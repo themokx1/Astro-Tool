@@ -1,0 +1,237 @@
+import Foundation
+
+/// Counts of what an incremental scan did, broken down by outcome per file.
+public struct ScanSummary: Codable, Sendable {
+    public var added: Int
+    public var updated: Int
+    public var unchanged: Int
+    public var missing: Int
+
+    public init(added: Int = 0, updated: Int = 0, unchanged: Int = 0, missing: Int = 0) {
+        self.added = added
+        self.updated = updated
+        self.unchanged = unchanged
+        self.missing = missing
+    }
+}
+
+/// Walks the library tree and incrementally syncs `Database.files` with
+/// what's actually on disk. Never writes, deletes, or moves anything in the
+/// library itself — the only filesystem access here is read-only directory
+/// listing and file metadata (size/mtime).
+public final class LibraryScanner {
+    private let config: AstroConfig
+    private let db: Database
+
+    public init(config: AstroConfig, db: Database) {
+        self.config = config
+        self.db = db
+    }
+
+    /// Scans `config.rootPath`, or just the `subpath` subtree of it when
+    /// given. `progress` is called every 100 files with the running count
+    /// of files processed so far in this scan.
+    ///
+    /// Directory listing is done manually (not `FileManager.enumerator`) so
+    /// exclusions are decided before descending into a directory, and a
+    /// permission failure on any one directory can be caught and reported
+    /// with that directory's path rather than aborting with no context.
+    public func scan(
+        subpath: String? = nil,
+        progress: (@Sendable (Int) -> Void)? = nil
+    ) throws -> ScanSummary {
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        let startURL = subpath.map { root.appendingPathComponent($0, isDirectory: true) } ?? root
+
+        guard FileManager.default.fileExists(atPath: startURL.path) else {
+            if config.rootPath.hasPrefix("/Volumes/") {
+                throw AstroError.volumeNotMounted(path: config.rootPath)
+            } else {
+                throw AstroError.accessDenied(path: subpath ?? "")
+            }
+        }
+
+        var seen = Set<String>()
+        var summary = ScanSummary()
+        var processedCount = 0
+
+        try walk(
+            dirURL: startURL,
+            relPrefix: subpath ?? "",
+            seen: &seen,
+            processedCount: &processedCount,
+            progress: progress,
+            summary: &summary
+        )
+
+        let tracked = try db.allFiles(includeMissing: false)
+        let scoped: [FileRecord]
+        if let subpath {
+            scoped = tracked.filter { $0.path == subpath || $0.path.hasPrefix(subpath + "/") }
+        } else {
+            scoped = tracked
+        }
+        summary.missing = scoped.reduce(into: 0) { count, record in
+            if !seen.contains(record.path) { count += 1 }
+        }
+
+        try db.markMissing(pathsNotIn: seen, underSubpath: subpath)
+
+        return summary
+    }
+
+    // MARK: - Walk
+
+    private func walk(
+        dirURL: URL,
+        relPrefix: String,
+        seen: inout Set<String>,
+        processedCount: inout Int,
+        progress: (@Sendable (Int) -> Void)?,
+        summary: inout ScanSummary
+    ) throws {
+        let entries: [URL]
+        do {
+            entries = try FileManager.default.contentsOfDirectory(
+                at: dirURL,
+                includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isDirectoryKey],
+                options: []
+            )
+        } catch {
+            if Self.isPermissionError(error) {
+                throw AstroError.accessDenied(path: relPrefix)
+            }
+            throw error
+        }
+
+        for entryURL in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            let name = entryURL.lastPathComponent
+            let relativePath = relPrefix.isEmpty ? name : relPrefix + "/" + name
+
+            let values = try entryURL.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
+            let isDirectory = values.isDirectory ?? false
+
+            if isDirectory {
+                guard !isExcludedDir(name: name, relativePath: relativePath) else { continue }
+                try walk(
+                    dirURL: entryURL,
+                    relPrefix: relativePath,
+                    seen: &seen,
+                    processedCount: &processedCount,
+                    progress: progress,
+                    summary: &summary
+                )
+                continue
+            }
+
+            guard !isExcludedFile(name: name, relativePath: relativePath) else { continue }
+
+            seen.insert(relativePath)
+            processedCount += 1
+            if processedCount % 100 == 0 {
+                progress?(processedCount)
+            }
+
+            try recordFile(relativePath: relativePath, values: values, summary: &summary)
+        }
+    }
+
+    private func recordFile(
+        relativePath: String,
+        values: URLResourceValues,
+        summary: inout ScanSummary
+    ) throws {
+        let size = Int64(values.fileSize ?? 0)
+        let mtime = (values.contentModificationDate ?? Date(timeIntervalSince1970: 0)).timeIntervalSince1970
+        let ext = (relativePath as NSString).pathExtension.lowercased()
+        let info = PathClassifier.classify(relativePath: relativePath)
+
+        let existing = try db.file(path: relativePath)
+        if let existing, !existing.missing, existing.size == size, abs(existing.mtime - mtime) <= 1.0 {
+            summary.unchanged += 1
+            return
+        }
+
+        let record = FileRecord(
+            id: existing?.id,
+            path: relativePath,
+            size: size,
+            mtime: mtime,
+            ext: ext,
+            kind: Self.kind(for: ext),
+            area: info.area,
+            target: info.target,
+            sessionDate: info.dateRaw,
+            role: info.role,
+            contentHash: existing?.contentHash,
+            scannedAt: Date().timeIntervalSince1970,
+            missing: false
+        )
+        _ = try db.upsertFile(record)
+
+        if existing == nil {
+            summary.added += 1
+        } else {
+            summary.updated += 1
+        }
+    }
+
+    // MARK: - Exclusions
+
+    private func isExcludedDir(name: String, relativePath: String) -> Bool {
+        if name == ".astro_tool" { return true }
+        if config.excludedDirNames.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) { return true }
+        return isExcludedPath(relativePath)
+    }
+
+    private func isExcludedFile(name: String, relativePath: String) -> Bool {
+        // Dotfiles are noise from the tool's point of view, except
+        // `.DS_Store`: that one is residue the audit engine reports on, so
+        // it must be recorded like any other file.
+        if name.hasPrefix(".") && name != ".DS_Store" { return true }
+        return isExcludedPath(relativePath)
+    }
+
+    private func isExcludedPath(_ relativePath: String) -> Bool {
+        config.excludedPaths.contains { excluded in
+            relativePath == excluded || relativePath.hasPrefix(excluded + "/")
+        }
+    }
+
+    // MARK: - Kind bucket
+
+    private static func kind(for ext: String) -> String {
+        switch ext {
+        case "fit", "fits", "fz":
+            return "fits"
+        case "cr3":
+            return "raw"
+        case "tif", "png", "jpg", "jpeg":
+            return "image"
+        case "xmp":
+            return "sidecar"
+        case "seq", "lst":
+            return "residue"
+        case "txt":
+            return "text"
+        default:
+            return "other"
+        }
+    }
+
+    // MARK: - Error classification
+
+    private static func isPermissionError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileReadNoPermissionError {
+            return true
+        }
+        if nsError.domain == NSPOSIXErrorDomain && (nsError.code == Int(EACCES) || nsError.code == Int(EPERM)) {
+            return true
+        }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+            return isPermissionError(underlying)
+        }
+        return false
+    }
+}
