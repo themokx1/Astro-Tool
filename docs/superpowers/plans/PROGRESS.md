@@ -18,7 +18,7 @@
 | T4 WriteGuard | ✅ kész | 46 teszt zöld (37 T1+T2+T3 + 9 új) |
 | T5 SQLite réteg | ✅ kész | 69 teszt zöld (46 T1-T4 + 23 új) |
 | T6 PathClassifier + Scanner | ✅ kész | 89 teszt zöld (69 T1-T5 + 20 új) |
-| T7 FITS parser | – | |
+| T7 FITS parser | ✅ kész | 102 teszt zöld (89 T1-T6 + 13 új) |
 | T8 ImageIO meta | – | |
 | T9 Audit motor | – | |
 | T10 Duplikátum | – | |
