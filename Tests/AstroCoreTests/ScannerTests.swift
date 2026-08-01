@@ -1,5 +1,8 @@
 import Foundation
 import Testing
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 @testable import AstroCore
 
 private func makeTempDir(_ label: String) throws -> URL {
@@ -171,6 +174,103 @@ private struct ScanFixture {
     } catch {
         Issue.record("expected AstroError.accessDenied, got \(error)")
     }
+}
+
+@Test func scanCapturesFITSMetaForNewFITSFile() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/generated_light.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                 6248",
+        "NAXIS2  =                 4176",
+        "EXPTIME =                300.0",
+        "INSTRUME= 'ZWO ASI2600MC Pro'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try fixture.db.file(path: relativePath)
+    let fileID = try #require(record?.id)
+    let meta = try fixture.db.fitsMeta(fileID: fileID)
+    #expect(meta?.exptime == 300.0)
+    #expect(meta?.instrume == "ZWO ASI2600MC Pro")
+}
+
+@Test func scanCapturesImageMetaForNewTIFFFile() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let relativePath = "processed/NGC2237_Rosette_Nebula/2026-07-01/generated.tif"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try writeTestTIFF(to: fileURL, focalLengthMM: 135.0, cameraModel: "Canon EOS Ra")
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try fixture.db.file(path: relativePath)
+    let fileID = try #require(record?.id)
+    let meta = try fixture.db.fitsMeta(fileID: fileID)
+    #expect(meta?.focallen == 135.0)
+    #expect(meta?.instrume == "Canon EOS Ra")
+}
+
+@Test func metaPersistsAcrossUnchangedRescan() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/generated_light2.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "EXPTIME =                120.0",
+        "INSTRUME= 'ZWO ASI2600MM Pro'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    let first = try scanner.scan()
+    let second = try scanner.scan()
+
+    #expect(second.added == 0)
+    #expect(second.updated == 0)
+    #expect(second.unchanged == first.added)
+
+    let record = try fixture.db.file(path: relativePath)
+    let fileID = try #require(record?.id)
+    let meta = try fixture.db.fitsMeta(fileID: fileID)
+    #expect(meta?.exptime == 120.0)
+    #expect(meta?.instrume == "ZWO ASI2600MM Pro")
+}
+
+@Test func corruptFITSFileIsRecordedButNoMetaRowIsWritten() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/corrupt.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try "this is not a valid FITS header at all, just garbage bytes\n".write(
+        to: fileURL, atomically: true, encoding: .utf8
+    )
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    let summary = try scanner.scan()
+    #expect(summary.added > 0)
+
+    let record = try fixture.db.file(path: relativePath)
+    let fileID = try #require(record?.id)
+    #expect(try fixture.db.fitsMeta(fileID: fileID) == nil)
 }
 
 @Test func progressCallbackFiresEveryHundredFiles() throws {

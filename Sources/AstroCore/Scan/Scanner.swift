@@ -132,12 +132,13 @@ public final class LibraryScanner {
                 progress?(processedCount)
             }
 
-            try recordFile(relativePath: relativePath, values: values, summary: &summary)
+            try recordFile(relativePath: relativePath, fileURL: entryURL, values: values, summary: &summary)
         }
     }
 
     private func recordFile(
         relativePath: String,
+        fileURL: URL,
         values: URLResourceValues,
         summary: inout ScanSummary
     ) throws {
@@ -167,13 +168,68 @@ public final class LibraryScanner {
             scannedAt: Date().timeIntervalSince1970,
             missing: false
         )
-        _ = try db.upsertFile(record)
+        let fileID = try db.upsertFile(record)
 
         if existing == nil {
             summary.added += 1
         } else {
             summary.updated += 1
         }
+
+        // Metadata capture only runs for NEW/CHANGED files (never for the
+        // `unchanged` early-return above) — that's what keeps incremental
+        // rescans of a large library fast.
+        try captureMeta(fileID: fileID, ext: ext, url: fileURL)
+    }
+
+    // MARK: - Metadata capture
+
+    /// Reads FITS header / CR3-or-TIFF image metadata for a just-recorded
+    /// file and upserts it into `fits_meta`. Extensions this scanner doesn't
+    /// know how to introspect (jpg, png, xmp, ...) are a silent no-op.
+    private func captureMeta(fileID: Int64, ext: String, url: URL) throws {
+        switch ext {
+        case "fit", "fits", "fz":
+            // A corrupt/unreadable FITS header is swallowed by design here:
+            // the file itself is still recorded in `files` above, just
+            // without a `fits_meta` row. TODO: a later audit task should
+            // flag fits-kind files with no fits_meta row as corrupt FITS,
+            // since the parse error itself isn't surfaced anywhere today.
+            guard let header = try? FITSReader.readHeader(url: url) else { return }
+            try db.upsertFITSMeta(Self.fitsMetaRecord(fileID: fileID, header: header))
+        case "cr3", "tif":
+            guard let meta = ImageMetaReader.read(url: url) else { return }
+            try db.upsertFITSMeta(
+                FITSMetaRecord(
+                    fileID: fileID,
+                    instrume: meta.cameraModel,
+                    focallen: meta.focalLengthMM,
+                    dateObs: meta.dateTaken
+                )
+            )
+        default:
+            return
+        }
+    }
+
+    private static func fitsMetaRecord(fileID: Int64, header: FITSHeader) -> FITSMetaRecord {
+        let headerJSON = (try? JSONEncoder().encode(header.allCards)).flatMap { String(data: $0, encoding: .utf8) }
+        return FITSMetaRecord(
+            fileID: fileID,
+            exptime: header.double("EXPTIME"),
+            gain: header.double("GAIN"),
+            offset: header.double("OFFSET"),
+            setTemp: header.double("SET-TEMP"),
+            ccdTemp: header.double("CCD-TEMP"),
+            instrume: header.string("INSTRUME"),
+            focallen: header.double("FOCALLEN"),
+            filter: header.string("FILTER"),
+            dateObs: header.string("DATE-OBS"),
+            imagetyp: header.string("IMAGETYP"),
+            naxis1: header.int("NAXIS1"),
+            naxis2: header.int("NAXIS2"),
+            headerJSON: headerJSON
+        )
     }
 
     // MARK: - Exclusions
