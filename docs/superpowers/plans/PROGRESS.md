@@ -22,7 +22,7 @@
 | T8 ImageIO meta | ✅ kész | 109 teszt zöld (102 T1-T7 + 7 új) |
 | T9 Audit motor | ✅ kész | 124 teszt zöld (109 T1-T8 + 15 új) |
 | T10 Duplikátum | ✅ kész | 138 teszt zöld (132 T1-T9+R1 + 6 új) |
-| T11 Suggestion script | – | |
+| T11 Suggestion script | ✅ kész | 148 teszt zöld (138 T1-T10+R1 + 10 új) |
 | T12 Stats + wide-field | – | |
 | T13 Calib | – | |
 | T14 Session-párosítás | – | |
