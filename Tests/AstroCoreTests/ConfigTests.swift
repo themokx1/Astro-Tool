@@ -146,3 +146,21 @@ import Testing
         try AstroConfig.load(from: url)
     }
 }
+
+@Test func saveThenLoadRoundTripsThroughWriteGuard() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-config-tests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    var config = AstroConfig()
+    config.rootPath = "/Volumes/images/Saved"
+    config.wideField.overrides = ["M42": true]
+
+    let writeGuard = WriteGuard(root: root)
+    try config.save(using: writeGuard)
+
+    let configURL = root.appendingPathComponent(".astro_tool/config.json")
+    let loaded = try AstroConfig.load(from: configURL)
+    #expect(loaded == config)
+}

@@ -163,4 +163,15 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         let data = try Data(contentsOf: url)
         return try JSONDecoder().decode(AstroConfig.self, from: data)
     }
+
+    /// Persists the config as pretty-printed, sorted-key JSON via
+    /// `WriteGuard`, at `.astro_tool/config.json` under the guard's root.
+    /// This is the only sanctioned way to save a config to disk — it never
+    /// writes anywhere outside the tool's own directory.
+    public func save(using writeGuard: WriteGuard) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(self)
+        try writeGuard.writeToolFile(relativePath: "config.json", data: data)
+    }
 }

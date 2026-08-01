@@ -15,7 +15,7 @@
 | T1 SPM skeleton + Model | ✅ kész (1f427fe) | 3 teszt zöld |
 | T2 Sanitizer + SessionDateParser | ✅ kész | 26 teszt zöld (3 T1 + 23 új) |
 | T3 Config | ✅ kész | 37 teszt zöld (26 T1+T2 + 11 új) |
-| T4 WriteGuard | – | |
+| T4 WriteGuard | ✅ kész | 46 teszt zöld (37 T1+T2+T3 + 9 új) |
 | T5 SQLite réteg | – | |
 | T6 PathClassifier + Scanner | – | |
 | T7 FITS parser | – | |
