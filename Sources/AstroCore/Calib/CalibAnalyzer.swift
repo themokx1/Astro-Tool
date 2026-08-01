@@ -139,6 +139,35 @@ public enum CalibAnalyzer {
         }
     }
 
+    /// Finds the `calibration_library/darks/<dir>` (root-relative path)
+    /// whose parsed (exposure, temp) matches `exposureS`/`tempC` within
+    /// `config.calib` tolerances — the same per-combo matching `coverage()`
+    /// does internally, exposed standalone so callers matching a single
+    /// combo (e.g. `SessionMatcher`) don't have to re-derive it. `tempC ==
+    /// nil` matches any master's temperature (a DSLR light with no cooler
+    /// telemetry). Ties among multiple matching dirs are broken by
+    /// directory name, same as `coverage()`. `nil` when no master dir
+    /// matches at all.
+    public static func matchedMasterDarkPath(
+        exposureS: Double,
+        tempC: Double?,
+        files: [FileRecord],
+        config: AstroConfig
+    ) -> String? {
+        let masters = masterDirs(files: files)
+        let calib = config.calib
+
+        let candidate = masters.values
+            .filter { master in
+                abs(master.exposureS - exposureS) <= calib.exposureToleranceS
+                    && (tempC == nil || abs(master.tempC - tempC!) <= calib.tempToleranceC)
+            }
+            .sorted { $0.dirName < $1.dirName }
+            .first
+
+        return candidate.map { "calibration_library/darks/\($0.dirName)" }
+    }
+
     // MARK: - Grouping
 
     private struct GroupKey: Hashable {

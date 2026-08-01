@@ -599,19 +599,31 @@ public struct CalibInWrongDirRule: AuditRule {
     public func evaluate(_ ctx: AuditContext) -> [Finding] {
         ctx.files.compactMap { file -> Finding? in
             guard let fileID = file.id, let meta = ctx.fitsMetaByFileID[fileID], let imagetyp = meta.imagetyp else { return nil }
-            guard let implied = Self.impliedRole(from: imagetyp), implied != file.role else { return nil }
-
-            if file.area == .sessions, Self.sessionPathRoles.contains(file.role) {
-                return Self.finding(file: file, imagetyp: imagetyp, implied: implied, roleDirIndex: nil, id: id)
-            }
-            if file.area == .calibration, Self.calibPathRoles.contains(file.role), Self.calibImpliedRoles.contains(implied) {
-                // The role subdir always sits directly under
-                // `calibration_library/` (index 1), regardless of any
-                // further nesting beneath it (e.g. `darks/60sec_-10deg/`).
-                return Self.finding(file: file, imagetyp: imagetyp, implied: implied, roleDirIndex: 1, id: id)
-            }
-            return nil
+            return Self.misplacedFinding(file: file, imagetyp: imagetyp, id: id)
         }
+    }
+
+    /// Core misplaced-frame check, shared with `SessionMatcher` so it can
+    /// flag the same contradictions when it scopes its own scan to a single
+    /// session — reproduces exactly what `evaluate` used to inline: a file
+    /// whose FITS IMAGETYP contradicts the frame role implied by its path,
+    /// either under `sessions/` or `calibration_library/`. `nil` when the
+    /// IMAGETYP matches the path, or the location isn't one this rule acts
+    /// on (e.g. a light frame under `calibration_library/`, which has no
+    /// "lights" sibling dir to move it into).
+    static func misplacedFinding(file: FileRecord, imagetyp: String, id: String) -> Finding? {
+        guard let implied = impliedRole(from: imagetyp), implied != file.role else { return nil }
+
+        if file.area == .sessions, sessionPathRoles.contains(file.role) {
+            return finding(file: file, imagetyp: imagetyp, implied: implied, roleDirIndex: nil, id: id)
+        }
+        if file.area == .calibration, calibPathRoles.contains(file.role), calibImpliedRoles.contains(implied) {
+            // The role subdir always sits directly under
+            // `calibration_library/` (index 1), regardless of any
+            // further nesting beneath it (e.g. `darks/60sec_-10deg/`).
+            return finding(file: file, imagetyp: imagetyp, implied: implied, roleDirIndex: 1, id: id)
+        }
+        return nil
     }
 
     /// Builds the finding, replacing the path component that names the
