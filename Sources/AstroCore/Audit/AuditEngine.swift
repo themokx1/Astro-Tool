@@ -71,7 +71,15 @@ public final class AuditEngine {
     /// `AuditContext`, persists all findings, finishes the run, and returns
     /// them sorted with sure errors first, then suspicious, then
     /// probably-intentional — ties broken by path.
-    public func run() throws -> (runID: Int64, findings: [Finding]) {
+    ///
+    /// When `includeDuplicates` is true (the default), hash-based duplicate
+    /// detection (`DuplicateFinder`) also runs as part of this same run: its
+    /// findings share the run's `runID` and are persisted and sorted right
+    /// alongside the protocol rules' findings. `DuplicateFinder` isn't itself
+    /// an `AuditRule` (it needs DB write access to cache content hashes,
+    /// which the read-only `AuditContext` doesn't provide), so it's invoked
+    /// directly here instead of through `rules`.
+    public func run(includeDuplicates: Bool = true) throws -> (runID: Int64, findings: [Finding]) {
         let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
         let directories = try DirectoryLister.listDirectories(root: root, config: config)
         let files = try db.allFiles(includeMissing: false)
@@ -93,6 +101,10 @@ public final class AuditEngine {
         var findings: [Finding] = []
         for rule in rules {
             findings.append(contentsOf: rule.evaluate(ctx))
+        }
+
+        if includeDuplicates {
+            findings.append(contentsOf: try DuplicateFinder.findDuplicates(db: db, config: config))
         }
 
         for finding in findings {

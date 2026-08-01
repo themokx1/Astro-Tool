@@ -21,7 +21,7 @@
 | T7 FITS parser | ✅ kész | 102 teszt zöld (89 T1-T6 + 13 új) |
 | T8 ImageIO meta | ✅ kész | 109 teszt zöld (102 T1-T7 + 7 új) |
 | T9 Audit motor | ✅ kész | 124 teszt zöld (109 T1-T8 + 15 új) |
-| T10 Duplikátum | – | |
+| T10 Duplikátum | ✅ kész | 138 teszt zöld (132 T1-T9+R1 + 6 új) |
 | T11 Suggestion script | – | |
 | T12 Stats + wide-field | – | |
 | T13 Calib | – | |
