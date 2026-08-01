@@ -47,6 +47,9 @@ public struct SirilCLI: StarMetricsProvider {
     public enum ProcessError: Error, Equatable {
         case timedOut
         case unparsableOutput
+        /// `buildScript(imagePath:)` refused to build a script for this
+        /// path (see its doc comment for why).
+        case unsupportedPath(String)
     }
 
     public let path: String
@@ -99,8 +102,20 @@ public struct SirilCLI: StarMetricsProvider {
     /// `findstar` (which logs a star-detection summary `parseFindstarOutput`
     /// can read back), then closes it. `requires` pins the minimum Siril
     /// version the script grammar assumes.
-    static func buildScript(imagePath: String) -> String {
-        """
+    ///
+    /// `imagePath` is interpolated straight into a `load "..."` line, so a
+    /// path containing an unescaped `"` could break out of that string and
+    /// inject arbitrary Siril script commands. Rather than assume Siril's
+    /// command DSL supports backslash-escaping inside quoted strings (it
+    /// isn't documented either way, and guessing wrong would silently
+    /// reopen the same injection while looking "fixed"), any path
+    /// containing `"` or `\` is rejected outright -- neither character is
+    /// expected in a real astrophotography library path.
+    static func buildScript(imagePath: String) throws -> String {
+        guard !imagePath.contains("\""), !imagePath.contains("\\") else {
+            throw ProcessError.unsupportedPath(imagePath)
+        }
+        return """
         requires 1.2.0
         load "\(imagePath)"
         findstar
@@ -109,7 +124,7 @@ public struct SirilCLI: StarMetricsProvider {
     }
 
     public func metrics(for url: URL, workDir: URL) throws -> StarMetrics {
-        let script = Self.buildScript(imagePath: url.path)
+        let script = try Self.buildScript(imagePath: url.path)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)

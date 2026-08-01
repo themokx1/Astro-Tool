@@ -45,6 +45,47 @@ private func build16BitFITS(width: Int, height: Int, pixels: [Int], bzero: Int? 
     return data
 }
 
+/// Builds a realistic `.fz` (fpack-style Rice-compressed) FITS layout: a
+/// primary HDU with `NAXIS=0` (no pixel data of its own) immediately
+/// followed by a `BINTABLE` extension whose `ZNAXIS1`/`ZNAXIS2`/`ZIMAGE`/
+/// `ZCMPTYPE`/`ZBITPIX` describe the *actual* compressed image -- the real
+/// pixels live Rice-encoded inside the "heap" bytes after the extension
+/// header, not as a flat pixel grid `NativeStats` could ever read directly.
+/// `heapByteCount` is deliberately larger than `znaxis1 * znaxis2` so that,
+/// if compressed-layout detection were ever missing, the naive "read
+/// znaxis1*znaxis2 bytes as BITPIX=8 pixels" path would NOT fail via the
+/// unrelated "truncated pixel data" guard -- the only thing that should ever
+/// reject this fixture is the dedicated compressed-layout check.
+private func buildFZShapedFITS(znaxis1: Int, znaxis2: Int, heapByteCount: Int) -> Data {
+    let primaryCards = [
+        "SIMPLE  =                    T",
+        "BITPIX  =                    8",
+        "NAXIS   =                    0",
+        "END",
+    ]
+    let extensionCards = [
+        "XTENSION= 'BINTABLE'",
+        "BITPIX  =                    8",
+        "NAXIS   =                    2",
+        "NAXIS1  =                    1",
+        "NAXIS2  =                    1",
+        "PCOUNT  =                 \(heapByteCount)",
+        "GCOUNT  =                    1",
+        "TFIELDS =                    1",
+        "ZIMAGE  =                    T",
+        "ZCMPTYPE= 'RICE_1  '",
+        "ZBITPIX =                   16",
+        "ZNAXIS  =                    2",
+        "ZNAXIS1 =                 \(znaxis1)",
+        "ZNAXIS2 =                 \(znaxis2)",
+        "END",
+    ]
+    var data = buildHeaderData(primaryCards)
+    data.append(buildHeaderData(extensionCards))
+    data.append(Data(repeating: 0xAB, count: heapByteCount))
+    return data
+}
+
 /// A fresh fixture library + fresh sqlite-backed `Database`, plus a helper
 /// to register a light frame directly (bypassing the scanner/classifier —
 /// these tests only care about `Rater`/`NativeStats`/`SirilCLI`, so the DB
@@ -94,6 +135,39 @@ private struct RateFixture {
             size: Int64(data.count),
             mtime: mtime,
             ext: "fit",
+            kind: "fits",
+            area: .sessions,
+            target: target,
+            sessionDate: sessionDate,
+            role: .light,
+            scannedAt: Date().timeIntervalSince1970
+        )
+        let fileID = try db.upsertFile(record)
+        return (fileID, Int64(data.count))
+    }
+
+    /// Writes arbitrary bytes (e.g. a `.fz`-shaped fixture) at `relativePath`
+    /// and registers a matching `files` row, with `ext` derived from the
+    /// path exactly like the real scanner does (`Scanner.swift`'s
+    /// `(relativePath as NSString).pathExtension.lowercased()`).
+    @discardableResult
+    func addRawLightFrame(
+        relativePath: String,
+        target: String,
+        sessionDate: String = "2026-01-01",
+        data: Data,
+        mtime: Double = 1_700_000_000
+    ) throws -> (fileID: Int64, size: Int64) {
+        let url = libraryDir.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url)
+
+        let ext = (relativePath as NSString).pathExtension.lowercased()
+        let record = FileRecord(
+            path: relativePath,
+            size: Int64(data.count),
+            mtime: mtime,
+            ext: ext,
             kind: "fits",
             area: .sessions,
             target: target,
@@ -240,6 +314,26 @@ private final class ProgressRecorder: @unchecked Sendable {
     }
 }
 
+@Test func nativeStatsThrowsCorruptFITSForCompressedFZLayout() throws {
+    // Realistic .fz shape: primary NAXIS=0 + BINTABLE extension carrying
+    // ZIMAGE/ZCMPTYPE/ZBITPIX/ZNAXIS1/ZNAXIS2. `FITSReader.parse` merges
+    // the extension's keys (including backfilling NAXIS1/NAXIS2 from
+    // ZNAXIS1/ZNAXIS2), so a naive BITPIX/NAXIS-only guard would never
+    // catch this -- `NativeStats` must positively detect the compressed
+    // layout instead of reading extension-header text / Rice heap bytes as
+    // pixels.
+    let data = buildFZShapedFITS(znaxis1: 10, znaxis2: 10, heapByteCount: 500)
+
+    do {
+        _ = try NativeStats.compute(data: data)
+        Issue.record("expected AstroError.corruptFITS for compressed (.fz) layout")
+    } catch let AstroError.corruptFITS(_, reason) {
+        #expect(reason.contains("compressed"))
+    } catch {
+        Issue.record("expected AstroError.corruptFITS, got \(error)")
+    }
+}
+
 @Test func nativeStatsComputeFromURLReadsFile() throws {
     let dir = try makeTempDir("native-url")
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -294,12 +388,30 @@ private final class ProgressRecorder: @unchecked Sendable {
     }
 }
 
-@Test func sirilCLIBuildScriptContainsRequiresLoadFindstarClose() {
-    let script = SirilCLI.buildScript(imagePath: "/tmp/some frame.fit")
+@Test func sirilCLIBuildScriptContainsRequiresLoadFindstarClose() throws {
+    let script = try SirilCLI.buildScript(imagePath: "/tmp/some frame.fit")
     #expect(script.contains("requires 1.2.0"))
     #expect(script.contains("load \"/tmp/some frame.fit\""))
     #expect(script.contains("findstar"))
     #expect(script.contains("close"))
+}
+
+@Test func buildScriptRejectsPathContainingDoubleQuoteToPreventScriptInjection() {
+    // A path containing an unescaped `"` could otherwise break out of the
+    // `load "..."` string and inject arbitrary Siril script commands (e.g.
+    // a filename like `foo".fit\nshell rm -rf ~`). Reject outright rather
+    // than guess at Siril's DSL escaping rules.
+    let evilPath = "/tmp/evil\".fit\nclose\nrequires 1.2.0\nload \"/etc/passwd"
+    #expect(throws: SirilCLI.ProcessError.self) {
+        _ = try SirilCLI.buildScript(imagePath: evilPath)
+    }
+}
+
+@Test func buildScriptRejectsPathContainingBackslash() {
+    let weirdPath = "/tmp/weird\\path.fit"
+    #expect(throws: SirilCLI.ProcessError.self) {
+        _ = try SirilCLI.buildScript(imagePath: weirdPath)
+    }
 }
 
 // MARK: - Rater: no frames
@@ -389,6 +501,38 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(results.count == 1)
     #expect(results[0].metrics == nil)
     #expect(results[0].background == 77)
+}
+
+// MARK: - Rater: compressed (.fz) frames skip NativeStats but still rate
+
+@Test func rateSkipsNativeStatsForFZFramesButStillCallsProviderAndPersists() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    // Defense in depth: even though `NativeStats.compute` itself now
+    // rejects this shape, `Rater` must not even attempt it for a `.fz`
+    // file -- Siril can read `.fz` directly, so the frame should still be
+    // rated (metrics present), just with no native background/saturation.
+    let fzData = buildFZShapedFITS(znaxis1: 10, znaxis2: 10, heapByteCount: 500)
+    let (fileID, _) = try fixture.addRawLightFrame(
+        relativePath: "sessions/M27/2026-04-04/lights/light_0001.fits.fz",
+        target: "M27", data: fzData
+    )
+
+    let mock = ScriptedMockProvider(responses: [
+        "light_0001.fits.fz": StarMetrics(fwhm: 2.1, roundness: 0.88, starCount: 210),
+    ])
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: mock)
+    let results = try rater.rate(target: "M27")
+
+    #expect(results.count == 1)
+    #expect(results[0].metrics == StarMetrics(fwhm: 2.1, roundness: 0.88, starCount: 210))
+    #expect(results[0].background == nil)
+
+    let stored = try fixture.db.rating(fileID: fileID)
+    #expect(stored?.background == nil)
+    #expect(stored?.saturatedFraction == nil)
+    #expect(stored?.fwhm == 2.1)
 }
 
 // MARK: - Rater: scoring orientation + outlier
@@ -563,6 +707,6 @@ private final class ProgressRecorder: @unchecked Sendable {
     let cli = try SirilCLI(path: cfg.rating.sirilPath)
     #expect(!cli.version.isEmpty)
 
-    let script = SirilCLI.buildScript(imagePath: "/tmp/x.fit")
+    let script = try SirilCLI.buildScript(imagePath: "/tmp/x.fit")
     #expect(script.contains("findstar"))
 }

@@ -1,5 +1,26 @@
 import Foundation
 
+/// A rounded (exposure, temperature) combo. Lights are grouped by this both
+/// for calibration-coverage analysis (`CalibAnalyzer.lightGroups`) and for
+/// per-session dark fallback matching (`SessionMatcher.dominantLibraryDark`)
+/// -- sharing one rounding rule keeps "which combo is this light in" answered
+/// identically in both places.
+struct CalibCombo: Hashable {
+    var exposureS: Double
+    var tempC: Double?
+
+    /// Rounds `exptime` to the nearest 0.1s and `setTemp` to the nearest
+    /// 0.5°C -- coarse enough to bucket a camera's own exposure/temperature
+    /// jitter (e.g. `300.0` vs `300.04`) into the same combo, fine enough to
+    /// keep genuinely distinct dark-frame setups apart.
+    static func rounded(exptime: Double, setTemp: Double?) -> CalibCombo {
+        CalibCombo(
+            exposureS: (exptime * 10).rounded() / 10,
+            tempC: setTemp.map { ($0 / 0.5).rounded() * 0.5 }
+        )
+    }
+}
+
 /// One (exposure, temperature) combination of dark frames actually needed by
 /// scanned session lights, and whether the calibration library already
 /// covers it with a fresh master.
@@ -170,11 +191,6 @@ public enum CalibAnalyzer {
 
     // MARK: - Grouping
 
-    private struct GroupKey: Hashable {
-        var exposureS: Double
-        var tempC: Double?
-    }
-
     private struct GroupInfo {
         var count = 0
         var targets = Set<String>()
@@ -183,8 +199,8 @@ public enum CalibAnalyzer {
     /// Groups scanned session lights by rounded (exptime, setTemp). Lights
     /// with no `fits_meta` row or a nil `exptime` are skipped entirely --
     /// there's nothing to match a dark against.
-    private static func lightGroups(files: [FileRecord], db: Database) throws -> [GroupKey: GroupInfo] {
-        var groups: [GroupKey: GroupInfo] = [:]
+    private static func lightGroups(files: [FileRecord], db: Database) throws -> [CalibCombo: GroupInfo] {
+        var groups: [CalibCombo: GroupInfo] = [:]
 
         for file in files where file.area == .sessions && file.role == .light {
             guard let id = file.id,
@@ -192,10 +208,7 @@ public enum CalibAnalyzer {
                   let exptime = meta.exptime
             else { continue }
 
-            let key = GroupKey(
-                exposureS: (exptime * 10).rounded() / 10,
-                tempC: meta.setTemp.map { ($0 / 0.5).rounded() * 0.5 }
-            )
+            let key = CalibCombo.rounded(exptime: exptime, setTemp: meta.setTemp)
 
             var info = groups[key] ?? GroupInfo()
             info.count += 1

@@ -125,23 +125,18 @@ public enum SessionMatcher {
 
     // MARK: - Library dark fallback
 
-    private struct ComboKey: Hashable {
-        var exposureS: Double
-        var tempC: Double?
-    }
-
-    /// Groups `lights`' FITS meta by rounded (exptime, setTemp) -- same
-    /// rounding `CalibAnalyzer` uses for its own light grouping -- picks the
-    /// most common combo, and matches it against the calibration library.
-    /// `nil` when no light has usable exposure meta, or no library master
-    /// matches the dominant combo.
+    /// Groups `lights`' FITS meta by rounded (exptime, setTemp) -- via the
+    /// same `CalibCombo.rounded` rule `CalibAnalyzer` uses for its own light
+    /// grouping -- picks the most common combo, and matches it against the
+    /// calibration library. `nil` when no light has usable exposure meta, or
+    /// no library master matches the dominant combo.
     private static func dominantLibraryDark(
         lights: [FileRecord],
         db: Database,
         allFiles: [FileRecord],
         config: AstroConfig
     ) throws -> String? {
-        var counts: [ComboKey: Int] = [:]
+        var counts: [CalibCombo: Int] = [:]
 
         for light in lights {
             guard let fileID = light.id,
@@ -149,10 +144,7 @@ public enum SessionMatcher {
                   let exptime = meta.exptime
             else { continue }
 
-            let key = ComboKey(
-                exposureS: (exptime * 10).rounded() / 10,
-                tempC: meta.setTemp.map { ($0 / 0.5).rounded() * 0.5 }
-            )
+            let key = CalibCombo.rounded(exptime: exptime, setTemp: meta.setTemp)
             counts[key, default: 0] += 1
         }
 

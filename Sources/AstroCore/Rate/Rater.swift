@@ -101,13 +101,24 @@ public final class Rater {
             }
 
             let url = root.appendingPathComponent(file.path)
-            let nativeStats: NativeFrameStats
-            do {
-                nativeStats = try NativeStats.compute(url: url)
-            } catch {
-                // Can't even read the pixel data -- skip this frame but
-                // keep rating the rest of the batch.
-                continue
+
+            // `.fz` (Rice-compressed) frames are never handed to
+            // `NativeStats` -- it rejects them anyway (see
+            // `NativeStats.compute`'s compressed-layout guard), but this is
+            // defense in depth: don't even attempt the read. Siril *can*
+            // read `.fz` directly, so the provider still runs; the frame is
+            // still rated, just with `background`/`saturatedFraction` left
+            // `nil` (scoring already renormalizes weights over whichever
+            // metrics are actually present for a frame).
+            var nativeStats: NativeFrameStats?
+            if file.ext.lowercased() != "fz" {
+                do {
+                    nativeStats = try NativeStats.compute(url: url)
+                } catch {
+                    // Can't even read the pixel data -- skip this frame but
+                    // keep rating the rest of the batch.
+                    continue
+                }
             }
 
             let metrics = try? provider?.metrics(for: url, workDir: workDir)
@@ -117,8 +128,8 @@ public final class Rater {
                 fwhm: metrics?.fwhm,
                 roundness: metrics?.roundness,
                 starCount: metrics?.starCount,
-                background: nativeStats.backgroundMedian,
-                saturatedFraction: nativeStats.saturatedFraction,
+                background: nativeStats?.backgroundMedian,
+                saturatedFraction: nativeStats?.saturatedFraction,
                 score: nil,
                 ratedAt: Date().timeIntervalSince1970,
                 sirilVersion: provider?.version,
