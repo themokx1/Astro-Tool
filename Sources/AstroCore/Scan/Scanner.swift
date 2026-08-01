@@ -98,7 +98,7 @@ public final class LibraryScanner {
                 options: []
             )
         } catch {
-            if Self.isPermissionError(error) {
+            if isPermissionError(error) {
                 throw AstroError.accessDenied(path: relPrefix)
             }
             throw error
@@ -234,10 +234,10 @@ public final class LibraryScanner {
 
     // MARK: - Exclusions
 
+    private var exclusion: ExclusionRules { ExclusionRules(config: config) }
+
     private func isExcludedDir(name: String, relativePath: String) -> Bool {
-        if name == ".astro_tool" { return true }
-        if config.excludedDirNames.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) { return true }
-        return isExcludedPath(relativePath)
+        exclusion.isExcludedDir(name: name, relativePath: relativePath)
     }
 
     private func isExcludedFile(name: String, relativePath: String) -> Bool {
@@ -245,13 +245,7 @@ public final class LibraryScanner {
         // `.DS_Store`: that one is residue the audit engine reports on, so
         // it must be recorded like any other file.
         if name.hasPrefix(".") && name != ".DS_Store" { return true }
-        return isExcludedPath(relativePath)
-    }
-
-    private func isExcludedPath(_ relativePath: String) -> Bool {
-        config.excludedPaths.contains { excluded in
-            relativePath == excluded || relativePath.hasPrefix(excluded + "/")
-        }
+        return exclusion.isExcludedPath(relativePath)
     }
 
     // MARK: - Kind bucket
@@ -275,19 +269,4 @@ public final class LibraryScanner {
         }
     }
 
-    // MARK: - Error classification
-
-    private static func isPermissionError(_ error: Error) -> Bool {
-        let nsError = error as NSError
-        if nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileReadNoPermissionError {
-            return true
-        }
-        if nsError.domain == NSPOSIXErrorDomain && (nsError.code == Int(EACCES) || nsError.code == Int(EPERM)) {
-            return true
-        }
-        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
-            return isPermissionError(underlying)
-        }
-        return false
-    }
 }

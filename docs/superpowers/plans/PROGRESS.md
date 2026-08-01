@@ -20,7 +20,7 @@
 | T6 PathClassifier + Scanner | ✅ kész | 89 teszt zöld (69 T1-T5 + 20 új) |
 | T7 FITS parser | ✅ kész | 102 teszt zöld (89 T1-T6 + 13 új) |
 | T8 ImageIO meta | ✅ kész | 109 teszt zöld (102 T1-T7 + 7 új) |
-| T9 Audit motor | – | |
+| T9 Audit motor | ✅ kész | 124 teszt zöld (109 T1-T8 + 15 új) |
 | T10 Duplikátum | – | |
 | T11 Suggestion script | – | |
 | T12 Stats + wide-field | – | |
