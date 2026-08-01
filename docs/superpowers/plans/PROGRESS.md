@@ -23,7 +23,7 @@
 | T9 Audit motor | ✅ kész | 124 teszt zöld (109 T1-T8 + 15 új) |
 | T10 Duplikátum | ✅ kész | 138 teszt zöld (132 T1-T9+R1 + 6 új) |
 | T11 Suggestion script | ✅ kész | 148 teszt zöld (138 T1-T10+R1 + 10 új) |
-| T12 Stats + wide-field | – | |
+| T12 Stats + wide-field | ✅ kész | 163 teszt zöld (148 T1-T11 + 15 új) |
 | T13 Calib | – | |
 | T14 Session-párosítás | – | |
 | T15 Rate | – | |
