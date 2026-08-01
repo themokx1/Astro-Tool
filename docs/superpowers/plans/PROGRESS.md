@@ -16,7 +16,7 @@
 | T2 Sanitizer + SessionDateParser | ✅ kész | 26 teszt zöld (3 T1 + 23 új) |
 | T3 Config | ✅ kész | 37 teszt zöld (26 T1+T2 + 11 új) |
 | T4 WriteGuard | ✅ kész | 46 teszt zöld (37 T1+T2+T3 + 9 új) |
-| T5 SQLite réteg | – | |
+| T5 SQLite réteg | ✅ kész | 69 teszt zöld (46 T1-T4 + 23 új) |
 | T6 PathClassifier + Scanner | – | |
 | T7 FITS parser | – | |
 | T8 ImageIO meta | – | |
