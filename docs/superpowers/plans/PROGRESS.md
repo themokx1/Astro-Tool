@@ -13,7 +13,7 @@
 | Task | Állapot | Megjegyzés |
 |---|---|---|
 | T1 SPM skeleton + Model | ✅ kész (1f427fe) | 3 teszt zöld |
-| T2 Sanitizer + SessionDateParser | – | |
+| T2 Sanitizer + SessionDateParser | ✅ kész | 26 teszt zöld (3 T1 + 23 új) |
 | T3 Config | – | |
 | T4 WriteGuard | – | |
 | T5 SQLite réteg | – | |
