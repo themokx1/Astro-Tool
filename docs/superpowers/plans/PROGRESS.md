@@ -32,6 +32,7 @@
 | T18 build.sh + DMG | – | |
 | T19 CI + README | – | |
 | T20 Pages + v0.1.0 | – | |
+| Review R1 (T6–T9) javítások | ✅ kész | 132 teszt zöld (124 + 8 új) |
 
 Nyitott, kötet-hozzáférés után: add_new_session.sh és tools/rate/ verifikáció
 (spec 2. szakasz); user teendő: Teljes lemezhozzáférés a Claude appnak.

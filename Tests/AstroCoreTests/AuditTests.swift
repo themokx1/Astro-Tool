@@ -163,6 +163,18 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
 
     // M_Milky_Way must never be grouped with the placeholder target.
     #expect(!hits.contains { $0.message.contains("M_Milky_Way") && $0.message.contains("Please_enter_a_value") })
+
+    // Comet triplet: different-order token permutations sharing the same
+    // {c2025, r3} catalog-designation token set must group together.
+    let cometNames: Set<String> = ["R3_C2025", "C2025_R3_C2025_R3_Panstarrs", "C2025_R3_C2025_R3_Panstarrs_Wide"]
+    let cometGroup = try #require(hits.first { finding in
+        cometNames.allSatisfy { finding.message.contains($0) }
+    })
+    #expect(cometGroup.severity == .suspicious)
+
+    // M42_Orion* (catalog m42) must never be grouped with M45_Pleiades
+    // (catalog m45) even though both are single-catalog-token targets.
+    #expect(!hits.contains { $0.message.contains("M42_Orion") && $0.message.contains("M45_Pleiades") })
 }
 
 @Test func auditFindsMissingCounterparts() throws {
@@ -241,6 +253,74 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
         from: "sessions/M45_Pleiades/2026-01-10/lights/flat_stray.fit",
         to: "sessions/M45_Pleiades/2026-01-10/flats/flat_stray.fit"
     ))
+}
+
+@Test func auditFindsInvalidDateDir() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    let unparseablePath = "sessions/M45_Pleiades/notadate/lights/x.fit"
+    let fileURL = fixture.root.appendingPathComponent(unparseablePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "fixture dummy content\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let engine = AuditEngine(config: fixture.config, db: fixture.db)
+    let (_, all) = try engine.run()
+
+    let hits = findings(all, category: "invalid-date-dir")
+    #expect(hits.contains { $0.path == "sessions/M45_Pleiades/notadate" && $0.severity == .suspicious })
+}
+
+@Test func auditFindsEmptyTargetComponent() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    let dirURL = fixture.root.appendingPathComponent("stacks/_Orphan/2026-01-01", isDirectory: true)
+    try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+
+    let engine = AuditEngine(config: fixture.config, db: fixture.db)
+    let (_, all) = try engine.run()
+
+    let hits = findings(all, category: "empty-target-component")
+    let hit = try #require(hits.first { $0.path == "stacks/_Orphan" })
+    #expect(hit.severity == .sureError)
+    if case .review = hit.suggestion {
+        // expected
+    } else {
+        Issue.record("expected a .review suggestion, got \(String(describing: hit.suggestion))")
+    }
+}
+
+@Test func auditFindsCalibInWrongDirUnderCalibrationLibrary() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    let strayPath = "calibration_library/darks/flat_in_darks.fit"
+    let strayURL = fixture.root.appendingPathComponent(strayPath)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Flat Field'",
+        "END",
+    ])
+    try headerData.write(to: strayURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let engine = AuditEngine(config: fixture.config, db: fixture.db)
+    let (_, all) = try engine.run()
+
+    let hits = findings(all, category: "calib-in-wrong-dir")
+    let hit = try #require(hits.first { $0.path == strayPath })
+    #expect(hit.severity == .sureError)
+    #expect(hit.suggestion == .move(from: strayPath, to: "calibration_library/flats/flat_in_darks.fit"))
 }
 
 @Test func auditFindingsArePersistedAndReadableFromDB() throws {

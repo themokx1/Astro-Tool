@@ -9,7 +9,12 @@ struct ExclusionRules {
     let config: AstroConfig
 
     func isExcludedDir(name: String, relativePath: String) -> Bool {
-        if name == ".astro_tool" { return true }
+        // Any dot-directory is invisible to the tool: `.astro_tool` (this
+        // tool's own state), `.DS_Store`-adjacent Finder/Spotlight noise, and
+        // — on a real external volume — macOS housekeeping dirs like
+        // `.Trashes` and `.fseventsd`. `.DS_Store` the *file* is deliberately
+        // NOT covered by this (it's still recorded, see `isExcludedFile`).
+        if name.hasPrefix(".") { return true }
         if config.excludedDirNames.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) { return true }
         return isExcludedPath(relativePath)
     }

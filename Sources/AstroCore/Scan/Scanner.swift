@@ -1,5 +1,40 @@
 import Foundation
 
+/// Decides what error a missing root/subpath should surface as. Split out
+/// from `LibraryScanner.scan` so the decision (which never needs disk
+/// access beyond one `volumeExists` check) can be unit-tested directly
+/// without touching a real `/Volumes` mount point.
+enum RootErrorClassifier {
+    /// - `rootPath` starts with `/Volumes/` and its volume portion (the
+    ///   first two path components, e.g. `/Volumes/images`) doesn't exist
+    ///   per `volumeExists` → `.volumeNotMounted(path: rootPath)`.
+    /// - Otherwise the missing root/subpath itself doesn't exist (but its
+    ///   parent does) → `.pathNotFound(path:)`, using `subpath` when one was
+    ///   given (a scoped scan under an existing root) or `rootPath` when the
+    ///   root itself is what's missing.
+    static func classify(
+        rootPath: String,
+        subpath: String?,
+        volumeExists: (String) -> Bool
+    ) -> AstroError {
+        if rootPath.hasPrefix("/Volumes/") {
+            let volume = volumePortion(of: rootPath)
+            if !volumeExists(volume) {
+                return .volumeNotMounted(path: rootPath)
+            }
+        }
+        return .pathNotFound(path: subpath ?? rootPath)
+    }
+
+    /// The volume mount point portion of an absolute path — its first two
+    /// path components, e.g. `/Volumes/images/sessions` → `/Volumes/images`.
+    static func volumePortion(of path: String) -> String {
+        let comps = path.split(separator: "/", omittingEmptySubsequences: true)
+        guard comps.count >= 2 else { return path }
+        return "/" + comps[0] + "/" + comps[1]
+    }
+}
+
 /// Counts of what an incremental scan did, broken down by outcome per file.
 public struct ScanSummary: Codable, Sendable {
     public var added: Int
@@ -44,11 +79,11 @@ public final class LibraryScanner {
         let startURL = subpath.map { root.appendingPathComponent($0, isDirectory: true) } ?? root
 
         guard FileManager.default.fileExists(atPath: startURL.path) else {
-            if config.rootPath.hasPrefix("/Volumes/") {
-                throw AstroError.volumeNotMounted(path: config.rootPath)
-            } else {
-                throw AstroError.accessDenied(path: subpath ?? "")
-            }
+            throw RootErrorClassifier.classify(
+                rootPath: config.rootPath,
+                subpath: subpath,
+                volumeExists: { FileManager.default.fileExists(atPath: $0) }
+            )
         }
 
         var seen = Set<String>()
@@ -153,6 +188,12 @@ public final class LibraryScanner {
             return
         }
 
+        // Reaching this point means either the file is brand new (`existing`
+        // is nil) or something about it changed (size/mtime/missing-flag
+        // differs from what's on record) — the only case that keeps a prior
+        // `contentHash` is the fast `unchanged` path above, which returns
+        // before ever building a record. So any hash cached from a previous
+        // scan is stale here and must be dropped, not carried forward.
         let record = FileRecord(
             id: existing?.id,
             path: relativePath,
@@ -164,7 +205,7 @@ public final class LibraryScanner {
             target: info.target,
             sessionDate: info.dateRaw,
             role: info.role,
-            contentHash: existing?.contentHash,
+            contentHash: nil,
             scannedAt: Date().timeIntervalSince1970,
             missing: false
         )

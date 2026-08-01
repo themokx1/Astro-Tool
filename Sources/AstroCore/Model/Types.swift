@@ -46,6 +46,7 @@ public struct Finding: Codable, Equatable, Sendable {
 public enum AstroError: Error, Equatable {
     case accessDenied(path: String)   // TCC / EPERM
     case volumeNotMounted(path: String)
+    case pathNotFound(path: String)   // root or subpath simply doesn't exist
     case corruptFITS(path: String, reason: String)
     case databaseError(String)
     case writeForbidden(path: String)

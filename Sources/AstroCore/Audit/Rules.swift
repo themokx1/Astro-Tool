@@ -342,6 +342,7 @@ public struct SimilarTargetNamesRule: AuditRule {
                 while j < buckets.count {
                     if Self.isStrictPrefix(buckets[i].tokens, of: buckets[j].tokens)
                         || Self.isStrictPrefix(buckets[j].tokens, of: buckets[i].tokens)
+                        || Self.catalogTokenSetsRelated(buckets[i].tokens, buckets[j].tokens)
                     {
                         buckets[i].names.formUnion(buckets[j].names)
                         buckets.remove(at: j)
@@ -370,6 +371,35 @@ public struct SimilarTargetNamesRule: AuditRule {
     private static func isStrictPrefix(_ a: [String], of b: [String]) -> Bool {
         guard a.count < b.count else { return false }
         return Array(b.prefix(a.count)) == a
+    }
+
+    /// Comet-style names (`R3_C2025`, `C2025_R3_C2025_R3_Panstarrs`, ...)
+    /// share a catalog-designation token set even when word order or
+    /// incidental extra tokens (a duplicated prefix, a "Panstarrs" suffix)
+    /// differ enough that the prefix-merge above doesn't catch them. Two
+    /// token lists are related when, restricted to just their catalog-like
+    /// tokens (`m42`, `ngc7000`, `c2025`, `r3`, ...), the two sets are equal
+    /// or one is a subset of the other — and neither set is empty, so two
+    /// targets with no catalog designation at all (e.g. "M_Milky_Way" and
+    /// the placeholder name) never match by this rule.
+    private static func catalogTokenSetsRelated(_ a: [String], _ b: [String]) -> Bool {
+        let setA = Set(a.filter(isCatalogToken))
+        let setB = Set(b.filter(isCatalogToken))
+        guard !setA.isEmpty, !setB.isEmpty else { return false }
+        return setA == setB || setA.isSubset(of: setB) || setB.isSubset(of: setA)
+    }
+
+    /// Matches `^(ngc|ic|sh2)\d+$` (multi-letter catalog prefixes) or
+    /// `^[a-z]\d+$` (single-letter ones — `m42`, `c2025`, `r3`, ...).
+    private static func isCatalogToken(_ token: String) -> Bool {
+        for prefix in ["ngc", "sh2", "ic"] {
+            if token.hasPrefix(prefix) {
+                let rest = token.dropFirst(prefix.count)
+                if !rest.isEmpty, rest.allSatisfy({ $0.isNumber }) { return true }
+            }
+        }
+        guard token.count >= 2, let first = token.first, first.isLetter else { return false }
+        return token.dropFirst().allSatisfy { $0.isNumber }
     }
 }
 
@@ -550,36 +580,63 @@ public struct ResidueRule: AuditRule {
 
 // MARK: - 12. calib-in-wrong-dir
 
-/// A file under `sessions/` whose FITS `IMAGETYP` (flat/dark/bias/light)
-/// contradicts the frame role implied by its path — e.g. a flat frame that
-/// ended up in `lights/`.
+/// A file whose FITS `IMAGETYP` (flat/dark/bias/light) contradicts the frame
+/// role implied by its path — e.g. a flat frame that ended up in `lights/`
+/// under `sessions/`, or in `darks/` under `calibration_library/`.
 public struct CalibInWrongDirRule: AuditRule {
     public let id = "calib-in-wrong-dir"
-    private static let pathRoles: Set<FrameRole> = [.light, .flat, .dark, .bias]
+    private static let sessionPathRoles: Set<FrameRole> = [.light, .flat, .dark, .bias]
+    /// `calibration_library/` only ever has darks/flats/biases subdirs — no
+    /// "lights" sibling to move a mislabeled light frame into, so a light
+    /// IMAGETYP there isn't actionable by this rule. A file whose *current*
+    /// role isn't one of these three either is an orphan-dir concern
+    /// (`OrphanCalibDirRule`'s job), not this rule's.
+    private static let calibPathRoles: Set<FrameRole> = [.flat, .dark, .bias]
+    private static let calibImpliedRoles: Set<FrameRole> = [.flat, .dark, .bias]
 
     public init() {}
 
     public func evaluate(_ ctx: AuditContext) -> [Finding] {
         ctx.files.compactMap { file -> Finding? in
-            guard file.area == .sessions, Self.pathRoles.contains(file.role) else { return nil }
             guard let fileID = file.id, let meta = ctx.fitsMetaByFileID[fileID], let imagetyp = meta.imagetyp else { return nil }
             guard let implied = Self.impliedRole(from: imagetyp), implied != file.role else { return nil }
-            guard let impliedDir = Self.dirName(for: implied) else { return nil }
 
-            var comps = file.path.split(separator: "/").map(String.init)
-            guard comps.count >= 2 else { return nil }
-            let filename = comps.removeLast()
-            comps[comps.count - 1] = impliedDir
-            let to = (comps + [filename]).joined(separator: "/")
-
-            return Finding(
-                severity: .sureError,
-                category: id,
-                path: file.path,
-                message: "FITS IMAGETYP \"\(imagetyp)\" doesn't match this file's location (expected under \(impliedDir)/).",
-                suggestion: .move(from: file.path, to: to)
-            )
+            if file.area == .sessions, Self.sessionPathRoles.contains(file.role) {
+                return Self.finding(file: file, imagetyp: imagetyp, implied: implied, roleDirIndex: nil, id: id)
+            }
+            if file.area == .calibration, Self.calibPathRoles.contains(file.role), Self.calibImpliedRoles.contains(implied) {
+                // The role subdir always sits directly under
+                // `calibration_library/` (index 1), regardless of any
+                // further nesting beneath it (e.g. `darks/60sec_-10deg/`).
+                return Self.finding(file: file, imagetyp: imagetyp, implied: implied, roleDirIndex: 1, id: id)
+            }
+            return nil
         }
+    }
+
+    /// Builds the finding, replacing the path component that names the
+    /// (wrong) role directory with the implied-correct one. `roleDirIndex`
+    /// is the fixed component index to replace (calibration_library's case);
+    /// `nil` means "the directory directly containing the file" (sessions'
+    /// canonical `.../<role>/<file>` shape).
+    private static func finding(file: FileRecord, imagetyp: String, implied: FrameRole, roleDirIndex: Int?, id: String) -> Finding? {
+        guard let impliedDir = dirName(for: implied) else { return nil }
+
+        var comps = file.path.split(separator: "/").map(String.init)
+        guard comps.count >= 2 else { return nil }
+        let filename = comps.removeLast()
+        let indexToReplace = roleDirIndex ?? (comps.count - 1)
+        guard comps.indices.contains(indexToReplace) else { return nil }
+        comps[indexToReplace] = impliedDir
+        let to = (comps + [filename]).joined(separator: "/")
+
+        return Finding(
+            severity: .sureError,
+            category: id,
+            path: file.path,
+            message: "FITS IMAGETYP \"\(imagetyp)\" doesn't match this file's location (expected under \(impliedDir)/).",
+            suggestion: .move(from: file.path, to: to)
+        )
     }
 
     private static func impliedRole(from imagetyp: String) -> FrameRole? {
@@ -599,5 +656,40 @@ public struct CalibInWrongDirRule: AuditRule {
         case .bias: return "biases"
         default: return nil
         }
+    }
+}
+
+// MARK: - 13. empty-target-component
+
+/// A target directory (2nd path component under sessions/stacks/processed)
+/// that's empty-ish once you look past sanitization — a name that begins
+/// with `_` (a leading separator with nothing meaningful before it) or is
+/// made up of nothing but underscores/dots.
+public struct EmptyTargetComponentRule: AuditRule {
+    public let id = "empty-target-component"
+    private static let areas: Set<String> = ["sessions", "stacks", "processed"]
+
+    public init() {}
+
+    public func evaluate(_ ctx: AuditContext) -> [Finding] {
+        ctx.directories.compactMap { dir -> Finding? in
+            let comps = dir.split(separator: "/").map(String.init)
+            guard comps.count == 2, Self.areas.contains(comps[0]) else { return nil }
+
+            let name = comps[1]
+            guard Self.isEmptyish(name) else { return nil }
+
+            return Finding(
+                severity: .sureError,
+                category: id,
+                path: dir,
+                message: "\"\(name)\" doesn't look like a real target name — it's empty or all separators once sanitized.",
+                suggestion: .review(note: "Rename this directory to the actual target name; the intended name can't be recovered automatically.")
+            )
+        }
+    }
+
+    private static func isEmptyish(_ name: String) -> Bool {
+        name.hasPrefix("_") || name.allSatisfy { $0 == "_" || $0 == "." }
     }
 }

@@ -63,6 +63,7 @@ public final class AuditEngine {
             InvalidDateDirRule(),
             ResidueRule(),
             CalibInWrongDirRule(),
+            EmptyTargetComponentRule(),
         ]
     }
 

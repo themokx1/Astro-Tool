@@ -52,6 +52,7 @@ private struct ScanFixture {
 
     #expect(try fixture.db.fileID(path: "tools/setiastro/test.fits") == nil)
     #expect(try fixture.db.fileID(path: ".astro_tool/astrotool.sqlite-decoy.txt") == nil)
+    #expect(try fixture.db.fileID(path: ".fseventsd/junk.txt") == nil)
 
     // Sanity: a real, non-excluded file did get recorded.
     #expect(try fixture.db.fileID(path: "sessions/M45_Pleiades/2026-01-10/lights/light_0001.fit") != nil)
@@ -91,6 +92,33 @@ private struct ScanFixture {
 
     let record = try fixture.db.file(path: relativePath)
     #expect(record?.missing == false)
+}
+
+@Test func modifiedFileHasContentHashInvalidatedOnRescan() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/light_0001.fit"
+
+    // Simulate a previous run having populated a content hash for this file.
+    var record = try #require(try fixture.db.file(path: relativePath))
+    record.contentHash = "deadbeef"
+    _ = try fixture.db.upsertFile(record)
+    #expect(try fixture.db.file(path: relativePath)?.contentHash == "deadbeef")
+
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try "changed content, now longer than before\n".write(to: fileURL, atomically: true, encoding: .utf8)
+    let future = Date().addingTimeInterval(30)
+    try FileManager.default.setAttributes([.modificationDate: future], ofItemAtPath: fileURL.path)
+
+    let summary = try scanner.scan()
+    #expect(summary.updated == 1)
+
+    let rescanned = try fixture.db.file(path: relativePath)
+    #expect(rescanned?.contentHash == nil)
 }
 
 @Test func deletedFixtureFileIsMarkedMissingButRecordRemains() throws {
@@ -174,6 +202,63 @@ private struct ScanFixture {
     } catch {
         Issue.record("expected AstroError.accessDenied, got \(error)")
     }
+}
+
+@Test func nonexistentSubpathUnderExistingRootThrowsPathNotFound() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    do {
+        _ = try scanner.scan(subpath: "does_not_exist_subpath")
+        Issue.record("expected AstroError.pathNotFound to be thrown")
+    } catch let AstroError.pathNotFound(path) {
+        #expect(path == "does_not_exist_subpath")
+    } catch {
+        Issue.record("expected AstroError.pathNotFound, got \(error)")
+    }
+}
+
+@Test func nonexistentRootUnderExistingParentThrowsPathNotFound() throws {
+    let parentDir = try makeTempDir("parent")
+    defer { try? FileManager.default.removeItem(at: parentDir) }
+    let dbDir = try makeTempDir("db")
+    defer { try? FileManager.default.removeItem(at: dbDir) }
+    let missingRoot = parentDir.appendingPathComponent("nonexistent_root", isDirectory: true)
+
+    let db = try Database(path: dbDir.appendingPathComponent("test.sqlite").path)
+    var config = AstroConfig()
+    config.rootPath = missingRoot.path
+
+    let scanner = LibraryScanner(config: config, db: db)
+    do {
+        _ = try scanner.scan()
+        Issue.record("expected AstroError.pathNotFound to be thrown")
+    } catch let AstroError.pathNotFound(path) {
+        #expect(path == missingRoot.path)
+    } catch {
+        Issue.record("expected AstroError.pathNotFound, got \(error)")
+    }
+}
+
+@Test func rootErrorClassifierDecidesVolumeNotMountedVsPathNotFound() throws {
+    #expect(
+        RootErrorClassifier.classify(rootPath: "/Volumes/images/sessions", subpath: nil, volumeExists: { _ in false })
+            == .volumeNotMounted(path: "/Volumes/images/sessions")
+    )
+    #expect(
+        RootErrorClassifier.classify(rootPath: "/Volumes/images/sessions", subpath: nil, volumeExists: { _ in true })
+            == .pathNotFound(path: "/Volumes/images/sessions")
+    )
+    #expect(
+        RootErrorClassifier.classify(rootPath: "/tmp/foo/bar", subpath: nil, volumeExists: { _ in true })
+            == .pathNotFound(path: "/tmp/foo/bar")
+    )
+    #expect(
+        RootErrorClassifier.classify(rootPath: "/tmp/foo", subpath: "sub/dir", volumeExists: { _ in true })
+            == .pathNotFound(path: "sub/dir")
+    )
+    #expect(RootErrorClassifier.volumePortion(of: "/Volumes/images/sessions/2026") == "/Volumes/images")
 }
 
 @Test func scanCapturesFITSMetaForNewFITSFile() throws {

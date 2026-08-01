@@ -240,6 +240,44 @@ import Testing
     }
 }
 
+@Test func headerExceedingSixtyFourKiBSafetyValveThrowsCorruptFITSForBothParseAndReadHeader() throws {
+    // No END card anywhere, and comfortably more than the 64 KiB
+    // per-HDU cap (>828 cards worth) — both entry points must give up
+    // rather than read forever.
+    var cards = ["SIMPLE  =                    T"]
+    for i in 0..<900 {
+        let keyword = "K\(i)".padding(toLength: 8, withPad: " ", startingAt: 0)
+        cards.append("\(keyword)=                    \(i)")
+    }
+    let data = buildHeaderData(cards)
+    #expect(data.count > 65536)
+
+    do {
+        _ = try FITSReader.parse(data: data)
+        Issue.record("expected AstroError.corruptFITS to be thrown from parse(data:)")
+    } catch AstroError.corruptFITS {
+        // expected
+    } catch {
+        Issue.record("expected AstroError.corruptFITS from parse(data:), got \(error)")
+    }
+
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("fits-reader-tests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let fileURL = dir.appendingPathComponent("huge_header.fits")
+    try data.write(to: fileURL)
+
+    do {
+        _ = try FITSReader.readHeader(url: fileURL)
+        Issue.record("expected AstroError.corruptFITS to be thrown from readHeader(url:)")
+    } catch AstroError.corruptFITS {
+        // expected
+    } catch {
+        Issue.record("expected AstroError.corruptFITS from readHeader(url:), got \(error)")
+    }
+}
+
 @Test func allCardsExposesRawValueTexts() throws {
     let data = buildHeaderData([
         "SIMPLE  =                    T",

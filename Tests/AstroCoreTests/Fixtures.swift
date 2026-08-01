@@ -102,6 +102,10 @@ enum Fixtures {
         // MARK: Decoys that MUST be excluded from every scan.
         try makeFile("tools/setiastro/test.fits")
         try makeFile(".astro_tool/astrotool.sqlite-decoy.txt")
+        // A macOS housekeeping dot-directory, as would show up on a real
+        // external volume — any dot-directory must be skipped, not just
+        // `.astro_tool`.
+        try makeFile(".fseventsd/junk.txt")
 
         return root
     }
