@@ -24,7 +24,7 @@
 | T10 Duplikátum | ✅ kész | 138 teszt zöld (132 T1-T9+R1 + 6 új) |
 | T11 Suggestion script | ✅ kész | 148 teszt zöld (138 T1-T10+R1 + 10 új) |
 | T12 Stats + wide-field | ✅ kész | 163 teszt zöld (148 T1-T11 + 15 új) |
-| T13 Calib | – | |
+| T13 Calib | ✅ kész | 172 teszt zöld (163 T1-T12 + 9 új) |
 | T14 Session-párosítás | – | |
 | T15 Rate | – | |
 | T16 CLI | – | |
