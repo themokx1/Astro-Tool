@@ -284,8 +284,12 @@ public final class Database: @unchecked Sendable {
 
     /// Marks tracked (non-missing) files as missing when their path is not
     /// in `present`. When `underSubpath` is given, only paths equal to it or
-    /// nested under `<underSubpath>/` are considered.
-    public func markMissing(pathsNotIn present: Set<String>, underSubpath: String?) throws {
+    /// nested under `<underSubpath>/` are considered. `excludingPrefixes`
+    /// carves out paths equal to, or nested under, any of those prefixes --
+    /// used by the scanner to protect files under a directory it couldn't
+    /// read this scan (e.g. an EPERM'd subtree) from being wrongly flagged
+    /// missing just because they weren't seen.
+    public func markMissing(pathsNotIn present: Set<String>, underSubpath: String?, excludingPrefixes: [String] = []) throws {
         try withLock {
             var sql = "SELECT path FROM files WHERE missing = 0"
             var bind: [SQLiteValue] = []
@@ -298,15 +302,19 @@ public final class Database: @unchecked Sendable {
 
             var toMark: [String] = []
             try db.query(sql, bind: bind) { row in
-                if let path = row.string(0), !present.contains(path) {
-                    toMark.append(path)
-                }
+                guard let path = row.string(0), !present.contains(path) else { return }
+                guard !Self.isUnder(path, anyOf: excludingPrefixes) else { return }
+                toMark.append(path)
             }
 
             for path in toMark {
                 try db.run("UPDATE files SET missing = 1 WHERE path = ?;", bind: [.text(path)])
             }
         }
+    }
+
+    private static func isUnder(_ path: String, anyOf prefixes: [String]) -> Bool {
+        prefixes.contains { path == $0 || path.hasPrefix($0 + "/") }
     }
 
     private static let fileSelectSQL = """

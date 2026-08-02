@@ -85,3 +85,63 @@ import Testing
     #expect(info.area == .calibration)
     #expect(info.role == .other)
 }
+
+// MARK: - Shallow real-library paths (file directly under an area/target dir)
+
+@Test func fileDirectlyUnderSessionsHasNoTargetOrDate() {
+    let info = PathClassifier.classify(relativePath: "sessions/.DS_Store")
+    #expect(info.area == .sessions)
+    #expect(info.target == nil)
+    #expect(info.dateRaw == nil)
+    #expect(info.role == .other)
+}
+
+@Test func fileDirectlyUnderSessionTargetDirHasTargetButNoDate() {
+    let info = PathClassifier.classify(relativePath: "sessions/IC1805-1848_Heart-and-Soul_Nebula/.DS_Store")
+    #expect(info.area == .sessions)
+    #expect(info.target == "IC1805-1848_Heart-and-Soul_Nebula")
+    #expect(info.dateRaw == nil)
+    #expect(info.role == .other)
+}
+
+@Test func fileDirectlyUnderStacksHasNoTargetOrDate() {
+    let info = PathClassifier.classify(relativePath: "stacks/.DS_Store")
+    #expect(info.area == .stacks)
+    #expect(info.target == nil)
+    #expect(info.dateRaw == nil)
+}
+
+@Test func fileDirectlyUnderStackTargetDirHasTargetButNoDate() {
+    let info = PathClassifier.classify(relativePath: "stacks/M42_Orion/.DS_Store")
+    #expect(info.area == .stacks)
+    #expect(info.target == "M42_Orion")
+    #expect(info.dateRaw == nil)
+}
+
+@Test func fileDirectlyUnderProcessedHasNoTargetOrDate() {
+    let info = PathClassifier.classify(relativePath: "processed/.DS_Store")
+    #expect(info.area == .processed)
+    #expect(info.target == nil)
+    #expect(info.dateRaw == nil)
+}
+
+@Test func fileDirectlyUnderProcessedTargetDirHasTargetButNoDate() {
+    let info = PathClassifier.classify(relativePath: "processed/M45_Pleiades/.DS_Store")
+    #expect(info.area == .processed)
+    #expect(info.target == "M45_Pleiades")
+    #expect(info.dateRaw == nil)
+}
+
+// MARK: - Singular session role dirs
+
+@Test func roleFromSingularSessionSubdirectories() {
+    #expect(PathClassifier.classify(relativePath: "sessions/T/2025-12-31/light/a.fit").role == .light)
+    #expect(PathClassifier.classify(relativePath: "sessions/T/2025-12-31/flat/a.fit").role == .flat)
+    #expect(PathClassifier.classify(relativePath: "sessions/T/2025-12-31/dark/a.fit").role == .dark)
+    #expect(PathClassifier.classify(relativePath: "sessions/T/2025-12-31/bias/x.fit").role == .bias)
+}
+
+@Test func roleFromSingularSessionSubdirectoriesIsCaseInsensitive() {
+    #expect(PathClassifier.classify(relativePath: "sessions/T/2025-12-31/BIAS/x.fit").role == .bias)
+    #expect(PathClassifier.classify(relativePath: "sessions/T/2025-12-31/Light/x.fit").role == .light)
+}

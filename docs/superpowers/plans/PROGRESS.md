@@ -35,6 +35,7 @@
 | Review R1 (T6–T9) javítások | ✅ kész | 132 teszt zöld (124 + 8 új) |
 | Review R2 (T10–T15) javítások | ✅ | 203 teszt zöld (199 + 4 új) |
 | Final review javítás (TCC exit 2) | ✅ | 216 teszt zöld (214 + 2 új); WriteGuard (createSessionTree/writeToolFile) és astrotool Commands.makeDatabase most `AstroError.accessDenied`-re fordítja a permission-hibákat (EPERM/EACCES, `isPermissionError` publikussá téve), így a chmod 555 gyökér is exit 2 + magyar TCC útmutatót ad exit 1 helyett; AppState.endOperation stale-completion guard (UUID operation-id) |
+| Valós-könyvtár javítások R1 | ✅ | 231 teszt zöld (216 + 15 új); `PathClassifier` sekély-útvonal mélységi javítás (sessions/stacks/processed) + egyes számú session role-alkönyvtárak (light/flat/dark/bias); `Scanner` lazán heverő dátum-mappa-frame szerep-finomítás FITS IMAGETYP-ből + EPERM-ellenálló bejárás (`ScanSummary.inaccessiblePaths`, `Database.markMissing(excludingPrefixes:)`); új `loose-frames-in-date-dir` audit szabály; `StatsQueries` regresszió (.DS_Store nem lesz célpont); `AppState.runScan()` a sikeres scan után frissíti a Stats/Calib fület is |
 
 ## Zárás (2026-08-02)
 

@@ -323,6 +323,41 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
     #expect(hit.suggestion == .move(from: strayPath, to: "calibration_library/flats/flat_in_darks.fit"))
 }
 
+@Test func auditFindsLooseFramesInDateDir() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    // No lights/ subdir -- the frame sits directly under the date dir, just
+    // like the real IC1805 session that motivated this rule.
+    let loosePath = "sessions/M45_Pleiades/2026-01-10/loose_light.fit"
+    let looseURL = fixture.root.appendingPathComponent(loosePath)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: looseURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let engine = AuditEngine(config: fixture.config, db: fixture.db)
+    let (_, all) = try engine.run()
+
+    let hits = findings(all, category: "loose-frames-in-date-dir")
+    let hit = try #require(hits.first { $0.path == "sessions/M45_Pleiades/2026-01-10" })
+    #expect(hit.severity == .suspicious)
+    #expect(hit.suggestion == nil)
+
+    // One finding per (target, date), not one per loose file -- the fixture
+    // already has three canonical lights in this same date dir.
+    #expect(hits.filter { $0.path == "sessions/M45_Pleiades/2026-01-10" }.count == 1)
+}
+
 @Test func auditFindingsArePersistedAndReadableFromDB() throws {
     let fixture = try AuditFixture.make()
     defer { fixture.cleanup() }

@@ -8,6 +8,31 @@ történik.
 
 ## [Unreleased]
 
+### Javítva
+
+- Valós-könyvtár keménység (R1): a `PathClassifier` helyesen kezeli a sekély
+  útvonalakat (`sessions/.DS_Store`, `sessions/<target>/.DS_Store` stb.) —
+  korábban a fájlnevet tévesen célpont/dátum néven értelmezte.
+- A session-terület szerep-alkönyvtárai (`lights/flats/darks/biases`) mostantól
+  egyes számban is felismerésre kerülnek (`light`/`flat`/`dark`/`bias`,
+  kis-nagybetűtől függetlenül); a `calibration_library/` viselkedése
+  változatlan (az árva `bias` mappa továbbra is jelzésre kerül).
+- A dátum-mappában közvetlenül (alkönyvtár nélkül) heverő fény/flat/dark/bias
+  keretek szerepe a beolvasáskor a FITS `IMAGETYP` alapján finomodik, így
+  helyesen számítanak bele a statisztikába/kalibrációba; új audit szabály
+  (`loose-frames-in-date-dir`) jelzi az ilyen elrendezést.
+- A beolvasás (`scan`) többé nem szakad meg egy mélyebb (nem gyökér)
+  alkönyvtár EPERM/EACCES hibájánál — azt a részfát kihagyja, az érintett
+  útvonalat `ScanSummary.inaccessiblePaths`-be jegyzi, és folytatja a többi
+  fát; az így kimaradt fájlok nem lesznek tévesen hiányzónak jelölve. A CLI
+  `scan` figyelmeztetést ír stderr-re, ha volt ilyen. A gyökér/megadott
+  alútvonal saját hibája továbbra is `accessDenied`-et dob (exit 2).
+- `StatsQueries`: regresszióteszt, hogy egy `sessions/` alatt közvetlenül lévő
+  fájl soha nem hoz létre statisztika-sort (a fenti classifier-javítás
+  következménye).
+- Az app: sikeres `runScan()` után a Statisztika és Kalibráció fülek adatai is
+  automatikusan frissülnek, nem csak a következő fül-váltáskor.
+
 ## [0.1.1]
 
 ### Javítva

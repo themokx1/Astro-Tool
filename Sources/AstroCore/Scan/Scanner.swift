@@ -41,12 +41,20 @@ public struct ScanSummary: Codable, Sendable {
     public var updated: Int
     public var unchanged: Int
     public var missing: Int
+    /// Root-relative paths of directories the scan couldn't read (EPERM/
+    /// EACCES) partway through the walk and skipped -- the walk continued
+    /// past them rather than aborting the whole scan. Empty on a normal
+    /// scan. Files already tracked under one of these paths are left alone
+    /// (not marked missing) since the scan simply couldn't see them this
+    /// time, not because they're actually gone.
+    public var inaccessiblePaths: [String]
 
-    public init(added: Int = 0, updated: Int = 0, unchanged: Int = 0, missing: Int = 0) {
+    public init(added: Int = 0, updated: Int = 0, unchanged: Int = 0, missing: Int = 0, inaccessiblePaths: [String] = []) {
         self.added = added
         self.updated = updated
         self.unchanged = unchanged
         self.missing = missing
+        self.inaccessiblePaths = inaccessiblePaths
     }
 }
 
@@ -96,7 +104,8 @@ public final class LibraryScanner {
             seen: &seen,
             processedCount: &processedCount,
             progress: progress,
-            summary: &summary
+            summary: &summary,
+            isTopLevel: true
         )
 
         let tracked = try db.allFiles(includeMissing: false)
@@ -107,23 +116,40 @@ public final class LibraryScanner {
             scoped = tracked
         }
         summary.missing = scoped.reduce(into: 0) { count, record in
-            if !seen.contains(record.path) { count += 1 }
+            guard !seen.contains(record.path) else { return }
+            guard !Self.isUnder(record.path, anyOf: summary.inaccessiblePaths) else { return }
+            count += 1
         }
 
-        try db.markMissing(pathsNotIn: seen, underSubpath: subpath)
+        try db.markMissing(pathsNotIn: seen, underSubpath: subpath, excludingPrefixes: summary.inaccessiblePaths)
 
         return summary
     }
 
+    private static func isUnder(_ path: String, anyOf prefixes: [String]) -> Bool {
+        prefixes.contains { path == $0 || path.hasPrefix($0 + "/") }
+    }
+
     // MARK: - Walk
 
+    /// `isTopLevel` distinguishes the very first directory of this scan
+    /// invocation (the configured root, or the requested `subpath`) from
+    /// every directory found underneath it during the recursive walk. An
+    /// EPERM/EACCES reading the top-level directory itself still aborts the
+    /// whole scan with `.accessDenied` -- that contract (CLI exit 2, etc.)
+    /// is unchanged. The SAME error reading a deeper directory instead skips
+    /// just that directory's subtree (recorded in `summary.inaccessiblePaths`)
+    /// and lets the rest of the tree keep scanning -- one locked-down folder
+    /// partway through a large real-world library shouldn't blow up the
+    /// entire scan.
     private func walk(
         dirURL: URL,
         relPrefix: String,
         seen: inout Set<String>,
         processedCount: inout Int,
         progress: (@Sendable (Int) -> Void)?,
-        summary: inout ScanSummary
+        summary: inout ScanSummary,
+        isTopLevel: Bool = false
     ) throws {
         let entries: [URL]
         do {
@@ -133,10 +159,12 @@ public final class LibraryScanner {
                 options: []
             )
         } catch {
-            if isPermissionError(error) {
-                throw AstroError.accessDenied(path: relPrefix)
+            guard isPermissionError(error) else { throw error }
+            guard isTopLevel else {
+                summary.inaccessiblePaths.append(relPrefix)
+                return
             }
-            throw error
+            throw AstroError.accessDenied(path: relPrefix)
         }
 
         for entryURL in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
@@ -221,6 +249,36 @@ public final class LibraryScanner {
         // `unchanged` early-return above) — that's what keeps incremental
         // rescans of a large library fast.
         try captureMeta(fileID: fileID, ext: ext, url: fileURL)
+
+        // A loose frame sitting directly in a session date dir (no lights/
+        // flats/darks/biases subdir under it -- real libraries have these)
+        // classifies from the path alone as role `.other`. Now that its FITS
+        // header has just been read above, refine the role from IMAGETYP so
+        // it still counts correctly in stats/calibration coverage. Only
+        // reachable for new/changed files, same as the meta capture itself.
+        try refineLooseFrameRole(fileID: fileID, info: info, ext: ext, baseRecord: record)
+    }
+
+    private func refineLooseFrameRole(fileID: Int64, info: PathInfo, ext: String, baseRecord: FileRecord) throws {
+        guard info.area == .sessions, info.role == .other else { return }
+        guard ["fit", "fits", "fz"].contains(ext) else { return }
+        guard let meta = try db.fitsMeta(fileID: fileID),
+              let imagetyp = meta.imagetyp,
+              let refined = Self.roleFromImagetyp(imagetyp)
+        else { return }
+
+        var refinedRecord = baseRecord
+        refinedRecord.role = refined
+        _ = try db.upsertFile(refinedRecord)
+    }
+
+    private static func roleFromImagetyp(_ imagetyp: String) -> FrameRole? {
+        let lower = imagetyp.lowercased()
+        if lower.contains("light") { return .light }
+        if lower.contains("flat") { return .flat }
+        if lower.contains("dark") { return .dark }
+        if lower.contains("bias") { return .bias }
+        return nil
     }
 
     // MARK: - Metadata capture

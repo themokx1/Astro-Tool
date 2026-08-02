@@ -149,6 +149,23 @@ private struct StatsFixture {
     #expect(all.map(\.target) == ["Alpha", "Mid", "Zed"])
 }
 
+@Test func fileDirectlyUnderSessionsNeverYieldsAStatsRow() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    // A real target with lights, plus Finder noise sitting directly under
+    // sessions/ (no target dir of its own) -- the latter must never turn
+    // into a bogus ".DS_Store" stats row.
+    try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/l1.fit", exptime: 60.0, instrume: nil, filter: nil)
+    try fixture.writePlainTextFile("sessions/.DS_Store")
+
+    try fixture.scan()
+
+    let all = try StatsQueries.perTarget(db: fixture.db, config: fixture.config)
+    #expect(all.map(\.target) == ["T1"])
+    #expect(!all.contains { $0.target == ".DS_Store" })
+}
+
 @Test func targetLookupReturnsNilForUnknownName() throws {
     let fixture = try StatsFixture.make()
     defer { fixture.cleanup() }

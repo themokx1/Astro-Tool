@@ -178,11 +178,22 @@ private struct ScanFixture {
     #expect(sessionRecord?.missing == false)
 }
 
-@Test func inaccessibleDirectoryThrowsAccessDenied() throws {
+// An EPERM/EACCES reading the top-level directory of a scan invocation
+// (the configured root, or the requested `subpath`) still aborts the whole
+// scan with `.accessDenied` -- see `inaccessibleRootThrowsAccessDenied` and
+// `inaccessibleRequestedSubpathThrowsAccessDenied` below. The SAME error on
+// a directory found deeper during the walk no longer aborts the scan --
+// see `inaccessibleDeeperDirectoryIsSkippedAndScanContinues`.
+
+@Test func inaccessibleDeeperDirectoryIsSkippedAndScanContinues() throws {
     let fixture = try ScanFixture.make()
     defer { fixture.cleanup() }
 
-    let restrictedDir = fixture.root.appendingPathComponent("sessions/M45_Pleiades/2026-01-10/lights")
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let restrictedRelative = "sessions/M45_Pleiades/2026-01-10/lights"
+    let restrictedDir = fixture.root.appendingPathComponent(restrictedRelative)
     let originalPermissions = try FileManager.default.attributesOfItem(atPath: restrictedDir.path)[.posixPermissions] as? NSNumber
 
     try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: restrictedDir.path)
@@ -193,12 +204,66 @@ private struct ScanFixture {
         )
     }
 
+    let summary = try scanner.scan()
+
+    #expect(summary.inaccessiblePaths.contains(restrictedRelative))
+
+    // The rest of the tree is still scanned -- an unrelated file elsewhere
+    // is recorded fine, the scan did not abort.
+    #expect(try fixture.db.fileID(path: "stacks/M42_Orion/2026-01-17/result.fit") != nil)
+
+    // Files already tracked under the now-unreadable directory must NOT be
+    // flagged missing just because this scan couldn't see them.
+    let previouslyTracked = try #require(
+        try fixture.db.file(path: "\(restrictedRelative)/light_0001.fit")
+    )
+    #expect(previouslyTracked.missing == false)
+}
+
+@Test func inaccessibleRootThrowsAccessDenied() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let originalPermissions = try FileManager.default.attributesOfItem(atPath: fixture.root.path)[.posixPermissions] as? NSNumber
+    try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: fixture.root.path)
+    defer {
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: originalPermissions ?? NSNumber(value: 0o755)],
+            ofItemAtPath: fixture.root.path
+        )
+    }
+
     let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
     do {
         _ = try scanner.scan()
         Issue.record("expected AstroError.accessDenied to be thrown")
+    } catch AstroError.accessDenied {
+        // expected
+    } catch {
+        Issue.record("expected AstroError.accessDenied, got \(error)")
+    }
+}
+
+@Test func inaccessibleRequestedSubpathThrowsAccessDenied() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let sessionsDir = fixture.root.appendingPathComponent("sessions")
+    let originalPermissions = try FileManager.default.attributesOfItem(atPath: sessionsDir.path)[.posixPermissions] as? NSNumber
+    try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: sessionsDir.path)
+    defer {
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: originalPermissions ?? NSNumber(value: 0o755)],
+            ofItemAtPath: sessionsDir.path
+        )
+    }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    do {
+        _ = try scanner.scan(subpath: "sessions")
+        Issue.record("expected AstroError.accessDenied to be thrown")
     } catch let AstroError.accessDenied(path) {
-        #expect(path.contains("lights"))
+        #expect(path == "sessions")
     } catch {
         Issue.record("expected AstroError.accessDenied, got \(error)")
     }
@@ -337,6 +402,55 @@ private struct ScanFixture {
     let meta = try fixture.db.fitsMeta(fileID: fileID)
     #expect(meta?.exptime == 120.0)
     #expect(meta?.instrume == "ZWO ASI2600MM Pro")
+}
+
+@Test func looseLightFrameDirectlyInDateDirGetsRoleFromIMAGETYP() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    // No lights/ subdir at all -- the frame sits directly under the date
+    // dir, exactly like the real IC1805 session that motivated this fix.
+    let relativePath = "sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/Light_Hearth 3_120.0s_0005.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try #require(try fixture.db.file(path: relativePath))
+    #expect(record.role == .light)
+    #expect(record.area == .sessions)
+}
+
+@Test func looseFrameWithNoRecognizableIMAGETYPStaysOther() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/loose_no_imagetyp.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try #require(try fixture.db.file(path: relativePath))
+    #expect(record.role == .other)
 }
 
 @Test func corruptFITSFileIsRecordedButNoMetaRowIsWritten() throws {

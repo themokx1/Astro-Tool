@@ -705,3 +705,47 @@ public struct EmptyTargetComponentRule: AuditRule {
         name.hasPrefix("_") || name.allSatisfy { $0 == "_" || $0 == "." }
     }
 }
+
+// MARK: - 14. loose-frames-in-date-dir
+
+/// Session-area frames (light/flat/dark/bias role) sitting DIRECTLY in a
+/// `sessions/<target>/<date>/` dir instead of the canonical
+/// `lights/flats/darks/biases` subdirectory underneath it -- a real-library
+/// pattern the scanner still classifies correctly (`Scanner` refines the
+/// role from the FITS `IMAGETYP` for these), but the layout itself is still
+/// worth flagging. Fires once per `(target, date)`, not once per file.
+public struct LooseFramesInDateDirRule: AuditRule {
+    public let id = "loose-frames-in-date-dir"
+    private static let frameRoles: Set<FrameRole> = [.light, .flat, .dark, .bias]
+
+    public init() {}
+
+    public func evaluate(_ ctx: AuditContext) -> [Finding] {
+        var seen = Set<String>()
+        var findings: [Finding] = []
+
+        for file in ctx.files {
+            guard file.area == .sessions, Self.frameRoles.contains(file.role) else { continue }
+            guard let target = file.target, let date = file.sessionDate else { continue }
+
+            // Path depth 4 (`sessions/<target>/<date>/<file>`) is exactly a
+            // file sitting directly in the date dir -- one level deeper
+            // (`.../<role>/<file>`, depth 5) is the canonical layout and
+            // isn't this rule's concern.
+            let depth = file.path.split(separator: "/", omittingEmptySubsequences: true).count
+            guard depth == 4 else { continue }
+
+            let dirPath = "sessions/\(target)/\(date)"
+            guard seen.insert(dirPath).inserted else { continue }
+
+            findings.append(Finding(
+                severity: .suspicious,
+                category: id,
+                path: dirPath,
+                message: "Frames sit directly in this date directory instead of a lights/flats/darks/biases subdirectory.",
+                suggestion: nil
+            ))
+        }
+        return findings
+    }
+}

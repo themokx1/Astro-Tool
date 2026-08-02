@@ -26,12 +26,17 @@ public struct PathInfo: Equatable, Sendable {
 
 public enum PathClassifier {
     /// Subdirectory name (immediately under `sessions/<target>/<date>/`)
-    /// that determines a session frame's role.
+    /// that determines a session frame's role. Both the canonical plural
+    /// form and the singular form real libraries sometimes use (`bias`
+    /// instead of `biases`, ...) are accepted here, case-insensitively --
+    /// this only affects `sessions/`; `calibration_library/`'s orphan-dir
+    /// handling (a singular `bias` dir there is deliberately left
+    /// unrecognized so `OrphanCalibDirRule` keeps flagging it) is untouched.
     private static let sessionRoleSubdirs: [String: FrameRole] = [
-        "lights": .light,
-        "flats": .flat,
-        "darks": .dark,
-        "biases": .bias,
+        "lights": .light, "light": .light,
+        "flats": .flat, "flat": .flat,
+        "darks": .dark, "dark": .dark,
+        "biases": .bias, "bias": .bias,
     ]
 
     /// Subdirectory name (immediately under `calibration_library/`) that
@@ -58,21 +63,31 @@ public enum PathClassifier {
 
         switch top {
         case "sessions":
-            let target = components.count > 1 ? components[1] : nil
-            let dateRaw = components.count > 2 ? components[2] : nil
-            let role = components.count > 3
+            // The classified path's LAST component is always the filename
+            // (the scanner only classifies files) -- so a component is only
+            // really a directory when there's at least one more component
+            // after it. `component[1]` (the target dir) needs >= 3
+            // components total; `component[2]` (the date dir) needs >= 4;
+            // `component[3]` (the role dir) needs >= 5. Without these
+            // thresholds a file sitting directly under `sessions/` (e.g.
+            // `sessions/.DS_Store`) or directly under a target dir (e.g.
+            // `sessions/IC1805/.DS_Store`) would have its own filename
+            // misread as a target/date.
+            let target = components.count >= 3 ? components[1] : nil
+            let dateRaw = components.count >= 4 ? components[2] : nil
+            let role = components.count >= 5
                 ? (sessionRoleSubdirs[components[3].lowercased()] ?? .other)
                 : .other
             return PathInfo(area: .sessions, target: target, dateRaw: dateRaw, role: role)
 
         case "stacks":
-            let target = components.count > 1 ? components[1] : nil
-            let dateRaw = components.count > 2 ? components[2] : nil
+            let target = components.count >= 3 ? components[1] : nil
+            let dateRaw = components.count >= 4 ? components[2] : nil
             return PathInfo(area: .stacks, target: target, dateRaw: dateRaw, role: .stack)
 
         case "processed":
-            let target = components.count > 1 ? components[1] : nil
-            let dateRaw = components.count > 2 ? components[2] : nil
+            let target = components.count >= 3 ? components[1] : nil
+            let dateRaw = components.count >= 4 ? components[2] : nil
             return PathInfo(area: .processed, target: target, dateRaw: dateRaw, role: .processed)
 
         case "calibration_library":

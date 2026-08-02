@@ -243,6 +243,22 @@ final class AppState: @unchecked Sendable {
                 self.progressText =
                     "Kész — új: \(summary.added), frissült: \(summary.updated), " +
                     "változatlan: \(summary.unchanged), hiányzó: \(summary.missing)"
+
+                // Refresh Stats/Calib so those tabs never show stale
+                // pre-scan data. Best-effort: a failure here shouldn't turn
+                // an otherwise-successful scan into a reported error.
+                let statsTask = Task.detached(priority: .userInitiated) {
+                    try StatsQueries.perTarget(db: db, config: cfg)
+                }
+                if let statsResult = try? await statsTask.value {
+                    self.stats = statsResult
+                }
+                let calibTask = Task.detached(priority: .userInitiated) {
+                    try CalibAnalyzer.coverage(db: db, config: cfg)
+                }
+                if let calibResult = try? await calibTask.value {
+                    self.calibNeeds = calibResult
+                }
             } catch {
                 self.handle(error)
             }

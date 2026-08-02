@@ -135,6 +135,28 @@ struct CLISmokeTests {
     #expect(unchanged > 0)
 }
 
+@Test func scanWithInaccessibleSubdirectoryStillExitsZeroAndWarnsOnStderr() throws {
+    let root = try makeTempRoot("scan-inaccessible-subdir")
+    defer {
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: root.appendingPathComponent("sessions/M45_Pleiades/2026-01-10/lights").path
+        )
+        try? FileManager.default.removeItem(at: root)
+    }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let first = try runCLI(["scan", "--root", root.path])
+    #expect(first.exitCode == 0, "stderr: \(first.stderr)")
+
+    let restrictedDir = root.appendingPathComponent("sessions/M45_Pleiades/2026-01-10/lights")
+    try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: restrictedDir.path)
+
+    let second = try runCLI(["scan", "--root", root.path])
+    #expect(second.exitCode == 0, "stdout: \(second.stdout), stderr: \(second.stderr)")
+    #expect(second.stderr.contains("sessions/M45_Pleiades/2026-01-10/lights"))
+}
+
 // MARK: - audit
 
 @Test func auditJSONAfterScanReportsKnownCategories() throws {
