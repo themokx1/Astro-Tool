@@ -36,5 +36,19 @@
 | Review R2 (T10–T15) javítások | ✅ | 203 teszt zöld (199 + 4 új) |
 | Final review javítás (TCC exit 2) | ✅ | 216 teszt zöld (214 + 2 új); WriteGuard (createSessionTree/writeToolFile) és astrotool Commands.makeDatabase most `AstroError.accessDenied`-re fordítja a permission-hibákat (EPERM/EACCES, `isPermissionError` publikussá téve), így a chmod 555 gyökér is exit 2 + magyar TCC útmutatót ad exit 1 helyett; AppState.endOperation stale-completion guard (UUID operation-id) |
 
-Nyitott, kötet-hozzáférés után: add_new_session.sh és tools/rate/ verifikáció
-(spec 2. szakasz); user teendő: Teljes lemezhozzáférés a Claude appnak.
+## Zárás (2026-08-02)
+
+Mind a 20 task kész. Kiadva: **v0.1.0** és **v0.1.1**
+(https://github.com/themokx1/Astro-Tool/releases/tag/v0.1.1 — AstroTool.dmg +
+astrotool.zip, CI zöld, 216 teszt). Négy review-kör futott (M1, T6–T9, T10–T15,
+végső) — minden találat javítva és re-approve-olva.
+
+**Nyitott tételek (user-döntés / engedély kell):**
+1. GitHub Pages: a repo privát, a plan nem támogatja → tedd publikussá a repót
+   (vagy fizetős plan), utána:
+   `gh api -X POST repos/themokx1/Astro-Tool/pages -f 'source[branch]=main' -f 'source[path]=/docs'`
+2. /Volumes/images TCC-engedély a Claude-nak → utána add_new_session.sh és
+   tools/rate/ verifikáció a spec 2. szakasza szerint, plusz első valós
+   (read-only) futtatás egy szűk almappán.
+3. Az AstroTool appnak és a terminálnak is Teljes lemezhozzáférés kell majd az
+   első éles futáshoz.
