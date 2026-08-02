@@ -23,6 +23,28 @@ private func makeTempDir() throws -> URL {
     #expect(meta?.dateTaken == "2026:01:15 20:30:00")
 }
 
+@Test func readReturnsExposureTimeAndISOFromGeneratedTIFF() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let url = dir.appendingPathComponent("test-exif.tif")
+    try writeTestTIFF(to: url, exposureSeconds: 30.0, iso: 800)
+
+    let meta = ImageMetaReader.read(url: url)
+    #expect(meta?.exposureSeconds == 30.0)
+    #expect(meta?.iso == 800)
+}
+
+@Test func readReturnsNilExposureAndISOWhenTagsAbsent() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let url = dir.appendingPathComponent("test-no-exif.tif")
+    try writeTestTIFF(to: url)
+
+    let meta = ImageMetaReader.read(url: url)
+    #expect(meta?.exposureSeconds == nil)
+    #expect(meta?.iso == nil)
+}
+
 @Test func readReturnsNilForNonexistentFile() throws {
     let missingURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("does-not-exist-\(UUID().uuidString).tif")

@@ -27,6 +27,25 @@ történik.
 
 ### Javítva
 
+- **Elavult besorolás gyógyítása beolvasáskor**: a `scan` az `unchanged`
+  (méret+mtime azonos) fájlokra is újraszámolja a `PathClassifier` kimenetét
+  (terület/cél/session-dátum/szerep) és a `kind`-öt, és helyben frissíti a
+  DB-sort, ha az eltér a tárolttól — korábban egy classifier-javítás után a
+  már beolvasott sorok örökre megtartották a régi (hibás) besorolást, amíg a
+  fájl maga meg nem változott. A lazán heverő keret (`loose-frames-in-date-dir`)
+  IMAGETYP-alapú szerep-finomítása védett marad: ha a tárolt szerep konkrét
+  keret-szerep (light/flat/dark/bias), egy újrabeolvasás nem degradálja
+  vissza `.other`-re csak azért, mert a tiszta útvonal-osztályozó azt adná.
+  Új `ScanSummary.reclassified: Int` mező (additív, alapértelmezett 0); a CLI
+  `scan` ", reclassified N"-t ír ki, ha N > 0.
+- **DSLR (CR3/TIF) expozíciós idő az Exif-ből**: a FITS `EXPTIME` fejléc
+  nélküli DSLR fény-keretek (pl. Canon CR3) eddig
+  `exposureBreakdown["unknown"]`-ban landoltak, 0 másodperccel járulva hozzá
+  az integrációs időhöz. `ImageMetaReader`/`ImageMeta` mostantól kiolvassa az
+  Exif `ExposureTime`-ot és `ISOSpeedRatings`-et is; a `Scanner` ezeket a
+  `fits_meta.exptime`/`gain` oszlopokba menti CR3/TIF fájloknál (az ISO a
+  `gain` oszlopban), így a `StatsQueries` integrációs/exponálási statisztikái
+  változtatás nélkül beszámítják őket.
 - **Ground-truth verifikáció**: a valós `add_new_session.sh` elolvasása után
   kiderült, hogy a `sanitize()` a nem engedélyezett karaktereket TÖRLI
   (`tr -cd 'A-Za-z0-9._-'`), nem `_`-ra cseréli — a portolt `Sanitizer`

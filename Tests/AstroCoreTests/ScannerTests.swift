@@ -373,6 +373,25 @@ private struct ScanFixture {
     #expect(meta?.instrume == "Canon EOS Ra")
 }
 
+@Test func scanCapturesExposureAndISOForDSLRStyleTIFFFile() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/generated_dslr.tif"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try writeTestTIFF(to: fileURL, exposureSeconds: 30.0, iso: 800)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try fixture.db.file(path: relativePath)
+    let fileID = try #require(record?.id)
+    let meta = try fixture.db.fitsMeta(fileID: fileID)
+    #expect(meta?.exptime == 30.0)
+    #expect(meta?.gain == 800.0)
+}
+
 @Test func metaPersistsAcrossUnchangedRescan() throws {
     let fixture = try ScanFixture.make()
     defer { fixture.cleanup() }
@@ -451,6 +470,89 @@ private struct ScanFixture {
 
     let record = try #require(try fixture.db.file(path: relativePath))
     #expect(record.role == .other)
+}
+
+@Test func rescanHealsStaleClassificationOnUnchangedFile() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    // Simulate a row left over from a pre-fix classifier version: on disk
+    // the file is still (and always was) at the same size/mtime, but its
+    // stored target/sessionDate are stale garbage a since-fixed classifier
+    // bug would have produced.
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/light_0001.fit"
+    var stale = try #require(try fixture.db.file(path: relativePath))
+    stale.target = ".DS_Store"
+    stale.sessionDate = ".DS_Store"
+    _ = try fixture.db.upsertFile(stale)
+
+    let second = try scanner.scan()
+    #expect(second.reclassified == 1)
+    #expect(second.unchanged > 0)
+
+    let healed = try #require(try fixture.db.file(path: relativePath))
+    #expect(healed.target == "M45_Pleiades")
+    #expect(healed.sessionDate == "2026-01-10")
+    #expect(healed.area == .sessions)
+    #expect(healed.role == .light)
+    // The file's own content/size/mtime were never touched.
+    #expect(healed.size == stale.size)
+    #expect(healed.contentHash == stale.contentHash)
+}
+
+@Test func looseFrameRoleSurvivesRescanUnchanged() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    // Same loose-frame scenario as
+    // `looseLightFrameDirectlyInDateDirGetsRoleFromIMAGETYP`: the FITS path
+    // alone classifies as role `.other`, but the IMAGETYP-based refinement
+    // upgrades it to `.light`. A rescan of the same (unchanged) file must
+    // not let the stale-classification healing in `recordFile` downgrade it
+    // back to `.other` just because the pure path classifier still says so.
+    let relativePath = "sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/Light_Hearth 3_120.0s_0005.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+    let second = try scanner.scan()
+
+    let record = try #require(try fixture.db.file(path: relativePath))
+    #expect(record.role == .light)
+    #expect(record.area == .sessions)
+    #expect(second.reclassified == 0)
+}
+
+@Test func normalUnchangedFileHasNoRowChurn() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/light_0001.fit"
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+    let before = try #require(try fixture.db.file(path: relativePath))
+
+    let second = try scanner.scan()
+    let after = try #require(try fixture.db.file(path: relativePath))
+
+    #expect(second.reclassified == 0)
+    #expect(second.unchanged > 0)
+    // No upsert happened for this row -- scannedAt is untouched.
+    #expect(after.scannedAt == before.scannedAt)
 }
 
 @Test func corruptFITSFileIsRecordedButNoMetaRowIsWritten() throws {

@@ -14,7 +14,9 @@ func writeTestTIFF(
     to url: URL,
     focalLengthMM: Double = 50.0,
     cameraModel: String = "Canon EOS R6",
-    dateTimeOriginal: String = "2026:01:15 20:30:00"
+    dateTimeOriginal: String = "2026:01:15 20:30:00",
+    exposureSeconds: Double? = nil,
+    iso: Int? = nil
 ) throws {
     let width = 2
     let height = 2
@@ -42,10 +44,16 @@ func writeTestTIFF(
         return
     }
 
-    let exifDict: [CFString: Any] = [
+    var exifDict: [CFString: Any] = [
         kCGImagePropertyExifFocalLength: focalLengthMM,
         kCGImagePropertyExifDateTimeOriginal: dateTimeOriginal,
     ]
+    if let exposureSeconds {
+        exifDict[kCGImagePropertyExifExposureTime] = exposureSeconds
+    }
+    if let iso {
+        exifDict[kCGImagePropertyExifISOSpeedRatings] = [iso]
+    }
     let tiffDict: [CFString: Any] = [
         kCGImagePropertyTIFFModel: cameraModel,
     ]

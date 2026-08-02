@@ -86,6 +86,28 @@ private struct StatsFixture {
     #expect(stats.filters == ["L-eXtreme"])
 }
 
+@Test func statsCountsDSLRLightExposureFromEXIFInIntegrationTotal() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    // No FITS EXPTIME here at all -- a CR3-style DSLR light (using a .tif
+    // fixture, since ImageIO can't encode a CR3 in tests) whose exposure
+    // only exists as Exif ExposureTime/ISOSpeedRatings. Without reading
+    // those, this frame would land entirely in the "unknown" bucket and
+    // contribute 0 seconds.
+    let relativePath = "sessions/T4/2026-02-01/lights/dslr_frame.tif"
+    let url = fixture.libraryDir.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try writeTestTIFF(to: url, cameraModel: "Canon EOS Ra", exposureSeconds: 30.0, iso: 800)
+
+    try fixture.scan()
+
+    let stats = try #require(try StatsQueries.target("T4", db: fixture.db, config: fixture.config))
+    #expect(stats.totalIntegrationSeconds == 30.0)
+    #expect(stats.exposureBreakdown == ["30.0": 1])
+    #expect(stats.cameras == ["Canon EOS Ra"])
+}
+
 @Test func statsCountsLightWithoutMetaAsUnknownBucketWithoutChangingIntegration() throws {
     let fixture = try StatsFixture.make()
     defer { fixture.cleanup() }

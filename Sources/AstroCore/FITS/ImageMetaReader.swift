@@ -13,11 +13,26 @@ public struct ImageMeta: Equatable, Sendable {
     /// as ImageIO reports it (Exif's `"yyyy:MM:dd HH:mm:ss"` form) — no
     /// timezone handling or reformatting.
     public var dateTaken: String?
+    /// Exif `ExposureTime`, in seconds. DSLR (e.g. Canon CR3) lights have no
+    /// FITS `EXPTIME` -- this is where their exposure length actually lives,
+    /// and it's what lets them contribute to integration-time stats instead
+    /// of landing in the `"unknown"` exposure bucket.
+    public var exposureSeconds: Double?
+    /// Exif `ISOSpeedRatings`, first value when the tag holds more than one.
+    public var iso: Int?
 
-    public init(focalLengthMM: Double? = nil, cameraModel: String? = nil, dateTaken: String? = nil) {
+    public init(
+        focalLengthMM: Double? = nil,
+        cameraModel: String? = nil,
+        dateTaken: String? = nil,
+        exposureSeconds: Double? = nil,
+        iso: Int? = nil
+    ) {
         self.focalLengthMM = focalLengthMM
         self.cameraModel = cameraModel
         self.dateTaken = dateTaken
+        self.exposureSeconds = exposureSeconds
+        self.iso = iso
     }
 }
 
@@ -47,7 +62,18 @@ public enum ImageMetaReader {
         let cameraModel = tiff?[kCGImagePropertyTIFFModel] as? String
         let dateTaken = (exif?[kCGImagePropertyExifDateTimeOriginal] as? String)
             ?? (tiff?[kCGImagePropertyTIFFDateTime] as? String)
+        let exposureSeconds = exif?[kCGImagePropertyExifExposureTime] as? Double
+        // ISOSpeedRatings is Exif's array-valued tag (some cameras record
+        // more than one rating) -- ImageIO surfaces it as an NSNumber array;
+        // only the first value is meaningful for our purposes.
+        let iso = (exif?[kCGImagePropertyExifISOSpeedRatings] as? [NSNumber])?.first?.intValue
 
-        return ImageMeta(focalLengthMM: focalLength, cameraModel: cameraModel, dateTaken: dateTaken)
+        return ImageMeta(
+            focalLengthMM: focalLength,
+            cameraModel: cameraModel,
+            dateTaken: dateTaken,
+            exposureSeconds: exposureSeconds,
+            iso: iso
+        )
     }
 }

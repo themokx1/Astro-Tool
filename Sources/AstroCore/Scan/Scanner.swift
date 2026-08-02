@@ -48,13 +48,29 @@ public struct ScanSummary: Codable, Sendable {
     /// (not marked missing) since the scan simply couldn't see them this
     /// time, not because they're actually gone.
     public var inaccessiblePaths: [String]
+    /// Count of files whose size/mtime matched the stored row (so they're
+    /// also counted in `unchanged`) but whose `PathClassifier` output
+    /// (area/target/sessionDate/role) or `kind` bucket had drifted from what
+    /// was on record -- a classifier fix landed after these rows were last
+    /// scanned, and the rescan healed the stale values in place. 0 on a
+    /// normal scan where nothing had drifted. Additive field, defaults to 0
+    /// so existing JSON callers/decoders are unaffected.
+    public var reclassified: Int
 
-    public init(added: Int = 0, updated: Int = 0, unchanged: Int = 0, missing: Int = 0, inaccessiblePaths: [String] = []) {
+    public init(
+        added: Int = 0,
+        updated: Int = 0,
+        unchanged: Int = 0,
+        missing: Int = 0,
+        inaccessiblePaths: [String] = [],
+        reclassified: Int = 0
+    ) {
         self.added = added
         self.updated = updated
         self.unchanged = unchanged
         self.missing = missing
         self.inaccessiblePaths = inaccessiblePaths
+        self.reclassified = reclassified
     }
 }
 
@@ -209,10 +225,12 @@ public final class LibraryScanner {
         let mtime = (values.contentModificationDate ?? Date(timeIntervalSince1970: 0)).timeIntervalSince1970
         let ext = (relativePath as NSString).pathExtension.lowercased()
         let info = PathClassifier.classify(relativePath: relativePath)
+        let kind = Self.kind(for: ext)
 
         let existing = try db.file(path: relativePath)
         if let existing, !existing.missing, existing.size == size, abs(existing.mtime - mtime) <= 1.0 {
             summary.unchanged += 1
+            try healStaleClassification(existing: existing, info: info, kind: kind, summary: &summary)
             return
         }
 
@@ -228,7 +246,7 @@ public final class LibraryScanner {
             size: size,
             mtime: mtime,
             ext: ext,
-            kind: Self.kind(for: ext),
+            kind: kind,
             area: info.area,
             target: info.target,
             sessionDate: info.dateRaw,
@@ -257,6 +275,57 @@ public final class LibraryScanner {
         // it still counts correctly in stats/calibration coverage. Only
         // reachable for new/changed files, same as the meta capture itself.
         try refineLooseFrameRole(fileID: fileID, info: info, ext: ext, baseRecord: record)
+    }
+
+    /// Files whose size/mtime match the stored row (the `unchanged` fast
+    /// path in `recordFile`) still skip metadata re-capture, but their
+    /// classification is pure string work over `relativePath` -- cheap
+    /// enough to recompute on every scan. When `PathClassifier` logic
+    /// changes between releases (or gains a new area/role it didn't
+    /// previously recognize), already-scanned rows would otherwise keep
+    /// their OLD classification forever, since an unchanged file never
+    /// reaches the upsert in `recordFile`. This recomputes `info`/`kind`
+    /// (already done by the caller) and heals the stored row in place when
+    /// they've drifted -- no FITS/ImageIO re-read, since file content
+    /// (and therefore any content-derived meta) hasn't changed.
+    private func healStaleClassification(
+        existing: FileRecord,
+        info: PathInfo,
+        kind: String,
+        summary: inout ScanSummary
+    ) throws {
+        // Loose-frame guard: `refineLooseFrameRole` can upgrade a path-only
+        // `.other` role to a specific frame role (light/flat/dark/bias)
+        // using the FITS IMAGETYP header -- content the pure path
+        // classifier never sees. A rescan of that same (unchanged) file
+        // must not undo that upgrade just because the path alone still
+        // resolves to `.other`; keep the stored role in that case.
+        let specificFrameRoles: Set<FrameRole> = [.light, .flat, .dark, .bias]
+        let effectiveRole: FrameRole
+        if info.area == .sessions, info.role == .other, specificFrameRoles.contains(existing.role) {
+            effectiveRole = existing.role
+        } else {
+            effectiveRole = info.role
+        }
+
+        guard existing.area != info.area
+            || existing.target != info.target
+            || existing.sessionDate != info.dateRaw
+            || existing.role != effectiveRole
+            || existing.kind != kind
+        else {
+            return
+        }
+
+        var healed = existing
+        healed.area = info.area
+        healed.target = info.target
+        healed.sessionDate = info.dateRaw
+        healed.role = effectiveRole
+        healed.kind = kind
+        healed.scannedAt = Date().timeIntervalSince1970
+        _ = try db.upsertFile(healed)
+        summary.reclassified += 1
     }
 
     private func refineLooseFrameRole(fileID: Int64, info: PathInfo, ext: String, baseRecord: FileRecord) throws {
@@ -298,9 +367,20 @@ public final class LibraryScanner {
             try db.upsertFITSMeta(Self.fitsMetaRecord(fileID: fileID, header: header))
         case "cr3", "tif":
             guard let meta = ImageMetaReader.read(url: url) else { return }
+            // DSLR frames have no FITS EXPTIME/GAIN header -- their Exif
+            // ExposureTime and ISOSpeedRatings are the equivalent values, so
+            // they're stored in the same `exptime`/`gain` columns FITS
+            // frames use. This is what lets StatsQueries' integration-time
+            // and exposure-breakdown queries (which only ever look at
+            // `fits_meta.exptime`) count CR3/TIFF lights the same way as
+            // FITS lights, instead of all landing in the "unknown" bucket.
+            // ISO is unitless (not a real e-/ADU gain), but reusing the
+            // column keeps every frame kind on one schema.
             try db.upsertFITSMeta(
                 FITSMetaRecord(
                     fileID: fileID,
+                    exptime: meta.exposureSeconds,
+                    gain: meta.iso.map(Double.init),
                     instrume: meta.cameraModel,
                     focallen: meta.focalLengthMM,
                     dateObs: meta.dateTaken

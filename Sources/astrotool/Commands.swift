@@ -195,7 +195,11 @@ func cmdScan(_ args: [String]) throws -> Int32 {
     if parsed.has("--json") {
         try printJSON(summary)
     } else {
-        print("scan: added \(summary.added), updated \(summary.updated), unchanged \(summary.unchanged), missing \(summary.missing)")
+        var line = "scan: added \(summary.added), updated \(summary.updated), unchanged \(summary.unchanged), missing \(summary.missing)"
+        if summary.reclassified > 0 {
+            line += ", reclassified \(summary.reclassified)"
+        }
+        print(line)
         if !summary.inaccessiblePaths.isEmpty {
             eprint("warning: \(summary.inaccessiblePaths.count) directories could not be read and were skipped: \(summary.inaccessiblePaths.joined(separator: ", "))")
         }
