@@ -32,6 +32,20 @@ private struct ScanFixture {
         return ScanFixture(libraryDir: libraryDir, dbDir: dbDir, root: root, db: db, config: config)
     }
 
+    /// An EMPTY library root (no messy fixture): refresh-meta tests need a
+    /// tree where the only meta-bearing files are the ones the test itself
+    /// plants — the messy fixture's dummy text-content `.fit` files all lack
+    /// a `fits_meta` row, so every one of them counts as a backfill attempt
+    /// and drowns out the single-file expectations.
+    static func makeEmpty() throws -> ScanFixture {
+        let libraryDir = try makeTempDir("lib-empty")
+        let dbDir = try makeTempDir("db")
+        let db = try Database(path: dbDir.appendingPathComponent("test.sqlite").path)
+        var config = AstroConfig()
+        config.rootPath = libraryDir.path
+        return ScanFixture(libraryDir: libraryDir, dbDir: dbDir, root: libraryDir, db: db, config: config)
+    }
+
     func cleanup() {
         try? FileManager.default.removeItem(at: libraryDir)
         try? FileManager.default.removeItem(at: dbDir)
@@ -572,6 +586,100 @@ private struct ScanFixture {
     let record = try fixture.db.file(path: relativePath)
     let fileID = try #require(record?.id)
     #expect(try fixture.db.fitsMeta(fileID: fileID) == nil)
+}
+
+// MARK: - refreshMeta backfill
+
+@Test func refreshMetaBackfillsExposureForUnchangedDSLRTIFF() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/generated_dslr_refresh.tif"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try writeTestTIFF(to: fileURL, exposureSeconds: 30.0, iso: 800)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try #require(try fixture.db.file(path: relativePath))
+    let fileID = try #require(record.id)
+
+    // Simulate a row left over from before the EXIF-exposure feature
+    // existed: content/size/mtime never changed, but `exptime` was never
+    // captured for this file -- exactly the state every pre-existing CR3/
+    // TIFF in a real library is in today.
+    try fixture.db.upsertFITSMeta(FITSMetaRecord(fileID: fileID, exptime: nil))
+
+    let withoutFlag = try scanner.scan()
+    #expect(withoutFlag.metaRefreshed == 0)
+    #expect(try fixture.db.fitsMeta(fileID: fileID)?.exptime == nil)
+
+    let withFlag = try scanner.scan(refreshMeta: true)
+    #expect(withFlag.metaRefreshed == 1)
+    #expect(try fixture.db.fitsMeta(fileID: fileID)?.exptime == 30.0)
+    #expect(try fixture.db.fitsMeta(fileID: fileID)?.gain == 800.0)
+}
+
+@Test func refreshMetaAttemptsRecaptureForUnchangedFileWithNoMetaRow() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    // A corrupt FITS header fails to parse on first scan, so the file is
+    // recorded but never gets a `fits_meta` row -- this covers the OTHER
+    // refresh condition (no row at all) without needing to delete a row
+    // out from under the Database directly.
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/corrupt_refresh.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(
+        at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
+    )
+    try "this is not a valid FITS header at all, just garbage bytes\n".write(
+        to: fileURL, atomically: true, encoding: .utf8
+    )
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try #require(try fixture.db.file(path: relativePath))
+    let fileID = try #require(record.id)
+    #expect(try fixture.db.fitsMeta(fileID: fileID) == nil)
+
+    let withoutFlag = try scanner.scan()
+    #expect(withoutFlag.metaRefreshed == 0)
+
+    let withFlag = try scanner.scan(refreshMeta: true)
+    #expect(withFlag.metaRefreshed == 1)
+    // The content is still unparsable garbage, so the recapture attempt
+    // still produces no row -- refreshMeta guarantees the attempt is made,
+    // not that it succeeds.
+    #expect(try fixture.db.fitsMeta(fileID: fileID) == nil)
+}
+
+@Test func refreshMetaSkipsUnchangedFileWithCompleteMeta() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/generated_complete.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(
+        at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
+    )
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "EXPTIME =                180.0",
+        "INSTRUME= 'ZWO ASI2600MM Pro'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let summary = try scanner.scan(refreshMeta: true)
+    #expect(summary.metaRefreshed == 0)
 }
 
 @Test func progressCallbackFiresEveryHundredFiles() throws {

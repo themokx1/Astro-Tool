@@ -135,6 +135,18 @@ struct CLISmokeTests {
     #expect(unchanged > 0)
 }
 
+@Test func scanRefreshMetaFlagRunsAndExitsZero() throws {
+    let root = try makeTempRoot("scan-refresh-meta")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let first = try runCLI(["scan", "--root", root.path])
+    #expect(first.exitCode == 0, "stderr: \(first.stderr)")
+
+    let second = try runCLI(["scan", "--root", root.path, "--refresh-meta"])
+    #expect(second.exitCode == 0, "stderr: \(second.stderr)")
+}
+
 @Test func scanWithInaccessibleSubdirectoryStillExitsZeroAndWarnsOnStderr() throws {
     let root = try makeTempRoot("scan-inaccessible-subdir")
     defer {

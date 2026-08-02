@@ -10,6 +10,11 @@ történik.
 
 ### Added
 
+- **`astrotool scan --refresh-meta`**: metaadat-backfill változatlan fájlokra —
+  újraolvassa a `fits_meta`-t ott, ahol nincs meta-sor, vagy ahol egy
+  RAW/kép-fájl `exptime`-ja üres (a Canon CR3/TIF expozíciós idő EXIF-ből
+  történő kinyerése a funkció megjelenése ELŐTT beolvasott fájlokra így
+  pótolható). A scan-összegzés új `meta_refreshed` mezőt kapott.
 - **Session-létrehozás**: új `Sources/AstroCore/NewSession/SessionCreator.swift`
   fogja össze a sanitize+dátum-validáció+README+könyvtárfa-létrehozás logikát
   egy helyen — a CLI `new-session` és a SwiftUI app `AppState.createSession`

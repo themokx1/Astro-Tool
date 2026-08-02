@@ -184,13 +184,17 @@ func cmdScan(_ args: [String]) throws -> Int32 {
         FlagSpec("--root", takesValue: true),
         FlagSpec("--path", takesValue: true),
         FlagSpec("--json", takesValue: false),
+        FlagSpec("--refresh-meta", takesValue: false),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
 
     let config = try resolveConfig(rootFlag: parsed.value("--root"))
     let db = try makeDatabase(config: config)
     let scanner = LibraryScanner(config: config, db: db)
-    let summary = try scanner.scan(subpath: parsed.value("--path"))
+    let summary = try scanner.scan(
+        subpath: parsed.value("--path"),
+        refreshMeta: parsed.has("--refresh-meta")
+    )
 
     if parsed.has("--json") {
         try printJSON(summary)
@@ -198,6 +202,9 @@ func cmdScan(_ args: [String]) throws -> Int32 {
         var line = "scan: added \(summary.added), updated \(summary.updated), unchanged \(summary.unchanged), missing \(summary.missing)"
         if summary.reclassified > 0 {
             line += ", reclassified \(summary.reclassified)"
+        }
+        if summary.metaRefreshed > 0 {
+            line += ", meta refreshed \(summary.metaRefreshed)"
         }
         print(line)
         if !summary.inaccessiblePaths.isEmpty {

@@ -56,6 +56,16 @@ public struct ScanSummary: Codable, Sendable {
     /// normal scan where nothing had drifted. Additive field, defaults to 0
     /// so existing JSON callers/decoders are unaffected.
     public var reclassified: Int
+    /// Count of UNCHANGED, meta-bearing files (fit/fits/fz/cr3/tif) whose
+    /// `fits_meta` was re-captured because a `--refresh-meta` backfill scan
+    /// found either no `fits_meta` row at all, or (for a raw/image kind) a
+    /// stored `exptime` of NULL. 0 on a normal scan, since this check never
+    /// runs unless `refreshMeta` was requested. This counts recapture
+    /// ATTEMPTS, not confirmed successes -- a still-corrupt file can be
+    /// attempted again and again without ever producing a row, same as a
+    /// brand-new scan of that file would. Additive field, defaults to 0 so
+    /// existing JSON callers/decoders are unaffected.
+    public var metaRefreshed: Int
 
     public init(
         added: Int = 0,
@@ -63,7 +73,8 @@ public struct ScanSummary: Codable, Sendable {
         unchanged: Int = 0,
         missing: Int = 0,
         inaccessiblePaths: [String] = [],
-        reclassified: Int = 0
+        reclassified: Int = 0,
+        metaRefreshed: Int = 0
     ) {
         self.added = added
         self.updated = updated
@@ -71,6 +82,7 @@ public struct ScanSummary: Codable, Sendable {
         self.missing = missing
         self.inaccessiblePaths = inaccessiblePaths
         self.reclassified = reclassified
+        self.metaRefreshed = metaRefreshed
     }
 }
 
@@ -91,12 +103,20 @@ public final class LibraryScanner {
     /// given. `progress` is called every 100 files with the running count
     /// of files processed so far in this scan.
     ///
+    /// `refreshMeta` opts an otherwise-normal incremental scan into also
+    /// backfilling `fits_meta` for UNCHANGED meta-bearing files (fit/fits/
+    /// fz/cr3/tif) that are missing metadata a feature added after they
+    /// were first scanned would have captured -- see `refreshMetaIfNeeded`.
+    /// Existing callers that don't pass it get the exact same behavior as
+    /// before this parameter existed.
+    ///
     /// Directory listing is done manually (not `FileManager.enumerator`) so
     /// exclusions are decided before descending into a directory, and a
     /// permission failure on any one directory can be caught and reported
     /// with that directory's path rather than aborting with no context.
     public func scan(
         subpath: String? = nil,
+        refreshMeta: Bool = false,
         progress: (@Sendable (Int) -> Void)? = nil
     ) throws -> ScanSummary {
         let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
@@ -121,6 +141,7 @@ public final class LibraryScanner {
             processedCount: &processedCount,
             progress: progress,
             summary: &summary,
+            refreshMeta: refreshMeta,
             isTopLevel: true
         )
 
@@ -165,6 +186,7 @@ public final class LibraryScanner {
         processedCount: inout Int,
         progress: (@Sendable (Int) -> Void)?,
         summary: inout ScanSummary,
+        refreshMeta: Bool,
         isTopLevel: Bool = false
     ) throws {
         let entries: [URL]
@@ -198,7 +220,8 @@ public final class LibraryScanner {
                     seen: &seen,
                     processedCount: &processedCount,
                     progress: progress,
-                    summary: &summary
+                    summary: &summary,
+                    refreshMeta: refreshMeta
                 )
                 continue
             }
@@ -211,7 +234,13 @@ public final class LibraryScanner {
                 progress?(processedCount)
             }
 
-            try recordFile(relativePath: relativePath, fileURL: entryURL, values: values, summary: &summary)
+            try recordFile(
+                relativePath: relativePath,
+                fileURL: entryURL,
+                values: values,
+                summary: &summary,
+                refreshMeta: refreshMeta
+            )
         }
     }
 
@@ -219,7 +248,8 @@ public final class LibraryScanner {
         relativePath: String,
         fileURL: URL,
         values: URLResourceValues,
-        summary: inout ScanSummary
+        summary: inout ScanSummary,
+        refreshMeta: Bool
     ) throws {
         let size = Int64(values.fileSize ?? 0)
         let mtime = (values.contentModificationDate ?? Date(timeIntervalSince1970: 0)).timeIntervalSince1970
@@ -231,6 +261,9 @@ public final class LibraryScanner {
         if let existing, !existing.missing, existing.size == size, abs(existing.mtime - mtime) <= 1.0 {
             summary.unchanged += 1
             try healStaleClassification(existing: existing, info: info, kind: kind, summary: &summary)
+            if refreshMeta, let fileID = existing.id {
+                try refreshMetaIfNeeded(fileID: fileID, kind: kind, ext: ext, url: fileURL, summary: &summary)
+            }
             return
         }
 
@@ -389,6 +422,42 @@ public final class LibraryScanner {
         default:
             return
         }
+    }
+
+    /// Backfill hook for `--refresh-meta` scans. Only ever called for
+    /// UNCHANGED files, and only when the caller asked for a refresh: a
+    /// normal incremental scan never reaches this, so its extra `fits_meta`
+    /// lookup stays off the hot path. Re-captures metadata when a feature
+    /// added after the file was first scanned would have captured more than
+    /// what's on record: either the file has no `fits_meta` row at all
+    /// (e.g. an earlier parse failure), or it's a raw/image kind whose
+    /// stored `exptime` is NULL (scanned before Exif ExposureTime capture
+    /// existed). Files with complete metadata are left untouched.
+    private func refreshMetaIfNeeded(
+        fileID: Int64,
+        kind: String,
+        ext: String,
+        url: URL,
+        summary: inout ScanSummary
+    ) throws {
+        switch ext {
+        case "fit", "fits", "fz", "cr3", "tif":
+            break
+        default:
+            return
+        }
+        let existingMeta = try db.fitsMeta(fileID: fileID)
+        let needsRefresh: Bool
+        if existingMeta == nil {
+            needsRefresh = true
+        } else if kind == "raw" || kind == "image" {
+            needsRefresh = existingMeta?.exptime == nil
+        } else {
+            needsRefresh = false
+        }
+        guard needsRefresh else { return }
+        summary.metaRefreshed += 1
+        try captureMeta(fileID: fileID, ext: ext, url: url)
     }
 
     private static func fitsMetaRecord(fileID: Int64, header: FITSHeader) -> FITSMetaRecord {
