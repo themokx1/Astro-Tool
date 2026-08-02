@@ -258,3 +258,25 @@ progress-callbackekkel; minden hosszú művelet Task-ként fut, megszakítható.
 8. **M8 — Csomagolás:** build.sh, DMG, ikon, CI release, docs oldal, README.
 
 Minden mérföldkő végén: tesztek zöldek, commit + push.
+
+## 11. Kiegészítés — 2. kör (2026-08-02, user-kérés)
+
+1. **Audit memory-hiba javítása**: az `audit` a valós könyvtáron másodpercek
+   alatt ~40 GB RAM-ot eszik. Gyanú: a duplikátum-hash-elés (a) autoreleasepool
+   nélkül olvas chunkokat, (b) az azonos szenzorról jövő FITS-ek mind azonos
+   méretűek → gyakorlatilag minden frame hash-jelölt lesz (200+ GB olvasás).
+   Elvárás: konstans (< pár száz MB) memóriahasználat + értelmes előszűrés.
+2. **Session-részletek**: célpontonként session-bontású nézet és CLI kimenet:
+   dátum, frame-számok szerepenként, expozíció-bontás, gyújtótávolság
+   (FOCALLEN/EXIF), kamera, gain/ISO, szenzor-hőmérséklet, szűrő, össz-idő.
+3. **Tagelés**: szabad címkék célpontra ÉS sessionre (DB séma v2: `tags`
+   tábla + kapcsolótáblák vagy egyszerű (kind, key, tag) séma). CLI:
+   `astrotool tag add|remove|list`; app: tag-chipek + szűrés.
+4. **Kalibráció-linkelés (ÚJ írási művelet — user által engedélyezve)**:
+   gombra/parancsra a tool megkeresi a session lightjaihoz illő master darkot
+   (exp/temp tűréssel), a flatokhoz illő flat-darkot és a bias mastert, és
+   **hard linkeli** őket a session megfelelő mappájába
+   (`darks/`, `biases/`). Szabályok: kizárólag a WriteGuard új, fehérlistás
+   `linkCalibration` műveletén át; hard link (azonos kötet), létező cél-fájlt
+   SOHA nem ír felül (skip + jelzés); forrás mindig a `calibration_library`;
+   a vasszabály többi része (nincs törlés/mozgatás) változatlan.
