@@ -18,13 +18,26 @@ public enum DuplicateFinder {
     /// A file's `contentHash` is read from the DB cache when present — the
     /// scanner already resets it to `nil` whenever a file is added or its
     /// content changes, so a non-nil cached hash is trustworthy and the file
-    /// is never re-read. Cache misses are hashed by streaming the file in
-    /// 1 MiB chunks (never loading a whole frame into memory) and the
-    /// result is written straight back to the file's DB record.
+    /// is never re-read.
+    ///
+    /// Real astro libraries have thousands of same-camera frames that are
+    /// all byte-identical in *size* (same sensor, same bit depth, same
+    /// dimensions every exposure), so the size prefilter alone lets nearly
+    /// everything through to hashing. To avoid full-hashing hundreds of GB
+    /// of frames that merely share a size, uncached same-size files are
+    /// first grouped by a cheap prefix hash (first 64 KiB, streamed) — only
+    /// files whose (size, prefix) *both* collide go on to full-content
+    /// SHA-256. Prefix hashes are a pure in-run optimization and are never
+    /// persisted; only full hashes are written back to `content_hash`, same
+    /// as before. Both tiers stream in bounded chunks inside an
+    /// `autoreleasepool` per chunk, so peak memory stays flat regardless of
+    /// file count or size — never loading a whole frame into memory.
     public static func findDuplicates(
         db: Database,
         config: AstroConfig,
-        minSizeBytes: Int64 = 1_048_576
+        minSizeBytes: Int64 = 1_048_576,
+        onPrefixHash: (() -> Void)? = nil,
+        onFullHash: (() -> Void)? = nil
     ) throws -> [Finding] {
         let files = try db.allFiles(includeMissing: false)
         let candidates = files.filter { $0.size >= minSizeBytes }
@@ -37,19 +50,67 @@ public enum DuplicateFinder {
         let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
 
         var byHash: [String: [FileRecord]] = [:]
+
+        func fullHashAndStore(_ file: FileRecord) throws -> String {
+            let fileURL = root.appendingPathComponent(file.path)
+            let hash = try sha256Hash(of: fileURL)
+            onFullHash?()
+            var updated = file
+            updated.contentHash = hash
+            try db.upsertFile(updated)
+            byHash[hash, default: []].append(updated)
+            return hash
+        }
+
         for (_, group) in bySize where group.count >= 2 {
-            for var file in group {
-                let hash: String
+            var uncachedFiles: [FileRecord] = []
+            for file in group {
                 if let cached = file.contentHash {
-                    hash = cached
+                    byHash[cached, default: []].append(file)
                 } else {
-                    let fileURL = root.appendingPathComponent(file.path)
-                    hash = try sha256Hash(of: fileURL)
-                    file.contentHash = hash
-                    try db.upsertFile(file)
+                    uncachedFiles.append(file)
                 }
-                byHash[hash, default: []].append(file)
             }
+            guard !uncachedFiles.isEmpty else { continue }
+
+            // The prefix-hash tier only applies when this whole bucket is
+            // uncached (nothing else to compare against) and there's more
+            // than one uncached file to discriminate between. If any
+            // sibling in the bucket already has a cached full hash, an
+            // uncached file might duplicate *that* sibling's content, and a
+            // prefix hash can't be compared against a full hash we already
+            // have (re-reading the cached file for its prefix would defeat
+            // the point of caching) -- so fall straight back to full
+            // hashing every uncached file, same as before the prefix tier
+            // existed. This fallback only matters on repeat runs with a
+            // handful of new files mixed into an already-hashed bucket --
+            // the expensive first-run case (nothing cached yet) always
+            // takes the prefix-hash tier below.
+            let bucketIsAllUncached = uncachedFiles.count == group.count
+            guard bucketIsAllUncached, uncachedFiles.count >= 2 else {
+                for file in uncachedFiles {
+                    _ = try fullHashAndStore(file)
+                }
+                continue
+            }
+
+            var byPrefix: [String: [FileRecord]] = [:]
+            for file in uncachedFiles {
+                let fileURL = root.appendingPathComponent(file.path)
+                let prefix = try prefixHash(of: fileURL)
+                onPrefixHash?()
+                byPrefix[prefix, default: []].append(file)
+            }
+
+            for (_, prefixGroup) in byPrefix where prefixGroup.count >= 2 {
+                for file in prefixGroup {
+                    _ = try fullHashAndStore(file)
+                }
+            }
+            // prefixGroup.count == 1 subgroups are intentionally left
+            // unhashed: no other same-size file shares this file's first
+            // 64 KiB, so it cannot be a full-content duplicate of anything
+            // else in this bucket.
         }
 
         var findings: [Finding] = []
@@ -101,8 +162,38 @@ public enum DuplicateFinder {
 
     // MARK: - Hashing
 
+    /// First-64-KiB prefix hash of `url`, read in a single bounded read
+    /// inside an `autoreleasepool`. Cheap second discriminator applied to
+    /// same-size files before paying for a full-content SHA-256: two files
+    /// that merely share a size (e.g. same-camera FITS frames) almost
+    /// always differ within their first 64 KiB (FITS headers alone carry
+    /// per-frame timestamps), so this tier filters out nearly all
+    /// non-duplicates without reading the rest of the file. Purely an
+    /// in-run optimization -- never persisted to `content_hash`.
+    private static let prefixSampleBytes = 65536
+
+    private static func prefixHash(of url: URL) throws -> String {
+        guard let handle = FileHandle(forReadingAtPath: url.path) else {
+            throw AstroError.pathNotFound(path: url.path)
+        }
+        defer { try? handle.close() }
+
+        let digest = try autoreleasepool { () -> SHA256.Digest in
+            let chunk = try handle.read(upToCount: prefixSampleBytes) ?? Data()
+            var hasher = SHA256()
+            hasher.update(data: chunk)
+            return hasher.finalize()
+        }
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
     /// Streams `url` in 1 MiB chunks through SHA-256 so hashing a
     /// multi-gigabyte FITS frame never loads the whole file into memory.
+    /// Each chunk's read + hash update happens inside its own
+    /// `autoreleasepool`: without it, the autoreleased buffers backing
+    /// every chunk linger for the entire audit run instead of being freed
+    /// as they're consumed, so peak memory grows with total bytes hashed
+    /// across *all* files instead of staying bounded to one chunk.
     private static func sha256Hash(of url: URL) throws -> String {
         guard let handle = FileHandle(forReadingAtPath: url.path) else {
             throw AstroError.pathNotFound(path: url.path)
@@ -112,9 +203,13 @@ public enum DuplicateFinder {
         let chunkSize = 1_048_576
         var hasher = SHA256()
         while true {
-            let chunk = try handle.read(upToCount: chunkSize) ?? Data()
-            if chunk.isEmpty { break }
-            hasher.update(data: chunk)
+            let isDone = try autoreleasepool { () -> Bool in
+                let chunk = try handle.read(upToCount: chunkSize) ?? Data()
+                guard !chunk.isEmpty else { return true }
+                hasher.update(data: chunk)
+                return false
+            }
+            if isDone { break }
         }
 
         let digest = hasher.finalize()

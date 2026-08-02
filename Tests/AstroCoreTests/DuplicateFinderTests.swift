@@ -210,3 +210,60 @@ private struct DupFixture {
     let persisted = try fixture.db.findings(runID: runID)
     #expect(persisted.contains { $0.category == "duplicate-content" })
 }
+
+/// Behavioral regression test for the prefix-hash tier: same-camera FITS
+/// libraries have many files sharing an identical size but differing
+/// content, so a naive "hash every same-size file" approach full-hashes
+/// everything. The prefix-hash tier (first 64 KiB) should filter those
+/// out cheaply, so only files whose (size, prefix) both collide ever pay
+/// for a full-content SHA-256. Verified via injected counters rather than
+/// a memory measurement, which is more reliable in CI.
+@Test func duplicateFinderPrefixTierSkipsFullHashingForNonMatchingSameSizeFiles() throws {
+    let fixture = try DupFixture.make()
+    defer { fixture.cleanup() }
+
+    let dup1 = "stacks/A/2026-01-01/dup1.fit"
+    let dup2 = "processed/A/2026-01-01/dup2.fit"
+    let other1 = "stacks/A/2026-01-02/other1.fit"
+    let other2 = "stacks/A/2026-01-03/other2.fit"
+    let other3 = "stacks/A/2026-01-04/other3.fit"
+
+    // All five files share the same size (the realistic same-camera
+    // scenario), but only dup1/dup2 share content -- the "other" files are
+    // each uniformly filled with their own distinct byte, so they differ
+    // from everything else within their very first byte (well inside the
+    // 64 KiB prefix window).
+    try writeFile(at: fixture.libraryDir.appendingPathComponent(dup1), byte: 0xAB, size: Int(dupSize))
+    try writeFile(at: fixture.libraryDir.appendingPathComponent(dup2), byte: 0xAB, size: Int(dupSize))
+    try writeFile(at: fixture.libraryDir.appendingPathComponent(other1), byte: 0xCD, size: Int(dupSize))
+    try writeFile(at: fixture.libraryDir.appendingPathComponent(other2), byte: 0xEE, size: Int(dupSize))
+    try writeFile(at: fixture.libraryDir.appendingPathComponent(other3), byte: 0xFF, size: Int(dupSize))
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    var prefixHashCount = 0
+    var fullHashCount = 0
+    let findings = try DuplicateFinder.findDuplicates(
+        db: fixture.db,
+        config: fixture.config,
+        onPrefixHash: { prefixHashCount += 1 },
+        onFullHash: { fullHashCount += 1 }
+    )
+
+    // Still finds the one real duplicate pair -- behavior contract unchanged.
+    #expect(findings.count == 1)
+    let hit = try #require(findings.first)
+    #expect(hit.message.contains(dup1))
+    #expect(hit.message.contains(dup2))
+    #expect(!hit.message.contains(other1))
+    #expect(!hit.message.contains(other2))
+    #expect(!hit.message.contains(other3))
+
+    // All 5 same-size, uncached files get prefix-hashed (cheap: 64 KiB
+    // each)...
+    #expect(prefixHashCount == 5)
+    // ...but only the 2 files whose prefix actually collided (the real
+    // dup pair) ever pay for a full-content SHA-256 -- not all 5.
+    #expect(fullHashCount == 2)
+}

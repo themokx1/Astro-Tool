@@ -8,6 +8,33 @@ történik.
 
 ## [Unreleased]
 
+### Javítva
+
+- **Audit memória-javítás**: `astrotool audit` (duplikátum-keresés) korlátlanul
+  nőtt memóriában valós könyvtárakon (~40 GB néhány másodperc alatt egy
+  ~281 GB/~14 700 fájlos könyvtáron), mert (1) a `DuplicateFinder` chunkolt
+  SHA-256 olvasása (`sha256Hash(of:)`) nem volt `autoreleasepool`-ba
+  csomagolva chunkonként, így a Darwin Data/NSData-hidalás autorelease
+  pufferei a teljes futás végéig életben maradtak a hashelt bájtok teljes
+  mennyiségével arányosan nőve, ÉS (2) az azonos kameráról származó FITS
+  keretek méret szerint gyakorlatilag mind egyeznek, így a méret-előszűrő
+  szinte mindent átengedett teljes SHA-256 hashelésre. Javítás: minden
+  chunk olvasás+hash-frissítés saját `autoreleasepool`-ba került
+  (`DuplicateFinder`, `FITSReader.readOneHeader`, `Rater.rate` a
+  `NativeStats.compute(url:)` hívás körül); a `DuplicateFinder` új
+  prefix-hash réteget kapott — azonos méretű, még nem cache-elt fájlok
+  előbb az első 64 KiB alapján csoportosulnak (streamelve, memóriakorlátos),
+  és csak azok a (méret, prefix) csoportok mennek tovább teljes tartalmi
+  SHA-256-ra, amelyeknél ez is ütközik; a prefix-hash tisztán futásidőn
+  belüli optimalizáció, nem kerül perzisztálásra — a `content_hash` mezőbe
+  továbbra is csak a teljes hash íródik, változatlanul viselkedve a
+  gyorsítótár-találatok esetén. Mért csúcs-RSS egy 60×5 MiB (300 MiB)
+  szintetikus fixture-ön (3 valódi duplikátum-pár, minden fájl azonos
+  méretű): **javítás előtt +301,5 MiB** (kb. 1:1 arány a teljes hashelt
+  bájtmennyiséggel — az összes fájl teljes SHA-256 hashelésre ment),
+  **javítás után +2,3 MiB** — a memórianövekedés a fájlszámtól/mérettől
+  függetlenül korlátos marad.
+
 ## [0.1.2] - 2026-08-02
 
 ### Added

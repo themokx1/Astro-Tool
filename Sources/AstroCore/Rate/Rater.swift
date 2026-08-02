@@ -122,7 +122,16 @@ public final class Rater {
             var nativeStats: NativeFrameStats?
             if file.ext.lowercased() != "fz" {
                 do {
-                    nativeStats = try NativeStats.compute(url: url)
+                    // `NativeStats.compute(url:)` loads the whole frame
+                    // into memory to read its pixels. Wrapping just the
+                    // call in `autoreleasepool` ensures that buffer (and
+                    // any autoreleased bridging temporaries underneath it)
+                    // is freed as soon as this frame's stats are computed,
+                    // rather than lingering for the rest of a large batch
+                    // -- `nativeStats` itself is a plain struct with no
+                    // Foundation object references, so it's safe to return
+                    // out of the pool.
+                    nativeStats = try autoreleasepool { try NativeStats.compute(url: url) }
                 } catch {
                     // Can't even read the pixel data -- skip this frame but
                     // keep rating the rest of the batch.

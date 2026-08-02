@@ -184,39 +184,49 @@ public enum FITSReader {
         var bytesRead = 0
 
         while true {
-            guard let blockData = try nextBlock(), blockData.count == blockSize else {
-                throw AstroError.corruptFITS(
-                    path: path,
-                    reason: "truncated FITS header: incomplete 2880-byte block"
-                )
-            }
-            bytesRead += blockSize
-            guard let blockString = String(data: blockData, encoding: .ascii) else {
-                throw AstroError.corruptFITS(path: path, reason: "header block contains non-ASCII bytes")
-            }
-
-            let blockChars = Array(blockString)
-            var reachedEnd = false
-            for cardIndex in 0..<cardsPerBlock {
-                let start = cardIndex * cardSize
-                let cardChars = Array(blockChars[start..<(start + cardSize)])
-                let keyword = String(cardChars[0..<8]).trimmingCharacters(in: .whitespaces)
-
-                if isFirstCardOverall {
-                    firstCardKeyword = keyword
-                    isFirstCardOverall = false
+            // Each block's read + ASCII decode + card parsing happens
+            // inside its own `autoreleasepool`: on Darwin, the Data/NSData
+            // bridging behind `FileHandle` reads and `String(data:...)`
+            // decoding can leave autoreleased buffers alive until the pool
+            // drains, which for a long-running CLI with no run loop means
+            // "until the process exits" rather than "after this block".
+            // `maxHeaderBytesPerHDU` already caps this per file, but this
+            // still runs once per scanned file, so bounding it per block
+            // keeps memory flat regardless of file count.
+            let reachedEnd = try autoreleasepool { () -> Bool in
+                guard let blockData = try nextBlock(), blockData.count == blockSize else {
+                    throw AstroError.corruptFITS(
+                        path: path,
+                        reason: "truncated FITS header: incomplete 2880-byte block"
+                    )
+                }
+                bytesRead += blockSize
+                guard let blockString = String(data: blockData, encoding: .ascii) else {
+                    throw AstroError.corruptFITS(path: path, reason: "header block contains non-ASCII bytes")
                 }
 
-                if keyword == "END" {
-                    reachedEnd = true
-                    break
-                }
+                let blockChars = Array(blockString)
+                for cardIndex in 0..<cardsPerBlock {
+                    let start = cardIndex * cardSize
+                    let cardChars = Array(blockChars[start..<(start + cardSize)])
+                    let keyword = String(cardChars[0..<8]).trimmingCharacters(in: .whitespaces)
 
-                let indicator = String(cardChars[8..<10])
-                if indicator == "= " {
-                    let rest = String(cardChars[10..<80])
-                    values[keyword.uppercased()] = extractValueText(rest)
+                    if isFirstCardOverall {
+                        firstCardKeyword = keyword
+                        isFirstCardOverall = false
+                    }
+
+                    if keyword == "END" {
+                        return true
+                    }
+
+                    let indicator = String(cardChars[8..<10])
+                    if indicator == "= " {
+                        let rest = String(cardChars[10..<80])
+                        values[keyword.uppercased()] = extractValueText(rest)
+                    }
                 }
+                return false
             }
 
             if reachedEnd {
