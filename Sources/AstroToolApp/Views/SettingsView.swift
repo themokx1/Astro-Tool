@@ -129,6 +129,8 @@ struct SettingsView: View {
             return "Adatbázis hiba: \(message)"
         case .sirilNotFound(let path):
             return "Siril nem található itt: \(path)"
+        case .invalidInput(let reason):
+            return "Érvénytelen bemenet: \(reason)"
         }
     }
 }

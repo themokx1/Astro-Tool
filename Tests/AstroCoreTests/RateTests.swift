@@ -123,7 +123,8 @@ private struct RateFixture {
         width: Int,
         height: Int,
         bzero: Int? = nil,
-        mtime: Double = 1_700_000_000
+        mtime: Double = 1_700_000_000,
+        exptime: Double? = nil
     ) throws -> (fileID: Int64, size: Int64) {
         let url = libraryDir.appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -143,6 +144,9 @@ private struct RateFixture {
             scannedAt: Date().timeIntervalSince1970
         )
         let fileID = try db.upsertFile(record)
+        if let exptime {
+            try db.upsertFITSMeta(FITSMetaRecord(fileID: fileID, exptime: exptime))
+        }
         return (fileID, Int64(data.count))
     }
 
@@ -617,6 +621,105 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(abs(byPath["sessions/T2/2026-01-01/lights/B.fit"]!.score - 0) < 0.0001)
     #expect(abs(byPath["sessions/T2/2026-01-01/lights/C.fit"]!.score - (-expectedMagnitude)) < 0.0001)
     #expect(results.allSatisfy { $0.metrics == nil })
+}
+
+// MARK: - Rater: per-exposure-group z-scoring
+
+@Test func scoringZScoresWithinExposureGroupsNotAcrossTheWholeBatch() throws {
+    // Ground-truthed against tools/rate/LightFrameRater.py, which always
+    // compares frames of the same exposure time separately. Two exposure
+    // groups, each internally evenly spaced by background (only
+    // `background` contributes -- no provider), so each group's own z-score
+    // magnitude is exactly sqrt(2/3) (the 3-point evenly-spaced case).
+    //
+    // Group "short" (5s): backgrounds 10, 20, 30 -> S1 (10) is this group's
+    // BEST frame (lowest background).
+    // Group "long" (50s): backgrounds 1000, 1010, 1020 -> L1 (1000) is this
+    // group's BEST frame too, despite every one of its backgrounds being
+    // far higher than the whole "short" group -- if z-scoring were (wrongly)
+    // computed across the full 6-frame batch, L1 would come out as one of
+    // the WORST frames overall (its background is high relative to the
+    // pooled mean), not tied for best. Per-exposure-group scoring must give
+    // L1 the same best-in-group score as S1, not the globally-pooled one.
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.addLightFrame(
+        relativePath: "sessions/G/2026-01-01/lights/S1.fit", target: "G",
+        pixels: Array(repeating: 10, count: 4), width: 2, height: 2, exptime: 5.0
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/G/2026-01-01/lights/S2.fit", target: "G",
+        pixels: Array(repeating: 20, count: 4), width: 2, height: 2, exptime: 5.0
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/G/2026-01-01/lights/S3.fit", target: "G",
+        pixels: Array(repeating: 30, count: 4), width: 2, height: 2, exptime: 5.0
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/G/2026-01-01/lights/L1.fit", target: "G",
+        pixels: Array(repeating: 1000, count: 4), width: 2, height: 2, exptime: 50.0
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/G/2026-01-01/lights/L2.fit", target: "G",
+        pixels: Array(repeating: 1010, count: 4), width: 2, height: 2, exptime: 50.0
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/G/2026-01-01/lights/L3.fit", target: "G",
+        pixels: Array(repeating: 1020, count: 4), width: 2, height: 2, exptime: 50.0
+    )
+
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: nil)
+    let results = try rater.rate(target: "G")
+
+    #expect(results.count == 6)
+    let byPath = Dictionary(uniqueKeysWithValues: results.map { ($0.path, $0) })
+    // sqrt(3/2): the z-score magnitude for any 3-point evenly-spaced set,
+    // regardless of the absolute spacing (10 here) -- same constant as
+    // `scoringOrientationAndOutlierDetection`'s.
+    let expectedMagnitude = (3.0 / 2.0).squareRoot()
+
+    // Best-in-group frames (S1, L1) tie at the same top score...
+    #expect(abs(byPath["sessions/G/2026-01-01/lights/S1.fit"]!.score - expectedMagnitude) < 0.0001)
+    #expect(abs(byPath["sessions/G/2026-01-01/lights/L1.fit"]!.score - expectedMagnitude) < 0.0001)
+    // ...middle frames (S2, L2) both score ~0...
+    #expect(abs(byPath["sessions/G/2026-01-01/lights/S2.fit"]!.score - 0) < 0.0001)
+    #expect(abs(byPath["sessions/G/2026-01-01/lights/L2.fit"]!.score - 0) < 0.0001)
+    // ...and worst-in-group frames (S3, L3) tie at the same bottom score --
+    // none of this would hold if L1/L2/L3 were z-scored against the pooled
+    // "short" + "long" background values instead of within their own group.
+    #expect(abs(byPath["sessions/G/2026-01-01/lights/S3.fit"]!.score - (-expectedMagnitude)) < 0.0001)
+    #expect(abs(byPath["sessions/G/2026-01-01/lights/L3.fit"]!.score - (-expectedMagnitude)) < 0.0001)
+}
+
+@Test func scoringTreatsFramesWithoutExptimeAsTheirOwnSharedGroup() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    // No exptime set for any of these -- must all land in one shared group
+    // (not each its own singleton, which would force every score to 0).
+    try fixture.addLightFrame(
+        relativePath: "sessions/H/2026-01-01/lights/A.fit", target: "H",
+        pixels: Array(repeating: 50, count: 4), width: 2, height: 2
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/H/2026-01-01/lights/B.fit", target: "H",
+        pixels: Array(repeating: 100, count: 4), width: 2, height: 2
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/H/2026-01-01/lights/C.fit", target: "H",
+        pixels: Array(repeating: 150, count: 4), width: 2, height: 2
+    )
+
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: nil)
+    let results = try rater.rate(target: "H")
+
+    #expect(results.count == 3)
+    let expectedMagnitude = (3.0 / 2.0).squareRoot()
+    let byPath = Dictionary(uniqueKeysWithValues: results.map { ($0.path, $0) })
+    #expect(abs(byPath["sessions/H/2026-01-01/lights/A.fit"]!.score - expectedMagnitude) < 0.0001)
+    #expect(abs(byPath["sessions/H/2026-01-01/lights/B.fit"]!.score - 0) < 0.0001)
+    #expect(abs(byPath["sessions/H/2026-01-01/lights/C.fit"]!.score - (-expectedMagnitude)) < 0.0001)
 }
 
 // MARK: - Rater: workDir isolation

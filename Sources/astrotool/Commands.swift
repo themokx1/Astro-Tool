@@ -65,6 +65,8 @@ func describeAstroError(_ error: AstroError) -> String {
         return "database error: \(message)"
     case .sirilNotFound(let path):
         return "siril not found at \(path)"
+    case .invalidInput(let reason):
+        return "invalid input: \(reason)"
     }
 }
 
@@ -498,20 +500,6 @@ private func printSessionCalibration(_ sc: SessionCalibration) {
 
 // MARK: - new-session
 
-private let newSessionReadmeTemplate = """
-Camera:
-Sensor temp:
-Gain/Offset:
-Exposure (lights):
-Filter:
-Optics:
-Mount:
-Guiding:
-Total integration:
-Location/Bortle:
-Notes/issues:
-"""
-
 func cmdNewSession(_ args: [String]) throws -> Int32 {
     let specs = [
         FlagSpec("--catalog", takesValue: true),
@@ -531,28 +519,25 @@ func cmdNewSession(_ args: [String]) throws -> Int32 {
         return 1
     }
 
-    // New sessions must use the canonical YYYY-MM-DD form -- a run-suffix
-    // ("-2"), date-range, or labeled variant only ever makes sense for a
-    // date directory that already exists.
-    guard let parsedDate = SessionDateParser.parse(date), parsedDate.isCanonical else {
-        eprint("error: invalid date '\(date)': new sessions require a canonical YYYY-MM-DD date")
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    try ensureRootAccessible(config)
+    let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+
+    let result: SessionCreator.Result
+    do {
+        result = try SessionCreator.create(root: root, catalogRaw: catalog, nameRaw: name, date: date)
+    } catch AstroError.invalidInput(let reason) {
+        eprint("error: \(reason)")
         eprint(usageText)
         return 1
     }
 
-    let config = try resolveConfig(rootFlag: parsed.value("--root"))
-    try ensureRootAccessible(config)
-    let writeGuard = makeWriteGuard(config: config)
-
-    let target = Sanitizer.makeTarget(catalog: catalog, name: name)
-    let created = try writeGuard.createSessionTree(target: target, dateDir: date, readme: newSessionReadmeTemplate)
-
     if parsed.has("--json") {
-        try printJSON(["created": created.map { $0.path }])
+        try printJSON(["created": result.createdURLs.map { $0.path }])
     } else {
-        let sessionDir = writeGuard.root
+        let sessionDir = root
             .appendingPathComponent("sessions", isDirectory: true)
-            .appendingPathComponent(target, isDirectory: true)
+            .appendingPathComponent(result.targetFolder, isDirectory: true)
             .appendingPathComponent(date, isDirectory: true)
         print("created: \(sessionDir.path)")
     }

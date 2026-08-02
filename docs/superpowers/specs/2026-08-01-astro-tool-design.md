@@ -35,15 +35,47 @@ Konvenciók forrása: a repo `PROMPT.md`-je (célpont-sanitize, `YYYY-MM-DD` dá
 session/stack/processed/calibration_library elrendezés, kalibrációs
 `<exp>sec_<temp>deg` nevek, README.txt mezők).
 
-**Verifikálandó, amint a `/Volumes/images` TCC-engedélye megvan** (jelenleg
-"Operation not permitted" a Claude folyamatnak):
+**Verifikálva (2026-08-02)**, miután a `/Volumes/images` TCC-engedélye
+megérkezett és a valódi `add_new_session.sh` + `tools/rate/LightFrameRater.py`
+elolvasható lett:
 
-- `add_new_session.sh` tényleges sanitize/dátum/README logikája ↔ a portolt
-  `NewSession` modul (a specbeli szabályok a PROMPT.md-ből származnak);
-- `tools/rate/` képességei — építünk-e rá; addig a saját hibrid pontozás készül,
-  és a döntést a spec függelékében dokumentáljuk, ha megnéztük;
-- a régi audit tool riportjai (`/Volumes/images/.astro_audit_reports/`) —
-  formátum-ötletek.
+- **`sanitize()`**: a valós script sorrendje `tr ' ' '_'` ELŐSZÖR, utána
+  `tr -cd 'A-Za-z0-9._-'` — a nem engedélyezett karakterek TÖRLŐDNEK, nem
+  `_`-ra cserélődnek (a portolt `Sanitizer` korábban tévesen cserélt).
+  Javítva: `Sources/AstroCore/NewSession/Sanitizer.swift` +
+  `SanitizerTests.swift` (`"a///b   c"` → `"ab_c"`, nem `"a_b_c"`).
+- **Session-fa**: a script minden új sessionhöz a teljes
+  `sessions/<T>/<D>/{lights,flats,darks,biases}` + `README.txt` mellett
+  `stacks/<T>/<D>/`-t és `processed/<T>/<D>/`-t is létrehoz, és biztosítja a
+  bázis-mappákat (`sessions/`, `stacks/<T>`, `processed/<T>`,
+  `calibration_library/{darks,flats,biases}`) — mkdir -p szemantikával.
+  Javítva: `WriteGuard.createSessionTree` bővítve; új
+  `Sources/AstroCore/NewSession/SessionCreator.swift` fogja össze a
+  sanitize+dátum-validáció+README+fa-létrehozás logikát egy helyen (a CLI
+  `new-session` és az app `AppState.createSession` mostantól ezt hívja,
+  nem duplikálja).
+- **README.txt sablon**: a valós script pontos szövege (fejléc, "Folder map",
+  "Fill in metadata", "Calibration reminder" szakaszok) most szó szerint a
+  `SessionCreator`-ban van, interpolációkkal (`target_folder`, `target_raw`,
+  `catalog_raw`, dátum, létrehozási időbélyeg).
+- **`tools/rate/LightFrameRater.py`**: döntés — **egymás mellett élnek**, nem
+  egymást helyettesítik. Az `astrotool rate` gyors, DB-hátterű indexelés
+  exportálható JSON-nal és per-exponálási-csoport z-score-okkal (lásd alább);
+  a `LightFrameRater` a részletes, stack előtti triázs-eszköz (Stack/Review/
+  Reject mappák Best/Good/Ok alkategóriákkal). Ezek a kimenetek szándékos
+  tool-kimenetek, nem rendetlenség — az audit motor `tool-output` kategóriával
+  ismeri fel őket (`AstroConfig.toolOutputDirNames`,
+  `Sources/AstroCore/Audit/Rules.swift`'s `ToolOutputRule`), és a
+  `noncanonical-subdir`/`assets-without-date`/`loose-frames-in-date-dir`
+  szabályok kifejezetten kihagyják ezeket.
+- **Pontozás per exponálási csoport**: a `LightFrameRater` fixen külön
+  hasonlítja össze az azonos expozíciós idejű képeket ("Azonos expo idok
+  kulon osszehasonlitasa. Ez fixen be van kapcsolva.") — ezt a viselkedést a
+  saját `Rater` is átvette: a z-score-ok mostantól exptime-csoporton belül
+  (0.1s-re kerekítve; exptime nélküli képek egy közös csoportot alkotnak)
+  számolódnak, nem a teljes batch-en át.
+- A régi audit tool riportjai (`/Volumes/images/.astro_audit_reports/`) —
+  formátum-ötletek gyűjtve, nem épült rájuk közvetlen függőség.
 
 ## 3. Architektúra
 

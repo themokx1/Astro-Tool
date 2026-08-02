@@ -99,6 +99,13 @@ enum Fixtures {
         try makeFile("stacks/M42_Orion/2026-01-17/.DS_Store")
         try makeFile("stacks/M42_Orion/2026-01-17/process/leftover.tmp")
 
+        // MARK: Known tool-output dirs from the coexisting
+        // tools/rate/LightFrameRater.py triage tool -- Stack/Review/Reject
+        // (with Best/Good/Ok subdirs) inside a session's lights/ folder.
+        // These are intentional tool outputs, not mess -- the audit engine
+        // must recognize them as `tool-output`, not flag them as suspicious.
+        try makeFile("sessions/T/2026-01-10/lights/Stack/Best/x.fit")
+
         // MARK: Decoys that MUST be excluded from every scan.
         try makeFile("tools/setiastro/test.fits")
         try makeFile(".astro_tool/astrotool.sqlite-decoy.txt")

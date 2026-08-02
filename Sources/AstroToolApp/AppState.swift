@@ -208,6 +208,8 @@ final class AppState: @unchecked Sendable {
             return "Írás nem engedélyezett: \(path)"
         case .sirilNotFound(let path):
             return "Siril nem található itt: \(path)"
+        case .invalidInput(let reason):
+            return "Érvénytelen bemenet: \(reason)"
         }
     }
 
@@ -412,25 +414,12 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - New session
 
-    private nonisolated static let sessionReadmeTemplate = """
-    Camera:
-    Sensor temp:
-    Gain/Offset:
-    Exposure (lights):
-    Filter:
-    Optics:
-    Mount:
-    Guiding:
-    Total integration:
-    Location/Bortle:
-    Notes/issues:
-    """
-
-    /// Creates `sessions/<sanitize(catalog)_sanitize(name)>/<date>/...`.
-    /// `date` must already be a canonical `YYYY-MM-DD` string -- callers
-    /// (`NewSessionSheet`) are expected to validate via `SessionDateParser`
-    /// before enabling the "Létrehozás" button, but this re-validates so the
-    /// guard holds even if called from elsewhere.
+    /// Creates `sessions/<sanitize(catalog)_sanitize(name)>/<date>/...` (plus
+    /// the matching `stacks`/`processed`/`calibration_library` entries) via
+    /// `SessionCreator`. `date` must already be a canonical `YYYY-MM-DD`
+    /// string -- callers (`NewSessionSheet`) are expected to validate via
+    /// `SessionDateParser` before enabling the "Létrehozás" button, but this
+    /// re-validates so the guard holds even if called from elsewhere.
     func createSession(catalog: String, name: String, date: String) {
         guard let parsedDate = SessionDateParser.parse(date), parsedDate.isCanonical else {
             lastError = "Érvénytelen dátum: \(date) (YYYY-MM-DD formátum szükséges)"
@@ -441,20 +430,19 @@ final class AppState: @unchecked Sendable {
             return
         }
 
-        let cfg = config
-        let target = Sanitizer.makeTarget(catalog: catalog, name: name)
-        let writeGuard = WriteGuard(root: URL(fileURLWithPath: cfg.rootPath, isDirectory: true))
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
 
         let opID = beginOperation("Session létrehozása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let created = try await Task.detached(priority: .userInitiated) {
-                    try writeGuard.createSessionTree(target: target, dateDir: date, readme: Self.sessionReadmeTemplate)
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try SessionCreator.create(root: root, catalogRaw: catalog, nameRaw: name, date: date)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.progressText = "Session létrehozva: \(target)/\(date)"
-                if let dirURL = created.first?.deletingLastPathComponent() {
+                self.progressText = "Session létrehozva: \(result.targetFolder)/\(date)"
+                if let lightsDir = result.createdURLs.first(where: { $0.lastPathComponent == "lights" }) {
+                    let dirURL = lightsDir.deletingLastPathComponent()
                     self.lastCreatedSessionDir = dirURL
                     NSWorkspace.shared.activateFileViewerSelecting([dirURL])
                 }

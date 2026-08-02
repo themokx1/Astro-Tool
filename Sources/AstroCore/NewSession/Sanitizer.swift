@@ -2,16 +2,26 @@
 /// names created by the GUI/CLI follow the exact same convention as the
 /// existing library (`<TARGET> = sanitize(<catalog>)_sanitize(<name>)`).
 public enum Sanitizer {
-    /// Rules: whitespace and any character outside `[A-Za-z0-9._-]` become
-    /// `_`; runs of `_` collapse to a single `_`; `_` is trimmed from both
-    /// ends.
+    /// Ground-truth rules, verified against the real script's `sanitize()`:
+    /// `tr ' ' '_'` FIRST (only the literal space character becomes `_`),
+    /// THEN `tr -cd 'A-Za-z0-9._-'` -- every other character outside that
+    /// allow-list is DELETED, not replaced with `_` (e.g. `"a///b   c"` ->
+    /// `"a///b___c"` -> `"ab___c"` -- not `"a_b_c"`). Finally, runs of `_`
+    /// collapse to a single `_`, and `_` is trimmed from both ends.
     public static func sanitize(_ s: String) -> String {
-        var replaced = ""
-        replaced.reserveCapacity(s.count)
+        var spaceReplaced = ""
+        spaceReplaced.reserveCapacity(s.count)
         for ch in s {
-            replaced.append(isAllowed(ch) ? ch : "_")
+            spaceReplaced.append(ch == " " ? "_" : ch)
         }
-        return trimUnderscores(collapseUnderscores(replaced))
+
+        var filtered = ""
+        filtered.reserveCapacity(spaceReplaced.count)
+        for ch in spaceReplaced where isAllowed(ch) {
+            filtered.append(ch)
+        }
+
+        return trimUnderscores(collapseUnderscores(filtered))
     }
 
     /// `<TARGET>` = `sanitize(<catalog>)_sanitize(<name>)`.

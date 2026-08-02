@@ -139,10 +139,42 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
     let engine = AuditEngine(config: fixture.config, db: fixture.db)
     let (_, all) = try engine.run()
 
+    // `light_frame_rating_report_assets` is a known tool-output dir name
+    // (tools/rate/LightFrameRater.py's report bundle) -- it must no longer
+    // be flagged by assets-without-date; ToolOutputRule owns it now (see
+    // auditFindsToolOutputDirs below).
     let hits = findings(all, category: "assets-without-date")
-    #expect(hits.contains {
-        $0.path == "stacks/NGC2237_Rosette_Nebula/light_frame_rating_report_assets" && $0.severity == .suspicious
-    })
+    #expect(!hits.contains { $0.path == "stacks/NGC2237_Rosette_Nebula/light_frame_rating_report_assets" })
+}
+
+@Test func auditFindsToolOutputDirs() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    let engine = AuditEngine(config: fixture.config, db: fixture.db)
+    let (_, all) = try engine.run()
+
+    let hits = findings(all, category: "tool-output")
+
+    // The report-assets dir under stacks/ -- previously assets-without-date.
+    let assetsHit = try #require(hits.first { $0.path == "stacks/NGC2237_Rosette_Nebula/light_frame_rating_report_assets" })
+    #expect(assetsHit.severity == .probablyIntentional)
+    #expect(assetsHit.suggestion == nil)
+
+    // The LightFrameRater Stack/Best triage dir nested inside a session's
+    // lights/ folder -- only the topmost matched dir ("Stack") is flagged,
+    // not "Best" too, and it must never show up as suspicious elsewhere.
+    let stackHit = try #require(hits.first { $0.path == "sessions/T/2026-01-10/lights/Stack" })
+    #expect(stackHit.severity == .probablyIntentional)
+    #expect(stackHit.suggestion == nil)
+    #expect(!hits.contains { $0.path == "sessions/T/2026-01-10/lights/Stack/Best" })
+
+    #expect(hits.allSatisfy { $0.severity == .probablyIntentional && $0.suggestion == nil })
+
+    // Never flagged as suspicious by any other rule.
+    let allSuspiciousPaths = Set(all.filter { $0.severity == .suspicious }.map(\.path))
+    #expect(!allSuspiciousPaths.contains("sessions/T/2026-01-10/lights/Stack"))
+    #expect(!allSuspiciousPaths.contains("stacks/NGC2237_Rosette_Nebula/light_frame_rating_report_assets"))
 }
 
 @Test func auditGroupsSimilarTargetNames() throws {

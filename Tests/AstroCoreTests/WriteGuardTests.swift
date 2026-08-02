@@ -17,12 +17,17 @@ private func makeTempRoot() throws -> URL {
     let created = try guardian.createSessionTree(target: "M31", dateDir: "2026-01-01", readme: "hello session")
 
     let fm = FileManager.default
+
+    func expectDir(_ relativePath: String) {
+        var isDir: ObjCBool = false
+        let path = root.appendingPathComponent(relativePath).path
+        #expect(fm.fileExists(atPath: path, isDirectory: &isDir), "expected directory at \(relativePath)")
+        #expect(isDir.boolValue)
+    }
+
     let sessionDir = root.appendingPathComponent("sessions/M31/2026-01-01", isDirectory: true)
     for sub in ["lights", "flats", "darks", "biases"] {
-        var isDir: ObjCBool = false
-        let path = sessionDir.appendingPathComponent(sub).path
-        #expect(fm.fileExists(atPath: path, isDirectory: &isDir))
-        #expect(isDir.boolValue)
+        expectDir("sessions/M31/2026-01-01/\(sub)")
     }
 
     let readmeURL = sessionDir.appendingPathComponent("README.txt")
@@ -30,7 +35,17 @@ private func makeTempRoot() throws -> URL {
     let contents = try String(contentsOf: readmeURL, encoding: .utf8)
     #expect(contents == "hello session")
 
-    #expect(created.count == 5)
+    // Full tree per the real add_new_session.sh: stacks/<T>/<D>,
+    // processed/<T>/<D>, plus the ensured calibration_library subdirs.
+    expectDir("stacks/M31/2026-01-01")
+    expectDir("processed/M31/2026-01-01")
+    expectDir("calibration_library/darks")
+    expectDir("calibration_library/flats")
+    expectDir("calibration_library/biases")
+
+    // 4 session role dirs + README + stacks date dir + processed date dir
+    // + 3 calibration_library subdirs = 10.
+    #expect(created.count == 10)
     for url in created {
         #expect(fm.fileExists(atPath: url.path))
     }

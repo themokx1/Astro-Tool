@@ -65,6 +65,7 @@ public final class AuditEngine {
             CalibInWrongDirRule(),
             EmptyTargetComponentRule(),
             LooseFramesInDateDirRule(),
+            ToolOutputRule(),
         ]
     }
 

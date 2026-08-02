@@ -110,6 +110,12 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var excludedPaths: [String]
     public var residuePatterns: [String]
     public var residueDirNames: [String]
+    /// Directory names (case-sensitive match on the path component) that are
+    /// known outputs of coexisting tools -- currently `tools/rate/
+    /// LightFrameRater.py`'s `Stack`/`Review`/`Reject` triage folders and its
+    /// `light_frame_rating_report_assets` report bundle. The audit engine
+    /// recognizes these instead of flagging them as suspicious.
+    public var toolOutputDirNames: [String]
     public var intentional: IntentionalPatterns
     public var wideField: WideFieldRule
     public var calib: CalibRule
@@ -121,6 +127,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         excludedPaths: [String] = [],
         residuePatterns: [String] = ["*.seq", "*.lst", "*_conv*", "*_bkg*", "*_pp_*", "r_*", "bkg_*", ".DS_Store"],
         residueDirNames: [String] = ["process"],
+        toolOutputDirNames: [String] = ["Stack", "Review", "Reject", "light_frame_rating_report_assets"],
         intentional: IntentionalPatterns = IntentionalPatterns(),
         wideField: WideFieldRule = WideFieldRule(),
         calib: CalibRule = CalibRule(),
@@ -131,6 +138,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.excludedPaths = excludedPaths
         self.residuePatterns = residuePatterns
         self.residueDirNames = residueDirNames
+        self.toolOutputDirNames = toolOutputDirNames
         self.intentional = intentional
         self.wideField = wideField
         self.calib = calib
@@ -138,7 +146,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case rootPath, excludedDirNames, excludedPaths, residuePatterns, residueDirNames
+        case rootPath, excludedDirNames, excludedPaths, residuePatterns, residueDirNames, toolOutputDirNames
         case intentional, wideField, calib, rating
     }
 
@@ -150,6 +158,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.excludedPaths = try container.decodeIfPresent([String].self, forKey: .excludedPaths) ?? defaults.excludedPaths
         self.residuePatterns = try container.decodeIfPresent([String].self, forKey: .residuePatterns) ?? defaults.residuePatterns
         self.residueDirNames = try container.decodeIfPresent([String].self, forKey: .residueDirNames) ?? defaults.residueDirNames
+        self.toolOutputDirNames = try container.decodeIfPresent([String].self, forKey: .toolOutputDirNames) ?? defaults.toolOutputDirNames
         self.intentional = try container.decodeIfPresent(IntentionalPatterns.self, forKey: .intentional) ?? defaults.intentional
         self.wideField = try container.decodeIfPresent(WideFieldRule.self, forKey: .wideField) ?? defaults.wideField
         self.calib = try container.decodeIfPresent(CalibRule.self, forKey: .calib) ?? defaults.calib

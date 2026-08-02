@@ -14,7 +14,11 @@ import Testing
 }
 
 @Test func sanitizeDropsDisallowedCharactersAndCollapsesRuns() {
-    #expect(Sanitizer.sanitize("a///b   c") == "a_b_c")
+    // Ground truth (`add_new_session.sh`'s `sanitize()`): `tr ' ' '_'` FIRST,
+    // then `tr -cd 'A-Za-z0-9._-'` -- disallowed characters are DELETED, not
+    // replaced with `_`. So "a///b   c" -> (spaces -> _) "a///b___c" ->
+    // (delete "/") "ab___c" -> (collapse "_+") "ab_c" -- NOT "a_b_c".
+    #expect(Sanitizer.sanitize("a///b   c") == "ab_c")
 }
 
 @Test func sanitizeOfEmptyStringIsEmpty() {

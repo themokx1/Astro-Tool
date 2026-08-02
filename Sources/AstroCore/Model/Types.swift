@@ -51,4 +51,8 @@ public enum AstroError: Error, Equatable {
     case databaseError(String)
     case writeForbidden(path: String)
     case sirilNotFound(path: String)
+    /// A caller-supplied value (e.g. `new-session`'s catalog/name/date) fails
+    /// validation before any filesystem write is attempted -- the associated
+    /// string explains what was wrong.
+    case invalidInput(String)
 }

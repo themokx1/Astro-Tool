@@ -8,7 +8,39 @@ történik.
 
 ## [Unreleased]
 
+### Added
+
+- **Session-létrehozás**: új `Sources/AstroCore/NewSession/SessionCreator.swift`
+  fogja össze a sanitize+dátum-validáció+README+könyvtárfa-létrehozás logikát
+  egy helyen — a CLI `new-session` és a SwiftUI app `AppState.createSession`
+  mostantól ezt hívja a korábbi, egymástól függetlenül duplikált logika
+  helyett. A generált `README.txt` a valós `add_new_session.sh` szó szerinti
+  szövegét követi (fejléc, "Folder map", "Fill in metadata", "Calibration
+  reminder" szakaszok).
+- **Audit**: új `tool-output` szabály és `AstroConfig.toolOutputDirNames`
+  (alapértelmezés: `Stack`, `Review`, `Reject`,
+  `light_frame_rating_report_assets`) — a `tools/rate/LightFrameRater.py`
+  triázs-eszköz ismert kimeneti mappáit `probablyIntentional` súlyossággal,
+  "ismert tool-kimenet" üzenettel jelzi, ahelyett hogy a
+  `noncanonical-subdir`/`assets-without-date`/`loose-frames-in-date-dir`
+  szabályok gyanúsként megjelölnék.
+
 ### Javítva
+
+- **Ground-truth verifikáció**: a valós `add_new_session.sh` elolvasása után
+  kiderült, hogy a `sanitize()` a nem engedélyezett karaktereket TÖRLI
+  (`tr -cd 'A-Za-z0-9._-'`), nem `_`-ra cseréli — a portolt `Sanitizer`
+  javítva erre a szemantikára (`"a///b   c"` → `"ab_c"`, nem `"a_b_c"`).
+- `WriteGuard.createSessionTree` mostantól a script tényleges teljes fáját
+  hozza létre: a `sessions/<T>/<D>/{lights,flats,darks,biases}` + `README.txt`
+  mellett `stacks/<T>/<D>/`-t és `processed/<T>/<D>/`-t is, és mkdir -p
+  szemantikával biztosítja a bázis-mappákat
+  (`calibration_library/{darks,flats,biases}`).
+- **Pontozás (rate)**: a z-score-ok mostantól exponálási csoportonként (FITS
+  `EXPTIME`, 0.1s-re kerekítve; expozíció nélküli képek egy közös csoportot
+  alkotnak) számolódnak a teljes batch helyett, ugyanúgy, ahogy a bevált
+  `tools/rate/LightFrameRater.py` mindig fixen külön hasonlítja össze az
+  azonos expozíciós idejű képeket.
 
 - Valós-könyvtár keménység (R1): a `PathClassifier` helyesen kezeli a sekély
   útvonalakat (`sessions/.DS_Store`, `sessions/<target>/.DS_Store` stb.) —

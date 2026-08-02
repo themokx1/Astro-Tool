@@ -31,15 +31,21 @@ public struct FrameScore: Codable, Sendable {
 ///
 /// ## Scoring
 /// Once every frame in the batch has native + (optional) star metrics on
-/// record, each metric is z-scored *within this batch* (mean/std over the
-/// frames that have a value for it), oriented so higher-is-better (FWHM and
-/// background are negated), weighted by `config.rating.weights`, and
-/// averaged over only the metrics actually available for that frame (i.e.
-/// weights are renormalized per frame rather than assuming all four are
-/// always present — a `nil` provider means only `background` contributes).
-/// A frame is `isOutlier` when its score falls more than
-/// `config.rating.outlierZScore` below zero (only the "worse than the
-/// batch" direction is flagged).
+/// record, frames are first split into exposure groups -- fits_meta
+/// `exptime` rounded to 0.1s, with every frame lacking an `exptime` sharing
+/// one common group -- mirroring the proven `tools/rate/LightFrameRater.py`
+/// triage tool, which always compares frames of the same exposure time
+/// separately rather than pooling the whole session. Within each group,
+/// each metric is z-scored (mean/std over the frames *in that group* that
+/// have a value for it), oriented so higher-is-better (FWHM and background
+/// are negated), weighted by `config.rating.weights`, and averaged over
+/// only the metrics actually available for that frame (i.e. weights are
+/// renormalized per frame rather than assuming all four are always present
+/// — a `nil` provider means only `background` contributes). A frame is
+/// `isOutlier` when its score falls more than `config.rating.outlierZScore`
+/// below zero (only the "worse than its group" direction is flagged). A
+/// group with a single frame gets `z == 0` for every metric (the usual
+/// std-is-zero guard), same as a batch-wide singleton always did.
 ///
 /// ## Concurrency
 /// Processing is strictly sequential for this version.
@@ -81,7 +87,7 @@ public final class Rater {
 
         let total = frames.count
         var done = 0
-        var rated: [(file: FileRecord, record: RatingRecord)] = []
+        var rated: [(file: FileRecord, record: RatingRecord, exptime: Double?)] = []
         rated.reserveCapacity(frames.count)
 
         let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
@@ -93,10 +99,13 @@ public final class Rater {
             }
             guard let fileID = file.id else { continue }
 
+            // Needed for exposure-group scoring regardless of cache hit/miss.
+            let exptime = try db.fitsMeta(fileID: fileID)?.exptime
+
             let inputSig = "\(file.size)-\(Int(file.mtime.rounded()))"
 
             if let cached = try db.rating(fileID: fileID), cached.inputSig == inputSig {
-                rated.append((file, cached))
+                rated.append((file, cached, exptime))
                 continue
             }
 
@@ -136,7 +145,7 @@ public final class Rater {
                 inputSig: inputSig
             )
             try db.upsertRating(record)
-            rated.append((file, record))
+            rated.append((file, record, exptime))
         }
 
         guard !rated.isEmpty else { return [] }
@@ -151,7 +160,40 @@ public final class Rater {
         var std: Double
     }
 
-    private func score(_ rated: [(file: FileRecord, record: RatingRecord)]) throws -> [FrameScore] {
+    /// Which exposure group a frame belongs to for scoring purposes: exptime
+    /// rounded to the nearest 0.1s, or `.unknown` -- one single shared group
+    /// for every frame with no `exptime` at all (not one singleton group
+    /// each, which would force every such frame's z-score to 0).
+    private enum ExposureGroupKey: Hashable {
+        case exptime(Int)
+        case unknown
+    }
+
+    private static func exposureGroupKey(_ exptime: Double?) -> ExposureGroupKey {
+        guard let exptime else { return .unknown }
+        return .exptime(Int((exptime * 10).rounded()))
+    }
+
+    /// Splits `rated` into exposure groups (see `ExposureGroupKey`) and
+    /// scores each group independently, so a frame's z-scores only ever
+    /// compare it against other frames shot at the same exposure time.
+    private func score(_ rated: [(file: FileRecord, record: RatingRecord, exptime: Double?)]) throws -> [FrameScore] {
+        var groups: [ExposureGroupKey: [(file: FileRecord, record: RatingRecord)]] = [:]
+        for entry in rated {
+            let key = Self.exposureGroupKey(entry.exptime)
+            groups[key, default: []].append((entry.file, entry.record))
+        }
+
+        var results: [FrameScore] = []
+        results.reserveCapacity(rated.count)
+        for groupRated in groups.values {
+            results.append(contentsOf: try scoreGroup(groupRated))
+        }
+
+        return results.sorted { $0.score > $1.score }
+    }
+
+    private func scoreGroup(_ rated: [(file: FileRecord, record: RatingRecord)]) throws -> [FrameScore] {
         let weights = config.rating.weights
 
         let fwhmStats = Self.metricStats(rated.compactMap { $0.record.fwhm })

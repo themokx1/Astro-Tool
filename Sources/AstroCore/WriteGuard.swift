@@ -21,12 +21,19 @@ public struct WriteGuard: Sendable {
         root.appendingPathComponent(".astro_tool", isDirectory: true)
     }
 
-    /// Creates `sessions/<target>/<dateDir>/{lights,flats,darks,biases}` plus
-    /// a `README.txt` under the new date directory, and returns the created
-    /// URLs (subdirectories first, then the README). Throws
-    /// `AstroError.writeForbidden` if `target`/`dateDir` are not valid single
-    /// path components, or if the date directory already exists — this call
-    /// only ever creates a brand-new session tree, never overwrites one.
+    /// Creates the full session tree the real `add_new_session.sh` builds
+    /// for a brand-new session -- `sessions/<target>/<dateDir>/
+    /// {lights,flats,darks,biases}` plus a `README.txt` under the new date
+    /// directory, `stacks/<target>/<dateDir>/`, `processed/<target>/
+    /// <dateDir>/`, and (mkdir -p semantics -- fine if they already exist)
+    /// the base `calibration_library/{darks,flats,biases}` directories.
+    /// Returns every directory/file this call created or ensured existed.
+    /// Throws `AstroError.writeForbidden` if `target`/`dateDir` are not valid
+    /// single path components, or if the *session* date directory already
+    /// exists — this call only ever creates a brand-new session, never
+    /// overwrites one; the sibling `stacks`/`processed`/
+    /// `calibration_library` directories are ensured with mkdir -p semantics
+    /// and are never themselves treated as a conflict.
     @discardableResult
     public func createSessionTree(
         target: String,
@@ -47,12 +54,16 @@ public struct WriteGuard: Sendable {
         }
 
         var created: [URL] = []
-        for sub in ["lights", "flats", "darks", "biases"] {
-            let dirURL = sessionDir.appendingPathComponent(sub, isDirectory: true)
-            try Self.classifyingPermissionErrors(path: dirURL.path) {
-                try fm.createDirectory(at: dirURL, withIntermediateDirectories: true)
+
+        func ensureDir(_ url: URL) throws {
+            try Self.classifyingPermissionErrors(path: url.path) {
+                try fm.createDirectory(at: url, withIntermediateDirectories: true)
             }
-            created.append(dirURL)
+            created.append(url)
+        }
+
+        for sub in ["lights", "flats", "darks", "biases"] {
+            try ensureDir(sessionDir.appendingPathComponent(sub, isDirectory: true))
         }
 
         let readmeURL = sessionDir.appendingPathComponent("README.txt", isDirectory: false)
@@ -60,6 +71,23 @@ public struct WriteGuard: Sendable {
             try Data(readme.utf8).write(to: readmeURL, options: .withoutOverwriting)
         }
         created.append(readmeURL)
+
+        let stacksDateDir = root
+            .appendingPathComponent("stacks", isDirectory: true)
+            .appendingPathComponent(target, isDirectory: true)
+            .appendingPathComponent(dateDir, isDirectory: true)
+        try ensureDir(stacksDateDir)
+
+        let processedDateDir = root
+            .appendingPathComponent("processed", isDirectory: true)
+            .appendingPathComponent(target, isDirectory: true)
+            .appendingPathComponent(dateDir, isDirectory: true)
+        try ensureDir(processedDateDir)
+
+        let calibDir = root.appendingPathComponent("calibration_library", isDirectory: true)
+        for sub in ["darks", "flats", "biases"] {
+            try ensureDir(calibDir.appendingPathComponent(sub, isDirectory: true))
+        }
 
         return created
     }

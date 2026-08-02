@@ -257,6 +257,9 @@ public struct NoncanonicalSubdirRule: AuditRule {
             let name = comps[3]
             let lower = name.lowercased()
             guard !Self.canonicalRoleDirs.contains(lower), lower != "sessions" else { return nil }
+            // A known tool-output dir isn't a stray working folder --
+            // ToolOutputRule owns it instead.
+            guard !ctx.config.toolOutputDirNames.contains(name) else { return nil }
             guard lower.contains("collected") || lower.contains("mosaic") || lower.hasSuffix("_process") else { return nil }
 
             return Finding(
@@ -287,6 +290,10 @@ public struct AssetsWithoutDateRule: AuditRule {
 
             let name = comps[2]
             guard SessionDateParser.parse(name, patterns: ctx.config.intentional) == nil else { return nil }
+            // A known tool-output dir (e.g. LightFrameRater's report-assets
+            // bundle) isn't a mislabeled date folder -- ToolOutputRule owns
+            // it instead.
+            guard !ctx.config.toolOutputDirNames.contains(name) else { return nil }
 
             return Finding(
                 severity: .suspicious,
@@ -728,12 +735,17 @@ public struct LooseFramesInDateDirRule: AuditRule {
             guard file.area == .sessions, Self.frameRoles.contains(file.role) else { continue }
             guard let target = file.target, let date = file.sessionDate else { continue }
 
+            // A frame sitting under a known tool-output dir (e.g.
+            // LightFrameRater's Stack/Review/Reject triage) isn't loose --
+            // ToolOutputRule owns that dir instead.
+            let pathComponents = file.path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+            guard !pathComponents.contains(where: { ctx.config.toolOutputDirNames.contains($0) }) else { continue }
+
             // Path depth 4 (`sessions/<target>/<date>/<file>`) is exactly a
             // file sitting directly in the date dir -- one level deeper
             // (`.../<role>/<file>`, depth 5) is the canonical layout and
             // isn't this rule's concern.
-            let depth = file.path.split(separator: "/", omittingEmptySubsequences: true).count
-            guard depth == 4 else { continue }
+            guard pathComponents.count == 4 else { continue }
 
             let dirPath = "sessions/\(target)/\(date)"
             guard seen.insert(dirPath).inserted else { continue }
@@ -747,5 +759,47 @@ public struct LooseFramesInDateDirRule: AuditRule {
             ))
         }
         return findings
+    }
+}
+
+// MARK: - 15. tool-output
+
+/// A directory whose name (case-sensitive) matches one of
+/// `config.toolOutputDirNames` -- a known output of a coexisting tool, e.g.
+/// `tools/rate/LightFrameRater.py`'s `Stack`/`Review`/`Reject` triage folders
+/// (with `Best`/`Good`/`Ok` subdirs) inside a session's `lights/`, or its
+/// `light_frame_rating_report_assets` report bundle. Informational only --
+/// these are intentional tool outputs, not mess, and the
+/// noncanonical-subdir/assets-without-date/loose-frames-in-date-dir rules
+/// above all defer to this one instead of flagging them as suspicious. Only
+/// the top-most matched directory is reported -- nothing nested under it
+/// (e.g. `Stack/Best`) needs its own finding.
+public struct ToolOutputRule: AuditRule {
+    public let id = "tool-output"
+    public init() {}
+
+    public func evaluate(_ ctx: AuditContext) -> [Finding] {
+        var seen = Set<String>()
+        var offendingPaths: [String] = []
+
+        for dir in ctx.directories {
+            let components = dir.split(separator: "/").map(String.init)
+            guard let index = components.firstIndex(where: { ctx.config.toolOutputDirNames.contains($0) }) else { continue }
+            let offending = components[0...index].joined(separator: "/")
+            if seen.insert(offending).inserted {
+                offendingPaths.append(offending)
+            }
+        }
+
+        return offendingPaths.map { path in
+            let name = (path as NSString).lastPathComponent
+            return Finding(
+                severity: .probablyIntentional,
+                category: id,
+                path: path,
+                message: "\"\(name)\" ismert tool-kimenet (pl. a rate/LightFrameRater triázs-eszköz Stack/Review/Reject mappái vagy riport-melléklete).",
+                suggestion: nil
+            )
+        }
     }
 }
