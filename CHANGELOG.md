@@ -8,6 +8,8 @@ történik.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-02
+
 ### Added
 
 - **Session-részletes statisztika**: `astrotool stats --target T --sessions
