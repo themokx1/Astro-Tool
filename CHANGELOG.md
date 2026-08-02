@@ -8,6 +8,8 @@ történik.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-02
+
 ### Added
 
 - **`astrotool scan --refresh-meta`**: metaadat-backfill változatlan fájlokra —
