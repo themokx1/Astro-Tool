@@ -78,10 +78,14 @@ if ! codesign --force --deep --sign - "$APP" >/dev/null 2>&1; then
     echo "WARNING: codesign failed -- the app may refuse to launch (Gatekeeper)."
 fi
 
-echo "==> Installing to $INSTALL_DIR"
-mkdir -p "$INSTALL_DIR"
-rm -rf "$INSTALL_DIR/$APP_NAME.app"
-cp -R "$APP" "$INSTALL_DIR/$APP_NAME.app"
+if [ -z "${CI:-}" ]; then
+    echo "==> Installing to $INSTALL_DIR"
+    mkdir -p "$INSTALL_DIR"
+    rm -rf "$INSTALL_DIR/$APP_NAME.app"
+    cp -R "$APP" "$INSTALL_DIR/$APP_NAME.app"
+else
+    echo "==> CI detected, skipping local install to $INSTALL_DIR"
+fi
 
 echo "==> Staging astrotool CLI ($CLI_STAGE)"
 rm -rf "$CLI_STAGE"
@@ -89,11 +93,15 @@ mkdir -p "$CLI_STAGE"
 cp "$BIN_PATH/astrotool" "$CLI_STAGE/astrotool"
 chmod +x "$CLI_STAGE/astrotool"
 
-echo "==> Symlinking CLI onto PATH"
-mkdir -p "$BIN_DIR"
-ln -sf "$(pwd)/$CLI_STAGE/astrotool" "$BIN_DIR/astrotool"
-# NOTE: this points at build/astrotool-cli/astrotool inside the repo, not a
-# copy -- every `./build.sh` rerun refreshes the binary the symlink follows.
+if [ -z "${CI:-}" ]; then
+    echo "==> Symlinking CLI onto PATH"
+    mkdir -p "$BIN_DIR"
+    ln -sf "$(pwd)/$CLI_STAGE/astrotool" "$BIN_DIR/astrotool"
+    # NOTE: this points at build/astrotool-cli/astrotool inside the repo, not a
+    # copy -- every `./build.sh` rerun refreshes the binary the symlink follows.
+else
+    echo "==> CI detected, skipping CLI symlink into $BIN_DIR"
+fi
 
 echo "==> Building DMG (drag-to-Applications installer)"
 DMG_STAGE="$BUILD/dmg"

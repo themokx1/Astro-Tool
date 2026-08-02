@@ -30,7 +30,7 @@
 | T16 CLI | ✅ kész | 214 teszt zöld (203 T1-T15 + 11 új) |
 | T17 SwiftUI app | ✅ kész | 214 teszt zöld (UI-hoz nincs unit teszt); build+release build zöld, app elindul |
 | T18 build.sh + DMG | ✅ kész | 214 teszt zöld; build.sh: swift build -c release → AstroTool.app + astrotool CLI, ad-hoc codesign, DMG + CLI zip, ~/Applications install, ~/.local/bin/astrotool symlink; ikon icon/make_icon.swift-ből (CoreGraphics, determinisztikus csillagmező + mappa-motívum) |
-| T19 CI + README | – | |
+| T19 CI + README | ✅ kész | 214 teszt zöld; release.yml (macos-15, swift test → build.sh → gh release create), LICENSE (MIT), CHANGELOG.md (Keep-a-Changelog, 0.1.0), README.md; build.sh: `${CI:-}` guard az `~/Applications` install és `~/.local/bin` szimlink lépésekre |
 | T20 Pages + v0.1.0 | – | |
 | Review R1 (T6–T9) javítások | ✅ kész | 132 teszt zöld (124 + 8 új) |
 | Review R2 (T10–T15) javítások | ✅ | 203 teszt zöld (199 + 4 új) |
