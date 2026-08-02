@@ -4,9 +4,10 @@ import SwiftUI
 struct StatsView: View {
     @Environment(AppState.self) private var appState
     @State private var searchText: String = ""
+    @State private var selection: Row.ID?
 
     private struct Row: Identifiable {
-        let id = UUID()
+        var id: String { stats.target }
         let stats: TargetStats
     }
 
@@ -41,7 +42,7 @@ struct StatsView: View {
                 Text(lastError).foregroundStyle(.red)
             }
 
-            Table(rows) {
+            Table(rows, selection: $selection) {
                 TableColumn("Célpont") { row in Text(row.stats.target) }
                     .width(min: 160, ideal: 240)
                 TableColumn("Össz. integráció") { row in Text(formatDuration(row.stats.totalIntegrationSeconds)) }
@@ -59,9 +60,19 @@ struct StatsView: View {
                 Text(formatDuration(totalIntegrationSeconds))
                 Spacer()
             }
+
+            if let selection {
+                Divider()
+                SessionDetailPanel(target: selection, sessions: appState.sessionDetails, isBusy: appState.isBusy)
+            }
         }
         .onAppear {
             if appState.stats.isEmpty { appState.loadStats() }
+        }
+        .onChange(of: selection) { _, newValue in
+            if let newValue {
+                appState.loadSessionDetails(target: newValue)
+            }
         }
         .padding()
     }
@@ -69,5 +80,98 @@ struct StatsView: View {
     private func formatDuration(_ seconds: Double) -> String {
         let totalMinutes = Int((seconds / 60).rounded())
         return String(format: "%d:%02d", totalMinutes / 60, totalMinutes % 60)
+    }
+}
+
+/// Detail area shown under the target table once a row is selected: one
+/// block per session date-dir with the equipment signals `TargetStats`
+/// doesn't carry (focal length, camera, gain/ISO, sensor temp, filter).
+private struct SessionDetailPanel: View {
+    let target: String
+    let sessions: [SessionDetail]
+    let isBusy: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Session-ök — \(target)").font(.headline)
+
+            if isBusy && sessions.isEmpty {
+                ProgressView().controlSize(.small)
+            } else if sessions.isEmpty {
+                Text("Nincs session ehhez a célponthoz.").foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(sessions, id: \.dateRaw) { session in
+                            sessionRow(session)
+                            Divider()
+                        }
+                    }
+                }
+                .frame(maxHeight: 260)
+            }
+        }
+    }
+
+    private func sessionRow(_ session: SessionDetail) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(session.dateRaw).bold()
+                Text("(\(session.lightCount) light, \(session.flatCount) flat, \(session.darkCount) dark, \(session.biasCount) bias)")
+                    .foregroundStyle(.secondary)
+                if session.hasReadme {
+                    Text("README").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 2) {
+                GridRow {
+                    Text("Integráció:").foregroundStyle(.secondary)
+                    Text(formatDuration(session.integrationSeconds))
+                }
+                GridRow {
+                    Text("Expozíciók:").foregroundStyle(.secondary)
+                    Text(exposureSummary(session.exposureBreakdown))
+                }
+                GridRow {
+                    Text("Kamera:").foregroundStyle(.secondary)
+                    Text(session.cameras.isEmpty ? "-" : session.cameras.joined(separator: ", "))
+                }
+                GridRow {
+                    Text("Gyújtótávolság:").foregroundStyle(.secondary)
+                    Text(session.focalLengthsMM.isEmpty ? "-" : session.focalLengthsMM.map { "\(Self.formatNumber($0)) mm" }.joined(separator: ", "))
+                }
+                GridRow {
+                    Text("Gain/ISO:").foregroundStyle(.secondary)
+                    Text(session.gains.isEmpty ? "-" : session.gains.map { Self.formatNumber($0) }.joined(separator: ", "))
+                }
+                GridRow {
+                    Text("Szenzor hőm.:").foregroundStyle(.secondary)
+                    Text(session.sensorTempsC.isEmpty ? "-" : session.sensorTempsC.map { "\(Self.formatNumber($0))°C" }.joined(separator: ", "))
+                }
+                GridRow {
+                    Text("Szűrő:").foregroundStyle(.secondary)
+                    Text(session.filters.isEmpty ? "-" : session.filters.joined(separator: ", "))
+                }
+            }
+            .font(.callout)
+        }
+    }
+
+    private func exposureSummary(_ breakdown: [String: Int]) -> String {
+        guard !breakdown.isEmpty else { return "-" }
+        return breakdown
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)s×\($0.value)" }
+            .joined(separator: ", ")
+    }
+
+    private func formatDuration(_ seconds: Double) -> String {
+        let totalMinutes = Int((seconds / 60).rounded())
+        return String(format: "%d:%02d", totalMinutes / 60, totalMinutes % 60)
+    }
+
+    private static func formatNumber(_ value: Double) -> String {
+        value == value.rounded() ? String(format: "%.0f", value) : String(format: "%.1f", value)
     }
 }

@@ -28,7 +28,7 @@ Commands:
   scan          [--root R] [--path SUB] [--json]
   audit         [--root R] [--json] [--suggest] [--include-suspicious] [--no-duplicates]
   rate          [--root R] --target T [--date D] [--json] [--no-siril]
-  stats         [--root R] [--target T] [--json]
+  stats         [--root R] [--target T] [--json] [--sessions (requires --target)]
   calib         [--root R] [--json]
   match         [--root R] --target T --date D [--json]
   new-session   --catalog CAT --name NAME --date D [--root R] [--json]
@@ -347,32 +347,75 @@ func cmdStats(_ args: [String]) throws -> Int32 {
         FlagSpec("--root", takesValue: true),
         FlagSpec("--target", takesValue: true),
         FlagSpec("--json", takesValue: false),
+        FlagSpec("--sessions", takesValue: false),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
 
-    let config = try resolveConfig(rootFlag: parsed.value("--root"))
-    let db = try makeDatabase(config: config)
-    try hintIfEmpty(db)
-
-    if let target = parsed.value("--target") {
-        guard let stats = try StatsQueries.target(target, db: db, config: config) else {
-            eprint("error: target not found: \(target)")
+    guard let target = parsed.value("--target") else {
+        if parsed.has("--sessions") {
+            eprint("error: --sessions requires --target")
             return 1
         }
-        if parsed.has("--json") {
-            try printJSON(stats)
-        } else {
-            printSingleTargetStats(stats)
-        }
-    } else {
+        let config = try resolveConfig(rootFlag: parsed.value("--root"))
+        let db = try makeDatabase(config: config)
+        try hintIfEmpty(db)
         let all = try StatsQueries.perTarget(db: db, config: config)
         if parsed.has("--json") {
             try printJSON(all)
         } else {
             printStatsTable(all)
         }
+        return 0
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    if parsed.has("--sessions") {
+        let sessions = try SessionStatsQueries.sessions(target: target, db: db, config: config)
+        if parsed.has("--json") {
+            try printJSON(sessions)
+        } else {
+            printSessionDetails(target: target, sessions: sessions)
+        }
+        return 0
+    }
+
+    guard let stats = try StatsQueries.target(target, db: db, config: config) else {
+        eprint("error: target not found: \(target)")
+        return 1
+    }
+    if parsed.has("--json") {
+        try printJSON(stats)
+    } else {
+        printSingleTargetStats(stats)
     }
     return 0
+}
+
+private func printSessionDetails(target: String, sessions: [SessionDetail]) {
+    guard !sessions.isEmpty else {
+        print("no sessions for target: \(target)")
+        return
+    }
+
+    for s in sessions {
+        print("session: \(s.target) / \(s.dateRaw)")
+        print("  frames: \(s.lightCount) light, \(s.flatCount) flat, \(s.darkCount) dark, \(s.biasCount) bias")
+        print("  integration: \(formatHoursMinutes(s.integrationSeconds))")
+        let exposures = s.exposureBreakdown
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)s×\($0.value)" }
+            .joined(separator: ", ")
+        print("  exposures: \(exposures.isEmpty ? "-" : exposures)")
+        print("  camera: \(s.cameras.isEmpty ? "-" : s.cameras.joined(separator: ", "))")
+        print("  focal length: \(s.focalLengthsMM.isEmpty ? "-" : s.focalLengthsMM.map { "\($0)mm" }.joined(separator: ", "))")
+        print("  gain/ISO: \(s.gains.isEmpty ? "-" : s.gains.map { "\($0)" }.joined(separator: ", "))")
+        print("  sensor temp: \(s.sensorTempsC.isEmpty ? "-" : s.sensorTempsC.map { "\($0)°C" }.joined(separator: ", "))")
+        print("  filter: \(s.filters.isEmpty ? "-" : s.filters.joined(separator: ", "))")
+        print("  README: \(s.hasReadme ? "yes" : "no")")
+    }
 }
 
 private func formatHoursMinutes(_ seconds: Double) -> String {

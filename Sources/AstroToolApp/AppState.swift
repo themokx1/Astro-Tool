@@ -40,6 +40,8 @@ final class AppState: @unchecked Sendable {
     var includeSuspiciousInScript: Bool = false
 
     var stats: [TargetStats] = []
+    var selectedTarget: String?
+    var sessionDetails: [SessionDetail] = []
     var calibNeeds: [CalibNeed] = []
     var frameScores: [FrameScore] = []
 
@@ -350,6 +352,35 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.stats = result
                 self.progressText = "Statisztika kész: \(result.count) célpont"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Loads the per-session detail breakdown (focal length, camera,
+    /// gain/ISO, sensor temp, filter) for one target, e.g. after the user
+    /// selects a row in `StatsView`'s table. Clears `sessionDetails` first
+    /// so a slow load never leaves a previous target's rows on screen
+    /// under the new selection.
+    func loadSessionDetails(target: String) {
+        guard let db else { return }
+        let cfg = config
+        selectedTarget = target
+        sessionDetails = []
+
+        let opID = beginOperation("Session-részletek betöltése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try SessionStatsQueries.sessions(target: target, db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                guard self.selectedTarget == target else { self.endOperation(opID); return }
+                self.sessionDetails = result
+                self.progressText = "Session-részletek kész: \(result.count) session"
             } catch {
                 self.handle(error)
             }

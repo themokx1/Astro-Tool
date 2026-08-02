@@ -8,6 +8,21 @@ történik.
 
 ## [Unreleased]
 
+### Added
+
+- **Session-részletes statisztika**: `astrotool stats --target T --sessions
+  [--json]` és a Stats fül (célpont-sor kiválasztása) mostantól session-önkénti
+  bontást ad az adott célpont minden `sessions/<target>/<date>/` mappájához —
+  kereten-számok szerep szerint (light/flat/dark/bias), integrációs idő és
+  expozíció-bontás (csak a light keretekből, ugyanúgy, mint a `TargetStats`),
+  valamint a light keretek `fits_meta`-jából származó gyújtótávolság
+  (kerekítve 1 mm-re), kamera (`instrume`), gain/ISO, szenzor hőmérséklet
+  (kerekítve 0.5°C-ra) és szűrő listája, plusz hogy a session-mappának van-e
+  `README.txt`-je. Új `Sources/AstroCore/Stats/SessionStats.swift`
+  (`SessionDetail`, `SessionStatsQueries.sessions(target:db:config:)`); app
+  oldalon `AppState.loadSessionDetails(target:)` + `StatsView` táblasor-
+  kiválasztás alatti részletpanel.
+
 ### Javítva
 
 - **Audit memória-javítás**: `astrotool audit` (duplikátum-keresés) korlátlanul

@@ -253,6 +253,35 @@ struct CLISmokeTests {
     #expect(result.exitCode == 1)
 }
 
+@Test func statsSessionsJSONDecodesForFixtureTarget() throws {
+    let root = try makeTempRoot("stats-sessions-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--sessions", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let sessions = try #require(json)
+    #expect(!sessions.isEmpty)
+    #expect(sessions.allSatisfy { $0["target"] as? String == "M45_Pleiades" })
+}
+
+@Test func statsSessionsWithoutTargetExitsWithError() throws {
+    let root = try makeTempRoot("stats-sessions-no-target")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stats", "--root", root.path, "--sessions", "--json"])
+    #expect(result.exitCode == 1)
+}
+
 // MARK: - new-session
 
 @Test func newSessionCreatesThenRerunFails() throws {
