@@ -225,7 +225,7 @@ final class AppState: @unchecked Sendable {
         guard let db else { return }
         let cfg = config
 
-        beginOperation("Könyvtár beolvasása…")
+        let opID = beginOperation("Könyvtár beolvasása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -237,7 +237,7 @@ final class AppState: @unchecked Sendable {
                         }
                     }
                 }.value
-                guard !Task.isCancelled else { self.endOperation(); return }
+                guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.scanSummary = summary
                 self.rootStatus = .ok
                 self.progressText =
@@ -246,7 +246,7 @@ final class AppState: @unchecked Sendable {
             } catch {
                 self.handle(error)
             }
-            self.endOperation()
+            self.endOperation(opID)
         }
     }
 
@@ -261,7 +261,7 @@ final class AppState: @unchecked Sendable {
         let cfg = config
         includeSuspiciousInScript = includeSuspicious
 
-        beginOperation("Audit fut…")
+        let opID = beginOperation("Audit fut…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -269,14 +269,14 @@ final class AppState: @unchecked Sendable {
                     let engine = AuditEngine(config: cfg, db: db)
                     return try engine.run(includeDuplicates: true)
                 }.value
-                guard !Task.isCancelled else { self.endOperation(); return }
+                guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.lastRunID = runID
                 self.findings = findings
                 self.progressText = "Audit kész: \(findings.count) találat"
             } catch {
                 self.handle(error)
             }
-            self.endOperation()
+            self.endOperation(opID)
         }
     }
 
@@ -289,7 +289,7 @@ final class AppState: @unchecked Sendable {
         let findingsCopy = findings
         let includeSuspicious = includeSuspiciousInScript
 
-        beginOperation("Javaslat-script írása…")
+        let opID = beginOperation("Javaslat-script írása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -302,7 +302,7 @@ final class AppState: @unchecked Sendable {
                         using: writeGuard
                     )
                 }.value
-                guard !Task.isCancelled else { self.endOperation(); return }
+                guard !Task.isCancelled else { self.endOperation(opID); return }
                 if let url {
                     self.progressText = "Script elmentve: \(url.lastPathComponent)"
                     NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -312,7 +312,7 @@ final class AppState: @unchecked Sendable {
             } catch {
                 self.handle(error)
             }
-            self.endOperation()
+            self.endOperation(opID)
         }
     }
 
@@ -322,20 +322,20 @@ final class AppState: @unchecked Sendable {
         guard let db else { return }
         let cfg = config
 
-        beginOperation("Statisztika számítása…")
+        let opID = beginOperation("Statisztika számítása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
                     try StatsQueries.perTarget(db: db, config: cfg)
                 }.value
-                guard !Task.isCancelled else { self.endOperation(); return }
+                guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.stats = result
                 self.progressText = "Statisztika kész: \(result.count) célpont"
             } catch {
                 self.handle(error)
             }
-            self.endOperation()
+            self.endOperation(opID)
         }
     }
 
@@ -345,20 +345,20 @@ final class AppState: @unchecked Sendable {
         guard let db else { return }
         let cfg = config
 
-        beginOperation("Kalibrációs lefedettség számítása…")
+        let opID = beginOperation("Kalibrációs lefedettség számítása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
                     try CalibAnalyzer.coverage(db: db, config: cfg)
                 }.value
-                guard !Task.isCancelled else { self.endOperation(); return }
+                guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.calibNeeds = result
                 self.progressText = "Kalibráció kész: \(result.count) kombináció"
             } catch {
                 self.handle(error)
             }
-            self.endOperation()
+            self.endOperation(opID)
         }
     }
 
@@ -368,7 +368,7 @@ final class AppState: @unchecked Sendable {
         guard let db else { return }
         let cfg = config
 
-        beginOperation("Pontozás indul…")
+        let opID = beginOperation("Pontozás indul…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -384,13 +384,13 @@ final class AppState: @unchecked Sendable {
                         }
                     }
                 }.value
-                guard !Task.isCancelled else { self.endOperation(); return }
+                guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.frameScores = results
                 self.progressText = "Pontozás kész: \(results.count) frame"
             } catch {
                 self.handle(error)
             }
-            self.endOperation()
+            self.endOperation(opID)
         }
     }
 
@@ -429,14 +429,14 @@ final class AppState: @unchecked Sendable {
         let target = Sanitizer.makeTarget(catalog: catalog, name: name)
         let writeGuard = WriteGuard(root: URL(fileURLWithPath: cfg.rootPath, isDirectory: true))
 
-        beginOperation("Session létrehozása…")
+        let opID = beginOperation("Session létrehozása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let created = try await Task.detached(priority: .userInitiated) {
                     try writeGuard.createSessionTree(target: target, dateDir: date, readme: Self.sessionReadmeTemplate)
                 }.value
-                guard !Task.isCancelled else { self.endOperation(); return }
+                guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.progressText = "Session létrehozva: \(target)/\(date)"
                 if let dirURL = created.first?.deletingLastPathComponent() {
                     self.lastCreatedSessionDir = dirURL
@@ -445,20 +445,32 @@ final class AppState: @unchecked Sendable {
             } catch {
                 self.handle(error)
             }
-            self.endOperation()
+            self.endOperation(opID)
         }
     }
 
     // MARK: - Busy bookkeeping
 
-    private func beginOperation(_ text: String) {
+    /// Identifies the in-flight operation so a stale completion (one whose
+    /// `Task` was superseded by a newer `beginOperation` call before it
+    /// finished -- e.g. the user cancels and immediately starts a different
+    /// operation) can't clobber `isBusy`/`progressText` out from under the
+    /// operation that's actually current.
+    @ObservationIgnored
+    private var currentOperationID: UUID?
+
+    private func beginOperation(_ text: String) -> UUID {
         currentTask?.cancel()
         lastError = nil
         isBusy = true
         progressText = text
+        let id = UUID()
+        currentOperationID = id
+        return id
     }
 
-    private func endOperation() {
+    private func endOperation(_ id: UUID) {
+        guard currentOperationID == id else { return }
         isBusy = false
     }
 }

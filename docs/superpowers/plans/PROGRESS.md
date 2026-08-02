@@ -34,6 +34,7 @@
 | T20 Pages + v0.1.0 | ✅ kész (részben) | Release: https://github.com/themokx1/Astro-Tool/releases/tag/v0.1.0 (AstroTool.dmg + astrotool.zip, CI zöld); docs/ oldal kész és pusholva, de a GitHub Pages **nincs bekapcsolva** — a repo private, a jelenlegi GitHub plan nem támogatja Pages-t private repóhoz (API 422 "Your current plan does not support GitHub Pages for this repository"). Teendő: repo publikussá tétele VAGY plan-váltás, utána `gh api -X POST repos/themokx1/Astro-Tool/pages -f 'source[branch]=main' -f 'source[path]=/docs'`. |
 | Review R1 (T6–T9) javítások | ✅ kész | 132 teszt zöld (124 + 8 új) |
 | Review R2 (T10–T15) javítások | ✅ | 203 teszt zöld (199 + 4 új) |
+| Final review javítás (TCC exit 2) | ✅ | 216 teszt zöld (214 + 2 új); WriteGuard (createSessionTree/writeToolFile) és astrotool Commands.makeDatabase most `AstroError.accessDenied`-re fordítja a permission-hibákat (EPERM/EACCES, `isPermissionError` publikussá téve), így a chmod 555 gyökér is exit 2 + magyar TCC útmutatót ad exit 1 helyett; AppState.endOperation stale-completion guard (UUID operation-id) |
 
 Nyitott, kötet-hozzáférés után: add_new_session.sh és tools/rate/ verifikáció
 (spec 2. szakasz); user teendő: Teljes lemezhozzáférés a Claude appnak.

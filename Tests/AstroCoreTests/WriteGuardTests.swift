@@ -130,3 +130,27 @@ private func makeTempRoot() throws -> URL {
 
     #expect(guardian.toolDir.standardizedFileURL.path == root.appendingPathComponent(".astro_tool").standardizedFileURL.path)
 }
+
+// MARK: - Permission errors reclassified as accessDenied
+
+@Test func createSessionTreeThrowsAccessDeniedForReadOnlyRoot() throws {
+    let root = try makeTempRoot()
+    defer {
+        // Restore write permission before the temp-dir cleanup, and before
+        // any other test can reuse a directory that's still 555.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
+
+    let guardian = WriteGuard(root: root)
+    do {
+        try guardian.createSessionTree(target: "M31", dateDir: "2026-01-01", readme: "hello")
+        Issue.record("expected AstroError.accessDenied for a read-only root")
+    } catch let AstroError.accessDenied(path) {
+        #expect(!path.isEmpty)
+    } catch {
+        Issue.record("expected AstroError.accessDenied, got \(error)")
+    }
+}

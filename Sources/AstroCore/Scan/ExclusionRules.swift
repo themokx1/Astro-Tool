@@ -28,10 +28,14 @@ struct ExclusionRules {
 
 /// Classifies a filesystem error as permission-denied (TCC / EPERM / EACCES),
 /// possibly wrapped as an `NSUnderlyingErrorKey`. Shared by `LibraryScanner`
-/// and `DirectoryLister` so both translate a permission failure into
+/// and `DirectoryLister` (both translate a permission failure into
 /// `AstroError.accessDenied` with the offending relative path rather than
-/// letting a raw `NSError` escape.
-func isPermissionError(_ error: Error) -> Bool {
+/// letting a raw `NSError` escape), and by `WriteGuard`'s own write-site
+/// classification. `public` so the `astrotool` CLI target can reuse the
+/// exact same classification when opening/creating `.astro_tool/` itself
+/// (a different module, hence the wider access level rather than plain
+/// `internal`).
+public func isPermissionError(_ error: Error) -> Bool {
     let nsError = error as NSError
     if nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileReadNoPermissionError {
         return true

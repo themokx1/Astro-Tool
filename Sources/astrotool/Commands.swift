@@ -144,8 +144,25 @@ func makeDatabase(config: AstroConfig) throws -> Database {
     try ensureRootAccessible(config)
     let toolDir = URL(fileURLWithPath: config.rootPath, isDirectory: true)
         .appendingPathComponent(".astro_tool", isDirectory: true)
-    try FileManager.default.createDirectory(at: toolDir, withIntermediateDirectories: true)
-    return try Database(path: dbPath(for: config))
+
+    // A read-only root (TCC revoked mid-session, or a plain chmod 555 in
+    // tests) makes `createDirectory` throw a raw `NSCocoaErrorDomain` (513,
+    // wrapping POSIX EPERM) rather than an `AstroError` -- reclassify that
+    // as `.accessDenied` here so main.swift's dedicated exit-2 + TCC
+    // guidance branch actually fires instead of falling through to the
+    // generic exit-1 path. `AstroError`s thrown by `Database(path:)` itself
+    // (e.g. `.databaseError`) pass through unchanged.
+    do {
+        try FileManager.default.createDirectory(at: toolDir, withIntermediateDirectories: true)
+        return try Database(path: dbPath(for: config))
+    } catch let error as AstroError {
+        throw error
+    } catch {
+        if isPermissionError(error) {
+            throw AstroError.accessDenied(path: toolDir.path)
+        }
+        throw error
+    }
 }
 
 /// `audit`/`stats`/`calib`/`match`/`rate` never scan on their own -- if the

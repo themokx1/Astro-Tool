@@ -258,6 +258,30 @@ struct CLISmokeTests {
     #expect(result.exitCode == 1)
 }
 
+// MARK: - permission errors -> exit 2
+
+@Test func scanOnReadOnlyRootExitsWithTCCGuidance() throws {
+    // Deliberately NOT `Fixtures.makeMessyLibrary` -- one of its fixture
+    // files lives under `.astro_tool/`, which would pre-create that
+    // directory (with its own, still-writable permissions) before the
+    // chmod below, masking the exact failure this test targets: `scan`
+    // needing to CREATE `.astro_tool/` under a root it can no longer write
+    // into.
+    let root = try makeTempRoot("scan-readonly-root")
+    defer {
+        // Restore write permission before cleanup -- a still-555 directory
+        // can't be removed either.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
+
+    let result = try runCLI(["scan", "--root", root.path])
+    #expect(result.exitCode == 2, "stdout: \(result.stdout), stderr: \(result.stderr)")
+    #expect(result.stderr.contains("Teljes lemezhozzáférés"))
+}
+
 // MARK: - misc
 
 @Test func unknownSubcommandExitsWithUsage() throws {

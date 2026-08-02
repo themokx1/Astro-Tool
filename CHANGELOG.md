@@ -8,6 +8,13 @@ történik.
 
 ## [Unreleased]
 
+## [0.1.1]
+
+### Javítva
+
+- Javítva: TCC-hiba helyes kezelése (exit 2) a `.astro_tool` létrehozásakor és
+  DB-nyitáskor; app: stale operation guard.
+
 ## [0.1.0] - 2026-08-02
 
 Első kiadás.

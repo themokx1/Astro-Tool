@@ -49,12 +49,16 @@ public struct WriteGuard: Sendable {
         var created: [URL] = []
         for sub in ["lights", "flats", "darks", "biases"] {
             let dirURL = sessionDir.appendingPathComponent(sub, isDirectory: true)
-            try fm.createDirectory(at: dirURL, withIntermediateDirectories: true)
+            try Self.classifyingPermissionErrors(path: dirURL.path) {
+                try fm.createDirectory(at: dirURL, withIntermediateDirectories: true)
+            }
             created.append(dirURL)
         }
 
         let readmeURL = sessionDir.appendingPathComponent("README.txt", isDirectory: false)
-        try Data(readme.utf8).write(to: readmeURL, options: .withoutOverwriting)
+        try Self.classifyingPermissionErrors(path: readmeURL.path) {
+            try Data(readme.utf8).write(to: readmeURL, options: .withoutOverwriting)
+        }
         created.append(readmeURL)
 
         return created
@@ -80,8 +84,10 @@ public struct WriteGuard: Sendable {
         }
 
         let fm = FileManager.default
-        try fm.createDirectory(at: candidate.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: candidate)
+        try Self.classifyingPermissionErrors(path: candidate.path) {
+            try fm.createDirectory(at: candidate.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: candidate)
+        }
 
         return candidate
     }
@@ -91,6 +97,28 @@ public struct WriteGuard: Sendable {
     private static func validatePathComponent(_ component: String) throws {
         guard !component.isEmpty, !component.contains("/"), component != ".", component != ".." else {
             throw AstroError.writeForbidden(path: component)
+        }
+    }
+
+    /// Runs a filesystem-writing `body`, reclassifying a permission failure
+    /// (TCC / EPERM / EACCES -- e.g. a read-only root, or a directory whose
+    /// TCC grant was revoked mid-session) as `AstroError.accessDenied(path:)`
+    /// instead of letting the raw `NSError` (`NSCocoaErrorDomain` 513
+    /// wrapping POSIX `EPERM`, typically) escape. Any other error — out of
+    /// disk space, a genuinely malformed path, etc. — passes through
+    /// unchanged; only permission failures get this special treatment, since
+    /// only those map to the CLI/app's dedicated "grant Full Disk Access"
+    /// guidance.
+    private static func classifyingPermissionErrors<T>(path: String, _ body: () throws -> T) throws -> T {
+        do {
+            return try body()
+        } catch let error as AstroError {
+            throw error
+        } catch {
+            if isPermissionError(error) {
+                throw AstroError.accessDenied(path: path)
+            }
+            throw error
         }
     }
 }
