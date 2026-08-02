@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AstroTool — letöltés</title>
+<meta name="description" content="AstroTool — asztrofotó-könyvtár karbantartó macOS-re: audit (soha nem töröl), minőség-pontozás, kalibrációs hiánylista, session-kezelés.">
+
+<!-- Tab icon -->
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<meta name="theme-color" content="#405282">
+
+<!-- Link preview (Open Graph / Twitter) -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="AstroTool">
+<meta property="og:description" content="Asztrofotó-könyvtár karbantartó macOS-re: audit (soha nem töröl), minőség-pontozás, kalibrációs hiánylista, session-kezelés.">
+<meta property="og:url" content="https://themokx1.github.io/Astro-Tool/">
+<meta property="og:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AstroTool">
+<meta name="twitter:description" content="Asztrofotó-könyvtár karbantartó macOS-re: audit (soha nem töröl), minőség-pontozás, kalibrációs hiánylista, session-kezelés.">
+<meta name="twitter:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+<style>
+  :root {
+    --bg: #f5f5f7; --card: #ffffff; --text: #1d1d1f; --muted: #6e6e73;
+    --line: #e5e5ea; --accent: #405282; --accent2: #7a2bff; --code-bg: #f0f0f3;
+    --star: transparent;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #06081a; --card: #10142c; --text: #f2f3fb; --muted: #9096b8;
+      --line: #262c4d; --accent: #9fb2e8; --accent2: #c7d3ff; --code-bg: #171b38;
+      --star: #ffffff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased; display: flex; justify-content: center;
+    padding: 48px 20px; position: relative; overflow-x: hidden;
+  }
+  /* Deterministic-looking star field, dark mode only. */
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      radial-gradient(1.6px 1.6px at 8% 12%, var(--star), transparent),
+      radial-gradient(1.2px 1.2px at 22% 38%, var(--star), transparent),
+      radial-gradient(1.8px 1.8px at 34% 8%, var(--star), transparent),
+      radial-gradient(1.2px 1.2px at 47% 52%, var(--star), transparent),
+      radial-gradient(1.5px 1.5px at 63% 22%, var(--star), transparent),
+      radial-gradient(1.1px 1.1px at 78% 44%, var(--star), transparent),
+      radial-gradient(1.7px 1.7px at 89% 15%, var(--star), transparent),
+      radial-gradient(1.3px 1.3px at 12% 70%, var(--star), transparent),
+      radial-gradient(1.6px 1.6px at 29% 86%, var(--star), transparent),
+      radial-gradient(1.1px 1.1px at 55% 78%, var(--star), transparent),
+      radial-gradient(1.4px 1.4px at 71% 92%, var(--star), transparent),
+      radial-gradient(1.2px 1.2px at 94% 68%, var(--star), transparent),
+      radial-gradient(1.5px 1.5px at 5% 95%, var(--star), transparent),
+      radial-gradient(1.3px 1.3px at 85% 88%, var(--star), transparent);
+    opacity: .55;
+  }
+  main { width: 100%; max-width: 640px; position: relative; z-index: 1; }
+  .hero { text-align: center; margin-bottom: 40px; }
+  .icon {
+    width: 132px; height: 132px; border-radius: 29px; margin: 0 auto 20px;
+    display: block; box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  }
+  h1 { font-size: 34px; margin: 0 0 6px; letter-spacing: -.02em; }
+  .tagline { color: var(--muted); font-size: 18px; margin: 0 0 28px; }
+  .download {
+    display: inline-block; text-decoration: none; color: #0b0d1f; font-weight: 700;
+    font-size: 17px; padding: 14px 30px; border-radius: 12px;
+    background: linear-gradient(120deg, var(--accent), var(--accent2));
+    box-shadow: 0 6px 20px rgba(64,82,130,.35); transition: transform .12s ease;
+  }
+  .download:hover { transform: translateY(-1px); }
+  .req { color: var(--muted); font-size: 13px; margin-top: 12px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 24px 26px; margin-top: 28px;
+  }
+  .card h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); margin: 0 0 14px; }
+  ol { margin: 0; padding-left: 20px; }
+  li { margin: 9px 0; }
+  code {
+    background: var(--code-bg); border-radius: 6px; padding: 2px 7px;
+    font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all;
+  }
+  .features { list-style: none; padding: 0; margin: 0; }
+  .features li { display: flex; gap: 10px; align-items: flex-start; margin: 12px 0; }
+  .features .dot { color: var(--accent2); font-weight: 700; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 16px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px;
+    font-weight: 600; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line);
+  }
+  .badge .swatch { width: 8px; height: 8px; border-radius: 50%; }
+  .badge.sure { color: #ff8a8a; } .badge.sure .swatch { background: #ff5c5c; }
+  .badge.suspicious { color: #ffcf7d; } .badge.suspicious .swatch { background: #ffb545; }
+  .badge.intentional { color: #8fd0a8; } .badge.intentional .swatch { background: #4fbf78; }
+  .warn {
+    background: rgba(255,181,69,.12); border: 1px solid rgba(255,181,69,.3);
+    border-radius: 12px; padding: 14px 16px; font-size: 14px; margin-top: 16px;
+  }
+  .warn strong { color: #ffb545; }
+  footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 36px; }
+  a { color: var(--accent2); }
+</style>
+</head>
+<body>
+<main>
+  <div class="hero">
+    <img class="icon" src="icon.png" alt="AstroTool ikon">
+    <h1>AstroTool</h1>
+    <p class="tagline">Asztrofotó-könyvtár karbantartó — audit, minőség, session-kezelés.</p>
+    <a class="download" href="https://github.com/themokx1/Astro-Tool/releases/latest">Letöltés macOS-re</a>
+    <div class="req">macOS 14 vagy újabb · Apple Silicon · ingyenes, nyílt forráskódú (MIT)</div>
+  </div>
+
+  <div class="card">
+    <h2>Mit tud</h2>
+    <ul class="features">
+      <li><span class="dot">›</span><span><strong>Audit</strong> — végigpásztázza a képkönyvtárat és három súlyossági szintbe sorolja a talált problémákat, de <strong>soha nem töröl vagy mozgat semmit</strong> — csak jelöl, és kérésre egy átnézhető javaslat-scriptet generál.</span></li>
+      <li><span class="dot">›</span><span><strong>Minőség-pontozás</strong> — light frame-ek pontozása natív metrikákkal, opcionálisan Siril CLI hibriddel (FWHM, kerekség, csillagszám, háttér), kiugró keretek jelölésével.</span></li>
+      <li><span class="dot">›</span><span><strong>Integrációs statisztika</strong> — célpontonkénti integrációs idő, session-szám, utolsó felvétel dátuma, wide-field besorolás.</span></li>
+      <li><span class="dot">›</span><span><strong>Kalibrációs hiánylista</strong> — mely expozíció/hőmérséklet kombinációkhoz van dark/flat/bias lefedettség, és mihez kell még.</span></li>
+      <li><span class="dot">›</span><span><strong>Session-párosítás</strong> — egy adott célpont+dátum session light frame-jeinek és kalibrációs kereteinek összerendelése.</span></li>
+      <li><span class="dot">›</span><span><strong>Új session létrehozása</strong> — kanonikus <code>YYYY-MM-DD</code> könyvtárstruktúra és README-sablon egy kattintással.</span></li>
+    </ul>
+    <div class="badges" style="margin-top:18px">
+      <span class="badge sure"><span class="swatch"></span>Biztos hiba</span>
+      <span class="badge suspicious"><span class="swatch"></span>Gyanús</span>
+      <span class="badge intentional"><span class="swatch"></span>Szándékos</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Telepítés</h2>
+    <ol>
+      <li>Nyisd meg az <code>AstroTool.dmg</code>-t és húzd az <strong>AstroTool.app</strong>-ot az <strong>Applications</strong> mappára.</li>
+      <li>Első indításkor: jobbklikk az app ikonján → <strong>Megnyitás</strong> → <strong>Megnyitás</strong> (mert az app nincs notarizálva).</li>
+      <li>Válaszd ki a képkönyvtárat az appban, és kezdd az audittal.</li>
+    </ol>
+    <p class="req">CLI-telepítés (a release zip-ből): <code>curl -L https://github.com/themokx1/Astro-Tool/releases/latest/download/astrotool.zip -o astrotool.zip &amp;&amp; unzip astrotool.zip &amp;&amp; mv astrotool ~/.local/bin/</code></p>
+    <div class="warn"><strong>Teljes lemez-hozzáférés:</strong> ha a képkönyvtár egy külső köteten van, a Rendszerbeállítások → Adatvédelem és biztonság → Teljes lemezhozzáférés alatt engedélyezd az appnak (és a terminálnak, ha a CLI-t onnan futtatod), majd indítsd újra.</div>
+  </div>
+
+  <footer>
+    MIT licenc · <a href="https://github.com/themokx1/Astro-Tool">forráskód a GitHubon</a>
+  </footer>
+</main>
+</body>
+</html>
