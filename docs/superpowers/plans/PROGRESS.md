@@ -28,7 +28,7 @@
 | T14 Session-párosítás | ✅ kész | 179 teszt zöld (172 T1-T13 + 7 új) |
 | T15 Rate | ✅ kész | 199 teszt zöld (179 T1-T14 + 20 új) |
 | T16 CLI | ✅ kész | 214 teszt zöld (203 T1-T15 + 11 új) |
-| T17 SwiftUI app | – | |
+| T17 SwiftUI app | ✅ kész | 214 teszt zöld (UI-hoz nincs unit teszt); build+release build zöld, app elindul |
 | T18 build.sh + DMG | – | |
 | T19 CI + README | – | |
 | T20 Pages + v0.1.0 | – | |
