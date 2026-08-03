@@ -126,7 +126,7 @@ public enum Planner {
         for stat in stats {
             let targetLights = allLights.filter { $0.target == stat.target }
             let coord = TargetCoordinates.medianCoordinates(files: targetLights, meta: allMeta)
-            let goalSeconds = goalSeconds(fromTags: stat.tags)
+            let goalSeconds = GoalTag.parse(tags: stat.tags)
 
             plans.append(buildPlan(
                 target: stat.target,
@@ -313,21 +313,6 @@ public enum Planner {
             visibleStart: visibleStart,
             visibleEnd: visibleEnd
         )
-    }
-
-    // MARK: - Tags -> goal
-
-    /// Parses a `"goal:<hours>h"` tag leniently (`"goal:6h"`, `"goal:6.5h"`)
-    /// into seconds. `nil` if no target-level tag matches.
-    private static func goalSeconds(fromTags tags: [String]) -> Double? {
-        for tag in tags {
-            let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard trimmed.hasPrefix("goal:") else { continue }
-            var numberText = String(trimmed.dropFirst("goal:".count))
-            if numberText.hasSuffix("h") { numberText.removeLast() }
-            if let hours = Double(numberText) { return hours * 3600.0 }
-        }
-        return nil
     }
 
     // MARK: - Helpers

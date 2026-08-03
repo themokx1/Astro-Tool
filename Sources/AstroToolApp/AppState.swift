@@ -55,6 +55,12 @@ final class AppState: @unchecked Sendable {
     /// run at least once this session.
     var plan: [TargetPlan]?
 
+    /// Every target's pipeline status (`ProjectStatusQueries.projects`),
+    /// shown in the "Projektek" box on the Áttekintés tab. `[]` until
+    /// `loadProjects()` has run at least once this session (also refreshed
+    /// automatically after a scan, unlike `plan`).
+    var projectStates: [ProjectState] = []
+
     /// The currently selected target's per-session absolute quality summaries
     /// (`SessionQuality.summaries`) -- shown above the frame table in the
     /// Minőség fül. Cleared whenever a different target is selected so a
@@ -290,6 +296,12 @@ final class AppState: @unchecked Sendable {
                 if let calibResult = try? await calibTask.value {
                     self.calibNeeds = calibResult
                 }
+                let projectsTask = Task.detached(priority: .userInitiated) {
+                    try ProjectStatusQueries.projects(db: db, config: cfg)
+                }
+                if let projectsResult = try? await projectsTask.value {
+                    self.projectStates = projectsResult
+                }
             } catch {
                 self.handle(error)
             }
@@ -500,6 +512,32 @@ final class AppState: @unchecked Sendable {
                 self.plan = result
                 self.config.site = resolvedSite
                 self.progressText = "Terv kész: \(result.count) célpont"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    // MARK: - Project pipeline status
+
+    /// Loads every target's pipeline status for the "Projektek" box. Safe to
+    /// call any time the DB has data -- read-only, same shape as
+    /// `loadCalib()`.
+    func loadProjects() {
+        guard let db else { return }
+        let cfg = config
+
+        let opID = beginOperation("Projekt-állapot számítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try ProjectStatusQueries.projects(db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.projectStates = result
+                self.progressText = "Projekt-állapot kész: \(result.count) célpont"
             } catch {
                 self.handle(error)
             }

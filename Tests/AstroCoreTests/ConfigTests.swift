@@ -35,6 +35,7 @@ import Testing
 
     #expect(config.stats.excludeLabels == ["hibas"])
     #expect(config.stats.gapThresholdSeconds == 0)
+    #expect(config.stats.collectingThresholdSeconds == 7200)
 
     #expect(config.site.latitudeDeg == nil)
     #expect(config.site.longitudeDeg == nil)
@@ -61,6 +62,7 @@ import Testing
     let rule = StatsRule()
     #expect(rule.excludeLabels == ["hibas"])
     #expect(rule.gapThresholdSeconds == 0)
+    #expect(rule.collectingThresholdSeconds == 7200)
 }
 
 @Test func defaultWideFieldRuleHasExpectedValues() {
@@ -162,6 +164,7 @@ import Testing
 
     #expect(config.stats.excludeLabels == ["hibas", "cloudy"])
     #expect(config.stats.gapThresholdSeconds == 0)
+    #expect(config.stats.collectingThresholdSeconds == 7200)
 }
 
 @Test func loadReadsConfigFromDisk() throws {

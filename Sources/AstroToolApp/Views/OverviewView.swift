@@ -27,6 +27,7 @@ struct OverviewView: View {
                 if let cleanupSummary = appState.cleanupSummary {
                     cleanupSection(cleanupSummary)
                 }
+                projectsSection
                 tonightSection
                 quickLinksSection
                 if let lastError = appState.lastError {
@@ -110,6 +111,84 @@ struct OverviewView: View {
             }
             Button("Takarítási script generálása") { appState.generateCleanupScript() }
                 .disabled(appState.isBusy || summary.groups.isEmpty)
+        }
+    }
+
+    /// "Projektek": per-phase counts as colored chips, plus the top 3
+    /// actionable (non-`.done`) targets with their first to-do -- the
+    /// answer to "cloudy tonight, what should I work on?". Refreshed
+    /// automatically after a scan (`AppState.runScan()`), with a manual
+    /// "Frissítés" button for whenever tags/goals change without a rescan.
+    private var projectsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Projektek").font(.headline)
+                Spacer()
+                Button("Frissítés") { appState.loadProjects() }
+                    .disabled(appState.isBusy || appState.db == nil)
+            }
+
+            if appState.projectStates.isEmpty {
+                Text("Még nincs számolva — kattints a Frissítésre.").foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 24) {
+                    statBadge("Gyűjtés", "\(projectCount(.collecting))", .blue)
+                    statBadge("Stackelhető", "\(projectCount(.readyToStack))", .yellow)
+                    statBadge("Feldolgozásra vár", "\(projectCount(.stacked))", .orange)
+                    statBadge("Kész", "\(projectCount(.done))", .green)
+                }
+                let actionable = appState.projectStates.filter { $0.phase != .done }.prefix(3)
+                if actionable.isEmpty {
+                    Text("Minden célpont kész.").foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(actionable), id: \.target) { row in
+                        projectRow(row)
+                    }
+                }
+            }
+        }
+    }
+
+    private func projectCount(_ phase: ProjectPhase) -> Int {
+        appState.projectStates.filter { $0.phase == phase }.count
+    }
+
+    private func projectRow(_ row: ProjectState) -> some View {
+        HStack(spacing: 12) {
+            Text(row.target)
+                .frame(minWidth: 140, alignment: .leading)
+            phaseChip(row.phase)
+            Text(row.todos.first ?? "-")
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .font(.callout)
+    }
+
+    private func phaseChip(_ phase: ProjectPhase) -> some View {
+        Text(phaseLabel(phase))
+            .font(.caption.bold())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(phaseColor(phase).opacity(0.15), in: Capsule())
+            .foregroundStyle(phaseColor(phase))
+    }
+
+    private func phaseLabel(_ phase: ProjectPhase) -> String {
+        switch phase {
+        case .collecting: return "gyűjtés"
+        case .readyToStack: return "stackelhető"
+        case .stacked: return "feldolgozásra vár"
+        case .done: return "kész"
+        }
+    }
+
+    private func phaseColor(_ phase: ProjectPhase) -> Color {
+        switch phase {
+        case .collecting: return .blue
+        case .readyToStack: return .yellow
+        case .stacked: return .orange
+        case .done: return .green
         }
     }
 

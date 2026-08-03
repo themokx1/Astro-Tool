@@ -41,6 +41,7 @@ Commands:
   tag remove    --target T [--date D] <tag> [--root R] [--json]
   tag list      [--target T] [--date D] [--root R] [--json]
   plan          [--date YYYY-MM-DD] [--min-alt 30] [--root R] [--json]
+  projects      [--root R] [--json]
 
   --version     Print version and exit
   --help        Show this help
@@ -1274,4 +1275,59 @@ private func printPlanTable(_ plans: [TargetPlan]) {
 private func moonColumnText(_ plan: TargetPlan) -> String {
     guard let illum = plan.moonIlluminationPercent, let sep = plan.moonSeparationDeg else { return "-" }
     return String(format: "%.0f°/%.0f%%", sep, illum)
+}
+
+// MARK: - projects
+
+/// `astrotool projects [--root R] [--json]` -- per-target pipeline status
+/// (collect/stack/process/done) with a concrete Hungarian to-do list, the
+/// answer to "cloudy tonight, what should I work on?" (see
+/// `ProjectStatusQueries.projects`).
+func cmdProjects(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let projects = try ProjectStatusQueries.projects(db: db, config: config)
+
+    if parsed.has("--json") {
+        try printJSON(projects)
+    } else {
+        printProjectsGrouped(projects)
+    }
+    return 0
+}
+
+private func printProjectsGrouped(_ projects: [ProjectState]) {
+    guard !projects.isEmpty else {
+        print("no targets")
+        return
+    }
+
+    let groups: [(ProjectPhase, String)] = [
+        (.collecting, "Gyűjtés alatt"),
+        (.readyToStack, "Stackelhető"),
+        (.stacked, "Feldolgozásra vár"),
+        (.done, "Kész"),
+    ]
+
+    for (phase, header) in groups {
+        let items = projects.filter { $0.phase == phase }
+        guard !items.isEmpty else { continue }
+        print("\(header) (\(items.count)):")
+        for p in items {
+            let have = formatHoursMinutes(p.usableIntegrationSeconds)
+            let goal = p.goalSeconds.map(formatHoursMinutes) ?? "—"
+            print("  \(p.target)  \(have) / \(goal)")
+            for todo in p.todos.prefix(2) {
+                print("    - \(todo)")
+            }
+        }
+    }
 }

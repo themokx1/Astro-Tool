@@ -179,17 +179,25 @@ public struct StatsRule: Codable, Equatable, Sendable {
     /// implemented, just plumbed through so config files written today keep
     /// decoding once R4-2 lands.
     public var gapThresholdSeconds: Double
+    /// R5-2 (`ProjectStatusQueries`): a target with no stack anywhere and
+    /// less than this much usable integration is considered still
+    /// "gyűjtés" (collecting) rather than "stackelhető" (ready to stack) --
+    /// a couple of test lights don't mean the night's data collection is
+    /// done. Default 2 hours.
+    public var collectingThresholdSeconds: Double
 
     public init(
         excludeLabels: [String] = ["hibas"],
-        gapThresholdSeconds: Double = 0
+        gapThresholdSeconds: Double = 0,
+        collectingThresholdSeconds: Double = 7200
     ) {
         self.excludeLabels = excludeLabels
         self.gapThresholdSeconds = gapThresholdSeconds
+        self.collectingThresholdSeconds = collectingThresholdSeconds
     }
 
     private enum CodingKeys: String, CodingKey {
-        case excludeLabels, gapThresholdSeconds
+        case excludeLabels, gapThresholdSeconds, collectingThresholdSeconds
     }
 
     public init(from decoder: any Decoder) throws {
@@ -197,6 +205,7 @@ public struct StatsRule: Codable, Equatable, Sendable {
         let defaults = StatsRule()
         self.excludeLabels = try container.decodeIfPresent([String].self, forKey: .excludeLabels) ?? defaults.excludeLabels
         self.gapThresholdSeconds = try container.decodeIfPresent(Double.self, forKey: .gapThresholdSeconds) ?? defaults.gapThresholdSeconds
+        self.collectingThresholdSeconds = try container.decodeIfPresent(Double.self, forKey: .collectingThresholdSeconds) ?? defaults.collectingThresholdSeconds
     }
 }
 

@@ -861,6 +861,57 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
     #expect(result.exitCode == 1)
 }
 
+// MARK: - projects
+
+private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Double) throws {
+    let url = root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let cards = [
+        "SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2",
+        "EXPTIME =                \(exptime)", "END",
+    ]
+    try buildHeaderData(cards).write(to: url)
+}
+
+@Test func projectsJSONDecodesAndReportsPhaseForFixtureTarget() throws {
+    let root = try makeTempRoot("projects-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    // No stack yet, well above the 2h default collecting threshold, no
+    // goal tag -> readyToStack.
+    try writeProjectsFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, exptime: 3 * 3600)
+    try "notes".write(to: root.appendingPathComponent("sessions/M31_Andromeda/2026-08-01/README.txt"), atomically: true, encoding: .utf8)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["projects", "--root", root.path, "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let projects = try #require(json)
+    let project = try #require(projects.first { $0["target"] as? String == "M31_Andromeda" })
+    #expect(project["phase"] as? String == "stackelheto")
+    let todos = try #require(project["todos"] as? [String])
+    #expect(todos.contains("készíts stacket: M31_Andromeda/2026-08-01"))
+}
+
+@Test func projectsHumanOutputShowsPhaseHeaders() throws {
+    let root = try makeTempRoot("projects-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeProjectsFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, exptime: 3 * 3600)
+    try "notes".write(to: root.appendingPathComponent("sessions/M31_Andromeda/2026-08-01/README.txt"), atomically: true, encoding: .utf8)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["projects", "--root", root.path])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("Stackelhető"))
+    #expect(result.stdout.contains("M31_Andromeda"))
+}
+
 // MARK: - misc
 
 @Test func unknownSubcommandExitsWithUsage() throws {

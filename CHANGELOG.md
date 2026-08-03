@@ -31,6 +31,29 @@ történik.
   SOHA (privacy). App: „Ma este" doboz az Áttekintés fülön (top 5 célpont,
   színezett verdikt-jelvény, „Frissítés" gomb).
 
+- **Projekt-státusz (`astrotool projects`)**: célpontonkénti feldolgozási
+  állapot ("felhős este mit dolgozzak fel?") — minden ismert célponthoz egy
+  fázis (`gyujtes` / `stackelheto` / `feldolgozasra_var` / `kesz`) és egy
+  konkrét, magyar to-do lista. Új `Sources/AstroCore/Stats/ProjectStatus.swift`
+  (`ProjectPhase`/`ProjectState`/`ProjectStatusQueries.projects`) —
+  `StatsQueries`/`SessionStatsQueries` session-részleteire és a `files` tábla
+  `stacks`/`processed` sorainak dátum-átfedésére épül (ugyanaz az
+  átfedés-logika, mint az audit `missing-counterpart` szabályáé), a
+  `goal:<óra>h` cél-tag parse-olása kiemelve a `Planner`-ből egy közös
+  `Sources/AstroCore/Stats/GoalTag.swift` helperbe (`GoalTag.parse(tags:)`),
+  amit mindkét feature használ. `AstroConfig.stats.collectingThresholdSeconds`
+  additív mező (alapból 2 óra) — sztek nélküli célpont eddig számít
+  "gyűjtés alatt"-nak. To-do sorok: „készíts stacket: cél/dátum", „dolgozd
+  fel: stacks/cél/dátum", „hiányzik még N.N óra a célhoz (goal:Xh)", „nincs
+  README: cél/dátum", „kizárt session: dátum (hibas)" — a `_hibas` sessionök
+  nem befolyásolják a fázist, csak megjelennek a listában. CLI: `astrotool
+  projects [--root R] [--json]` — emberi kimenet fázis szerint csoportosítva
+  (magyar fejlécek: „Gyűjtés alatt" / „Stackelhető" / „Feldolgozásra vár" /
+  „Kész"), célpontonként név + meglévő/cél óraszám + első 2 to-do. App:
+  „Projektek" doboz az Áttekintés fülön (Takarítás alatt) — fázisonkénti
+  darabszám színes jelvényekkel, top 3 tennivaló célpont az első to-dójukkal,
+  automatikusan frissül scan után (`AppState.loadProjects()`).
+
 ## [0.3.0] - 2026-08-03
 
 ### Added
