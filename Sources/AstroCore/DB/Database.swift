@@ -268,6 +268,19 @@ public final class Database: @unchecked Sendable {
     ALTER TABLE fits_meta ADD COLUMN egain REAL;
     """
 
+    // Internal (not private) for the same reason as the earlier schemaSQLv*
+    // constants: migration tests apply this directly to a raw `SQLiteDB` to
+    // simulate an existing v4 database before verifying `Database(path:)`
+    // upgrades it in place.
+    static let schemaSQLv5 = """
+    CREATE TABLE IF NOT EXISTS session_notes(
+      target TEXT NOT NULL,
+      session_date TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      PRIMARY KEY(target, session_date, key));
+    """
+
     public init(path: String) throws {
         self.db = try SQLiteDB(path: path)
         try migrate()
@@ -313,6 +326,12 @@ public final class Database: @unchecked Sendable {
             try backfillXpixszEgainFromHeaderJSON()
             try db.run("UPDATE schema_version SET version = ?;", bind: [.int(4)])
             version = 4
+        }
+
+        if version < 5 {
+            try db.exec(Self.schemaSQLv5)
+            try db.run("UPDATE schema_version SET version = ?;", bind: [.int(5)])
+            version = 5
         }
     }
 
@@ -822,6 +841,76 @@ public final class Database: @unchecked Sendable {
                 bind: [.text(target), .text(tag)],
                 row: row
             )
+        }
+    }
+
+    // MARK: session_notes (R6-4)
+
+    /// Replaces EVERY note stored for `(target, date)` with `notes` --
+    /// delete-then-insert within the same locked section, so a caller never
+    /// observes a partial (some-old-some-new) state. This is the class's own
+    /// `.astro_tool` database, not the image library the iron rule protects
+    /// -- deleting rows here is ordinary DAO housekeeping, same as
+    /// `markMissing`'s `UPDATE` or `removeTag`'s `DELETE` elsewhere in this
+    /// file. Called by the scanner every time a session's `README.txt` is
+    /// scanned as NEW or CHANGED (see `LibraryScanner.captureReadmeNotes`),
+    /// so a line the user deleted from the file doesn't linger in the
+    /// database forever.
+    public func upsertSessionNotes(target: String, date: String, notes: [String: String]) throws {
+        try withLock {
+            try db.run(
+                "DELETE FROM session_notes WHERE target = ? AND session_date = ?;",
+                bind: [.text(target), .text(date)]
+            )
+            for (key, value) in notes {
+                try db.run(
+                    "INSERT INTO session_notes(target, session_date, key, value) VALUES (?, ?, ?, ?);",
+                    bind: [.text(target), .text(date), .text(key), .text(value)]
+                )
+            }
+        }
+    }
+
+    /// Every note on record for one session, `[:]` when none exist.
+    public func sessionNotes(target: String, date: String) throws -> [String: String] {
+        try withLock {
+            var result: [String: String] = [:]
+            try db.query(
+                "SELECT key, value FROM session_notes WHERE target = ? AND session_date = ?;",
+                bind: [.text(target), .text(date)]
+            ) { row in
+                guard let key = row.string(0), let value = row.string(1) else { return }
+                result[key] = value
+            }
+            return result
+        }
+    }
+
+    /// Every `(target, date, key, value)` row whose `key` or `value`
+    /// contains `query` -- backs `astrotool search`. Plain SQL `LIKE`,
+    /// which SQLite already matches case-insensitively for ASCII text with
+    /// no extra `COLLATE` needed; `query` is wrapped in `%...%` wildcards so
+    /// a bare substring (not a full LIKE pattern) is what the caller hands
+    /// in. Sorted by target, then date, then key for a stable, readable
+    /// grouping at the CLI layer.
+    public func searchNotes(query: String) throws -> [(target: String, date: String, key: String, value: String)] {
+        try withLock {
+            var result: [(target: String, date: String, key: String, value: String)] = []
+            let pattern = "%" + query + "%"
+            try db.query(
+                """
+                SELECT target, session_date, key, value FROM session_notes
+                WHERE key LIKE ? OR value LIKE ?
+                ORDER BY target, session_date, key;
+                """,
+                bind: [.text(pattern), .text(pattern)]
+            ) { row in
+                guard let target = row.string(0), let date = row.string(1),
+                      let key = row.string(2), let value = row.string(3)
+                else { return }
+                result.append((target, date, key, value))
+            }
+            return result
         }
     }
 }

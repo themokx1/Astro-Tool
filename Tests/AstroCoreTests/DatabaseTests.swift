@@ -83,7 +83,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 4)
+    #expect(version == 5)
 }
 
 @Test func migrateIsIdempotentAndDoesNotDuplicateVersionRow() throws {
@@ -97,7 +97,7 @@ import Testing
 @Test func migrateCreatesAllExpectedTables() throws {
     let database = try Database(path: ":memory:")
 
-    let expectedTables = ["schema_version", "files", "fits_meta", "ratings", "findings", "runs", "tags"]
+    let expectedTables = ["schema_version", "files", "fits_meta", "ratings", "findings", "runs", "tags", "session_notes"]
     var found: Set<String> = []
     try database.db.query("SELECT name FROM sqlite_master WHERE type = 'table';") { row in
         if let name = row.string(0) { found.insert(name) }
@@ -144,7 +144,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 4)
+    #expect(version == 5)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -197,7 +197,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 4)
+    #expect(version == 5)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -266,7 +266,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 4)
+    #expect(version == 5)
 
     let fileID1 = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let meta1 = try database.fitsMeta(fileID: fileID1)
@@ -669,4 +669,109 @@ private func sampleRating(fileID: Int64, inputSig: String = "sig-1") -> RatingRe
 
     #expect(try database.targetsWithTag("favorite") == ["M31", "M42"])
     #expect(try database.targetsWithTag("nonexistent") == [])
+}
+
+// MARK: - session_notes (schema v5, R6-4)
+
+/// Simulates an already-deployed v4 database (v1..v4 schema, `schema_
+/// version` stamped `4`) via a raw `SQLiteDB` connection, then opens it
+/// through `Database(path:)` and verifies the upgrade advances to v5 and
+/// creates the new `session_notes` table without disturbing existing rows.
+@Test func migrateUpgradesExistingV4DatabaseToV5AddingSessionNotesTable() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-migrate-v4-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("v4.sqlite").path
+
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.exec(Database.schemaSQLv1)
+        try raw.exec(Database.schemaSQLv2)
+        try raw.exec(Database.schemaSQLv3)
+        try raw.exec(Database.schemaSQLv4)
+        try raw.run("INSERT INTO schema_version(version) VALUES (4);")
+        try raw.run(
+            """
+            INSERT INTO files(path, size, mtime, ext, kind, area, target, session_date, role, content_hash, scanned_at, missing, inode, nlink)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            bind: [
+                .text("sessions/M31/2026-01-01/lights/f1.fits"), .int(1024), .real(1_700_000_000),
+                .text("fits"), .text("fits"), .text("sessions"), .text("M31"), .text("2026-01-01"),
+                .text("light"), .null, .real(1_700_000_100), .int(0), .null, .null,
+            ]
+        )
+    }
+
+    let database = try Database(path: path)
+
+    var version: Int64 = -1
+    try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
+        version = row.int64(0) ?? -1
+    }
+    #expect(version == 5)
+
+    let files = try database.allFiles(includeMissing: true)
+    #expect(files.count == 1, "the v4 row must survive the upgrade untouched")
+    #expect(files.first?.target == "M31")
+
+    // Fresh table, usable via the DAO immediately after the upgrade.
+    try database.upsertSessionNotes(target: "M31", date: "2026-01-01", notes: ["Camera": "ASI2600MC"])
+    #expect(try database.sessionNotes(target: "M31", date: "2026-01-01") == ["Camera": "ASI2600MC"])
+}
+
+@Test func upsertSessionNotesReplacesAllPriorNotesForThatSession() throws {
+    let database = try Database(path: ":memory:")
+    try database.upsertSessionNotes(
+        target: "M31", date: "2026-01-01",
+        notes: ["Camera": "ASI2600MC", "Filter": "L-eXtreme"]
+    )
+    #expect(try database.sessionNotes(target: "M31", date: "2026-01-01").count == 2)
+
+    // A second call with a DIFFERENT set of keys must fully replace the
+    // first -- "Filter" must be gone, not merged.
+    try database.upsertSessionNotes(target: "M31", date: "2026-01-01", notes: ["Camera": "ASI2600MM Pro"])
+
+    let notes = try database.sessionNotes(target: "M31", date: "2026-01-01")
+    #expect(notes == ["Camera": "ASI2600MM Pro"])
+}
+
+@Test func sessionNotesIsScopedToItsOwnTargetAndDate() throws {
+    let database = try Database(path: ":memory:")
+    try database.upsertSessionNotes(target: "M31", date: "2026-01-01", notes: ["Bortle": "4"])
+    try database.upsertSessionNotes(target: "M31", date: "2026-01-02", notes: ["Bortle": "5"])
+    try database.upsertSessionNotes(target: "M42", date: "2026-01-01", notes: ["Bortle": "6"])
+
+    #expect(try database.sessionNotes(target: "M31", date: "2026-01-01") == ["Bortle": "4"])
+    #expect(try database.sessionNotes(target: "M31", date: "2026-01-02") == ["Bortle": "5"])
+    #expect(try database.sessionNotes(target: "M42", date: "2026-01-01") == ["Bortle": "6"])
+}
+
+@Test func sessionNotesReturnsEmptyDictionaryWhenNoneStored() throws {
+    let database = try Database(path: ":memory:")
+    #expect(try database.sessionNotes(target: "M31", date: "2026-01-01") == [:])
+}
+
+@Test func searchNotesMatchesKeyOrValueCaseInsensitively() throws {
+    let database = try Database(path: ":memory:")
+    try database.upsertSessionNotes(
+        target: "M31", date: "2026-01-01",
+        notes: ["Location/Bortle": "falu, 4", "SQM": "20.8", "Notes/issues": "some dew on the corrector"]
+    )
+    try database.upsertSessionNotes(
+        target: "M42", date: "2026-02-02",
+        notes: ["Notes/issues": "no problems tonight"]
+    )
+
+    let byValue = try database.searchNotes(query: "DEW")
+    #expect(byValue.count == 1)
+    #expect(byValue.first?.target == "M31")
+    #expect(byValue.first?.key == "Notes/issues")
+
+    let byKey = try database.searchNotes(query: "bortle")
+    #expect(byKey.count == 1)
+    #expect(byKey.first?.value == "falu, 4")
+
+    #expect(try database.searchNotes(query: "nonexistent-term").isEmpty)
 }

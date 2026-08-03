@@ -186,6 +186,66 @@ private struct AcquisitionExportFixture {
     #expect(fields[10] == "1") // bias
 }
 
+/// R6-4: `bortle`/`meanSqm` come from `SessionDetail.notes` (README.txt
+/// indexing) -- a plain digit value, a digit embedded in a longer sentence,
+/// and a session with no matching note at all (blank, not a guess).
+@Test func astrobinExtractsBortleFromNotesPlainAndEmbeddedDigitElseBlank() throws {
+    let fixture = try AcquisitionExportFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0)
+    try fixture.writeFITS("sessions/T1/2026-01-11/lights/l1.fit", exptime: 300.0)
+    try fixture.writeFITS("sessions/T1/2026-01-12/lights/l1.fit", exptime: 300.0)
+    try fixture.scan()
+
+    try fixture.db.upsertSessionNotes(target: "T1", date: "2026-01-10", notes: ["Bortle": "4"])
+    try fixture.db.upsertSessionNotes(target: "T1", date: "2026-01-11", notes: ["Location/Bortle": "falu, 4"])
+    // 2026-01-12 has no Bortle-ish key at all.
+
+    let output = try AcquisitionExport.render(target: "T1", format: .astrobin, db: fixture.db, config: fixture.config)
+    let rowsByDate = Dictionary(uniqueKeysWithValues: output.components(separatedBy: "\n").filter { !$0.isEmpty }.dropFirst().map {
+        line -> (String, [String]) in
+        let fields = line.components(separatedBy: ",")
+        return (fields[0], fields)
+    })
+
+    #expect(rowsByDate["2026-01-10"]?[11] == "4")
+    #expect(rowsByDate["2026-01-11"]?[11] == "4")
+    #expect(rowsByDate["2026-01-12"]?[11] == "")
+}
+
+/// Same three shapes for `meanSqm`: a plain reading, a reading embedded
+/// alongside an unrelated (out-of-range) number that must be skipped rather
+/// than picked up first, and a session whose only number is out of the
+/// plausible 16-22 range at all (blank).
+@Test func astrobinExtractsMeanSqmFromNotesPlainAndEmbeddedNumberElseBlank() throws {
+    let fixture = try AcquisitionExportFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0)
+    try fixture.writeFITS("sessions/T1/2026-01-11/lights/l1.fit", exptime: 300.0)
+    try fixture.writeFITS("sessions/T1/2026-01-12/lights/l1.fit", exptime: 300.0)
+    try fixture.scan()
+
+    try fixture.db.upsertSessionNotes(target: "T1", date: "2026-01-10", notes: ["SQM": "20.8"])
+    try fixture.db.upsertSessionNotes(
+        target: "T1", date: "2026-01-11",
+        notes: ["SQM": "device serial 12345, reading 21.2 mag/arcsec2"]
+    )
+    try fixture.db.upsertSessionNotes(target: "T1", date: "2026-01-12", notes: ["SQM": "device serial 12345"])
+
+    let output = try AcquisitionExport.render(target: "T1", format: .astrobin, db: fixture.db, config: fixture.config)
+    let rowsByDate = Dictionary(uniqueKeysWithValues: output.components(separatedBy: "\n").filter { !$0.isEmpty }.dropFirst().map {
+        line -> (String, [String]) in
+        let fields = line.components(separatedBy: ",")
+        return (fields[0], fields)
+    })
+
+    #expect(rowsByDate["2026-01-10"]?[12] == "20.8")
+    #expect(rowsByDate["2026-01-11"]?[12] == "21.2")
+    #expect(rowsByDate["2026-01-12"]?[12] == "")
+}
+
 @Test func astrobinSkipsHibasExcludedSessions() throws {
     let fixture = try AcquisitionExportFixture.make()
     defer { fixture.cleanup() }

@@ -18,6 +18,7 @@ Asztrofotó-könyvtár auditálása, minőség-pontozás és kalibráció-követ
 - **Session-párosítás (match)** — egy adott célpont+dátum session-höz tartozó kalibrációs keretek és light frame-ek összerendelése, problémákkal.
 - **Új session létrehozás (new-session)** — kanonikus `YYYY-MM-DD` könyvtárstruktúra és README-sablon létrehozása egy célponthoz.
 - **Észlelés-tervező (plan)** — ma esti kulmináció, max magasság, láthatósági ablak és Hold-zavarás célpontonként, pontszám szerint rendezve.
+- **Kereshető éjszaka-napló (search)** — a session `README.txt`-jébe kézzel beírt Bortle/SQM/seeing/megjegyzés szöveg indexelve, kulcs vagy érték szerint kereshetően.
 
 ## ⛔ Vasszabály
 
@@ -136,7 +137,7 @@ riportot, három formátumban:
 ```bash
 astrotool export --target M31 --format astrobin
 # date,filter,number,duration,binning,gain,sensorCooling,darks,flats,flatDarks,bias,bortle,meanSqm
-# 2026-03-15,L-eXtreme,42,300,,100,-10,4,6,2,4,,
+# 2026-03-15,L-eXtreme,42,300,,100,-10,4,6,2,4,4,20.8
 # 2026-03-16,L-eXtreme,18,300,,100,-10,3,6,0,4,,
 
 astrotool export --target M31 --format csv --out -
@@ -163,6 +164,34 @@ astrotool export --target M31 --format md
   `.astro_tool/exports/<célpont>-<időbélyeg>.<csv|md>` alá ír és kiírja az
   útvonalat. Az alkalmazásban a Statisztika fül célpont-sorának Műveletek
   cellájában az "Exportálás…" menü ugyanezt teszi, Finder-reveal-lel.
+- Az `astrobin` sorok `bortle`/`meanSqm` oszlopa a session `README.txt`-jébe
+  írt jegyzetekből töltődik ki (lásd lentebb "Kereshető napló") — üresen
+  marad, ha a session-nek nincs ilyen jegyzete.
+
+## Kereshető napló
+
+A Bortle-osztály, SQM, seeing, harmatképződés vagy egyéb megjegyzés soha nem
+kerül FITS fejlécbe — de a `new-session` által létrehozott `README.txt`
+"Fill in metadata" szakasza pontosan erre való. Egy scan minden session
+`README.txt`-jét beolvassa (`Kulcs: érték` sorok, üres érték kihagyva), és
+kereshetővé teszi:
+
+```bash
+astrotool search bortle
+# M31_Andromeda [2026-03-15]
+#   Location/Bortle: falu, 4
+
+astrotool search sqm --json
+```
+
+- A keresés a kulcsban ÉS az értékben is néz (case-insensitive `LIKE`).
+- Bármilyen egyéni kulcs indexelődik, nem csak a sablon mezői — pl. egy
+  kézzel hozzáadott `SQM: 20.8` sor is kereshető lesz.
+- Az app Statisztika fülén a session-sor "README" jelvényén hover-tooltip
+  mutatja az összes kiolvasott `kulcs: érték` sort.
+- `--refresh-meta` egy már korábban beszkennelt, de még jegyzet nélküli
+  session `README.txt`-jét is újraolvassa (pl. R6-4 előtti scan után).
+- A fájlt a scan CSAK OLVASSA — sosem ír bele.
 
 ## Konfiguráció
 

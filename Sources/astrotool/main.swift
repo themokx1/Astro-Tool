@@ -39,6 +39,7 @@ do {
     case "export": exitCode = try cmdExport(rest)
     case "health": exitCode = try cmdHealth(rest)
     case "panels": exitCode = try cmdPanels(rest)
+    case "search": exitCode = try cmdSearch(rest)
     default:
         eprint(usageText)
         exit(1)

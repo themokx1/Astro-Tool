@@ -10,6 +10,58 @@ történik.
 
 ### Added
 
+- **README-indexelés / kereshető éjszaka-napló (`astrotool search`)**: az
+  égbolt-körülmények (Bortle, SQM, seeing, dew, egyéb megjegyzés) sosem
+  kerülnek FITS fejlécbe — de a felhasználó munkafolyamata már most is
+  beírja őket minden session `README.txt`-jének "Fill in metadata"
+  szakaszába (`Camera:`, `Location/Bortle:`, `Notes/issues:` stb., plusz
+  bármilyen egyéni kulcs, pl. `SQM:`). Séma v5: új `session_notes(target,
+  session_date, key, value)` tábla (`PRIMARY KEY(target, session_date,
+  key)`), `Database.upsertSessionNotes(target:date:notes:)` (session-önkénti
+  teljes csere: delete-then-insert a class saját lock-ján belül — ez a
+  SAJÁT `.astro_tool` DB-je, nem a képkönyvtár, a vasszabály erre nem
+  vonatkozik), `sessionNotes(target:date:)`, `searchNotes(query:)` (SQLite
+  `LIKE`, ami ASCII-re alapból kis-nagybetű-független, `COLLATE` nélkül is).
+  Új `Sources/AstroCore/Scan/ReadmeNotesParser.swift`
+  (`ReadmeNotesParser.parse(text:)`/`parse(data:)`) — `^([A-Za-z][A-Za-z0-9
+  ()/_-]{0,40}):\s*(.*)$` mintára illeszkedő sorok kulcs/érték párokra
+  bontása, üres érték kihagyva, 64 KiB felett vagy nem-UTF8 tartalomnál
+  `nil` (a scan védekezően, `Data(contentsOf:)`+`try?` mögött hívja). Scan-
+  integráció: minden ÚJ/MEGVÁLTOZOTT session-szintű `README.txt`
+  (`sessions/<target>/<date>/README.txt` pontosan, sosem egy role-alkönyvtár
+  alatti névazonos fájl — ezt a `PathClassifier` `.other` szerepe dönti el)
+  a meglévő FITS-meta-capture melletti új ág a `Scanner.captureMeta`-ban,
+  `--refresh-meta` alatt egy változatlan README is újraolvasódik, ha még
+  nincs hozzá `session_notes` sora (pl. R6-4 előtti scan). CSAK OLVAS — a
+  `README.txt`-t a scanner soha nem írja. `SessionDetail` additív
+  `notes: [String: String]` mezője (`SessionStatsQueries` tölti a
+  `session_notes`-ból); az app Statisztika fülének "README" jelvényén
+  `.help` tooltip listázza a `kulcs: érték` sorokat. CLI: `astrotool search
+  <query> [--root R] [--json]` — cél/dátum szerint csoportosított emberi
+  kimenet, `tag add`/`tag remove` mintájára pozicionális `<query>` argumentum
+  (`splitPositionalArgs`), nincs találatnál is exit 0. Export: `astrobin`
+  formátum eddig üresen hagyott `bortle`/`meanSqm` oszlopai most a session
+  jegyzeteiből töltődnek — `bortle` az első "Bortle"-t tartalmazó kulcs
+  értékéből az első ÖNÁLLÓ 1-9 számjegy (pl. `"4"` vagy `"falu, 4"` is `"4"`,
+  de `"42"` végződése NEM önálló), `meanSqm` az első "SQM"-et tartalmazó
+  kulcs értékéből az első 16-22 tartományba eső decimális szám (a
+  tartományon kívüli számok — pl. egy műszer-sorozatszám — átugorva, nem
+  megállítva a keresést); egyik sincs kulcs/tartományba eső szám nélkül —
+  üresen marad, nem tippel. Tervező/minőség érintetlen. Új tesztfájl
+  `Tests/AstroCoreTests/ReadmeNotesParserTests.swift` (7: valódi
+  `SessionCreator`-sablon fejléc-kulcsai megvannak + üres mezők kihagyva,
+  egyéni kulcs (SQM) elfogva, colon/kezdő-betű nélküli sor kihagyva, 64 KiB
+  felett/nem-UTF8-nál `nil`, üres szövegre `[:]`), `DatabaseTests` +5 (v4→v5
+  migráció táblával+meglévő sor érintetlen, replace-all szemantika, cél/dátum
+  szerinti izoláció, üres alapérték, `searchNotes` kulcs/érték LIKE
+  kis-nagybetű-független), `ScannerTests` +5 (új README elfogva, role-
+  alkönyvtárbeli névazonos fájl NEM az, megváltozott README újraolvasva
+  replace-all-lal, változatlan README NEM íródik újra, `--refresh-meta`
+  pótolja a hiányzó jegyzeteket), `SessionStatsTests` +1
+  (`SessionDetail.notes` README-vel/nélküle), `AcquisitionExportTests` +2
+  (bortle és meanSqm: sima számjegy/beágyazott szám/hiányzó → üres),
+  `CLISmokeTests` +2 (`search` találat a fixture README-jén, találat nélkül
+  is exit 0).
 - **Mozaik-panel követés + setup-fingerprint (`astrotool panels`)**: a
   szélesmezős mozaikoknál (pl. `M_Milky_Way/Panel1..Panel11`) a panelek
   közti egyenlőtlen integráció látható SNR-lépcsőt okoz a varratoknál — a

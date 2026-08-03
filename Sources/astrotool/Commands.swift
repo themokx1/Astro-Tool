@@ -45,6 +45,7 @@ Commands:
   export        --target T --format astrobin|csv|md [--out PATH] [--root R]
   health        --target T [--date D] [--root R] [--json]
   panels        --target T [--root R] [--json]
+  search        <query> [--root R] [--json]
 
   --version     Print version and exit
   --help        Show this help
@@ -1218,6 +1219,77 @@ private func splitPositionalArgs(_ args: [String], specs: [FlagSpec]) -> (flagAr
     }
 
     return (flagArgs, positionals)
+}
+
+// MARK: - search
+
+/// `astrotool search <query> [--root R] [--json]` -- R6-4's searchable
+/// night log: a plain `LIKE` lookup over `session_notes` (Bortle, SQM,
+/// seeing, dew, free-form notes -- everything the user typed into a
+/// session's `README.txt` that a FITS header could never carry). Takes a
+/// bare positional `<query>` alongside its flags, same
+/// `splitPositionalArgs` split as `tag add`/`tag remove` use.
+func cmdSearch(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let (flagArgs, positionals) = splitPositionalArgs(args, specs: specs)
+    guard positionals.count == 1 else {
+        eprint("error: expected a single <query> argument, got \(positionals.count)")
+        eprint(usageText)
+        return 1
+    }
+    let query = positionals[0]
+    let parsed = try ArgParser.parse(flagArgs, specs: specs)
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let results = try db.searchNotes(query: query)
+
+    if parsed.has("--json") {
+        try printJSON(results.map {
+            SessionNoteSearchResult(target: $0.target, date: $0.date, key: $0.key, value: $0.value)
+        })
+    } else if results.isEmpty {
+        print("no matches for \"\(query)\"")
+    } else {
+        printSearchResultsGrouped(results)
+    }
+    return 0
+}
+
+/// `db.searchNotes` returns plain tuples (not `Encodable`) -- this thin
+/// wrapper is the only thing `--json` needs to serialize them.
+private struct SessionNoteSearchResult: Encodable {
+    let target: String
+    let date: String
+    let key: String
+    let value: String
+}
+
+private func printSearchResultsGrouped(_ results: [(target: String, date: String, key: String, value: String)]) {
+    struct Key: Hashable {
+        let target: String
+        let date: String
+    }
+
+    var rowsByKey: [Key: [(key: String, value: String)]] = [:]
+    var order: [Key] = []
+    for r in results {
+        let key = Key(target: r.target, date: r.date)
+        if rowsByKey[key] == nil { order.append(key) }
+        rowsByKey[key, default: []].append((r.key, r.value))
+    }
+
+    for key in order {
+        print("\(key.target) [\(key.date)]")
+        for row in rowsByKey[key] ?? [] {
+            print("  \(row.key): \(row.value)")
+        }
+    }
 }
 
 // MARK: - plan

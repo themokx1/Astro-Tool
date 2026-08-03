@@ -271,7 +271,10 @@ public final class LibraryScanner {
                 }
             }
             if refreshMeta, let fileID = existing.id {
-                try refreshMetaIfNeeded(fileID: fileID, kind: kind, ext: ext, url: fileURL, summary: &summary)
+                try refreshMetaIfNeeded(
+                    fileID: fileID, kind: kind, ext: ext, url: fileURL,
+                    relativePath: relativePath, info: info, summary: &summary
+                )
             }
             return
         }
@@ -311,7 +314,7 @@ public final class LibraryScanner {
         // Metadata capture only runs for NEW/CHANGED files (never for the
         // `unchanged` early-return above) — that's what keeps incremental
         // rescans of a large library fast.
-        try captureMeta(fileID: fileID, ext: ext, url: fileURL)
+        try captureMeta(fileID: fileID, ext: ext, url: fileURL, relativePath: relativePath, info: info)
 
         // A loose frame sitting directly in a session date dir (no lights/
         // flats/darks/biases subdir under it -- real libraries have these)
@@ -398,9 +401,11 @@ public final class LibraryScanner {
     // MARK: - Metadata capture
 
     /// Reads FITS header / CR3-or-TIFF image metadata for a just-recorded
-    /// file and upserts it into `fits_meta`. Extensions this scanner doesn't
-    /// know how to introspect (jpg, png, xmp, ...) are a silent no-op.
-    private func captureMeta(fileID: Int64, ext: String, url: URL) throws {
+    /// file and upserts it into `fits_meta` (or, for a session `README.txt`,
+    /// parses its "Fill in metadata" notes into `session_notes` -- see
+    /// `captureReadmeNotes`). Extensions this scanner doesn't know how to
+    /// introspect (jpg, png, xmp, ...) are a silent no-op.
+    private func captureMeta(fileID: Int64, ext: String, url: URL, relativePath: String, info: PathInfo) throws {
         switch ext {
         case "fit", "fits", "fz":
             // A corrupt/unreadable FITS header is swallowed by design here:
@@ -431,45 +436,85 @@ public final class LibraryScanner {
                     dateObs: meta.dateTaken
                 )
             )
+        case "txt":
+            try captureReadmeNotes(relativePath: relativePath, info: info, url: url)
         default:
             return
         }
     }
 
+    /// R6-4: sky conditions (Bortle, SQM, seeing, dew, notes) can't come
+    /// from a FITS header -- but the user's own workflow already writes them
+    /// into each session's `README.txt` (`SessionCreator`'s "Fill in
+    /// metadata" template). Parsing that text is what makes a night
+    /// searchable and feeds Bortle/SQM into the AstroBin export. Only a
+    /// session-level `README.txt` counts: `sessions/<target>/<date>/
+    /// README.txt` directly (never a stray text file elsewhere in the
+    /// library, and never one nested inside a role subdir -- `info.role`
+    /// is `.other` for exactly the direct-under-date-dir case, since a role
+    /// subdir needs one path component more than `PathClassifier` requires
+    /// to resolve `target`/`dateRaw` at all). READ ONLY: the file itself is
+    /// never written back to. A non-UTF8 or oversized (>64 KiB) file, or a
+    /// read failure, is silently skipped -- same "swallow and move on"
+    /// convention the FITS branch above uses for a corrupt header.
+    private func captureReadmeNotes(relativePath: String, info: PathInfo, url: URL) throws {
+        guard info.area == .sessions, info.role == .other,
+              let target = info.target, let date = info.dateRaw,
+              (relativePath as NSString).lastPathComponent == "README.txt"
+        else { return }
+        guard let data = try? Data(contentsOf: url) else { return }
+        guard let notes = ReadmeNotesParser.parse(data: data) else { return }
+        try db.upsertSessionNotes(target: target, date: date, notes: notes)
+    }
+
     /// Backfill hook for `--refresh-meta` scans. Only ever called for
     /// UNCHANGED files, and only when the caller asked for a refresh: a
-    /// normal incremental scan never reaches this, so its extra `fits_meta`
-    /// lookup stays off the hot path. Re-captures metadata when a feature
-    /// added after the file was first scanned would have captured more than
-    /// what's on record: either the file has no `fits_meta` row at all
-    /// (e.g. an earlier parse failure), or it's a raw/image kind whose
-    /// stored `exptime` is NULL (scanned before Exif ExposureTime capture
-    /// existed). Files with complete metadata are left untouched.
+    /// normal incremental scan never reaches this, so its extra `fits_meta`/
+    /// `session_notes` lookup stays off the hot path. Re-captures metadata
+    /// when a feature added after the file was first scanned would have
+    /// captured more than what's on record: either the file has no
+    /// `fits_meta` row at all (e.g. an earlier parse failure), or it's a
+    /// raw/image kind whose stored `exptime` is NULL (scanned before Exif
+    /// ExposureTime capture existed) -- or, for a session `README.txt`, no
+    /// `session_notes` row exists yet at all (a README scanned before R6-4
+    /// existed, or a template README that was entirely blank on first scan
+    /// and has since been filled in by hand without the file's size/mtime
+    /// otherwise triggering a normal rescan). Files/sessions with complete
+    /// data are left untouched.
     private func refreshMetaIfNeeded(
         fileID: Int64,
         kind: String,
         ext: String,
         url: URL,
+        relativePath: String,
+        info: PathInfo,
         summary: inout ScanSummary
     ) throws {
         switch ext {
         case "fit", "fits", "fz", "cr3", "tif":
-            break
+            let existingMeta = try db.fitsMeta(fileID: fileID)
+            let needsRefresh: Bool
+            if existingMeta == nil {
+                needsRefresh = true
+            } else if kind == "raw" || kind == "image" {
+                needsRefresh = existingMeta?.exptime == nil
+            } else {
+                needsRefresh = false
+            }
+            guard needsRefresh else { return }
+            summary.metaRefreshed += 1
+            try captureMeta(fileID: fileID, ext: ext, url: url, relativePath: relativePath, info: info)
+        case "txt":
+            guard info.area == .sessions, info.role == .other,
+                  let target = info.target, let date = info.dateRaw,
+                  (relativePath as NSString).lastPathComponent == "README.txt"
+            else { return }
+            guard try db.sessionNotes(target: target, date: date).isEmpty else { return }
+            summary.metaRefreshed += 1
+            try captureMeta(fileID: fileID, ext: ext, url: url, relativePath: relativePath, info: info)
         default:
             return
         }
-        let existingMeta = try db.fitsMeta(fileID: fileID)
-        let needsRefresh: Bool
-        if existingMeta == nil {
-            needsRefresh = true
-        } else if kind == "raw" || kind == "image" {
-            needsRefresh = existingMeta?.exptime == nil
-        } else {
-            needsRefresh = false
-        }
-        guard needsRefresh else { return }
-        summary.metaRefreshed += 1
-        try captureMeta(fileID: fileID, ext: ext, url: url)
     }
 
     private static func fitsMetaRecord(fileID: Int64, header: FITSHeader) -> FITSMetaRecord {

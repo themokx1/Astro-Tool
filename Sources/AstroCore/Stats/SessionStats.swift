@@ -63,6 +63,11 @@ public struct SessionDetail: Codable, Sendable, Equatable {
     /// its usable lights -- `nil` when no usable light has a derivable
     /// fingerprint at all (e.g. an entirely bare-header DSLR session).
     public var setupDescriptor: String?
+    /// This session's `README.txt` notes (R6-4), keyed exactly as
+    /// `ReadmeNotesParser` extracted them (e.g. `"Camera"`, `"Location/
+    /// Bortle"`, or any custom key the user typed) -- `[:]` when the
+    /// session has no README.txt on record, or one with no parseable lines.
+    public var notes: [String: String]
 
     public init(
         target: String,
@@ -84,7 +89,8 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         rejectedCount: Int = 0,
         duplicateLinkCount: Int = 0,
         isExcludedFromTotals: Bool = false,
-        setupDescriptor: String? = nil
+        setupDescriptor: String? = nil,
+        notes: [String: String] = [:]
     ) {
         self.target = target
         self.dateRaw = dateRaw
@@ -106,12 +112,13 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         self.duplicateLinkCount = duplicateLinkCount
         self.isExcludedFromTotals = isExcludedFromTotals
         self.setupDescriptor = setupDescriptor
+        self.notes = notes
     }
 
     private enum CodingKeys: String, CodingKey {
         case target, dateRaw, lightCount, flatCount, darkCount, biasCount, integrationSeconds,
              exposureBreakdown, cameras, focalLengthsMM, gains, sensorTempsC, filters, hasReadme, tags,
-             usableLightCount, rejectedCount, duplicateLinkCount, isExcludedFromTotals, setupDescriptor
+             usableLightCount, rejectedCount, duplicateLinkCount, isExcludedFromTotals, setupDescriptor, notes
     }
 
     public init(from decoder: Decoder) throws {
@@ -141,6 +148,8 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         isExcludedFromTotals = try c.decodeIfPresent(Bool.self, forKey: .isExcludedFromTotals) ?? false
         // Additive R6-3 field: absent in pre-R6-3 JSON, falls back to nil.
         setupDescriptor = try c.decodeIfPresent(String.self, forKey: .setupDescriptor)
+        // Additive R6-4 field: absent in pre-R6-4 JSON, falls back to [:].
+        notes = try c.decodeIfPresent([String: String].self, forKey: .notes) ?? [:]
     }
 }
 
@@ -214,6 +223,7 @@ public enum SessionStatsQueries {
         let setupDescriptor = EquipmentProfile.dominant(fingerprintCounts)?.descriptor
 
         let tags = try db.tags(target: target, sessionDate: date)
+        let notes = try db.sessionNotes(target: target, date: date)
 
         let excludedLabels = Set(config.stats.excludeLabels.map { $0.lowercased() })
         let isExcluded: Bool
@@ -244,7 +254,8 @@ public enum SessionStatsQueries {
             rejectedCount: frameBuckets.rejected.count,
             duplicateLinkCount: frameBuckets.duplicateLinkCount,
             isExcludedFromTotals: isExcluded,
-            setupDescriptor: setupDescriptor
+            setupDescriptor: setupDescriptor,
+            notes: notes
         )
     }
 }

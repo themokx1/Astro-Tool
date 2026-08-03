@@ -88,6 +88,8 @@ public enum AcquisitionExport {
             let gainText = mode(equipment.compactMap(\.gain)).map(formatTrimmed) ?? ""
             let coolingText = median(equipment.compactMap(\.cooling)).map { String(Int($0.rounded())) } ?? ""
             let flatDarks = try flatDarksCount(sessionFiles: sessionFiles, date: session.dateRaw, db: db)
+            let bortleText = bortleValue(fromNotes: session.notes)
+            let meanSqmText = meanSqmValue(fromNotes: session.notes)
 
             var countsByExposure: [Double: Int] = [:]
             for e in equipment { countsByExposure[e.nominalExptime, default: 0] += 1 }
@@ -105,8 +107,8 @@ public enum AcquisitionExport {
                     String(session.flatCount),
                     String(flatDarks),
                     String(session.biasCount),
-                    "", // bortle -- future README indexing.
-                    "", // meanSqm -- future README indexing.
+                    bortleText,
+                    meanSqmText,
                 ]
                 lines.append(row.map(csvField).joined(separator: ","))
             }
@@ -375,6 +377,73 @@ public enum AcquisitionExport {
             result.append(NominalExposure.nominal(exptime))
         }
         return result
+    }
+
+    // MARK: - README-derived sky conditions (R6-4)
+
+    /// The session's Bortle class, read out of its `README.txt` notes
+    /// (`SessionDetail.notes`, R6-4) -- the first key containing "Bortle"
+    /// (case-insensitive, so both the template's own `"Location/Bortle"` and
+    /// a bare custom `"Bortle"` key match), with the first STANDALONE digit
+    /// 1-9 extracted from its value (e.g. `"4"` or `"falu, 4"` both yield
+    /// `"4"` -- the trailing digit of a longer number like "42" would NOT
+    /// count, since it's never standalone). `""` when no key matches, or the
+    /// matching value has no such digit -- same "blank, not a guess"
+    /// convention every other unknown cell in this row already follows.
+    private static func bortleValue(fromNotes notes: [String: String]) -> String {
+        for (key, value) in notes where key.range(of: "bortle", options: .caseInsensitive) != nil {
+            if let digit = firstStandaloneDigit1Through9(in: value) {
+                return digit
+            }
+        }
+        return ""
+    }
+
+    /// The session's mean SQM reading (mag/arcsec²), read out of its
+    /// `README.txt` notes -- the first key containing "SQM"
+    /// (case-insensitive), with the first decimal number found in its value
+    /// that falls in the plausible 16-22 range (a typical dark-to-bright-sky
+    /// SQM span) -- this skips over an unrelated number elsewhere in the
+    /// same note (e.g. a device serial number) rather than grabbing whatever
+    /// number happens to come first. `""` when no key matches, or none of
+    /// its numbers fall in range.
+    private static func meanSqmValue(fromNotes notes: [String: String]) -> String {
+        for (key, value) in notes where key.range(of: "sqm", options: .caseInsensitive) != nil {
+            if let text = firstDecimalNumber(in: value, inRange: 16...22) {
+                return text
+            }
+        }
+        return ""
+    }
+
+    /// The first character in `text` that is a digit `1`-`9` with no other
+    /// digit immediately before or after it (so "42"'s trailing "2" is
+    /// skipped, but the "4" in "falu, 4" or a bare "4" both match).
+    private static func firstStandaloneDigit1Through9(in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: "(?<!\\d)[1-9](?!\\d)") else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, range: range), let r = Range(match.range, in: text) else {
+            return nil
+        }
+        return String(text[r])
+    }
+
+    /// The first plain decimal number (`"20"`, `"20.8"`, ...) in `text`
+    /// whose value falls within `range`, as its exact matched substring
+    /// (not reformatted -- so `"20.80"` in the README stays `"20.80"` in the
+    /// export). Numbers outside `range` are skipped rather than stopping the
+    /// search, so an unrelated number earlier in the string doesn't hide a
+    /// real SQM reading later in the same note.
+    private static func firstDecimalNumber(in text: String, inRange range: ClosedRange<Double>) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: "[0-9]+(?:\\.[0-9]+)?") else { return nil }
+        let nsrange = NSRange(text.startIndex..<text.endIndex, in: text)
+        for match in regex.matches(in: text, range: nsrange) {
+            guard let r = Range(match.range, in: text) else { continue }
+            let substring = String(text[r])
+            guard let value = Double(substring), range.contains(value) else { continue }
+            return substring
+        }
+        return nil
     }
 
     // MARK: - Small shared helpers

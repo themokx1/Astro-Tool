@@ -145,6 +145,35 @@ private struct SessionStatsFixture {
     #expect(b.hasReadme == false)
 }
 
+/// R6-4: `SessionDetail.notes` is populated straight from `session_notes`
+/// (which the scanner filled in by parsing the session's `README.txt`) --
+/// a session with no README at all gets `[:]`, not an error.
+@Test func sessionDetailNotesArePopulatedFromScannedReadme() throws {
+    let fixture = try SessionStatsFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 1...2 {
+        try fixture.writeFITS("sessions/T1/2026-01-10/lights/l\(i).fit", exptime: 300.0)
+    }
+    let readmeURL = fixture.libraryDir.appendingPathComponent("sessions/T1/2026-01-10/README.txt")
+    try FileManager.default.createDirectory(at: readmeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "Camera: ASI2600MC\nLocation/Bortle: falu, 4\n".write(to: readmeURL, atomically: true, encoding: .utf8)
+
+    for i in 1...2 {
+        try fixture.writeFITS("sessions/T1/2026-02-05/lights/l\(i).fit", exptime: 300.0)
+    }
+
+    try fixture.scan()
+
+    let sessions = try SessionStatsQueries.sessions(target: "T1", db: fixture.db, config: fixture.config)
+    let withReadme = try #require(sessions.first { $0.dateRaw == "2026-01-10" })
+    #expect(withReadme.notes["Camera"] == "ASI2600MC")
+    #expect(withReadme.notes["Location/Bortle"] == "falu, 4")
+
+    let withoutReadme = try #require(sessions.first { $0.dateRaw == "2026-02-05" })
+    #expect(withoutReadme.notes == [:])
+}
+
 @Test func sessionDetailsCountsDarksAndBiasesSeparately() throws {
     let fixture = try SessionStatsFixture.make()
     defer { fixture.cleanup() }

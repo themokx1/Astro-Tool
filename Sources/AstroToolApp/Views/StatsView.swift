@@ -189,6 +189,7 @@ struct StatsView: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                        .help(readmeNotesTooltip(detail.notes))
                 }
                 if detail.isExcludedFromTotals {
                     Text("kizárva")
@@ -224,6 +225,17 @@ struct StatsView: View {
             lines.append("Panelek: \(panelsSummaryLine(panels))")
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Hover tooltip on a session row's "README" badge (R6-4): every note
+    /// `ReadmeNotesParser` pulled out of that session's `README.txt`, one
+    /// `key: value` line each, sorted by key for a stable read. Falls back
+    /// to a short placeholder for a README with no parseable lines at all
+    /// (an edge case, but the badge itself only reflects the file's
+    /// existence, not whether it has any content worth surfacing).
+    private func readmeNotesTooltip(_ notes: [String: String]) -> String {
+        guard !notes.isEmpty else { return "README.txt (nincs kiolvasható bejegyzés)" }
+        return notes.keys.sorted().map { "\($0): \(notes[$0] ?? "")" }.joined(separator: "\n")
     }
 
     /// "3 panel: A 2:10 · B 1:50 · C 0:35 ⚠️ kiegyenlítetlen" -- the compact

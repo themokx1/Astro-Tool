@@ -592,6 +592,40 @@ struct CLISmokeTests {
     #expect(result.exitCode == 1)
 }
 
+// MARK: - search
+
+/// `Fixtures.makeMessyLibrary` plants a real `README.txt` for
+/// `M45_Pleiades/2026-01-10` containing "Camera: ZWO ASI2600MC Pro" -- a
+/// scan must index it so `search` can find it by a substring of that value.
+@Test func searchFindsMatchAfterScanOfFixtureReadme() throws {
+    let root = try makeTempRoot("search-hit")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["search", "ZWO", "--root", root.path, "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let rows = try #require(json)
+    #expect(rows.contains { ($0["target"] as? String) == "M45_Pleiades" && ($0["date"] as? String) == "2026-01-10" })
+}
+
+@Test func searchWithNoMatchesStillExitsZero() throws {
+    let root = try makeTempRoot("search-miss")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["search", "nonexistent-term-xyz", "--root", root.path])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("no matches"))
+}
+
 // MARK: - tag
 
 @Test func tagAddThenListShowsIt() throws {

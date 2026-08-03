@@ -715,6 +715,117 @@ private struct ScanFixture {
     #expect(summary.metaRefreshed == 0)
 }
 
+// MARK: - README.txt notes capture (schema v5, R6-4)
+
+/// `Fixtures.makeMessyLibrary` already plants a real
+/// `sessions/M45_Pleiades/2026-01-10/README.txt` with
+/// `"Camera: ZWO ASI2600MC Pro\nExposure (lights): 300s\n"` -- a first scan
+/// must parse it into `session_notes` keyed by that session's own
+/// (target, date).
+@Test func scanCapturesReadmeNotesForNewReadme() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let notes = try fixture.db.sessionNotes(target: "M45_Pleiades", date: "2026-01-10")
+    #expect(notes["Camera"] == "ZWO ASI2600MC Pro")
+    #expect(notes["Exposure (lights)"] == "300s")
+}
+
+/// A `README.txt` sitting deeper than `sessions/<target>/<date>/` (e.g.
+/// inside a role subdir) must never be mistaken for the session-level file
+/// -- `PathClassifier` gives it a real role (`.light`, not `.other`), which
+/// `captureReadmeNotes` uses to reject it.
+@Test func readmeInsideRoleSubdirIsNotTreatedAsSessionReadme() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/README.txt"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try "Camera: should not be indexed\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let notes = try fixture.db.sessionNotes(target: "M45_Pleiades", date: "2026-01-10")
+    #expect(notes["Camera"] == "ZWO ASI2600MC Pro", "the real session README.txt must still be the one on record")
+}
+
+@Test func modifiedReadmeIsReparsedOnNextScan() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+    #expect(try fixture.db.sessionNotes(target: "M45_Pleiades", date: "2026-01-10")["Camera"] == "ZWO ASI2600MC Pro")
+
+    let readmeURL = fixture.root.appendingPathComponent("sessions/M45_Pleiades/2026-01-10/README.txt")
+    try "Camera: Updated Camera\nLocation/Bortle: falu, 4\n".write(to: readmeURL, atomically: true, encoding: .utf8)
+    let future = Date().addingTimeInterval(30)
+    try FileManager.default.setAttributes([.modificationDate: future], ofItemAtPath: readmeURL.path)
+
+    let summary = try scanner.scan()
+    #expect(summary.updated >= 1)
+
+    let notes = try fixture.db.sessionNotes(target: "M45_Pleiades", date: "2026-01-10")
+    #expect(notes["Camera"] == "Updated Camera")
+    #expect(notes["Location/Bortle"] == "falu, 4")
+    #expect(notes["Exposure (lights)"] == nil, "replace-all semantics: the old key must be gone, not merged")
+}
+
+/// A plain rescan of an UNCHANGED README.txt must never re-touch
+/// `session_notes` -- proven here by seeding a sentinel value directly (as
+/// if some other process had written it) and confirming an ordinary rescan
+/// leaves it exactly alone.
+@Test func unchangedReadmeIsNotReparsedOnRescan() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    try fixture.db.upsertSessionNotes(
+        target: "M45_Pleiades", date: "2026-01-10", notes: ["Sentinel": "untouched"]
+    )
+
+    let summary = try scanner.scan()
+    #expect(summary.updated == 0)
+    #expect(try fixture.db.sessionNotes(target: "M45_Pleiades", date: "2026-01-10") == ["Sentinel": "untouched"])
+}
+
+/// `--refresh-meta` backfill: an UNCHANGED README.txt with no
+/// `session_notes` on record yet (e.g. scanned before R6-4 existed) gets
+/// parsed on a refresh-meta rescan even though its content never changed.
+@Test func refreshMetaBackfillsReadmeNotesWhenNoneRecordedYet() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/README.txt"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(
+        at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
+    )
+    try "Camera: ASI2600MC\nSQM: 20.8\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+    #expect(try fixture.db.sessionNotes(target: "M45_Pleiades", date: "2026-01-10").isEmpty == false)
+
+    // Simulate a pre-R6-4 row: notes wiped back to empty without touching
+    // the file itself, so size/mtime still match what's on record.
+    try fixture.db.upsertSessionNotes(target: "M45_Pleiades", date: "2026-01-10", notes: [:])
+
+    let withoutFlag = try scanner.scan()
+    #expect(withoutFlag.metaRefreshed == 0)
+    #expect(try fixture.db.sessionNotes(target: "M45_Pleiades", date: "2026-01-10").isEmpty)
+
+    let withFlag = try scanner.scan(refreshMeta: true)
+    #expect(withFlag.metaRefreshed == 1)
+    #expect(try fixture.db.sessionNotes(target: "M45_Pleiades", date: "2026-01-10")["SQM"] == "20.8")
+}
+
 // MARK: - inode / nlink capture (schema v3)
 
 @Test func scanCapturesInodeAndNlinkForNewFile() throws {
