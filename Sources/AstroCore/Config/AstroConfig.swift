@@ -112,8 +112,11 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var residueDirNames: [String]
     /// Directory names (case-sensitive match on the path component) that are
     /// known outputs of coexisting tools -- currently `tools/rate/
-    /// LightFrameRater.py`'s `Stack`/`Review`/`Reject` triage folders and its
-    /// `light_frame_rating_report_assets` report bundle. The audit engine
+    /// LightFrameRater.py`'s `Stack`/`Review`/`Reject` triage folders, its
+    /// `light_frame_rating_report_assets` report bundle, and `masters` (a
+    /// deliberate convention: stacked master files kept in a `masters/`
+    /// subfolder right next to the raws that produced them, e.g.
+    /// `sessions/<target>/<date>/darks/masters/`). The audit engine
     /// recognizes these instead of flagging them as suspicious.
     public var toolOutputDirNames: [String]
     public var intentional: IntentionalPatterns
@@ -127,7 +130,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         excludedPaths: [String] = [],
         residuePatterns: [String] = ["*.seq", "*.lst", "*_conv*", "*_bkg*", "*_pp_*", "r_*", "bkg_*", ".DS_Store"],
         residueDirNames: [String] = ["process"],
-        toolOutputDirNames: [String] = ["Stack", "Review", "Reject", "light_frame_rating_report_assets"],
+        toolOutputDirNames: [String] = ["Stack", "Review", "Reject", "light_frame_rating_report_assets", "masters"],
         intentional: IntentionalPatterns = IntentionalPatterns(),
         wideField: WideFieldRule = WideFieldRule(),
         calib: CalibRule = CalibRule(),

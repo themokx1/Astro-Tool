@@ -218,19 +218,18 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
 
     let hits = findings(all, category: "missing-counterpart")
 
-    #expect(hits.contains {
-        $0.path == "stacks/NGC_7000_North_America/2026-06-06" && $0.message == "stack without session"
-    })
-    #expect(hits.contains {
-        $0.path == "stacks/NGC_7000_North_America/2026-06-29" && $0.message == "stack without session"
-    })
-    #expect(hits.contains {
-        $0.path == "processed/NGC2237_Rosette_Nebula/2026-07-01" && $0.message == "processed without session or stack"
-    })
-    #expect(hits.contains {
-        $0.path == "sessions/IC1805-1848_Heart_and_Soul_Nebula/2026-01-17" && $0.message == "session not yet stacked"
-    })
+    // Message text is deliberately not asserted exactly here (Hungarian
+    // wording may still evolve) -- category + path is the stable contract.
+    #expect(hits.contains { $0.path == "stacks/NGC_7000_North_America/2026-06-06" })
+    #expect(hits.contains { $0.path == "stacks/NGC_7000_North_America/2026-06-29" })
+    #expect(hits.contains { $0.path == "processed/NGC2237_Rosette_Nebula/2026-07-01" })
+    #expect(hits.contains { $0.path == "sessions/IC1805-1848_Heart_and_Soul_Nebula/2026-01-17" })
     #expect(hits.allSatisfy { $0.severity == .suspicious })
+
+    // Spot check: messages must actually be Hungarian, not the old English
+    // wording.
+    let stackHit = try #require(hits.first { $0.path == "stacks/NGC_7000_North_America/2026-06-06" })
+    #expect(stackHit.message == "stack session nélkül")
 }
 
 @Test func auditFindsIntentionalDates() throws {
@@ -269,6 +268,12 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
     #expect(flaggedPaths.contains("stacks/M42_Orion/2026-01-17/.DS_Store"))
     #expect(flaggedPaths.contains("stacks/M42_Orion/2026-01-17/process"))
     #expect(hits.allSatisfy { $0.severity == .suspicious })
+
+    // Spot check: residue messages must be Hungarian, not the old English
+    // wording -- this is the exact row the user complained reads as
+    // nonsense in the app.
+    let dsStoreHit = try #require(hits.first { $0.path == "stacks/M42_Orion/2026-01-17/.DS_Store" })
+    #expect(dsStoreHit.message == "\".DS_Store\" feldolgozási maradéknak tűnik.")
 }
 
 @Test func auditFindsCalibInWrongDir() throws {
@@ -285,6 +290,9 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
         from: "sessions/M45_Pleiades/2026-01-10/lights/flat_stray.fit",
         to: "sessions/M45_Pleiades/2026-01-10/flats/flat_stray.fit"
     ))
+
+    // Spot check: another of the user's exact "reads as nonsense" examples.
+    #expect(hit.message == "A FITS IMAGETYP (\"Flat Field\") nem illik a fájl helyéhez (várt hely: flats/).")
 }
 
 @Test func auditFindsInvalidDateDir() throws {
@@ -353,6 +361,82 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
     let hit = try #require(hits.first { $0.path == strayPath })
     #expect(hit.severity == .sureError)
     #expect(hit.suggestion == .move(from: strayPath, to: "calibration_library/flats/flat_in_darks.fit"))
+}
+
+@Test func auditSuppressesCalibInWrongDirUnderNestedSessionTree() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    // A whole extra session tree nested a level too deep inside an existing
+    // session -- mirrors the real bug report
+    // (sessions/<target>/<date>/flats/sessions/session1/darks/...): every
+    // file underneath has its role fixed by the outer "flats" path
+    // component (`PathClassifier` only ever looks at the 4th component), so
+    // a real dark frame down in the nested tree's own "darks" folder always
+    // looks misplaced relative to that path -- exactly the flood of
+    // per-file `calib-in-wrong-dir` rows (dozens in the real library) the
+    // engine-level suppression exists to collapse down to the single
+    // `nested-session-tree` finding that's actually actionable.
+    let nestedDarkPath = "sessions/M45_Pleiades/2026-01-10/flats/sessions/session1/darks/dark_0001.fit"
+    let nestedDarkURL = fixture.root.appendingPathComponent(nestedDarkPath)
+    try FileManager.default.createDirectory(at: nestedDarkURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Dark Frame'",
+        "END",
+    ])
+    try headerData.write(to: nestedDarkURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let engine = AuditEngine(config: fixture.config, db: fixture.db)
+    let (_, all) = try engine.run()
+
+    let nestedTreeHits = findings(all, category: "nested-session-tree")
+    #expect(nestedTreeHits.contains { $0.path == "sessions/M45_Pleiades/2026-01-10/flats/sessions" })
+
+    let calibHits = findings(all, category: "calib-in-wrong-dir")
+    #expect(!calibHits.contains { $0.path == nestedDarkPath })
+}
+
+@Test func auditSkipsCalibInWrongDirUnderMastersToolOutputDir() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    // `masters/` right next to the raws is a deliberate convention for
+    // stacking outputs, not a misplaced frame -- a stacked darks master
+    // dropped there must never be flagged as calib-in-wrong-dir just
+    // because its enclosing role folder ("flats", here) doesn't match the
+    // master's own IMAGETYP.
+    let mastersPath = "sessions/M45_Pleiades/2026-01-10/flats/masters/session1_60s_-10c_darks_stacked.fit"
+    let mastersURL = fixture.root.appendingPathComponent(mastersPath)
+    try FileManager.default.createDirectory(at: mastersURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Dark Frame'",
+        "END",
+    ])
+    try headerData.write(to: mastersURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let engine = AuditEngine(config: fixture.config, db: fixture.db)
+    let (_, all) = try engine.run()
+
+    #expect(!findings(all, category: "calib-in-wrong-dir").contains { $0.path == mastersPath })
+
+    let toolOutputHits = findings(all, category: "tool-output")
+    #expect(toolOutputHits.contains { $0.path == "sessions/M45_Pleiades/2026-01-10/flats/masters" })
 }
 
 @Test func auditFindsLooseFramesInDateDir() throws {

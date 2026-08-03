@@ -258,13 +258,19 @@ func cmdAudit(_ args: [String]) throws -> Int32 {
         if let suggestMessage { eprint(suggestMessage) }
         try printJSON(findings)
     } else {
-        printAuditFindings(findings)
+        printAuditFindings(findings, config: config)
         if let suggestMessage { print(suggestMessage) }
     }
     return 0
 }
 
-private func printAuditFindings(_ findings: [Finding]) {
+/// Human-readable audit output, aggregated the same way as the app's
+/// `AuditView` (`FindingGrouper`, shared so the two never drift): one line
+/// per (severity, category, group) with a count, then up to 3 example
+/// paths -- instead of one line per finding, which floods the terminal when
+/// a single root cause produces dozens/hundreds of near-identical findings.
+/// Full per-finding detail is always available via `--json`.
+private func printAuditFindings(_ findings: [Finding], config: AstroConfig) {
     guard !findings.isEmpty else {
         print("no findings")
         return
@@ -276,10 +282,16 @@ private func printAuditFindings(_ findings: [Finding]) {
         guard !group.isEmpty else { continue }
 
         print("\(severity.rawValue) (\(group.count))")
-        for finding in group {
-            print("\(finding.severity.rawValue)  \(finding.category)  \(finding.path)")
-            for line in finding.message.components(separatedBy: "\n") {
+        for bucket in FindingGrouper.group(group, config: config) {
+            print("\(severity.rawValue)  \(bucket.key.category)  \(bucket.key.groupKey)  (\(bucket.count) db)")
+            for line in bucket.firstMessage.components(separatedBy: "\n") {
                 print("    \(line)")
+            }
+            for finding in bucket.findings.prefix(3) {
+                print("    - \(finding.path)")
+            }
+            if bucket.count > 3 {
+                print("    ... +\(bucket.count - 3) more")
             }
         }
     }

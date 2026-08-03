@@ -8,6 +8,35 @@ történik.
 
 ## [Unreleased]
 
+### Changed
+
+- **Audit tab UX**: éles screenshotokból jött panaszok javítva.
+  - Minden audit-finding üzenet (`Rules.swift`, `DuplicateFinder`,
+    `SessionMatcher`, `CleanupReport`) magyarra fordítva — eddig a magyar UI
+    közepén angol mondatok jelentek meg (`FITS IMAGETYP "Dark" doesn't match
+    this file's location`, `".DS_Store" looks like leftover processing
+    residue`).
+  - Új `AuditEngine.suppressRedundantFindings` post-pass: egy beágyazott
+    session-fa (pl. `sessions/<target>/<date>/flats/sessions/session1/
+    darks/`) korábban egyetlen `nested-session-tree` találat MELLETT tucatnyi
+    vagy száznál is több azonos `calib-in-wrong-dir`/`misplaced-file`/
+    `loose-frames-in-date-dir` sort produkált a mögötte lévő fájlokra — ezek
+    most elnyomódnak, ha az útvonaluk egy ugyanabban a futásban
+    `nested-session-tree`-vel jelölt mappa alatt van.
+  - `AstroConfig.toolOutputDirNames` új alapértelmezett eleme: `"masters"` —
+    stackelt master fájlok szándékos `masters/` alkönyvtára a raw-ok mellett
+    (pl. `sessions/<target>/<date>/darks/masters/…stacked.fit`) többé nem
+    kap `calib-in-wrong-dir` találatot, hanem egy `probablyIntentional`
+    `tool-output` találatot.
+  - App: `AuditView` a lapos táblázatot lenyitható, csoportosított listára
+    cserélte (Stats fül `DisclosureGroup` stílusában) — egy sor egy
+    (súlyosság, kategória, csoport) hármasra, darabszám-jelvénnyel, lenyitva
+    az egyedi találatokkal. CLI: `astrotool audit` emberi kimenete
+    (`--json` nélkül) ugyanígy csoportosítva, csoportonként max 3 példa-
+    útvonallal — a teljes lista változatlanul elérhető `--json`-nal. A
+    csoportosító logika közös: új `Sources/AstroCore/Audit/
+    FindingGrouper.swift`.
+
 ## [0.2.0] - 2026-08-03
 
 ### Added

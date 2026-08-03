@@ -159,8 +159,8 @@ public enum CleanupReport {
                     severity: .suspicious,
                     category: "cleanup-candidate",
                     path: path,
-                    message: "\(group.category): cleanup candidate — moved to quarantine, not deleted; "
-                        + "empty the quarantine folder by hand once you've confirmed you don't need it.",
+                    message: "\(group.category): takarítási jelölt — karanténba mozgatva, nem törölve; "
+                        + "ürítsd ki kézzel a karantén-mappát, ha megbizonyosodtál róla, hogy nincs rá szükséged.",
                     suggestion: .move(from: path, to: quarantinePath)
                 ))
             }

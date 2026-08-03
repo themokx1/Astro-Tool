@@ -105,6 +105,8 @@ public final class AuditEngine {
             findings.append(contentsOf: rule.evaluate(ctx))
         }
 
+        findings = Self.suppressRedundantFindings(findings)
+
         if includeDuplicates {
             findings.append(contentsOf: try DuplicateFinder.findDuplicates(db: db, config: config))
         }
@@ -122,6 +124,33 @@ public final class AuditEngine {
         }
 
         return (runID, sorted)
+    }
+
+    /// One root cause (a whole session tree accidentally nested a level too
+    /// deep, e.g. `sessions/<target>/<date>/flats/sessions/session1/darks/`)
+    /// can otherwise flood the result with dozens of near-identical per-file
+    /// findings underneath it, on top of the single `nested-session-tree`
+    /// finding that already names the actionable unit -- a human fixes this
+    /// by moving the whole nested tree, not file by file, and the per-file
+    /// `.move` suggestions computed for those files are wrong anyway (they're
+    /// derived from a path-implied role that only holds for the canonical
+    /// `sessions/<target>/<date>/<role>/` shape, not for an arbitrarily
+    /// deeper nested one). So once every rule has run, drop any
+    /// `calib-in-wrong-dir` / `misplaced-file` / `loose-frames-in-date-dir`
+    /// finding whose path lies at or under a directory this same run also
+    /// flagged as `nested-session-tree`.
+    private static func suppressRedundantFindings(_ findings: [Finding]) -> [Finding] {
+        let nestedTreeDirs = findings
+            .filter { $0.category == "nested-session-tree" }
+            .map(\.path)
+        guard !nestedTreeDirs.isEmpty else { return findings }
+
+        let suppressibleCategories: Set<String> = ["calib-in-wrong-dir", "misplaced-file", "loose-frames-in-date-dir"]
+
+        return findings.filter { finding in
+            guard suppressibleCategories.contains(finding.category) else { return true }
+            return !nestedTreeDirs.contains { dir in finding.path == dir || finding.path.hasPrefix(dir + "/") }
+        }
     }
 
     private static func severityRank(_ severity: Severity) -> Int {

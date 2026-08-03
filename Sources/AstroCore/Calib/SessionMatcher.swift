@@ -73,7 +73,7 @@ public enum SessionMatcher {
                   let meta = try db.fitsMeta(fileID: fileID),
                   let imagetyp = meta.imagetyp
             else { continue }
-            if let problem = CalibInWrongDirRule.misplacedFinding(file: file, imagetyp: imagetyp, id: "calib-in-wrong-dir") {
+            if let problem = CalibInWrongDirRule.misplacedFinding(file: file, imagetyp: imagetyp, id: "calib-in-wrong-dir", toolOutputDirNames: config.toolOutputDirNames) {
                 problems.append(problem)
             }
         }
@@ -86,7 +86,7 @@ public enum SessionMatcher {
                     severity: .suspicious,
                     category: "missing-flats",
                     path: sessionPath,
-                    message: "This session has no flats.",
+                    message: "Ehhez a session-höz nincs flat felvétel.",
                     suggestion: nil
                 )
             )
@@ -105,7 +105,7 @@ public enum SessionMatcher {
                     severity: .suspicious,
                     category: "missing-darks",
                     path: sessionPath,
-                    message: "No session darks and no matching library dark.",
+                    message: "Nincs saját dark felvétel a session-höz, és nincs hozzá illő library dark sem.",
                     suggestion: nil
                 )
             )

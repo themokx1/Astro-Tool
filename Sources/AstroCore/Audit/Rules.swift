@@ -125,8 +125,8 @@ public struct PlaceholderNameRule: AuditRule {
                 severity: .sureError,
                 category: id,
                 path: path,
-                message: "Directory name still contains the session-creation script's prompt text — it looks like nobody typed a real target name.",
-                suggestion: .review(note: "Rename this directory to the actual target name; the intended name can't be recovered automatically.")
+                message: "A mappa neve még mindig a session-létrehozó szkript promptszövegét tartalmazza — úgy tűnik, senki nem írt be valódi célpontnevet.",
+                suggestion: .review(note: "Nevezd át ezt a mappát a tényleges célpont nevére; az eredetileg szánt név automatikusan nem állítható vissza.")
             )
         }
     }
@@ -162,8 +162,8 @@ public struct OrphanCalibDirRule: AuditRule {
                 severity: .sureError,
                 category: id,
                 path: dirPath,
-                message: "\"\(name)\" is not one of the canonical calibration_library subdirectories (darks/flats/biases).",
-                suggestion: .review(note: "Move or rename this directory into calibration_library/darks, /flats, or /biases.")
+                message: "\"\(name)\" nem kanonikus calibration_library almappa (darks/flats/biases).",
+                suggestion: .review(note: "Mozgasd vagy nevezd át ezt a mappát calibration_library/darks, /flats vagy /biases alá.")
             ))
 
             let canonicalName = Self.canonicalMapping(for: name)
@@ -173,13 +173,13 @@ public struct OrphanCalibDirRule: AuditRule {
                 if let canonicalName {
                     suggestion = .move(from: file.path, to: "calibration_library/\(canonicalName)/\(filename)")
                 } else {
-                    suggestion = .review(note: "Could not tell whether this is a dark/flat/bias frame; move it into the correct calibration_library subdirectory by hand.")
+                    suggestion = .review(note: "Nem állapítható meg biztosan, hogy dark/flat/bias felvétel-e; mozgasd kézzel a megfelelő calibration_library almappába.")
                 }
                 findings.append(Finding(
                     severity: .sureError,
                     category: "misplaced-file",
                     path: file.path,
-                    message: "File is inside the non-canonical calibration_library subdirectory \"\(name)\".",
+                    message: "A fájl a nem kanonikus calibration_library almappában van: \"\(name)\".",
                     suggestion: suggestion
                 ))
             }
@@ -221,7 +221,7 @@ public struct DuplicatedCatalogPrefixRule: AuditRule {
                 severity: .sureError,
                 category: id,
                 path: dir,
-                message: "Target name \"\(name)\" repeats its own leading tokens — likely a copy-paste duplication.",
+                message: "A célpont neve (\"\(name)\") megismétli a saját kezdő token-jeit — valószínűleg copy-paste duplikáció.",
                 suggestion: .rename(from: dir, to: "\(comps[0])/\(renamed)")
             )
         }
@@ -247,8 +247,8 @@ public struct NestedSessionTreeRule: AuditRule {
                     severity: .sureError,
                     category: id,
                     path: dir,
-                    message: "A \"sessions\" directory is nested outside the top-level sessions/ tree.",
-                    suggestion: .review(note: "Move this nested sessions/ tree's contents into the real sessions/ area; a whole-tree move needs a human to pick the destination.")
+                    message: "a \"sessions\" mappa a felső szintű sessions/ fán kívül van beágyazva.",
+                    suggestion: .review(note: "Mozgasd át ennek a beágyazott sessions/ fának a tartalmát a valódi sessions/ területre; egy teljes fa áthelyezéséhez emberi döntés kell a célhelyre.")
                 )
             }
     }
@@ -283,7 +283,7 @@ public struct NoncanonicalSubdirRule: AuditRule {
                 severity: .suspicious,
                 category: id,
                 path: dir,
-                message: "\"\(name)\" under a stack date directory doesn't look like a normal frame-role folder.",
+                message: "\"\(name)\" egy stack dátum-mappa alatt nem tűnik normál frame-role mappának.",
                 suggestion: nil
             )
         }
@@ -316,7 +316,7 @@ public struct AssetsWithoutDateRule: AuditRule {
                 severity: .suspicious,
                 category: id,
                 path: dir,
-                message: "\"\(name)\" sits directly under the target directory but isn't a date folder.",
+                message: "\"\(name)\" közvetlenül a célpont-mappa alatt van, de nem dátum-mappa.",
                 suggestion: nil
             )
         }
@@ -386,7 +386,7 @@ public struct SimilarTargetNamesRule: AuditRule {
                 severity: .suspicious,
                 category: id,
                 path: path,
-                message: "Possibly the same target under different names: \(sortedNames.joined(separator: ", "))",
+                message: "Valószínűleg ugyanaz a célpont különböző néven: \(sortedNames.joined(separator: ", "))",
                 suggestion: nil
             )
         }
@@ -458,7 +458,7 @@ public struct MissingCounterpartRule: AuditRule {
         for stack in stacksEntries {
             let hasSession = sessionsEntries.contains { $0.target == stack.target && Self.overlaps($0.span, stack.span) }
             if !hasSession {
-                findings.append(Finding(severity: .suspicious, category: id, path: stack.path, message: "stack without session", suggestion: nil))
+                findings.append(Finding(severity: .suspicious, category: id, path: stack.path, message: "stack session nélkül", suggestion: nil))
             }
         }
 
@@ -466,14 +466,14 @@ public struct MissingCounterpartRule: AuditRule {
             let hasCounterpart = sessionsEntries.contains { $0.target == processed.target && Self.overlaps($0.span, processed.span) }
                 || stacksEntries.contains { $0.target == processed.target && Self.overlaps($0.span, processed.span) }
             if !hasCounterpart {
-                findings.append(Finding(severity: .suspicious, category: id, path: processed.path, message: "processed without session or stack", suggestion: nil))
+                findings.append(Finding(severity: .suspicious, category: id, path: processed.path, message: "feldolgozott anyag session vagy stack nélkül", suggestion: nil))
             }
         }
 
         for session in sessionsEntries {
             let hasStack = stacksEntries.contains { $0.target == session.target && Self.overlaps($0.span, session.span) }
             if !hasStack {
-                findings.append(Finding(severity: .suspicious, category: id, path: session.path, message: "session not yet stacked", suggestion: nil))
+                findings.append(Finding(severity: .suspicious, category: id, path: session.path, message: "session még nincs stackelve", suggestion: nil))
             }
         }
 
@@ -524,13 +524,13 @@ public struct IntentionalDateRule: AuditRule {
     private static func message(for date: SessionDate) -> String {
         switch date.kind {
         case .canonical:
-            return "canonical date"
+            return "kanonikus dátum"
         case .runSuffix(let n):
-            return "run suffix: run \(n) of \(date.start)"
+            return "run jelölés: a(z) \(date.start) \(n). futása"
         case .range:
-            return "date range: \(date.start) to \(date.end)"
+            return "dátum-tartomány: \(date.start) – \(date.end)"
         case .labeled:
-            return "label \"\(date.label ?? "")\" on \(date.start)"
+            return "\"\(date.label ?? "")\" címke a(z) \(date.start) dátumon"
         }
     }
 }
@@ -554,8 +554,8 @@ public struct InvalidDateDirRule: AuditRule {
                 severity: .suspicious,
                 category: id,
                 path: dir,
-                message: "\"\(comps[2])\" under sessions/\(comps[1]) doesn't parse as a date.",
-                suggestion: .review(note: "Rename this folder to a real YYYY-MM-DD date, or move its contents into the correct session date folder.")
+                message: "\"\(comps[2])\" a sessions/\(comps[1]) alatt nem értelmezhető dátumként.",
+                suggestion: .review(note: "Nevezd át ezt a mappát valódi ÉÉÉÉ-HH-NN dátumra, vagy mozgasd a tartalmát a megfelelő session dátum-mappába.")
             )
         }
     }
@@ -581,7 +581,7 @@ public struct ResidueRule: AuditRule {
                 severity: .suspicious,
                 category: id,
                 path: file.path,
-                message: "\"\(name)\" looks like leftover processing residue.",
+                message: "\"\(name)\" feldolgozási maradéknak tűnik.",
                 suggestion: nil
             ))
         }
@@ -593,7 +593,7 @@ public struct ResidueRule: AuditRule {
                 severity: .suspicious,
                 category: id,
                 path: dir,
-                message: "\"\(name)\" is a residue directory left behind by processing tools.",
+                message: "\"\(name)\" egy feldolgozó eszközök által hátrahagyott maradék-mappa.",
                 suggestion: nil
             ))
         }
@@ -623,7 +623,7 @@ public struct CalibInWrongDirRule: AuditRule {
     public func evaluate(_ ctx: AuditContext) -> [Finding] {
         ctx.files.compactMap { file -> Finding? in
             guard let fileID = file.id, let meta = ctx.fitsMetaByFileID[fileID], let imagetyp = meta.imagetyp else { return nil }
-            return Self.misplacedFinding(file: file, imagetyp: imagetyp, id: id)
+            return Self.misplacedFinding(file: file, imagetyp: imagetyp, id: id, toolOutputDirNames: ctx.config.toolOutputDirNames)
         }
     }
 
@@ -632,11 +632,16 @@ public struct CalibInWrongDirRule: AuditRule {
     /// session — reproduces exactly what `evaluate` used to inline: a file
     /// whose FITS IMAGETYP contradicts the frame role implied by its path,
     /// either under `sessions/` or `calibration_library/`. `nil` when the
-    /// IMAGETYP matches the path, or the location isn't one this rule acts
-    /// on (e.g. a light frame under `calibration_library/`, which has no
-    /// "lights" sibling dir to move it into).
-    static func misplacedFinding(file: FileRecord, imagetyp: String, id: String) -> Finding? {
+    /// IMAGETYP matches the path, the location isn't one this rule acts on
+    /// (e.g. a light frame under `calibration_library/`, which has no
+    /// "lights" sibling dir to move it into), or the file sits anywhere
+    /// under a known tool-output dir (e.g. a stacked master kept in a
+    /// deliberate `masters/` subfolder next to the raws) — that's
+    /// `ToolOutputRule`'s territory, not a misplacement.
+    static func misplacedFinding(file: FileRecord, imagetyp: String, id: String, toolOutputDirNames: [String] = []) -> Finding? {
         guard let implied = impliedRole(from: imagetyp), implied != file.role else { return nil }
+        let pathComponents = file.path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard !pathComponents.contains(where: { toolOutputDirNames.contains($0) }) else { return nil }
 
         if file.area == .sessions, sessionPathRoles.contains(file.role) {
             return finding(file: file, imagetyp: imagetyp, implied: implied, roleDirIndex: nil, id: id)
@@ -670,7 +675,7 @@ public struct CalibInWrongDirRule: AuditRule {
             severity: .sureError,
             category: id,
             path: file.path,
-            message: "FITS IMAGETYP \"\(imagetyp)\" doesn't match this file's location (expected under \(impliedDir)/).",
+            message: "A FITS IMAGETYP (\"\(imagetyp)\") nem illik a fájl helyéhez (várt hely: \(impliedDir)/).",
             suggestion: .move(from: file.path, to: to)
         )
     }
@@ -719,8 +724,8 @@ public struct EmptyTargetComponentRule: AuditRule {
                 severity: .sureError,
                 category: id,
                 path: dir,
-                message: "\"\(name)\" doesn't look like a real target name — it's empty or all separators once sanitized.",
-                suggestion: .review(note: "Rename this directory to the actual target name; the intended name can't be recovered automatically.")
+                message: "\"\(name)\" nem tűnik valódi célpontnévnek — sanitizálás után üres vagy csak elválasztó karakterekből áll.",
+                suggestion: .review(note: "Nevezd át ezt a mappát a tényleges célpont nevére; az eredetileg szánt név automatikusan nem állítható vissza.")
             )
         }
     }
@@ -771,7 +776,7 @@ public struct LooseFramesInDateDirRule: AuditRule {
                 severity: .suspicious,
                 category: id,
                 path: dirPath,
-                message: "Frames sit directly in this date directory instead of a lights/flats/darks/biases subdirectory.",
+                message: "A felvételek közvetlenül ebben a dátum-mappában vannak, nem egy lights/flats/darks/biases almappában.",
                 suggestion: nil
             ))
         }

@@ -129,8 +129,8 @@ public enum DuplicateFinder {
         let size = group.first?.size ?? 0
         let wastedBytes = size * Int64(sortedPaths.count - 1)
 
-        let message = "duplicate content across \(sortedPaths.count) files (size \(size) bytes each, "
-            + "wasted \(wastedBytes) bytes): \(sortedPaths.joined(separator: ", "))"
+        let message = "azonos tartalom \(sortedPaths.count) fájlban (méret: \(size) bájt/fájl, "
+            + "pazarolt hely: \(wastedBytes) bájt): \(sortedPaths.joined(separator: ", "))"
 
         // sessions/ is the canonical RAW area -- never propose touching a
         // copy that lives there, only copies outside it.
@@ -141,9 +141,9 @@ public enum DuplicateFinder {
         // at anything under the canonical RAW area.
         let note: String
         if removalCandidates.isEmpty {
-            note = "all copies are under sessions/ (the canonical RAW area) -- review manually before removing anything"
+            note = "minden másolat a sessions/ alatt van (a kanonikus RAW terület) — kézzel ellenőrizd, mielőtt bármit törölnél"
         } else {
-            note = "candidates to deduplicate (redundant copies outside sessions/): "
+            note = "deduplikálásra javasolt (redundáns másolatok a sessions/ területen kívül): "
                 + removalCandidates.joined(separator: ", ")
         }
 
