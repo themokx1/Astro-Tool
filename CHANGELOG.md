@@ -8,6 +8,8 @@ történik.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-03
+
 ### Added
 
 - **Méret szerint rendezett szemét-riport (`cleanup`)**: az audit már ismeri
