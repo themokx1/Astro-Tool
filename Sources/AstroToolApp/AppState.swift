@@ -48,6 +48,11 @@ final class AppState: @unchecked Sendable {
     /// lazily fetch a row's children on first expand).
     var sessionDetailsByTarget: [String: [SessionDetail]] = [:]
     var calibNeeds: [CalibNeed] = []
+    /// `CalibHealth.report`'s result -- flat discipline, bias inventory, dark
+    /// master health -- shown below the coverage table on the Kalibráció
+    /// fül. `nil` until `loadCalibHealth()` has run at least once this
+    /// session.
+    var calibHealth: CalibHealthReport?
     var frameScores: [FrameScore] = []
 
     /// Tonight's observation plan (`Planner.plan`), shown in the
@@ -295,6 +300,12 @@ final class AppState: @unchecked Sendable {
                 }
                 if let calibResult = try? await calibTask.value {
                     self.calibNeeds = calibResult
+                }
+                let calibHealthTask = Task.detached(priority: .userInitiated) {
+                    try CalibHealth.report(db: db, config: cfg)
+                }
+                if let calibHealthResult = try? await calibHealthTask.value {
+                    self.calibHealth = calibHealthResult
                 }
                 let projectsTask = Task.detached(priority: .userInitiated) {
                     try ProjectStatusQueries.projects(db: db, config: cfg)
@@ -729,6 +740,30 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.calibNeeds = result
                 self.progressText = "Kalibráció kész: \(result.count) kombináció"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Loads the calibration-HEALTH report (flat discipline, bias inventory,
+    /// dark master health) -- shown below the coverage table on the
+    /// Kalibráció fül.
+    func loadCalibHealth() {
+        guard let db else { return }
+        let cfg = config
+
+        let opID = beginOperation("Kalibráció-egészség számítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try CalibHealth.report(db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.calibHealth = result
+                self.progressText = "Kalibráció-egészség kész"
             } catch {
                 self.handle(error)
             }

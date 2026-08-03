@@ -8,6 +8,23 @@ történik.
 
 ## [Unreleased]
 
+### Added
+
+- **Kalibráció-egészség riport (`astrotool calib --health`)**: flat-fegyelem,
+  bias-készlet és dark-készlet egészség egy paranccsal/fülön. Új
+  `Sources/AstroCore/Calib/CalibHealth.swift` (`CalibHealth.report(db:config:)`) —
+  (a) session-önkénti flat-fegyelem: `"nincs flat"` / `"flat nem illik"`
+  (gyújtótáv ±2mm, szűrő, `ROTATOR`-szög `calib.rotatorToleranceDeg`-en túl,
+  flat-kor `calib.flatMaxAgeDays`-en túl) / `"rendben"`; (b) minden bias frame
+  (session + `calibration_library`) csoportosítva gain/offset/kamera szerint,
+  plusz a usable lightok által használt, biassal le nem fedett kombók
+  listája; (c) minden master dark könyvtár kora, CCD-TEMP stabilitása
+  (>1.5°C szórás → figyelmeztetés), keretszáma, és nem-használt (orphan)
+  jelzése. Új `AstroConfig.calib` mezők: `flatMaxAgeDays: Int = 30`,
+  `rotatorToleranceDeg: Double = 2.0`. CLI: `astrotool calib --health
+  [--json]`. App: Kalibráció fül új "Kalibráció-egészség" szakasza három
+  lenyitható blokkal.
+
 ## [0.4.0] - 2026-08-03
 
 ### Added

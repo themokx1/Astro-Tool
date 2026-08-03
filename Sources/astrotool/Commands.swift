@@ -32,7 +32,7 @@ Commands:
   stats         [--root R] [--target T] [--json] [--gross] [--sessions (requires --target)] [--tag TAG]
                 [--timeline (requires --target) [--date D]]
   quality       --target T [--date D] [--root R] [--json]
-  calib         [--root R] [--json]
+  calib         [--root R] [--json] [--health]
   match         [--root R] --target T --date D [--json]
   link-calib    --target T --date D [--dry-run] [--yes] [--root R] [--json]
   new-session   --catalog CAT --name NAME --date D [--root R] [--json]
@@ -710,12 +710,23 @@ func cmdCalib(_ args: [String]) throws -> Int32 {
     let specs = [
         FlagSpec("--root", takesValue: true),
         FlagSpec("--json", takesValue: false),
+        FlagSpec("--health", takesValue: false),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
 
     let config = try resolveConfig(rootFlag: parsed.value("--root"))
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
+
+    if parsed.has("--health") {
+        let report = try CalibHealth.report(db: db, config: config)
+        if parsed.has("--json") {
+            try printJSON(report)
+        } else {
+            printCalibHealthReport(report)
+        }
+        return 0
+    }
 
     let needs = try CalibAnalyzer.coverage(db: db, config: config)
     if parsed.has("--json") {
@@ -724,6 +735,54 @@ func cmdCalib(_ args: [String]) throws -> Int32 {
         printCalibReport(needs)
     }
     return 0
+}
+
+private func printCalibHealthReport(_ report: CalibHealthReport) {
+    print("Flat-fegyelem:")
+    let problemFlats = report.flats.filter { $0.status != "rendben" }
+    let okFlats = report.flats.filter { $0.status == "rendben" }
+    if report.flats.isEmpty {
+        print("  nincs session usable lighttal")
+    }
+    for flat in problemFlats + okFlats {
+        print("  \(flat.target)/\(flat.date): \(flat.status)")
+        if !flat.reasons.isEmpty {
+            print("    - \(flat.reasons.joined(separator: ", "))")
+        }
+    }
+
+    print("")
+    print("Bias-készlet:")
+    if report.biasGroups.isEmpty {
+        print("  nincs bias frame")
+    }
+    for group in report.biasGroups {
+        let gainStr = group.gain.map(formatted) ?? "-"
+        let offsetStr = group.offset.map(formatted) ?? "-"
+        let cameraStr = group.camera ?? "-"
+        print("  gain\(gainStr)/offset\(offsetStr)/\(cameraStr): \(group.frameCount) frame (\(group.locations.joined(separator: ", ")))")
+    }
+    if !report.missingBiasCombos.isEmpty {
+        print("  hiányzó kombók:")
+        for combo in report.missingBiasCombos {
+            print("    - \(combo)")
+        }
+    }
+
+    print("")
+    print("Dark-készlet egészség:")
+    if report.darkMasters.isEmpty {
+        print("  nincs master dark")
+    }
+    for master in report.darkMasters {
+        let ageStr = master.ageDays.map(String.init) ?? "-"
+        var line = "  \(master.path): \(master.frameCount) frame, \(ageStr) napos"
+        if master.isStale { line += " ⚠️ elavult" }
+        print(line)
+        if !master.warnings.isEmpty {
+            print("    - \(master.warnings.joined(separator: ", "))")
+        }
+    }
 }
 
 private func printCalibReport(_ needs: [CalibNeed]) {

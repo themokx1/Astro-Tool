@@ -85,6 +85,21 @@ public struct CalibRule: Codable, Equatable, Sendable {
     /// landing at `29.9s`) without a fixed absolute tolerance that would be
     /// too loose for short exposures or too tight for long ones.
     public var exposureToleranceFraction: Double
+    /// R6-1 (`CalibHealth`'s flat discipline check): a session's own flat is
+    /// rejected as "too old" once it's more than this many days away from
+    /// the session's lights (both sides' `DATE-OBS`) -- dust on the sensor
+    /// moves over time, so an old flat no longer describes the current
+    /// vignetting/dust pattern even if it's otherwise electronically
+    /// identical. Default 30 days.
+    public var flatMaxAgeDays: Int
+    /// R6-1: a session's own flat is rejected when its `ROTATOR` FITS header
+    /// angle (read from `header_json`, same convention as `XBINNING`)
+    /// differs from the lights' by more than this many degrees -- a flat
+    /// only corrects vignetting/dust at the optical-train orientation it was
+    /// taken at, so a rotated imaging train needs its own flat. Only
+    /// compared when BOTH sides have a `ROTATOR` value (same "nothing to
+    /// compare" rule as `matchOffset`/`matchCamera`). Default 2.0°.
+    public var rotatorToleranceDeg: Double
 
     public init(
         tempToleranceC: Double = 1.0,
@@ -95,7 +110,9 @@ public struct CalibRule: Codable, Equatable, Sendable {
         matchBinning: Bool = true,
         matchCamera: Bool = true,
         gainTolerance: Double = 0,
-        exposureToleranceFraction: Double = 0.02
+        exposureToleranceFraction: Double = 0.02,
+        flatMaxAgeDays: Int = 30,
+        rotatorToleranceDeg: Double = 2.0
     ) {
         self.tempToleranceC = tempToleranceC
         self.exposureToleranceS = exposureToleranceS
@@ -106,12 +123,15 @@ public struct CalibRule: Codable, Equatable, Sendable {
         self.matchCamera = matchCamera
         self.gainTolerance = gainTolerance
         self.exposureToleranceFraction = exposureToleranceFraction
+        self.flatMaxAgeDays = flatMaxAgeDays
+        self.rotatorToleranceDeg = rotatorToleranceDeg
     }
 
     private enum CodingKeys: String, CodingKey {
         case tempToleranceC, exposureToleranceS, darkMaxAgeMonths
         case matchGain, matchOffset, matchBinning, matchCamera
         case gainTolerance, exposureToleranceFraction
+        case flatMaxAgeDays, rotatorToleranceDeg
     }
 
     public init(from decoder: any Decoder) throws {
@@ -126,6 +146,8 @@ public struct CalibRule: Codable, Equatable, Sendable {
         self.matchCamera = try container.decodeIfPresent(Bool.self, forKey: .matchCamera) ?? defaults.matchCamera
         self.gainTolerance = try container.decodeIfPresent(Double.self, forKey: .gainTolerance) ?? defaults.gainTolerance
         self.exposureToleranceFraction = try container.decodeIfPresent(Double.self, forKey: .exposureToleranceFraction) ?? defaults.exposureToleranceFraction
+        self.flatMaxAgeDays = try container.decodeIfPresent(Int.self, forKey: .flatMaxAgeDays) ?? defaults.flatMaxAgeDays
+        self.rotatorToleranceDeg = try container.decodeIfPresent(Double.self, forKey: .rotatorToleranceDeg) ?? defaults.rotatorToleranceDeg
     }
 }
 

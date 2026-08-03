@@ -427,6 +427,17 @@ public enum CalibAnalyzer {
         /// dirs hold hundreds of files at most, unlike the scanned light
         /// library.
         var xbinning: Int?
+        /// Total file count -- every file contributing to this dir, whether
+        /// or not it had a parseable `CCD-TEMP`. Used by `CalibHealth`'s
+        /// dark-master-health report (`MasterDirInfo.frameCount`); `coverage()`
+        /// itself never needed a raw count before.
+        var fileCount: Int
+        /// Every file's own `CCD-TEMP` (actual cooler reading, not the
+        /// `SET-TEMP` setpoint used for exposure/temp combo matching) --
+        /// kept as a raw list (not collapsed to `mode`, unlike gain/offset/
+        /// instrume/xbinning) so `CalibHealth` can compute a median and max
+        /// deviation across the dir to flag cooler instability.
+        var ccdTemps: [Double]
     }
 
     /// Accumulates one master dir's raw per-file values before they're
@@ -440,6 +451,8 @@ public enum CalibAnalyzer {
         var offsets: [Double] = []
         var instrumes: [String] = []
         var xbinnings: [Int] = []
+        var fileCount = 0
+        var ccdTemps: [Double] = []
     }
 
     /// Discovers master-dark directories from DB rows: files with
@@ -470,9 +483,11 @@ public enum CalibAnalyzer {
                 newestInstant: instant
             )
             builder.newestInstant = max(builder.newestInstant, instant)
+            builder.fileCount += 1
             if let gain = meta?.gain { builder.gains.append(gain) }
             if let offset = meta?.offset { builder.offsets.append(offset) }
             if let instrume = meta?.instrume { builder.instrumes.append(instrume) }
+            if let ccdTemp = meta?.ccdTemp { builder.ccdTemps.append(ccdTemp) }
             if let xbinning = parseXBinning(headerJSON: meta?.headerJSON) { builder.xbinnings.append(xbinning) }
             builders[dirName] = builder
         }
@@ -487,10 +502,55 @@ public enum CalibAnalyzer {
                 gain: mode(builder.gains),
                 offset: mode(builder.offsets),
                 instrume: mode(builder.instrumes),
-                xbinning: mode(builder.xbinnings)
+                xbinning: mode(builder.xbinnings),
+                fileCount: builder.fileCount,
+                ccdTemps: builder.ccdTemps
             )
         }
         return masters
+    }
+
+    // MARK: - R6-1: public master-dir detail (CalibHealth)
+
+    /// Everything `CalibHealth`'s dark-master-health report needs about one
+    /// master-dark directory that `coverage()`'s own `CalibNeed` view
+    /// doesn't carry: a raw frame count and per-file `CCD-TEMP` readings,
+    /// alongside the same `path`/age-source `newestInstant` `coverage()`
+    /// already derives. Deliberately NOT the private `MasterDir` itself --
+    /// that type also carries matching-only fields (`gain`/`offset`/
+    /// `instrume`/`xbinning`) `CalibHealth` has no use for.
+    public struct MasterDirInfo: Sendable {
+        /// Root-relative path, e.g. `"calibration_library/darks/300sec_-10deg"`.
+        public var path: String
+        /// Newest "instant" among the dir's files -- see `MasterDir`'s own
+        /// doc comment for the DATE-OBS-first, mtime-fallback rule.
+        public var newestInstant: Double
+        public var frameCount: Int
+        public var ccdTemps: [Double]
+
+        public init(path: String, newestInstant: Double, frameCount: Int, ccdTemps: [Double]) {
+            self.path = path
+            self.newestInstant = newestInstant
+            self.frameCount = frameCount
+            self.ccdTemps = ccdTemps
+        }
+    }
+
+    /// Builds `MasterDirInfo` for every discoverable master-dark directory --
+    /// same discovery/parsing rule as `coverage()`'s internal `masterDirs`
+    /// (reused, not re-derived). Reads only from `db`; never touches the
+    /// filesystem.
+    public static func masterDirInfos(db: Database) throws -> [MasterDirInfo] {
+        let files = try db.allFiles(includeMissing: false)
+        let masters = try masterDirs(files: files, db: db)
+        return masters.values.map { master in
+            MasterDirInfo(
+                path: "calibration_library/darks/\(master.dirName)",
+                newestInstant: master.newestInstant,
+                frameCount: master.fileCount,
+                ccdTemps: master.ccdTemps
+            )
+        }
     }
 
     /// Parses the `XBINNING` card out of a `fits_meta.header_json` blob

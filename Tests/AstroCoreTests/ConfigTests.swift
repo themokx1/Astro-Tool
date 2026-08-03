@@ -27,6 +27,8 @@ import Testing
     #expect(config.calib.matchCamera == true)
     #expect(config.calib.gainTolerance == 0)
     #expect(config.calib.exposureToleranceFraction == 0.02)
+    #expect(config.calib.flatMaxAgeDays == 30)
+    #expect(config.calib.rotatorToleranceDeg == 2.0)
 
     #expect(config.rating.workers == 4)
     #expect(config.rating.outlierZScore == 2.0)
@@ -84,6 +86,20 @@ import Testing
     #expect(rule.matchCamera == true)
     #expect(rule.gainTolerance == 0)
     #expect(rule.exposureToleranceFraction == 0.02)
+    #expect(rule.flatMaxAgeDays == 30)
+    #expect(rule.rotatorToleranceDeg == 2.0)
+}
+
+@Test func decodingPartialCalibRuleFillsMissingKeysWithDefaults() throws {
+    let json = """
+    { "calib": { "flatMaxAgeDays": 45 } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.calib.flatMaxAgeDays == 45)
+    #expect(config.calib.rotatorToleranceDeg == 2.0)
+    #expect(config.calib.tempToleranceC == 1.0)
 }
 
 @Test func defaultRatingRuleHasExpectedValues() {

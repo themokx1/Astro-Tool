@@ -656,6 +656,66 @@ struct CLISmokeTests {
     #expect(result.exitCode == 1)
 }
 
+// MARK: - calib --health
+
+@Test func calibHealthJSONReportsFlatDisciplineBiasAndDarkMasters() throws {
+    let root = try makeTempRoot("calib-health-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    // T1 has lights but no flats at all -> "nincs flat".
+    try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
+    try writeLinkCalibDummy("calibration_library/darks/300sec_-10deg/master.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["calib", "--root", root.path, "--health", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+    let flats = try #require(json?["flats"] as? [[String: Any]])
+    let t1Flat = try #require(flats.first { $0["target"] as? String == "T1" })
+    #expect(t1Flat["status"] as? String == "nincs flat")
+
+    #expect(json?["bias_groups"] != nil)
+    #expect(json?["missing_bias_combos"] != nil)
+    let darkMasters = try #require(json?["dark_masters"] as? [[String: Any]])
+    #expect(darkMasters.contains { $0["path"] as? String == "calibration_library/darks/300sec_-10deg" })
+}
+
+@Test func calibHealthHumanOutputPrintsHungarianHeaders() throws {
+    let root = try makeTempRoot("calib-health-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["calib", "--root", root.path, "--health"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("Flat-fegyelem"))
+    #expect(result.stdout.contains("Bias-készlet"))
+    #expect(result.stdout.contains("Dark-készlet egészség"))
+}
+
+@Test func calibWithoutHealthFlagStaysOnCoverageReport() throws {
+    let root = try makeTempRoot("calib-no-health")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["calib", "--root", root.path, "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let needs = try #require(json)
+    #expect(needs.contains { $0["exposure_seconds"] as? Double == 300 })
+}
+
 // MARK: - permission errors -> exit 2
 
 @Test func scanOnReadOnlyRootExitsWithTCCGuidance() throws {
