@@ -8,6 +8,8 @@ történik.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-03
+
 ### Changed
 
 - **Audit tab UX**: éles screenshotokból jött panaszok javítva.
