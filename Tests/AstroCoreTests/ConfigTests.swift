@@ -35,6 +35,26 @@ import Testing
 
     #expect(config.stats.excludeLabels == ["hibas"])
     #expect(config.stats.gapThresholdSeconds == 0)
+
+    #expect(config.site.latitudeDeg == nil)
+    #expect(config.site.longitudeDeg == nil)
+}
+
+@Test func defaultSiteRuleHasNilCoordinates() {
+    let rule = SiteRule()
+    #expect(rule.latitudeDeg == nil)
+    #expect(rule.longitudeDeg == nil)
+}
+
+@Test func decodingPartialSiteRuleFillsMissingKeyWithDefault() throws {
+    let json = """
+    { "site": { "latitudeDeg": 47.5 } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.site.latitudeDeg == 47.5)
+    #expect(config.site.longitudeDeg == nil)
 }
 
 @Test func defaultStatsRuleHasExpectedValues() {
@@ -105,6 +125,7 @@ import Testing
     #expect(config.wideField == WideFieldRule())
     #expect(config.calib == CalibRule())
     #expect(config.stats == StatsRule())
+    #expect(config.site == SiteRule())
 
     #expect(config.rating.workers == 8)
     #expect(config.rating.outlierZScore == 2.0)

@@ -40,6 +40,7 @@ Commands:
   tag add       --target T [--date D] <tag> [--root R] [--json]
   tag remove    --target T [--date D] <tag> [--root R] [--json]
   tag list      [--target T] [--date D] [--root R] [--json]
+  plan          [--date YYYY-MM-DD] [--min-alt 30] [--root R] [--json]
 
   --version     Print version and exit
   --help        Show this help
@@ -1154,4 +1155,123 @@ private func splitPositionalArgs(_ args: [String], specs: [FlagSpec]) -> (flagAr
     }
 
     return (flagArgs, positionals)
+}
+
+// MARK: - plan
+
+/// `astrotool plan [--date YYYY-MM-DD] [--min-alt 30] [--json]` -- tonight's
+/// observation plan for every target on record (see `Planner.plan`).
+func cmdPlan(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--date", takesValue: true),
+        FlagSpec("--min-alt", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    var date: Date?
+    if let raw = parsed.value("--date") {
+        guard let parsedDate = parsePlanDate(raw) else {
+            eprint("error: invalid --date (expected YYYY-MM-DD): \(raw)")
+            return 1
+        }
+        date = parsedDate
+    }
+
+    var minAlt = 30.0
+    if let raw = parsed.value("--min-alt") {
+        guard let value = Double(raw) else {
+            eprint("error: invalid --min-alt: \(raw)")
+            return 1
+        }
+        minAlt = value
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let plans = try Planner.plan(date: date, minAltitudeDeg: minAlt, db: db, config: config)
+
+    if parsed.has("--json") {
+        try printJSON(plans)
+    } else {
+        try printPlanHeader(db: db, config: config, date: date)
+        printPlanTable(plans)
+    }
+    return 0
+}
+
+/// Parses a bare `YYYY-MM-DD` date (UTC, offset to local noon so it safely
+/// lands within the intended civil day regardless of the site's timezone
+/// offset -- `Planner` only ever uses this to find "the night starting on
+/// this calendar day", never the exact time of day).
+private func parsePlanDate(_ raw: String) -> Date? {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(identifier: "UTC")
+    formatter.dateFormat = "yyyy-MM-dd"
+    guard let date = formatter.date(from: raw) else { return nil }
+    return date.addingTimeInterval(12 * 3600)
+}
+
+/// The header line above the plan table: tonight's dusk/dawn (site-LOCAL
+/// time) and the Moon's phase. PRIVACY: never prints the site's actual
+/// latitude/longitude -- only uses them to derive the times/phase shown
+/// (`config show` is the one place those coordinates may appear).
+private func printPlanHeader(db: Database, config: AstroConfig, date: Date?) throws {
+    let site = try Planner.resolveSite(db: db, config: config)
+    guard let lat = site.latitudeDeg, let lon = site.longitudeDeg else {
+        print("Ma este: helyszín ismeretlen (nincs SITELAT/SITELONG a könyvtárban, és a config sem ad meg helyszínt)")
+        return
+    }
+
+    let timeZone = TimeZone.current
+    let night = SunMoon.astronomicalTwilight(nightOf: date ?? Date(), latDeg: lat, lonDeg: lon, timeZone: timeZone)
+    guard let dusk = night.duskUTC, let dawn = night.dawnUTC else {
+        print("Ma este: nincs csillagászati (sem nautikai) éjszaka ezen a szélességen ma")
+        return
+    }
+
+    let midNight = dusk.addingTimeInterval(dawn.timeIntervalSince(dusk) / 2)
+    let moonIllum = SunMoon.moonIlluminationPercent(julianDay: JulianDate.julianDay(midNight))
+    let fallbackNote = night.usedNauticalFallback ? " (nautikai szürkület, nincs valódi csillagászati sötét)" : ""
+
+    print("Ma este: szürkület \(formatLocalTime(dusk, timeZone: timeZone)) -> hajnal \(formatLocalTime(dawn, timeZone: timeZone))\(fallbackNote), Hold: \(String(format: "%.0f%%", moonIllum))")
+}
+
+private func formatLocalTime(_ date: Date, timeZone: TimeZone) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = timeZone
+    formatter.dateFormat = "HH:mm"
+    return formatter.string(from: date)
+}
+
+private func printPlanTable(_ plans: [TargetPlan]) {
+    guard !plans.isEmpty else {
+        print("no targets")
+        return
+    }
+
+    let targetWidth = max(plans.map { $0.target.count }.max() ?? 7, 7)
+    let header = "CÉLPONT".padding(toLength: targetWidth, withPad: " ", startingAt: 0)
+    print("\(header)  MEGVAN   CÉL      KULMINÁCIÓ  MAX ALT  ABLAK          HOLD        VERDIKT")
+
+    for plan in plans {
+        let name = plan.target.padding(toLength: targetWidth, withPad: " ", startingAt: 0)
+        let have = formatHoursMinutes(plan.usableIntegrationSeconds).padding(toLength: 7, withPad: " ", startingAt: 0)
+        let goal = (plan.goalSeconds.map(formatHoursMinutes) ?? "—").padding(toLength: 7, withPad: " ", startingAt: 0)
+        let culmination = (plan.culminationLocal ?? "-").padding(toLength: 10, withPad: " ", startingAt: 0)
+        let maxAlt = (plan.maxAltitudeDeg.map { String(format: "%.0f°", $0) } ?? "-").padding(toLength: 7, withPad: " ", startingAt: 0)
+        let window = (plan.visibleWindowLocal ?? "-").padding(toLength: 13, withPad: " ", startingAt: 0)
+        let moon = moonColumnText(plan).padding(toLength: 10, withPad: " ", startingAt: 0)
+        print("\(name)  \(have)  \(goal)  \(culmination)  \(maxAlt)  \(window)  \(moon)  \(plan.verdict)")
+    }
+}
+
+private func moonColumnText(_ plan: TargetPlan) -> String {
+    guard let illum = plan.moonIlluminationPercent, let sep = plan.moonSeparationDeg else { return "-" }
+    return String(format: "%.0f°/%.0f%%", sep, illum)
 }

@@ -8,6 +8,29 @@ történik.
 
 ## [Unreleased]
 
+### Added
+
+- **Észlelés-tervező (`astrotool plan`)**: a könyvtár-kezelőt éjszakai
+  tervezővé bővítő új parancs — minden ismert célponthoz megmutatja a meglévő
+  (usable) integrációt, a hiányzó órákat (a meglévő `goal:<óra>h` tag alapján,
+  pl. `goal:6.5h`), a ma esti kulminációt és max magasságot, a `--min-alt`
+  fölötti láthatósági ablakot a csillagászati éjszakán belül, a Hold
+  fázisát/szögtávolságát a célponttól, és egy magyar verdiktet (`"ma jó"` /
+  `"Hold zavar (32°, 89%)"` / `"alacsony (max 18°)"` / `"nem látszik ma
+  éjjel"` / `"nincs koordináta"`), pontszám szerint csökkenő sorrendben. Új,
+  zéró-függőségű `Sources/AstroCore/Sky/` modul (`JulianDate`, `SiderealTime`,
+  `AltAz`, `SunMoon` — Meeus *Astronomical Algorithms* alacsony-pontosságú
+  Nap/Hold-formulái, Meeus tankönyvi példáival validálva) és
+  `TargetCoordinates` (célpont RA/Dec mediánja plate-solve `CRVAL1`/`CRVAL2`
+  vagy `RA`/`DEC` fejlécekből, számos-vagy-szexagezimális formában is).
+  `AstroConfig.site: SiteRule` (`latitudeDeg`/`longitudeDeg`, alapból `nil`) —
+  ha üres, a `SITELAT`/`SITELONG` fejlécek könyvtár-mediánjából származik,
+  csak memóriában cachelva, sosem lemezre írva. CLI: `astrotool plan
+  [--date YYYY-MM-DD] [--min-alt 30] [--json]` — az emberi kimenet fejléce a
+  szürkület/hajnal időt és a Hold fázisát mutatja, a helyszín koordinátáit
+  SOHA (privacy). App: „Ma este" doboz az Áttekintés fülön (top 5 célpont,
+  színezett verdikt-jelvény, „Frissítés" gomb).
+
 ## [0.3.0] - 2026-08-03
 
 ### Added

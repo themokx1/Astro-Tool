@@ -775,6 +775,92 @@ private func writeLinkCalibDummy(_ relativePath: String, root: URL) throws {
     #expect(!FileManager.default.fileExists(atPath: destURL.path))
 }
 
+// MARK: - plan
+
+/// Writes a light frame carrying plate-solved WCS (`CRVAL1`/`CRVAL2`) plus
+/// `SITELAT`/`SITELONG` -- fixture coordinates only (Budapest-ish, per the
+/// R5-1 spec's own suggestion), never the real user's site.
+private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, crval2: Double, dateObs: String) throws {
+    let url = root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let cards = [
+        "SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2",
+        "EXPTIME =                300.0", "DATE-OBS= '\(dateObs)'",
+        "CRVAL1  =                \(crval1)", "CRVAL2  =                \(crval2)",
+        "SITELAT =                 47.5", "SITELONG=                 19.0", "END",
+    ]
+    try buildHeaderData(cards).write(to: url)
+}
+
+@Test func planJSONAfterScanReportsVerdictsForFixtureTarget() throws {
+    let root = try makeTempRoot("plan-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writePlanFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, crval1: 10.6847, crval2: 41.2687, dateObs: "2026-08-01T22:00:00")
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let plans = try #require(json)
+    let plan = try #require(plans.first { $0["target"] as? String == "M31_Andromeda" })
+    #expect(plan["verdict"] as? String != nil)
+    #expect(plan["ra_deg"] != nil)
+    #expect(plan["dec_deg"] != nil)
+    #expect((plan["verdict"] as? String)?.isEmpty == false)
+}
+
+@Test func planHumanOutputShowsHeaderAndTableWithoutSiteCoordinates() throws {
+    let root = try makeTempRoot("plan-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writePlanFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, crval1: 10.6847, crval2: 41.2687, dateObs: "2026-08-01T22:00:00")
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("Ma este"))
+    #expect(result.stdout.contains("M31_Andromeda"))
+    #expect(result.stdout.contains("VERDIKT"))
+
+    // PRIVACY: the human table must never print the site's actual
+    // coordinates (47.5 / 19.0), only derived times/phase.
+    #expect(!result.stdout.contains("47.5"))
+    #expect(!result.stdout.contains("19.0"))
+}
+
+@Test func planRespectsMinAltFlag() throws {
+    let root = try makeTempRoot("plan-min-alt")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    // dec -80 at lat 47.5 never rises anywhere near minAlt.
+    try writePlanFITS("sessions/T_Low/2026-08-01/lights/l1.fit", root: root, crval1: 10.0, crval2: -80.0, dateObs: "2026-08-01T22:00:00")
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--min-alt", "30", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let plans = try #require(json)
+    let plan = try #require(plans.first { $0["target"] as? String == "T_Low" })
+    #expect((plan["verdict"] as? String)?.hasPrefix("alacsony") == true)
+}
+
+@Test func planWithInvalidDateExitsWithError() throws {
+    let root = try makeTempRoot("plan-bad-date")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI(["plan", "--root", root.path, "--date", "not-a-date"])
+    #expect(result.exitCode == 1)
+}
+
 // MARK: - misc
 
 @Test func unknownSubcommandExitsWithUsage() throws {

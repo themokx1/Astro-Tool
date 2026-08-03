@@ -34,6 +34,7 @@ do {
     case "new-session": exitCode = try cmdNewSession(rest)
     case "config": exitCode = try cmdConfig(rest)
     case "tag": exitCode = try cmdTag(rest)
+    case "plan": exitCode = try cmdPlan(rest)
     default:
         eprint(usageText)
         exit(1)

@@ -50,6 +50,11 @@ final class AppState: @unchecked Sendable {
     var calibNeeds: [CalibNeed] = []
     var frameScores: [FrameScore] = []
 
+    /// Tonight's observation plan (`Planner.plan`), shown in the
+    /// "Ma este" box on the Áttekintés tab. `nil` until `loadPlan()` has
+    /// run at least once this session.
+    var plan: [TargetPlan]?
+
     /// The currently selected target's per-session absolute quality summaries
     /// (`SessionQuality.summaries`) -- shown above the frame table in the
     /// Minőség fül. Cleared whenever a different target is selected so a
@@ -462,6 +467,39 @@ final class AppState: @unchecked Sendable {
                 self.stats = result
                 self.sessionDetailsByTarget = sessionsByTarget
                 self.progressText = "Statisztika kész: \(result.count) célpont"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    // MARK: - Planner
+
+    /// Loads tonight's plan for every target. Also resolves the effective
+    /// observing site (config's explicit `site`, else the median
+    /// SITELAT/SITELONG across the library) and caches it back into
+    /// `config.site` in memory ONLY -- never written to disk -- so a
+    /// second "Frissítés" this session, or any other tab reading
+    /// `appState.config`, sees the resolved coordinates without
+    /// recomputing them from scratch every time.
+    func loadPlan() {
+        guard let db else { return }
+        let cfg = config
+
+        let opID = beginOperation("Terv számítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let (result, resolvedSite) = try await Task.detached(priority: .userInitiated) {
+                    let plans = try Planner.plan(db: db, config: cfg)
+                    let site = try Planner.resolveSite(db: db, config: cfg)
+                    return (plans, site)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.plan = result
+                self.config.site = resolvedSite
+                self.progressText = "Terv kész: \(result.count) célpont"
             } catch {
                 self.handle(error)
             }

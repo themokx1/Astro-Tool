@@ -27,6 +27,7 @@ struct OverviewView: View {
                 if let cleanupSummary = appState.cleanupSummary {
                     cleanupSection(cleanupSummary)
                 }
+                tonightSection
                 quickLinksSection
                 if let lastError = appState.lastError {
                     Text(lastError)
@@ -110,6 +111,80 @@ struct OverviewView: View {
             Button("Takarítási script generálása") { appState.generateCleanupScript() }
                 .disabled(appState.isBusy || summary.groups.isEmpty)
         }
+    }
+
+    /// "Ma este": top 5 `TargetPlan` rows by score, with a manual refresh
+    /// button (`AppState.loadPlan()` is never triggered automatically --
+    /// unlike Stats/Calib, tonight's plan is time-of-day-sensitive, so an
+    /// auto-refresh right after a long scan would often show a stale
+    /// instant anyway).
+    private var tonightSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Ma este").font(.headline)
+                Spacer()
+                Button("Frissítés") { appState.loadPlan() }
+                    .disabled(appState.isBusy || appState.db == nil)
+            }
+
+            if let plan = appState.plan {
+                if plan.isEmpty {
+                    Text("Nincs célpont a könyvtárban.").foregroundStyle(.secondary)
+                } else {
+                    ForEach(plan.prefix(5), id: \.target) { row in
+                        tonightRow(row)
+                    }
+                }
+            } else {
+                Text("Még nincs számolva — kattints a Frissítésre.").foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func tonightRow(_ row: TargetPlan) -> some View {
+        HStack(spacing: 12) {
+            Text(row.target)
+                .frame(minWidth: 140, alignment: .leading)
+            Text(row.goalSeconds != nil ? missingHoursText(row) : "—")
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 70, alignment: .leading)
+            Text(row.culminationLocal ?? "-")
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 50, alignment: .leading)
+            Text(moonText(row))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 90, alignment: .leading)
+            Spacer()
+            verdictChip(row.verdict)
+        }
+        .font(.callout)
+    }
+
+    private func missingHoursText(_ row: TargetPlan) -> String {
+        guard let goal = row.goalSeconds else { return "—" }
+        let missingHours = max(0, (goal - row.usableIntegrationSeconds) / 3600.0)
+        return String(format: "hiányzik: %.1fó", missingHours)
+    }
+
+    private func moonText(_ row: TargetPlan) -> String {
+        guard let illum = row.moonIlluminationPercent else { return "-" }
+        return String(format: "Hold: %.0f%%", illum)
+    }
+
+    private func verdictChip(_ verdict: String) -> some View {
+        Text(verdict)
+            .font(.caption.bold())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(verdictColor(verdict).opacity(0.15), in: Capsule())
+            .foregroundStyle(verdictColor(verdict))
+    }
+
+    private func verdictColor(_ verdict: String) -> Color {
+        if verdict == "ma jó" { return .green }
+        if verdict.hasPrefix("Hold zavar") { return .yellow }
+        if verdict.hasPrefix("alacsony") || verdict == "nem látszik ma éjjel" { return .orange }
+        return .gray // "nincs koordináta"
     }
 
     private static func formatBytes(_ bytes: Int64) -> String {

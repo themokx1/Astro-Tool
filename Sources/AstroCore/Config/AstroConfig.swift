@@ -200,6 +200,33 @@ public struct StatsRule: Codable, Equatable, Sendable {
     }
 }
 
+/// The observer's site, for the planner (`Sources/AstroCore/Sky/Planner.swift`):
+/// culmination/altitude/twilight all need a latitude and longitude. Both
+/// default to `nil` -- when unset, `Planner` derives them from the median
+/// `SITELAT`/`SITELONG` FITS header values across the scanned library
+/// instead (see `TargetCoordinates.resolveSite`), and callers may cache that
+/// derived value back into their in-memory `AstroConfig` without ever
+/// writing it to disk.
+public struct SiteRule: Codable, Equatable, Sendable {
+    public var latitudeDeg: Double?
+    public var longitudeDeg: Double?
+
+    public init(latitudeDeg: Double? = nil, longitudeDeg: Double? = nil) {
+        self.latitudeDeg = latitudeDeg
+        self.longitudeDeg = longitudeDeg
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case latitudeDeg, longitudeDeg
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.latitudeDeg = try container.decodeIfPresent(Double.self, forKey: .latitudeDeg)
+        self.longitudeDeg = try container.decodeIfPresent(Double.self, forKey: .longitudeDeg)
+    }
+}
+
 /// Top-level, user-editable configuration for Astro-Tool. Every field falls
 /// back to a sensible default when missing from the on-disk JSON, so old
 /// config files stay valid after new fields are added, and unknown keys in
@@ -225,6 +252,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var calib: CalibRule
     public var rating: RatingRule
     public var stats: StatsRule
+    public var site: SiteRule
 
     public init(
         rootPath: String = "/Volumes/images/Astro",
@@ -237,7 +265,8 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         wideField: WideFieldRule = WideFieldRule(),
         calib: CalibRule = CalibRule(),
         rating: RatingRule = RatingRule(),
-        stats: StatsRule = StatsRule()
+        stats: StatsRule = StatsRule(),
+        site: SiteRule = SiteRule()
     ) {
         self.rootPath = rootPath
         self.excludedDirNames = excludedDirNames
@@ -250,11 +279,12 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.calib = calib
         self.rating = rating
         self.stats = stats
+        self.site = site
     }
 
     private enum CodingKeys: String, CodingKey {
         case rootPath, excludedDirNames, excludedPaths, residuePatterns, residueDirNames, toolOutputDirNames
-        case intentional, wideField, calib, rating, stats
+        case intentional, wideField, calib, rating, stats, site
     }
 
     public init(from decoder: any Decoder) throws {
@@ -271,6 +301,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.calib = try container.decodeIfPresent(CalibRule.self, forKey: .calib) ?? defaults.calib
         self.rating = try container.decodeIfPresent(RatingRule.self, forKey: .rating) ?? defaults.rating
         self.stats = try container.decodeIfPresent(StatsRule.self, forKey: .stats) ?? defaults.stats
+        self.site = try container.decodeIfPresent(SiteRule.self, forKey: .site) ?? defaults.site
     }
 
     /// Loads and decodes the config from `url`. Throws on I/O failure

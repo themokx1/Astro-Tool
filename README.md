@@ -17,6 +17,7 @@ Asztrofotó-könyvtár auditálása, minőség-pontozás és kalibráció-követ
 - **Kalibráció-hiánylista (calib)** — mely expozíciós idő/hőmérséklet kombinációkhoz van lefedettség (dark/flat/bias), és mihez kell még kalibrációs keretet készíteni.
 - **Session-párosítás (match)** — egy adott célpont+dátum session-höz tartozó kalibrációs keretek és light frame-ek összerendelése, problémákkal.
 - **Új session létrehozás (new-session)** — kanonikus `YYYY-MM-DD` könyvtárstruktúra és README-sablon létrehozása egy célponthoz.
+- **Észlelés-tervező (plan)** — ma esti kulmináció, max magasság, láthatósági ablak és Hold-zavarás célpontonként, pontszám szerint rendezve.
 
 ## ⛔ Vasszabály
 
@@ -85,9 +86,43 @@ astrotool config show
 
 astrotool config path
 # A config.json elérési útjának kiírása.
+
+astrotool plan
+# Ma esti észlelési terv: célpontonként megvan/hiányzó óra, kulmináció, láthatósági ablak, Hold-zavarás, verdikt.
 ```
 
 Minden parancs elfogadja a `--root <PATH>` kapcsolót az alapértelmezett könyvtár felülbírálására.
+
+## Tervező
+
+Az `astrotool plan` a meglévő adatokból (light frame-ek `header_json`-ja +
+opcionális `goal:<óra>h` tag) minden ismert célponthoz megmutatja, hogy
+**ma este** érdemes-e rááldozni időt:
+
+```bash
+astrotool plan --min-alt 25 --date 2026-08-10
+```
+
+```
+Ma este: szürkület 22:30 -> hajnal 03:10, Hold: 73%
+CÉLPONT        MEGVAN   CÉL      KULMINÁCIÓ  MAX ALT  ABLAK          HOLD        VERDIKT
+M31_Andromeda  0:05     —        03:10       74°      22:44–03:10    32°/73%     Hold zavar (32°, 73%)
+```
+
+- **Koordináták**: a célpont RA/Dec-je a session light frame-ek plate-solve
+  `CRVAL1`/`CRVAL2` fejlécéből (ASIAIR-lightokon szinte mindig jelen van),
+  vagy `RA`/`DEC` fallback kulcsokból (szám vagy szexagezimális `H M S`/
+  `D M S` forma is jó) — a session lightok mediánja. Koordináta nélküli
+  célpont "nincs koordináta" verdikttel jelenik meg, sky-adat nélkül.
+- **Helyszín**: `config.json`-ban `site.latitudeDeg`/`site.longitudeDeg`
+  felülbírálható; ha üres, a könyvtárban talált `SITELAT`/`SITELONG`
+  fejlécek mediánjából számolódik automatikusan (csak memóriában, sosem
+  íródik vissza a configba). A `plan` emberi kimenete **soha nem írja ki**
+  a helyszín koordinátáit — ha ezekre kíváncsi vagy, azt csak az
+  `astrotool config show` mutatja meg (az helyi, nem osztott kimenet).
+- **Cél**: a célpont-szintű `goal:<óra>h` tag (pl. `astrotool tag add
+  --target M31 goal:8h`) adja meg, mennyi integrációt szeretnél összesen —
+  ennek hiányában a "CÉL" oszlop `—`.
 
 ## Konfiguráció
 
@@ -104,6 +139,7 @@ A konfiguráció a `<ROOT>/.astro_tool/config.json` fájlban van; hiányzó kulc
 | `wideField` | Wide-field/deep-sky besorolás szabálya: `extensions`, `maxFocalLengthMM`, `nameMarkers`, és célpontonkénti `overrides`. |
 | `calib` | Kalibráció-illesztés tűrései: `tempToleranceC`, `exposureToleranceS`, `darkMaxAgeMonths` (mikor számít elévültnek egy dark). |
 | `rating` | Minőség-pontozás beállításai: `workers` (párhuzamos worker-ek száma), `outlierZScore`, `sirilPath`, `weights` (metrikánkénti súlyok: `fwhm`, `roundness`, `starCount`, `background`). |
+| `site` | A tervező (`astrotool plan`) helyszín-felülbírálása: `latitudeDeg`/`longitudeDeg`. Üresen hagyva a könyvtár `SITELAT`/`SITELONG` fejléceinek mediánjából származik. |
 
 ## Fejlesztés
 
