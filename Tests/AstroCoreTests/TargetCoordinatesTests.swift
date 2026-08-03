@@ -11,17 +11,23 @@ private func headerJSON(_ cards: [String: String]) -> String {
 
 @Test func parseSexagesimalAcceptsSpaceSeparated() {
     let value = TargetCoordinates.parseSexagesimal("12 34 56")
-    #expect(abs((value ?? -1) - (12 + 34.0 / 60 + 56.0 / 3600)) < 1e-9)
+    let expected: Double = 12.0 + 34.0 / 60.0 + 56.0 / 3600.0
+    let diff: Double = abs((value ?? -1.0) - expected)
+    #expect(diff < 1e-9)
 }
 
 @Test func parseSexagesimalAcceptsColonSeparated() {
     let value = TargetCoordinates.parseSexagesimal("12:34:56")
-    #expect(abs((value ?? -1) - (12 + 34.0 / 60 + 56.0 / 3600)) < 1e-9)
+    let expected: Double = 12.0 + 34.0 / 60.0 + 56.0 / 3600.0
+    let diff: Double = abs((value ?? -1.0) - expected)
+    #expect(diff < 1e-9)
 }
 
 @Test func parseSexagesimalHandlesNegativeSign() {
     let value = TargetCoordinates.parseSexagesimal("-45 30 10")
-    #expect(abs((value ?? 1) - -(45 + 30.0 / 60 + 10.0 / 3600)) < 1e-9)
+    let expected: Double = -(45.0 + 30.0 / 60.0 + 10.0 / 3600.0)
+    let diff: Double = abs((value ?? 1.0) - expected)
+    #expect(diff < 1e-9)
 }
 
 @Test func parseSexagesimalReturnsNilForGarbage() {
@@ -49,10 +55,12 @@ private func headerJSON(_ cards: [String: String]) -> String {
     // RA 05h34m30s = 83.625 deg exactly (05:34:30 -> 5.575h * 15).
     let json = headerJSON(["RA": "'05 34 30'", "DEC": "'22 00 52'"])
     let coord = try #require(TargetCoordinates.coordinates(headerJSON: json))
-    let expectedRA = (5 + 34.0 / 60 + 30.0 / 3600) * 15
-    let expectedDec = 22 + 0.0 / 60 + 52.0 / 3600
-    #expect(abs(coord.raDeg - expectedRA) < 1e-6)
-    #expect(abs(coord.decDeg - expectedDec) < 1e-6)
+    let expectedRA: Double = (5.0 + 34.0 / 60.0 + 30.0 / 3600.0) * 15.0
+    let expectedDec: Double = 22.0 + 0.0 / 60.0 + 52.0 / 3600.0
+    let raDiff: Double = abs(coord.raDeg - expectedRA)
+    let decDiff: Double = abs(coord.decDeg - expectedDec)
+    #expect(raDiff < 1e-6)
+    #expect(decDiff < 1e-6)
 }
 
 @Test func coordinatesReturnsNilWhenNoUsableKeysPresent() {
