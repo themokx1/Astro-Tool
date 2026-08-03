@@ -8,6 +8,32 @@ történik.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-08-03
+
+### Javítva
+
+- **Kritikus: `Array index is out of range` crash a Pontozás (`rate`)
+  futtatásakor valós FITS fájlokon**: gyökérok — egy fájlban véletlenül
+  szomszédos CR+LF bájtpár (`0x0D 0x0A`) esett a 2880 bájtos fejléc-blokkba;
+  Swift a `"\r\n"`-t EGYETLEN `Character`-ként grafémaklaszterezi (Unicode
+  UAX #29 GB3 szabály), így `Array(String(data:encoding:.ascii))` egy ilyen
+  blokkból csak 2879 elemű tömböt adott 2880 helyett. A `FITSReader.
+  readOneHeader` (és a testvér `NativeStats.primaryHeaderInfo`, ami
+  szándékosan duplikálja ugyanezt a blokk-szkennelést a nyers primary
+  `NAXIS` miatt, ha a fő `FITSReader.parse` már összefésülte egy `.fz`
+  extenzióval) 0-alapú, fix `cardIndex * 80` kártya-szeletelése emiatt
+  elszállt, amint a ciklus elért egy olyan kártyáig, aminek a tartománya már
+  nem fért bele a lerövidült tömbbe. Javítás: mindkét helyen bájtonkénti
+  dekódolás (`data.map { Character(Unicode.Scalar($0)) }`) a
+  `String(data:encoding:.ascii)` + `Array(_:)` pár helyett — szigorú 1:1
+  bájt↔tömbelem megfelelés, függetlenül a bájttartalomtól. Az
+  `autoreleasepool` memóriakorlátozás (lásd 0.1.3 audit memória-javítás)
+  változatlan. `Rater.rate` már meglévő `do/catch` blokkja
+  (`NativeStats.compute(url:)` körül) egy dobott `AstroError.corruptFITS`-et
+  változatlanul lekezel és a batch többi keretét tovább pontozza — a valódi
+  védelem azonban a forrás-javítás, mivel egy Swift `Fatal error` trap sosem
+  catch-elhető.
+
 ## [0.2.2] - 2026-08-03
 
 ### Changed

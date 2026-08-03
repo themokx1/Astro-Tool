@@ -291,3 +291,126 @@ import Testing
     #expect(header.allCards["INSTRUME"] == "'ZWO ASI2600MC Pro'")
     #expect(header.allCards["NOPE"] == nil)
 }
+
+// MARK: - Crash regression: CR+LF byte pair inside a header block
+
+/// Real FITS headers are supposed to be padded with ASCII space (0x20)
+/// only, but not every capture tool / library file is strictly conformant --
+/// a stray CR+LF byte pair (0x0D 0x0A) can end up inside a card's padding or
+/// free-text value. Swift's `String`/`Character` grapheme-cluster rules
+/// treat `"\r\n"` as a SINGLE `Character` (Unicode's mandated
+/// do-not-break-CR-LF rule: UAX #29 GB3), so `Array(blockString)` for a
+/// 2880-byte block containing this pair has 2879 elements, not 2880 -- one
+/// short. `readOneHeader`'s per-card loop slices that array 0-based up to
+/// `cardIndex * 80 ..< cardIndex * 80 + 80` for all 36 cards in the block;
+/// once the loop reaches the card whose range no longer fits inside a
+/// 2879-element array, it traps with "Array index is out of range" instead
+/// of throwing `AstroError.corruptFITS`. This is what crashed real users'
+/// batches (crash report: `FITSReader.readOneHeader` closure, EXC_BREAKPOINT
+/// "Array index is out of range").
+///
+/// To force the crash deterministically the header must overflow a single
+/// 36-card block (so the whole first block is scanned with no `END` card
+/// short-circuiting the loop early), with the CR+LF pair placed anywhere in
+/// that first block.
+private func multiBlockHeaderCards() -> [String] {
+    var cards = [
+        "SIMPLE  =                    T",
+        "BITPIX  =                    8",
+        "NAXIS   =                    0",
+    ]
+    for i in 0..<40 {
+        let keyword = "TESTK\(i)".padding(toLength: 8, withPad: " ", startingAt: 0)
+        cards.append("\(keyword)=                    \(i)")
+    }
+    cards.append("END")
+    return cards
+}
+
+@Test func crLfBytePairInFirstBlockOfMultiBlockHeaderDoesNotCrashParse() throws {
+    var data = buildHeaderData(multiBlockHeaderCards())
+    #expect(data.count == 2 * 2880, "44 cards must overflow a single 36-card block")
+
+    // Overwrite two padding bytes inside card 0 (well inside block 1, which
+    // has no END card and so must be scanned in full) with a literal CR+LF.
+    data[50] = 0x0D
+    data[51] = 0x0A
+
+    // Must not trap. Either successfully parsing past the glitch or
+    // throwing `AstroError.corruptFITS` is an acceptable outcome -- a crash
+    // is not.
+    _ = try? FITSReader.parse(data: data)
+}
+
+@Test func crLfBytePairFamilySweepAcrossPositionsAndHeaderShapesNeverTraps() throws {
+    // Brute-force safety net: sweep the CR+LF pair across many byte offsets
+    // within the first block, across a few header shapes (single-block
+    // with END on the last card, multi-block with no END in block 1, and
+    // multi-block with an `.fz`-style extension merge), and confirm none of
+    // them ever trap -- only a thrown `AstroError.corruptFITS` (or a clean
+    // parse) is acceptable.
+    func makeExactlyOneBlockEndingOnLastCard() -> Data {
+        var cards = [
+            "SIMPLE  =                    T",
+            "BITPIX  =                    8",
+            "NAXIS   =                    0",
+        ]
+        // 36 cards per block; 3 used above, END must land on the last
+        // (36th) card, so pad with 32 filler cards (3 + 32 + END == 36).
+        for i in 0..<32 {
+            let keyword = "TK\(i)".padding(toLength: 8, withPad: " ", startingAt: 0)
+            cards.append("\(keyword)=                    \(i)")
+        }
+        cards.append("END")
+        let data = buildHeaderData(cards)
+        precondition(data.count == 2880, "expected exactly one block, got \(data.count)")
+        return data
+    }
+
+    func makeFzStyleTwoHeaderMerge() -> Data {
+        let primary = buildHeaderData([
+            "SIMPLE  =                    T",
+            "BITPIX  =                    8",
+            "NAXIS   =                    0",
+            "END",
+        ])
+        let extension_ = buildHeaderData([
+            "XTENSION= 'BINTABLE'",
+            "BITPIX  =                    8",
+            "NAXIS   =                    2",
+            "NAXIS1  =                    1",
+            "NAXIS2  =                    1",
+            "ZNAXIS1 =                 6248",
+            "ZNAXIS2 =                 4176",
+            "END",
+        ])
+        var data = primary
+        data.append(extension_)
+        return data
+    }
+
+    let shapes: [(String, Data)] = [
+        ("single-block-end-on-last-card", makeExactlyOneBlockEndingOnLastCard()),
+        ("multi-block-no-end-in-first-block", buildHeaderData(multiBlockHeaderCards())),
+        ("fz-style-two-header-merge", makeFzStyleTwoHeaderMerge()),
+    ]
+
+    for (name, baseData) in shapes {
+        // Sweep across a representative sample of offsets within the first
+        // block rather than all 2880 (would be slow); every 37th offset
+        // covers every card's start/middle/end position at least once
+        // across the sweep (2880 / 37 is coprime-ish with 80).
+        for offset in stride(from: 0, to: 2879, by: 37) {
+            var data = baseData
+            data[data.startIndex + offset] = 0x0D
+            data[data.startIndex + offset + 1] = 0x0A
+            do {
+                _ = try FITSReader.parse(data: data)
+            } catch is AstroError {
+                // expected/acceptable outcome
+            } catch {
+                Issue.record("shape \(name) offset \(offset): unexpected error \(error)")
+            }
+        }
+    }
+}

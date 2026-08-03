@@ -201,11 +201,24 @@ public enum FITSReader {
                     )
                 }
                 bytesRead += blockSize
-                guard let blockString = String(data: blockData, encoding: .ascii) else {
+
+                // Decode byte-by-byte (`Unicode.Scalar` per byte) rather
+                // than via `String(data:encoding:.ascii)` + `Array(_:)`:
+                // ASCII bytes are all valid Unicode scalars, but Swift's
+                // `Character` grapheme-cluster rules merge some adjacent
+                // scalar pairs (notably CR+LF, `0x0D 0x0A`) into a SINGLE
+                // `Character`. A block containing such a pair anywhere would
+                // then produce a 2879-element (or shorter) array for a
+                // 2880-byte block, and the fixed `cardIndex * cardSize`
+                // slicing below -- which assumes exactly one array element
+                // per input byte -- traps with "Array index is out of
+                // range" once it reaches a card whose range no longer fits.
+                // Scalar-per-byte decoding keeps a strict 1:1 byte↔element
+                // correspondence regardless of byte content.
+                guard blockData.allSatisfy({ $0 < 0x80 }) else {
                     throw AstroError.corruptFITS(path: path, reason: "header block contains non-ASCII bytes")
                 }
-
-                let blockChars = Array(blockString)
+                let blockChars = blockData.map { Character(Unicode.Scalar($0)) }
                 for cardIndex in 0..<cardsPerBlock {
                     let start = cardIndex * cardSize
                     let cardChars = Array(blockChars[start..<(start + cardSize)])

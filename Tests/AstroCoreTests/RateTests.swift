@@ -351,6 +351,50 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(stats.backgroundMedian == 2.5)
 }
 
+// MARK: - Crash regression: CR+LF byte pair inside NativeStats' own header scan
+//
+// `NativeStats.primaryHeaderInfo` duplicates `FITSReader.readOneHeader`'s
+// block-scanning logic (deliberately, per its own doc comment, since it
+// needs the *raw* unmerged primary NAXIS) -- including the same
+// `Array(blockString)` 0-based card-slicing loop. A stray CR+LF byte pair
+// inside the first header block collapses that array from 2880 to 2879
+// elements (Swift's grapheme-cluster rules treat "\r\n" as one `Character`),
+// which traps "Array index is out of range" once the loop reaches a card
+// whose range no longer fits -- the same class of bug as the
+// `FITSReader.readOneHeader` crash, just in the sibling implementation.
+@Test func nativeStatsCrLfBytePairInFirstBlockOfMultiBlockHeaderDoesNotCrash() throws {
+    var cards = [
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                    2",
+        "NAXIS2  =                    2",
+    ]
+    for i in 0..<40 {
+        let keyword = "TESTK\(i)".padding(toLength: 8, withPad: " ", startingAt: 0)
+        cards.append("\(keyword)=                    \(i)")
+    }
+    cards.append("END")
+    var data = buildHeaderData(cards)
+    #expect(data.count == 2 * 2880, "45 cards must overflow a single 36-card block")
+
+    // Overwrite two padding bytes inside card 0 (block 1 has no END card,
+    // so it must be scanned in full) with a literal CR+LF.
+    data[50] = 0x0D
+    data[51] = 0x0A
+
+    // Pixel bytes so a successful parse path has something to read.
+    for value in [1, 2, 3, 4] as [Int16] {
+        let unsigned = UInt16(bitPattern: value)
+        data.append(UInt8(unsigned >> 8))
+        data.append(UInt8(unsigned & 0xFF))
+    }
+
+    // Must not trap. Either successfully computing stats or throwing
+    // `AstroError.corruptFITS` is acceptable -- a crash is not.
+    _ = try? NativeStats.compute(data: data)
+}
+
 // MARK: - SirilCLI.parseFindstarOutput
 
 @Test func parseFindstarOutputParsesTypicalOutput() {

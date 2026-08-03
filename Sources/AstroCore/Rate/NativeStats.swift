@@ -207,10 +207,21 @@ public enum NativeStats {
             let block = data.subdata(in: offset..<(offset + blockSize))
             offset += blockSize
 
-            guard let blockString = String(data: block, encoding: .ascii) else {
+            // Decode byte-by-byte (`Unicode.Scalar` per byte) rather than
+            // via `String(data:encoding:.ascii)` + `Array(_:)`: Swift's
+            // `Character` grapheme-cluster rules merge some adjacent ASCII
+            // byte pairs (notably CR+LF, `0x0D 0x0A`) into a SINGLE
+            // `Character`, which would shrink the resulting array below
+            // 2880 elements for a 2880-byte block and trap the fixed
+            // `cardIndex * cardSize` slicing below once it reaches a card
+            // whose range no longer fits. See `FITSReader.readOneHeader`
+            // for the sibling fix / full rationale -- this scan
+            // deliberately duplicates that logic (see doc comment above)
+            // and so duplicates this fix too.
+            guard block.allSatisfy({ $0 < 0x80 }) else {
                 throw AstroError.corruptFITS(path: "<data>", reason: "header block contains non-ASCII bytes")
             }
-            let chars = Array(blockString)
+            let chars = block.map { Character(Unicode.Scalar($0)) }
 
             for cardIndex in 0..<cardsPerBlock {
                 let start = cardIndex * cardSize
