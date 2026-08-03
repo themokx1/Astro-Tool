@@ -190,6 +190,31 @@ private struct SessionStatsFixture {
     #expect(sessions.isEmpty)
 }
 
+@Test func sessionDetailCarriesItsSessionLevelTags() throws {
+    let fixture = try SessionStatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l1.fit", exptime: 60.0)
+    try fixture.scan()
+    try fixture.db.addTag(TagRecord(kind: "session", target: "T1", sessionDate: "2026-01-10", tag: "clouds"))
+
+    let sessions = try SessionStatsQueries.sessions(target: "T1", db: fixture.db, config: fixture.config)
+    let session = try #require(sessions.first)
+    #expect(session.tags == ["clouds"])
+}
+
+@Test func sessionDetailHasEmptyTagsWhenNoneAdded() throws {
+    let fixture = try SessionStatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l1.fit", exptime: 60.0)
+    try fixture.scan()
+
+    let sessions = try SessionStatsQueries.sessions(target: "T1", db: fixture.db, config: fixture.config)
+    let session = try #require(sessions.first)
+    #expect(session.tags == [])
+}
+
 @Test func sessionDetailsLightWithoutMetaLandsInUnknownExposureBucket() throws {
     let fixture = try SessionStatsFixture.make()
     defer { fixture.cleanup() }

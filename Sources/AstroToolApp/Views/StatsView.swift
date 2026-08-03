@@ -4,20 +4,17 @@ import SwiftUI
 struct StatsView: View {
     @Environment(AppState.self) private var appState
     @State private var searchText: String = ""
-    @State private var selection: Row.ID?
-
-    private struct Row: Identifiable {
-        var id: String { stats.target }
-        let stats: TargetStats
-    }
+    /// At most one target's session detail list is expanded at a time --
+    /// mirrors `AppState`'s single `selectedTarget`/`sessionDetails` pair
+    /// (expanding a different row replaces both).
+    @State private var expandedTarget: String?
 
     private var filtered: [TargetStats] {
         guard !searchText.isEmpty else { return appState.stats }
-        return appState.stats.filter { $0.target.localizedCaseInsensitiveContains(searchText) }
-    }
-
-    private var rows: [Row] {
-        filtered.map(Row.init)
+        return appState.stats.filter { stats in
+            stats.target.localizedCaseInsensitiveContains(searchText)
+                || stats.tags.contains { $0.localizedCaseInsensitiveContains(searchText) }
+        }
     }
 
     private var totalIntegrationSeconds: Double {
@@ -27,8 +24,8 @@ struct StatsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                TextField("Keresés célpont szerint", text: $searchText)
-                    .frame(width: 260)
+                TextField("Keresés célpont vagy címke szerint", text: $searchText)
+                    .frame(width: 280)
                 Button("Frissítés") { appState.loadStats() }
                     .disabled(appState.isBusy || appState.db == nil)
                 Spacer()
@@ -42,17 +39,18 @@ struct StatsView: View {
                 Text(lastError).foregroundStyle(.red)
             }
 
-            Table(rows, selection: $selection) {
-                TableColumn("Célpont") { row in Text(row.stats.target) }
-                    .width(min: 160, ideal: 240)
-                TableColumn("Össz. integráció") { row in Text(formatDuration(row.stats.totalIntegrationSeconds)) }
-                    .width(120)
-                TableColumn("Session-ök") { row in Text("\(row.stats.sessionDates.count)") }
-                    .width(90)
-                TableColumn("Utolsó dátum") { row in Text(row.stats.lastSessionDate ?? "-") }
-                    .width(110)
-                TableColumn("Wide-field") { row in Text(row.stats.isWideField ? "igen" : "") }
-                    .width(80)
+            if filtered.isEmpty {
+                Text(appState.stats.isEmpty ? "Nincs célpont." : "Nincs találat.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        ForEach(filtered, id: \.target) { stats in
+                            targetRow(stats)
+                            Divider()
+                        }
+                    }
+                }
             }
 
             HStack {
@@ -60,21 +58,70 @@ struct StatsView: View {
                 Text(formatDuration(totalIntegrationSeconds))
                 Spacer()
             }
-
-            if let selection {
-                Divider()
-                SessionDetailPanel(target: selection, sessions: appState.sessionDetails, isBusy: appState.isBusy)
-            }
         }
         .onAppear {
             if appState.stats.isEmpty { appState.loadStats() }
         }
-        .onChange(of: selection) { _, newValue in
-            if let newValue {
-                appState.loadSessionDetails(target: newValue)
-            }
-        }
         .padding()
+    }
+
+    @ViewBuilder
+    private func targetRow(_ stats: TargetStats) -> some View {
+        DisclosureGroup(
+            isExpanded: Binding(
+                get: { expandedTarget == stats.target },
+                set: { isExpanded in
+                    if isExpanded {
+                        expandedTarget = stats.target
+                        appState.loadSessionDetails(target: stats.target)
+                    } else if expandedTarget == stats.target {
+                        expandedTarget = nil
+                    }
+                }
+            )
+        ) {
+            if expandedTarget == stats.target {
+                SessionDetailPanel(
+                    sessions: appState.sessionDetails,
+                    isBusy: appState.isBusy,
+                    onAddTag: { date, tag in appState.addTag(target: stats.target, date: date, tag: tag) },
+                    onRemoveTag: { date, tag in appState.removeTag(target: stats.target, date: date, tag: tag) }
+                )
+                .padding(.top, 4)
+                .padding(.leading, 12)
+            }
+        } label: {
+            targetHeader(stats)
+        }
+    }
+
+    private func targetHeader(_ stats: TargetStats) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 16) {
+                Text(stats.target).bold()
+                    .frame(minWidth: 160, alignment: .leading)
+                Text(formatDuration(stats.totalIntegrationSeconds))
+                    .frame(width: 70, alignment: .leading)
+                Text("\(stats.sessionDates.count) session")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 90, alignment: .leading)
+                Text(stats.lastSessionDate ?? "-")
+                    .frame(width: 100, alignment: .leading)
+                if stats.isWideField {
+                    Text("wide-field")
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.orange.opacity(0.2)))
+                }
+                Spacer()
+            }
+            TagChipsRow(
+                tags: stats.tags,
+                onAdd: { tag in appState.addTag(target: stats.target, date: nil, tag: tag) },
+                onRemove: { tag in appState.removeTag(target: stats.target, date: nil, tag: tag) }
+            )
+        }
     }
 
     private func formatDuration(_ seconds: Double) -> String {
@@ -83,32 +130,30 @@ struct StatsView: View {
     }
 }
 
-/// Detail area shown under the target table once a row is selected: one
+/// Detail area shown inside an expanded target's `DisclosureGroup`: one
 /// block per session date-dir with the equipment signals `TargetStats`
-/// doesn't carry (focal length, camera, gain/ISO, sensor temp, filter).
+/// doesn't carry (focal length, camera, gain/ISO, sensor temp, filter) plus
+/// that session's own tag chips.
 private struct SessionDetailPanel: View {
-    let target: String
     let sessions: [SessionDetail]
     let isBusy: Bool
+    /// `(sessionDateRaw, tagText)`.
+    let onAddTag: (String, String) -> Void
+    let onRemoveTag: (String, String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Session-ök — \(target)").font(.headline)
-
             if isBusy && sessions.isEmpty {
                 ProgressView().controlSize(.small)
             } else if sessions.isEmpty {
                 Text("Nincs session ehhez a célponthoz.").foregroundStyle(.secondary)
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(sessions, id: \.dateRaw) { session in
-                            sessionRow(session)
-                            Divider()
-                        }
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(sessions, id: \.dateRaw) { session in
+                        sessionRow(session)
+                        Divider()
                     }
                 }
-                .frame(maxHeight: 260)
             }
         }
     }
@@ -155,6 +200,12 @@ private struct SessionDetailPanel: View {
                 }
             }
             .font(.callout)
+
+            TagChipsRow(
+                tags: session.tags,
+                onAdd: { tag in onAddTag(session.dateRaw, tag) },
+                onRemove: { tag in onRemoveTag(session.dateRaw, tag) }
+            )
         }
     }
 
@@ -173,5 +224,128 @@ private struct SessionDetailPanel: View {
 
     private static func formatNumber(_ value: Double) -> String {
         value == value.rounded() ? String(format: "%.0f", value) : String(format: "%.1f", value)
+    }
+}
+
+// MARK: - Tag chips
+
+/// A wrapping row of tag capsules plus a trailing "+" chip that pops over a
+/// text field for adding a new one. Shared by the target-level header and
+/// each session row.
+private struct TagChipsRow: View {
+    let tags: [String]
+    let onAdd: (String) -> Void
+    let onRemove: (String) -> Void
+
+    var body: some View {
+        FlowLayout(spacing: 6) {
+            ForEach(tags, id: \.self) { tag in
+                TagChip(text: tag, onRemove: { onRemove(tag) })
+            }
+            AddTagChip(onAdd: onAdd)
+        }
+    }
+}
+
+private struct TagChip: View {
+    let text: String
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(text).font(.caption)
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+        .overlay(Capsule().stroke(Color.accentColor.opacity(0.35)))
+    }
+}
+
+private struct AddTagChip: View {
+    let onAdd: (String) -> Void
+
+    @State private var showPopover = false
+    @State private var text = ""
+
+    var body: some View {
+        Button {
+            showPopover = true
+        } label: {
+            Image(systemName: "plus")
+                .font(.caption2)
+                .padding(6)
+                .background(Circle().fill(Color.secondary.opacity(0.15)))
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showPopover) {
+            HStack {
+                TextField("Új címke", text: $text)
+                    .frame(width: 160)
+                    .onSubmit(submit)
+                Button("Hozzáad", action: submit)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding()
+        }
+    }
+
+    private func submit() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        onAdd(trimmed)
+        text = ""
+        showPopover = false
+    }
+}
+
+/// Minimal wrapping horizontal-then-vertical layout for tag chips -- SwiftUI
+/// has no built-in "flow" container. Lays subviews left-to-right, wrapping
+/// to a new line once the proposed width would be exceeded.
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? 600
+        var origin = CGPoint.zero
+        var lineHeight: CGFloat = 0
+        var totalWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if origin.x > 0, origin.x + size.width > maxWidth {
+                origin.x = 0
+                origin.y += lineHeight + spacing
+                lineHeight = 0
+            }
+            origin.x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+            totalWidth = max(totalWidth, origin.x)
+        }
+
+        return CGSize(width: totalWidth, height: origin.y + lineHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var origin = CGPoint(x: bounds.minX, y: bounds.minY)
+        var lineHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if origin.x > bounds.minX, origin.x + size.width > bounds.maxX {
+                origin.x = bounds.minX
+                origin.y += lineHeight + spacing
+                lineHeight = 0
+            }
+            subview.place(at: origin, proposal: ProposedViewSize(size))
+            origin.x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+        }
     }
 }

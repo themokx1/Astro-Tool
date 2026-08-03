@@ -282,6 +282,138 @@ struct CLISmokeTests {
     #expect(result.exitCode == 1)
 }
 
+// MARK: - tag
+
+@Test func tagAddThenListShowsIt() throws {
+    let root = try makeTempRoot("tag-add-list")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let add = try runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
+    #expect(add.exitCode == 0, "stderr: \(add.stderr)")
+
+    let list = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    #expect(list.exitCode == 0, "stderr: \(list.stderr)")
+    let tags = try JSONSerialization.jsonObject(with: Data(list.stdout.utf8)) as? [String]
+    #expect(tags == ["favorite"])
+}
+
+@Test func tagAddSameTwiceStaysIdempotent() throws {
+    let root = try makeTempRoot("tag-idempotent")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let first = try runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
+    #expect(first.exitCode == 0, "stderr: \(first.stderr)")
+    let second = try runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
+    #expect(second.exitCode == 0, "stderr: \(second.stderr)")
+
+    let list = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    #expect(list.exitCode == 0, "stderr: \(list.stderr)")
+    let tags = try JSONSerialization.jsonObject(with: Data(list.stdout.utf8)) as? [String]
+    #expect(tags == ["favorite"])
+}
+
+@Test func tagRemoveDeletesIt() throws {
+    let root = try makeTempRoot("tag-remove")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let add = try runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
+    #expect(add.exitCode == 0, "stderr: \(add.stderr)")
+    let remove = try runCLI(["tag", "remove", "--target", "M45_Pleiades", "favorite", "--root", root.path])
+    #expect(remove.exitCode == 0, "stderr: \(remove.stderr)")
+
+    let list = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    #expect(list.exitCode == 0, "stderr: \(list.stderr)")
+    let tags = try JSONSerialization.jsonObject(with: Data(list.stdout.utf8)) as? [String]
+    #expect(tags == [])
+}
+
+@Test func tagSessionScopedTagOnlyListedWithMatchingDate() throws {
+    let root = try makeTempRoot("tag-session-scoped")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let sessionsResult = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--sessions", "--json"])
+    #expect(sessionsResult.exitCode == 0, "stderr: \(sessionsResult.stderr)")
+    let sessions = try #require(try JSONSerialization.jsonObject(with: Data(sessionsResult.stdout.utf8)) as? [[String: Any]])
+    let date = try #require(sessions.first?["date_raw"] as? String)
+
+    let add = try runCLI(["tag", "add", "--target", "M45_Pleiades", "--date", date, "clouds", "--root", root.path])
+    #expect(add.exitCode == 0, "stderr: \(add.stderr)")
+
+    let sessionList = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--date", date, "--root", root.path, "--json"])
+    #expect(sessionList.exitCode == 0, "stderr: \(sessionList.stderr)")
+    let sessionTags = try JSONSerialization.jsonObject(with: Data(sessionList.stdout.utf8)) as? [String]
+    #expect(sessionTags == ["clouds"])
+
+    let targetList = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    #expect(targetList.exitCode == 0, "stderr: \(targetList.stderr)")
+    let targetTags = try JSONSerialization.jsonObject(with: Data(targetList.stdout.utf8)) as? [String]
+    #expect(targetTags == [])
+}
+
+@Test func statsTagFilterOnlyShowsTaggedTargets() throws {
+    let root = try makeTempRoot("stats-tag-filter")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let add = try runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
+    #expect(add.exitCode == 0, "stderr: \(add.stderr)")
+
+    let filtered = try runCLI(["stats", "--root", root.path, "--tag", "favorite", "--json"])
+    #expect(filtered.exitCode == 0, "stderr: \(filtered.stderr)")
+    let json = try JSONSerialization.jsonObject(with: Data(filtered.stdout.utf8)) as? [[String: Any]]
+    let stats = try #require(json)
+    #expect(!stats.isEmpty)
+    #expect(stats.allSatisfy { ($0["target"] as? String) == "M45_Pleiades" })
+
+    let filteredOut = try runCLI(["stats", "--root", root.path, "--tag", "nonexistent-tag", "--json"])
+    #expect(filteredOut.exitCode == 0, "stderr: \(filteredOut.stderr)")
+    let jsonOut = try JSONSerialization.jsonObject(with: Data(filteredOut.stdout.utf8)) as? [[String: Any]]
+    #expect(try #require(jsonOut).isEmpty)
+}
+
+@Test func tagAddRejectsEmptyTagText() throws {
+    let root = try makeTempRoot("tag-empty")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["tag", "add", "--target", "M45_Pleiades", "   ", "--root", root.path])
+    #expect(result.exitCode == 1)
+}
+
+@Test func tagAddWithoutTargetExitsWithError() throws {
+    let root = try makeTempRoot("tag-no-target")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["tag", "add", "favorite", "--root", root.path])
+    #expect(result.exitCode == 1)
+}
+
 // MARK: - new-session
 
 @Test func newSessionCreatesThenRerunFails() throws {

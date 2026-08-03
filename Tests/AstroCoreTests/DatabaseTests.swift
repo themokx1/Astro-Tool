@@ -76,14 +76,14 @@ import Testing
 
 // MARK: - Database migration
 
-@Test func migrateSetsSchemaVersionToOne() throws {
+@Test func migrateSetsSchemaVersionToTwoForFreshDatabase() throws {
     let database = try Database(path: ":memory:")
 
     var version: Int64 = -1
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 1)
+    #expect(version == 2)
 }
 
 @Test func migrateIsIdempotentAndDoesNotDuplicateVersionRow() throws {
@@ -97,7 +97,7 @@ import Testing
 @Test func migrateCreatesAllExpectedTables() throws {
     let database = try Database(path: ":memory:")
 
-    let expectedTables = ["schema_version", "files", "fits_meta", "ratings", "findings", "runs"]
+    let expectedTables = ["schema_version", "files", "fits_meta", "ratings", "findings", "runs", "tags"]
     var found: Set<String> = []
     try database.db.query("SELECT name FROM sqlite_master WHERE type = 'table';") { row in
         if let name = row.string(0) { found.insert(name) }
@@ -105,6 +105,57 @@ import Testing
     for table in expectedTables {
         #expect(found.contains(table))
     }
+}
+
+/// Simulates a real, already-deployed v1 database (schema created straight
+/// from `Database.schemaSQLv1`, `schema_version` stamped `1`, one file row
+/// inserted) via a raw `SQLiteDB` connection, then opens it through
+/// `Database(path:)` -- the production upgrade path -- and verifies the v1
+/// data survived, the version advanced to 2, and the new `tags` table
+/// exists. This is the regression guard for "incremental migration must not
+/// touch real v1 data".
+@Test func migrateUpgradesExistingV1DatabaseToV2PreservingData() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-migrate-v1-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("v1.sqlite").path
+
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.exec(Database.schemaSQLv1)
+        try raw.run("INSERT INTO schema_version(version) VALUES (1);")
+        try raw.run(
+            """
+            INSERT INTO files(path, size, mtime, ext, kind, area, target, session_date, role, content_hash, scanned_at, missing)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            bind: [
+                .text("sessions/M31/2026-01-01/lights/f1.fits"), .int(1024), .real(1_700_000_000),
+                .text("fits"), .text("fits"), .text("sessions"), .text("M31"), .text("2026-01-01"),
+                .text("light"), .null, .real(1_700_000_100), .int(0),
+            ]
+        )
+    }
+
+    let database = try Database(path: path)
+
+    var version: Int64 = -1
+    try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
+        version = row.int64(0) ?? -1
+    }
+    #expect(version == 2)
+
+    let files = try database.allFiles(includeMissing: true)
+    #expect(files.count == 1)
+    #expect(files.first?.target == "M31")
+    #expect(files.first?.path == "sessions/M31/2026-01-01/lights/f1.fits")
+
+    var tagsTableExists = false
+    try database.db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tags';") { _ in
+        tagsTableExists = true
+    }
+    #expect(tagsTableExists)
 }
 
 // MARK: - Database: files
@@ -361,4 +412,120 @@ private func sampleRating(fileID: Int64, inputSig: String = "sig-1") -> RatingRe
     let database = try Database(path: ":memory:")
     let fileID = try database.upsertFile(sampleFile())
     #expect(try database.rating(fileID: fileID) == nil)
+}
+
+// MARK: - Database: tags
+
+@Test func addTargetLevelTagThenListsIt() throws {
+    let database = try Database(path: ":memory:")
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "favorite"))
+
+    #expect(try database.tags(target: "M31", sessionDate: nil) == ["favorite"])
+}
+
+@Test func addSessionLevelTagIsScopedToThatDateOnly() throws {
+    let database = try Database(path: ":memory:")
+    try database.addTag(TagRecord(kind: "session", target: "M31", sessionDate: "2026-01-01", tag: "clouds"))
+
+    #expect(try database.tags(target: "M31", sessionDate: "2026-01-01") == ["clouds"])
+    #expect(try database.tags(target: "M31", sessionDate: nil) == [])
+    #expect(try database.tags(target: "M31", sessionDate: "2026-01-02") == [])
+}
+
+@Test func addTagTwiceStaysIdempotent() throws {
+    let database = try Database(path: ":memory:")
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "favorite"))
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "favorite"))
+
+    #expect(try database.tags(target: "M31", sessionDate: nil) == ["favorite"])
+
+    var count = 0
+    try database.db.query("SELECT id FROM tags;") { _ in count += 1 }
+    #expect(count == 1)
+}
+
+/// Regression guard: SQL `NULL` is never equal to `NULL`, so two
+/// target-level tag rows (`session_date IS NULL`) would NOT collide on the
+/// table's `UNIQUE(kind, target, session_date, tag)` index the way two
+/// session-level rows with the same date would. `addTag` must not rely on
+/// that index alone for idempotency.
+@Test func addTargetLevelTagTwiceDoesNotDuplicateDespiteNullSessionDate() throws {
+    let database = try Database(path: ":memory:")
+    for _ in 0..<3 {
+        try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "favorite"))
+    }
+
+    var count = 0
+    try database.db.query(
+        "SELECT id FROM tags WHERE target = ? AND session_date IS NULL AND tag = ?;",
+        bind: [.text("M31"), .text("favorite")]
+    ) { _ in count += 1 }
+    #expect(count == 1)
+}
+
+@Test func addTagRejectsEmptyOrWhitespaceOnlyTag() throws {
+    let database = try Database(path: ":memory:")
+    #expect(throws: AstroError.self) {
+        try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "   "))
+    }
+    #expect(throws: AstroError.self) {
+        try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: ""))
+    }
+}
+
+@Test func addTagTrimsWhitespaceAroundTagText() throws {
+    let database = try Database(path: ":memory:")
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "  favorite  "))
+    #expect(try database.tags(target: "M31", sessionDate: nil) == ["favorite"])
+}
+
+@Test func addTagDerivesKindFromSessionDateIgnoringCallerSuppliedKind() throws {
+    let database = try Database(path: ":memory:")
+    // Caller passes a lying `kind` -- Database must ignore it and derive
+    // the real kind from `sessionDate`'s nil-ness.
+    try database.addTag(TagRecord(kind: "session", target: "M31", sessionDate: nil, tag: "favorite"))
+
+    let all = try database.allTags()
+    #expect(all == [TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "favorite")])
+}
+
+@Test func removeTagDeletesOnlyTheMatchingRow() throws {
+    let database = try Database(path: ":memory:")
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "favorite"))
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "wide"))
+
+    try database.removeTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "favorite"))
+
+    #expect(try database.tags(target: "M31", sessionDate: nil) == ["wide"])
+}
+
+@Test func removeTagOnAbsentTagIsANoOp() throws {
+    let database = try Database(path: ":memory:")
+    try database.removeTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "favorite"))
+    #expect(try database.tags(target: "M31", sessionDate: nil) == [])
+}
+
+@Test func allTagsReturnsEveryRowSortedByTargetThenDateThenTag() throws {
+    let database = try Database(path: ":memory:")
+    try database.addTag(TagRecord(kind: "target", target: "M42", sessionDate: nil, tag: "wide"))
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "favorite"))
+    try database.addTag(TagRecord(kind: "session", target: "M31", sessionDate: "2026-01-01", tag: "clouds"))
+
+    let all = try database.allTags()
+    #expect(all == [
+        TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "favorite"),
+        TagRecord(kind: "session", target: "M31", sessionDate: "2026-01-01", tag: "clouds"),
+        TagRecord(kind: "target", target: "M42", sessionDate: nil, tag: "wide"),
+    ])
+}
+
+@Test func targetsWithTagReturnsOnlyTargetLevelMatchesSorted() throws {
+    let database = try Database(path: ":memory:")
+    try database.addTag(TagRecord(kind: "target", target: "M42", sessionDate: nil, tag: "favorite"))
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "favorite"))
+    // Session-level tag with the same text must NOT count.
+    try database.addTag(TagRecord(kind: "session", target: "M1", sessionDate: "2026-01-01", tag: "favorite"))
+
+    #expect(try database.targetsWithTag("favorite") == ["M31", "M42"])
+    #expect(try database.targetsWithTag("nonexistent") == [])
 }

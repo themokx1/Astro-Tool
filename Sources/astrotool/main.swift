@@ -30,6 +30,7 @@ do {
     case "match": exitCode = try cmdMatch(rest)
     case "new-session": exitCode = try cmdNewSession(rest)
     case "config": exitCode = try cmdConfig(rest)
+    case "tag": exitCode = try cmdTag(rest)
     default:
         eprint(usageText)
         exit(1)

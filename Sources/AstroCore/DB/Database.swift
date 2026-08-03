@@ -100,6 +100,25 @@ public struct FITSMetaRecord: Codable, Equatable, Sendable {
     }
 }
 
+/// A free-form tag on either a target (`sessionDate == nil`) or one of its
+/// sessions (`sessionDate` set to that session's raw date-dir name). `kind`
+/// is always re-derived from `sessionDate`'s nil-ness by `Database`'s tag
+/// methods -- never trust a caller-supplied `kind` that might disagree with
+/// it.
+public struct TagRecord: Codable, Equatable, Sendable {
+    public var kind: String        // "target" | "session"
+    public var target: String
+    public var sessionDate: String?
+    public var tag: String
+
+    public init(kind: String, target: String, sessionDate: String?, tag: String) {
+        self.kind = kind
+        self.target = target
+        self.sessionDate = sessionDate
+        self.tag = tag
+    }
+}
+
 /// A frame-quality rating, one row per `files.id`. `inputSig` fingerprints
 /// the inputs the score was computed from, so a re-rate with an unchanged
 /// signature can be recognized as redundant by callers.
@@ -158,7 +177,11 @@ public final class Database: @unchecked Sendable {
     let db: SQLiteDB
     private let lock = NSLock()
 
-    private static let schemaSQL = """
+    // Internal (not private) so migration tests can exec this exact string
+    // directly against a raw `SQLiteDB` to simulate an existing v1 database,
+    // then verify `Database(path:)` upgrades it in place without touching
+    // the data it already has.
+    static let schemaSQLv1 = """
     CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS files(
       id INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL, size INTEGER NOT NULL,
@@ -184,14 +207,27 @@ public final class Database: @unchecked Sendable {
       finished_at REAL, root TEXT NOT NULL, config_json TEXT);
     """
 
+    private static let schemaSQLv2 = """
+    CREATE TABLE IF NOT EXISTS tags(
+      id INTEGER PRIMARY KEY,
+      kind TEXT NOT NULL,
+      target TEXT NOT NULL,
+      session_date TEXT,
+      tag TEXT NOT NULL,
+      UNIQUE(kind, target, session_date, tag));
+    """
+
     public init(path: String) throws {
         self.db = try SQLiteDB(path: path)
         try migrate()
     }
 
-    /// Creates the schema and stamps `schema_version` with `1` the first
-    /// time this database is opened. A no-op on every later open (the
-    /// version row is read back and found non-empty).
+    /// Brings the database up to the current schema version, one version
+    /// step at a time, so a real deployed v1 database upgrades in place
+    /// without losing its existing rows, while a brand-new database walks
+    /// straight through every step. A no-op step is skipped once its
+    /// version has already been reached (re-opening an up-to-date database
+    /// runs no DDL at all).
     private func migrate() throws {
         var version: Int64 = 0
         do {
@@ -203,10 +239,17 @@ public final class Database: @unchecked Sendable {
             version = 0
         }
 
-        guard version == 0 else { return }
+        if version < 1 {
+            try db.exec(Self.schemaSQLv1)
+            try db.run("INSERT INTO schema_version(version) VALUES (?);", bind: [.int(1)])
+            version = 1
+        }
 
-        try db.exec(Self.schemaSQL)
-        try db.run("INSERT INTO schema_version(version) VALUES (?);", bind: [.int(1)])
+        if version < 2 {
+            try db.exec(Self.schemaSQLv2)
+            try db.run("UPDATE schema_version SET version = ?;", bind: [.int(2)])
+            version = 2
+        }
     }
 
     private func withLock<T>(_ body: () throws -> T) rethrows -> T {
@@ -522,6 +565,147 @@ public final class Database: @unchecked Sendable {
                 )
             }
             return record
+        }
+    }
+
+    // MARK: tags
+
+    /// Adds a free-form tag to a target (`t.sessionDate == nil`) or one of
+    /// its sessions. `kind` is always re-derived from `t.sessionDate`'s
+    /// nil-ness -- `t.kind` is ignored, so a caller can never desync the two.
+    /// Idempotent: adding the same (kind, target, sessionDate, tag) twice
+    /// leaves exactly one row. This is enforced with an explicit existence
+    /// check rather than relying on the table's `UNIQUE` constraint plus
+    /// `INSERT OR IGNORE`, because SQL `NULL` is never equal to `NULL` in a
+    /// `UNIQUE` index -- two target-level tags (`session_date IS NULL`)
+    /// would NOT collide there and `INSERT OR IGNORE` would happily insert a
+    /// duplicate row.
+    public func addTag(_ t: TagRecord) throws {
+        let tag = try Self.validatedTag(t.tag)
+        let kind = Self.kind(forSessionDate: t.sessionDate)
+
+        try withLock {
+            var exists = false
+            try Self.queryTagRows(db, target: t.target, sessionDate: t.sessionDate, tag: tag) { _ in
+                exists = true
+            }
+            guard !exists else { return }
+            try db.run(
+                "INSERT INTO tags(kind, target, session_date, tag) VALUES (?, ?, ?, ?);",
+                bind: [.text(kind), .text(t.target), t.sessionDate.map(SQLiteValue.text) ?? .null, .text(tag)]
+            )
+        }
+    }
+
+    /// Removes a tag; a no-op if it wasn't present.
+    public func removeTag(_ t: TagRecord) throws {
+        let tag = try Self.validatedTag(t.tag)
+
+        try withLock {
+            if let sessionDate = t.sessionDate {
+                try db.run(
+                    "DELETE FROM tags WHERE target = ? AND session_date = ? AND tag = ?;",
+                    bind: [.text(t.target), .text(sessionDate), .text(tag)]
+                )
+            } else {
+                try db.run(
+                    "DELETE FROM tags WHERE target = ? AND session_date IS NULL AND tag = ?;",
+                    bind: [.text(t.target), .text(tag)]
+                )
+            }
+        }
+    }
+
+    /// The tags on one target (`sessionDate == nil`) or one of its sessions,
+    /// sorted alphabetically.
+    public func tags(target: String, sessionDate: String?) throws -> [String] {
+        try withLock {
+            var result: [String] = []
+            if let sessionDate {
+                try db.query(
+                    "SELECT tag FROM tags WHERE target = ? AND session_date = ? ORDER BY tag;",
+                    bind: [.text(target), .text(sessionDate)]
+                ) { row in if let tag = row.string(0) { result.append(tag) } }
+            } else {
+                try db.query(
+                    "SELECT tag FROM tags WHERE target = ? AND session_date IS NULL ORDER BY tag;",
+                    bind: [.text(target)]
+                ) { row in if let tag = row.string(0) { result.append(tag) } }
+            }
+            return result
+        }
+    }
+
+    /// Every tag on record, sorted by target, then session date, then tag.
+    public func allTags() throws -> [TagRecord] {
+        try withLock {
+            var result: [TagRecord] = []
+            try db.query(
+                "SELECT kind, target, session_date, tag FROM tags ORDER BY target, session_date, tag;"
+            ) { row in
+                result.append(
+                    TagRecord(
+                        kind: row.string(0) ?? "",
+                        target: row.string(1) ?? "",
+                        sessionDate: row.string(2),
+                        tag: row.string(3) ?? ""
+                    )
+                )
+            }
+            return result
+        }
+    }
+
+    /// Every target carrying `tag` as a target-level tag (session-level tags
+    /// don't count), sorted by name -- backs `stats --tag`.
+    public func targetsWithTag(_ tag: String) throws -> [String] {
+        let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        return try withLock {
+            var result: [String] = []
+            try db.query(
+                "SELECT DISTINCT target FROM tags WHERE kind = 'target' AND tag = ? ORDER BY target;",
+                bind: [.text(trimmed)]
+            ) { row in if let target = row.string(0) { result.append(target) } }
+            return result
+        }
+    }
+
+    private static func kind(forSessionDate sessionDate: String?) -> String {
+        sessionDate == nil ? "target" : "session"
+    }
+
+    private static func validatedTag(_ raw: String) throws -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw AstroError.invalidInput("tag cannot be empty")
+        }
+        return trimmed
+    }
+
+    /// Runs `row` for every existing tag row matching `(target, sessionDate,
+    /// tag)` -- shared by `addTag`'s existence check. Must be called with
+    /// `lock` already held.
+    private static func queryTagRows(
+        _ db: SQLiteDB,
+        target: String,
+        sessionDate: String?,
+        tag: String,
+        row: (SQLiteRow) throws -> Void
+    ) throws {
+        if let sessionDate {
+            try db.query(
+                "SELECT 1 FROM tags WHERE target = ? AND session_date = ? AND tag = ?;",
+                bind: [.text(target), .text(sessionDate), .text(tag)],
+                row: row
+            )
+        } else {
+            try db.query(
+                "SELECT 1 FROM tags WHERE target = ? AND session_date IS NULL AND tag = ?;",
+                bind: [.text(target), .text(tag)],
+                row: row
+            )
         }
     }
 }

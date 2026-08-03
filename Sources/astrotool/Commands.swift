@@ -28,11 +28,14 @@ Commands:
   scan          [--root R] [--path SUB] [--json]
   audit         [--root R] [--json] [--suggest] [--include-suspicious] [--no-duplicates]
   rate          [--root R] --target T [--date D] [--json] [--no-siril]
-  stats         [--root R] [--target T] [--json] [--sessions (requires --target)]
+  stats         [--root R] [--target T] [--json] [--sessions (requires --target)] [--tag TAG]
   calib         [--root R] [--json]
   match         [--root R] --target T --date D [--json]
   new-session   --catalog CAT --name NAME --date D [--root R] [--json]
   config        (show|path) [--root R] [--json]
+  tag add       --target T [--date D] <tag> [--root R] [--json]
+  tag remove    --target T [--date D] <tag> [--root R] [--json]
+  tag list      [--target T] [--date D] [--root R] [--json]
 
   --version     Print version and exit
   --help        Show this help
@@ -348,6 +351,7 @@ func cmdStats(_ args: [String]) throws -> Int32 {
         FlagSpec("--target", takesValue: true),
         FlagSpec("--json", takesValue: false),
         FlagSpec("--sessions", takesValue: false),
+        FlagSpec("--tag", takesValue: true),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
 
@@ -359,7 +363,11 @@ func cmdStats(_ args: [String]) throws -> Int32 {
         let config = try resolveConfig(rootFlag: parsed.value("--root"))
         let db = try makeDatabase(config: config)
         try hintIfEmpty(db)
-        let all = try StatsQueries.perTarget(db: db, config: config)
+        var all = try StatsQueries.perTarget(db: db, config: config)
+        if let tag = parsed.value("--tag") {
+            let trimmedTag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            all = all.filter { $0.tags.contains(trimmedTag) }
+        }
         if parsed.has("--json") {
             try printJSON(all)
         } else {
@@ -631,4 +639,180 @@ func cmdConfig(_ args: [String]) throws -> Int32 {
         eprint(usageText)
         return 1
     }
+}
+
+// MARK: - tag
+
+/// `astrotool tag <add|remove|list>`. Unlike every other subcommand, `add`/
+/// `remove` take a bare positional `<tag>` argument alongside their flags --
+/// `ArgParser` itself has no notion of positionals (see its doc comment), so
+/// `splitPositionalArgs` below separates recognized `--flag [value]` pairs
+/// from anything else before handing the flag-only slice to `ArgParser`.
+func cmdTag(_ args: [String]) throws -> Int32 {
+    guard let sub = args.first else {
+        eprint("error: expected 'add', 'remove', or 'list'")
+        eprint(usageText)
+        return 1
+    }
+    let rest = Array(args.dropFirst())
+
+    let specs = [
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--date", takesValue: true),
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+
+    switch sub {
+    case "add", "remove":
+        return try cmdTagAddOrRemove(rest, specs: specs, isAdd: sub == "add")
+    case "list":
+        return try cmdTagList(rest, specs: specs)
+    default:
+        eprint("error: expected 'add', 'remove', or 'list', got '\(sub)'")
+        eprint(usageText)
+        return 1
+    }
+}
+
+private func cmdTagAddOrRemove(_ args: [String], specs: [FlagSpec], isAdd: Bool) throws -> Int32 {
+    let (flagArgs, positionals) = splitPositionalArgs(args, specs: specs)
+    let parsed = try ArgParser.parse(flagArgs, specs: specs)
+
+    guard let target = parsed.value("--target") else {
+        eprint("error: --target is required")
+        eprint(usageText)
+        return 1
+    }
+    guard positionals.count == 1 else {
+        eprint("error: expected a single <tag> argument, got \(positionals.count)")
+        eprint(usageText)
+        return 1
+    }
+    let tagText = positionals[0]
+    let date = parsed.value("--date")
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    let record = TagRecord(kind: date == nil ? "target" : "session", target: target, sessionDate: date, tag: tagText)
+
+    if isAdd {
+        try db.addTag(record)
+    } else {
+        try db.removeTag(record)
+    }
+
+    if parsed.has("--json") {
+        try printJSON(record)
+    } else {
+        let scope = date.map { "\(target) [\($0)]" } ?? target
+        print("\(isAdd ? "added" : "removed"): \(scope) -> \(record.tag.trimmingCharacters(in: .whitespacesAndNewlines))")
+    }
+    return 0
+}
+
+private func cmdTagList(_ args: [String], specs: [FlagSpec]) throws -> Int32 {
+    let (flagArgs, positionals) = splitPositionalArgs(args, specs: specs)
+    guard positionals.isEmpty else {
+        eprint("error: unexpected argument: \(positionals.joined(separator: " "))")
+        eprint(usageText)
+        return 1
+    }
+    let parsed = try ArgParser.parse(flagArgs, specs: specs)
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+
+    if let target = parsed.value("--target") {
+        let date = parsed.value("--date")
+        let tags = try db.tags(target: target, sessionDate: date)
+        if parsed.has("--json") {
+            try printJSON(tags)
+        } else if tags.isEmpty {
+            let scope = date.map { "\(target) [\($0)]" } ?? target
+            print("no tags for \(scope)")
+        } else {
+            print(tags.joined(separator: ", "))
+        }
+        return 0
+    }
+
+    let all = try db.allTags()
+    if parsed.has("--json") {
+        try printJSON(all)
+    } else {
+        printTagsGrouped(all)
+    }
+    return 0
+}
+
+private func printTagsGrouped(_ records: [TagRecord]) {
+    guard !records.isEmpty else {
+        print("no tags")
+        return
+    }
+
+    struct Key: Hashable {
+        let target: String
+        let date: String?
+    }
+
+    var tagsByKey: [Key: [String]] = [:]
+    var order: [Key] = []
+    for r in records {
+        let key = Key(target: r.target, date: r.sessionDate)
+        if tagsByKey[key] == nil { order.append(key) }
+        tagsByKey[key, default: []].append(r.tag)
+    }
+
+    for key in order {
+        let label = key.date.map { "\(key.target) [\($0)]" } ?? key.target
+        print("\(label): \(tagsByKey[key]?.joined(separator: ", ") ?? "")")
+    }
+}
+
+/// Splits `args` into recognized `--flag`/`--flag value` tokens (returned
+/// verbatim, still to be handed to `ArgParser.parse`) and everything else
+/// (the positional `<tag>` argument `tag add`/`tag remove` take). An
+/// unrecognized `--flag` is left in the flag slice so `ArgParser.parse`
+/// still reports it as `ArgParserError.unknownFlag` rather than silently
+/// treating it as the positional.
+private func splitPositionalArgs(_ args: [String], specs: [FlagSpec]) -> (flagArgs: [String], positionals: [String]) {
+    let specByName = Dictionary(uniqueKeysWithValues: specs.map { ($0.name, $0) })
+    var flagArgs: [String] = []
+    var positionals: [String] = []
+
+    var index = 0
+    while index < args.count {
+        let arg = args[index]
+        guard arg.hasPrefix("--") else {
+            positionals.append(arg)
+            index += 1
+            continue
+        }
+
+        let name = arg.firstIndex(of: "=").map { String(arg[arg.startIndex..<$0]) } ?? arg
+        guard let spec = specByName[name] else {
+            // Unknown flag -- keep it so ArgParser.parse surfaces the error.
+            flagArgs.append(arg)
+            index += 1
+            continue
+        }
+
+        if arg.contains("=") {
+            flagArgs.append(arg)
+            index += 1
+        } else if spec.takesValue {
+            flagArgs.append(arg)
+            if index + 1 < args.count {
+                flagArgs.append(args[index + 1])
+            }
+            index += 2
+        } else {
+            flagArgs.append(arg)
+            index += 1
+        }
+    }
+
+    return (flagArgs, positionals)
 }

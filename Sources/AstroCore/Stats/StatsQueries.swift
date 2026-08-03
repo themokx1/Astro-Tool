@@ -26,6 +26,10 @@ public struct TargetStats: Codable, Sendable, Equatable {
     public var cameras: [String]
     /// Distinct, sorted `filter` values across the target's session lights.
     public var filters: [String]
+    /// This target's target-level tags (from the `tags` table), sorted.
+    /// `[]` for a target with none -- always present so older callers that
+    /// never set it still get a valid, empty list.
+    public var tags: [String]
 
     public init(
         target: String,
@@ -35,7 +39,8 @@ public struct TargetStats: Codable, Sendable, Equatable {
         exposureBreakdown: [String: Int],
         lastSessionDate: String?,
         cameras: [String],
-        filters: [String]
+        filters: [String],
+        tags: [String] = []
     ) {
         self.target = target
         self.isWideField = isWideField
@@ -45,6 +50,27 @@ public struct TargetStats: Codable, Sendable, Equatable {
         self.lastSessionDate = lastSessionDate
         self.cameras = cameras
         self.filters = filters
+        self.tags = tags
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case target, isWideField, totalIntegrationSeconds, sessionDates, exposureBreakdown,
+             lastSessionDate, cameras, filters, tags
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        target = try c.decode(String.self, forKey: .target)
+        isWideField = try c.decode(Bool.self, forKey: .isWideField)
+        totalIntegrationSeconds = try c.decode(Double.self, forKey: .totalIntegrationSeconds)
+        sessionDates = try c.decode([String].self, forKey: .sessionDates)
+        exposureBreakdown = try c.decode([String: Int].self, forKey: .exposureBreakdown)
+        lastSessionDate = try c.decodeIfPresent(String.self, forKey: .lastSessionDate)
+        cameras = try c.decode([String].self, forKey: .cameras)
+        filters = try c.decode([String].self, forKey: .filters)
+        // Absent in JSON produced before this field existed -- decode
+        // leniently so older cached/serialized stats stay loadable.
+        tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
     }
 }
 
@@ -128,6 +154,8 @@ public enum StatsQueries {
             rule: config.wideField
         )
 
+        let tags = try db.tags(target: target, sessionDate: nil)
+
         return TargetStats(
             target: target,
             isWideField: isWideField,
@@ -136,7 +164,8 @@ public enum StatsQueries {
             exposureBreakdown: exposureBreakdown,
             lastSessionDate: lastSessionDate,
             cameras: cameras.sorted(),
-            filters: filters.sorted()
+            filters: filters.sorted(),
+            tags: tags
         )
     }
 }

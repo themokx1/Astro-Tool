@@ -388,6 +388,76 @@ final class AppState: @unchecked Sendable {
         }
     }
 
+    // MARK: - Tags
+
+    /// Adds a free-form tag to a target (`date == nil`) or one of its
+    /// sessions (`date` given, one of that target's `sessionDates`).
+    /// Idempotent at the DB layer -- adding the same tag twice is a no-op.
+    /// Refreshes `stats` (always) and `sessionDetails` (if this target is
+    /// currently selected) so the chip UI reflects the change immediately.
+    func addTag(target: String, date: String?, tag: String) {
+        guard let db else { return }
+        let cfg = config
+        let record = TagRecord(kind: date == nil ? "target" : "session", target: target, sessionDate: date, tag: tag)
+
+        let opID = beginOperation("Címke hozzáadása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try db.addTag(record)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                await self.reloadStatsAfterTagChange(db: db, config: cfg)
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Removes a previously added tag; a no-op if it wasn't present.
+    func removeTag(target: String, date: String?, tag: String) {
+        guard let db else { return }
+        let cfg = config
+        let record = TagRecord(kind: date == nil ? "target" : "session", target: target, sessionDate: date, tag: tag)
+
+        let opID = beginOperation("Címke törlése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try db.removeTag(record)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                await self.reloadStatsAfterTagChange(db: db, config: cfg)
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Best-effort refresh of `stats` (always) and `sessionDetails` (only
+    /// when a target is currently selected/expanded) after a tag mutation --
+    /// mirrors the post-scan refresh in `runScan()`. Best-effort: a failure
+    /// here shouldn't turn an otherwise-successful tag edit into a reported
+    /// error.
+    private func reloadStatsAfterTagChange(db: Database, config: AstroConfig) async {
+        if let statsResult = try? await Task.detached(priority: .userInitiated, operation: {
+            try StatsQueries.perTarget(db: db, config: config)
+        }).value {
+            self.stats = statsResult
+        }
+        if let target = selectedTarget {
+            if let sessionsResult = try? await Task.detached(priority: .userInitiated, operation: {
+                try SessionStatsQueries.sessions(target: target, db: db, config: config)
+            }).value {
+                self.sessionDetails = sessionsResult
+            }
+        }
+    }
+
     // MARK: - Calibration coverage
 
     func loadCalib() {

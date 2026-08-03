@@ -198,6 +198,29 @@ private struct StatsFixture {
     #expect(try StatsQueries.target("DoesNotExist", db: fixture.db, config: fixture.config) == nil)
 }
 
+@Test func targetStatsCarriesItsTargetLevelTags() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/l1.fit", exptime: 60.0, instrume: nil, filter: nil)
+    try fixture.scan()
+    try fixture.db.addTag(TagRecord(kind: "target", target: "T1", sessionDate: nil, tag: "favorite"))
+
+    let stats = try #require(try StatsQueries.target("T1", db: fixture.db, config: fixture.config))
+    #expect(stats.tags == ["favorite"])
+}
+
+@Test func targetStatsHasEmptyTagsWhenNoneAdded() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/l1.fit", exptime: 60.0, instrume: nil, filter: nil)
+    try fixture.scan()
+
+    let stats = try #require(try StatsQueries.target("T1", db: fixture.db, config: fixture.config))
+    #expect(stats.tags == [])
+}
+
 @Test func targetLookupMatchesEntryFromPerTarget() throws {
     let fixture = try StatsFixture.make()
     defer { fixture.cleanup() }

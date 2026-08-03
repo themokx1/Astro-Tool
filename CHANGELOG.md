@@ -8,6 +8,32 @@ történik.
 
 ## [Unreleased]
 
+### Added
+
+- **Szabad szöveges címkék (tagek) célpontokra és session-ökre**: DB séma
+  v2-re bővült egy `tags` táblával (`kind`, `target`, `session_date`, `tag`,
+  `UNIQUE(kind, target, session_date, tag)`); a migráció verzió-lépcsős
+  (`if version < 1 { … } if version < 2 { … }`), így egy már éles v1 könyvtár
+  a meglévő adatai érintetlenül maradása mellett kapja meg a `tags` táblát,
+  egy friss könyvtár pedig egyből v2-re fut. Új `Database` API:
+  `addTag`/`removeTag`/`tags(target:sessionDate:)`/`allTags()`/
+  `targetsWithTag(_:)` — a `kind` mindig a `sessionDate` nil-ességéből
+  származik, a tag szöveg trim-elve és üres/csak-szóköz esetén
+  `AstroError.invalidInput`-ot dob, a hozzáadás explicit exists-check-kel
+  idempotens (a `UNIQUE` index önmagában nem elég, mert SQL `NULL` sosem
+  egyenlő `NULL`-lal). CLI: `astrotool tag add/remove --target T [--date D]
+  <tag> [--json]` egy session-höz vagy magához a célponthoz, `tag list
+  [--target T] [--date D] [--json]` (célpont nélkül minden tag
+  csoportosítva kiírva), valamint `stats --tag TAG` szűrő, ami csak a
+  target-szintű tag-gel rendelkező célpontokat mutatja. `TargetStats` és
+  `SessionDetail` új `tags: [String]` mezőt kapott (a régi JSON-ból hiányzó
+  `tags` kulcs `[]`-ra esik vissza dekódoláskor). App oldalon a Stats fül
+  táblája lenyitható (`DisclosureGroup`) célpont-sorokra cserélődött —
+  fejlécben a régi oszlopok mellett tag-chipek, lenyitáskor lazy
+  session-lista session-önkénti tag-chipekkel, „+" chip popoverrel új címke
+  felvételéhez és ✕ törléshez; a keresőmező mostantól célpont neve VAGY
+  címke szerint is szűr.
+
 ## [0.1.3] - 2026-08-02
 
 ### Added

@@ -37,6 +37,9 @@ public struct SessionDetail: Codable, Sendable, Equatable {
     /// Whether the session's date-dir has a `README.txt` on record (a
     /// `kind == "text"` file whose last path component is `README.txt`).
     public var hasReadme: Bool
+    /// This session's tags (from the `tags` table, `session_date == dateRaw`),
+    /// sorted. `[]` for a session with none.
+    public var tags: [String]
 
     public init(
         target: String,
@@ -52,7 +55,8 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         gains: [Double],
         sensorTempsC: [Double],
         filters: [String],
-        hasReadme: Bool
+        hasReadme: Bool,
+        tags: [String] = []
     ) {
         self.target = target
         self.dateRaw = dateRaw
@@ -68,6 +72,33 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         self.sensorTempsC = sensorTempsC
         self.filters = filters
         self.hasReadme = hasReadme
+        self.tags = tags
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case target, dateRaw, lightCount, flatCount, darkCount, biasCount, integrationSeconds,
+             exposureBreakdown, cameras, focalLengthsMM, gains, sensorTempsC, filters, hasReadme, tags
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        target = try c.decode(String.self, forKey: .target)
+        dateRaw = try c.decode(String.self, forKey: .dateRaw)
+        lightCount = try c.decode(Int.self, forKey: .lightCount)
+        flatCount = try c.decode(Int.self, forKey: .flatCount)
+        darkCount = try c.decode(Int.self, forKey: .darkCount)
+        biasCount = try c.decode(Int.self, forKey: .biasCount)
+        integrationSeconds = try c.decode(Double.self, forKey: .integrationSeconds)
+        exposureBreakdown = try c.decode([String: Int].self, forKey: .exposureBreakdown)
+        cameras = try c.decode([String].self, forKey: .cameras)
+        focalLengthsMM = try c.decode([Double].self, forKey: .focalLengthsMM)
+        gains = try c.decode([Double].self, forKey: .gains)
+        sensorTempsC = try c.decode([Double].self, forKey: .sensorTempsC)
+        filters = try c.decode([String].self, forKey: .filters)
+        hasReadme = try c.decode(Bool.self, forKey: .hasReadme)
+        // Absent in JSON produced before this field existed -- decode
+        // leniently so older cached/serialized session details stay loadable.
+        tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
     }
 }
 
@@ -134,6 +165,8 @@ public enum SessionStatsQueries {
             if let setTemp = meta?.setTemp { sensorTemps.insert((setTemp * 2).rounded() / 2) }
         }
 
+        let tags = try db.tags(target: target, sessionDate: date)
+
         return SessionDetail(
             target: target,
             dateRaw: date,
@@ -148,7 +181,8 @@ public enum SessionStatsQueries {
             gains: gains.sorted(),
             sensorTempsC: sensorTemps.sorted(),
             filters: filters.sorted(),
-            hasReadme: hasReadme
+            hasReadme: hasReadme,
+            tags: tags
         )
     }
 }
