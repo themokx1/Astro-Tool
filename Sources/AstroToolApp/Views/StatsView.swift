@@ -211,10 +211,10 @@ struct StatsView: View {
             return "\(stats.sessionDates.count) session"
         case .session(_, let detail):
             var parts: [String] = []
-            if detail.lightCount > 0 { parts.append("\(detail.lightCount) L") }
-            if detail.flatCount > 0 { parts.append("\(detail.flatCount) F") }
-            if detail.darkCount > 0 { parts.append("\(detail.darkCount) D") }
-            if detail.biasCount > 0 { parts.append("\(detail.biasCount) B") }
+            if detail.lightCount > 0 { parts.append("\(detail.lightCount) light") }
+            if detail.flatCount > 0 { parts.append("\(detail.flatCount) flat") }
+            if detail.darkCount > 0 { parts.append("\(detail.darkCount) dark") }
+            if detail.biasCount > 0 { parts.append("\(detail.biasCount) bias") }
             return parts.isEmpty ? "-" : parts.joined(separator: " · ")
         }
     }
