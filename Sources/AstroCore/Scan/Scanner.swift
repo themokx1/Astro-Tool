@@ -261,6 +261,15 @@ public final class LibraryScanner {
         if let existing, !existing.missing, existing.size == size, abs(existing.mtime - mtime) <= 1.0 {
             summary.unchanged += 1
             try healStaleClassification(existing: existing, info: info, kind: kind, summary: &summary)
+            // Cheap, targeted backfill for rows scanned before schema v3 (or
+            // whose earlier stat call simply failed) -- only when missing,
+            // to avoid a stat() on every unchanged file every scan.
+            if existing.inode == nil, let fileID = existing.id {
+                let (inode, nlink) = Self.inodeAndNlink(atPath: fileURL.path)
+                if inode != nil {
+                    try db.backfillInode(id: fileID, inode: inode, nlink: nlink)
+                }
+            }
             if refreshMeta, let fileID = existing.id {
                 try refreshMetaIfNeeded(fileID: fileID, kind: kind, ext: ext, url: fileURL, summary: &summary)
             }
@@ -273,6 +282,7 @@ public final class LibraryScanner {
         // `contentHash` is the fast `unchanged` path above, which returns
         // before ever building a record. So any hash cached from a previous
         // scan is stale here and must be dropped, not carried forward.
+        let (inode, nlink) = Self.inodeAndNlink(atPath: fileURL.path)
         let record = FileRecord(
             id: existing?.id,
             path: relativePath,
@@ -286,7 +296,9 @@ public final class LibraryScanner {
             role: info.role,
             contentHash: nil,
             scannedAt: Date().timeIntervalSince1970,
-            missing: false
+            missing: false,
+            inode: inode,
+            nlink: nlink
         )
         let fileID = try db.upsertFile(record)
 
@@ -494,6 +506,21 @@ public final class LibraryScanner {
         // it must be recorded like any other file.
         if name.hasPrefix(".") && name != ".DS_Store" { return true }
         return exclusion.isExcludedPath(relativePath)
+    }
+
+    // MARK: - Inode / link count
+
+    /// The filesystem inode number and hardlink count for the file at
+    /// `path`, via `FileManager.attributesOfItem` (`.systemFileNumber` /
+    /// `.referenceCount`). `(nil, nil)` if the stat call fails -- callers
+    /// treat that the same as "not known yet", same as a pre-v3 row.
+    private static func inodeAndNlink(atPath path: String) -> (inode: Int64?, nlink: Int64?) {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else {
+            return (nil, nil)
+        }
+        let inode = (attributes[.systemFileNumber] as? NSNumber)?.int64Value
+        let nlink = (attributes[.referenceCount] as? NSNumber)?.int64Value
+        return (inode, nlink)
     }
 
     // MARK: - Kind bucket

@@ -26,6 +26,15 @@ import Testing
     #expect(config.rating.outlierZScore == 2.0)
     #expect(config.rating.sirilPath == "/Applications/Siril.app/Contents/MacOS/siril-cli")
     #expect(config.rating.weights == ["fwhm": 0.4, "roundness": 0.2, "starCount": 0.2, "background": 0.2])
+
+    #expect(config.stats.excludeLabels == ["hibas"])
+    #expect(config.stats.gapThresholdSeconds == 0)
+}
+
+@Test func defaultStatsRuleHasExpectedValues() {
+    let rule = StatsRule()
+    #expect(rule.excludeLabels == ["hibas"])
+    #expect(rule.gapThresholdSeconds == 0)
 }
 
 @Test func defaultWideFieldRuleHasExpectedValues() {
@@ -83,6 +92,7 @@ import Testing
     #expect(config.intentional == IntentionalPatterns())
     #expect(config.wideField == WideFieldRule())
     #expect(config.calib == CalibRule())
+    #expect(config.stats == StatsRule())
 
     #expect(config.rating.workers == 8)
     #expect(config.rating.outlierZScore == 2.0)
@@ -108,6 +118,17 @@ import Testing
     let config = try JSONDecoder().decode(AstroConfig.self, from: data)
     #expect(config.wideField.extensions == ["cr3"])
     #expect(config.wideField.maxFocalLengthMM == 135)
+}
+
+@Test func decodingPartialStatsRuleFillsMissingKeyWithDefault() throws {
+    let json = """
+    { "stats": { "excludeLabels": ["hibas", "cloudy"] } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.stats.excludeLabels == ["hibas", "cloudy"])
+    #expect(config.stats.gapThresholdSeconds == 0)
 }
 
 @Test func loadReadsConfigFromDisk() throws {

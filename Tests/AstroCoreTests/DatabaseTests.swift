@@ -76,14 +76,14 @@ import Testing
 
 // MARK: - Database migration
 
-@Test func migrateSetsSchemaVersionToTwoForFreshDatabase() throws {
+@Test func migrateSetsSchemaVersionToThreeForFreshDatabase() throws {
     let database = try Database(path: ":memory:")
 
     var version: Int64 = -1
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 2)
+    #expect(version == 3)
 }
 
 @Test func migrateIsIdempotentAndDoesNotDuplicateVersionRow() throws {
@@ -144,18 +144,83 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 2)
+    #expect(version == 3)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
     #expect(files.first?.target == "M31")
     #expect(files.first?.path == "sessions/M31/2026-01-01/lights/f1.fits")
+    #expect(files.first?.inode == nil)
+    #expect(files.first?.nlink == nil)
 
     var tagsTableExists = false
     try database.db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tags';") { _ in
         tagsTableExists = true
     }
     #expect(tagsTableExists)
+}
+
+/// Simulates an already-deployed v2 database (v1 schema + `schemaSQLv2`'s
+/// `tags` table, `schema_version` stamped `2`, one file row inserted) via a
+/// raw `SQLiteDB` connection, then opens it through `Database(path:)` and
+/// verifies the v2 data survived, the version advanced to 3, and the new
+/// `inode`/`nlink` columns exist (as `NULL` for the pre-existing row, since
+/// `ALTER TABLE ADD COLUMN` never backfills existing rows).
+@Test func migrateUpgradesExistingV2DatabaseToV3PreservingData() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-migrate-v2-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("v2.sqlite").path
+
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.exec(Database.schemaSQLv1)
+        try raw.exec(Database.schemaSQLv2)
+        try raw.run("INSERT INTO schema_version(version) VALUES (2);")
+        try raw.run(
+            """
+            INSERT INTO files(path, size, mtime, ext, kind, area, target, session_date, role, content_hash, scanned_at, missing)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            bind: [
+                .text("sessions/M31/2026-01-01/lights/f1.fits"), .int(1024), .real(1_700_000_000),
+                .text("fits"), .text("fits"), .text("sessions"), .text("M31"), .text("2026-01-01"),
+                .text("light"), .null, .real(1_700_000_100), .int(0),
+            ]
+        )
+    }
+
+    let database = try Database(path: path)
+
+    var version: Int64 = -1
+    try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
+        version = row.int64(0) ?? -1
+    }
+    #expect(version == 3)
+
+    let files = try database.allFiles(includeMissing: true)
+    #expect(files.count == 1)
+    #expect(files.first?.target == "M31")
+    #expect(files.first?.inode == nil)
+    #expect(files.first?.nlink == nil)
+}
+
+@Test func backfillInodeSetsOnlyInodeAndNlinkColumns() throws {
+    let database = try Database(path: ":memory:")
+    let id = try database.upsertFile(
+        FileRecord(
+            path: "sessions/M31/2026-01-01/lights/f1.fits", size: 10, mtime: 1, ext: "fits", kind: "fits",
+            area: .sessions, target: "M31", sessionDate: "2026-01-01", role: .light, scannedAt: 1
+        )
+    )
+
+    try database.backfillInode(id: id, inode: 12345, nlink: 2)
+
+    let record = try #require(try database.file(path: "sessions/M31/2026-01-01/lights/f1.fits"))
+    #expect(record.inode == 12345)
+    #expect(record.nlink == 2)
+    #expect(record.size == 10)
 }
 
 // MARK: - Database: files

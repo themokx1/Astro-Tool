@@ -682,6 +682,70 @@ private struct ScanFixture {
     #expect(summary.metaRefreshed == 0)
 }
 
+// MARK: - inode / nlink capture (schema v3)
+
+@Test func scanCapturesInodeAndNlinkForNewFile() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/light_0001.fit"
+    let record = try #require(try fixture.db.file(path: relativePath))
+    #expect(record.inode != nil)
+    #expect(record.nlink == 1)
+}
+
+@Test func hardlinkedCopyShowsSameInodeAndNlinkTwo() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let originalRelative = "sessions/M45_Pleiades/2026-01-10/lights/light_0001.fit"
+    let originalURL = fixture.root.appendingPathComponent(originalRelative)
+    let linkURL = fixture.root.appendingPathComponent(
+        "sessions/M45_Pleiades/2026-01-10/lights/Review/light_0001.fit"
+    )
+    try FileManager.default.createDirectory(at: linkURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try FileManager.default.linkItem(at: originalURL, to: linkURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let original = try #require(try fixture.db.file(path: originalRelative))
+    let link = try #require(
+        try fixture.db.file(path: "sessions/M45_Pleiades/2026-01-10/lights/Review/light_0001.fit")
+    )
+    #expect(original.inode != nil)
+    #expect(original.inode == link.inode)
+    #expect(original.nlink == 2)
+    #expect(link.nlink == 2)
+}
+
+@Test func rescanBackfillsInodeForRowScannedBeforeSchemaV3() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/light_0001.fit"
+    var stale = try #require(try fixture.db.file(path: relativePath))
+    // Simulate a v2-era row: inode/nlink never captured.
+    stale.inode = nil
+    stale.nlink = nil
+    _ = try fixture.db.upsertFile(stale)
+    #expect(try fixture.db.file(path: relativePath)?.inode == nil)
+
+    let second = try scanner.scan()
+    #expect(second.updated == 0)
+    #expect(second.unchanged > 0)
+
+    let healed = try #require(try fixture.db.file(path: relativePath))
+    #expect(healed.inode != nil)
+    #expect(healed.nlink == 1)
+}
+
 @Test func progressCallbackFiresEveryHundredFiles() throws {
     let fixture = try ScanFixture.make()
     defer { fixture.cleanup() }

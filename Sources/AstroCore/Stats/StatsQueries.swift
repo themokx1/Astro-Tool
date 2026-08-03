@@ -9,6 +9,11 @@ import Foundation
 public struct TargetStats: Codable, Sendable, Equatable {
     public var target: String
     public var isWideField: Bool
+    /// Now EQUALS `usableIntegrationSeconds` -- the headline number must be
+    /// the TRUE one (deduped, non-rejected, non-excluded-session), not the
+    /// naive sum over every file `PathClassifier` calls a light. Kept as its
+    /// own field (rather than just renaming it) since it's the one CLI/app
+    /// callers have always displayed.
     public var totalIntegrationSeconds: Double
     /// Raw date-dir names (as they appear on disk under
     /// `sessions/<target>/`), sorted ascending. Covers every session-area
@@ -17,19 +22,50 @@ public struct TargetStats: Codable, Sendable, Equatable {
     /// Light-frame count per exposure length, keyed by the exposure's
     /// `Double.description` (e.g. `"300.0"`); frames with no exptime (no
     /// `fits_meta` row, or a row with a nil `exptime`) are counted under the
-    /// `"unknown"` key instead and contribute 0 seconds.
+    /// `"unknown"` key instead and contribute 0 seconds. Computed from the
+    /// USABLE bucket only (see `usableIntegrationSeconds`).
     public var exposureBreakdown: [String: Int]
     /// The latest canonical start date (`YYYY-MM-DD`) among the target's
     /// `sessionDates` that parse as a real date; `nil` if none do.
     public var lastSessionDate: String?
-    /// Distinct, sorted `instrume` values across the target's session lights.
+    /// Distinct, sorted `instrume` values across the target's USABLE session
+    /// lights.
     public var cameras: [String]
-    /// Distinct, sorted `filter` values across the target's session lights.
+    /// Distinct, sorted `filter` values across the target's USABLE session
+    /// lights -- excludes values that only ever appeared on non-frame/
+    /// derivative files (e.g. a Siril `starless_*.fit`'s `FILTER` header).
     public var filters: [String]
     /// This target's target-level tags (from the `tags` table), sorted.
     /// `[]` for a target with none -- always present so older callers that
     /// never set it still get a valid, empty list.
     public var tags: [String]
+    /// Sum of exptime over deduped, non-rejected, non-excluded-session light
+    /// frames -- the "true" integration time. Identical to
+    /// `totalIntegrationSeconds`.
+    public var usableIntegrationSeconds: Double
+    /// Sum of exptime over EVERY session light-role file, exactly as this
+    /// tool computed `totalIntegrationSeconds` before R4-1 -- no dedup, no
+    /// non-frame filtering, no excluded-session filtering. Kept so the app/
+    /// CLI can show "you have X, but only Y is real" side by side.
+    public var grossIntegrationSeconds: Double
+    /// Count of deduped, non-rejected, non-excluded-session light frames --
+    /// the frame-count counterpart of `usableIntegrationSeconds`.
+    public var usableFrameCount: Int
+    /// Extra hardlinked/derivative copies of the same physical frame that
+    /// were dropped during dedup (see `FrameSet.lightBuckets`).
+    public var duplicateLinkCount: Int
+    /// Deduped frames living under a `Reject/` triage subdirectory -- the
+    /// user explicitly threw these out.
+    public var rejectedFrameCount: Int
+    /// Files under `lights/` that were never real frames (wrong extension,
+    /// or a processed-derivative name).
+    public var nonFrameFileCount: Int
+    /// Raw date-dir names, among `sessionDates`, whose `SessionDateKind` is
+    /// `.labeled` with a label in `config.stats.excludeLabels` (e.g. the
+    /// user's own `_hibas` "bad night" marker) -- excluded from every
+    /// USABLE total above, even though they're still counted in
+    /// `sessionDates` and have their own `SessionDetail`.
+    public var excludedSessionDates: [String]
 
     public init(
         target: String,
@@ -40,7 +76,14 @@ public struct TargetStats: Codable, Sendable, Equatable {
         lastSessionDate: String?,
         cameras: [String],
         filters: [String],
-        tags: [String] = []
+        tags: [String] = [],
+        usableIntegrationSeconds: Double? = nil,
+        grossIntegrationSeconds: Double? = nil,
+        usableFrameCount: Int = 0,
+        duplicateLinkCount: Int = 0,
+        rejectedFrameCount: Int = 0,
+        nonFrameFileCount: Int = 0,
+        excludedSessionDates: [String] = []
     ) {
         self.target = target
         self.isWideField = isWideField
@@ -51,11 +94,19 @@ public struct TargetStats: Codable, Sendable, Equatable {
         self.cameras = cameras
         self.filters = filters
         self.tags = tags
+        self.usableIntegrationSeconds = usableIntegrationSeconds ?? totalIntegrationSeconds
+        self.grossIntegrationSeconds = grossIntegrationSeconds ?? totalIntegrationSeconds
+        self.usableFrameCount = usableFrameCount
+        self.duplicateLinkCount = duplicateLinkCount
+        self.rejectedFrameCount = rejectedFrameCount
+        self.nonFrameFileCount = nonFrameFileCount
+        self.excludedSessionDates = excludedSessionDates
     }
 
     private enum CodingKeys: String, CodingKey {
         case target, isWideField, totalIntegrationSeconds, sessionDates, exposureBreakdown,
-             lastSessionDate, cameras, filters, tags
+             lastSessionDate, cameras, filters, tags, usableIntegrationSeconds, grossIntegrationSeconds,
+             usableFrameCount, duplicateLinkCount, rejectedFrameCount, nonFrameFileCount, excludedSessionDates
     }
 
     public init(from decoder: Decoder) throws {
@@ -71,6 +122,16 @@ public struct TargetStats: Codable, Sendable, Equatable {
         // Absent in JSON produced before this field existed -- decode
         // leniently so older cached/serialized stats stay loadable.
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+        // All additive R4-1 fields: absent in pre-R4-1 JSON, so fall back to
+        // values consistent with the old (gross-only) semantics rather than
+        // failing to decode.
+        usableIntegrationSeconds = try c.decodeIfPresent(Double.self, forKey: .usableIntegrationSeconds) ?? totalIntegrationSeconds
+        grossIntegrationSeconds = try c.decodeIfPresent(Double.self, forKey: .grossIntegrationSeconds) ?? totalIntegrationSeconds
+        usableFrameCount = try c.decodeIfPresent(Int.self, forKey: .usableFrameCount) ?? 0
+        duplicateLinkCount = try c.decodeIfPresent(Int.self, forKey: .duplicateLinkCount) ?? 0
+        rejectedFrameCount = try c.decodeIfPresent(Int.self, forKey: .rejectedFrameCount) ?? 0
+        nonFrameFileCount = try c.decodeIfPresent(Int.self, forKey: .nonFrameFileCount) ?? 0
+        excludedSessionDates = try c.decodeIfPresent([String].self, forKey: .excludedSessionDates) ?? []
     }
 }
 
@@ -124,15 +185,43 @@ public enum StatsQueries {
             }
         }
 
-        var totalSeconds: Double = 0
+        // Gross: the OLD (pre-R4-1) behavior, exactly -- every session
+        // light-role file, no dedup, no exclusions. Kept so callers can show
+        // "you have X raw, only Y is real".
+        var grossSeconds: Double = 0
+        for file in sessionLights {
+            if let exptime = (file.id.flatMap { metaByFileID[$0] })?.exptime {
+                grossSeconds += exptime
+            }
+        }
+
+        let frameBuckets = FrameSet.lightBuckets(files: sessionLights, meta: metaByFileID, config: config)
+
+        let excludedLabels = Set(config.stats.excludeLabels.map { $0.lowercased() })
+        let excludedSessionDates = Set(sessionFiles.compactMap(\.sessionDate)).filter { date in
+            guard let parsed = SessionDateParser.parse(date, patterns: config.intentional),
+                  parsed.kind == .labeled, let label = parsed.label
+            else { return false }
+            return excludedLabels.contains(label.lowercased())
+        }.sorted()
+        let excludedSet = Set(excludedSessionDates)
+
+        // Usable: deduped + non-rejected (from `frameBuckets`) AND not part
+        // of an excluded (e.g. `_hibas`) session date -- the TRUE total.
+        let usableForTotals = frameBuckets.usable.filter { file in
+            guard let date = file.sessionDate else { return true }
+            return !excludedSet.contains(date)
+        }
+
+        var usableSeconds: Double = 0
         var exposureBreakdown: [String: Int] = [:]
         var cameras = Set<String>()
         var filters = Set<String>()
 
-        for file in sessionLights {
+        for file in usableForTotals {
             let meta = file.id.flatMap { metaByFileID[$0] }
             if let exptime = meta?.exptime {
-                totalSeconds += exptime
+                usableSeconds += exptime
                 exposureBreakdown[exptime.description, default: 0] += 1
             } else {
                 exposureBreakdown["unknown", default: 0] += 1
@@ -149,7 +238,7 @@ public enum StatsQueries {
 
         let isWideField = WideFieldHeuristic.isWideField(
             target: target,
-            files: sessionLights,
+            files: usableForTotals,
             meta: metaByFileID,
             rule: config.wideField
         )
@@ -159,13 +248,20 @@ public enum StatsQueries {
         return TargetStats(
             target: target,
             isWideField: isWideField,
-            totalIntegrationSeconds: totalSeconds,
+            totalIntegrationSeconds: usableSeconds,
             sessionDates: sessionDates,
             exposureBreakdown: exposureBreakdown,
             lastSessionDate: lastSessionDate,
             cameras: cameras.sorted(),
             filters: filters.sorted(),
-            tags: tags
+            tags: tags,
+            usableIntegrationSeconds: usableSeconds,
+            grossIntegrationSeconds: grossSeconds,
+            usableFrameCount: usableForTotals.count,
+            duplicateLinkCount: frameBuckets.duplicateLinkCount,
+            rejectedFrameCount: frameBuckets.rejected.count,
+            nonFrameFileCount: frameBuckets.nonFrameFileCount,
+            excludedSessionDates: excludedSessionDates
         )
     }
 }

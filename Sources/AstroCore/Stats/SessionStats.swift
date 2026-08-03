@@ -11,28 +11,32 @@ public struct SessionDetail: Codable, Sendable, Equatable {
     /// Raw date-dir name, verbatim as it appears on disk under
     /// `sessions/<target>/`.
     public var dateRaw: String
+    /// Raw count of role-`.light` files on record for this session --
+    /// UNDEDUPED (see `usableLightCount` for the true count).
     public var lightCount: Int
     public var flatCount: Int
     public var darkCount: Int
     public var biasCount: Int
-    /// Sum of the session's light exptimes (seconds); lights with no
-    /// exptime contribute 0, same as `TargetStats.totalIntegrationSeconds`.
+    /// Sum of exptime over this session's USABLE light frames (deduped,
+    /// non-rejected, non-derivative) -- lights with no exptime contribute 0,
+    /// same as `TargetStats.totalIntegrationSeconds`.
     public var integrationSeconds: Double
     /// Light-frame count per exposure length, keyed by the exposure's
     /// `Double.description`; frames with no exptime land under `"unknown"`.
+    /// Computed from the USABLE bucket, same as `integrationSeconds`.
     public var exposureBreakdown: [String: Int]
-    /// Distinct, sorted `instrume` values across the session's lights.
+    /// Distinct, sorted `instrume` values across the session's USABLE lights.
     public var cameras: [String]
-    /// Distinct `focallen` values across the session's lights, rounded to
-    /// the nearest 1 mm, sorted ascending.
+    /// Distinct `focallen` values across the session's USABLE lights,
+    /// rounded to the nearest 1 mm, sorted ascending.
     public var focalLengthsMM: [Double]
     /// Distinct `gain` (ISO for DSLR frames) values across the session's
-    /// lights, sorted ascending.
+    /// USABLE lights, sorted ascending.
     public var gains: [Double]
-    /// Distinct `setTemp` values across the session's lights, rounded to
-    /// the nearest 0.5°C, sorted ascending.
+    /// Distinct `setTemp` values across the session's USABLE lights, rounded
+    /// to the nearest 0.5°C, sorted ascending.
     public var sensorTempsC: [Double]
-    /// Distinct, sorted `filter` values across the session's lights.
+    /// Distinct, sorted `filter` values across the session's USABLE lights.
     public var filters: [String]
     /// Whether the session's date-dir has a `README.txt` on record (a
     /// `kind == "text"` file whose last path component is `README.txt`).
@@ -40,6 +44,21 @@ public struct SessionDetail: Codable, Sendable, Equatable {
     /// This session's tags (from the `tags` table, `session_date == dateRaw`),
     /// sorted. `[]` for a session with none.
     public var tags: [String]
+    /// Deduped, non-rejected real light-frame count for this session -- the
+    /// TRUE frame count `integrationSeconds`/`exposureBreakdown` above are
+    /// derived from.
+    public var usableLightCount: Int
+    /// Deduped real frames under this session's `Reject/` triage
+    /// subdirectory.
+    public var rejectedCount: Int
+    /// Extra hardlinked/derivative copies of the same physical frame
+    /// dropped during dedup (see `FrameSet.lightBuckets`).
+    public var duplicateLinkCount: Int
+    /// Whether this session date's `SessionDateKind` is `.labeled` with a
+    /// label in `config.stats.excludeLabels` (e.g. the user's own `_hibas`
+    /// marker) -- the session is still listed here with its own real
+    /// numbers, but excluded from its target's `TargetStats` usable totals.
+    public var isExcludedFromTotals: Bool
 
     public init(
         target: String,
@@ -56,7 +75,11 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         sensorTempsC: [Double],
         filters: [String],
         hasReadme: Bool,
-        tags: [String] = []
+        tags: [String] = [],
+        usableLightCount: Int? = nil,
+        rejectedCount: Int = 0,
+        duplicateLinkCount: Int = 0,
+        isExcludedFromTotals: Bool = false
     ) {
         self.target = target
         self.dateRaw = dateRaw
@@ -73,11 +96,16 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         self.filters = filters
         self.hasReadme = hasReadme
         self.tags = tags
+        self.usableLightCount = usableLightCount ?? lightCount
+        self.rejectedCount = rejectedCount
+        self.duplicateLinkCount = duplicateLinkCount
+        self.isExcludedFromTotals = isExcludedFromTotals
     }
 
     private enum CodingKeys: String, CodingKey {
         case target, dateRaw, lightCount, flatCount, darkCount, biasCount, integrationSeconds,
-             exposureBreakdown, cameras, focalLengthsMM, gains, sensorTempsC, filters, hasReadme, tags
+             exposureBreakdown, cameras, focalLengthsMM, gains, sensorTempsC, filters, hasReadme, tags,
+             usableLightCount, rejectedCount, duplicateLinkCount, isExcludedFromTotals
     }
 
     public init(from decoder: Decoder) throws {
@@ -99,6 +127,12 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         // Absent in JSON produced before this field existed -- decode
         // leniently so older cached/serialized session details stay loadable.
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+        // Additive R4-1 fields: absent in pre-R4-1 JSON, fall back to values
+        // consistent with the old (undeduped) semantics.
+        usableLightCount = try c.decodeIfPresent(Int.self, forKey: .usableLightCount) ?? lightCount
+        rejectedCount = try c.decodeIfPresent(Int.self, forKey: .rejectedCount) ?? 0
+        duplicateLinkCount = try c.decodeIfPresent(Int.self, forKey: .duplicateLinkCount) ?? 0
+        isExcludedFromTotals = try c.decodeIfPresent(Bool.self, forKey: .isExcludedFromTotals) ?? false
     }
 }
 
@@ -115,7 +149,7 @@ public enum SessionStatsQueries {
 
         let dates = Set(sessionFiles.compactMap(\.sessionDate)).sorted()
         return try dates.map { date in
-            try computeSessionDetail(target: target, date: date, files: sessionFiles, db: db)
+            try computeSessionDetail(target: target, date: date, files: sessionFiles, db: db, config: config)
         }
     }
 
@@ -123,7 +157,8 @@ public enum SessionStatsQueries {
         target: String,
         date: String,
         files: [FileRecord],
-        db: Database
+        db: Database,
+        config: AstroConfig
     ) throws -> SessionDetail {
         let dayFiles = files.filter { $0.sessionDate == date }
         let lights = dayFiles.filter { $0.role == .light }
@@ -142,6 +177,8 @@ public enum SessionStatsQueries {
             }
         }
 
+        let frameBuckets = FrameSet.lightBuckets(files: lights, meta: metaByFileID, config: config)
+
         var totalSeconds: Double = 0
         var exposureBreakdown: [String: Int] = [:]
         var cameras = Set<String>()
@@ -150,7 +187,7 @@ public enum SessionStatsQueries {
         var sensorTemps = Set<Double>()
         var filters = Set<String>()
 
-        for file in lights {
+        for file in frameBuckets.usable {
             let meta = file.id.flatMap { metaByFileID[$0] }
             if let exptime = meta?.exptime {
                 totalSeconds += exptime
@@ -167,6 +204,15 @@ public enum SessionStatsQueries {
 
         let tags = try db.tags(target: target, sessionDate: date)
 
+        let excludedLabels = Set(config.stats.excludeLabels.map { $0.lowercased() })
+        let isExcluded: Bool
+        if let parsed = SessionDateParser.parse(date, patterns: config.intentional),
+           parsed.kind == .labeled, let label = parsed.label {
+            isExcluded = excludedLabels.contains(label.lowercased())
+        } else {
+            isExcluded = false
+        }
+
         return SessionDetail(
             target: target,
             dateRaw: date,
@@ -182,7 +228,11 @@ public enum SessionStatsQueries {
             sensorTempsC: sensorTemps.sorted(),
             filters: filters.sorted(),
             hasReadme: hasReadme,
-            tags: tags
+            tags: tags,
+            usableLightCount: frameBuckets.usable.count,
+            rejectedCount: frameBuckets.rejected.count,
+            duplicateLinkCount: frameBuckets.duplicateLinkCount,
+            isExcludedFromTotals: isExcluded
         )
     }
 }

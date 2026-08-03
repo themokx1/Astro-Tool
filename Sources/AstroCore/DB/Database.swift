@@ -18,6 +18,20 @@ public struct FileRecord: Codable, Equatable, Sendable {
     public var contentHash: String?
     public var scannedAt: Double
     public var missing: Bool
+    /// The filesystem inode number (`st_ino`), when known -- captured by the
+    /// scanner via `FileManager.attributesOfItem(atPath:)[.systemFileNumber]`.
+    /// `nil` for rows written before schema v3, or when the stat call
+    /// failed. Two `FileRecord`s sharing the same non-nil `inode` are
+    /// hardlinks to the same underlying data (same device implied, since the
+    /// whole library lives on one volume) -- `FrameSet` uses this as its
+    /// primary dedup key.
+    public var inode: Int64?
+    /// The filesystem hardlink count (`st_nlink`) at scan time, when known --
+    /// captured alongside `inode` via `.referenceCount`. `nil` under the same
+    /// conditions as `inode`. `nlink >= 2` is the signal that a file has at
+    /// least one sibling hardlink somewhere (not necessarily tracked in this
+    /// library, e.g. a link outside the scanned root).
+    public var nlink: Int64?
 
     public init(
         id: Int64? = nil,
@@ -32,7 +46,9 @@ public struct FileRecord: Codable, Equatable, Sendable {
         role: FrameRole,
         contentHash: String? = nil,
         scannedAt: Double,
-        missing: Bool = false
+        missing: Bool = false,
+        inode: Int64? = nil,
+        nlink: Int64? = nil
     ) {
         self.id = id
         self.path = path
@@ -47,6 +63,8 @@ public struct FileRecord: Codable, Equatable, Sendable {
         self.contentHash = contentHash
         self.scannedAt = scannedAt
         self.missing = missing
+        self.inode = inode
+        self.nlink = nlink
     }
 }
 
@@ -207,7 +225,9 @@ public final class Database: @unchecked Sendable {
       finished_at REAL, root TEXT NOT NULL, config_json TEXT);
     """
 
-    private static let schemaSQLv2 = """
+    // Internal (not private) for the same reason as `schemaSQLv1` -- the v2→v3
+    // migration test applies this directly to a raw `SQLiteDB`.
+    static let schemaSQLv2 = """
     CREATE TABLE IF NOT EXISTS tags(
       id INTEGER PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -215,6 +235,14 @@ public final class Database: @unchecked Sendable {
       session_date TEXT,
       tag TEXT NOT NULL,
       UNIQUE(kind, target, session_date, tag));
+    """
+
+    // Internal (not private) for the same reason as `schemaSQLv1`: migration
+    // tests apply this directly to a raw `SQLiteDB` to simulate an existing
+    // v2 database before verifying `Database(path:)` upgrades it in place.
+    static let schemaSQLv3 = """
+    ALTER TABLE files ADD COLUMN inode INTEGER;
+    ALTER TABLE files ADD COLUMN nlink INTEGER;
     """
 
     public init(path: String) throws {
@@ -250,6 +278,12 @@ public final class Database: @unchecked Sendable {
             try db.run("UPDATE schema_version SET version = ?;", bind: [.int(2)])
             version = 2
         }
+
+        if version < 3 {
+            try db.exec(Self.schemaSQLv3)
+            try db.run("UPDATE schema_version SET version = ?;", bind: [.int(3)])
+            version = 3
+        }
     }
 
     private func withLock<T>(_ body: () throws -> T) rethrows -> T {
@@ -265,14 +299,14 @@ public final class Database: @unchecked Sendable {
         try withLock {
             try db.run(
                 """
-                INSERT INTO files(path, size, mtime, ext, kind, area, target, session_date, role, content_hash, scanned_at, missing)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO files(path, size, mtime, ext, kind, area, target, session_date, role, content_hash, scanned_at, missing, inode, nlink)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(path) DO UPDATE SET
                   size = excluded.size, mtime = excluded.mtime, ext = excluded.ext,
                   kind = excluded.kind, area = excluded.area, target = excluded.target,
                   session_date = excluded.session_date, role = excluded.role,
                   content_hash = excluded.content_hash, scanned_at = excluded.scanned_at,
-                  missing = excluded.missing;
+                  missing = excluded.missing, inode = excluded.inode, nlink = excluded.nlink;
                 """,
                 bind: [
                     .text(r.path), .int(r.size), .real(r.mtime), .text(r.ext), .text(r.kind),
@@ -280,6 +314,7 @@ public final class Database: @unchecked Sendable {
                     r.sessionDate.map(SQLiteValue.text) ?? .null, .text(r.role.rawValue),
                     r.contentHash.map(SQLiteValue.text) ?? .null, .real(r.scannedAt),
                     .int(r.missing ? 1 : 0),
+                    r.inode.map(SQLiteValue.int) ?? .null, r.nlink.map(SQLiteValue.int) ?? .null,
                 ]
             )
 
@@ -361,7 +396,7 @@ public final class Database: @unchecked Sendable {
     }
 
     private static let fileSelectSQL = """
-    SELECT id, path, size, mtime, ext, kind, area, target, session_date, role, content_hash, scanned_at, missing FROM files
+    SELECT id, path, size, mtime, ext, kind, area, target, session_date, role, content_hash, scanned_at, missing, inode, nlink FROM files
     """
 
     private static func fileRecord(from row: SQLiteRow) -> FileRecord {
@@ -378,8 +413,25 @@ public final class Database: @unchecked Sendable {
             role: row.string(9).flatMap(FrameRole.init(rawValue:)) ?? .other,
             contentHash: row.string(10),
             scannedAt: row.double(11) ?? 0,
-            missing: (row.int64(12) ?? 0) != 0
+            missing: (row.int64(12) ?? 0) != 0,
+            inode: row.int64(13),
+            nlink: row.int64(14)
         )
+    }
+
+    /// Backfills `inode`/`nlink` for one existing row without touching any
+    /// other column -- used by the scanner's unchanged-file healing pass so
+    /// a row scanned before schema v3 (or one whose stat call failed) picks
+    /// up real values on a later rescan without a full re-upsert (which
+    /// would also bump `scanned_at` and disturb the "no row churn on an
+    /// unchanged file" contract other callers rely on).
+    public func backfillInode(id: Int64, inode: Int64?, nlink: Int64?) throws {
+        try withLock {
+            try db.run(
+                "UPDATE files SET inode = ?, nlink = ? WHERE id = ?;",
+                bind: [inode.map(SQLiteValue.int) ?? .null, nlink.map(SQLiteValue.int) ?? .null, .int(id)]
+            )
+        }
     }
 
     // MARK: fits_meta

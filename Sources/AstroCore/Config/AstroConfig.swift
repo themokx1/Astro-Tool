@@ -99,6 +99,44 @@ public struct RatingRule: Codable, Equatable, Sendable {
     }
 }
 
+/// Rules governing how "true" (usable) statistics are derived from the raw
+/// scanned library -- see `Sources/AstroCore/Stats/FrameSet.swift` for where
+/// most of this actually gets applied.
+public struct StatsRule: Codable, Equatable, Sendable {
+    /// Session date-dir labels (`SessionDateKind.labeled`'s `label`,
+    /// case-insensitive) whose entire night is excluded from a target's
+    /// usable integration/frame totals -- the user's own "this night was
+    /// bad" marker (`_hibas` = "faulty" in Hungarian). The session still
+    /// shows up in per-session details, just flagged
+    /// `isExcludedFromTotals`.
+    public var excludeLabels: [String]
+    /// Reserved for R4-2 (gap-based sub-session splitting): the minimum
+    /// silent gap, in seconds, between two consecutive lights before they're
+    /// considered separate sub-sessions. `0` means "auto-detect" -- not yet
+    /// implemented, just plumbed through so config files written today keep
+    /// decoding once R4-2 lands.
+    public var gapThresholdSeconds: Double
+
+    public init(
+        excludeLabels: [String] = ["hibas"],
+        gapThresholdSeconds: Double = 0
+    ) {
+        self.excludeLabels = excludeLabels
+        self.gapThresholdSeconds = gapThresholdSeconds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case excludeLabels, gapThresholdSeconds
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = StatsRule()
+        self.excludeLabels = try container.decodeIfPresent([String].self, forKey: .excludeLabels) ?? defaults.excludeLabels
+        self.gapThresholdSeconds = try container.decodeIfPresent(Double.self, forKey: .gapThresholdSeconds) ?? defaults.gapThresholdSeconds
+    }
+}
+
 /// Top-level, user-editable configuration for Astro-Tool. Every field falls
 /// back to a sensible default when missing from the on-disk JSON, so old
 /// config files stay valid after new fields are added, and unknown keys in
@@ -123,6 +161,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var wideField: WideFieldRule
     public var calib: CalibRule
     public var rating: RatingRule
+    public var stats: StatsRule
 
     public init(
         rootPath: String = "/Volumes/images/Astro",
@@ -134,7 +173,8 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         intentional: IntentionalPatterns = IntentionalPatterns(),
         wideField: WideFieldRule = WideFieldRule(),
         calib: CalibRule = CalibRule(),
-        rating: RatingRule = RatingRule()
+        rating: RatingRule = RatingRule(),
+        stats: StatsRule = StatsRule()
     ) {
         self.rootPath = rootPath
         self.excludedDirNames = excludedDirNames
@@ -146,11 +186,12 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.wideField = wideField
         self.calib = calib
         self.rating = rating
+        self.stats = stats
     }
 
     private enum CodingKeys: String, CodingKey {
         case rootPath, excludedDirNames, excludedPaths, residuePatterns, residueDirNames, toolOutputDirNames
-        case intentional, wideField, calib, rating
+        case intentional, wideField, calib, rating, stats
     }
 
     public init(from decoder: any Decoder) throws {
@@ -166,6 +207,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.wideField = try container.decodeIfPresent(WideFieldRule.self, forKey: .wideField) ?? defaults.wideField
         self.calib = try container.decodeIfPresent(CalibRule.self, forKey: .calib) ?? defaults.calib
         self.rating = try container.decodeIfPresent(RatingRule.self, forKey: .rating) ?? defaults.rating
+        self.stats = try container.decodeIfPresent(StatsRule.self, forKey: .stats) ?? defaults.stats
     }
 
     /// Loads and decodes the config from `url`. Throws on I/O failure

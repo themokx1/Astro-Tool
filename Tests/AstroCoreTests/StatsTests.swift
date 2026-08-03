@@ -233,6 +233,126 @@ private struct StatsFixture {
     #expect(all.first { $0.target == "T1" } == single)
 }
 
+// MARK: - R4-1: true integration (dedup, non-frame filtering, label exclusion)
+
+@Test func statsDedupesHardlinkedTriageCopyCountingItOnceTowardIntegration() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, instrume: "Cam", filter: "L"
+    )
+    let originalURL = fixture.libraryDir.appendingPathComponent("sessions/T1/2026-01-10/lights/l1.fit")
+    let linkURL = fixture.libraryDir.appendingPathComponent("sessions/T1/2026-01-10/lights/Review/l1.fit")
+    try FileManager.default.createDirectory(at: linkURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try FileManager.default.linkItem(at: originalURL, to: linkURL)
+
+    try fixture.scan()
+
+    let stats = try #require(try StatsQueries.target("T1", db: fixture.db, config: fixture.config))
+    #expect(stats.totalIntegrationSeconds == 300.0)
+    #expect(stats.usableFrameCount == 1)
+    #expect(stats.duplicateLinkCount == 1)
+    #expect(stats.grossIntegrationSeconds == 600.0)
+}
+
+@Test func statsDedupesCR3AndTIFPairCountingItOnce() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    // A DSLR frame kept as both the original .cr3 and a converted .tif --
+    // ImageIO can't decode either dummy file here, but the dedup only needs
+    // the matching basename stem, not readable metadata.
+    try fixture.writePlainTextFile("sessions/T1/2026-01-10/lights/IMG_0001.cr3")
+    try fixture.writePlainTextFile("sessions/T1/2026-01-10/lights/IMG_0001.tif")
+
+    try fixture.scan()
+
+    let stats = try #require(try StatsQueries.target("T1", db: fixture.db, config: fixture.config))
+    #expect(stats.usableFrameCount == 1)
+    #expect(stats.duplicateLinkCount == 1)
+}
+
+@Test func statsCountsXMPSidecarAsNonFrameNeverAsALight() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, instrume: "Cam", filter: "L"
+    )
+    try fixture.writePlainTextFile("sessions/T1/2026-01-10/lights/l1.fit.xmp")
+
+    try fixture.scan()
+
+    let stats = try #require(try StatsQueries.target("T1", db: fixture.db, config: fixture.config))
+    #expect(stats.totalIntegrationSeconds == 300.0)
+    #expect(stats.usableFrameCount == 1)
+    #expect(stats.nonFrameFileCount == 1)
+}
+
+@Test func statsExcludesRejectedFrameFromUsableTotalButCountsItSeparately() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, instrume: "Cam", filter: "L"
+    )
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/Reject/blurry/l2.fit", exptime: 120.0, instrume: "Cam", filter: "L"
+    )
+
+    try fixture.scan()
+
+    let stats = try #require(try StatsQueries.target("T1", db: fixture.db, config: fixture.config))
+    #expect(stats.totalIntegrationSeconds == 300.0)
+    #expect(stats.usableFrameCount == 1)
+    #expect(stats.rejectedFrameCount == 1)
+}
+
+@Test func statsExcludesHibasLabeledSessionFromTargetTotalButKeepsItInSessionDates() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10_hibas/lights/l1.fit", exptime: 300.0, instrume: "Cam", filter: "L"
+    )
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-11/lights/l2.fit", exptime: 60.0, instrume: "Cam", filter: "L"
+    )
+
+    try fixture.scan()
+
+    let stats = try #require(try StatsQueries.target("T1", db: fixture.db, config: fixture.config))
+    #expect(stats.totalIntegrationSeconds == 60.0)
+    #expect(stats.usableFrameCount == 1)
+    #expect(stats.excludedSessionDates == ["2026-01-10_hibas"])
+    #expect(Set(stats.sessionDates) == Set(["2026-01-10_hibas", "2026-01-11"]))
+    #expect(stats.grossIntegrationSeconds == 360.0)
+}
+
+@Test func statsRespectsCustomExcludeLabelsFromConfig() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+    var config = fixture.config
+    config.stats.excludeLabels = ["clouds"]
+    let customFixture = StatsFixture(libraryDir: fixture.libraryDir, dbDir: fixture.dbDir, db: fixture.db, config: config)
+
+    try customFixture.writeFITSLight(
+        "sessions/T1/2026-01-10_clouds/lights/l1.fit", exptime: 300.0, instrume: "Cam", filter: "L"
+    )
+    try customFixture.writeFITSLight(
+        "sessions/T1/2026-01-11_hibas/lights/l2.fit", exptime: 60.0, instrume: "Cam", filter: "L"
+    )
+
+    try customFixture.scan()
+
+    let stats = try #require(try StatsQueries.target("T1", db: customFixture.db, config: customFixture.config))
+    // "clouds" is excluded (custom config); "hibas" is NOT excluded here
+    // since it's not in this target's configured list.
+    #expect(stats.excludedSessionDates == ["2026-01-10_clouds"])
+    #expect(stats.totalIntegrationSeconds == 60.0)
+}
+
 // MARK: - WideFieldHeuristic
 
 private func lightFile(_ id: Int64, ext: String, target: String) -> FileRecord {

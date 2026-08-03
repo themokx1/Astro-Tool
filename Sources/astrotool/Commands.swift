@@ -29,7 +29,7 @@ Commands:
   audit         [--root R] [--json] [--suggest] [--include-suspicious] [--no-duplicates]
   cleanup       [--root R] [--json] [--suggest] [--limit N]
   rate          [--root R] --target T [--date D] [--json] [--no-siril]
-  stats         [--root R] [--target T] [--json] [--sessions (requires --target)] [--tag TAG]
+  stats         [--root R] [--target T] [--json] [--gross] [--sessions (requires --target)] [--tag TAG]
   calib         [--root R] [--json]
   match         [--root R] --target T --date D [--json]
   link-calib    --target T --date D [--dry-run] [--yes] [--root R] [--json]
@@ -455,10 +455,12 @@ func cmdStats(_ args: [String]) throws -> Int32 {
         FlagSpec("--root", takesValue: true),
         FlagSpec("--target", takesValue: true),
         FlagSpec("--json", takesValue: false),
+        FlagSpec("--gross", takesValue: false),
         FlagSpec("--sessions", takesValue: false),
         FlagSpec("--tag", takesValue: true),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
+    let showGross = parsed.has("--gross")
 
     guard let target = parsed.value("--target") else {
         if parsed.has("--sessions") {
@@ -476,7 +478,7 @@ func cmdStats(_ args: [String]) throws -> Int32 {
         if parsed.has("--json") {
             try printJSON(all)
         } else {
-            printStatsTable(all)
+            printStatsTable(all, showGross: showGross)
         }
         return 0
     }
@@ -502,7 +504,7 @@ func cmdStats(_ args: [String]) throws -> Int32 {
     if parsed.has("--json") {
         try printJSON(stats)
     } else {
-        printSingleTargetStats(stats)
+        printSingleTargetStats(stats, showGross: showGross)
     }
     return 0
 }
@@ -514,8 +516,9 @@ private func printSessionDetails(target: String, sessions: [SessionDetail]) {
     }
 
     for s in sessions {
-        print("session: \(s.target) / \(s.dateRaw)")
-        print("  frames: \(s.lightCount) light, \(s.flatCount) flat, \(s.darkCount) dark, \(s.biasCount) bias")
+        let excludedSuffix = s.isExcludedFromTotals ? "  [kizárva a célpont-összegzésből]" : ""
+        print("session: \(s.target) / \(s.dateRaw)\(excludedSuffix)")
+        print("  frames: \(frameCountText(s))")
         print("  integration: \(formatHoursMinutes(s.integrationSeconds))")
         let exposures = s.exposureBreakdown
             .sorted { $0.key < $1.key }
@@ -531,6 +534,20 @@ private func printSessionDetails(target: String, sessions: [SessionDetail]) {
     }
 }
 
+/// "118 light, 2 flat" plus a "(+12 elvetett · 47 link)" suffix when this
+/// session has rejected/duplicate frames the naive `lightCount` doesn't
+/// distinguish from real usable ones.
+private func frameCountText(_ s: SessionDetail) -> String {
+    var base = "\(s.usableLightCount) light, \(s.flatCount) flat, \(s.darkCount) dark, \(s.biasCount) bias"
+    var extras: [String] = []
+    if s.rejectedCount > 0 { extras.append("\(s.rejectedCount) elvetett") }
+    if s.duplicateLinkCount > 0 { extras.append("\(s.duplicateLinkCount) link") }
+    if !extras.isEmpty {
+        base += "  (+\(extras.joined(separator: " · ")))"
+    }
+    return base
+}
+
 private func formatHoursMinutes(_ seconds: Double) -> String {
     let totalMinutes = Int((seconds / 60).rounded())
     let hours = totalMinutes / 60
@@ -538,7 +555,7 @@ private func formatHoursMinutes(_ seconds: Double) -> String {
     return String(format: "%d:%02d", hours, minutes)
 }
 
-private func printStatsTable(_ stats: [TargetStats]) {
+private func printStatsTable(_ stats: [TargetStats], showGross: Bool) {
     guard !stats.isEmpty else {
         print("no targets")
         return
@@ -546,20 +563,29 @@ private func printStatsTable(_ stats: [TargetStats]) {
 
     let targetWidth = max(stats.map { $0.target.count }.max() ?? 6, 6)
     let header = "TARGET".padding(toLength: targetWidth, withPad: " ", startingAt: 0)
-    print("\(header)  INTEGRATION  SESSIONS  LAST DATE   WIDE")
+    let grossHeader = showGross ? "  GROSS      " : ""
+    print("\(header)  INTEGRATION  \(grossHeader)SESSIONS  LAST DATE   WIDE")
     for s in stats {
         let name = s.target.padding(toLength: targetWidth, withPad: " ", startingAt: 0)
         let integration = formatHoursMinutes(s.totalIntegrationSeconds).padding(toLength: 11, withPad: " ", startingAt: 0)
+        let gross = showGross ? formatHoursMinutes(s.grossIntegrationSeconds).padding(toLength: 11, withPad: " ", startingAt: 0) + "  " : ""
         let sessions = String(s.sessionDates.count).padding(toLength: 8, withPad: " ", startingAt: 0)
         let last = (s.lastSessionDate ?? "-").padding(toLength: 11, withPad: " ", startingAt: 0)
         let wide = s.isWideField ? "wide" : ""
-        print("\(name)  \(integration)  \(sessions)  \(last)  \(wide)")
+        print("\(name)  \(integration)  \(gross)\(sessions)  \(last)  \(wide)")
     }
 }
 
-private func printSingleTargetStats(_ s: TargetStats) {
+private func printSingleTargetStats(_ s: TargetStats, showGross: Bool) {
     print("target: \(s.target)")
     print("integration: \(formatHoursMinutes(s.totalIntegrationSeconds))")
+    if showGross {
+        print("gross (undeduped): \(formatHoursMinutes(s.grossIntegrationSeconds))")
+    }
+    print("frames: \(s.usableFrameCount) usable, \(s.duplicateLinkCount) duplicate link(s), \(s.rejectedFrameCount) rejected, \(s.nonFrameFileCount) non-frame")
+    if !s.excludedSessionDates.isEmpty {
+        print("excluded sessions: \(s.excludedSessionDates.joined(separator: ", "))")
+    }
     print("sessions: \(s.sessionDates.count)")
     print("last date: \(s.lastSessionDate ?? "-")")
     print("wide field: \(s.isWideField ? "yes" : "no")")

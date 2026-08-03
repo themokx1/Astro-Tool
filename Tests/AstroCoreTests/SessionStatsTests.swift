@@ -215,6 +215,55 @@ private struct SessionStatsFixture {
     #expect(session.tags == [])
 }
 
+// MARK: - R4-1: true per-session stats
+
+@Test func sessionDetailFlagsHibasLabeledDateAsExcludedFromTotals() throws {
+    let fixture = try SessionStatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10_hibas/lights/l1.fit", exptime: 300.0)
+    try fixture.writeFITS("sessions/T1/2026-01-11/lights/l2.fit", exptime: 60.0)
+    try fixture.scan()
+
+    let sessions = try SessionStatsQueries.sessions(target: "T1", db: fixture.db, config: fixture.config)
+    #expect(sessions.map(\.dateRaw) == ["2026-01-10_hibas", "2026-01-11"])
+
+    let bad = sessions[0]
+    #expect(bad.isExcludedFromTotals == true)
+    // The session's OWN numbers are still real -- only the target roll-up
+    // excludes it.
+    #expect(bad.integrationSeconds == 300.0)
+    #expect(bad.usableLightCount == 1)
+
+    let good = sessions[1]
+    #expect(good.isExcludedFromTotals == false)
+}
+
+@Test func sessionDetailCountsRejectedAndDuplicateLinksSeparatelyFromUsable() throws {
+    let fixture = try SessionStatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0)
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/Reject/blurry/l2.fit", exptime: 120.0)
+    try fixture.scan()
+
+    let originalURL = fixture.libraryDir.appendingPathComponent("sessions/T1/2026-01-10/lights/l1.fit")
+    let linkURL = fixture.libraryDir.appendingPathComponent("sessions/T1/2026-01-10/lights/Review/l1.fit")
+    try FileManager.default.createDirectory(at: linkURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try FileManager.default.linkItem(at: originalURL, to: linkURL)
+    try fixture.scan()
+
+    let sessions = try SessionStatsQueries.sessions(target: "T1", db: fixture.db, config: fixture.config)
+    let session = try #require(sessions.first)
+
+    #expect(session.usableLightCount == 1)
+    #expect(session.rejectedCount == 1)
+    #expect(session.duplicateLinkCount == 1)
+    #expect(session.integrationSeconds == 300.0)
+    // Raw (undeduped) count still reflects every role-.light row on disk.
+    #expect(session.lightCount == 3)
+}
+
 @Test func sessionDetailsLightWithoutMetaLandsInUnknownExposureBucket() throws {
     let fixture = try SessionStatsFixture.make()
     defer { fixture.cleanup() }

@@ -10,6 +10,33 @@ történik.
 
 ### Added
 
+- **Valós (usable) integráció és keret-statisztika**: a kimutatott
+  integrációs idő eddig ~30%-kal felfújt volt, mert a `PathClassifier`
+  mindent light keretnek jelölt a `lights/` mappa alatt — a Siril-oldali
+  triázs-eszköz (`Stack`/`Review`/`Reject/<ok>`) hardlinkelt másolatait,
+  CR3+TIF duplikátumokat, `.xmp`/`.png`/`.txt`/`.html`/`.csv`/`.ssf`/`.json`
+  sidecar-okat, feldolgozott derivatívumokat (`starless_*`, `starmask_*`),
+  a `Reject/`-be triázsolt kereteket, és a `_hibas`-címkés ("rossz éjszaka")
+  session-öket is beleszámítva. Új `Sources/AstroCore/Stats/FrameSet.swift`
+  (`FrameSet.lightBuckets`) — a "melyik fájl valódi, használható light
+  keret" egyetlen igazságforrása: nem-keret kiterjesztés/derivatívum-név
+  kiszűrve, dedup elsődlegesen a fájlrendszer `inode`-ja szerint (új séma
+  v3: `files.inode`/`files.nlink`, a `Scanner` minden fájlnál rögzíti),
+  `inode` hiányában `(célpont, session-dátum, DATE-OBS, exptime)`
+  fallback-kulccsal, plusz cross-extension CR3+TIF összevonás (a nyers CR3
+  marad). `AstroConfig.stats.excludeLabels` (`["hibas"]` alapértelmezett)
+  — `.labeled` session-dátumok, ha címkéjük szerepel a listán, kimaradnak
+  a célpont-összegekből (a session-részletekben viszont változatlanul,
+  `isExcludedFromTotals` jelzéssel megjelennek). `TargetStats`/
+  `SessionDetail` additív mezői (`usableIntegrationSeconds`/
+  `grossIntegrationSeconds`, `usableFrameCount`/`usableLightCount`,
+  `duplicateLinkCount`, `rejectedFrameCount`/`rejectedCount`,
+  `nonFrameFileCount`, `excludedSessionDates`) — `totalIntegrationSeconds`
+  mostantól a valós (usable) számot adja vissza. CLI `stats --gross`
+  kapcsoló mutatja mellé a régi (dedup nélküli) bruttó számot is. App:
+  session-sorok „N light (+N elvetett · N link)" formában, kizárt
+  (`_hibas`) session-sorok fél-áttetsző „kizárva" jelvénnyel, célpont-sorok
+  tooltipje a teljes bontással.
 - **Részletes minőség-táblázat**: a Minőség fül eddig csak Útvonal/Pontszám/
   Kiugró oszlopokat mutatott — ha a Siril nem adott metrikát egy kerethez,
   a pontszám kizárólag a háttér-metrikából jött, ami azonos-pontszám

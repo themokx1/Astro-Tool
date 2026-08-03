@@ -345,6 +345,41 @@ struct CLISmokeTests {
     #expect(sessions.allSatisfy { $0["target"] as? String == "M45_Pleiades" })
 }
 
+@Test func statsJSONCarriesUsableAndGrossIntegrationFields() throws {
+    let root = try makeTempRoot("stats-json-r4-1")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+    let stats = try #require(json)
+    #expect(stats["usable_integration_seconds"] != nil)
+    #expect(stats["gross_integration_seconds"] != nil)
+    #expect(stats["usable_frame_count"] != nil)
+    #expect(stats["duplicate_link_count"] != nil)
+    #expect(stats["rejected_frame_count"] != nil)
+    #expect(stats["non_frame_file_count"] != nil)
+    #expect(stats["excluded_session_dates"] != nil)
+}
+
+@Test func statsHumanOutputWithGrossFlagShowsGrossLine() throws {
+    let root = try makeTempRoot("stats-gross-flag")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--gross"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("gross (undeduped):"))
+}
+
 @Test func statsSessionsWithoutTargetExitsWithError() throws {
     let root = try makeTempRoot("stats-sessions-no-target")
     defer { try? FileManager.default.removeItem(at: root) }

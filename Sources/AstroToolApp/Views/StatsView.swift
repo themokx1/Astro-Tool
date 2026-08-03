@@ -178,6 +178,7 @@ struct StatsView: View {
                 }
             }
             .lineLimit(1)
+            .help(targetBreakdownTooltip(stats))
         case .session(_, let detail):
             HStack(spacing: 6) {
                 Text(detail.dateRaw)
@@ -189,9 +190,37 @@ struct StatsView: View {
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color.secondary.opacity(0.15)))
                 }
+                if detail.isExcludedFromTotals {
+                    Text("kizárva")
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.red.opacity(0.15)))
+                        .foregroundStyle(.red)
+                }
             }
             .lineLimit(1)
+            .opacity(detail.isExcludedFromTotals ? 0.5 : 1.0)
         }
+    }
+
+    /// Hover tooltip on a target row's name cell: the usable-vs-gross
+    /// breakdown behind the headline integration number, so a user who sees
+    /// "42.55h" shrink to "29.77h" after upgrading can see WHY without
+    /// digging into individual sessions.
+    private func targetBreakdownTooltip(_ stats: TargetStats) -> String {
+        var lines = [
+            "Valós (usable) integráció: \(formatDuration(stats.usableIntegrationSeconds))",
+            "Bruttó (dedup nélkül): \(formatDuration(stats.grossIntegrationSeconds))",
+            "Használható keret: \(stats.usableFrameCount)",
+        ]
+        if stats.duplicateLinkCount > 0 { lines.append("Duplikált link/másolat: \(stats.duplicateLinkCount)") }
+        if stats.rejectedFrameCount > 0 { lines.append("Elvetett (Reject/): \(stats.rejectedFrameCount)") }
+        if stats.nonFrameFileCount > 0 { lines.append("Nem-keret fájl a lights/ alatt: \(stats.nonFrameFileCount)") }
+        if !stats.excludedSessionDates.isEmpty {
+            lines.append("Kizárt session-ök: \(stats.excludedSessionDates.joined(separator: ", "))")
+        }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Column 2: Integráció
@@ -211,11 +240,18 @@ struct StatsView: View {
             return "\(stats.sessionDates.count) session"
         case .session(_, let detail):
             var parts: [String] = []
-            if detail.lightCount > 0 { parts.append("\(detail.lightCount) light") }
+            if detail.usableLightCount > 0 { parts.append("\(detail.usableLightCount) light") }
             if detail.flatCount > 0 { parts.append("\(detail.flatCount) flat") }
             if detail.darkCount > 0 { parts.append("\(detail.darkCount) dark") }
             if detail.biasCount > 0 { parts.append("\(detail.biasCount) bias") }
-            return parts.isEmpty ? "-" : parts.joined(separator: " · ")
+            var text = parts.isEmpty ? "-" : parts.joined(separator: " · ")
+            var extras: [String] = []
+            if detail.rejectedCount > 0 { extras.append("\(detail.rejectedCount) elvetett") }
+            if detail.duplicateLinkCount > 0 { extras.append("\(detail.duplicateLinkCount) link") }
+            if !extras.isEmpty {
+                text += "  (+\(extras.joined(separator: " · ")))"
+            }
+            return text
         }
     }
 
