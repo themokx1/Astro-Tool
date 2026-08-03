@@ -8,6 +8,8 @@ történik.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-03
+
 ### Added
 
 - **README-indexelés / kereshető éjszaka-napló (`astrotool search`)**: az
