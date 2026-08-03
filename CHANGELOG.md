@@ -8,6 +8,8 @@ történik.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-03
+
 ### Added
 
 - **Acquisition export (`astrotool export`)**: publikálásra kész
