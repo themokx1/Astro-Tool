@@ -76,14 +76,14 @@ import Testing
 
 // MARK: - Database migration
 
-@Test func migrateSetsSchemaVersionToThreeForFreshDatabase() throws {
+@Test func migrateSetsSchemaVersionToLatestForFreshDatabase() throws {
     let database = try Database(path: ":memory:")
 
     var version: Int64 = -1
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 3)
+    #expect(version == 4)
 }
 
 @Test func migrateIsIdempotentAndDoesNotDuplicateVersionRow() throws {
@@ -144,7 +144,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 3)
+    #expect(version == 4)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -197,13 +197,87 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 3)
+    #expect(version == 4)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
     #expect(files.first?.target == "M31")
     #expect(files.first?.inode == nil)
     #expect(files.first?.nlink == nil)
+}
+
+/// Simulates an already-deployed v3 database (v1+v2+v3 schema, `schema_
+/// version` stamped `3`) with one `fits_meta` row whose `header_json` carries
+/// `XPIXSZ`/`EGAIN` cards (as `Scanner.fitsMetaRecord` always wrote, even
+/// before those became dedicated columns), then opens it through
+/// `Database(path:)` and verifies the v3->v4 upgrade both adds the new
+/// columns AND backfills them from the existing `header_json` blob -- no
+/// file I/O, no rescan required.
+@Test func migrateUpgradesExistingV3DatabaseToV4BackfillingXpixszEgainFromHeaderJSON() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-migrate-v3-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("v3.sqlite").path
+
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.exec(Database.schemaSQLv1)
+        try raw.exec(Database.schemaSQLv2)
+        try raw.exec(Database.schemaSQLv3)
+        try raw.run("INSERT INTO schema_version(version) VALUES (3);")
+        try raw.run(
+            """
+            INSERT INTO files(path, size, mtime, ext, kind, area, target, session_date, role, content_hash, scanned_at, missing, inode, nlink)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            bind: [
+                .text("sessions/M31/2026-01-01/lights/f1.fits"), .int(1024), .real(1_700_000_000),
+                .text("fits"), .text("fits"), .text("sessions"), .text("M31"), .text("2026-01-01"),
+                .text("light"), .null, .real(1_700_000_100), .int(0), .null, .null,
+            ]
+        )
+        try raw.run(
+            """
+            INSERT INTO fits_meta(file_id, exptime, header_json)
+            VALUES (1, 300.0, ?);
+            """,
+            bind: [.text(#"{"EXPTIME":"300.0","XPIXSZ":"3.76","EGAIN":"0.75"}"#)]
+        )
+        // A second row with no header_json at all -- must not crash the
+        // backfill and must stay NULL in the new columns.
+        try raw.run(
+            """
+            INSERT INTO files(path, size, mtime, ext, kind, area, target, session_date, role, content_hash, scanned_at, missing, inode, nlink)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            bind: [
+                .text("sessions/M31/2026-01-02/lights/f2.fits"), .int(1024), .real(1_700_000_000),
+                .text("fits"), .text("fits"), .text("sessions"), .text("M31"), .text("2026-01-02"),
+                .text("light"), .null, .real(1_700_000_100), .int(0), .null, .null,
+            ]
+        )
+        try raw.run("INSERT INTO fits_meta(file_id, exptime) VALUES (2, 300.0);")
+    }
+
+    let database = try Database(path: path)
+
+    var version: Int64 = -1
+    try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
+        version = row.int64(0) ?? -1
+    }
+    #expect(version == 4)
+
+    let fileID1 = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
+    let meta1 = try database.fitsMeta(fileID: fileID1)
+    #expect(meta1?.xpixsz == 3.76)
+    #expect(meta1?.egain == 0.75)
+    #expect(meta1?.exptime == 300.0, "backfill must not disturb pre-existing columns")
+
+    let fileID2 = try #require(try database.fileID(path: "sessions/M31/2026-01-02/lights/f2.fits"))
+    let meta2 = try database.fitsMeta(fileID: fileID2)
+    #expect(meta2?.xpixsz == nil)
+    #expect(meta2?.egain == nil)
 }
 
 @Test func backfillInodeSetsOnlyInodeAndNlinkColumns() throws {
@@ -351,6 +425,8 @@ private func sampleFile(path: String = "sessions/M31/2026-01-01/lights/f1.fits")
         imagetyp: "LIGHT",
         naxis1: 6248,
         naxis2: 4176,
+        xpixsz: 3.76,
+        egain: 0.75,
         headerJSON: "{\"NAXIS\":2}"
     )
     try database.upsertFITSMeta(meta)

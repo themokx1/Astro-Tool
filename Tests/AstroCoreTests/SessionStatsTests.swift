@@ -264,6 +264,23 @@ private struct SessionStatsFixture {
     #expect(session.lightCount == 3)
 }
 
+/// R4-2 fix (a): same nominal-exposure merge as `StatsQueries`'s
+/// `exposureBreakdown`, applied to `SessionDetail`'s per-session bucket.
+@Test func sessionDetailExposureBreakdownMergesFloatNoisyExptimesIntoOneNominalKey() throws {
+    let fixture = try SessionStatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/a1.fit", exptime: 120.0)
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/a2.fit", exptime: 119.9)
+
+    try fixture.scan()
+
+    let sessions = try SessionStatsQueries.sessions(target: "T1", db: fixture.db, config: fixture.config)
+    let session = try #require(sessions.first)
+    #expect(session.exposureBreakdown == ["120.0": 2])
+    #expect(session.integrationSeconds == 120.0 + 119.9)
+}
+
 @Test func sessionDetailsLightWithoutMetaLandsInUnknownExposureBucket() throws {
     let fixture = try SessionStatsFixture.make()
     defer { fixture.cleanup() }

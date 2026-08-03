@@ -368,6 +368,39 @@ private struct ScanFixture {
     #expect(meta?.instrume == "ZWO ASI2600MC Pro")
 }
 
+/// R4-2: `XPIXSZ`/`EGAIN` are the two extra FITS header keys the absolute
+/// session-quality metrics (`SessionQuality`) need -- pixel size in microns
+/// and the camera's e-/ADU gain -- captured into schema v4's dedicated
+/// `fits_meta.xpixsz`/`egain` columns exactly like every other FITS keyword.
+@Test func scanCapturesXpixszAndEgainForNewFITSFile() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/generated_light_xpixsz.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                 6248",
+        "NAXIS2  =                 4176",
+        "EXPTIME =                300.0",
+        "XPIXSZ  =                 3.76",
+        "EGAIN   =                 0.75",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try fixture.db.file(path: relativePath)
+    let fileID = try #require(record?.id)
+    let meta = try fixture.db.fitsMeta(fileID: fileID)
+    #expect(meta?.xpixsz == 3.76)
+    #expect(meta?.egain == 0.75)
+}
+
 @Test func scanCapturesImageMetaForNewTIFFFile() throws {
     let fixture = try ScanFixture.make()
     defer { fixture.cleanup() }

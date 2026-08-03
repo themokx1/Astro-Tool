@@ -488,6 +488,8 @@ public final class LibraryScanner {
             imagetyp: header.string("IMAGETYP"),
             naxis1: header.int("NAXIS1"),
             naxis2: header.int("NAXIS2"),
+            xpixsz: header.double("XPIXSZ"),
+            egain: header.double("EGAIN"),
             headerJSON: headerJSON
         )
     }

@@ -203,27 +203,33 @@ public final class Rater {
         var std: Double
     }
 
-    /// Which exposure group a frame belongs to for scoring purposes: exptime
-    /// rounded to the nearest 0.1s, or `.unknown` -- one single shared group
-    /// for every frame with no `exptime` at all (not one singleton group
-    /// each, which would force every such frame's z-score to 0).
-    private enum ExposureGroupKey: Hashable {
-        case exptime(Int)
-        case unknown
+    /// Which exposure group a frame belongs to for scoring purposes: the
+    /// frame's session date (so rating a whole target across many nights
+    /// without `--date` never pools different nights' sky conditions into
+    /// one z-score population) crossed with its nominal exptime (see
+    /// `NominalExposure`, which absorbs float noise like 29.9s vs. 30.0s) --
+    /// or `nominalTenths == nil` for every frame with no `exptime` at all,
+    /// one single shared group per date (not one singleton group each, which
+    /// would force every such frame's z-score to 0).
+    private struct ExposureGroupKey: Hashable {
+        var sessionDate: String?
+        var nominalTenths: Int?
     }
 
-    private static func exposureGroupKey(_ exptime: Double?) -> ExposureGroupKey {
-        guard let exptime else { return .unknown }
-        return .exptime(Int((exptime * 10).rounded()))
+    private static func exposureGroupKey(sessionDate: String?, exptime: Double?) -> ExposureGroupKey {
+        guard let exptime else { return ExposureGroupKey(sessionDate: sessionDate, nominalTenths: nil) }
+        let nominal = NominalExposure.nominal(exptime)
+        return ExposureGroupKey(sessionDate: sessionDate, nominalTenths: Int((nominal * 10).rounded()))
     }
 
     /// Splits `rated` into exposure groups (see `ExposureGroupKey`) and
     /// scores each group independently, so a frame's z-scores only ever
-    /// compare it against other frames shot at the same exposure time.
+    /// compare it against other frames shot the same night at the same
+    /// nominal exposure time.
     private func score(_ rated: [(file: FileRecord, record: RatingRecord, exptime: Double?)]) throws -> [FrameScore] {
         var groups: [ExposureGroupKey: [(file: FileRecord, record: RatingRecord, exptime: Double?)]] = [:]
         for entry in rated {
-            let key = Self.exposureGroupKey(entry.exptime)
+            let key = Self.exposureGroupKey(sessionDate: entry.file.sessionDate, exptime: entry.exptime)
             groups[key, default: []].append((entry.file, entry.record, entry.exptime))
         }
 
@@ -278,9 +284,13 @@ public final class Rater {
             try db.upsertRating(record)
 
             let metrics: StarMetrics? = {
-                guard let fwhm = record.fwhm, let roundness = record.roundness, let starCount = record.starCount
-                else { return nil }
-                return StarMetrics(fwhm: fwhm, roundness: roundness, starCount: starCount)
+                // `roundness` is deliberately NOT required here (unlike
+                // `fwhm`/`starCount`): `SirilCLI.parseFindstarOutput` now
+                // returns `nil` roundness when Siril's log doesn't print it,
+                // rather than fabricating a neutral 0.5 -- that shouldn't
+                // hide the real fwhm/starCount a frame does have.
+                guard let fwhm = record.fwhm, let starCount = record.starCount else { return nil }
+                return StarMetrics(fwhm: fwhm, roundness: record.roundness, starCount: starCount)
             }()
 
             results.append(

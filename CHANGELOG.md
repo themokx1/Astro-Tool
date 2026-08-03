@@ -54,6 +54,48 @@ történik.
   `rate` emberi táblázata FWHM/Kerekség/Csillagok/Háttér/Szat.%
   oszlopokkal bővült ("-" nil esetén); `--json` automatikusan hozza az új
   mezőket.
+- **Abszolút session-minőség (arcsec, e-/s), éjszaka-idővonal, rate-javítások
+  (R4-2)**: a `rate` z-score-jai RELATÍVAK — nem tudnak válaszolni arra,
+  hogy "ma éjjel jobb volt-e, mint tavaly?" — ehhez kellenek beállítás-
+  függetlenül összehasonlítható ABSZOLÚT metrikák. Séma v4: `fits_meta.
+  xpixsz`/`egain` új oszlopok (pixelméret µm-ben, kamera e-/ADU gain) —
+  migráció visszatölti a meglévő sorok `header_json`-jából (nincs
+  fájlolvasás), a `Scanner` új FITS-eknél a fejlécből rögzíti. Új
+  `Sources/AstroCore/Stats/SessionQuality.swift`
+  (`SessionQualitySummary`/`SessionQuality.summaries`) — session-önkénti
+  medián FWHM pixelben ÉS ívmásodpercben (`206.265 × xpixsz(µm) /
+  focallen(mm)` pixelskála), égi háttér e-/s/ívmásodperc²-ben
+  (`háttér(ADU) × egain / exptime / skála²`), medián csillagszám,
+  kiugró-arány (a tárolt `score` és `config.rating.outlierZScore` alapján
+  újraszámolva), és rangsor a célpont session-jei között (1 = legjobb
+  ívmásodperces FWHM, hiányzó metrikájú session nem kap rangot). Új
+  `Sources/AstroCore/Stats/SessionTimeline.swift`
+  (`SessionTimeline.timeline`) — éjszaka-idővonal a használható lightok
+  DATE-OBS-jából (FITS ÉS EXIF formátum is): ablak eleje/vége, integráció,
+  hatékonyság (integráció/ablak), és a csendes kiesések listája
+  (`config.stats.gapThresholdSeconds`, 0 = auto → 3× a session medián
+  NOMINÁLIS expozíciója). Rate-javítások: (a) `NominalExposure.nominal`
+  — egy valós könyvtárban az exptime lebegőpontos zajjal jár (30.0 és
+  29.899999618523 ugyanaz a "30s" sub, 822 ill. 91 kerettel) — 10s alatt
+  0.1s-re, felette egész másodpercre kerekítve, ez küszöböli ki a
+  parányi, std≈0 csoportokat a `Rater` pontozásában ÉS az
+  `exposureBreakdown` kulcsaiban (`StatsQueries`/`SessionStatsQueries`);
+  (b) a `Rater` pontozás-csoportosítása mostantól (session-dátum, nominális
+  exptime) párra megy, nem csak exptime-ra — így egy `--date` nélküli,
+  több éjszakát átfogó `rate` nem keveri össze a különböző éjszakák
+  égbolt-viszonyait egy z-score populációba; (c) `SirilCLI.
+  parseFindstarOutput` mostantól `nil`-t ad vissza hiányzó kerekségre a
+  korábbi kitalált `0.5` helyett (`StarMetrics.roundness` → `Double?`) —
+  a `Rater` súly-újranormalizálása már eddig is kezelte a hiányzó
+  metrikákat. CLI: `astrotool quality --target T [--date D] [--json]`
+  (dátum, keret, FWHM px/", háttér e-/s/"², csillag, kiugró%, rang
+  táblázat) és `astrotool stats --target T --timeline [--date D] [--json]`
+  (ablak, integráció, hatékonyság%, kiesés-lista). App: a Minőség fülön a
+  keret-táblázat FÖLÉ kerül egy session-összegző szakasz (dátum · keret ·
+  FWHM" · háttér · rang jelvény, pl. "2/6"), session kiválasztásakor
+  idővonal-sor jelenik meg ("Ablak 3:42 · integráció 2:11 · hatékonyság
+  59% · 2 kiesés (37m, 12m)") — `AppState.loadQualitySummaries(target:)`/
+  `loadSessionTimeline(target:date:)` háttérműveletek.
 
 ## [0.2.3] - 2026-08-03
 

@@ -191,7 +191,7 @@ public enum SessionStatsQueries {
             let meta = file.id.flatMap { metaByFileID[$0] }
             if let exptime = meta?.exptime {
                 totalSeconds += exptime
-                exposureBreakdown[exptime.description, default: 0] += 1
+                exposureBreakdown[NominalExposure.nominal(exptime).description, default: 0] += 1
             } else {
                 exposureBreakdown["unknown", default: 0] += 1
             }

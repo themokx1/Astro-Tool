@@ -86,6 +86,32 @@ private struct StatsFixture {
     #expect(stats.filters == ["L-eXtreme"])
 }
 
+/// R4-2 fix (a): float-noisy exptimes that mean the same nominal exposure
+/// (30.0 vs. 29.899999618523, ground-truthed from a real library) must share
+/// one `exposureBreakdown` key instead of splitting into two near-empty
+/// buckets.
+@Test func statsExposureBreakdownMergesFloatNoisyExptimesIntoOneNominalKey() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 1...2 {
+        try fixture.writeFITSLight(
+            "sessions/T1/2026-01-10/lights/a\(i).fit",
+            exptime: 30.0, instrume: nil, filter: nil
+        )
+    }
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/b1.fit",
+        exptime: 29.899999618523, instrume: nil, filter: nil
+    )
+
+    try fixture.scan()
+
+    let stats = try #require(try StatsQueries.target("T1", db: fixture.db, config: fixture.config))
+    #expect(stats.exposureBreakdown == ["30.0": 3])
+    #expect(stats.totalIntegrationSeconds == 30.0 + 30.0 + 29.899999618523)
+}
+
 @Test func statsCountsDSLRLightExposureFromEXIFInIntegrationTotal() throws {
     let fixture = try StatsFixture.make()
     defer { fixture.cleanup() }

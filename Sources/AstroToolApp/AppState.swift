@@ -50,6 +50,15 @@ final class AppState: @unchecked Sendable {
     var calibNeeds: [CalibNeed] = []
     var frameScores: [FrameScore] = []
 
+    /// The currently selected target's per-session absolute quality summaries
+    /// (`SessionQuality.summaries`) -- shown above the frame table in the
+    /// Minőség fül. Cleared whenever a different target is selected so a
+    /// stale previous target's rows never flash before the new ones load.
+    var qualitySummaries: [SessionQualitySummary] = []
+    /// The night-timeline for whichever session row is currently selected in
+    /// the quality summary section, `nil` until one is selected/loaded.
+    var sessionTimeline: SessionTimeline?
+
     /// The plan currently shown in `CalibLinkSheet`, `nil` while it's still
     /// loading (or the sheet isn't open). Cleared whenever the sheet closes
     /// so a stale plan from a previous session never flashes on next open.
@@ -648,6 +657,56 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.frameScores = results
                 self.progressText = "Pontozás kész: \(results.count) frame"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    // MARK: - Session quality (absolute metrics + night timeline)
+
+    /// Loads `qualitySummaries` for `target` -- called whenever the Minőség
+    /// fül's target picker changes. Clears `sessionTimeline` too, since a
+    /// previously selected session's timeline no longer applies once the
+    /// target itself changes.
+    func loadQualitySummaries(target: String) {
+        guard let db else { return }
+        let cfg = config
+        sessionTimeline = nil
+
+        let opID = beginOperation("Minőség-összegzés számítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try SessionQuality.summaries(target: target, db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.qualitySummaries = result
+                self.progressText = "Minőség-összegzés kész: \(result.count) session"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Loads the night timeline for one session -- called when a row in the
+    /// quality summary section is selected.
+    func loadSessionTimeline(target: String, date: String) {
+        guard let db else { return }
+        let cfg = config
+
+        let opID = beginOperation("Idővonal számítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try SessionTimeline.timeline(target: target, date: date, db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.sessionTimeline = result
             } catch {
                 self.handle(error)
             }

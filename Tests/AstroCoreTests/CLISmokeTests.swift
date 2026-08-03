@@ -392,6 +392,99 @@ struct CLISmokeTests {
     #expect(result.exitCode == 1)
 }
 
+@Test func statsTimelineJSONDecodesForFixtureTarget() throws {
+    let root = try makeTempRoot("stats-timeline-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--timeline", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let timelines = try #require(json)
+    #expect(!timelines.isEmpty)
+    #expect(timelines.allSatisfy { $0["target"] as? String == "M45_Pleiades" })
+    #expect(timelines.allSatisfy { $0["integration_seconds"] != nil })
+    #expect(timelines.allSatisfy { $0["gaps"] != nil })
+}
+
+@Test func statsTimelineHumanOutputPrintsWindowAndIntegration() throws {
+    let root = try makeTempRoot("stats-timeline-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--timeline"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("window:"))
+    #expect(result.stdout.contains("integration:"))
+}
+
+@Test func statsTimelineWithoutTargetExitsWithError() throws {
+    let root = try makeTempRoot("stats-timeline-no-target")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stats", "--root", root.path, "--timeline", "--json"])
+    #expect(result.exitCode == 1)
+}
+
+// MARK: - quality
+
+@Test func qualityJSONAfterRateDecodesForFixtureTarget() throws {
+    let root = try makeTempRoot("quality-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let rate = try runCLI(["rate", "--root", root.path, "--target", "M45_Pleiades", "--no-siril"])
+    #expect(rate.exitCode == 0, "stderr: \(rate.stderr)")
+
+    let result = try runCLI(["quality", "--root", root.path, "--target", "M45_Pleiades", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let summaries = try #require(json)
+    #expect(!summaries.isEmpty)
+    #expect(summaries.allSatisfy { $0["target"] as? String == "M45_Pleiades" })
+    #expect(summaries.allSatisfy { $0["frame_count"] != nil })
+}
+
+@Test func qualityHumanOutputPrintsTable() throws {
+    let root = try makeTempRoot("quality-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["quality", "--root", root.path, "--target", "M45_Pleiades"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("DATE"))
+}
+
+@Test func qualityWithoutTargetExitsWithError() throws {
+    let root = try makeTempRoot("quality-no-target")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["quality", "--root", root.path])
+    #expect(result.exitCode == 1)
+}
+
 // MARK: - tag
 
 @Test func tagAddThenListShowsIt() throws {

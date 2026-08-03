@@ -7,6 +7,10 @@ struct QualityView: View {
     @State private var selectedTarget: String?
     @State private var dateText: String = ""
     @State private var sortOrder = [KeyPathComparator(\Row.score, order: .reverse)]
+    /// The session date currently selected in the quality-summary section,
+    /// `nil` until the user picks one -- drives `sessionTimeline`'s "Ablak…"
+    /// line below the summary table.
+    @State private var selectedSessionDate: String?
 
     /// Flattened, display-ready view of a `FrameScore` -- every optional
     /// metric stays optional here too (rather than substituting a sentinel)
@@ -142,6 +146,10 @@ struct QualityView: View {
                 Text(lastError).foregroundStyle(.red)
             }
 
+            if selectedTarget != nil {
+                qualitySummarySection
+            }
+
             Table(rows, sortOrder: $sortOrder) {
                 TableColumn("Fájl", value: \.fileName) { row in
                     Text(row.fileName)
@@ -217,6 +225,112 @@ struct QualityView: View {
         .onAppear {
             if appState.stats.isEmpty { appState.loadStats() }
         }
+        .onChange(of: selectedTarget) { _, newTarget in
+            selectedSessionDate = nil
+            appState.sessionTimeline = nil
+            if let newTarget {
+                appState.loadQualitySummaries(target: newTarget)
+            } else {
+                appState.qualitySummaries = []
+            }
+        }
         .padding()
+    }
+
+    // MARK: - Session quality summary section
+
+    /// Compact table of the selected target's `SessionQualitySummary` rows,
+    /// shown above the frame table -- absolute (cross-setup-comparable)
+    /// metrics, unlike the frame table's per-frame RELATIVE z-scores. A row
+    /// selection loads that session's night timeline underneath.
+    private var qualitySummarySection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Session-minőség").font(.headline)
+
+            if appState.qualitySummaries.isEmpty {
+                Text("Nincs minőség-adat ehhez a célponthoz (előbb futtass pontozást).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(appState.qualitySummaries, id: \.date) { summary in
+                        qualitySummaryRow(summary)
+                    }
+                }
+            }
+
+            if let date = selectedSessionDate {
+                if let timeline = appState.sessionTimeline, timeline.date == date {
+                    Text(timelineLineText(timeline))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+    }
+
+    private func qualitySummaryRow(_ summary: SessionQualitySummary) -> some View {
+        let isSelected = selectedSessionDate == summary.date
+        return HStack(spacing: 10) {
+            Text(summary.date)
+                .frame(width: 100, alignment: .leading)
+            Text("\(summary.frameCount) keret")
+                .frame(width: 70, alignment: .leading)
+                .foregroundStyle(.secondary)
+            Text(summary.medianFWHMArcsec.map { String(format: "FWHM %.2f\"", $0) } ?? "FWHM -")
+                .frame(width: 90, alignment: .leading)
+            Text(summary.backgroundEPerSecPerArcsec2.map { String(format: "háttér %.3f e-/s/\"²", $0) } ?? "háttér -")
+                .frame(width: 170, alignment: .leading)
+                .foregroundStyle(.secondary)
+            if let rank = summary.rankAmongSessions {
+                Text("\(rank)/\(summary.sessionCountForTarget ?? 0)")
+                    .font(.caption2)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(rank == 1 ? Color.green.opacity(0.2) : Color.secondary.opacity(0.15)))
+            }
+            Spacer()
+        }
+        .font(.caption)
+        .padding(.vertical, 3)
+        .padding(.horizontal, 6)
+        .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard let target = selectedTarget else { return }
+            selectedSessionDate = summary.date
+            appState.loadSessionTimeline(target: target, date: summary.date)
+        }
+    }
+
+    /// "Ablak 3:42 · integráció 2:11 · hatékonyság 59% · 2 kiesés (37m, 12m)"
+    private func timelineLineText(_ timeline: SessionTimeline) -> String {
+        var parts: [String] = []
+        parts.append("Ablak \(timeline.windowSeconds.map(Self.formatHoursMinutes) ?? "-")")
+        parts.append("integráció \(Self.formatHoursMinutes(timeline.integrationSeconds))")
+        if let dutyCycle = timeline.dutyCycle {
+            parts.append("hatékonyság \(Int((dutyCycle * 100).rounded()))%")
+        }
+        if timeline.gaps.isEmpty {
+            parts.append("nincs kiesés")
+        } else {
+            let gapList = timeline.gaps.map { Self.formatMinutes($0.seconds) }.joined(separator: ", ")
+            parts.append("\(timeline.gaps.count) kiesés (\(gapList))")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func formatHoursMinutes(_ seconds: Double) -> String {
+        let totalMinutes = Int((seconds / 60).rounded())
+        return String(format: "%d:%02d", totalMinutes / 60, totalMinutes % 60)
+    }
+
+    private static func formatMinutes(_ seconds: Double) -> String {
+        "\(Int((seconds / 60).rounded()))m"
     }
 }

@@ -4,10 +4,17 @@ import Foundation
 /// `StarMetricsProvider` produced them (currently only `SirilCLI`).
 public struct StarMetrics: Codable, Equatable, Sendable {
     public var fwhm: Double
-    public var roundness: Double
+    /// `nil` when Siril's `findstar` log didn't print a roundness figure at
+    /// all -- previously defaulted to a fabricated `0.5` "neutral" value,
+    /// which polluted rating stats with data that was never actually
+    /// measured. `Rater` already renormalizes its scoring weights over
+    /// whichever metrics are actually present for a frame, so a `nil` here
+    /// simply drops roundness from that frame's score instead of lying
+    /// about it.
+    public var roundness: Double?
     public var starCount: Int
 
-    public init(fwhm: Double, roundness: Double, starCount: Int) {
+    public init(fwhm: Double, roundness: Double?, starCount: Int) {
         self.fwhm = fwhm
         self.roundness = roundness
         self.starCount = starCount
@@ -197,9 +204,10 @@ public struct SirilCLI: StarMetricsProvider {
     ///     usable here at all.
     ///   - FWHM: `FWHM[= ]<float>` (also matches the `(FWHM 3.42)` form) —
     ///     defaults to `0` if absent.
-    ///   - roundness: `roundness[= ]<float>` — defaults to `0.5` (a neutral
-    ///     "circular enough" value) if absent, since older Siril builds
-    ///     don't always print it.
+    ///   - roundness: `roundness[= ]<float>` — `nil` if absent (older Siril
+    ///     builds don't always print it), rather than a fabricated neutral
+    ///     value that would silently pollute rating stats with data that was
+    ///     never actually measured.
     static func parseFindstarOutput(_ output: String) -> StarMetrics? {
         guard let starCountText = firstMatch(pattern: #"Found\s+(\d+)\s+star"#, in: output),
               let starCount = Int(starCountText)
@@ -210,7 +218,7 @@ public struct SirilCLI: StarMetricsProvider {
         let fwhm = firstMatch(pattern: #"FWHM[=\s]+([0-9]+(?:\.[0-9]+)?)"#, in: output)
             .flatMap(Double.init) ?? 0
         let roundness = firstMatch(pattern: #"roundness[=\s]+([0-9]+(?:\.[0-9]+)?)"#, in: output)
-            .flatMap(Double.init) ?? 0.5
+            .flatMap(Double.init)
 
         return StarMetrics(fwhm: fwhm, roundness: roundness, starCount: starCount)
     }

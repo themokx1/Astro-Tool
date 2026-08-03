@@ -30,6 +30,8 @@ Commands:
   cleanup       [--root R] [--json] [--suggest] [--limit N]
   rate          [--root R] --target T [--date D] [--json] [--no-siril]
   stats         [--root R] [--target T] [--json] [--gross] [--sessions (requires --target)] [--tag TAG]
+                [--timeline (requires --target) [--date D]]
+  quality       --target T [--date D] [--root R] [--json]
   calib         [--root R] [--json]
   match         [--root R] --target T --date D [--json]
   link-calib    --target T --date D [--dry-run] [--yes] [--root R] [--json]
@@ -454,10 +456,12 @@ func cmdStats(_ args: [String]) throws -> Int32 {
     let specs = [
         FlagSpec("--root", takesValue: true),
         FlagSpec("--target", takesValue: true),
+        FlagSpec("--date", takesValue: true),
         FlagSpec("--json", takesValue: false),
         FlagSpec("--gross", takesValue: false),
         FlagSpec("--sessions", takesValue: false),
         FlagSpec("--tag", takesValue: true),
+        FlagSpec("--timeline", takesValue: false),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
     let showGross = parsed.has("--gross")
@@ -465,6 +469,10 @@ func cmdStats(_ args: [String]) throws -> Int32 {
     guard let target = parsed.value("--target") else {
         if parsed.has("--sessions") {
             eprint("error: --sessions requires --target")
+            return 1
+        }
+        if parsed.has("--timeline") {
+            eprint("error: --timeline requires --target")
             return 1
         }
         let config = try resolveConfig(rootFlag: parsed.value("--root"))
@@ -497,6 +505,22 @@ func cmdStats(_ args: [String]) throws -> Int32 {
         return 0
     }
 
+    if parsed.has("--timeline") {
+        let dates: [String]
+        if let date = parsed.value("--date") {
+            dates = [date]
+        } else {
+            dates = try SessionStatsQueries.sessions(target: target, db: db, config: config).map(\.dateRaw)
+        }
+        let timelines = try dates.map { try SessionTimeline.timeline(target: target, date: $0, db: db, config: config) }
+        if parsed.has("--json") {
+            try printJSON(timelines)
+        } else {
+            printTimelines(timelines)
+        }
+        return 0
+    }
+
     guard let stats = try StatsQueries.target(target, db: db, config: config) else {
         eprint("error: target not found: \(target)")
         return 1
@@ -507,6 +531,32 @@ func cmdStats(_ args: [String]) throws -> Int32 {
         printSingleTargetStats(stats, showGross: showGross)
     }
     return 0
+}
+
+private func printTimelines(_ timelines: [SessionTimeline]) {
+    guard !timelines.isEmpty else {
+        print("no sessions")
+        return
+    }
+    for t in timelines {
+        print("session: \(t.target) / \(t.date)")
+        if let start = t.windowStart, let end = t.windowEnd {
+            print("  window: \(start) → \(end)")
+        } else {
+            print("  window: -")
+        }
+        print("  window duration: \(t.windowSeconds.map(formatHoursMinutes) ?? "-")")
+        print("  integration: \(formatHoursMinutes(t.integrationSeconds))")
+        print("  duty cycle: \(t.dutyCycle.map { String(format: "%.0f%%", $0 * 100) } ?? "-")")
+        if t.gaps.isEmpty {
+            print("  gaps: none")
+        } else {
+            print("  gaps:")
+            for gap in t.gaps {
+                print("    \(gap.start) → \(gap.end)  (\(formatHoursMinutes(gap.seconds)))")
+            }
+        }
+    }
 }
 
 private func printSessionDetails(target: String, sessions: [SessionDetail]) {
@@ -591,6 +641,64 @@ private func printSingleTargetStats(_ s: TargetStats, showGross: Bool) {
     print("wide field: \(s.isWideField ? "yes" : "no")")
     print("cameras: \(s.cameras.joined(separator: ", "))")
     print("filters: \(s.filters.joined(separator: ", "))")
+}
+
+// MARK: - quality
+
+/// `astrotool quality --target T [--date D] [--json]` -- absolute,
+/// cross-setup-comparable session quality metrics (`SessionQuality`), as
+/// opposed to `rate`'s per-frame RELATIVE z-scores.
+func cmdQuality(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--date", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    guard let target = parsed.value("--target") else {
+        eprint("error: --target is required")
+        eprint(usageText)
+        return 1
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    var summaries = try SessionQuality.summaries(target: target, db: db, config: config)
+    if let date = parsed.value("--date") {
+        summaries = summaries.filter { $0.date == date }
+    }
+
+    if parsed.has("--json") {
+        try printJSON(summaries)
+    } else {
+        printQualityTable(summaries)
+    }
+    return 0
+}
+
+private func printQualityTable(_ summaries: [SessionQualitySummary]) {
+    guard !summaries.isEmpty else {
+        print("no sessions")
+        return
+    }
+
+    let dateWidth = max(summaries.map { $0.date.count }.max() ?? 10, 10)
+    let header = "DATE".padding(toLength: dateWidth, withPad: " ", startingAt: 0)
+    print("\(header)  FRAMES  FWHM(px)  FWHM(\")  BACKGROUND(e-/s/\"^2)  STARS  OUTLIER%  RANK")
+    for s in summaries {
+        let date = s.date.padding(toLength: dateWidth, withPad: " ", startingAt: 0)
+        let fwhmPx = fmt(s.medianFWHMPixels, 2).padding(toLength: 8, withPad: " ", startingAt: 0)
+        let fwhmArc = fmt(s.medianFWHMArcsec, 2).padding(toLength: 7, withPad: " ", startingAt: 0)
+        let background = fmt(s.backgroundEPerSecPerArcsec2, 4).padding(toLength: 20, withPad: " ", startingAt: 0)
+        let stars = (s.medianStarCount.map(String.init) ?? "-").padding(toLength: 5, withPad: " ", startingAt: 0)
+        let outlier = (s.outlierFraction.map { String(format: "%.0f%%", $0 * 100) } ?? "-").padding(toLength: 8, withPad: " ", startingAt: 0)
+        let rank = s.rankAmongSessions.map { "\($0)/\(s.sessionCountForTarget ?? 0)" } ?? "-"
+        print("\(date)  \(s.frameCount)       \(fwhmPx)  \(fwhmArc)  \(background)  \(stars)  \(outlier)  \(rank)")
+    }
 }
 
 // MARK: - calib

@@ -83,6 +83,16 @@ public struct FITSMetaRecord: Codable, Equatable, Sendable {
     public var imagetyp: String?
     public var naxis1: Int?
     public var naxis2: Int?
+    /// Pixel size in microns (FITS `XPIXSZ`) -- schema v4, additive. Needed
+    /// (together with `focallen`) to derive the arcsec/pixel scale for
+    /// absolute FWHM measurements (`SessionQuality`). `nil` for files scanned
+    /// before v4 whose `header_json` didn't carry the key, or non-FITS
+    /// frames.
+    public var xpixsz: Double?
+    /// Camera e-/ADU gain (FITS `EGAIN`) -- schema v4, additive. Needed to
+    /// convert a native background reading (ADU) into electrons for the
+    /// absolute sky-background metric (`SessionQuality`).
+    public var egain: Double?
     public var headerJSON: String?
 
     public init(
@@ -99,6 +109,8 @@ public struct FITSMetaRecord: Codable, Equatable, Sendable {
         imagetyp: String? = nil,
         naxis1: Int? = nil,
         naxis2: Int? = nil,
+        xpixsz: Double? = nil,
+        egain: Double? = nil,
         headerJSON: String? = nil
     ) {
         self.fileID = fileID
@@ -114,6 +126,8 @@ public struct FITSMetaRecord: Codable, Equatable, Sendable {
         self.imagetyp = imagetyp
         self.naxis1 = naxis1
         self.naxis2 = naxis2
+        self.xpixsz = xpixsz
+        self.egain = egain
         self.headerJSON = headerJSON
     }
 }
@@ -245,6 +259,15 @@ public final class Database: @unchecked Sendable {
     ALTER TABLE files ADD COLUMN nlink INTEGER;
     """
 
+    // Internal (not private) for the same reason as the earlier schemaSQLv*
+    // constants: migration tests apply this directly to a raw `SQLiteDB` to
+    // simulate an existing v3 database before verifying `Database(path:)`
+    // upgrades it in place.
+    static let schemaSQLv4 = """
+    ALTER TABLE fits_meta ADD COLUMN xpixsz REAL;
+    ALTER TABLE fits_meta ADD COLUMN egain REAL;
+    """
+
     public init(path: String) throws {
         self.db = try SQLiteDB(path: path)
         try migrate()
@@ -283,6 +306,43 @@ public final class Database: @unchecked Sendable {
             try db.exec(Self.schemaSQLv3)
             try db.run("UPDATE schema_version SET version = ?;", bind: [.int(3)])
             version = 3
+        }
+
+        if version < 4 {
+            try db.exec(Self.schemaSQLv4)
+            try backfillXpixszEgainFromHeaderJSON()
+            try db.run("UPDATE schema_version SET version = ?;", bind: [.int(4)])
+            version = 4
+        }
+    }
+
+    /// One-time v3->v4 upgrade step: `xpixsz`/`egain` are new dedicated
+    /// columns, but every FITS file scanned before v4 already has the same
+    /// values sitting in its `header_json` blob (the full raw card dump) --
+    /// no file I/O needed, just parse what's already in the database. Rows
+    /// with no `header_json` (non-FITS frames, or a pre-v4 row whose header
+    /// simply lacked both keys) are left with `NULL` in the new columns,
+    /// same as `ALTER TABLE ADD COLUMN`'s default for every row.
+    private func backfillXpixszEgainFromHeaderJSON() throws {
+        var rows: [(fileID: Int64, headerJSON: String)] = []
+        try db.query("SELECT file_id, header_json FROM fits_meta WHERE header_json IS NOT NULL;") { row in
+            guard let fileID = row.int64(0), let json = row.string(1) else { return }
+            rows.append((fileID, json))
+        }
+
+        for (fileID, json) in rows {
+            guard let data = json.data(using: .utf8),
+                  let cards = try? JSONDecoder().decode([String: String].self, from: data)
+            else { continue }
+
+            let xpixsz = cards["XPIXSZ"].flatMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            let egain = cards["EGAIN"].flatMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            guard xpixsz != nil || egain != nil else { continue }
+
+            try db.run(
+                "UPDATE fits_meta SET xpixsz = COALESCE(?, xpixsz), egain = COALESCE(?, egain) WHERE file_id = ?;",
+                bind: [xpixsz.map(SQLiteValue.real) ?? .null, egain.map(SQLiteValue.real) ?? .null, .int(fileID)]
+            )
         }
     }
 
@@ -440,13 +500,14 @@ public final class Database: @unchecked Sendable {
         try withLock {
             try db.run(
                 """
-                INSERT INTO fits_meta(file_id, exptime, gain, "offset", set_temp, ccd_temp, instrume, focallen, filter, date_obs, imagetyp, naxis1, naxis2, header_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO fits_meta(file_id, exptime, gain, "offset", set_temp, ccd_temp, instrume, focallen, filter, date_obs, imagetyp, naxis1, naxis2, xpixsz, egain, header_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(file_id) DO UPDATE SET
                   exptime = excluded.exptime, gain = excluded.gain, "offset" = excluded."offset",
                   set_temp = excluded.set_temp, ccd_temp = excluded.ccd_temp, instrume = excluded.instrume,
                   focallen = excluded.focallen, filter = excluded.filter, date_obs = excluded.date_obs,
                   imagetyp = excluded.imagetyp, naxis1 = excluded.naxis1, naxis2 = excluded.naxis2,
+                  xpixsz = excluded.xpixsz, egain = excluded.egain,
                   header_json = excluded.header_json;
                 """,
                 bind: [
@@ -457,6 +518,7 @@ public final class Database: @unchecked Sendable {
                     r.dateObs.map(SQLiteValue.text) ?? .null, r.imagetyp.map(SQLiteValue.text) ?? .null,
                     r.naxis1.map { SQLiteValue.int(Int64($0)) } ?? .null,
                     r.naxis2.map { SQLiteValue.int(Int64($0)) } ?? .null,
+                    r.xpixsz.map(SQLiteValue.real) ?? .null, r.egain.map(SQLiteValue.real) ?? .null,
                     r.headerJSON.map(SQLiteValue.text) ?? .null,
                 ]
             )
@@ -468,7 +530,7 @@ public final class Database: @unchecked Sendable {
             var record: FITSMetaRecord?
             try db.query(
                 """
-                SELECT file_id, exptime, gain, "offset", set_temp, ccd_temp, instrume, focallen, filter, date_obs, imagetyp, naxis1, naxis2, header_json
+                SELECT file_id, exptime, gain, "offset", set_temp, ccd_temp, instrume, focallen, filter, date_obs, imagetyp, naxis1, naxis2, xpixsz, egain, header_json
                 FROM fits_meta WHERE file_id = ?;
                 """,
                 bind: [.int(fileID)]
@@ -487,7 +549,9 @@ public final class Database: @unchecked Sendable {
                     imagetyp: row.string(10),
                     naxis1: row.int64(11).map(Int.init),
                     naxis2: row.int64(12).map(Int.init),
-                    headerJSON: row.string(13)
+                    xpixsz: row.double(13),
+                    egain: row.double(14),
+                    headerJSON: row.string(15)
                 )
             }
             return record

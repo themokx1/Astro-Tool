@@ -409,12 +409,15 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(metrics?.roundness == 0.89)
 }
 
-@Test func parseFindstarOutputDefaultsRoundnessWhenAbsent() {
+@Test func parseFindstarOutputReturnsNilRoundnessWhenAbsent() {
+    // Regression guard: this used to default to a fabricated 0.5 "neutral"
+    // roundness, which fed fake data into rating stats. Missing means
+    // missing.
     let output = "log: Found 88 stars in image, channel #0 (FWHM 2.95)"
     let metrics = SirilCLI.parseFindstarOutput(output)
     #expect(metrics?.starCount == 88)
     #expect(metrics?.fwhm == 2.95)
-    #expect(metrics?.roundness == 0.5)
+    #expect(metrics?.roundness == nil)
 }
 
 @Test func parseFindstarOutputReturnsNilForGarbage() {
@@ -779,6 +782,104 @@ private final class ProgressRecorder: @unchecked Sendable {
     // "short" + "long" background values instead of within their own group.
     #expect(abs(byPath["sessions/G/2026-01-01/lights/S3.fit"]!.score - (-expectedMagnitude)) < 0.0001)
     #expect(abs(byPath["sessions/G/2026-01-01/lights/L3.fit"]!.score - (-expectedMagnitude)) < 0.0001)
+}
+
+// MARK: - Rater: nominal-exposure grouping (R4-2 fix a)
+
+/// Ground-truthed against a real library: exptime 30.0 (x822 frames) and
+/// 29.899999618523 (x91 frames) are the SAME nominal "30s" sub, but the old
+/// 0.1s-rounded grouping key put the 29.9s frames in their own tiny group
+/// (`Int((29.899999618523 * 10).rounded()) == 299`, vs. `300` for 30.0) --
+/// with only itself in that group, its z-score (and therefore score) was
+/// always exactly 0, regardless of how good or bad the frame actually was.
+/// After rounding to the nominal exptime (`NominalExposure`), all three
+/// frames below share one group and get a real, non-degenerate score.
+@Test func scoringMergesFloatNoisyExptimesIntoOneNominalGroup() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.addLightFrame(
+        relativePath: "sessions/N/2026-01-01/lights/S1.fit", target: "N",
+        pixels: Array(repeating: 10, count: 4), width: 2, height: 2, exptime: 30.0
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/N/2026-01-01/lights/S2.fit", target: "N",
+        pixels: Array(repeating: 20, count: 4), width: 2, height: 2, exptime: 30.0
+    )
+    // Float-noisy "30s" sub -- must land in the SAME group as the two
+    // frames above, not its own singleton.
+    try fixture.addLightFrame(
+        relativePath: "sessions/N/2026-01-01/lights/S3.fit", target: "N",
+        pixels: Array(repeating: 30, count: 4), width: 2, height: 2, exptime: 29.899999618523
+    )
+
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: nil)
+    let results = try rater.rate(target: "N")
+
+    #expect(results.count == 3)
+    let byPath = Dictionary(uniqueKeysWithValues: results.map { ($0.path, $0) })
+    let expectedMagnitude = (3.0 / 2.0).squareRoot()
+
+    // S3 (background 30, the group's worst) must NOT score 0 (the old,
+    // wrongly-singleton-grouped behavior) -- it must tie with what a
+    // 3-point evenly-spaced worst frame scores.
+    #expect(abs(byPath["sessions/N/2026-01-01/lights/S3.fit"]!.score - (-expectedMagnitude)) < 0.0001)
+    #expect(abs(byPath["sessions/N/2026-01-01/lights/S1.fit"]!.score - expectedMagnitude) < 0.0001)
+    #expect(abs(byPath["sessions/N/2026-01-01/lights/S2.fit"]!.score - 0) < 0.0001)
+}
+
+// MARK: - Rater: per-(date, exposure)-group scoring (R4-2 fix b)
+
+/// A multi-night `rate(target:)` call with no `--date` must not pool
+/// different nights' sky conditions into one z-score population, even when
+/// they share the same nominal exptime: two nights, both shot at 60s, one
+/// much brighter overall (a hazier night) than the other. Per-(date,
+/// exptime) grouping means each night's best/worst frame gets the SAME
+/// relative score as the other night's, rather than the whole "bright"
+/// night scoring uniformly worse than the whole "dim" one just because
+/// their backgrounds are pooled together.
+@Test func scoringGroupsPerSessionDateNotPooledAcrossNights() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.addLightFrame(
+        relativePath: "sessions/P/2026-01-01/lights/D1_1.fit", target: "P", sessionDate: "2026-01-01",
+        pixels: Array(repeating: 10, count: 4), width: 2, height: 2, exptime: 60.0
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/P/2026-01-01/lights/D1_2.fit", target: "P", sessionDate: "2026-01-01",
+        pixels: Array(repeating: 20, count: 4), width: 2, height: 2, exptime: 60.0
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/P/2026-01-01/lights/D1_3.fit", target: "P", sessionDate: "2026-01-01",
+        pixels: Array(repeating: 30, count: 4), width: 2, height: 2, exptime: 60.0
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/P/2026-02-02/lights/D2_1.fit", target: "P", sessionDate: "2026-02-02",
+        pixels: Array(repeating: 1000, count: 4), width: 2, height: 2, exptime: 60.0
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/P/2026-02-02/lights/D2_2.fit", target: "P", sessionDate: "2026-02-02",
+        pixels: Array(repeating: 1010, count: 4), width: 2, height: 2, exptime: 60.0
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/P/2026-02-02/lights/D2_3.fit", target: "P", sessionDate: "2026-02-02",
+        pixels: Array(repeating: 1020, count: 4), width: 2, height: 2, exptime: 60.0
+    )
+
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: nil)
+    let results = try rater.rate(target: "P") // no --date: spans both nights
+
+    #expect(results.count == 6)
+    let byPath = Dictionary(uniqueKeysWithValues: results.map { ($0.path, $0) })
+    let expectedMagnitude = (3.0 / 2.0).squareRoot()
+
+    #expect(abs(byPath["sessions/P/2026-01-01/lights/D1_1.fit"]!.score - expectedMagnitude) < 0.0001)
+    #expect(abs(byPath["sessions/P/2026-02-02/lights/D2_1.fit"]!.score - expectedMagnitude) < 0.0001)
+    #expect(abs(byPath["sessions/P/2026-01-01/lights/D1_2.fit"]!.score - 0) < 0.0001)
+    #expect(abs(byPath["sessions/P/2026-02-02/lights/D2_2.fit"]!.score - 0) < 0.0001)
+    #expect(abs(byPath["sessions/P/2026-01-01/lights/D1_3.fit"]!.score - (-expectedMagnitude)) < 0.0001)
+    #expect(abs(byPath["sessions/P/2026-02-02/lights/D2_3.fit"]!.score - (-expectedMagnitude)) < 0.0001)
 }
 
 @Test func scoringTreatsFramesWithoutExptimeAsTheirOwnSharedGroup() throws {

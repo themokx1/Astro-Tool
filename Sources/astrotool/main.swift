@@ -27,6 +27,7 @@ do {
     case "cleanup": exitCode = try cmdCleanup(rest)
     case "rate": exitCode = try cmdRate(rest)
     case "stats": exitCode = try cmdStats(rest)
+    case "quality": exitCode = try cmdQuality(rest)
     case "calib": exitCode = try cmdCalib(rest)
     case "match": exitCode = try cmdMatch(rest)
     case "link-calib": exitCode = try cmdLinkCalib(rest)
