@@ -220,7 +220,20 @@ struct StatsView: View {
         if !stats.excludedSessionDates.isEmpty {
             lines.append("Kizárt session-ök: \(stats.excludedSessionDates.joined(separator: ", "))")
         }
+        if let panels = appState.panelReportsByTarget[stats.target], panels.isMosaic {
+            lines.append("Panelek: \(panelsSummaryLine(panels))")
+        }
         return lines.joined(separator: "\n")
+    }
+
+    /// "3 panel: A 2:10 · B 1:50 · C 0:35 ⚠️ kiegyenlítetlen" -- the compact
+    /// one-line mosaic summary shared by the target tooltip and the
+    /// "Panelek…" popover's header.
+    private func panelsSummaryLine(_ report: PanelReport) -> String {
+        let perPanel = report.panels.map { "\($0.label) \(formatDuration($0.integrationSeconds))" }.joined(separator: " · ")
+        var line = "\(report.panels.count) panel: \(perPanel)"
+        if report.isUnbalanced { line += " ⚠️ kiegyenlítetlen" }
+        return line
     }
 
     // MARK: - Column 2: Integráció
@@ -335,14 +348,20 @@ struct StatsView: View {
     private func actionsCell(_ row: StatsRow) -> some View {
         switch row.kind {
         case .target(let stats):
-            Menu("Exportálás…") {
-                Button("AstroBin CSV") { appState.exportAcquisition(target: stats.target, format: .astrobin) }
-                Button("CSV") { appState.exportAcquisition(target: stats.target, format: .csv) }
-                Button("Markdown") { appState.exportAcquisition(target: stats.target, format: .md) }
+            HStack(spacing: 8) {
+                Menu("Exportálás…") {
+                    Button("AstroBin CSV") { appState.exportAcquisition(target: stats.target, format: .astrobin) }
+                    Button("CSV") { appState.exportAcquisition(target: stats.target, format: .csv) }
+                    Button("Markdown") { appState.exportAcquisition(target: stats.target, format: .md) }
+                }
+                .menuStyle(.borderlessButton)
+                .font(.caption)
+                .fixedSize()
+
+                if let panels = appState.panelReportsByTarget[stats.target], panels.isMosaic {
+                    PanelsPopoverButton(report: panels)
+                }
             }
-            .menuStyle(.borderlessButton)
-            .font(.caption)
-            .fixedSize()
         case .session(let target, let detail):
             Button("Kalibráció linkelése…") {
                 linkingSession = LinkingSession(target: target, date: detail.dateRaw)
@@ -436,6 +455,65 @@ private struct AddTagChip: View {
         onAdd(trimmed)
         text = ""
         showPopover = false
+    }
+}
+
+// MARK: - Panels popover
+
+/// "Panelek…" button on a mosaic target's row -- pops over the full panel
+/// table (label, center RA/Dec, frame count, integration, rotation, pixel
+/// scale) plus the same unbalanced-mosaic warning line the tooltip shows.
+/// Only ever shown when `PanelReport.isMosaic` (the caller checks that
+/// before instantiating this view).
+private struct PanelsPopoverButton: View {
+    let report: PanelReport
+
+    @State private var showPopover = false
+
+    var body: some View {
+        Button("Panelek…") { showPopover = true }
+            .buttonStyle(.link)
+            .font(.caption)
+            .popover(isPresented: $showPopover) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(report.target) — \(report.panels.count) panel").font(.headline)
+
+                    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
+                        GridRow {
+                            Text("Panel").bold()
+                            Text("Közép RA/Dec").bold()
+                            Text("Keret").bold()
+                            Text("Integráció").bold()
+                            Text("Rot.").bold()
+                            Text("Skála").bold()
+                        }
+                        .font(.caption)
+                        ForEach(report.panels, id: \.label) { panel in
+                            GridRow {
+                                Text(panel.label)
+                                Text(String(format: "%.4f / %+.4f", panel.centerRaDeg, panel.centerDecDeg))
+                                Text("\(panel.frameCount)")
+                                Text(formatDuration(panel.integrationSeconds))
+                                Text(panel.rotationDeg.map { String(format: "%.1f°", $0) } ?? "-")
+                                Text(panel.pixelScaleArcsec.map { String(format: "%.2f\"/px", $0) } ?? "-")
+                            }
+                            .font(.caption)
+                        }
+                    }
+
+                    if report.isUnbalanced {
+                        Text("⚠️ kiegyenlítetlen mozaik")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .padding()
+            }
+    }
+
+    private func formatDuration(_ seconds: Double) -> String {
+        let totalMinutes = Int((seconds / 60).rounded())
+        return String(format: "%d:%02d", totalMinutes / 60, totalMinutes % 60)
     }
 }
 

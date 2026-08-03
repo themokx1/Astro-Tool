@@ -10,6 +10,73 @@ történik.
 
 ### Added
 
+- **Mozaik-panel követés + setup-fingerprint (`astrotool panels`)**: a
+  szélesmezős mozaikoknál (pl. `M_Milky_Way/Panel1..Panel11`) a panelek
+  közti egyenlőtlen integráció látható SNR-lépcsőt okoz a varratoknál — a
+  plate-solve-olt WCS (`CRVAL1`/`CRVAL2`) alapján a keret-középpontok
+  klaszterezése felfedi a paneleket és azok integráció-egyensúlyát. Új
+  `Sources/AstroCore/Sky/FieldGeometry.swift` (`FrameField`, `Panel`,
+  `PanelReport`, `FieldGeometry.frameField(headerJSON:naxis1:naxis2:)` +
+  `FieldGeometry.panels(target:db:config:)`) — `frameField` a `CRVAL1`/
+  `CRVAL2`-t (kötelező), a rotációt és a pixel-skálát a WCS `CD` mátrixból
+  (`CD1_1..CD2_2`, `sqrt(|det|)·3600` skála, `atan2(CD1_2,CD1_1)` rotáció)
+  vagy — `CD` mátrix hiányában — a meglévő `SessionQuality.pixelScaleArcsec`
+  (`xpixsz`+`focallen`) helperrel adja vissza (utóbbi esetben rotáció
+  nélkül), a látómezőt (`NAXIS1`/`NAXIS2` × skála) pedig csak akkor, ha van
+  skála. `panels` a célpont ÖSSZES session-jének usable lightjait (`FrameSet`
+  dedup) klaszterezi mohó egykapcsolatú (single-linkage) módszerrel a
+  nagykör-távolság (`SunMoon.angularSeparationDeg`, publikus) alapján —
+  összekapcsolási küszöb az ismert látómező-szélességek mediánjának fele,
+  vagy 1.0° ha egyetlen keretnek sincs ismert látómezeje; a panel középpontja
+  a tagok RA/Dec-jének EGYSÉGVEKTOR-átlaga (nem naiv számtani átlag — ez
+  helyesen kezeli a 0°/360° RA-átfordulást, pl. 359.9° és 0.1° körülbelül
+  0.0°-ra klaszterez, nem a szemközti 180°-ra), keretszám szerint csökkenő
+  sorrendben A/B/C…-vel címkézve. `isMosaic` (`panels.count >= 2`),
+  `isUnbalanced` (legalább két nemnulla integrációjú panel közül a
+  legnagyobb/legkisebb arány > 1.5 — pl. 2:10 vs. 0:35). Új
+  `Sources/AstroCore/Stats/EquipmentProfile.swift` (`SetupFingerprint`,
+  `EquipmentProfile.fingerprint(meta:headerJSON:)` +
+  `sessionFingerprints(target:date:db:config:)`) — kompakt eszköz-ujjlenyomat
+  (kamera + gyújtótáv egész mm-re kerekítve + pixelméret 2 tizedesre +
+  binning ha van + Bayer-minta + guide-kamera ha van), pl.
+  `"ASI2600MC·302mm·3.76µm·RGGB"`; `nil` ha a keretnek se kamerája, se
+  gyújtótávja, se pixelmérete nincs. Két új audit szabály (`Rules.swift`, 17.
+  és 18.): `mixed-setup-in-session` (suspicious — egy session usable
+  lightjai ≥2 különböző fingerprintre esnek szét, a fingerprint nélküli
+  keretek figyelmen kívül maradnak) és `mixed-setup-in-target`
+  (probablyIntentional — egy célpont session-jeinek DOMINÁNS fingerprintje
+  eltér session-ök között, pl. egyik éjjel 302mm, másikon 480mm optikával —
+  ez gyakran szándékos gyújtótáv-váltás, csak figyelmeztetés, nem hiba),
+  mindkettő a megosztott, DB-mentes `EquipmentProfile.fingerprintCounts`
+  helperen át, hogy sose térjenek el attól, mit számol fingerprintnek a
+  `sessionFingerprints`. `SessionDetail` additív `setupDescriptor: String?`
+  mezője (a session domináns fingerprintjének leírója, `nil` ha egyetlen
+  usable lightnak sincs fingerprintje). CLI: `astrotool panels --target T
+  [--json]` — emberi táblázat (PANEL / KÖZÉP RA/DEC / KERET / INTEGRÁCIÓ /
+  ROT / SCALE oszlopokkal) + `"⚠️  kiegyenlítetlen mozaik"` figyelmeztető sor
+  ha `isUnbalanced`. App: `AppState.panelReportsByTarget` (a `loadStats()`
+  minden célponthoz kiszámolja a `sessionDetailsByTarget` mellett);
+  `StatsView` célpont-sorának név-tooltipje mozaik célpontnál egy "Panelek: 3
+  panel: A 2:10 · B 1:50 · C 0:35 ⚠️ kiegyenlítetlen" sort kap, a Műveletek
+  cellában az Exportálás… menü mellé egy "Panelek…" gomb kerül, ami egy teljes
+  panel-táblázatot mutat popoverben (label, közép RA/Dec, keretszám,
+  integráció, rotáció, pixel-skála). Új tesztfájlok
+  `Tests/AstroCoreTests/FieldGeometryTests.swift` (12: `CRVAL`-parszolás,
+  `CD`-mátrixból pontos skála+rotáció egy elforgatás-mátrix determinánsával,
+  `XPIXSZ`/`FOCALLEN` fallback skála, `NAXIS`-ból számolt látómező, egyetlen
+  mező nem mozaik, két, 3°-ra lévő, 1° látómezős csoport 2 panelre
+  klaszterezése, kiegyenlítetlen/kiegyensúlyozott integráció-jelzés, RA
+  0°/360°-átfordulás helyes egységvektor-átlaga, üres célpont, JSON
+  round-trip) és `Tests/AstroCoreTests/EquipmentProfileTests.swift` (15:
+  fingerprint-leíró pontos formátuma, binning ki-/bekapcsolt állapotban,
+  guide-kamera, `nil` azonosító adat nélkül, kerekítés, session-önkénti
+  darabszám, domináns fingerprint kiválasztása, `SessionDetail.
+  setupDescriptor` mindkét ág, JSON round-trip, mindkét audit szabály
+  tüzelése/csendben maradása + fingerprint nélküli keretek figyelmen kívül
+  hagyása), `CLISmokeTests` +3 (`panels --json` dekódolás, emberi "no
+  WCS-solved frames" üzenet CRVAL nélküli fixture-ön, hiányzó `--target`
+  hibakód).
+
 - **Éjszakai hardver-egészség (`astrotool health`)**: session-önkénti
   hűtő-stabilitás + fókusz-trend egy paranccsal/fülön — nyáron az ASI2600
   hűtője nem biztos, hogy tartja a -20°C célhőmérsékletet, ami csendben

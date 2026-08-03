@@ -548,6 +548,50 @@ struct CLISmokeTests {
     #expect(reports.first?["date"] as? String == "2026-01-10")
 }
 
+// MARK: - panels
+
+@Test func panelsJSONAfterScanDecodesForFixtureTarget() throws {
+    let root = try makeTempRoot("panels-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["panels", "--root", root.path, "--target", "M45_Pleiades", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+    let report = try #require(json)
+    #expect(report["target"] as? String == "M45_Pleiades")
+    #expect(report["panels"] is [Any])
+}
+
+@Test func panelsHumanOutputReportsNoWCSSolvedFramesForFixtureWithoutCRVAL() throws {
+    let root = try makeTempRoot("panels-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["panels", "--root", root.path, "--target", "M45_Pleiades"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("no WCS-solved frames"))
+}
+
+@Test func panelsWithoutTargetExitsWithError() throws {
+    let root = try makeTempRoot("panels-no-target")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["panels", "--root", root.path])
+    #expect(result.exitCode == 1)
+}
+
 // MARK: - tag
 
 @Test func tagAddThenListShowsIt() throws {

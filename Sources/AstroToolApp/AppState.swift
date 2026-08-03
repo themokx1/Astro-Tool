@@ -47,6 +47,13 @@ final class AppState: @unchecked Sendable {
     /// `Table` has every row's children available up front (a `Table` can't
     /// lazily fetch a row's children on first expand).
     var sessionDetailsByTarget: [String: [SessionDetail]] = [:]
+    /// Every target's mosaic-panel breakdown (`FieldGeometry.panels`, R6-3),
+    /// keyed by target name -- populated alongside `stats`/
+    /// `sessionDetailsByTarget` in `loadStats()`. Only targets with `>= 2`
+    /// panels (`isMosaic`) show anything in `StatsView`, but every target
+    /// gets an entry so a re-render never has to guess "not loaded yet" vs.
+    /// "genuinely a single field".
+    var panelReportsByTarget: [String: PanelReport] = [:]
     var calibNeeds: [CalibNeed] = []
     /// `CalibHealth.report`'s result -- flat discipline, bias inventory, dark
     /// master health -- shown below the coverage table on the Kalibráció
@@ -509,19 +516,24 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let (result, sessionsByTarget) = try await Task.detached(priority: .userInitiated) {
+                let (result, sessionsByTarget, panelsByTarget) = try await Task.detached(priority: .userInitiated) {
                     let stats = try StatsQueries.perTarget(db: db, config: cfg)
                     var sessionsByTarget: [String: [SessionDetail]] = [:]
+                    var panelsByTarget: [String: PanelReport] = [:]
                     for stat in stats {
                         sessionsByTarget[stat.target] = try SessionStatsQueries.sessions(
                             target: stat.target, db: db, config: cfg
                         )
+                        panelsByTarget[stat.target] = try FieldGeometry.panels(
+                            target: stat.target, db: db, config: cfg
+                        )
                     }
-                    return (stats, sessionsByTarget)
+                    return (stats, sessionsByTarget, panelsByTarget)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.stats = result
                 self.sessionDetailsByTarget = sessionsByTarget
+                self.panelReportsByTarget = panelsByTarget
                 self.progressText = "Statisztika kész: \(result.count) célpont"
             } catch {
                 self.handle(error)

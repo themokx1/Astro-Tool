@@ -44,6 +44,7 @@ Commands:
   projects      [--root R] [--json]
   export        --target T --format astrobin|csv|md [--out PATH] [--root R]
   health        --target T [--date D] [--root R] [--json]
+  panels        --target T [--root R] [--json]
 
   --version     Print version and exit
   --help        Show this help
@@ -1511,5 +1512,58 @@ private func printHealthReports(_ reports: [NightHealthReport]) {
         print("session: \(r.target) / \(r.date)")
         print("  Hűtés: \(r.cooler.verdict)")
         print("  Fókusz: \(r.focus.verdict)")
+    }
+}
+
+// MARK: - panels
+
+/// `astrotool panels --target T [--json]` -- R6-3's mosaic-panel breakdown
+/// (WCS field-center clustering of the target's usable lights, across every
+/// session on record).
+func cmdPanels(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    guard let target = parsed.value("--target") else {
+        eprint("error: --target is required")
+        eprint(usageText)
+        return 1
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let report = try FieldGeometry.panels(target: target, db: db, config: config)
+
+    if parsed.has("--json") {
+        try printJSON(report)
+    } else {
+        printPanelReport(report)
+    }
+    return 0
+}
+
+private func printPanelReport(_ report: PanelReport) {
+    guard !report.panels.isEmpty else {
+        print("no WCS-solved frames for \(report.target)")
+        return
+    }
+
+    print("PANEL  KÖZÉP RA/DEC          KERET  INTEGRÁCIÓ  ROT      SCALE")
+    for panel in report.panels {
+        let center = String(format: "%9.4f / %+8.4f", panel.centerRaDeg, panel.centerDecDeg)
+        let integration = formatHoursMinutes(panel.integrationSeconds)
+        let rotation = panel.rotationDeg.map { String(format: "%.1f°", $0) } ?? "-"
+        let scale = panel.pixelScaleArcsec.map { String(format: "%.2f\"/px", $0) } ?? "-"
+        print("\(panel.label.padding(toLength: 5, withPad: " ", startingAt: 0))  \(center)  \(String(panel.frameCount).padding(toLength: 5, withPad: " ", startingAt: 0))  \(integration.padding(toLength: 10, withPad: " ", startingAt: 0))  \(rotation.padding(toLength: 7, withPad: " ", startingAt: 0))  \(scale)")
+    }
+
+    if report.isUnbalanced {
+        print("⚠️  kiegyenlítetlen mozaik: a panelek integrációja jelentősen eltér egymástól")
     }
 }

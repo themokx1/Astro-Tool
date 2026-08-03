@@ -887,3 +887,102 @@ public struct CoolerNotReachingSetpointRule: AuditRule {
         String(format: "%g", value)
     }
 }
+
+// MARK: - 17. mixed-setup-in-session
+
+/// A session whose usable lights (deduped via `FrameSet`) map to two or more
+/// distinct `SetupFingerprint`s -- e.g. half the night shot on one camera/
+/// focal length, the other half on another after a mid-session gear swap.
+/// Stacking a session like this together silently mixes pixel scales/
+/// rotations, which is much harder to recover from after the fact than
+/// noticing it now. Frames with no derivable fingerprint (see
+/// `EquipmentProfile.fingerprint`'s doc) are ignored -- they neither confirm
+/// nor contradict uniformity.
+public struct MixedSetupInSessionRule: AuditRule {
+    public let id = "mixed-setup-in-session"
+    public init() {}
+
+    private struct SessionKey: Hashable {
+        var target: String
+        var date: String
+    }
+
+    public func evaluate(_ ctx: AuditContext) -> [Finding] {
+        var sessionKeys = Set<SessionKey>()
+        for file in ctx.files where file.area == .sessions && file.role == .light {
+            guard let target = file.target, let date = file.sessionDate else { continue }
+            sessionKeys.insert(SessionKey(target: target, date: date))
+        }
+
+        var findings: [Finding] = []
+        for key in sessionKeys.sorted(by: { ($0.target, $0.date) < ($1.target, $1.date) }) {
+            let sessionLights = ctx.files.filter {
+                $0.area == .sessions && $0.role == .light && $0.target == key.target && $0.sessionDate == key.date
+            }
+            let buckets = FrameSet.lightBuckets(files: sessionLights, meta: ctx.fitsMetaByFileID, config: ctx.config)
+            let counts = EquipmentProfile.fingerprintCounts(usableLights: buckets.usable, meta: ctx.fitsMetaByFileID)
+            guard counts.count >= 2 else { continue }
+
+            let descriptors = counts.keys.map(\.descriptor).sorted()
+            findings.append(Finding(
+                severity: .suspicious,
+                category: id,
+                path: "sessions/\(key.target)/\(key.date)",
+                message: "A session felvételei eltérő eszköz-összeállítással készültek: \(descriptors.joined(separator: ", ")).",
+                suggestion: nil
+            ))
+        }
+        return findings
+    }
+}
+
+// MARK: - 18. mixed-setup-in-target
+
+/// A target whose sessions' DOMINANT `SetupFingerprint` differs from one
+/// session to another -- e.g. one night at 302mm, another at 480mm after
+/// swapping optics. Unlike the in-session variant, this is
+/// `probablyIntentional`: switching gear between nights is a common,
+/// deliberate choice for a long-running project -- the finding only exists
+/// so the user notices before stacking the two nights together as if they
+/// were one uniform setup.
+public struct MixedSetupInTargetRule: AuditRule {
+    public let id = "mixed-setup-in-target"
+    public init() {}
+
+    public func evaluate(_ ctx: AuditContext) -> [Finding] {
+        var datesByTarget: [String: Set<String>] = [:]
+        for file in ctx.files where file.area == .sessions && file.role == .light {
+            guard let target = file.target, let date = file.sessionDate else { continue }
+            datesByTarget[target, default: []].insert(date)
+        }
+
+        var findings: [Finding] = []
+        for target in datesByTarget.keys.sorted() {
+            let dates = (datesByTarget[target] ?? []).sorted()
+
+            var dominantDescriptors: [String] = []
+            for date in dates {
+                let sessionLights = ctx.files.filter {
+                    $0.area == .sessions && $0.role == .light && $0.target == target && $0.sessionDate == date
+                }
+                let buckets = FrameSet.lightBuckets(files: sessionLights, meta: ctx.fitsMetaByFileID, config: ctx.config)
+                let counts = EquipmentProfile.fingerprintCounts(usableLights: buckets.usable, meta: ctx.fitsMetaByFileID)
+                if let dominant = EquipmentProfile.dominant(counts) {
+                    dominantDescriptors.append(dominant.descriptor)
+                }
+            }
+
+            let distinct = Set(dominantDescriptors).sorted()
+            guard distinct.count >= 2 else { continue }
+
+            findings.append(Finding(
+                severity: .probablyIntentional,
+                category: id,
+                path: "sessions/\(target)",
+                message: "A célpont session-jei eltérő eszköz-összeállítást használnak: \(distinct.joined(separator: ", ")).",
+                suggestion: nil
+            ))
+        }
+        return findings
+    }
+}

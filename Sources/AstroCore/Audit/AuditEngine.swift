@@ -67,6 +67,8 @@ public final class AuditEngine {
             LooseFramesInDateDirRule(),
             ToolOutputRule(),
             CoolerNotReachingSetpointRule(),
+            MixedSetupInSessionRule(),
+            MixedSetupInTargetRule(),
         ]
     }
 

@@ -59,6 +59,10 @@ public struct SessionDetail: Codable, Sendable, Equatable {
     /// marker) -- the session is still listed here with its own real
     /// numbers, but excluded from its target's `TargetStats` usable totals.
     public var isExcludedFromTotals: Bool
+    /// This session's dominant `SetupFingerprint.descriptor` (R6-3) across
+    /// its usable lights -- `nil` when no usable light has a derivable
+    /// fingerprint at all (e.g. an entirely bare-header DSLR session).
+    public var setupDescriptor: String?
 
     public init(
         target: String,
@@ -79,7 +83,8 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         usableLightCount: Int? = nil,
         rejectedCount: Int = 0,
         duplicateLinkCount: Int = 0,
-        isExcludedFromTotals: Bool = false
+        isExcludedFromTotals: Bool = false,
+        setupDescriptor: String? = nil
     ) {
         self.target = target
         self.dateRaw = dateRaw
@@ -100,12 +105,13 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         self.rejectedCount = rejectedCount
         self.duplicateLinkCount = duplicateLinkCount
         self.isExcludedFromTotals = isExcludedFromTotals
+        self.setupDescriptor = setupDescriptor
     }
 
     private enum CodingKeys: String, CodingKey {
         case target, dateRaw, lightCount, flatCount, darkCount, biasCount, integrationSeconds,
              exposureBreakdown, cameras, focalLengthsMM, gains, sensorTempsC, filters, hasReadme, tags,
-             usableLightCount, rejectedCount, duplicateLinkCount, isExcludedFromTotals
+             usableLightCount, rejectedCount, duplicateLinkCount, isExcludedFromTotals, setupDescriptor
     }
 
     public init(from decoder: Decoder) throws {
@@ -133,6 +139,8 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         rejectedCount = try c.decodeIfPresent(Int.self, forKey: .rejectedCount) ?? 0
         duplicateLinkCount = try c.decodeIfPresent(Int.self, forKey: .duplicateLinkCount) ?? 0
         isExcludedFromTotals = try c.decodeIfPresent(Bool.self, forKey: .isExcludedFromTotals) ?? false
+        // Additive R6-3 field: absent in pre-R6-3 JSON, falls back to nil.
+        setupDescriptor = try c.decodeIfPresent(String.self, forKey: .setupDescriptor)
     }
 }
 
@@ -202,6 +210,9 @@ public enum SessionStatsQueries {
             if let setTemp = meta?.setTemp { sensorTemps.insert((setTemp * 2).rounded() / 2) }
         }
 
+        let fingerprintCounts = EquipmentProfile.fingerprintCounts(usableLights: frameBuckets.usable, meta: metaByFileID)
+        let setupDescriptor = EquipmentProfile.dominant(fingerprintCounts)?.descriptor
+
         let tags = try db.tags(target: target, sessionDate: date)
 
         let excludedLabels = Set(config.stats.excludeLabels.map { $0.lowercased() })
@@ -232,7 +243,8 @@ public enum SessionStatsQueries {
             usableLightCount: frameBuckets.usable.count,
             rejectedCount: frameBuckets.rejected.count,
             duplicateLinkCount: frameBuckets.duplicateLinkCount,
-            isExcludedFromTotals: isExcluded
+            isExcludedFromTotals: isExcluded,
+            setupDescriptor: setupDescriptor
         )
     }
 }
