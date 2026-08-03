@@ -385,6 +385,34 @@ final class AppState: @unchecked Sendable {
         }
     }
 
+    /// Renders and writes one target's acquisition export (`astrobin`/`csv`/
+    /// `md`) under `.astro_tool/exports/` and reveals it in Finder -- the
+    /// Statisztika tab's per-target "Exportálás…" menu.
+    func exportAcquisition(target: String, format: ExportFormat) {
+        guard let db else { return }
+        let cfg = config
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        let writeGuard = WriteGuard(root: root)
+
+        let opID = beginOperation("Exportálás…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let url = try await Task.detached(priority: .userInitiated) {
+                    try AcquisitionExport.write(
+                        target: target, format: format, timestamp: Date(), db: db, config: cfg, using: writeGuard
+                    )
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.progressText = "Exportálva: \(url.lastPathComponent)"
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
     // MARK: - Cleanup
 
     /// Loads the size-ordered cleanup report (residue + duplicate-content

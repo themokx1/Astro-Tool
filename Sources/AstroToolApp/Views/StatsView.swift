@@ -334,8 +334,15 @@ struct StatsView: View {
     @ViewBuilder
     private func actionsCell(_ row: StatsRow) -> some View {
         switch row.kind {
-        case .target:
-            EmptyView()
+        case .target(let stats):
+            Menu("Exportálás…") {
+                Button("AstroBin CSV") { appState.exportAcquisition(target: stats.target, format: .astrobin) }
+                Button("CSV") { appState.exportAcquisition(target: stats.target, format: .csv) }
+                Button("Markdown") { appState.exportAcquisition(target: stats.target, format: .md) }
+            }
+            .menuStyle(.borderlessButton)
+            .font(.caption)
+            .fixedSize()
         case .session(let target, let detail):
             Button("Kalibráció linkelése…") {
                 linkingSession = LinkingSession(target: target, date: detail.dateRaw)

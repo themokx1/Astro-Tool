@@ -89,6 +89,9 @@ astrotool config path
 
 astrotool plan
 # Ma esti észlelési terv: célpontonként megvan/hiányzó óra, kulmináció, láthatósági ablak, Hold-zavarás, verdikt.
+
+astrotool export --target M31 --format astrobin
+# AstroBin bulk-import CSV a célpont TRUE (dedupolt) acquisition-adataiból, .astro_tool/exports/ alá írva.
 ```
 
 Minden parancs elfogadja a `--root <PATH>` kapcsolót az alapértelmezett könyvtár felülbírálására.
@@ -123,6 +126,43 @@ M31_Andromeda  0:05     —        03:10       74°      22:44–03:10    32°/7
 - **Cél**: a célpont-szintű `goal:<óra>h` tag (pl. `astrotool tag add
   --target M31 goal:8h`) adja meg, mennyi integrációt szeretnél összesen —
   ennek hiányában a "CÉL" oszlop `—`.
+
+## Exportálás
+
+Egy célpont publikálásához az `astrotool export` egyetlen paranccsal
+előállítja a TRUE (dedupolt, `_hibas`-kizárt) számokból az acquisition-
+riportot, három formátumban:
+
+```bash
+astrotool export --target M31 --format astrobin
+# date,filter,number,duration,binning,gain,sensorCooling,darks,flats,flatDarks,bias,bortle,meanSqm
+# 2026-03-15,L-eXtreme,42,300,,100,-10,4,6,2,4,,
+# 2026-03-16,L-eXtreme,18,300,,100,-10,3,6,0,4,,
+
+astrotool export --target M31 --format csv --out -
+# Gazdagabb, session-önkénti CSV (frames_usable, integration_s, kamera,
+# gain/ISO, FWHM medián, háttér e-/s/arcsec², címkék stb.), stdoutra.
+
+astrotool export --target M31 --format md
+# Emberi session-napló Markdownban (.astro_tool/exports/ alá írva).
+```
+
+- `--format astrobin`: AstroBin "long acquisition" bulk-importjához pontos
+  fejléccel, session×nominális-expozíció csoportonként egy sorral. A
+  `_hibas`-kizárt session-ök teljesen kimaradnak (nem szabad publikálni
+  őket); a `binning` oszlop mindig üres, mert a light-oldali binning ma
+  nincs elmentve (sosem tippel `1`-et).
+- `--format csv`: általánosabb, session-önkénti CSV minőség-adatokkal
+  (`SessionQuality`-vel joinolva) és címkékkel — teljes napló, a kizárt
+  session-ök is szerepelnek benne.
+- `--format md`: emberi, magyar címkéjű session-napló — célpont-fejléc,
+  session-önkénti alszakaszok, záró összegzés (session-szám, integráció,
+  cél haladás % ha van `goal:Xh` tag).
+- `--out -` a tartalmat stdoutra írja fájl nélkül; `--out PATH` a
+  könyvtáron KÍVÜLI tetszőleges útvonalra ír. `--out` nélkül az eszköz
+  `.astro_tool/exports/<célpont>-<időbélyeg>.<csv|md>` alá ír és kiírja az
+  útvonalat. Az alkalmazásban a Statisztika fül célpont-sorának Műveletek
+  cellájában az "Exportálás…" menü ugyanezt teszi, Finder-reveal-lel.
 
 ## Konfiguráció
 

@@ -912,6 +912,52 @@ private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Doubl
     #expect(result.stdout.contains("M31_Andromeda"))
 }
 
+// MARK: - export
+
+@Test func exportOutDashPrintsContentToStdoutWithoutWritingAFile() throws {
+    let root = try makeTempRoot("export-stdout")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeProjectsFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, exptime: 300.0)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["export", "--root", root.path, "--target", "M31_Andromeda", "--format", "astrobin", "--out", "-"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.hasPrefix("date,filter,number,duration,binning,gain,sensorCooling,darks,flats,flatDarks,bias,bortle,meanSqm"))
+    #expect(result.stdout.contains("2026-08-01"))
+
+    let exportsDir = root.appendingPathComponent(".astro_tool/exports")
+    #expect(!FileManager.default.fileExists(atPath: exportsDir.path))
+}
+
+@Test func exportDefaultModeWritesFileUnderExportsAndPrintsPath() throws {
+    let root = try makeTempRoot("export-file")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeProjectsFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, exptime: 300.0)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["export", "--root", root.path, "--target", "M31_Andromeda", "--format", "md"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let printedPath = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    #expect(printedPath.hasPrefix(root.appendingPathComponent(".astro_tool/exports").path))
+    #expect(printedPath.hasSuffix(".md"))
+    #expect(FileManager.default.fileExists(atPath: printedPath))
+}
+
+@Test func exportMissingTargetOrFormatExitsWithError() throws {
+    let root = try makeTempRoot("export-missing-flags")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let result = try runCLI(["export", "--root", root.path, "--format", "csv"])
+    #expect(result.exitCode == 1)
+}
+
 // MARK: - misc
 
 @Test func unknownSubcommandExitsWithUsage() throws {

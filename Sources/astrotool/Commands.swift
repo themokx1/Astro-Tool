@@ -42,6 +42,7 @@ Commands:
   tag list      [--target T] [--date D] [--root R] [--json]
   plan          [--date YYYY-MM-DD] [--min-alt 30] [--root R] [--json]
   projects      [--root R] [--json]
+  export        --target T --format astrobin|csv|md [--out PATH] [--root R]
 
   --version     Print version and exit
   --help        Show this help
@@ -1330,4 +1331,67 @@ private func printProjectsGrouped(_ projects: [ProjectState]) {
             }
         }
     }
+}
+
+// MARK: - export
+
+/// `astrotool export --target T --format astrobin|csv|md [--out PATH]` --
+/// publish-ready acquisition report for one target (see
+/// `AcquisitionExport`). Default behavior writes under
+/// `.astro_tool/exports/` via `WriteGuard` and prints the resulting path.
+/// `--out -` prints the rendered content to stdout instead of writing any
+/// file. `--out PATH` writes to an arbitrary path OUTSIDE the library root
+/// via plain `FileManager` (allowed since it's the user's own destination,
+/// e.g. a Desktop folder to hand off to AstroBin) -- a `--out` path that
+/// resolves INSIDE the library root is rejected, since inside the library
+/// only `WriteGuard`'s own `.astro_tool/` paths are legal writes.
+func cmdExport(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--format", takesValue: true),
+        FlagSpec("--out", takesValue: true),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    guard let target = parsed.value("--target"), let formatRaw = parsed.value("--format") else {
+        eprint("error: --target and --format are required")
+        eprint(usageText)
+        return 1
+    }
+    guard let format = ExportFormat(rawValue: formatRaw) else {
+        eprint("error: invalid --format (expected astrobin, csv, or md): \(formatRaw)")
+        eprint(usageText)
+        return 1
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    if let out = parsed.value("--out") {
+        if out == "-" {
+            let content = try AcquisitionExport.render(target: target, format: format, db: db, config: config)
+            print(content, terminator: "")
+            return 0
+        }
+
+        let rootURL = URL(fileURLWithPath: config.rootPath, isDirectory: true).standardizedFileURL
+        let resolvedOut = URL(fileURLWithPath: out).standardizedFileURL
+        guard resolvedOut.path != rootURL.path, !resolvedOut.path.hasPrefix(rootURL.path + "/") else {
+            eprint("error: --out path is inside the library root; only .astro_tool/exports (the default, omit --out) may be written there")
+            return 1
+        }
+
+        let content = try AcquisitionExport.render(target: target, format: format, db: db, config: config)
+        try FileManager.default.createDirectory(at: resolvedOut.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(content.utf8).write(to: resolvedOut)
+        print(resolvedOut.path)
+        return 0
+    }
+
+    let writeGuard = makeWriteGuard(config: config)
+    let url = try AcquisitionExport.write(target: target, format: format, timestamp: Date(), db: db, config: config, using: writeGuard)
+    print(url.path)
+    return 0
 }

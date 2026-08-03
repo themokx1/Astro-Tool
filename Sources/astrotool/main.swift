@@ -36,6 +36,7 @@ do {
     case "tag": exitCode = try cmdTag(rest)
     case "plan": exitCode = try cmdPlan(rest)
     case "projects": exitCode = try cmdProjects(rest)
+    case "export": exitCode = try cmdExport(rest)
     default:
         eprint(usageText)
         exit(1)

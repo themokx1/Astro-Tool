@@ -10,6 +10,28 @@ történik.
 
 ### Added
 
+- **Acquisition export (`astrotool export`)**: publikálásra kész
+  acquisition-riport egyetlen paranccsal/gombbal, a TRUE (dedupolt) számokból
+  — nincs több kézi adatgyűjtés session-önként. Új
+  `Sources/AstroCore/Export/AcquisitionExport.swift` (`ExportFormat`:
+  `astrobin`/`csv`/`md`, `render(target:format:db:config:)`/
+  `write(target:format:timestamp:db:config:using:)`). `astrobin`: AstroBin
+  "long acquisition" bulk-import CSV-je (`date,filter,number,duration,
+  binning,gain,sensorCooling,darks,flats,flatDarks,bias,bortle,meanSqm`
+  fejléc), egy sor session×nominális-expozíció csoportonként; `_hibas`-
+  kizárt session teljesen kimarad, binning mindig üres (a light-oldali
+  binning ma nincs elmentve, sosem tippel 1-et). `csv`: gazdagabb,
+  session-önkénti általános CSV, `SessionQualitySummary`-vel joinolva,
+  szabványos vessző/idézőjel-escaping-gel. `md`: emberi session-napló magyar
+  címkékkel, célpont-fejléc + session-önkénti alszakaszok (README, keretek,
+  expozíciók, kamera/optika, minőség, idővonal) + záró "Összegzés" (session-
+  szám, összes usable integráció, cél haladás % ha van `goal:Xh` tag). CLI:
+  `astrotool export --target T --format astrobin|csv|md [--out PATH]
+  [--root R]` — alapból `.astro_tool/exports/`-be ír és kiírja az útvonalat,
+  `--out -` stdoutra, `--out PATH` a könyvtáron kívülre engedélyezett. App:
+  Statisztika fül célpont-sorának Műveletek cellájában "Exportálás…" menü
+  (AstroBin CSV / CSV / Markdown) → Finder-reveal.
+
 - **Észlelés-tervező (`astrotool plan`)**: a könyvtár-kezelőt éjszakai
   tervezővé bővítő új parancs — minden ismert célponthoz megmutatja a meglévő
   (usable) integrációt, a hiányzó órákat (a meglévő `goal:<óra>h` tag alapján,
