@@ -43,6 +43,7 @@ Commands:
   plan          [--date YYYY-MM-DD] [--min-alt 30] [--root R] [--json]
   projects      [--root R] [--json]
   export        --target T --format astrobin|csv|md [--out PATH] [--root R]
+  health        --target T [--date D] [--root R] [--json]
 
   --version     Print version and exit
   --help        Show this help
@@ -1453,4 +1454,62 @@ func cmdExport(_ args: [String]) throws -> Int32 {
     let url = try AcquisitionExport.write(target: target, format: format, timestamp: Date(), db: db, config: config, using: writeGuard)
     print(url.path)
     return 0
+}
+
+// MARK: - health
+
+/// `astrotool health --target T [--date D] [--json]` -- R6-2's per-night
+/// hardware health (cooler stability + focus drift). Without `--date`,
+/// iterates every session date-dir on record for `target` (same enumeration
+/// `SessionStatsQueries.sessions` uses), printing all of them -- unlike
+/// `quality`/`stats --timeline`, there's no separate "gross" flag here to
+/// filter n/a-only nights, so a target with mostly DSLR/unrated nights still
+/// shows every session's verdicts (including the n/a ones) rather than
+/// silently hiding them.
+func cmdHealth(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--date", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    guard let target = parsed.value("--target") else {
+        eprint("error: --target is required")
+        eprint(usageText)
+        return 1
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let dates: [String]
+    if let date = parsed.value("--date") {
+        dates = [date]
+    } else {
+        dates = try SessionStatsQueries.sessions(target: target, db: db, config: config).map(\.dateRaw)
+    }
+
+    let reports = try dates.map { try NightHealth.report(target: target, date: $0, db: db, config: config) }
+
+    if parsed.has("--json") {
+        try printJSON(reports)
+    } else {
+        printHealthReports(reports)
+    }
+    return 0
+}
+
+private func printHealthReports(_ reports: [NightHealthReport]) {
+    guard !reports.isEmpty else {
+        print("no sessions")
+        return
+    }
+    for r in reports {
+        print("session: \(r.target) / \(r.date)")
+        print("  Hűtés: \(r.cooler.verdict)")
+        print("  Fókusz: \(r.focus.verdict)")
+    }
 }

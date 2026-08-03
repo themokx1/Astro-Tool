@@ -228,6 +228,7 @@ struct QualityView: View {
         .onChange(of: selectedTarget) { _, newTarget in
             selectedSessionDate = nil
             appState.sessionTimeline = nil
+            appState.nightHealth = nil
             if let newTarget {
                 appState.loadQualitySummaries(target: newTarget)
             } else {
@@ -266,6 +267,10 @@ struct QualityView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ProgressView().controlSize(.small)
+                }
+
+                if let health = appState.nightHealth, health.date == date {
+                    hardwareHealthLine(health)
                 }
             }
         }
@@ -306,6 +311,31 @@ struct QualityView: View {
             selectedSessionDate = summary.date
             appState.loadSessionTimeline(target: target, date: summary.date)
         }
+    }
+
+    /// "Hűtés: stabil · Fókusz: fókuszcsúszás gyanú (+0.6"/3 óra)" -- the
+    /// R6-2 hardware-health line, color-coded per verdict word (green
+    /// "stabil", orange "gyanú"/"nem tartja", secondary for anything else
+    /// including the "n/a" cases).
+    private func hardwareHealthLine(_ health: NightHealthReport) -> some View {
+        HStack(spacing: 4) {
+            Text("Hűtés: \(health.cooler.verdict)")
+                .foregroundStyle(verdictColor(health.cooler.verdict))
+            Text("·").foregroundStyle(.secondary)
+            Text("Fókusz: \(health.focus.verdict)")
+                .foregroundStyle(verdictColor(health.focus.verdict))
+        }
+        .font(.caption)
+    }
+
+    private func verdictColor(_ verdict: String) -> Color {
+        if verdict == "stabil" || verdict == "stabil fókusz" {
+            return .green
+        }
+        if verdict.contains("gyanú") || verdict.contains("nem tartja") {
+            return .orange
+        }
+        return .secondary
     }
 
     /// "Ablak 3:42 · integráció 2:11 · hatékonyság 59% · 2 kiesés (37m, 12m)"

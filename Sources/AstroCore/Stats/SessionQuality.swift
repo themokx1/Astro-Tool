@@ -84,6 +84,15 @@ public enum SessionQuality {
     /// 1000` simplifies to `206.265 * xpixsz / focallen`.
     private static let arcsecPerRadianOverMM = 206.265
 
+    /// The arcsec/pixel scale for one frame's `xpixsz`/`focallen` pair --
+    /// `nil` whenever either is missing or `focallen` isn't positive. Shared
+    /// with `NightHealth` (R6-2's focus-drift arcsec conversion) so the two
+    /// features never compute this differently.
+    static func pixelScaleArcsec(xpixsz: Double?, focallen: Double?) -> Double? {
+        guard let xpixsz, let focallen, focallen > 0 else { return nil }
+        return arcsecPerRadianOverMM * xpixsz / focallen
+    }
+
     /// One entry per session date-dir on record for `target` (mirrors
     /// `SessionStatsQueries.sessions`'s date enumeration), ranked by
     /// ascending `medianFWHMArcsec`. `[]` if the target has no session-area
@@ -142,10 +151,7 @@ public enum SessionQuality {
             m.score = rating.score
 
             let meta = metaByFileID[id]
-            var pixelScale: Double?
-            if let xpixsz = meta?.xpixsz, let focallen = meta?.focallen, focallen > 0 {
-                pixelScale = arcsecPerRadianOverMM * xpixsz / focallen
-            }
+            let pixelScale = pixelScaleArcsec(xpixsz: meta?.xpixsz, focallen: meta?.focallen)
             m.pixelScale = pixelScale
 
             if let fwhm = rating.fwhm, let scale = pixelScale {

@@ -100,6 +100,18 @@ public struct CalibRule: Codable, Equatable, Sendable {
     /// compared when BOTH sides have a `ROTATOR` value (same "nothing to
     /// compare" rule as `matchOffset`/`matchCamera`). Default 2.0°.
     public var rotatorToleranceDeg: Double
+    /// R6-2 (`NightHealth`'s cooler-health verdict + the
+    /// `cooler-not-reaching-setpoint` audit rule): a frame's cooler is
+    /// considered "out of band" once `|CCD-TEMP - SET-TEMP|` exceeds this
+    /// many degrees C -- a cooled CMOS camera's own set-point wobble is
+    /// small (see this struct's top-level doc comment), so 1.0°C safely
+    /// separates normal jitter from an actual failure to hold temperature
+    /// (e.g. a hot summer night the ASI2600's cooler can't keep up with).
+    /// Only ever compared when BOTH sides have a value (same "nothing to
+    /// compare" rule as `matchOffset`/`matchCamera` -- a DSLR frame with no
+    /// `SET-TEMP` header never contributes to this check at all). Default
+    /// 1.0°C.
+    public var coolerToleranceC: Double
 
     public init(
         tempToleranceC: Double = 1.0,
@@ -112,7 +124,8 @@ public struct CalibRule: Codable, Equatable, Sendable {
         gainTolerance: Double = 0,
         exposureToleranceFraction: Double = 0.02,
         flatMaxAgeDays: Int = 30,
-        rotatorToleranceDeg: Double = 2.0
+        rotatorToleranceDeg: Double = 2.0,
+        coolerToleranceC: Double = 1.0
     ) {
         self.tempToleranceC = tempToleranceC
         self.exposureToleranceS = exposureToleranceS
@@ -125,13 +138,14 @@ public struct CalibRule: Codable, Equatable, Sendable {
         self.exposureToleranceFraction = exposureToleranceFraction
         self.flatMaxAgeDays = flatMaxAgeDays
         self.rotatorToleranceDeg = rotatorToleranceDeg
+        self.coolerToleranceC = coolerToleranceC
     }
 
     private enum CodingKeys: String, CodingKey {
         case tempToleranceC, exposureToleranceS, darkMaxAgeMonths
         case matchGain, matchOffset, matchBinning, matchCamera
         case gainTolerance, exposureToleranceFraction
-        case flatMaxAgeDays, rotatorToleranceDeg
+        case flatMaxAgeDays, rotatorToleranceDeg, coolerToleranceC
     }
 
     public init(from decoder: any Decoder) throws {
@@ -148,6 +162,7 @@ public struct CalibRule: Codable, Equatable, Sendable {
         self.exposureToleranceFraction = try container.decodeIfPresent(Double.self, forKey: .exposureToleranceFraction) ?? defaults.exposureToleranceFraction
         self.flatMaxAgeDays = try container.decodeIfPresent(Int.self, forKey: .flatMaxAgeDays) ?? defaults.flatMaxAgeDays
         self.rotatorToleranceDeg = try container.decodeIfPresent(Double.self, forKey: .rotatorToleranceDeg) ?? defaults.rotatorToleranceDeg
+        self.coolerToleranceC = try container.decodeIfPresent(Double.self, forKey: .coolerToleranceC) ?? defaults.coolerToleranceC
     }
 }
 

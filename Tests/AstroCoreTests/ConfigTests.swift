@@ -29,6 +29,7 @@ import Testing
     #expect(config.calib.exposureToleranceFraction == 0.02)
     #expect(config.calib.flatMaxAgeDays == 30)
     #expect(config.calib.rotatorToleranceDeg == 2.0)
+    #expect(config.calib.coolerToleranceC == 1.0)
 
     #expect(config.rating.workers == 4)
     #expect(config.rating.outlierZScore == 2.0)
@@ -88,6 +89,7 @@ import Testing
     #expect(rule.exposureToleranceFraction == 0.02)
     #expect(rule.flatMaxAgeDays == 30)
     #expect(rule.rotatorToleranceDeg == 2.0)
+    #expect(rule.coolerToleranceC == 1.0)
 }
 
 @Test func decodingPartialCalibRuleFillsMissingKeysWithDefaults() throws {
@@ -100,6 +102,7 @@ import Testing
     #expect(config.calib.flatMaxAgeDays == 45)
     #expect(config.calib.rotatorToleranceDeg == 2.0)
     #expect(config.calib.tempToleranceC == 1.0)
+    #expect(config.calib.coolerToleranceC == 1.0)
 }
 
 @Test func defaultRatingRuleHasExpectedValues() {

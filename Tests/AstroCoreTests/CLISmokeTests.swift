@@ -485,6 +485,69 @@ struct CLISmokeTests {
     #expect(result.exitCode == 1)
 }
 
+// MARK: - health
+
+@Test func healthJSONAfterScanDecodesForFixtureTarget() throws {
+    let root = try makeTempRoot("health-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["health", "--root", root.path, "--target", "M45_Pleiades", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let reports = try #require(json)
+    #expect(!reports.isEmpty)
+    #expect(reports.allSatisfy { $0["target"] as? String == "M45_Pleiades" })
+    #expect(reports.allSatisfy { $0["cooler"] != nil && $0["focus"] != nil })
+}
+
+@Test func healthHumanOutputPrintsCoolerAndFocusLines() throws {
+    let root = try makeTempRoot("health-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["health", "--root", root.path, "--target", "M45_Pleiades"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("Hűtés:"))
+    #expect(result.stdout.contains("Fókusz:"))
+}
+
+@Test func healthWithoutTargetExitsWithError() throws {
+    let root = try makeTempRoot("health-no-target")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["health", "--root", root.path])
+    #expect(result.exitCode == 1)
+}
+
+@Test func healthWithDateFlagFiltersToSingleSession() throws {
+    let root = try makeTempRoot("health-date")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["health", "--root", root.path, "--target", "M45_Pleiades", "--date", "2026-01-10", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let reports = try #require(json)
+    #expect(reports.count == 1)
+    #expect(reports.first?["date"] as? String == "2026-01-10")
+}
+
 // MARK: - tag
 
 @Test func tagAddThenListShowsIt() throws {

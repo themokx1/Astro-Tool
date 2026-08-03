@@ -66,6 +66,7 @@ public final class AuditEngine {
             EmptyTargetComponentRule(),
             LooseFramesInDateDirRule(),
             ToolOutputRule(),
+            CoolerNotReachingSetpointRule(),
         ]
     }
 

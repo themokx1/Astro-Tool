@@ -74,6 +74,11 @@ final class AppState: @unchecked Sendable {
     /// The night-timeline for whichever session row is currently selected in
     /// the quality summary section, `nil` until one is selected/loaded.
     var sessionTimeline: SessionTimeline?
+    /// The per-night hardware-health report (cooler stability + focus
+    /// drift, R6-2) for whichever session row is currently selected --
+    /// loaded alongside `sessionTimeline` by `loadSessionTimeline`, `nil`
+    /// under the same conditions.
+    var nightHealth: NightHealthReport?
 
     /// The plan currently shown in `CalibLinkSheet`, `nil` while it's still
     /// loading (or the sheet isn't open). Cleared whenever the sheet closes
@@ -813,6 +818,7 @@ final class AppState: @unchecked Sendable {
         guard let db else { return }
         let cfg = config
         sessionTimeline = nil
+        nightHealth = nil
 
         let opID = beginOperation("Minőség-összegzés számítása…")
         currentTask = Task { [weak self] in
@@ -831,8 +837,11 @@ final class AppState: @unchecked Sendable {
         }
     }
 
-    /// Loads the night timeline for one session -- called when a row in the
-    /// quality summary section is selected.
+    /// Loads the night timeline AND the per-night hardware-health report
+    /// (cooler stability + focus drift, R6-2) for one session -- called
+    /// when a row in the quality summary section is selected. Both reads
+    /// are cheap DB-only queries over the same session, so they share one
+    /// background hop rather than two separate operations/progress texts.
     func loadSessionTimeline(target: String, date: String) {
         guard let db else { return }
         let cfg = config
@@ -842,10 +851,13 @@ final class AppState: @unchecked Sendable {
             guard let self else { return }
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    try SessionTimeline.timeline(target: target, date: date, db: db, config: cfg)
+                    let timeline = try SessionTimeline.timeline(target: target, date: date, db: db, config: cfg)
+                    let health = try NightHealth.report(target: target, date: date, db: db, config: cfg)
+                    return (timeline, health)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.sessionTimeline = result
+                self.sessionTimeline = result.0
+                self.nightHealth = result.1
             } catch {
                 self.handle(error)
             }

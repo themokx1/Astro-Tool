@@ -10,6 +10,33 @@ történik.
 
 ### Added
 
+- **Éjszakai hardver-egészség (`astrotool health`)**: session-önkénti
+  hűtő-stabilitás + fókusz-trend egy paranccsal/fülön — nyáron az ASI2600
+  hűtője nem biztos, hogy tartja a -20°C célhőmérsékletet, ami csendben
+  lerontja a dark-kalibrációt; a FWHM éjszakán belüli emelkedése pedig
+  fókuszcsúszásra/páralecsapódásra utal, ami a KÖVETKEZŐ éjszaka
+  újrafókusz-intervallumát alapozza meg. Új
+  `Sources/AstroCore/Stats/NightHealth.swift`
+  (`NightHealth.report(target:date:db:config:)`) — (a) **hűtés**: minden
+  usable light frame páros `CCD-TEMP`/`SET-TEMP` (`fits_meta`) eltérésének
+  mediánja, max abszolút eltérése, és a `calib.coolerToleranceC`-n (alapból
+  1.0°C) túli keretek aránya — `"stabil"` / `"hűtő nem tartja a
+  célhőmérsékletet (max +3.2°C, a keretek 34%-án)"` / `"n/a — nincs hűtési
+  adat"` (DSLR, nincs SET-TEMP header); (b) **fókusz**: a session pontozott
+  keretjeinek `ratings.fwhm` (px) lineáris regressziója az idő (óra)
+  függvényében, arcsec/óraban ha a session-nek van pixel-skálája
+  (`xpixsz`+`focallen`, a `SessionQuality`-vel megosztott
+  `pixelScaleArcsec` helperen át), egyébként px/óraban — `"stabil fókusz"`
+  / `"fókuszcsúszás gyanú (+0.6"/3 óra)"` / `"javuló FWHM
+  (lehűlés/seeing) (...)"` / `"n/a — kevés pontozott keret"` (5-nél
+  kevesebb pontozott keret). Új `AstroConfig.calib.coolerToleranceC: Double
+  = 1.0` mező, megosztva az új `cooler-not-reaching-setpoint` audit
+  szabállyal (suspicious — session-önként, ha a keretek több mint 10%-a
+  lépi túl a hűtési tűrést). CLI: `astrotool health --target T [--date D]
+  [--json]` — `--date` nélkül a célpont összes session-je. App: Minőség fül
+  kiválasztott session-sorának idővonal-sora alá egy második, színkódolt
+  sort kapott (zöld "stabil", narancs "gyanú"/"nem tartja").
+
 - **Kalibráció-egészség riport (`astrotool calib --health`)**: flat-fegyelem,
   bias-készlet és dark-készlet egészség egy paranccsal/fülön. Új
   `Sources/AstroCore/Calib/CalibHealth.swift` (`CalibHealth.report(db:config:)`) —

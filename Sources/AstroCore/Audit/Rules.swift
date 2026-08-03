@@ -825,3 +825,65 @@ public struct ToolOutputRule: AuditRule {
         }
     }
 }
+
+// MARK: - 16. cooler-not-reaching-setpoint
+
+/// Per (target, session): the cooler failing to hold its CCD at `SET-TEMP`
+/// silently degrades dark calibration (dark current tracks the ACTUAL sensor
+/// temperature, not the requested one) -- a real risk on a hot summer night
+/// with a cooled CMOS camera like the ASI2600. Fires once a session's usable
+/// light frames (deduped via `FrameSet`, paired `CCD-TEMP`/`SET-TEMP` only)
+/// exceed `NightHealth.coolerOutOfBandFractionThreshold` (10%) beyond
+/// `config.calib.coolerToleranceC` -- exactly the same paired-delta
+/// convention and threshold `NightHealth`'s cooler-health verdict uses, so
+/// the two never disagree about what "the cooler isn't holding" means. A
+/// session with no paired reading at all (e.g. an all-DSLR night) is silent,
+/// same as `NightHealth`'s own "n/a" case.
+public struct CoolerNotReachingSetpointRule: AuditRule {
+    public let id = "cooler-not-reaching-setpoint"
+    public init() {}
+
+    private struct SessionKey: Hashable {
+        var target: String
+        var date: String
+    }
+
+    public func evaluate(_ ctx: AuditContext) -> [Finding] {
+        var sessionKeys = Set<SessionKey>()
+        for file in ctx.files where file.area == .sessions && file.role == .light {
+            guard let target = file.target, let date = file.sessionDate else { continue }
+            sessionKeys.insert(SessionKey(target: target, date: date))
+        }
+
+        var findings: [Finding] = []
+        for key in sessionKeys.sorted(by: { ($0.target, $0.date) < ($1.target, $1.date) }) {
+            let sessionLights = ctx.files.filter {
+                $0.area == .sessions && $0.role == .light && $0.target == key.target && $0.sessionDate == key.date
+            }
+            let buckets = FrameSet.lightBuckets(files: sessionLights, meta: ctx.fitsMetaByFileID, config: ctx.config)
+            let usableMetas = buckets.usable.compactMap { $0.id.flatMap { ctx.fitsMetaByFileID[$0] } }
+
+            let deltas = CoolerStats.pairedDeltas(usableMetas)
+            guard !deltas.isEmpty else { continue }
+
+            let outOfBandCount = deltas.filter { abs($0) > ctx.config.calib.coolerToleranceC }.count
+            let fraction = Double(outOfBandCount) / Double(deltas.count)
+            guard fraction > NightHealth.coolerOutOfBandFractionThreshold else { continue }
+
+            let worst = deltas.max(by: { abs($0) < abs($1) }) ?? 0
+            let percent = Int((fraction * 100).rounded())
+            findings.append(Finding(
+                severity: .suspicious,
+                category: id,
+                path: "sessions/\(key.target)/\(key.date)",
+                message: "A hűtő nem tartja a célhőmérsékletet: a keretek \(percent)%-a \(formatted(ctx.config.calib.coolerToleranceC))°C-nál jobban eltér a célhőmérséklettől (max \(String(format: "%+.1f", worst))°C).",
+                suggestion: nil
+            ))
+        }
+        return findings
+    }
+
+    private func formatted(_ value: Double) -> String {
+        String(format: "%g", value)
+    }
+}
