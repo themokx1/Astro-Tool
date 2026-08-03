@@ -118,7 +118,7 @@ Fontos, amit a kód-olvasás során találtam: **a `fits_meta.header_json` a TEL
 - **Miért**: Ez a hobbi *tényleges* döntése minden derült estén, és ma kézzel, Stellariummal + fejben tartott integrációs számokkal történik. Egy könyvtár-menedzser tool pont ehhez tud a legjobb választ adni, mert **csak neki van meg, hogy miből mennyi van már**. Amatőr szinten: nem kezd olyan célpontot, ami 2 óra múlva lemegy. Haladó szinten: a szűk szezonablakos célpontokat priorizálja, és nem pazarol Hold közeli éjszakát széles sávra.
 - **Hogyan**: Teljesen számítás, **nulla dependency, nulla hálózat**:
   - Célpont RA/DEC: a `header_json`-ból (`CRVAL1`/`CRVAL2` a plate-solved WCS-ből, fallback `RA`/`DEC`), célpontonként medián — a valós adatban minden ASIAIR light plate-solved.
-  - Helyszín: `SITELAT`/`SITELONG` a headerből (REDACTED / REDACTED a valós adatban), `config.site` override-dal.
+  - Helyszín: `SITELAT`/`SITELONG` a headerből (a valós adatban kitöltött), `config.site` override-dal.
   - Új `Sources/AstroCore/Sky/` — `SiderealTime.swift` (GMST/LST), `AltAz.swift` (RA/DEC + LST + lat → alt/az, airmass), `MoonSun.swift` (Meeus low-precision nap/hold pozíció + fázis, ±1' pontosság, ~250 sor, tesztelhető ismert dátumokra).
   - CLI `astrotool plan [--date D] [--min-alt 30] [--json]`; app: új „Terv" fül vagy egy Áttekintés-doboz („Ma este ezekre érdemes: …").
   - Cél-integráció: `goal:6h` konvenciós tag a meglévő `tags` táblában (nem kell új séma), vagy `config.targets.goals`.
