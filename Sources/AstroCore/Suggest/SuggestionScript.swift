@@ -15,10 +15,19 @@ import Foundation
 public enum SuggestionScript {
     /// Builds the script text, or `nil` if no finding produced any content
     /// (nothing with a non-nil suggestion at an included severity).
+    ///
+    /// `commentSuspicious` controls whether `.suspicious` findings' commands
+    /// are emitted commented-out (the default, safe behavior for a general
+    /// audit suggestion script) or fully active — the cleanup command passes
+    /// `false` since its `.suspicious` "cleanup-candidate" findings are
+    /// already reversible `mv`-into-quarantine moves, not something that
+    /// needs a second manual uncomment step on top of the script's own
+    /// blocking confirmation gate.
     public static func generate(
         findings: [Finding],
         root: URL,
-        includeSuspicious: Bool = false
+        includeSuspicious: Bool = false,
+        commentSuspicious: Bool = true
     ) -> String? {
         var blocks: [String] = []
         for finding in findings {
@@ -28,7 +37,7 @@ public enum SuggestionScript {
                 blocks.append(block(for: finding, root: root, commented: false))
             case .suspicious:
                 guard includeSuspicious else { continue }
-                blocks.append(block(for: finding, root: root, commented: true))
+                blocks.append(block(for: finding, root: root, commented: commentSuspicious))
             case .probablyIntentional:
                 continue
             }
@@ -70,9 +79,15 @@ public enum SuggestionScript {
         root: URL,
         includeSuspicious: Bool,
         timestamp: Date,
-        using writeGuard: WriteGuard
+        using writeGuard: WriteGuard,
+        commentSuspicious: Bool = true
     ) throws -> URL? {
-        guard let content = generate(findings: findings, root: root, includeSuspicious: includeSuspicious) else {
+        guard let content = generate(
+            findings: findings,
+            root: root,
+            includeSuspicious: includeSuspicious,
+            commentSuspicious: commentSuspicious
+        ) else {
             return nil
         }
 

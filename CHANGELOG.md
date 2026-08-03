@@ -10,6 +10,38 @@ történik.
 
 ### Added
 
+- **Méret szerint rendezett szemét-riport (`cleanup`)**: az audit már ismeri
+  a Siril-maradványokat (`.seq`/`.lst`/`r_*`/`process/` stb.) és a
+  duplikátum-tartalmakat findingenként, de nem volt egy összesítő válasz
+  arra, hogy „mit érdemes kitakarítani és mennyit nyerek vele". Új
+  `Sources/AstroCore/Audit/CleanupReport.swift`
+  (`CleanupGroup`/`CleanupSummary`/`CleanupReport.build(db:config:
+  maxPathsPerGroup:)`): kategóriánként (`residue-seq`/`residue-lst`/
+  `residue-process-dir`/`residue-other`/`duplicate-content`) csökkenő méret
+  szerint rendezett csoportok, csoportonként a legnagyobb fájlok felsorolva
+  (alapból max. 50, a többi csak számban). A duplikátum-csoport pazarolt
+  bájtja méret × (n−1), a megtartott példány a `sessions/` másolat (ha van),
+  egyébként az ábécé szerint első — ha még nem futott duplikátum-kereső
+  audit, a csoport egyszerűen hiányzik (nincs becslés/nullázás). A meglévő
+  `ResidueRule` glob-illesztő és `residueDirNames`-ellenőrző logikája egy
+  megosztott `ResidueMatcher` helperbe lett kiemelve (nincs duplikálva), és
+  a `toolOutputDirNames` alá eső fájlok sosem számítanak reziduumnak, akárhogy
+  is hívják őket. CLI: `astrotool cleanup [--root R] [--json] [--suggest]
+  [--limit N]` — emberi kimenet csoportonként méret + top útvonalak, majd
+  „összesen felszabadítható" összegzés. `--suggest` egy karantén-alapú,
+  visszafordítható scriptet ír: minden jelölt fájlt egy `.astro_tool/
+  cleanup_quarantine/<időbélyeg>/<eredeti relatív útvonal>` alá **mozgat**
+  (`mv`, mkdir -p a szülőkönyvtárra) — SOHA nem `rm`, a felhasználó a
+  karanténmappát később saját kézzel ürítheti. Ehhez a meglévő
+  `SuggestionScript` kapott egy `commentSuspicious: Bool = true` paramétert
+  (`generate`/`write`) — alapból (auditnál) változatlan a komment-soros
+  gyanús-találat viselkedés, a cleanup script viszont `false`-t ad át, hogy
+  a karantén-`mv`-k aktívan (nem kikommentelve) kerüljenek be. App:
+  Áttekintés fülön új „Takarítás" doboz (összesen felszabadítható + top 3
+  kategória) és „Takarítási script generálása" gomb (`AppState.
+  cleanupSummary`/`loadCleanup()`/`generateCleanupScript()`, audit után
+  automatikusan frissül).
+
 - **Kalibráció hard-linkelés (új írási művelet, kizárólag explicit gombra/
   parancsra)**: a tool megkeresi a session lightjaihoz illő master darkot,
   a flatjaihoz illő flat-darkot és a bias mastert a `calibration_library/`-ban

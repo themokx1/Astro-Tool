@@ -27,6 +27,7 @@ Usage: astrotool <command> [options]
 Commands:
   scan          [--root R] [--path SUB] [--json]
   audit         [--root R] [--json] [--suggest] [--include-suspicious] [--no-duplicates]
+  cleanup       [--root R] [--json] [--suggest] [--limit N]
   rate          [--root R] --target T [--date D] [--json] [--no-siril]
   stats         [--root R] [--target T] [--json] [--sessions (requires --target)] [--tag TAG]
   calib         [--root R] [--json]
@@ -282,6 +283,84 @@ private func printAuditFindings(_ findings: [Finding]) {
             }
         }
     }
+}
+
+// MARK: - cleanup
+
+/// Aggregated, size-ordered "what's worth cleaning up" report over residue
+/// files/dirs and duplicate-content groups already known to the DB (see
+/// `CleanupReport`). `--suggest` writes a reviewable script that quarantines
+/// (never deletes) every listed candidate — see `cleanupFindings` below.
+func cmdCleanup(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+        FlagSpec("--suggest", takesValue: false),
+        FlagSpec("--limit", takesValue: true),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let summary = try CleanupReport.build(db: db, config: config)
+
+    var suggestMessage: String?
+    if parsed.has("--suggest") {
+        let writeGuard = makeWriteGuard(config: config)
+        let timestamp = Date()
+        let findings = CleanupReport.quarantineFindings(for: summary, timestamp: timestamp)
+        let url = try SuggestionScript.write(
+            findings: findings,
+            root: writeGuard.root,
+            includeSuspicious: true,
+            timestamp: timestamp,
+            using: writeGuard,
+            commentSuspicious: false
+        )
+        suggestMessage = url.map { "cleanup script written to \($0.path)" } ?? "no cleanup candidates"
+    }
+
+    if parsed.has("--json") {
+        // Same stdout-purity contract as `audit --json --suggest`.
+        if let suggestMessage { eprint(suggestMessage) }
+        try printJSON(summary)
+    } else {
+        let limit = parsed.value("--limit").flatMap(Int.init) ?? 10
+        let sizeByPath = Dictionary(
+            (try db.allFiles(includeMissing: false)).map { ($0.path, $0.size) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        printCleanupReport(summary, limit: limit, sizeByPath: sizeByPath)
+        if let suggestMessage { print(suggestMessage) }
+    }
+    return 0
+}
+
+private func printCleanupReport(_ summary: CleanupSummary, limit: Int, sizeByPath: [String: Int64]) {
+    guard !summary.groups.isEmpty else {
+        print("nincs takarítható elem")
+        return
+    }
+
+    for group in summary.groups {
+        print("\(group.category)  \(group.fileCount) fájl  \(formatBytes(group.totalBytes))")
+        for path in group.paths.prefix(limit) {
+            print("  \(path)  \(formatBytes(sizeByPath[path] ?? 0))")
+        }
+        if group.truncatedCount > 0 {
+            print("  … és még \(group.truncatedCount) fájl (nincs kilistázva)")
+        }
+    }
+    print("")
+    print("összesen felszabadítható: \(formatBytes(summary.grandTotalBytes))")
+}
+
+private func formatBytes(_ bytes: Int64) -> String {
+    let formatter = ByteCountFormatter()
+    formatter.countStyle = .file
+    return formatter.string(fromByteCount: bytes)
 }
 
 // MARK: - rate

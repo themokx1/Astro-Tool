@@ -39,6 +39,8 @@ final class AppState: @unchecked Sendable {
     var lastRunID: Int64?
     var includeSuspiciousInScript: Bool = false
 
+    var cleanupSummary: CleanupSummary?
+
     var stats: [TargetStats] = []
     var selectedTarget: String?
     var sessionDetails: [SessionDetail] = []
@@ -301,6 +303,16 @@ final class AppState: @unchecked Sendable {
                 self.lastRunID = runID
                 self.findings = findings
                 self.progressText = "Audit kész: \(findings.count) találat"
+
+                // Best-effort refresh of the cleanup report, same as Stats/
+                // Calib get refreshed after a scan -- a failure here
+                // shouldn't turn an otherwise-successful audit into a
+                // reported error.
+                if let cleanupResult = try? await Task.detached(priority: .userInitiated, operation: {
+                    try CleanupReport.build(db: db, config: cfg)
+                }).value {
+                    self.cleanupSummary = cleanupResult
+                }
             } catch {
                 self.handle(error)
             }
@@ -336,6 +348,71 @@ final class AppState: @unchecked Sendable {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
                 } else {
                     self.progressText = "Nincs javasolható tétel."
+                }
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    // MARK: - Cleanup
+
+    /// Loads the size-ordered cleanup report (residue + duplicate-content
+    /// groups) for "Áttekintés"'s takarítás box. Safe to call any time the
+    /// DB has data -- unlike `runAudit`, this never runs duplicate-content
+    /// hashing itself, it only reads whatever's already cached.
+    func loadCleanup() {
+        guard let db else { return }
+        let cfg = config
+
+        let opID = beginOperation("Takarítási riport számítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try CleanupReport.build(db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.cleanupSummary = result
+                self.progressText = "Takarítási riport kész: \(result.groups.count) csoport"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Writes the quarantine-based cleanup suggestion script from the last
+    /// loaded `cleanupSummary` and reveals it in Finder. A no-op if there's
+    /// nothing to clean up.
+    func generateCleanupScript() {
+        guard let summary = cleanupSummary, !summary.groups.isEmpty else { return }
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        let writeGuard = WriteGuard(root: root)
+        let timestamp = Date()
+        let findings = CleanupReport.quarantineFindings(for: summary, timestamp: timestamp)
+
+        let opID = beginOperation("Takarítási script írása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let url = try await Task.detached(priority: .userInitiated) {
+                    try SuggestionScript.write(
+                        findings: findings,
+                        root: root,
+                        includeSuspicious: true,
+                        timestamp: timestamp,
+                        using: writeGuard,
+                        commentSuspicious: false
+                    )
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                if let url {
+                    self.progressText = "Takarítási script elmentve: \(url.lastPathComponent)"
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                } else {
+                    self.progressText = "Nincs takarítható tétel."
                 }
             } catch {
                 self.handle(error)

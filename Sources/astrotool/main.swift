@@ -24,6 +24,7 @@ do {
     switch subcommand {
     case "scan": exitCode = try cmdScan(rest)
     case "audit": exitCode = try cmdAudit(rest)
+    case "cleanup": exitCode = try cmdCleanup(rest)
     case "rate": exitCode = try cmdRate(rest)
     case "stats": exitCode = try cmdStats(rest)
     case "calib": exitCode = try cmdCalib(rest)

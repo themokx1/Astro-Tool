@@ -222,6 +222,81 @@ struct CLISmokeTests {
     _ = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8))
 }
 
+// MARK: - cleanup
+
+@Test func cleanupJSONAfterScanReportsResidueGroups() throws {
+    let root = try makeTempRoot("cleanup-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["cleanup", "--root", root.path, "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+    let groups = try #require(json?["groups"] as? [[String: Any]])
+    let categories = Set(groups.compactMap { $0["category"] as? String })
+    // Fixtures.makeMessyLibrary plants x.seq/x.lst/r_lights.fit/.DS_Store
+    // plus a process/ dir under stacks/M42_Orion/2026-01-17.
+    #expect(categories.contains("residue-seq"))
+    #expect(categories.contains("residue-lst"))
+    #expect(categories.contains("residue-process-dir"))
+    #expect((json?["grand_total_bytes"] as? Int ?? 0) > 0)
+}
+
+@Test func cleanupHumanOutputPrintsGroupsAndTotal() throws {
+    let root = try makeTempRoot("cleanup-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["cleanup", "--root", root.path])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("residue-seq"))
+    #expect(result.stdout.contains("összesen felszabadítható"))
+}
+
+@Test func cleanupSuggestWritesQuarantineScriptWithNoRM() throws {
+    let root = try makeTempRoot("cleanup-suggest")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["cleanup", "--root", root.path, "--suggest"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let suggestionsDir = root.appendingPathComponent(".astro_tool/suggestions")
+    let contents = try FileManager.default.contentsOfDirectory(atPath: suggestionsDir.path)
+    #expect(!contents.isEmpty)
+
+    let scriptURL = suggestionsDir.appendingPathComponent(try #require(contents.first))
+    let script = try String(contentsOf: scriptURL, encoding: .utf8)
+
+    // Quarantine mv, active (not commented out).
+    #expect(script.contains(".astro_tool/cleanup_quarantine/"))
+    #expect(script.contains("mv "))
+    let hasActiveMv = script.components(separatedBy: "\n").contains { line in
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return trimmed.hasPrefix("mv ") && !trimmed.hasPrefix("#")
+    }
+    #expect(hasActiveMv)
+
+    // Never a delete of any kind.
+    #expect(!script.contains("rm "))
+    #expect(!script.contains("rm\t"))
+    #expect(!script.contains("rmdir"))
+
+    // Every mv target lands under .astro_tool -- reversible quarantine, not
+    // a real library location.
+    #expect(!script.contains("# (suspicious — uncomment only after review)"))
+}
+
 // MARK: - stats
 
 @Test func statsJSONContainsFixtureTarget() throws {

@@ -38,6 +38,23 @@ enum GlobMatcher {
     }
 }
 
+/// Shared residue-matching primitives used by both `ResidueRule` (the
+/// per-run audit finding) and `CleanupReport` (the aggregated, size-ordered
+/// cleanup summary) so the two never drift on what counts as residue.
+enum ResidueMatcher {
+    /// Whether `name` (a bare filename, no path) matches one of
+    /// `config.residuePatterns`.
+    static func matchesFilePattern(name: String, config: AstroConfig) -> Bool {
+        config.residuePatterns.contains { GlobMatcher.matches(pattern: $0, name: name) }
+    }
+
+    /// Whether `name` (a bare directory name, no path) is one of
+    /// `config.residueDirNames`, case-insensitively.
+    static func isResidueDirName(_ name: String, config: AstroConfig) -> Bool {
+        config.residueDirNames.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+    }
+}
+
 /// Detects a target-name-token list whose leading run repeats itself
 /// (`["C2025","R3","C2025","R3","Panstarrs"]` → the "C2025 R3" prefix was
 /// duplicated by a copy-paste), and returns the deduplicated token list. The
@@ -559,7 +576,7 @@ public struct ResidueRule: AuditRule {
 
         for file in ctx.files {
             let name = (file.path as NSString).lastPathComponent
-            guard ctx.config.residuePatterns.contains(where: { GlobMatcher.matches(pattern: $0, name: name) }) else { continue }
+            guard ResidueMatcher.matchesFilePattern(name: name, config: ctx.config) else { continue }
             findings.append(Finding(
                 severity: .suspicious,
                 category: id,
@@ -571,7 +588,7 @@ public struct ResidueRule: AuditRule {
 
         for dir in ctx.directories {
             let name = (dir as NSString).lastPathComponent
-            guard ctx.config.residueDirNames.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else { continue }
+            guard ResidueMatcher.isResidueDirName(name, config: ctx.config) else { continue }
             findings.append(Finding(
                 severity: .suspicious,
                 category: id,

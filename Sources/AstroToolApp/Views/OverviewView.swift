@@ -24,6 +24,9 @@ struct OverviewView: View {
                     summarySection(scanSummary)
                 }
                 findingsSection
+                if let cleanupSummary = appState.cleanupSummary {
+                    cleanupSection(cleanupSummary)
+                }
                 quickLinksSection
                 if let lastError = appState.lastError {
                     Text(lastError)
@@ -90,6 +93,29 @@ struct OverviewView: View {
                 statBadge("Szándékos", "\(intentional)", .gray)
             }
         }
+    }
+
+    private func cleanupSection(_ summary: CleanupSummary) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Takarítás").font(.headline)
+            Text("Összesen felszabadítható: \(Self.formatBytes(summary.grandTotalBytes))")
+            ForEach(summary.groups.prefix(3), id: \.category) { group in
+                HStack {
+                    Text(group.category)
+                    Spacer()
+                    Text("\(group.fileCount) fájl, \(Self.formatBytes(group.totalBytes))")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Button("Takarítási script generálása") { appState.generateCleanupScript() }
+                .disabled(appState.isBusy || summary.groups.isEmpty)
+        }
+    }
+
+    private static func formatBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
     }
 
     private var quickLinksSection: some View {
