@@ -8,6 +8,8 @@ történik.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-03
+
 ### Added
 
 - **Valós (usable) integráció és keret-statisztika**: a kimutatott
