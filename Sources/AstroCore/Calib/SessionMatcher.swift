@@ -15,10 +15,18 @@ public struct SessionCalibration: Codable, Sendable, Equatable {
     /// Root-relative paths of this session's bias frames, sorted.
     public var biases: [String]
     /// Root-relative `calibration_library/darks/<dir>` path matching this
-    /// session's dominant light (exposure, temp) combo -- only ever set
-    /// when `darks` is empty. `nil` when the session has its own darks, or
-    /// there's no matching library master.
+    /// session's dominant light (exposure, temp, gain, offset, camera) combo
+    /// -- only ever set when `darks` is empty. `nil` when the session has
+    /// its own darks, there's no library master at the same (exposure,
+    /// temp) at all, or the closest one exists but was rejected on an
+    /// electronic dimension (see `libraryDarkMismatchReasons`).
     public var libraryDark: String?
+    /// Hungarian reasons the closest same-(exposure, temp) library master
+    /// was rejected, e.g. `["gain 0 ≠ 100"]` -- empty unless such a master
+    /// existed but failed an enabled electronic check
+    /// (`CalibRule.matchGain`/`matchOffset`/`matchBinning`/`matchCamera`).
+    /// `libraryDark` stays `nil` whenever this is non-empty.
+    public var libraryDarkMismatchReasons: [String]
     public var problems: [Finding]
 
     public init(
@@ -29,6 +37,7 @@ public struct SessionCalibration: Codable, Sendable, Equatable {
         darks: [String],
         biases: [String],
         libraryDark: String?,
+        libraryDarkMismatchReasons: [String] = [],
         problems: [Finding]
     ) {
         self.target = target
@@ -38,6 +47,7 @@ public struct SessionCalibration: Codable, Sendable, Equatable {
         self.darks = darks
         self.biases = biases
         self.libraryDark = libraryDark
+        self.libraryDarkMismatchReasons = libraryDarkMismatchReasons
         self.problems = problems
     }
 }
@@ -95,8 +105,11 @@ public enum SessionMatcher {
         // (c) no session darks -- fall back to the calibration library
         // before deciding this is actually a problem.
         var libraryDark: String?
+        var libraryDarkMismatchReasons: [String] = []
         if darks.isEmpty {
-            libraryDark = try dominantLibraryDark(lights: lights, db: db, allFiles: allFiles, config: config)
+            let result = try dominantLibraryDark(lights: lights, db: db, allFiles: allFiles, config: config)
+            libraryDark = result.path
+            libraryDarkMismatchReasons = result.mismatchReasons
         }
 
         if !lights.isEmpty, darks.isEmpty, libraryDark == nil {
@@ -119,29 +132,36 @@ public enum SessionMatcher {
             darks: darks,
             biases: biases,
             libraryDark: libraryDark,
+            libraryDarkMismatchReasons: libraryDarkMismatchReasons,
             problems: problems
         )
     }
 
     // MARK: - Library dark fallback
 
-    /// Picks `lights`' dominant (exptime, setTemp) combo -- via
-    /// `CalibAnalyzer.dominantCombo`, shared with `CalibLinker`'s flat-dark
-    /// matching -- and matches it against the calibration library. `nil`
-    /// when no light has usable exposure meta, or no library master matches
-    /// the dominant combo.
+    /// Picks `lights`' dominant (exptime, setTemp, gain, offset, camera)
+    /// combo -- via `CalibAnalyzer.dominantCombo`, shared with
+    /// `CalibLinker`'s flat-dark matching -- and matches it against the
+    /// calibration library. Both `path` and `mismatchReasons` are empty/nil
+    /// when no light has usable exposure meta at all; `mismatchReasons` is
+    /// populated (with `path == nil`) when a same-(exposure, temp) master
+    /// exists but fails an enabled electronic check.
     private static func dominantLibraryDark(
         lights: [FileRecord],
         db: Database,
         allFiles: [FileRecord],
         config: AstroConfig
-    ) throws -> String? {
-        guard let dominant = try CalibAnalyzer.dominantCombo(files: lights, db: db) else { return nil }
+    ) throws -> (path: String?, mismatchReasons: [String]) {
+        guard let dominant = try CalibAnalyzer.dominantCombo(files: lights, db: db) else { return (nil, []) }
 
-        return CalibAnalyzer.matchedMasterDarkPath(
+        return try CalibAnalyzer.matchedMasterDarkPath(
             exposureS: dominant.exposureS,
             tempC: dominant.tempC,
+            gain: dominant.gain,
+            offset: dominant.offset,
+            camera: dominant.camera,
             files: allFiles,
+            db: db,
             config: config
         )
     }

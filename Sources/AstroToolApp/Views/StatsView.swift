@@ -523,8 +523,13 @@ private struct CalibLinkSheet: View {
     @ViewBuilder
     private func planView(_ plan: CalibLinkPlan) -> some View {
         if plan.items.isEmpty {
-            Text("Nincs linkelhető kalibráció ehhez a session-höz.")
-                .foregroundStyle(.secondary)
+            if !plan.mismatchReasons.isEmpty {
+                Text("Nem linkelhető: \(plan.mismatchReasons.joined(separator: ", "))")
+                    .foregroundStyle(.orange)
+            } else {
+                Text("Nincs linkelhető kalibráció ehhez a session-höz.")
+                    .foregroundStyle(.secondary)
+            }
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {

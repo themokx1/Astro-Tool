@@ -38,23 +38,80 @@ public struct WideFieldRule: Codable, Equatable, Sendable {
 
 /// Tolerances used when matching calibration frames (darks/flats/bias) to
 /// lights.
+///
+/// R4-3 note on the two changed defaults: a cooled CMOS camera's set-point
+/// wobbles roughly ±0.1-0.2 °C and dark current only doubles every ~5-6 °C,
+/// so the old `tempToleranceC` of 0.5 was needlessly strict -- 1.0 is safe.
+/// `darkMaxAgeMonths` of 6 was too aggressive for a cooled CMOS dark library
+/// (the noise profile is stable far longer than that); 12 is right, and age
+/// is meant as a warning, never the primary invalidator -- the electronic
+/// key (gain/offset/binning/camera) below is.
 public struct CalibRule: Codable, Equatable, Sendable {
     public var tempToleranceC: Double
     public var exposureToleranceS: Double
     public var darkMaxAgeMonths: Int
+    /// Reject a candidate master whose FITS `GAIN` differs from the light's
+    /// (beyond `gainTolerance`) -- a gain-0 dark applied to gain-100 lights
+    /// actively harms the result on the ASI2600 (and any other cooled CMOS
+    /// camera with per-gain read-noise/dark-current curves), so this is on
+    /// by default.
+    public var matchGain: Bool
+    /// Reject a candidate master whose FITS `OFFSET` differs from the
+    /// light's -- only enforced when BOTH sides have a value (older
+    /// headers/DSLR frames without one never fail this check).
+    public var matchOffset: Bool
+    /// Reject a candidate master whose `XBINNING` differs from the light's
+    /// -- same "only when both sides have a value" rule as `matchOffset`.
+    /// Binning is parsed from calibration masters' `header_json` only (a few
+    /// hundred files); it is not captured per scanned light frame (there can
+    /// be thousands), so today this dimension only ever compares against a
+    /// deliberately absent light-side value and never actually rejects a
+    /// match -- it's wired through the config now so a future per-light
+    /// binning capture slots in without another config migration.
+    public var matchBinning: Bool
+    /// Reject a candidate master whose `INSTRUME` differs from the light's
+    /// -- same "only when both sides have a value" rule as `matchOffset`.
+    /// This is what keeps a DSLR session (ISO stored in the `gain` column)
+    /// from ever matching an ASI-camera master even if gain/exposure/temp
+    /// all happen to line up.
+    public var matchCamera: Bool
+    /// Allowed absolute difference in `GAIN` before `matchGain` rejects a
+    /// candidate. `0` (the default) requires an exact match.
+    public var gainTolerance: Double
+    /// Extra exposure-time tolerance as a fraction of the light's own
+    /// exposure, applied IN ADDITION to `exposureToleranceS` -- a candidate
+    /// matches if it's within either tolerance. `0.02` (2%) absorbs a
+    /// camera's own exposure-timing jitter (e.g. a `30s`-requested light
+    /// landing at `29.9s`) without a fixed absolute tolerance that would be
+    /// too loose for short exposures or too tight for long ones.
+    public var exposureToleranceFraction: Double
 
     public init(
-        tempToleranceC: Double = 0.5,
+        tempToleranceC: Double = 1.0,
         exposureToleranceS: Double = 0.0,
-        darkMaxAgeMonths: Int = 6
+        darkMaxAgeMonths: Int = 12,
+        matchGain: Bool = true,
+        matchOffset: Bool = true,
+        matchBinning: Bool = true,
+        matchCamera: Bool = true,
+        gainTolerance: Double = 0,
+        exposureToleranceFraction: Double = 0.02
     ) {
         self.tempToleranceC = tempToleranceC
         self.exposureToleranceS = exposureToleranceS
         self.darkMaxAgeMonths = darkMaxAgeMonths
+        self.matchGain = matchGain
+        self.matchOffset = matchOffset
+        self.matchBinning = matchBinning
+        self.matchCamera = matchCamera
+        self.gainTolerance = gainTolerance
+        self.exposureToleranceFraction = exposureToleranceFraction
     }
 
     private enum CodingKeys: String, CodingKey {
         case tempToleranceC, exposureToleranceS, darkMaxAgeMonths
+        case matchGain, matchOffset, matchBinning, matchCamera
+        case gainTolerance, exposureToleranceFraction
     }
 
     public init(from decoder: any Decoder) throws {
@@ -63,6 +120,12 @@ public struct CalibRule: Codable, Equatable, Sendable {
         self.tempToleranceC = try container.decodeIfPresent(Double.self, forKey: .tempToleranceC) ?? defaults.tempToleranceC
         self.exposureToleranceS = try container.decodeIfPresent(Double.self, forKey: .exposureToleranceS) ?? defaults.exposureToleranceS
         self.darkMaxAgeMonths = try container.decodeIfPresent(Int.self, forKey: .darkMaxAgeMonths) ?? defaults.darkMaxAgeMonths
+        self.matchGain = try container.decodeIfPresent(Bool.self, forKey: .matchGain) ?? defaults.matchGain
+        self.matchOffset = try container.decodeIfPresent(Bool.self, forKey: .matchOffset) ?? defaults.matchOffset
+        self.matchBinning = try container.decodeIfPresent(Bool.self, forKey: .matchBinning) ?? defaults.matchBinning
+        self.matchCamera = try container.decodeIfPresent(Bool.self, forKey: .matchCamera) ?? defaults.matchCamera
+        self.gainTolerance = try container.decodeIfPresent(Double.self, forKey: .gainTolerance) ?? defaults.gainTolerance
+        self.exposureToleranceFraction = try container.decodeIfPresent(Double.self, forKey: .exposureToleranceFraction) ?? defaults.exposureToleranceFraction
     }
 }
 

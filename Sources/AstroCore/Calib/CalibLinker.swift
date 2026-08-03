@@ -27,11 +27,21 @@ public struct CalibLinkPlan: Codable, Equatable, Sendable {
     public var target: String
     public var date: String
     public var items: [Item]
+    /// Hungarian reasons a same-(exposure, temp) master (light-dark and/or
+    /// flat-dark) was found but rejected on an electronic dimension
+    /// (`CalibRule.matchGain`/`matchOffset`/`matchBinning`/`matchCamera`) --
+    /// e.g. `["gain 0 ≠ 100"]`. Empty in the common case (either a full
+    /// match was found, contributing items, or no master exists at that
+    /// (exposure, temp) at all -- nothing to explain either way). Surfaced
+    /// so an otherwise-silent empty plan reads as "nem linkelhető: gain 0 ≠
+    /// 100" rather than just "nothing to link".
+    public var mismatchReasons: [String]
 
-    public init(target: String, date: String, items: [Item]) {
+    public init(target: String, date: String, items: [Item], mismatchReasons: [String] = []) {
         self.target = target
         self.date = date
         self.items = items
+        self.mismatchReasons = mismatchReasons
     }
 }
 
@@ -77,6 +87,8 @@ public enum CalibLinker {
 
         var items: [CalibLinkPlan.Item] = []
         var seenKeys = Set<String>()
+        var mismatchReasons: [String] = []
+        var seenMismatchReasons = Set<String>()
 
         func addMasterDirItems(masterDir: String, destDir: String, reason: String) {
             let files = allFiles
@@ -89,13 +101,25 @@ public enum CalibLinker {
             }
         }
 
+        func addMismatchReasons(_ reasons: [String]) {
+            for reason in reasons where seenMismatchReasons.insert(reason).inserted {
+                mismatchReasons.append(reason)
+            }
+        }
+
         // 1. Darks for lights -- only when the session has none of its own.
-        if sc.darks.isEmpty, let libraryDark = sc.libraryDark {
-            addMasterDirItems(
-                masterDir: libraryDark,
-                destDir: "\(destBase)/darks",
-                reason: reasonForDark(masterDir: libraryDark, isFlatDark: false)
-            )
+        // `SessionMatcher` already resolved the light-dark match (including
+        // any electronic mismatch) -- reuse it rather than re-deriving.
+        if sc.darks.isEmpty {
+            if let libraryDark = sc.libraryDark {
+                addMasterDirItems(
+                    masterDir: libraryDark,
+                    destDir: "\(destBase)/darks",
+                    reason: reasonForDark(masterDir: libraryDark, isFlatDark: false)
+                )
+            } else {
+                addMismatchReasons(sc.libraryDarkMismatchReasons)
+            }
         }
 
         // 2. Flat-darks for flats -- computed from the flats' own dominant
@@ -103,19 +127,26 @@ public enum CalibLinker {
         if !sc.flats.isEmpty {
             let sessionFiles = allFiles.filter { $0.area == .sessions && $0.target == target && $0.sessionDate == date }
             let flatFiles = sessionFiles.filter { $0.role == .flat }
-            if let dominant = try CalibAnalyzer.dominantCombo(files: flatFiles, db: db),
-               let flatDarkDir = CalibAnalyzer.matchedMasterDarkPath(
-                   exposureS: dominant.exposureS,
-                   tempC: dominant.tempC,
-                   files: allFiles,
-                   config: config
-               )
-            {
-                addMasterDirItems(
-                    masterDir: flatDarkDir,
-                    destDir: "\(destBase)/darks",
-                    reason: reasonForDark(masterDir: flatDarkDir, isFlatDark: true)
+            if let dominant = try CalibAnalyzer.dominantCombo(files: flatFiles, db: db) {
+                let match = try CalibAnalyzer.matchedMasterDarkPath(
+                    exposureS: dominant.exposureS,
+                    tempC: dominant.tempC,
+                    gain: dominant.gain,
+                    offset: dominant.offset,
+                    camera: dominant.camera,
+                    files: allFiles,
+                    db: db,
+                    config: config
                 )
+                if let flatDarkDir = match.path {
+                    addMasterDirItems(
+                        masterDir: flatDarkDir,
+                        destDir: "\(destBase)/darks",
+                        reason: reasonForDark(masterDir: flatDarkDir, isFlatDark: true)
+                    )
+                } else {
+                    addMismatchReasons(match.mismatchReasons)
+                }
             }
         }
 
@@ -134,7 +165,7 @@ public enum CalibLinker {
             }
         }
 
-        return CalibLinkPlan(target: target, date: date, items: items)
+        return CalibLinkPlan(target: target, date: date, items: items, mismatchReasons: mismatchReasons)
     }
 
     /// Walks every item in `plan` through `writeGuard.linkCalibrationFile`,

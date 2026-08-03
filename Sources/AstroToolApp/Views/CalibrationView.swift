@@ -73,6 +73,16 @@ struct CalibrationView: View {
                     }
                 }
                 .width(90)
+                TableColumn("Megjegyzés") { row in
+                    if !row.need.mismatchReasons.isEmpty {
+                        Text(row.need.mismatchReasons.joined(separator: ", "))
+                            .foregroundStyle(.orange)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(row.need.mismatchReasons.joined(separator: ", "))
+                    }
+                }
+                .width(min: 140, ideal: 200)
             }
         }
         .onAppear {

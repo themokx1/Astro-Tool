@@ -733,6 +733,9 @@ private func printCalibReport(_ needs: [CalibNeed]) {
         print("todo:")
         for need in todos {
             print("  - \(need.todo ?? "")")
+            if !need.mismatchReasons.isEmpty {
+                print("    ⚠️ nem illeszkedő master: \(need.mismatchReasons.joined(separator: ", "))")
+            }
         }
     }
 
@@ -879,7 +882,11 @@ private func printLinkPlan(_ plan: CalibLinkPlan) {
     print("date: \(plan.date)")
 
     guard !plan.items.isEmpty else {
-        print("nincs linkelhető kalibráció")
+        if !plan.mismatchReasons.isEmpty {
+            print("nem linkelhető: \(plan.mismatchReasons.joined(separator: ", "))")
+        } else {
+            print("nincs linkelhető kalibráció")
+        }
         return
     }
 

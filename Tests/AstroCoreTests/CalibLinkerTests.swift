@@ -32,15 +32,16 @@ private struct CalibLinkerFixture {
         try? FileManager.default.removeItem(at: dbDir)
     }
 
-    /// Writes a generated FITS file with the given EXPTIME/SET-TEMP cards --
-    /// works for any role (light/flat/dark/bias), the role is derived from
-    /// the path alone.
-    func writeFITS(_ relativePath: String, exptime: Double? = nil, setTemp: Double? = nil) throws {
+    /// Writes a generated FITS file with the given EXPTIME/SET-TEMP/GAIN
+    /// cards -- works for any role (light/flat/dark/bias), the role is
+    /// derived from the path alone.
+    func writeFITS(_ relativePath: String, exptime: Double? = nil, setTemp: Double? = nil, gain: Double? = nil) throws {
         let url = libraryDir.appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         var cards = ["SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2"]
         if let exptime { cards.append("EXPTIME =                \(exptime)") }
         if let setTemp { cards.append("SET-TEMP=                \(setTemp)") }
+        if let gain { cards.append("GAIN    =                \(gain)") }
         cards.append("END")
         try buildHeaderData(cards).write(to: url)
     }
@@ -51,6 +52,19 @@ private struct CalibLinkerFixture {
         let url = libraryDir.appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try "dummy".write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    /// Writes a master-calibration file as a real (parseable) FITS header
+    /// carrying a GAIN card -- unlike `writeDummy`, its content matters:
+    /// `CalibAnalyzer` aggregates gain straight off the file's `fits_meta`
+    /// row.
+    func writeFITSMaster(_ relativePath: String, gain: Double? = nil) throws {
+        let url = libraryDir.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var cards = ["SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2"]
+        if let gain { cards.append("GAIN    =                \(gain)") }
+        cards.append("END")
+        try buildHeaderData(cards).write(to: url)
     }
 
     func scan() throws {
@@ -163,6 +177,30 @@ private struct CalibLinkerFixture {
     // No dark match -> no dark items; no flats -> no flat-dark items; no
     // biases in the library at all -> no bias items either.
     #expect(plan.items.isEmpty)
+    // No master exists at this (exposure, temp) at all -- nothing to
+    // explain, so no mismatch reasons either (distinct from the electronic
+    // mismatch case below, where a same-(exposure, temp) master DOES exist).
+    #expect(plan.mismatchReasons.isEmpty)
+}
+
+// MARK: - 4b. Only candidate master fails electronically -> empty plan with reasons
+
+@Test func planIsEmptyWithMismatchReasonsWhenOnlyCandidateFailsElectronically() throws {
+    let fixture = try CalibLinkerFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, setTemp: -10.0, gain: 100)
+    // Same (exposure, temp) as the light, but a different gain -- the only
+    // candidate at 300s/-10°C, and it's electronically wrong for a
+    // gain-100 light.
+    try fixture.writeFITSMaster("calibration_library/darks/300sec_-10deg/master.fit", gain: 0)
+
+    try fixture.scan()
+
+    let plan = try CalibLinker.plan(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
+
+    #expect(plan.items.isEmpty)
+    #expect(plan.mismatchReasons == ["gain 0 ≠ 100"])
 }
 
 // MARK: - 5. apply() hard-links, rerun skips everything

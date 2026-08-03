@@ -96,6 +96,40 @@ történik.
   idővonal-sor jelenik meg ("Ablak 3:42 · integráció 2:11 · hatékonyság
   59% · 2 kiesés (37m, 12m)") — `AppState.loadQualitySummaries(target:)`/
   `loadSessionTimeline(target:date:)` háttérműveletek.
+- **Kalibráció-illesztés teljes elektronikus kulccsal (gain/offset/bin/
+  kamera), DATE-OBS-alapú master-kor (R4-3)**: a `CalibAnalyzer` eddig
+  csak a master DIR NEVÉBŐL olvasott (exponálás, hőmérséklet) alapján
+  párosított darkot lightokkal — de egy hűtött CMOS kamera (pl. ASI2600)
+  dark-jele GAIN-től és OFFSET-től is függ, egy rossz gain-ű dark
+  linkelése AKTÍVAN ÁRT a kalibráción. Mostantól a masterek saját FITS
+  fejlécükből (`GAIN`/`OFFSET`/`INSTRUME`/`XBINNING`) épített elektronikus
+  identitást kapnak, és egy light csak akkor illeszkedik egy azonos
+  (exponálás, hőmérséklet) masterhez, ha minden bekapcsolt dimenzió is
+  egyezik. Ha egy master a helyes exponálás/hőmérsékletnél van, de rossz
+  elektronikán, a `link-calib`/`calib` most figyelmeztet ahelyett, hogy
+  csendben linkelné vagy csendben semmit se találna: `CalibNeed`/
+  `CalibLinkPlan` `mismatchReasons` mezője magyarul elmondja miért (pl.
+  `"gain 0 ≠ 100"`, `"másik kamera: ZWO ASI2600MC Pro"`). A master kora
+  mostantól elsősorban a fájlok `DATE-OBS`-ából számol (mtime csak
+  fallback, ha nincs DATE-OBS) — egy sima copy/rsync nem "fiatalítja meg"
+  hamisan a mastert. CLI: `calib` figyelmeztető sort ír mismatch esetén,
+  `link-calib` üres terv esetén a konkrét okot írja ki. App:
+  `CalibrationView` új "Megjegyzés" oszlopa, `CalibLinkSheet` a mismatch
+  okot mutatja üres terv esetén.
+
+### Changed
+
+- **`CalibRule` két alapértéke** (`AstroConfig.calib`): `tempToleranceC`
+  **0.5 → 1.0** (egy hűtött CMOS set-pontja ±0.1-0.2°C-ot ingadozik, a régi
+  érték feleslegesen szigorú volt) és `darkMaxAgeMonths` **6 → 12** (a kor
+  csak figyelmeztetés, nem elsődleges érvénytelenítő — az új elektronikus
+  kulcs-ellenőrzés az). **Meglévő `config.json`-nal rendelkező
+  felhasználók nem érintettek automatikusan**: a fájlban explicit szereplő
+  régi érték változatlanul betöltődik; csak az új, még soha el nem mentett
+  konfigurációk kapják az új alapértéket. Ha valaki korábban már mentette
+  a Beállítások képernyőt (akár változtatás nélkül), a `config.json`
+  tartalmazza a régi 0.5/6 értéket, és az a Beállítások következő
+  mentésekor is megmarad, amíg valaki kézzel át nem írja.
 
 ## [0.2.3] - 2026-08-03
 

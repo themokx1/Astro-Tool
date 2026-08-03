@@ -7,8 +7,8 @@ struct SettingsView: View {
 
     @State private var excludedDirsText: String = ""
     @State private var sirilPathText: String = ""
-    @State private var darkMaxAgeMonths: Int = 6
-    @State private var tempTolerance: Double = 0.5
+    @State private var darkMaxAgeMonths: Int = 12
+    @State private var tempTolerance: Double = 1.0
     @State private var outlierZScore: Double = 2.0
     @State private var maxFocalLength: Double = 135
 

@@ -18,9 +18,15 @@ import Testing
     #expect(config.wideField.nameMarkers == ["wide"])
     #expect(config.wideField.overrides == [:])
 
-    #expect(config.calib.tempToleranceC == 0.5)
+    #expect(config.calib.tempToleranceC == 1.0)
     #expect(config.calib.exposureToleranceS == 0.0)
-    #expect(config.calib.darkMaxAgeMonths == 6)
+    #expect(config.calib.darkMaxAgeMonths == 12)
+    #expect(config.calib.matchGain == true)
+    #expect(config.calib.matchOffset == true)
+    #expect(config.calib.matchBinning == true)
+    #expect(config.calib.matchCamera == true)
+    #expect(config.calib.gainTolerance == 0)
+    #expect(config.calib.exposureToleranceFraction == 0.02)
 
     #expect(config.rating.workers == 4)
     #expect(config.rating.outlierZScore == 2.0)
@@ -47,9 +53,15 @@ import Testing
 
 @Test func defaultCalibRuleHasExpectedValues() {
     let rule = CalibRule()
-    #expect(rule.tempToleranceC == 0.5)
+    #expect(rule.tempToleranceC == 1.0)
     #expect(rule.exposureToleranceS == 0.0)
-    #expect(rule.darkMaxAgeMonths == 6)
+    #expect(rule.darkMaxAgeMonths == 12)
+    #expect(rule.matchGain == true)
+    #expect(rule.matchOffset == true)
+    #expect(rule.matchBinning == true)
+    #expect(rule.matchCamera == true)
+    #expect(rule.gainTolerance == 0)
+    #expect(rule.exposureToleranceFraction == 0.02)
 }
 
 @Test func defaultRatingRuleHasExpectedValues() {
