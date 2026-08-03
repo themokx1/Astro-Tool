@@ -1,19 +1,53 @@
 import Foundation
 
 /// A single light frame's rating result, as returned by `Rater.rate`.
+///
+/// `saturatedFraction`, `exptime`, and `sessionSubdir` were added after the
+/// initial release. They're all `Optional`, so Swift's synthesized
+/// `Codable` conformance decodes them via `decodeIfPresent` -- JSON produced
+/// before these fields existed (e.g. a cached CLI `--json` capture) still
+/// decodes fine, with all three simply `nil`.
 public struct FrameScore: Codable, Sendable {
     public var path: String
     public var score: Double
     public var isOutlier: Bool
     public var metrics: StarMetrics?
     public var background: Double?
+    public var saturatedFraction: Double?
+    public var exptime: Double?
+    /// The path component(s) between the session date dir and the filename,
+    /// e.g. `"lights"` or `"lights/Junk"` -- `nil` when the frame sits
+    /// directly in the date dir with no role subfolder. Lets a user's own
+    /// triage subfolders (a hand-made "Junk" under `lights/`) show up
+    /// directly in the quality table instead of only being visible by
+    /// reading the full path.
+    public var sessionSubdir: String?
 
-    public init(path: String, score: Double, isOutlier: Bool, metrics: StarMetrics?, background: Double?) {
+    /// The filename only (last path component) -- computed, not stored, so
+    /// it never affects `Codable` (old JSON without it still decodes, and
+    /// there's no key to omit).
+    public var fileName: String {
+        (path as NSString).lastPathComponent
+    }
+
+    public init(
+        path: String,
+        score: Double,
+        isOutlier: Bool,
+        metrics: StarMetrics?,
+        background: Double?,
+        saturatedFraction: Double? = nil,
+        exptime: Double? = nil,
+        sessionSubdir: String? = nil
+    ) {
         self.path = path
         self.score = score
         self.isOutlier = isOutlier
         self.metrics = metrics
         self.background = background
+        self.saturatedFraction = saturatedFraction
+        self.exptime = exptime
+        self.sessionSubdir = sessionSubdir
     }
 }
 
@@ -187,10 +221,10 @@ public final class Rater {
     /// scores each group independently, so a frame's z-scores only ever
     /// compare it against other frames shot at the same exposure time.
     private func score(_ rated: [(file: FileRecord, record: RatingRecord, exptime: Double?)]) throws -> [FrameScore] {
-        var groups: [ExposureGroupKey: [(file: FileRecord, record: RatingRecord)]] = [:]
+        var groups: [ExposureGroupKey: [(file: FileRecord, record: RatingRecord, exptime: Double?)]] = [:]
         for entry in rated {
             let key = Self.exposureGroupKey(entry.exptime)
-            groups[key, default: []].append((entry.file, entry.record))
+            groups[key, default: []].append((entry.file, entry.record, entry.exptime))
         }
 
         var results: [FrameScore] = []
@@ -202,7 +236,7 @@ public final class Rater {
         return results.sorted { $0.score > $1.score }
     }
 
-    private func scoreGroup(_ rated: [(file: FileRecord, record: RatingRecord)]) throws -> [FrameScore] {
+    private func scoreGroup(_ rated: [(file: FileRecord, record: RatingRecord, exptime: Double?)]) throws -> [FrameScore] {
         let weights = config.rating.weights
 
         let fwhmStats = Self.metricStats(rated.compactMap { $0.record.fwhm })
@@ -213,7 +247,7 @@ public final class Rater {
         var results: [FrameScore] = []
         results.reserveCapacity(rated.count)
 
-        for (file, original) in rated {
+        for (file, original, exptime) in rated {
             var record = original
             var weightedSum = 0.0
             var weightTotal = 0.0
@@ -255,12 +289,31 @@ public final class Rater {
                     score: finalScore,
                     isOutlier: finalScore < -config.rating.outlierZScore,
                     metrics: metrics,
-                    background: record.background
+                    background: record.background,
+                    saturatedFraction: record.saturatedFraction,
+                    exptime: exptime,
+                    sessionSubdir: Self.sessionSubdir(path: file.path)
                 )
             )
         }
 
         return results.sorted { $0.score > $1.score }
+    }
+
+    /// The path component(s) between the session date dir and the filename
+    /// of a `sessions/<target>/<date>/...` path, e.g. `"lights"` for
+    /// `sessions/M31/2026-01-01/lights/a.fit` or `"lights/Junk"` for
+    /// `sessions/M31/2026-01-01/lights/Junk/a.fit`. `nil` when the frame
+    /// sits directly in the date dir (no role subfolder at all) or the path
+    /// doesn't even have the expected `area/target/date/filename` depth --
+    /// mirrors `PathClassifier`'s "only area/target/date are positionally
+    /// consulted, everything after is untouched" stance, just surfacing that
+    /// untouched remainder for display instead of discarding it.
+    static func sessionSubdir(path: String) -> String? {
+        let components = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard components.count > 4 else { return nil }
+        let middle = components[3..<(components.count - 1)]
+        return middle.joined(separator: "/")
     }
 
     /// Mean/std over whichever frames in the batch have a value for this

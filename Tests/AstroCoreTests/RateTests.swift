@@ -481,8 +481,8 @@ private final class ProgressRecorder: @unchecked Sendable {
 
     let pixels = Array(repeating: 200, count: 9)
     let (fileID, size) = try fixture.addLightFrame(
-        relativePath: "sessions/M31/2026-01-01/lights/light_0001.fit",
-        target: "M31", pixels: pixels, width: 3, height: 3, mtime: 1_650_000_000
+        relativePath: "sessions/M31/2026-01-01/lights/Junk/light_0001.fit",
+        target: "M31", pixels: pixels, width: 3, height: 3, mtime: 1_650_000_000, exptime: 120.0
     )
 
     let mock = CountingMockProvider()
@@ -498,6 +498,51 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(stored?.fwhm == 2.0)
     #expect(stored?.sirilVersion == "mock-counting-1.0")
     #expect(stored?.score != nil)
+
+    // `FrameScore`'s display-oriented fields, populated straight through
+    // from the `RatingRecord` (`saturatedFraction`), the fits_meta exptime
+    // used for exposure-group scoring, and the path itself
+    // (`fileName`/`sessionSubdir`).
+    let score = try #require(results.first)
+    #expect(score.fileName == "light_0001.fit")
+    #expect(score.sessionSubdir == "lights/Junk")
+    #expect(score.exptime == 120.0)
+    #expect(score.saturatedFraction == 0)
+}
+
+@Test func frameScoreSessionSubdirIsNilWhenFrameSitsDirectlyInDateDir() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.addLightFrame(
+        relativePath: "sessions/M42/2026-01-01/light_0001.fit",
+        target: "M42", pixels: Array(repeating: 10, count: 4), width: 2, height: 2
+    )
+
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: nil)
+    let results = try rater.rate(target: "M42")
+
+    #expect(results.count == 1)
+    #expect(results[0].sessionSubdir == nil)
+    #expect(results[0].fileName == "light_0001.fit")
+}
+
+@Test func frameScoreDecodesJSONMissingFieldsAddedAfterInitialRelease() throws {
+    // Simulates a `--json` capture written before `saturatedFraction`,
+    // `exptime`, and `sessionSubdir` existed on `FrameScore` -- must still
+    // decode, with all three simply `nil`.
+    let legacyJSON = """
+    {"path": "sessions/M1/2026-01-01/lights/a.fit", "score": 1.5, "isOutlier": false,
+     "metrics": null, "background": 123.0}
+    """.data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(FrameScore.self, from: legacyJSON)
+    #expect(decoded.path == "sessions/M1/2026-01-01/lights/a.fit")
+    #expect(decoded.score == 1.5)
+    #expect(decoded.saturatedFraction == nil)
+    #expect(decoded.exptime == nil)
+    #expect(decoded.sessionSubdir == nil)
+    #expect(decoded.fileName == "a.fit")
 }
 
 // MARK: - Rater: cache hit

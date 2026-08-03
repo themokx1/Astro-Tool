@@ -418,6 +418,14 @@ func cmdRate(_ args: [String]) throws -> Int32 {
     return 0
 }
 
+/// Formats an optional metric compactly for the human table, `"-"` when
+/// absent (e.g. no Siril metrics for that frame, or `.fz` frames that never
+/// got native `background`/`saturatedFraction`).
+private func fmt(_ value: Double?, _ digits: Int) -> String {
+    guard let value else { return "-" }
+    return String(format: "%.\(digits)f", value)
+}
+
 private func printRateTable(_ results: [FrameScore]) {
     guard !results.isEmpty else {
         print("no frames rated")
@@ -426,12 +434,17 @@ private func printRateTable(_ results: [FrameScore]) {
 
     let pathWidth = results.map { $0.path.count }.max() ?? 4
     let header = "PATH".padding(toLength: pathWidth, withPad: " ", startingAt: 0)
-    print("\(header)  SCORE      OUTLIER")
+    print("\(header)  SCORE      FWHM   ROUND  STARS  BACKGRND  SAT%    OUTLIER")
     for r in results {
         let path = r.path.padding(toLength: pathWidth, withPad: " ", startingAt: 0)
         let score = String(format: "%9.4f", r.score)
+        let fwhm = fmt(r.metrics?.fwhm, 2).padding(toLength: 5, withPad: " ", startingAt: 0)
+        let roundness = fmt(r.metrics?.roundness, 2).padding(toLength: 5, withPad: " ", startingAt: 0)
+        let stars = (r.metrics.map { String($0.starCount) } ?? "-").padding(toLength: 5, withPad: " ", startingAt: 0)
+        let background = fmt(r.background, 0).padding(toLength: 8, withPad: " ", startingAt: 0)
+        let satPercent = fmt(r.saturatedFraction.map { $0 * 100 }, 2).padding(toLength: 6, withPad: " ", startingAt: 0)
         let marker = r.isOutlier ? "*" : ""
-        print("\(path)  \(score)  \(marker)")
+        print("\(path)  \(score)  \(fwhm)  \(roundness)  \(stars)  \(background)  \(satPercent)  \(marker)")
     }
 }
 

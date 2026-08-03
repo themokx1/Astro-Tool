@@ -8,6 +8,26 @@ történik.
 
 ## [Unreleased]
 
+### Added
+
+- **Részletes minőség-táblázat**: a Minőség fül eddig csak Útvonal/Pontszám/
+  Kiugró oszlopokat mutatott — ha a Siril nem adott metrikát egy kerethez,
+  a pontszám kizárólag a háttér-metrikából jött, ami azonos-pontszám
+  klasztereket eredményezett, és a hosszú útvonalakból nem látszott, melyik
+  saját triázs-almappában (pl. `lights/Junk`) ül a keret. `FrameScore`
+  additív bővítése: `saturatedFraction`, `exptime`, számolt `fileName`, és
+  `sessionSubdir` (a `sessions/<target>/<date>/` és a fájlnév közti
+  útvonal-rész — egy felhasználó saját triázs-almappája így azonnal
+  látszik); mind opcionális, a régi (mező nélküli) JSON változatlanul
+  betölthető marad. `QualityView` táblázata Fájl (teljes útvonal tooltip),
+  Mappa, Pontszám, FWHM, Kerekség, Csillagok, Háttér, Szat. %, Exp. és
+  Kiugró oszlopokra bővült, rendezhető fejlécekkel (alapértelmezés:
+  Pontszám csökkenő) és kiugró sorok piros kiemelésével, plusz egy futás
+  utáni összegző sor ("N frame · kiugró: K · Siril metrika: M/N"). CLI
+  `rate` emberi táblázata FWHM/Kerekség/Csillagok/Háttér/Szat.%
+  oszlopokkal bővült ("-" nil esetén); `--json` automatikusan hozza az új
+  mezőket.
+
 ## [0.2.3] - 2026-08-03
 
 ### Javítva
