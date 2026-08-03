@@ -8,6 +8,8 @@ történik.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-03
+
 ### Changed
 
 - **Statisztika tab újratervezés**: a `DisclosureGroup`-alapú célpont-lista
