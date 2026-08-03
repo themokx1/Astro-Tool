@@ -1,19 +1,65 @@
 import AstroCore
 import SwiftUI
 
+/// One row of the hierarchical stats `Table`: either a target roll-up (with
+/// its sessions as children) or a single session detail nested under one.
+/// View-layer only -- built fresh from `AppState.stats` /
+/// `AppState.sessionDetailsByTarget` on every render, never persisted.
+struct StatsRow: Identifiable {
+    enum Kind {
+        case target(TargetStats)
+        case session(target: String, detail: SessionDetail)
+    }
+
+    /// "t:<target>" for a target row, "s:<target>:<dateRaw>" for a session
+    /// row -- unique across the whole table since `dateRaw` is unique within
+    /// one target's session list.
+    let id: String
+    let kind: Kind
+    /// `nil` (not merely `[]`) when there are no sessions, so `Table` shows
+    /// no disclosure chevron at all for a target with no session rows on
+    /// record (e.g. stacks/processed-only targets).
+    var children: [StatsRow]?
+}
+
 struct StatsView: View {
     @Environment(AppState.self) private var appState
     @State private var searchText: String = ""
-    /// At most one target's session detail list is expanded at a time --
-    /// mirrors `AppState`'s single `selectedTarget`/`sessionDetails` pair
-    /// (expanding a different row replaces both).
-    @State private var expandedTarget: String?
+    /// The session currently shown in `CalibLinkSheet`, `nil` when the sheet
+    /// is closed. Row-scoped by construction: only one "Kalibráció
+    /// linkelése…" button can be pressed at a time.
+    @State private var linkingSession: LinkingSession?
+    @State private var selection: StatsRow.ID?
 
-    private var filtered: [TargetStats] {
+    private struct LinkingSession: Identifiable {
+        let target: String
+        let date: String
+        var id: String { "\(target):\(date)" }
+    }
+
+    private var filteredTargets: [TargetStats] {
         guard !searchText.isEmpty else { return appState.stats }
         return appState.stats.filter { stats in
             stats.target.localizedCaseInsensitiveContains(searchText)
                 || stats.tags.contains { $0.localizedCaseInsensitiveContains(searchText) }
+        }
+    }
+
+    private var rows: [StatsRow] {
+        filteredTargets.map { stats in
+            let sessions = appState.sessionDetailsByTarget[stats.target] ?? []
+            let childRows: [StatsRow] = sessions.map { detail in
+                StatsRow(
+                    id: "s:\(stats.target):\(detail.dateRaw)",
+                    kind: .session(target: stats.target, detail: detail),
+                    children: nil
+                )
+            }
+            return StatsRow(
+                id: "t:\(stats.target)",
+                kind: .target(stats),
+                children: childRows.isEmpty ? nil : childRows
+            )
         }
     }
 
@@ -39,18 +85,11 @@ struct StatsView: View {
                 Text(lastError).foregroundStyle(.red)
             }
 
-            if filtered.isEmpty {
+            if rows.isEmpty {
                 Text(appState.stats.isEmpty ? "Nincs célpont." : "Nincs találat.")
                     .foregroundStyle(.secondary)
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 6) {
-                        ForEach(filtered, id: \.target) { stats in
-                            targetRow(stats)
-                            Divider()
-                        }
-                    }
-                }
+                statsTable
             }
 
             HStack {
@@ -62,51 +101,74 @@ struct StatsView: View {
         .onAppear {
             if appState.stats.isEmpty { appState.loadStats() }
         }
+        .sheet(item: $linkingSession) { session in
+            CalibLinkSheet(target: session.target, date: session.date)
+        }
         .padding()
     }
 
-    @ViewBuilder
-    private func targetRow(_ stats: TargetStats) -> some View {
-        DisclosureGroup(
-            isExpanded: Binding(
-                get: { expandedTarget == stats.target },
-                set: { isExpanded in
-                    if isExpanded {
-                        expandedTarget = stats.target
-                        appState.loadSessionDetails(target: stats.target)
-                    } else if expandedTarget == stats.target {
-                        expandedTarget = nil
-                    }
-                }
-            )
-        ) {
-            if expandedTarget == stats.target {
-                SessionDetailPanel(
-                    sessions: appState.sessionDetails,
-                    isBusy: appState.isBusy,
-                    onAddTag: { date, tag in appState.addTag(target: stats.target, date: date, tag: tag) },
-                    onRemoveTag: { date, tag in appState.removeTag(target: stats.target, date: date, tag: tag) }
-                )
-                .padding(.top, 4)
-                .padding(.leading, 12)
+    private var statsTable: some View {
+        Table(rows, children: \.children, selection: $selection) {
+            TableColumn("Célpont / Session") { row in
+                nameCell(row)
             }
-        } label: {
-            targetHeader(stats)
+            .width(min: 260, ideal: 300)
+
+            TableColumn("Integráció") { row in
+                Text(formatDuration(integrationSeconds(row)))
+            }
+            .width(min: 80, ideal: 90)
+
+            TableColumn("Keretek") { row in
+                Text(framesText(row))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .width(min: 120, ideal: 160)
+
+            TableColumn("Expozíciók / Utolsó dátum") { row in
+                Text(exposureOrLastDateText(row))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .width(min: 140, ideal: 200)
+
+            TableColumn("Kamera") { row in
+                Text(cameraText(row))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .width(min: 100, ideal: 140)
+
+            TableColumn("Részletek") { row in
+                Text(detailsText(row))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(.secondary)
+            }
+            .width(min: 140, ideal: 220)
+
+            TableColumn("Címkék") { row in
+                tagsCell(row)
+            }
+            .width(min: 140, ideal: 200)
+
+            TableColumn("Műveletek") { row in
+                actionsCell(row)
+            }
+            .width(min: 80, ideal: 140)
         }
+        .tableStyle(.inset(alternatesRowBackgrounds: true))
     }
 
-    private func targetHeader(_ stats: TargetStats) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 16) {
+    // MARK: - Column 1: Célpont / Session
+
+    @ViewBuilder
+    private func nameCell(_ row: StatsRow) -> some View {
+        switch row.kind {
+        case .target(let stats):
+            HStack(spacing: 6) {
                 Text(stats.target).bold()
-                    .frame(minWidth: 160, alignment: .leading)
-                Text(formatDuration(stats.totalIntegrationSeconds))
-                    .frame(width: 70, alignment: .leading)
-                Text("\(stats.sessionDates.count) session")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 90, alignment: .leading)
-                Text(stats.lastSessionDate ?? "-")
-                    .frame(width: 100, alignment: .leading)
                 if stats.isWideField {
                     Text("wide-field")
                         .font(.caption2)
@@ -114,108 +176,57 @@ struct StatsView: View {
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color.orange.opacity(0.2)))
                 }
-                Spacer()
             }
-            TagChipsRow(
-                tags: stats.tags,
-                onAdd: { tag in appState.addTag(target: stats.target, date: nil, tag: tag) },
-                onRemove: { tag in appState.removeTag(target: stats.target, date: nil, tag: tag) }
-            )
+            .lineLimit(1)
+        case .session(_, let detail):
+            HStack(spacing: 6) {
+                Text(detail.dateRaw)
+                if detail.hasReadme {
+                    Text("README")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                }
+            }
+            .lineLimit(1)
         }
     }
 
-    private func formatDuration(_ seconds: Double) -> String {
-        let totalMinutes = Int((seconds / 60).rounded())
-        return String(format: "%d:%02d", totalMinutes / 60, totalMinutes % 60)
-    }
-}
+    // MARK: - Column 2: Integráció
 
-/// Detail area shown inside an expanded target's `DisclosureGroup`: one
-/// block per session date-dir with the equipment signals `TargetStats`
-/// doesn't carry (focal length, camera, gain/ISO, sensor temp, filter) plus
-/// that session's own tag chips.
-private struct SessionDetailPanel: View {
-    let sessions: [SessionDetail]
-    let isBusy: Bool
-    /// `(sessionDateRaw, tagText)`.
-    let onAddTag: (String, String) -> Void
-    let onRemoveTag: (String, String) -> Void
-
-    /// The session currently shown in `CalibLinkSheet`, `nil` when the sheet
-    /// is closed. `SessionDetail` is made `Identifiable` (below) purely so
-    /// `.sheet(item:)` can key off it.
-    @State private var linkingSession: SessionDetail?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if isBusy && sessions.isEmpty {
-                ProgressView().controlSize(.small)
-            } else if sessions.isEmpty {
-                Text("Nincs session ehhez a célponthoz.").foregroundStyle(.secondary)
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(sessions, id: \.dateRaw) { session in
-                        sessionRow(session)
-                        Divider()
-                    }
-                }
-            }
-        }
-        .sheet(item: $linkingSession) { session in
-            CalibLinkSheet(target: session.target, date: session.dateRaw)
+    private func integrationSeconds(_ row: StatsRow) -> Double {
+        switch row.kind {
+        case .target(let stats): return stats.totalIntegrationSeconds
+        case .session(_, let detail): return detail.integrationSeconds
         }
     }
 
-    private func sessionRow(_ session: SessionDetail) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(session.dateRaw).bold()
-                Text("(\(session.lightCount) light, \(session.flatCount) flat, \(session.darkCount) dark, \(session.biasCount) bias)")
-                    .foregroundStyle(.secondary)
-                if session.hasReadme {
-                    Text("README").font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Kalibráció linkelése…") { linkingSession = session }
-                    .buttonStyle(.link)
-            }
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 2) {
-                GridRow {
-                    Text("Integráció:").foregroundStyle(.secondary)
-                    Text(formatDuration(session.integrationSeconds))
-                }
-                GridRow {
-                    Text("Expozíciók:").foregroundStyle(.secondary)
-                    Text(exposureSummary(session.exposureBreakdown))
-                }
-                GridRow {
-                    Text("Kamera:").foregroundStyle(.secondary)
-                    Text(session.cameras.isEmpty ? "-" : session.cameras.joined(separator: ", "))
-                }
-                GridRow {
-                    Text("Gyújtótávolság:").foregroundStyle(.secondary)
-                    Text(session.focalLengthsMM.isEmpty ? "-" : session.focalLengthsMM.map { "\(Self.formatNumber($0)) mm" }.joined(separator: ", "))
-                }
-                GridRow {
-                    Text("Gain/ISO:").foregroundStyle(.secondary)
-                    Text(session.gains.isEmpty ? "-" : session.gains.map { Self.formatNumber($0) }.joined(separator: ", "))
-                }
-                GridRow {
-                    Text("Szenzor hőm.:").foregroundStyle(.secondary)
-                    Text(session.sensorTempsC.isEmpty ? "-" : session.sensorTempsC.map { "\(Self.formatNumber($0))°C" }.joined(separator: ", "))
-                }
-                GridRow {
-                    Text("Szűrő:").foregroundStyle(.secondary)
-                    Text(session.filters.isEmpty ? "-" : session.filters.joined(separator: ", "))
-                }
-            }
-            .font(.callout)
+    // MARK: - Column 3: Keretek
 
-            TagChipsRow(
-                tags: session.tags,
-                onAdd: { tag in onAddTag(session.dateRaw, tag) },
-                onRemove: { tag in onRemoveTag(session.dateRaw, tag) }
-            )
+    private func framesText(_ row: StatsRow) -> String {
+        switch row.kind {
+        case .target(let stats):
+            return "\(stats.sessionDates.count) session"
+        case .session(_, let detail):
+            var parts: [String] = []
+            if detail.lightCount > 0 { parts.append("\(detail.lightCount) L") }
+            if detail.flatCount > 0 { parts.append("\(detail.flatCount) F") }
+            if detail.darkCount > 0 { parts.append("\(detail.darkCount) D") }
+            if detail.biasCount > 0 { parts.append("\(detail.biasCount) B") }
+            return parts.isEmpty ? "-" : parts.joined(separator: " · ")
+        }
+    }
+
+    // MARK: - Column 4: Expozíciók / Utolsó dátum
+
+    private func exposureOrLastDateText(_ row: StatsRow) -> String {
+        switch row.kind {
+        case .target(let stats):
+            return stats.lastSessionDate ?? "-"
+        case .session(_, let detail):
+            return exposureSummary(detail.exposureBreakdown)
         }
     }
 
@@ -223,8 +234,79 @@ private struct SessionDetailPanel: View {
         guard !breakdown.isEmpty else { return "-" }
         return breakdown
             .sorted { $0.key < $1.key }
-            .map { "\($0.key)s×\($0.value)" }
+            .map { key, count in
+                if key == "unknown" { return "?×\(count)" }
+                let label = Double(key).map(Self.formatNumber) ?? key
+                return "\(label)s×\(count)"
+            }
             .joined(separator: ", ")
+    }
+
+    // MARK: - Column 5: Kamera
+
+    private func cameraText(_ row: StatsRow) -> String {
+        switch row.kind {
+        case .target(let stats):
+            return stats.cameras.isEmpty ? "-" : stats.cameras.joined(separator: ", ")
+        case .session(_, let detail):
+            return detail.cameras.isEmpty ? "-" : detail.cameras.joined(separator: ", ")
+        }
+    }
+
+    // MARK: - Column 6: Részletek (sessions only)
+
+    private func detailsText(_ row: StatsRow) -> String {
+        guard case .session(_, let detail) = row.kind else { return "" }
+        var parts: [String] = []
+        if !detail.focalLengthsMM.isEmpty {
+            parts.append(detail.focalLengthsMM.map { "\(Self.formatNumber($0)) mm" }.joined(separator: "/"))
+        }
+        if !detail.gains.isEmpty {
+            parts.append("gain \(detail.gains.map(Self.formatNumber).joined(separator: "/"))")
+        }
+        if !detail.sensorTempsC.isEmpty {
+            parts.append(detail.sensorTempsC.map { "\(Self.formatNumber($0)) °C" }.joined(separator: "/"))
+        }
+        if !detail.filters.isEmpty {
+            parts.append(detail.filters.joined(separator: "/"))
+        }
+        return parts.isEmpty ? "-" : parts.joined(separator: " · ")
+    }
+
+    // MARK: - Column 7: Címkék
+
+    @ViewBuilder
+    private func tagsCell(_ row: StatsRow) -> some View {
+        switch row.kind {
+        case .target(let stats):
+            TagChipsRow(
+                tags: stats.tags,
+                onAdd: { tag in appState.addTag(target: stats.target, date: nil, tag: tag) },
+                onRemove: { tag in appState.removeTag(target: stats.target, date: nil, tag: tag) }
+            )
+        case .session(let target, let detail):
+            TagChipsRow(
+                tags: detail.tags,
+                onAdd: { tag in appState.addTag(target: target, date: detail.dateRaw, tag: tag) },
+                onRemove: { tag in appState.removeTag(target: target, date: detail.dateRaw, tag: tag) }
+            )
+        }
+    }
+
+    // MARK: - Column 8: Műveletek
+
+    @ViewBuilder
+    private func actionsCell(_ row: StatsRow) -> some View {
+        switch row.kind {
+        case .target:
+            EmptyView()
+        case .session(let target, let detail):
+            Button("Kalibráció linkelése…") {
+                linkingSession = LinkingSession(target: target, date: detail.dateRaw)
+            }
+            .buttonStyle(.link)
+            .font(.caption)
+        }
     }
 
     private func formatDuration(_ seconds: Double) -> String {
@@ -240,8 +322,7 @@ private struct SessionDetailPanel: View {
 // MARK: - Tag chips
 
 /// A wrapping row of tag capsules plus a trailing "+" chip that pops over a
-/// text field for adding a new one. Shared by the target-level header and
-/// each session row.
+/// text field for adding a new one. Shared by target rows and session rows.
 private struct TagChipsRow: View {
     let tags: [String]
     let onAdd: (String) -> Void
@@ -361,13 +442,6 @@ private struct FlowLayout: Layout {
 }
 
 // MARK: - Calibration hard-linking
-
-/// Retroactive conformance purely so `.sheet(item:)` can key off a session
-/// row -- `dateRaw` is unique within one target's session list, which is
-/// exactly the scope this sheet is ever shown in.
-extension SessionDetail: Identifiable {
-    public var id: String { dateRaw }
-}
 
 /// Confirmation sheet for the one new write operation this tool performs
 /// against the user's existing library: hard-linking matching calibration

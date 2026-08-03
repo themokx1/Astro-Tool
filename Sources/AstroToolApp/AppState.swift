@@ -42,8 +42,11 @@ final class AppState: @unchecked Sendable {
     var cleanupSummary: CleanupSummary?
 
     var stats: [TargetStats] = []
-    var selectedTarget: String?
-    var sessionDetails: [SessionDetail] = []
+    /// Every target's session detail rows, keyed by target name -- populated
+    /// alongside `stats` in `loadStats()` so `StatsView`'s hierarchical
+    /// `Table` has every row's children available up front (a `Table` can't
+    /// lazily fetch a row's children on first expand).
+    var sessionDetailsByTarget: [String: [SessionDetail]] = [:]
     var calibNeeds: [CalibNeed] = []
     var frameScores: [FrameScore] = []
 
@@ -423,6 +426,11 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - Stats
 
+    /// Loads `stats` plus every target's session detail rows in one go (one
+    /// `SessionStatsQueries.sessions` call per target, on the same
+    /// background operation) -- with the library's target count this is
+    /// cheap, and it's what lets `StatsView`'s hierarchical `Table` show
+    /// session sub-rows without a separate lazy-load-on-expand step.
     func loadStats() {
         guard let db else { return }
         let cfg = config
@@ -431,41 +439,20 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try StatsQueries.perTarget(db: db, config: cfg)
+                let (result, sessionsByTarget) = try await Task.detached(priority: .userInitiated) {
+                    let stats = try StatsQueries.perTarget(db: db, config: cfg)
+                    var sessionsByTarget: [String: [SessionDetail]] = [:]
+                    for stat in stats {
+                        sessionsByTarget[stat.target] = try SessionStatsQueries.sessions(
+                            target: stat.target, db: db, config: cfg
+                        )
+                    }
+                    return (stats, sessionsByTarget)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.stats = result
+                self.sessionDetailsByTarget = sessionsByTarget
                 self.progressText = "Statisztika kész: \(result.count) célpont"
-            } catch {
-                self.handle(error)
-            }
-            self.endOperation(opID)
-        }
-    }
-
-    /// Loads the per-session detail breakdown (focal length, camera,
-    /// gain/ISO, sensor temp, filter) for one target, e.g. after the user
-    /// selects a row in `StatsView`'s table. Clears `sessionDetails` first
-    /// so a slow load never leaves a previous target's rows on screen
-    /// under the new selection.
-    func loadSessionDetails(target: String) {
-        guard let db else { return }
-        let cfg = config
-        selectedTarget = target
-        sessionDetails = []
-
-        let opID = beginOperation("Session-részletek betöltése…")
-        currentTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try SessionStatsQueries.sessions(target: target, db: db, config: cfg)
-                }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
-                guard self.selectedTarget == target else { self.endOperation(opID); return }
-                self.sessionDetails = result
-                self.progressText = "Session-részletek kész: \(result.count) session"
             } catch {
                 self.handle(error)
             }
@@ -493,7 +480,7 @@ final class AppState: @unchecked Sendable {
                     try db.addTag(record)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
-                await self.reloadStatsAfterTagChange(db: db, config: cfg)
+                await self.reloadStatsAfterTagChange(db: db, config: cfg, target: target)
             } catch {
                 self.handle(error)
             }
@@ -515,7 +502,7 @@ final class AppState: @unchecked Sendable {
                     try db.removeTag(record)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
-                await self.reloadStatsAfterTagChange(db: db, config: cfg)
+                await self.reloadStatsAfterTagChange(db: db, config: cfg, target: target)
             } catch {
                 self.handle(error)
             }
@@ -523,23 +510,20 @@ final class AppState: @unchecked Sendable {
         }
     }
 
-    /// Best-effort refresh of `stats` (always) and `sessionDetails` (only
-    /// when a target is currently selected/expanded) after a tag mutation --
-    /// mirrors the post-scan refresh in `runScan()`. Best-effort: a failure
-    /// here shouldn't turn an otherwise-successful tag edit into a reported
-    /// error.
-    private func reloadStatsAfterTagChange(db: Database, config: AstroConfig) async {
+    /// Best-effort refresh of `stats` (always) and `target`'s entry in
+    /// `sessionDetailsByTarget` after a tag mutation -- mirrors the post-scan
+    /// refresh in `runScan()`. Best-effort: a failure here shouldn't turn an
+    /// otherwise-successful tag edit into a reported error.
+    private func reloadStatsAfterTagChange(db: Database, config: AstroConfig, target: String) async {
         if let statsResult = try? await Task.detached(priority: .userInitiated, operation: {
             try StatsQueries.perTarget(db: db, config: config)
         }).value {
             self.stats = statsResult
         }
-        if let target = selectedTarget {
-            if let sessionsResult = try? await Task.detached(priority: .userInitiated, operation: {
-                try SessionStatsQueries.sessions(target: target, db: db, config: config)
-            }).value {
-                self.sessionDetails = sessionsResult
-            }
+        if let sessionsResult = try? await Task.detached(priority: .userInitiated, operation: {
+            try SessionStatsQueries.sessions(target: target, db: db, config: config)
+        }).value {
+            self.sessionDetailsByTarget[target] = sessionsResult
         }
     }
 
@@ -574,15 +558,16 @@ final class AppState: @unchecked Sendable {
     /// Applies `calibLinkPlan` through `CalibLinker.apply` (WriteGuard-gated
     /// hard-linking) -- the one place this button/flow actually writes
     /// anything. On success, `calibLinkResult` is set (so the sheet can show
-    /// linked/skipped counts) and `sessionDetails` is refreshed for the
-    /// currently-selected target, same as a tag edit does, so the session
-    /// panel's own dark/bias counts reflect the newly-linked files without
-    /// requiring a manual "Frissítés".
+    /// linked/skipped counts) and `plan.target`'s entry in
+    /// `sessionDetailsByTarget` is refreshed, same as a tag edit does, so the
+    /// session row's own dark/bias counts reflect the newly-linked files
+    /// without requiring a manual "Frissítés".
     func applyCalibLinkPlan() {
         guard let plan = calibLinkPlan else { return }
         let cfg = config
         let root = URL(fileURLWithPath: cfg.rootPath, isDirectory: true)
         let writeGuard = WriteGuard(root: root)
+        let target = plan.target
 
         let opID = beginOperation("Kalibráció linkelése…")
         currentTask = Task { [weak self] in
@@ -594,11 +579,11 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.calibLinkResult = result
                 self.progressText = "Linkelve: \(result.linked.count), kihagyva: \(result.skipped.count)"
-                if let db = self.db, let target = self.selectedTarget {
+                if let db = self.db {
                     if let refreshed = try? await Task.detached(priority: .userInitiated, operation: {
                         try SessionStatsQueries.sessions(target: target, db: db, config: cfg)
                     }).value {
-                        self.sessionDetails = refreshed
+                        self.sessionDetailsByTarget[target] = refreshed
                     }
                 }
             } catch {

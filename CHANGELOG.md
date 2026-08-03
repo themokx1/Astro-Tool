@@ -8,6 +8,24 @@ történik.
 
 ## [Unreleased]
 
+### Changed
+
+- **Statisztika tab újratervezés**: a `DisclosureGroup`-alapú célpont-lista
+  helyett natív SwiftUI hierarchikus `Table` (oszlopfejlécek, átméretezhető
+  oszlopok, váltakozó sorháttér, beépített lenyitó-chevron a session-sorokon)
+  — a session-sorok automatikusan behúzva jelennek meg az első oszlopban,
+  minden más érték a saját oszlopában marad, sorhatáron nem törik.
+  - 8 oszlop: Célpont/Session (wide-field jelvény + README badge),
+    Integráció, Keretek, Expozíciók/Utolsó dátum, Kamera, Részletek
+    (csak session-soroknál: gyújtótáv/gain/hőm./szűrő), Címkék (tag-chipek,
+    változatlan hozzáadás/törlés), Műveletek (session-soroknál „Kalibráció
+    linkelése…").
+  - `AppState.loadStats()` mostantól minden célpont session-részleteit is
+    egyszerre betölti (`sessionDetailsByTarget: [String: [SessionDetail]]`)
+    — a `Table(children:)` nem tud lenyitáskor lazy-betölteni, ezért ez
+    kiváltja a régi egy-célpontos `loadSessionDetails`/`sessionDetails`/
+    `selectedTarget` API-t (eltávolítva, sehol máshol nem volt rá hivatkozás).
+
 ## [0.2.1] - 2026-08-03
 
 ### Changed
