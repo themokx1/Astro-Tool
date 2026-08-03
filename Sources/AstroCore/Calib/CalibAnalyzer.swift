@@ -189,6 +189,28 @@ public enum CalibAnalyzer {
         return candidate.map { "calibration_library/darks/\($0.dirName)" }
     }
 
+    /// Groups `files`' FITS meta by rounded (exptime, setTemp) -- via
+    /// `CalibCombo.rounded` -- and returns the most common combo. Shared
+    /// dominant-combo logic used both by `SessionMatcher` (a session's
+    /// lights, to find a fallback library dark) and `CalibLinker` (a
+    /// session's flats, to find a matching flat-dark). `nil` when none of
+    /// `files` has usable exposure meta at all.
+    static func dominantCombo(files: [FileRecord], db: Database) throws -> CalibCombo? {
+        var counts: [CalibCombo: Int] = [:]
+
+        for file in files {
+            guard let fileID = file.id,
+                  let meta = try db.fitsMeta(fileID: fileID),
+                  let exptime = meta.exptime
+            else { continue }
+
+            let key = CalibCombo.rounded(exptime: exptime, setTemp: meta.setTemp)
+            counts[key, default: 0] += 1
+        }
+
+        return counts.max(by: { $0.value < $1.value })?.key
+    }
+
     // MARK: - Grouping
 
     private struct GroupInfo {

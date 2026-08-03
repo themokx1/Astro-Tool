@@ -10,6 +10,29 @@ történik.
 
 ### Added
 
+- **Kalibráció hard-linkelés (új írási művelet, kizárólag explicit gombra/
+  parancsra)**: a tool megkeresi a session lightjaihoz illő master darkot,
+  a flatjaihoz illő flat-darkot és a bias mastert a `calibration_library/`-ban
+  (ugyanaz az exp/temp tűrés-illesztés, mint a kalibrációs lefedettség
+  nézetnél), és **hard linkeli** őket a session saját `darks`/`biases`
+  mappájába. Meglévő cél-fájlt **soha nem ír felül** — ha már ott van,
+  kihagyja és jelzi. Kizárólag hard link (azonos kötet); ha ez valamiért
+  mégsem menne (cross-device), hibát jelez, NEM esik vissza csendben
+  másolásra. Semmi más nem törlődik vagy mozog — a vasszabály (nincs
+  törlés/mozgatás a képkönyvtárban) változatlan. Új `WriteGuard.
+  linkCalibrationFile(sourceRelative:destDirRelative:)` — a forrásnak a
+  `calibration_library/` alá, a célnak szigorúan `sessions/<target>/<date>/
+  (darks|biases|flats)` mintára kell esnie, mindkettő a `writeToolFile`-lal
+  azonos útvonal-védelemmel. Új `Sources/AstroCore/Calib/CalibLinker.swift`
+  (`CalibLinker.plan`/`apply`) a meglévő `SessionMatcher`/`CalibAnalyzer`
+  illesztési logikáját újrahasználva. CLI: `astrotool link-calib --target T
+  --date D [--dry-run] [--yes] [--json]` — alapból kiírja a tervet és
+  stdin-en kér megerősítést (`Type YES to link:`), `--dry-run` sosem ír,
+  szkriptelt/`--json` híváshoz `--yes` kötelező. App: „Kalibráció
+  linkelése…" gomb minden session-sornál (Statisztika fül) egy megerősítő
+  sheet-tel, ami a tervet célkönyvtár szerint csoportosítva, indoklással
+  mutatja, és a linkelés után frissíti a session-részleteket.
+
 - **Szabad szöveges címkék (tagek) célpontokra és session-ökre**: DB séma
   v2-re bővült egy `tags` táblával (`kind`, `target`, `session_date`, `tag`,
   `UNIQUE(kind, target, session_date, tag)`); a migráció verzió-lépcsős

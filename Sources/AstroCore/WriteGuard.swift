@@ -1,5 +1,22 @@
 import Foundation
 
+/// Outcome of `WriteGuard.linkCalibrationFile` applied over a whole
+/// `CalibLinkPlan` (see `CalibLinker.apply`): which destination paths were
+/// newly hard-linked, and which were left alone because a file already sat
+/// there.
+public struct LinkResult: Codable, Equatable, Sendable {
+    /// Root-relative destination paths this run actually created.
+    public var linked: [String]
+    /// Root-relative destination paths that already existed -- skipped,
+    /// never overwritten.
+    public var skipped: [String]
+
+    public init(linked: [String] = [], skipped: [String] = []) {
+        self.linked = linked
+        self.skipped = skipped
+    }
+}
+
 /// The sole filesystem-writing component of Astro-Tool. Nothing else in
 /// AstroCore may create, write, or delete anything under the library root —
 /// every write in the package goes through here so the two allowed
@@ -126,6 +143,86 @@ public struct WriteGuard: Sendable {
         guard !component.isEmpty, !component.contains("/"), component != ".", component != ".." else {
             throw AstroError.writeForbidden(path: component)
         }
+    }
+
+    /// Hard-links one file from the shared `calibration_library/` into a
+    /// session's own `darks`/`biases`/`flats` folder -- the sole additive
+    /// write operation this tool performs against files the user already
+    /// has (spec section 11 point 4). Everything else `WriteGuard` does
+    /// either creates brand-new session scaffolding or writes the tool's own
+    /// `.astro_tool/` state; this is the only place a *pre-existing* library
+    /// file gets a new name anywhere.
+    ///
+    /// Validates, in order:
+    /// - `sourceRelative` resolves (after `standardizedFileURL`, same
+    ///   defense as `writeToolFile`'s traversal check) to a path inside
+    ///   `<root>/calibration_library/`.
+    /// - `destDirRelative` is *exactly* `sessions/<target>/<date>/
+    ///   (darks|biases|flats)` -- one target component, one date component,
+    ///   one of the three allowed role directories, no more and no fewer --
+    ///   both as a raw component check (rejecting `.`/`..`/empty segments
+    ///   outright) and, again, via `standardizedFileURL` containment inside
+    ///   `<root>/sessions/` for defense in depth.
+    ///
+    /// Creates `destDirRelative` (mkdir -p semantics) if it doesn't exist
+    /// yet. The destination file name is always the source file's own last
+    /// path component. If a file already sits there, this makes NO change
+    /// and returns `nil` -- the existing library file is never overwritten,
+    /// touched, or replaced. Otherwise links via `FileManager.linkItem`
+    /// (hard link, same volume) and returns the new destination URL. A
+    /// cross-device link failure (`EXDEV` -- shouldn't happen since source
+    /// and destination are always under the same root) surfaces as
+    /// whatever error `linkItem` throws; this never silently falls back to
+    /// copying. Permission failures are reclassified as
+    /// `AstroError.accessDenied`, same as every other write in this type.
+    @discardableResult
+    public func linkCalibrationFile(sourceRelative: String, destDirRelative: String) throws -> URL? {
+        guard !sourceRelative.hasPrefix("/") else {
+            throw AstroError.writeForbidden(path: sourceRelative)
+        }
+
+        let calibBase = root.appendingPathComponent("calibration_library", isDirectory: true).standardizedFileURL
+        let sourceCandidate = root.appendingPathComponent(sourceRelative).standardizedFileURL
+        guard sourceCandidate.path.hasPrefix(calibBase.path + "/") else {
+            throw AstroError.writeForbidden(path: sourceRelative)
+        }
+
+        guard !destDirRelative.hasPrefix("/") else {
+            throw AstroError.writeForbidden(path: destDirRelative)
+        }
+
+        let destComponents = destDirRelative.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard destComponents.count == 4, destComponents[0] == "sessions" else {
+            throw AstroError.writeForbidden(path: destDirRelative)
+        }
+        let target = destComponents[1]
+        let dateDir = destComponents[2]
+        let role = destComponents[3]
+        try Self.validatePathComponent(target)
+        try Self.validatePathComponent(dateDir)
+        guard ["darks", "biases", "flats"].contains(role) else {
+            throw AstroError.writeForbidden(path: destDirRelative)
+        }
+
+        let sessionsBase = root.appendingPathComponent("sessions", isDirectory: true).standardizedFileURL
+        let destDirCandidate = root.appendingPathComponent(destDirRelative, isDirectory: true).standardizedFileURL
+        guard destDirCandidate.path.hasPrefix(sessionsBase.path + "/") else {
+            throw AstroError.writeForbidden(path: destDirRelative)
+        }
+
+        let fm = FileManager.default
+        let destFileURL = destDirCandidate.appendingPathComponent(sourceCandidate.lastPathComponent, isDirectory: false)
+
+        guard !fm.fileExists(atPath: destFileURL.path) else {
+            return nil
+        }
+
+        try Self.classifyingPermissionErrors(path: destFileURL.path) {
+            try fm.createDirectory(at: destDirCandidate, withIntermediateDirectories: true)
+            try fm.linkItem(at: sourceCandidate, to: destFileURL)
+        }
+
+        return destFileURL
     }
 
     /// Runs a filesystem-writing `body`, reclassifying a permission failure

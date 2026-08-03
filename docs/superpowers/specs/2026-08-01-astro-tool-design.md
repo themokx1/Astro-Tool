@@ -280,3 +280,10 @@ Minden mérföldkő végén: tesztek zöldek, commit + push.
    `linkCalibration` műveletén át; hard link (azonos kötet), létező cél-fájlt
    SOHA nem ír felül (skip + jelzés); forrás mindig a `calibration_library`;
    a vasszabály többi része (nincs törlés/mozgatás) változatlan.
+   **(megvalósítva 2026-08-03)**: `WriteGuard.linkCalibrationFile` (fehérlistás
+   hard-link, forrás/cél útvonal-validáció a `writeToolFile`-éval azonos
+   stílusban), `CalibLinker.plan`/`apply` (a `SessionMatcher`/`CalibAnalyzer`
+   meglévő illesztési logikáját újrahasználva, nem duplikálva), CLI
+   `astrotool link-calib --target T --date D [--dry-run] [--yes] [--json]`,
+   app: „Kalibráció linkelése…" gomb a session-részletek panelen
+   (`StatsView`) → megerősítő sheet.

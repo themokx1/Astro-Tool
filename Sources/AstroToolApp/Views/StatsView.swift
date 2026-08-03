@@ -141,6 +141,11 @@ private struct SessionDetailPanel: View {
     let onAddTag: (String, String) -> Void
     let onRemoveTag: (String, String) -> Void
 
+    /// The session currently shown in `CalibLinkSheet`, `nil` when the sheet
+    /// is closed. `SessionDetail` is made `Identifiable` (below) purely so
+    /// `.sheet(item:)` can key off it.
+    @State private var linkingSession: SessionDetail?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if isBusy && sessions.isEmpty {
@@ -156,6 +161,9 @@ private struct SessionDetailPanel: View {
                 }
             }
         }
+        .sheet(item: $linkingSession) { session in
+            CalibLinkSheet(target: session.target, date: session.dateRaw)
+        }
     }
 
     private func sessionRow(_ session: SessionDetail) -> some View {
@@ -168,6 +176,8 @@ private struct SessionDetailPanel: View {
                     Text("README").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button("Kalibráció linkelése…") { linkingSession = session }
+                    .buttonStyle(.link)
             }
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 2) {
                 GridRow {
@@ -347,5 +357,112 @@ private struct FlowLayout: Layout {
             origin.x += size.width + spacing
             lineHeight = max(lineHeight, size.height)
         }
+    }
+}
+
+// MARK: - Calibration hard-linking
+
+/// Retroactive conformance purely so `.sheet(item:)` can key off a session
+/// row -- `dateRaw` is unique within one target's session list, which is
+/// exactly the scope this sheet is ever shown in.
+extension SessionDetail: Identifiable {
+    public var id: String { dateRaw }
+}
+
+/// Confirmation sheet for the one new write operation this tool performs
+/// against the user's existing library: hard-linking matching calibration
+/// masters (`calibration_library/darks|flats|biases`) into this session's own
+/// `darks`/`biases` folders. Loads `AppState.calibLinkPlan` on appear, shows
+/// it grouped by destination with each item's reason, and only ever writes
+/// when the user explicitly presses "Linkelés" -- never on open, never
+/// automatically.
+private struct CalibLinkSheet: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+
+    let target: String
+    let date: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Kalibráció linkelése").font(.headline)
+            Text("\(target) / \(date)").foregroundStyle(.secondary)
+
+            if let result = appState.calibLinkResult {
+                resultView(result)
+            } else if let plan = appState.calibLinkPlan {
+                planView(plan)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+
+            if let lastError = appState.lastError {
+                Text(lastError).foregroundStyle(.red)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 480, minHeight: 220)
+        .onAppear {
+            appState.loadCalibLinkPlan(target: target, date: date)
+        }
+        .onDisappear {
+            appState.clearCalibLinkPlan()
+        }
+    }
+
+    @ViewBuilder
+    private func planView(_ plan: CalibLinkPlan) -> some View {
+        if plan.items.isEmpty {
+            Text("Nincs linkelhető kalibráció ehhez a session-höz.")
+                .foregroundStyle(.secondary)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(groupedDestDirs(plan), id: \.self) { destDir in
+                        Text(destDir).font(.subheadline).bold()
+                        ForEach(plan.items.filter { $0.destDir == destDir }, id: \.sourcePath) { item in
+                            Text("•  \(item.sourcePath)  —  \(item.reason)")
+                                .font(.caption)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 260)
+        }
+
+        HStack {
+            Spacer()
+            if appState.isBusy {
+                ProgressView().controlSize(.small)
+            }
+            Button("Mégse") { dismiss() }
+            Button("Linkelés") { appState.applyCalibLinkPlan() }
+                .keyboardShortcut(.defaultAction)
+                .disabled(plan.items.isEmpty || appState.isBusy)
+                .help(plan.items.isEmpty ? "Nincs linkelhető kalibráció" : "")
+        }
+    }
+
+    private func resultView(_ result: LinkResult) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Linkelve: \(result.linked.count), kihagyva: \(result.skipped.count)")
+                .font(.callout)
+            if !result.skipped.isEmpty {
+                Text("Kihagyva (már létezett a célban): \(result.skipped.joined(separator: ", "))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack {
+                Spacer()
+                Button("Bezárás") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+    }
+
+    private func groupedDestDirs(_ plan: CalibLinkPlan) -> [String] {
+        Set(plan.items.map(\.destDir)).sorted()
     }
 }

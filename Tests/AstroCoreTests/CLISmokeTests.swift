@@ -477,6 +477,101 @@ struct CLISmokeTests {
     #expect(result.stderr.contains("Teljes lemezhozzáférés"))
 }
 
+// MARK: - link-calib
+
+/// Writes a minimal real FITS header (not the plain dummy content
+/// `Fixtures.makeMessyLibrary` uses) so `link-calib`'s underlying
+/// `CalibLinker.plan` -- which needs actual EXPTIME/SET-TEMP meta -- has
+/// something to match against.
+private func writeLinkCalibFITS(_ relativePath: String, root: URL, exptime: Double, setTemp: Double) throws {
+    let url = root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let cards = [
+        "SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2",
+        "EXPTIME =                \(exptime)", "SET-TEMP=                \(setTemp)", "END",
+    ]
+    try buildHeaderData(cards).write(to: url)
+}
+
+private func writeLinkCalibDummy(_ relativePath: String, root: URL) throws {
+    let url = root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "dummy master".write(to: url, atomically: true, encoding: .utf8)
+}
+
+@Test func linkCalibDryRunPrintsPlanAndCreatesNothing() throws {
+    let root = try makeTempRoot("link-calib-dry-run")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
+    try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l2.fit", root: root, exptime: 300.0, setTemp: -10.0)
+    try writeLinkCalibDummy("calibration_library/darks/300sec_-10deg/master.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI([
+        "link-calib", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--dry-run", "--json",
+    ])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+    let items = try #require(json?["items"] as? [[String: Any]])
+    #expect(items.count == 1)
+    #expect(items.first?["source_path"] as? String == "calibration_library/darks/300sec_-10deg/master.fit")
+
+    let destURL = root.appendingPathComponent("sessions/T1/2026-01-10/darks/master.fit")
+    #expect(!FileManager.default.fileExists(atPath: destURL.path))
+}
+
+@Test func linkCalibWithYesLinksThenRerunReportsSkipped() throws {
+    let root = try makeTempRoot("link-calib-yes")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
+    try writeLinkCalibDummy("calibration_library/darks/300sec_-10deg/master.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let first = try runCLI([
+        "link-calib", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--yes", "--json",
+    ])
+    #expect(first.exitCode == 0, "stderr: \(first.stderr)")
+    let firstJSON = try JSONSerialization.jsonObject(with: Data(first.stdout.utf8)) as? [String: Any]
+    let linked = try #require(firstJSON?["linked"] as? [String])
+    #expect(linked == ["sessions/T1/2026-01-10/darks/master.fit"])
+    #expect((firstJSON?["skipped"] as? [String])?.isEmpty == true)
+
+    let destURL = root.appendingPathComponent("sessions/T1/2026-01-10/darks/master.fit")
+    #expect(FileManager.default.fileExists(atPath: destURL.path))
+
+    let second = try runCLI([
+        "link-calib", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--yes", "--json",
+    ])
+    #expect(second.exitCode == 0, "stderr: \(second.stderr)")
+    let secondJSON = try JSONSerialization.jsonObject(with: Data(second.stdout.utf8)) as? [String: Any]
+    #expect((secondJSON?["linked"] as? [String])?.isEmpty == true)
+    #expect(secondJSON?["skipped"] as? [String] == ["sessions/T1/2026-01-10/darks/master.fit"])
+}
+
+@Test func linkCalibJSONWithoutYesOrDryRunExitsWithError() throws {
+    let root = try makeTempRoot("link-calib-no-yes")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
+    try writeLinkCalibDummy("calibration_library/darks/300sec_-10deg/master.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["link-calib", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
+    #expect(result.exitCode == 1)
+
+    let destURL = root.appendingPathComponent("sessions/T1/2026-01-10/darks/master.fit")
+    #expect(!FileManager.default.fileExists(atPath: destURL.path))
+}
+
 // MARK: - misc
 
 @Test func unknownSubcommandExitsWithUsage() throws {

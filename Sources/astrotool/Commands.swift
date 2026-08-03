@@ -31,6 +31,7 @@ Commands:
   stats         [--root R] [--target T] [--json] [--sessions (requires --target)] [--tag TAG]
   calib         [--root R] [--json]
   match         [--root R] --target T --date D [--json]
+  link-calib    --target T --date D [--dry-run] [--yes] [--root R] [--json]
   new-session   --catalog CAT --name NAME --date D [--root R] [--json]
   config        (show|path) [--root R] [--json]
   tag add       --target T [--date D] <tag> [--root R] [--json]
@@ -556,6 +557,99 @@ private func printSessionCalibration(_ sc: SessionCalibration) {
         for problem in sc.problems {
             print("  [\(problem.severity.rawValue)] \(problem.category): \(problem.path)")
             print("    \(problem.message)")
+        }
+    }
+}
+
+// MARK: - link-calib
+
+/// Hard-links matching calibration masters from `calibration_library/` into
+/// one session's own `darks`/`biases` folders -- the sole additive write
+/// this tool performs against files the user already has (spec section 11
+/// point 4). Never runs without either an interactive `YES` confirmation or
+/// an explicit `--yes`; `--dry-run` never writes at all, in any mode.
+func cmdLinkCalib(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--date", takesValue: true),
+        FlagSpec("--dry-run", takesValue: false),
+        FlagSpec("--yes", takesValue: false),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    guard let target = parsed.value("--target"), let date = parsed.value("--date") else {
+        eprint("error: --target and --date are required")
+        eprint(usageText)
+        return 1
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let plan = try CalibLinker.plan(target: target, date: date, db: db, config: config)
+    let isJSON = parsed.has("--json")
+
+    if parsed.has("--dry-run") {
+        if isJSON {
+            try printJSON(plan)
+        } else {
+            printLinkPlan(plan)
+            print("(dry-run: nincs írás)")
+        }
+        return 0
+    }
+
+    if isJSON {
+        // No stdin prompt makes sense for a --json caller -- require an
+        // explicit --yes instead of ever blocking on a TTY read.
+        guard parsed.has("--yes") else {
+            eprint("error: --json without --dry-run requires --yes")
+            return 1
+        }
+        let result = try applyLinkPlan(plan, config: config)
+        try printJSON(result)
+        return 0
+    }
+
+    printLinkPlan(plan)
+    guard !plan.items.isEmpty else { return 0 }
+
+    if !parsed.has("--yes") {
+        print("Type YES to link:")
+        guard let line = readLine(), line.trimmingCharacters(in: .whitespacesAndNewlines) == "YES" else {
+            print("megszakítva, nem történt írás")
+            return 0
+        }
+    }
+
+    let result = try applyLinkPlan(plan, config: config)
+    print("linked \(result.linked.count), skipped \(result.skipped.count)")
+    return 0
+}
+
+private func applyLinkPlan(_ plan: CalibLinkPlan, config: AstroConfig) throws -> LinkResult {
+    let writeGuard = makeWriteGuard(config: config)
+    let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+    return try CalibLinker.apply(plan, root: root, using: writeGuard)
+}
+
+private func printLinkPlan(_ plan: CalibLinkPlan) {
+    print("target: \(plan.target)")
+    print("date: \(plan.date)")
+
+    guard !plan.items.isEmpty else {
+        print("nincs linkelhető kalibráció")
+        return
+    }
+
+    let grouped = Dictionary(grouping: plan.items, by: { $0.destDir })
+    for destDir in grouped.keys.sorted() {
+        print("\(destDir):")
+        for item in (grouped[destDir] ?? []).sorted(by: { $0.sourcePath < $1.sourcePath }) {
+            print("  \(item.sourcePath)  (\(item.reason))")
         }
     }
 }

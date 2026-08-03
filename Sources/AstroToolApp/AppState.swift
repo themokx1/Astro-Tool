@@ -45,6 +45,14 @@ final class AppState: @unchecked Sendable {
     var calibNeeds: [CalibNeed] = []
     var frameScores: [FrameScore] = []
 
+    /// The plan currently shown in `CalibLinkSheet`, `nil` while it's still
+    /// loading (or the sheet isn't open). Cleared whenever the sheet closes
+    /// so a stale plan from a previous session never flashes on next open.
+    var calibLinkPlan: CalibLinkPlan?
+    /// Set once `applyCalibLinkPlan()` finishes -- the sheet switches from
+    /// showing the plan to showing this result.
+    var calibLinkResult: LinkResult?
+
     var isBusy: Bool = false
     var progressText: String = ""
     var lastError: String?
@@ -456,6 +464,78 @@ final class AppState: @unchecked Sendable {
                 self.sessionDetails = sessionsResult
             }
         }
+    }
+
+    // MARK: - Calibration hard-linking
+
+    /// Computes the `CalibLinkPlan` for one session -- read-only, safe to
+    /// call every time `CalibLinkSheet` appears. `calibLinkResult` is reset
+    /// too, so reopening the sheet for a different session never shows a
+    /// stale previous result before the new plan arrives.
+    func loadCalibLinkPlan(target: String, date: String) {
+        guard let db else { return }
+        let cfg = config
+        calibLinkPlan = nil
+        calibLinkResult = nil
+
+        let opID = beginOperation("Kalibráció-terv számítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let plan = try await Task.detached(priority: .userInitiated) {
+                    try CalibLinker.plan(target: target, date: date, db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.calibLinkPlan = plan
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Applies `calibLinkPlan` through `CalibLinker.apply` (WriteGuard-gated
+    /// hard-linking) -- the one place this button/flow actually writes
+    /// anything. On success, `calibLinkResult` is set (so the sheet can show
+    /// linked/skipped counts) and `sessionDetails` is refreshed for the
+    /// currently-selected target, same as a tag edit does, so the session
+    /// panel's own dark/bias counts reflect the newly-linked files without
+    /// requiring a manual "Frissítés".
+    func applyCalibLinkPlan() {
+        guard let plan = calibLinkPlan else { return }
+        let cfg = config
+        let root = URL(fileURLWithPath: cfg.rootPath, isDirectory: true)
+        let writeGuard = WriteGuard(root: root)
+
+        let opID = beginOperation("Kalibráció linkelése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try CalibLinker.apply(plan, root: root, using: writeGuard)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.calibLinkResult = result
+                self.progressText = "Linkelve: \(result.linked.count), kihagyva: \(result.skipped.count)"
+                if let db = self.db, let target = self.selectedTarget {
+                    if let refreshed = try? await Task.detached(priority: .userInitiated, operation: {
+                        try SessionStatsQueries.sessions(target: target, db: db, config: cfg)
+                    }).value {
+                        self.sessionDetails = refreshed
+                    }
+                }
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Called when `CalibLinkSheet` closes, so its state never leaks into
+    /// the next time it's opened (for this session or another one).
+    func clearCalibLinkPlan() {
+        calibLinkPlan = nil
+        calibLinkResult = nil
     }
 
     // MARK: - Calibration coverage

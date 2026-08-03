@@ -28,6 +28,7 @@ do {
     case "stats": exitCode = try cmdStats(rest)
     case "calib": exitCode = try cmdCalib(rest)
     case "match": exitCode = try cmdMatch(rest)
+    case "link-calib": exitCode = try cmdLinkCalib(rest)
     case "new-session": exitCode = try cmdNewSession(rest)
     case "config": exitCode = try cmdConfig(rest)
     case "tag": exitCode = try cmdTag(rest)

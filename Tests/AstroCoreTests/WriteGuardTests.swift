@@ -169,3 +169,127 @@ private func makeTempRoot() throws -> URL {
         Issue.record("expected AstroError.accessDenied, got \(error)")
     }
 }
+
+// MARK: - linkCalibrationFile
+
+private func inode(_ url: URL) throws -> UInt64 {
+    let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+    return (attrs[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
+}
+
+@Test func linkCalibrationFileCreatesHardLinkWithSameInode() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+
+    let sourceDir = root.appendingPathComponent("calibration_library/darks/300sec_-10deg", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+    let sourceURL = sourceDir.appendingPathComponent("master_dark.fit")
+    try Data("master dark content".utf8).write(to: sourceURL)
+
+    let destURL = try guardian.linkCalibrationFile(
+        sourceRelative: "calibration_library/darks/300sec_-10deg/master_dark.fit",
+        destDirRelative: "sessions/T1/2026-01-10/darks"
+    )
+
+    let unwrapped = try #require(destURL)
+    #expect(unwrapped.standardizedFileURL.path == root.appendingPathComponent("sessions/T1/2026-01-10/darks/master_dark.fit").standardizedFileURL.path)
+    #expect(FileManager.default.fileExists(atPath: unwrapped.path))
+    #expect(try inode(unwrapped) == inode(sourceURL))
+    #expect(try Data(contentsOf: unwrapped) == Data("master dark content".utf8))
+}
+
+@Test func linkCalibrationFileReturnsNilWhenDestinationExistsAndLeavesItUntouched() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+
+    let sourceDir = root.appendingPathComponent("calibration_library/biases", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+    let sourceURL = sourceDir.appendingPathComponent("master_bias.fit")
+    try Data("master bias content".utf8).write(to: sourceURL)
+
+    let destDir = root.appendingPathComponent("sessions/T1/2026-01-10/biases", isDirectory: true)
+    try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
+    let destURL = destDir.appendingPathComponent("master_bias.fit")
+    try Data("original session content".utf8).write(to: destURL)
+
+    let result = try guardian.linkCalibrationFile(
+        sourceRelative: "calibration_library/biases/master_bias.fit",
+        destDirRelative: "sessions/T1/2026-01-10/biases"
+    )
+
+    #expect(result == nil)
+    #expect(try Data(contentsOf: destURL) == Data("original session content".utf8))
+    #expect(try Data(contentsOf: sourceURL) == Data("master bias content".utf8))
+}
+
+@Test func linkCalibrationFileRejectsSourceOutsideCalibrationLibrary() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+
+    let strayDir = root.appendingPathComponent("sessions/x/y/lights", isDirectory: true)
+    try FileManager.default.createDirectory(at: strayDir, withIntermediateDirectories: true)
+    try Data("x".utf8).write(to: strayDir.appendingPathComponent("a.fit"))
+
+    #expect(throws: AstroError.self) {
+        try guardian.linkCalibrationFile(
+            sourceRelative: "sessions/x/y/lights/a.fit",
+            destDirRelative: "sessions/x/y/darks"
+        )
+    }
+
+    #expect(throws: AstroError.self) {
+        try guardian.linkCalibrationFile(
+            sourceRelative: "../evil",
+            destDirRelative: "sessions/x/y/darks"
+        )
+    }
+}
+
+@Test func linkCalibrationFileRejectsDestDirOutsideAllowedPattern() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+
+    let sourceDir = root.appendingPathComponent("calibration_library/darks/60sec_-10deg", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+    let sourceURL = sourceDir.appendingPathComponent("m.fit")
+    try Data("x".utf8).write(to: sourceURL)
+    let sourceRelative = "calibration_library/darks/60sec_-10deg/m.fit"
+
+    #expect(throws: AstroError.self) {
+        try guardian.linkCalibrationFile(sourceRelative: sourceRelative, destDirRelative: "sessions/t/d/lights")
+    }
+    #expect(throws: AstroError.self) {
+        try guardian.linkCalibrationFile(sourceRelative: sourceRelative, destDirRelative: "stacks/t/d/darks")
+    }
+    #expect(throws: AstroError.self) {
+        try guardian.linkCalibrationFile(sourceRelative: sourceRelative, destDirRelative: "sessions/t/d/../../evil/darks")
+    }
+
+    // Nothing was ever created under a bogus destination.
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("evil").path))
+}
+
+@Test func linkCalibrationFileCreatesMissingDestDir() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+
+    let sourceDir = root.appendingPathComponent("calibration_library/flats", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+    try Data("x".utf8).write(to: sourceDir.appendingPathComponent("flat_master.fit"))
+
+    let destURL = try guardian.linkCalibrationFile(
+        sourceRelative: "calibration_library/flats/flat_master.fit",
+        destDirRelative: "sessions/T1/2026-01-10/flats"
+    )
+
+    #expect(destURL != nil)
+    var isDir: ObjCBool = false
+    let destDirPath = root.appendingPathComponent("sessions/T1/2026-01-10/flats").path
+    #expect(FileManager.default.fileExists(atPath: destDirPath, isDirectory: &isDir))
+    #expect(isDir.boolValue)
+}
