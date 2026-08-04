@@ -147,6 +147,7 @@ struct QualityView: View {
             }
 
             if selectedTarget != nil {
+                exposureAdviceSection
                 qualitySummarySection
             }
 
@@ -231,11 +232,44 @@ struct QualityView: View {
             appState.nightHealth = nil
             if let newTarget {
                 appState.loadQualitySummaries(target: newTarget)
+                appState.loadExposureAdvice(target: newTarget)
             } else {
                 appState.qualitySummaries = []
+                appState.exposureAdvice = nil
             }
         }
         .padding()
+    }
+
+    // MARK: - Exposure advisor section (R7-B3)
+
+    /// "Expozíció-tanácsadó" -- the sub-exposure-length + relative-SNR
+    /// advice for the selected target, shown just above the session-quality
+    /// summary. Every sentence in `ExposureAdvice.advice` is printed in
+    /// full; `notAvailableReason` (no profile/no Bayer data/mono-DSLR) is
+    /// shown as an honest "n/a" line instead of numbers.
+    private var exposureAdviceSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Expozíció-tanácsadó").font(.headline)
+
+            if let advice = appState.exposureAdvice {
+                if let reason = advice.notAvailableReason {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(Array(advice.advice.enumerated()), id: \.offset) { _, line in
+                            Text(line).font(.caption)
+                        }
+                    }
+                }
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
     }
 
     // MARK: - Session quality summary section

@@ -20,6 +20,7 @@ Asztrofotó-könyvtár auditálása, minőség-pontozás és kalibráció-követ
 - **Észlelés-tervező (plan)** — ma esti kulmináció, max magasság, láthatósági ablak és Hold-zavarás célpontonként, pontszám szerint rendezve.
 - **Kereshető éjszaka-napló (search)** — a session `README.txt`-jébe kézzel beírt Bortle/SQM/seeing/megjegyzés szöveg indexelve, kulcs vagy érték szerint kereshetően.
 - **Plate-solve backfill (solve)** — wide-field Canon CR3 célpontok koordináta-pótlása Siril blind plate-solve-jával, hogy a tervező és a mozaik-panel követés ezekre is működjön.
+- **Expozíció-tanácsadó (expose)** — mért szenzor-zajból és per-Bayer égháttérből számolt ideális sub-hossz + relatív SNR-tanács ("mennyivel javul a jel, ha még N órát integrálok").
 
 ## ⛔ Vasszabály
 
@@ -238,6 +239,65 @@ astrotool solve --target M_Milky_Way --force
 - Az alkalmazásban a Statisztika fül célpont-sorának Műveletek cellájában a
   "Plate-solve…" gomb csak koordináta nélküli célpontokon jelenik meg.
 
+## Expozíció-tanácsadó
+
+Mennyi legyen egy sub hossza? Az `astrotool expose` a mért szenzor-adatokból
+(`astrotool sensor --measure` bias-szintje/leolvasási zaja/EGAIN-je) és a
+mért per-Bayer háttérből (`astrotool rate`, R7-B1 óta) számolja ki, nem
+találgatja:
+
+```bash
+astrotool expose --target NGC7000
+```
+
+```
+Célpont: NGC7000
+Session: 2026-07-18
+Kamera: ASI2600MC · gain 100
+Setup: ASI2600MC·530mm·3.76µm·RGGB
+Jelenlegi sub: 120.0 s
+Leggyengébb csatorna: B (0.0810 e⁻/s/px)
+Ideális sub (elméleti): 203.6 s
+Ajánlott sub: 203.6 s
+Rövidebb alternatíva (C=10%): 99.4 s
+Összes használható integráció: 6.40 óra
+Tanács:
+  - a mért égháttér mellett ~204 s az ideális sub (most 120 s — a leolvasási
+    zaj a keret zajának 8%-a)
+  - +3 h → relatív SNR ×1,21; a következő +10%-hoz 1,34 h kell
+```
+
+`--target` nélkül egy sor/célpont kompakt táblázat (`astrotool expose
+--json` a teljes szerkezethez).
+
+- **A matek**: a leggyengébb (legalacsonyabb mért égi-fotonrátájú) csatorna
+  határozza meg az ideális sub-hosszt — `t = R² / (B × ((1+C)² − 1))`, ahol
+  `R` a mért leolvasási zaj (e⁻), `B` a mért égháttér-ráta (e⁻/s/px) és `C`
+  (alapból 5%) azt mondja meg, mennyivel engedjük a leolvasási zajt
+  megnövelni a tiszta foton-zaj felett — ez megegyezik Glover ökölszabályával
+  ("az égháttér legyen ≥10×R²"). A `C=10%` variáns ("rövidebb subok, kicsit
+  több zaj") mindig kiszámolva mellette.
+- **Sapkák**: `expose.maxSubSeconds` (alapból 300 s — guiding-pontosság és
+  műhold-csík kockázat nő a hosszal, függetlenül attól, mit mond a tiszta
+  zaj-matek), és egy szaturáció-sapka (ha a session medián szaturált
+  pixelaránya a JELENLEGI sub-hosszon már 0,1% fölött van, sosem javasol
+  hosszabbat, mint a jelenlegi). Amikor a sapka közbeszól, a tanács ezt
+  őszintén jelzi ("elméletileg N s, de guiding/műhold-kockázat miatt nem
+  javasolt").
+- **Relatív SNR**: nem igényel égháttér-adatot, csak a célpont eddigi
+  használható integrációját (a DOMINÁNS setup-fingerprint kereteire
+  szűkítve, hogy egy eszközváltás ne torzítsa a számot) — "+3 óra → relatív
+  SNR ×1,21-szoros", és mennyi idő kell a következő +10%/+5%
+  SNR-nyereséghez.
+- **Őszinte n/a**, sosem hibás szám: nincs mért szenzor-profil a
+  kombóhoz → "nincs szenzor-profil — futtasd: astrotool sensor --measure";
+  a keretek a per-Bayer háttér bevezetése előtt lettek pontozva → "futtasd
+  újra: astrotool rate"; a kamerának nincs `BAYERPAT` fejléce (mono/DSLR,
+  pl. Canon) → a funkció csak színes (Bayer) ASI-szenzorokhoz készült,
+  ezt őszintén megmondja.
+- Az alkalmazásban a Minőség fülön a session-összegzés fölött egy
+  "Expozíció-tanácsadó" doboz mutatja ugyanezt a kiválasztott célpontra.
+
 ## Konfiguráció
 
 A konfiguráció a `<ROOT>/.astro_tool/config.json` fájlban van; hiányzó kulcsok esetén az eszköz beépített alapértékeket használ, így egy régebbi config fájl is mindig érvényes marad.
@@ -254,6 +314,7 @@ A konfiguráció a `<ROOT>/.astro_tool/config.json` fájlban van; hiányzó kulc
 | `calib` | Kalibráció-illesztés tűrései: `tempToleranceC`, `exposureToleranceS`, `darkMaxAgeMonths` (mikor számít elévültnek egy dark). |
 | `rating` | Minőség-pontozás beállításai: `workers` (párhuzamos worker-ek száma), `outlierZScore`, `sirilPath`, `weights` (metrikánkénti súlyok: `fwhm`, `roundness`, `starCount`, `background`). |
 | `site` | A tervező (`astrotool plan`) helyszín-felülbírálása: `latitudeDeg`/`longitudeDeg`. Üresen hagyva a könyvtár `SITELAT`/`SITELONG` fejléceinek mediánjából származik. |
+| `expose` | Az expozíció-tanácsadó (`astrotool expose`) beállításai: `maxSubSeconds` (alapból 300 — sapka az ajánlott sub-hosszra), `noiseContributionC` (alapból 0.05 — mennyi extra leolvasási zajt engedünk a tiszta foton-zaj felett). |
 
 ## Fejlesztés
 

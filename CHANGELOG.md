@@ -36,6 +36,31 @@ történik.
 
 ### Added
 
+- **Expozíció-tanácsadó (`astrotool expose`)**: mennyi legyen egy sub
+  hossza — a mért szenzor-adatokból (`sensor_profile` bias-szintje/
+  leolvasási zaja/EGAIN-je) és a mért per-Bayer háttérből (`ratings.bg_00/
+  01/10/11`, R7-B1) számolva, sosem találgatva. A leggyengébb (legalacsonyabb
+  mért égi-fotonrátájú) csatorna szabja meg az ideális hosszt: `t = R² / (B
+  × ((1+C)² − 1))`, `C` (alapból 5%) azt mondja meg, mennyi extra
+  leolvasási zajt engedünk a tiszta foton-zaj felett (`C=5%` ≡ Glover
+  "égháttér ≥10×R²" ökölszabálya); a `C=10%` "rövidebb subok" variáns
+  mindig kiszámolva mellette. Két sapka: `expose.maxSubSeconds` (alapból
+  300s — guiding/műhold-kockázat) és egy szaturáció-sapka (ha a session már
+  a jelenlegi sub-hosszon szaturál, sosem javasol hosszabbat). Relatív
+  SNR-szakasz semmilyen égháttér-adatot nem igényel, csak a célpont eddigi
+  (a domináns setup-fingerprintre szűkített) használható integrációját:
+  "+3 óra → relatív SNR ×N-szoros", és mennyi idő kell a következő
+  +10%/+5% SNR-nyereséghez. Őszinte `n/a` sosem hibás szám helyett: nincs
+  mért szenzor-profil a kombóhoz, a keretek a per-Bayer háttér bevezetése
+  előtt lettek pontozva, vagy a kamerának nincs `BAYERPAT` fejléce
+  (mono/DSLR, pl. Canon — ez a funkció csak színes ASI-szenzorokhoz
+  készült). Új `Sources/AstroCore/Stats/ExposureAdvisor.swift`
+  (`ExposureAdvice`, `ExposureAdvisor.advise`/`adviseAll`), új
+  `ExposeRule` config (`maxSubSeconds`, `noiseContributionC`). CLI
+  `astrotool expose [--target T] [--json] [--root R]` — `--target` nélkül
+  egy sor/célpont táblázat, `--target`-tel a teljes tanács minden mondata
+  kiírva. App: Minőség fül, session-összegzés fölött "Expozíció-tanácsadó"
+  doboz a kiválasztott célpontra.
 - **DSS-metrikák és döntések beolvasása (`astrotool ingest-dss`)**: a
   könyvtárban meglévő 346 DeepSkyStacker `<frame>.info.txt` (mért
   csillag-metrikák) és `.dssfilelist` (a felhasználó saját

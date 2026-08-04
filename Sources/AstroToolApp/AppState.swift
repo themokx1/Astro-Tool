@@ -102,6 +102,12 @@ final class AppState: @unchecked Sendable {
     /// Minőség fül. Cleared whenever a different target is selected so a
     /// stale previous target's rows never flash before the new ones load.
     var qualitySummaries: [SessionQualitySummary] = []
+    /// The currently selected target's sub-exposure/relative-SNR advice
+    /// (R7-B3 `ExposureAdvisor`) -- shown just above `qualitySummaries` in
+    /// the Minőség fül. `nil` until `loadExposureAdvice(target:)` has run
+    /// for the current target (cleared on target change, same as
+    /// `qualitySummaries`).
+    var exposureAdvice: ExposureAdvice?
     /// The night-timeline for whichever session row is currently selected in
     /// the quality summary section, `nil` until one is selected/loaded.
     var sessionTimeline: SessionTimeline?
@@ -1006,6 +1012,32 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.qualitySummaries = result
                 self.progressText = "Minőség-összegzés kész: \(result.count) session"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Loads `exposureAdvice` for `target` (R7-B3 `ExposureAdvisor`) --
+    /// called alongside `loadQualitySummaries` whenever the Minőség fül's
+    /// target picker changes. Never surfaces a "no data" condition as an
+    /// app error -- that comes back as `ExposureAdvice.notAvailableReason`,
+    /// an ordinary (if unhelpful) result, not a failure.
+    func loadExposureAdvice(target: String) {
+        guard let db else { return }
+        let cfg = config
+        exposureAdvice = nil
+
+        let opID = beginOperation("Expozíció-tanácsadó számítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try ExposureAdvisor.advise(target: target, db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.exposureAdvice = result
             } catch {
                 self.handle(error)
             }

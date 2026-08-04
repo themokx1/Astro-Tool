@@ -1350,6 +1350,150 @@ private func writeSensorFITS(
     #expect(result.stderr.contains("ASI2600MC"))
 }
 
+// MARK: - expose (R7-B3)
+
+/// Same header-writing approach as `writeSensorFITS` above, but the pixel
+/// data varies by `(row%2, col%2)` grid position (`value00`/`01`/`10`/`11`)
+/// so `NativeStats.compute`'s per-Bayer-parity medians actually differ, and
+/// a `BAYERPAT` card is always written so `ExposureAdvisor` can map those
+/// positions to R/G/G/B.
+private func writeBayerLightFITS(
+    _ relativePath: String, root: URL,
+    width: Int = 8, height: Int = 8,
+    value00: Int, value01: Int, value10: Int, value11: Int,
+    gain: Double? = 100, offset: Double? = 50, instrume: String = "ASI2600MC",
+    egain: Double? = 0.25, exptime: Double? = 120, bayerPattern: String = "RGGB"
+) throws {
+    let url = root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+    var cards = [
+        "SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2",
+        "NAXIS1  =                 \(width)", "NAXIS2  =                 \(height)",
+    ]
+    if let gain { cards.append("GAIN    =                \(gain)") }
+    if let offset { cards.append("OFFSET  =                \(offset)") }
+    cards.append("INSTRUME= '\(instrume)'")
+    if let egain { cards.append("EGAIN   =                \(egain)") }
+    if let exptime { cards.append("EXPTIME =                \(exptime)") }
+    cards.append("BAYERPAT= '\(bayerPattern)'")
+    cards.append("END")
+
+    var data = buildHeaderData(cards)
+    var pixelBytes = Data()
+    pixelBytes.reserveCapacity(width * height * 2)
+    for row in 0..<height {
+        for col in 0..<width {
+            let value: Int
+            switch (row % 2, col % 2) {
+            case (0, 0): value = value00
+            case (0, 1): value = value01
+            case (1, 0): value = value10
+            default: value = value11
+            }
+            let unsigned = UInt16(bitPattern: Int16(value))
+            pixelBytes.append(UInt8(unsigned >> 8))
+            pixelBytes.append(UInt8(unsigned & 0xFF))
+        }
+    }
+    data.append(pixelBytes)
+    try data.write(to: url)
+}
+
+@Test func exposeJSONAfterSensorMeasureAndRateReportsNumericAdviceForFixtureTarget() throws {
+    let root = try makeTempRoot("expose-numeric")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    // Two bias frames (mild checkerboard vs flat, same convention as
+    // `SensorProfileTests`) -- gives a measured bias level + nonzero read
+    // noise + EGAIN, all needed before `expose` can compute anything.
+    try writeSensorFITS("calibration_library/biases/bias_a.fit", root: root, pixelValue: 505, egain: 0.25)
+    try writeSensorFITS("calibration_library/biases/bias_b.fit", root: root, pixelValue: 495, egain: 0.25)
+
+    // R (00) brightest, G (01/10) medium, B (11) faintest -- B is the
+    // weakest (read-noise-limited) channel.
+    try writeBayerLightFITS(
+        "sessions/M42/2026-08-01/lights/light_0001.fit", root: root,
+        value00: 700, value01: 650, value10: 650, value11: 520, egain: 0.25, exptime: 120
+    )
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let measure = try runCLI(["sensor", "--root", root.path, "--measure", "--json"])
+    #expect(measure.exitCode == 0, "stderr: \(measure.stderr)")
+
+    let rate = try runCLI(["rate", "--root", root.path, "--target", "M42", "--no-siril", "--json"])
+    #expect(rate.exitCode == 0, "stderr: \(rate.stderr)")
+
+    let result = try runCLI(["expose", "--root", root.path, "--target", "M42", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+    let advice = try #require(json)
+    #expect(advice["not_available_reason"] == nil)
+    #expect(advice["weakest_channel"] as? String == "B")
+    #expect((advice["optimal_sub_seconds"] as? Double) != nil)
+    #expect((advice["current_sub_seconds"] as? Double) == 120)
+}
+
+@Test func exposeWithoutSensorProfileReportsHonestNAReason() throws {
+    let root = try makeTempRoot("expose-no-profile")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    // A rated light frame, but not a single bias frame anywhere -- no
+    // `sensor_profile` row can ever exist for this combo.
+    try writeBayerLightFITS(
+        "sessions/M31/2026-08-01/lights/light_0001.fit", root: root,
+        value00: 700, value01: 650, value10: 650, value11: 520
+    )
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let rate = try runCLI(["rate", "--root", root.path, "--target", "M31", "--no-siril", "--json"])
+    #expect(rate.exitCode == 0, "stderr: \(rate.stderr)")
+
+    let jsonResult = try runCLI(["expose", "--root", root.path, "--target", "M31", "--json"])
+    #expect(jsonResult.exitCode == 0, "stderr: \(jsonResult.stderr)")
+    let json = try JSONSerialization.jsonObject(with: Data(jsonResult.stdout.utf8)) as? [String: Any]
+    let advice = try #require(json)
+    let reason = try #require(advice["not_available_reason"] as? String)
+    #expect(reason.contains("sensor --measure"))
+    #expect(advice["optimal_sub_seconds"] == nil)
+
+    let humanResult = try runCLI(["expose", "--root", root.path, "--target", "M31"])
+    #expect(humanResult.exitCode == 0, "stderr: \(humanResult.stderr)")
+    #expect(humanResult.stdout.contains("sensor --measure"))
+}
+
+@Test func exposeWithoutTargetPrintsOneRowPerTarget() throws {
+    let root = try makeTempRoot("expose-all-targets")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeBayerLightFITS(
+        "sessions/M31/2026-08-01/lights/light_0001.fit", root: root,
+        value00: 700, value01: 650, value10: 650, value11: 520
+    )
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+    let rate = try runCLI(["rate", "--root", root.path, "--target", "M31", "--no-siril", "--json"])
+    #expect(rate.exitCode == 0, "stderr: \(rate.stderr)")
+
+    let jsonResult = try runCLI(["expose", "--root", root.path, "--json"])
+    #expect(jsonResult.exitCode == 0, "stderr: \(jsonResult.stderr)")
+    let json = try JSONSerialization.jsonObject(with: Data(jsonResult.stdout.utf8)) as? [[String: Any]]
+    let rows = try #require(json)
+    #expect(rows.count == 1)
+    #expect(rows.first?["target"] as? String == "M31")
+
+    let humanResult = try runCLI(["expose", "--root", root.path])
+    #expect(humanResult.exitCode == 0, "stderr: \(humanResult.stderr)")
+    #expect(humanResult.stdout.contains("M31"))
+    #expect(humanResult.stdout.contains("CÉLPONT"))
+}
+
 // MARK: - misc
 
 @Test func unknownSubcommandExitsWithUsage() throws {

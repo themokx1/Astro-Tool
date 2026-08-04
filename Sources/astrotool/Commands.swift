@@ -53,6 +53,11 @@ Commands:
                 .dssfilelist accept/reject decisions already in the library.
                 Not run automatically by `scan --refresh-meta` -- DSS trees
                 can be large, so this stays an explicit, predictable step.
+  expose        [--target T] [--json] [--root R]
+                Sub-exposure-length optimizer + relative-SNR advisor, built
+                from measured sensor-profile + per-Bayer background data.
+                Without --target: one row per target. With --target: full
+                advice for that target.
 
   --version     Print version and exit
   --help        Show this help
@@ -1886,4 +1891,105 @@ func cmdIngestDSS(_ args: [String]) throws -> Int32 {
         )
     }
     return 0
+}
+
+// MARK: - expose (R7-B3)
+
+/// `astrotool expose [--target T] [--json] [--root R]` -- the sub-exposure
+/// optimizer + relative-SNR advisor (`ExposureAdvisor`). Without `--target`,
+/// reports one compact row per target that has usable light frames
+/// (`ExposureAdvisor.adviseAll`); with `--target`, the full advice block for
+/// that one target, every `advice` sentence printed in full.
+func cmdExpose(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+    let isJSON = parsed.has("--json")
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    if let target = parsed.value("--target") {
+        let advice = try ExposureAdvisor.advise(target: target, db: db, config: config)
+        if isJSON {
+            try printJSON(advice)
+        } else {
+            printExposeDetail(advice)
+        }
+    } else {
+        let all = try ExposureAdvisor.adviseAll(db: db, config: config)
+        if isJSON {
+            try printJSON(all)
+        } else {
+            printExposeTable(all)
+        }
+    }
+    return 0
+}
+
+private func printExposeDetail(_ advice: ExposureAdvice) {
+    print("Célpont: \(advice.target)")
+    if let sessionDate = advice.sessionDate {
+        print("Session: \(sessionDate)")
+    }
+    if let camera = advice.camera {
+        let gainText = advice.gain.map { String(format: "%g", $0) } ?? "-"
+        print("Kamera: \(camera) · gain \(gainText)")
+    }
+    if let descriptor = advice.setupDescriptor {
+        print("Setup: \(descriptor)")
+    }
+
+    if let reason = advice.notAvailableReason {
+        print("n/a: \(reason)")
+    } else {
+        if let current = advice.currentSubSeconds {
+            print("Jelenlegi sub: \(String(format: "%.1f", current)) s")
+        }
+        if let channel = advice.weakestChannel, let skyRate = advice.skyRateEPerSPx {
+            print("Leggyengébb csatorna: \(channel) (\(String(format: "%.4f", skyRate)) e⁻/s/px)")
+        }
+        if let optimal = advice.optimalSubSeconds {
+            print("Ideális sub (elméleti): \(String(format: "%.1f", optimal)) s")
+        }
+        if let recommended = advice.recommendedSubSeconds {
+            let capText = advice.capReason.map { " (\($0) miatt korlátozva)" } ?? ""
+            print("Ajánlott sub: \(String(format: "%.1f", recommended)) s\(capText)")
+        }
+        if let c10 = advice.recommendedSubSecondsC10 {
+            print("Rövidebb alternatíva (C=10%): \(String(format: "%.1f", c10)) s")
+        }
+    }
+
+    print("Összes használható integráció: \(String(format: "%.2f", advice.totalUsableSeconds / 3600)) óra")
+
+    if !advice.advice.isEmpty {
+        print("Tanács:")
+        for line in advice.advice {
+            print("  - \(line)")
+        }
+    }
+}
+
+private func printExposeTable(_ all: [ExposureAdvice]) {
+    guard !all.isEmpty else {
+        print("nincs adat egyetlen célponthoz sem")
+        return
+    }
+
+    let targetWidth = max(all.map(\.target.count).max() ?? 10, 10)
+    let header = "CÉLPONT".padding(toLength: targetWidth, withPad: " ", startingAt: 0)
+    print("\(header)  MOST      AJÁNLOTT  LEOLV.ZAJ  TANÁCS")
+    for advice in all {
+        let target = advice.target.padding(toLength: targetWidth, withPad: " ", startingAt: 0)
+        let current = (advice.currentSubSeconds.map { String(format: "%.0f s", $0) } ?? "-").padding(toLength: 8, withPad: " ", startingAt: 0)
+        let recommended = (advice.recommendedSubSeconds.map { String(format: "%.0f s", $0) } ?? "-").padding(toLength: 8, withPad: " ", startingAt: 0)
+        let share = (advice.currentReadNoiseSharePercent.map { String(format: "%.0f%%", $0) } ?? "-").padding(toLength: 9, withPad: " ", startingAt: 0)
+        let tip = advice.notAvailableReason ?? advice.advice.first ?? "-"
+        print("\(target)  \(current)  \(recommended)  \(share)  \(tip)")
+    }
 }

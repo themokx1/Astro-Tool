@@ -246,6 +246,41 @@ public struct StatsRule: Codable, Equatable, Sendable {
     }
 }
 
+/// Configuration for `astrotool expose` (R7-B3, `ExposureAdvisor`): the
+/// sub-exposure-length optimizer built on `SensorProfile`'s measured read
+/// noise/bias/EGAIN and `ratings`' per-Bayer background medians.
+public struct ExposeRule: Codable, Equatable, Sendable {
+    /// Hard ceiling on a RECOMMENDED sub length, in seconds -- guiding
+    /// accuracy and satellite-trail risk both grow with exposure length
+    /// regardless of what the pure read-noise-vs-shot-noise trade-off says
+    /// is "optimal", so a theoretical optimum beyond this is reported
+    /// honestly (`capReason == "maxSubSeconds"`) rather than recommended
+    /// outright. Default 300s (5 minutes).
+    public var maxSubSeconds: Double
+    /// How much extra per-sub noise read noise is allowed to add over pure
+    /// sky shot noise before a sub is considered "long enough":
+    /// `t = R² / (B × ((1+C)² − 1))`. Default `0.05` (5%) is equivalent to
+    /// Glover's "sky background ≥ 10×R²" rule of thumb, since
+    /// `1 / ((1.05)² − 1) ≈ 9.76`.
+    public var noiseContributionC: Double
+
+    public init(maxSubSeconds: Double = 300, noiseContributionC: Double = 0.05) {
+        self.maxSubSeconds = maxSubSeconds
+        self.noiseContributionC = noiseContributionC
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case maxSubSeconds, noiseContributionC
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = ExposeRule()
+        self.maxSubSeconds = try container.decodeIfPresent(Double.self, forKey: .maxSubSeconds) ?? defaults.maxSubSeconds
+        self.noiseContributionC = try container.decodeIfPresent(Double.self, forKey: .noiseContributionC) ?? defaults.noiseContributionC
+    }
+}
+
 /// The observer's site, for the planner (`Sources/AstroCore/Sky/Planner.swift`):
 /// culmination/altitude/twilight all need a latitude and longitude. Both
 /// default to `nil` -- when unset, `Planner` derives them from the median
@@ -299,6 +334,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var rating: RatingRule
     public var stats: StatsRule
     public var site: SiteRule
+    public var expose: ExposeRule
 
     public init(
         rootPath: String = "/Volumes/images/Astro",
@@ -312,7 +348,8 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         calib: CalibRule = CalibRule(),
         rating: RatingRule = RatingRule(),
         stats: StatsRule = StatsRule(),
-        site: SiteRule = SiteRule()
+        site: SiteRule = SiteRule(),
+        expose: ExposeRule = ExposeRule()
     ) {
         self.rootPath = rootPath
         self.excludedDirNames = excludedDirNames
@@ -326,11 +363,12 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.rating = rating
         self.stats = stats
         self.site = site
+        self.expose = expose
     }
 
     private enum CodingKeys: String, CodingKey {
         case rootPath, excludedDirNames, excludedPaths, residuePatterns, residueDirNames, toolOutputDirNames
-        case intentional, wideField, calib, rating, stats, site
+        case intentional, wideField, calib, rating, stats, site, expose
     }
 
     public init(from decoder: any Decoder) throws {
@@ -348,6 +386,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.rating = try container.decodeIfPresent(RatingRule.self, forKey: .rating) ?? defaults.rating
         self.stats = try container.decodeIfPresent(StatsRule.self, forKey: .stats) ?? defaults.stats
         self.site = try container.decodeIfPresent(SiteRule.self, forKey: .site) ?? defaults.site
+        self.expose = try container.decodeIfPresent(ExposeRule.self, forKey: .expose) ?? defaults.expose
     }
 
     /// Loads and decodes the config from `url`. Throws on I/O failure
