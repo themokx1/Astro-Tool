@@ -8,8 +8,47 @@ történik.
 
 ## [Unreleased]
 
+### Fixed
+
+- **⚠️ Minden e⁻/s/arcsec² égháttér-érték ~64×-esen inflálva volt a 0.4.0
+  óta** (`SessionQuality.backgroundEPerSecPerArcsec2`, és minden rá épülő
+  `quality`/`health`/export szám): a képlet sosem vonta le a szenzor
+  bias-pedesztálját (ASI2600, gain 100/offset 50: ~501 ADU) — valós Rosette
+  session-adaton 0,147 e⁻/s/arcsec² jelentett a mért 0,0023 igazsághoz
+  képest. Javítva: `max(0, (background_ADU − biasLevel) × EGAIN / EXPTIME /
+  scale²)`; `biasLevel` az új, mért `sensor_profile` táblából EXAKT
+  `(camera, gain, offset)` egyezéssel jön (sosem gain-only/kamera-only
+  fallback) — amíg egy kombóhoz nincs mérve bias-szint, a szám `n/a`
+  (`nil`), sosem egy hibás érték. Lásd az új `astrotool sensor` parancsot
+  lent a méréshez.
+- **A Siril-adapter csendben nem működött ezen a gépen**: minden mért
+  rating sorban `siril_version` a "Siril is started as macOS application"
+  indítási banner volt egy valódi verziószám helyett, és `fwhm`/
+  `roundness`/`star_count` 100%-ban `NULL` — a `findstar`-kimenet
+  regex-mintája nem illeszkedett a valós Siril 1.4 szövegére ("Found N
+  Gaussian profile stars…", extra szavak a szám és a "star" szó közt).
+  Mindkettő javítva, és egy valódi `siril-cli` bináris ellen futó
+  integrációs teszttel is ellenőrizve. `astrotool rate` mostantól stderr
+  figyelmeztetést ír, ha egy ≥5 keretes batch egyetlen keretre sem kap
+  Siril-metrikát ("a Siril nem adott metrikát egyetlen keretre sem —
+  ellenőrizd a telepítést") — pont ez a csendes hiba-mód maradt észrevétlen
+  korábban.
+
 ### Added
 
+- **Mért szenzor-karakterizáció (`astrotool sensor`)**: `(camera, gain,
+  offset)` kombónként méri a bias-pedesztált, a leolvasási zajt (két bias
+  frame különbségének 5σ-klippelt szórásából, NEM MAD-dal — az ADU-
+  kvantálás alulmérné), a dark-rátát és az EGAIN-t a már nyilvántartott
+  BIAS/DARK keretekből. `astrotool sensor [--measure] [--json]` — `--measure`
+  nélkül csak a már tárolt profilokat listázza; figyelmeztet (stderr), ha
+  usable lightok olyan kombót használnak, amihez nincs mért profil. App:
+  Kalibráció fül "Szenzor-profilok" read-only táblázata + "Mérés" gomb.
+- **Per-Bayer-csatornás égháttér**: `NativeStats` mostantól a meglévő
+  összesített medián mellett négy Bayer-parity mediánt is számol ugyanabban
+  a pixel-passzban; `BayerMap.channelMedians` RGGB/BGGR/GRBG/GBRG mintát
+  R/G/G/B csatornákra map-el. Perzisztálva a `ratings.bg_00/01/10/11`
+  oszlopokba (séma v7).
 - **Plate-solve backfill Sirillel (`astrotool solve`)**: a wide-field Canon
   CR3 célpontoknak nincs FITS fejlécük (és így WCS-ük sem) — a `plan`/
   `panels` "nincs koordináta"-t adott rájuk. `astrotool solve --target T\|

@@ -185,7 +185,11 @@ public final class Rater {
                 score: nil,
                 ratedAt: Date().timeIntervalSince1970,
                 sirilVersion: provider?.version,
-                inputSig: inputSig
+                inputSig: inputSig,
+                bg00: nativeStats?.backgroundMedian00,
+                bg01: nativeStats?.backgroundMedian01,
+                bg10: nativeStats?.backgroundMedian10,
+                bg11: nativeStats?.backgroundMedian11
             )
             try db.upsertRating(record)
             rated.append((file, record, exptime))
@@ -340,6 +344,25 @@ public final class Rater {
     private static func zScore(_ value: Double, stats: MetricStats) -> Double {
         guard stats.std > 0 else { return 0 }
         return (value - stats.mean) / stats.std
+    }
+
+    // MARK: - Silent-failure guard (item D.3)
+
+    /// Structural guard against the real bug found on this machine: a
+    /// `StarMetricsProvider` (in practice, `SirilCLI`) that quietly fails to
+    /// parse its own tool's output looks EXACTLY like a healthy run that
+    /// simply found nothing -- every `FrameScore.metrics` comes back `nil`
+    /// either way, and nothing throws. `true` exactly when a provider WAS
+    /// supplied (a `nil` provider, e.g. `--no-siril`, is a deliberate choice,
+    /// not a failure) and NOT ONE frame in a batch large enough to be
+    /// meaningful (`>= 5`, so a 1-2 frame `--date` rate of genuinely
+    /// starless calibration-adjacent frames doesn't cry wolf) came back with
+    /// any metrics at all. Callers (the `rate` CLI command) print a loud
+    /// stderr warning when this fires -- silence is exactly what let the
+    /// real bug go unnoticed across 586 rated frames.
+    public static func shouldWarnNoMetrics(_ results: [FrameScore], providerWasUsed: Bool) -> Bool {
+        guard providerWasUsed, results.count >= 5 else { return false }
+        return results.allSatisfy { $0.metrics == nil }
     }
 
     // MARK: - Scratch dir cleanup

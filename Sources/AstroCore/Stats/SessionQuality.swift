@@ -26,8 +26,17 @@ public struct SessionQualitySummary: Codable, Sendable, Equatable {
     /// Median `ratings.background` (in ADU) over rated frames that have one.
     public var medianBackgroundADU: Double?
     /// Median sky background converted to e-/s/arcsec² via each frame's own
-    /// `egain`/`exptime`/pixel scale -- `nil` whenever any of those inputs
-    /// is missing.
+    /// `egain`/`exptime`/pixel scale, AFTER subtracting the sensor's
+    /// measured bias pedestal (`SensorProfileRecord.biasLevelADU`, matched
+    /// on an EXACT `(camera, gain, offset)` -- never a gain-only/camera-only
+    /// fallback): `max(0, (background_ADU - biasLevel) * egain / exptime /
+    /// scale²)`. `nil` whenever any of `egain`/`exptime`/pixel-scale is
+    /// missing, OR no measured sensor profile (with a bias level) exists yet
+    /// for this exact combo -- reporting a number computed as if the bias
+    /// pedestal were 0 is exactly the ~64x-inflation bug this subtraction
+    /// fixes (real Rosette data: reported 0.147 e⁻/s/arcsec² against a
+    /// measured truth of 0.0023), so "no measured bias level" always means
+    /// `nil`, never a guessed number.
     public var backgroundEPerSecPerArcsec2: Double?
     /// Median `ratings.star_count` over rated frames that have one, rounded
     /// to the nearest integer (the median of two middle values can be a
@@ -123,6 +132,14 @@ public enum SessionQuality {
         var score: Double?
     }
 
+    /// Cache key for a `db.sensorProfile(camera:gain:offset:)` lookup within
+    /// one `computeSummary` call -- see `biasLevelCache`'s doc comment.
+    private struct ComboKey: Hashable {
+        var camera: String
+        var gain: Double?
+        var offset: Double?
+    }
+
     private static func computeSummary(
         target: String,
         date: String,
@@ -139,6 +156,15 @@ public enum SessionQuality {
         }
 
         let buckets = FrameSet.lightBuckets(files: dayLights, meta: metaByFileID, config: config)
+
+        // Caches `db.sensorProfile(camera:gain:offset:)` lookups per unique
+        // (camera, gain, offset) combo seen this session -- many frames in a
+        // session normally share the exact same combo, and each is an exact
+        // DB round-trip (see the method's own doc comment for why no
+        // gain-only/camera-only fallback is ever attempted). `nil` INSIDE
+        // the optional (`.some(nil)`) means "looked up, no profile" so a
+        // repeat miss doesn't re-query either.
+        var biasLevelCache: [ComboKey: Double?] = [:]
 
         var frameMetrics: [FrameMetrics] = []
         for file in buckets.usable {
@@ -158,9 +184,31 @@ public enum SessionQuality {
                 m.fwhmArcsec = fwhm * scale
             }
             if let background = rating.background, let egain = meta?.egain, let exptime = meta?.exptime,
-               exptime > 0, let scale = pixelScale, scale > 0
+               exptime > 0, let scale = pixelScale, scale > 0, let camera = meta?.instrume
             {
-                m.backgroundEPerSecPerArcsec2 = background * egain / exptime / (scale * scale)
+                let key = ComboKey(camera: camera, gain: meta?.gain, offset: meta?.offset)
+                let biasLevel: Double?
+                if let cached = biasLevelCache[key] {
+                    biasLevel = cached
+                } else {
+                    // EXACT (camera, gain, offset) match only -- see this
+                    // method's doc comment for why a gain-only/camera-only
+                    // fallback is deliberately never attempted (the R7-B1
+                    // spec: "exact or nil, document").
+                    let resolved = try db.sensorProfile(camera: camera, gain: meta?.gain, offset: meta?.offset)?.biasLevelADU
+                    biasLevelCache[key] = resolved
+                    biasLevel = resolved
+                }
+
+                if let biasLevel {
+                    m.backgroundEPerSecPerArcsec2 = max(0, (background - biasLevel) * egain / exptime / (scale * scale))
+                }
+                // No measured sensor profile (or no bias level within it)
+                // for this exact combo -> stays `nil`. See this file's top
+                // doc comment: reporting a number computed with an
+                // unsubtracted (or guessed) bias pedestal is exactly the
+                // 64x-inflation bug this fix closes -- "n/a" is the honest
+                // answer here, never a wrong number.
             }
 
             frameMetrics.append(m)

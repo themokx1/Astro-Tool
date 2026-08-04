@@ -88,9 +88,9 @@ public struct SirilCLI: StarMetricsProvider {
         self.version = Self.readVersion(path: path)
     }
 
-    /// Runs `siril-cli --version` once at init time and keeps the first
-    /// line. Falls back to `"unknown"` on any failure — version provenance
-    /// is nice-to-have, not worth failing init over.
+    /// Runs `siril-cli --version` once at init time and parses its output
+    /// via `parseVersionOutput`. Falls back to `"unknown"` on any failure —
+    /// version provenance is nice-to-have, not worth failing init over.
     private static func readVersion(path: String) -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
@@ -104,15 +104,52 @@ public struct SirilCLI: StarMetricsProvider {
             process.waitUntilExit()
             let data = outPipe.fileHandleForReading.readDataToEndOfFile()
             if let text = String(data: data, encoding: .utf8) {
-                let firstLine = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true).first
-                if let firstLine {
-                    let trimmed = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty { return trimmed }
-                }
+                return parseVersionOutput(text)
             }
         } catch {
             // Fall through to "unknown".
         }
+        return "unknown"
+    }
+
+    /// Parses `siril-cli --version`'s real output. On this machine (Siril
+    /// 1.4.4, macOS app bundle) that output is TWO lines, not one:
+    /// ```
+    /// Siril is started as macOS application
+    /// siril 1.4.4
+    /// ```
+    /// The macOS-launch banner (line 1) has no digit in it at all -- taking
+    /// "the first line" (the old behavior) silently stored that banner as
+    /// `siril_version` on every real rating row instead of an actual
+    /// version, which is exactly the bug found on the user's real database
+    /// (`siril_version == "Siril is started as macOS application"` on all
+    /// 586 rows). This instead:
+    ///   1. picks the first line that mentions "siril" (case-insensitive)
+    ///      AND contains a digit -- the real version line, wherever it
+    ///      falls;
+    ///   2. failing that, the LAST non-empty line that merely looks like a
+    ///      version number (`\d+\.\d+`), in case some other Siril build
+    ///      never says "siril" by name;
+    ///   3. failing that, `"unknown"` -- never the banner text.
+    static func parseVersionOutput(_ text: String) -> String {
+        let lines = text
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        if let match = lines.first(where: { line in
+            line.range(of: "siril", options: .caseInsensitive) != nil
+                && line.range(of: #"\d"#, options: .regularExpression) != nil
+        }) {
+            return match
+        }
+
+        if let match = lines.last(where: { line in
+            line.range(of: #"\d+\.\d+"#, options: .regularExpression) != nil
+        }) {
+            return match
+        }
+
         return "unknown"
     }
 
@@ -210,17 +247,27 @@ public struct SirilCLI: StarMetricsProvider {
     /// Parses Siril's `findstar` log output. Liberal by design — Siril's
     /// exact wording has changed across versions, so this looks for
     /// substrings/patterns rather than a fixed line format:
-    ///   - star count: `Found <N> star(s)` — required; `nil` (parse
+    ///   - star count: `Found <N> ... star(s)` — required; `nil` (parse
     ///     failure) if absent, since without a star count there's nothing
-    ///     usable here at all.
+    ///     usable here at all. The real Siril 1.4 wording observed on this
+    ///     machine is `"Found 5 Gaussian profile stars in image, channel #0
+    ///     (FWHM 5.416091)"` -- extra words ("Gaussian profile") sit between
+    ///     the count and "stars", which the old `Found\s+(\d+)\s+star`
+    ///     pattern (requiring "star" immediately after the number) never
+    ///     matched at all; this is the real cause of every rated frame's
+    ///     `fwhm`/`roundness`/`star_count` coming back NULL on the real
+    ///     library. The non-greedy `.*?` stays within one line (`.` never
+    ///     matches a newline by default), so it can't accidentally reach
+    ///     into an unrelated later line's "star" mention.
     ///   - FWHM: `FWHM[= ]<float>` (also matches the `(FWHM 3.42)` form) —
     ///     defaults to `0` if absent.
     ///   - roundness: `roundness[= ]<float>` — `nil` if absent (older Siril
-    ///     builds don't always print it), rather than a fabricated neutral
+    ///     builds don't always print it, and the real Siril 1.4 findstar
+    ///     line above prints none at all), rather than a fabricated neutral
     ///     value that would silently pollute rating stats with data that was
     ///     never actually measured.
     static func parseFindstarOutput(_ output: String) -> StarMetrics? {
-        guard let starCountText = firstMatch(pattern: #"Found\s+(\d+)\s+star"#, in: output),
+        guard let starCountText = firstMatch(pattern: #"Found\s+(\d+)\s+.*?\bstars?\b"#, in: output),
               let starCount = Int(starCountText)
         else {
             return nil

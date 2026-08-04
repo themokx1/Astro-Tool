@@ -41,6 +41,7 @@ do {
     case "panels": exitCode = try cmdPanels(rest)
     case "search": exitCode = try cmdSearch(rest)
     case "solve": exitCode = try cmdSolve(rest)
+    case "sensor": exitCode = try cmdSensor(rest)
     default:
         eprint(usageText)
         exit(1)

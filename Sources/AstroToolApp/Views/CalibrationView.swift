@@ -99,10 +99,24 @@ struct CalibrationView: View {
             } else {
                 Text("Még nincs betöltve.").foregroundStyle(.secondary)
             }
+
+            Divider()
+
+            HStack {
+                Text("Szenzor-profilok").font(.headline)
+                Spacer()
+                Button("Frissítés") { appState.loadSensorProfiles() }
+                    .disabled(appState.isBusy || appState.db == nil)
+                Button("Mérés") { appState.measureSensorProfiles() }
+                    .disabled(appState.isBusy || appState.db == nil)
+            }
+
+            SensorProfileSection(profiles: appState.sensorProfiles)
         }
         .onAppear {
             if appState.calibNeeds.isEmpty { appState.loadCalib() }
             if appState.calibHealth == nil { appState.loadCalibHealth() }
+            if appState.sensorProfiles.isEmpty { appState.loadSensorProfiles() }
         }
         .padding()
     }
@@ -237,5 +251,59 @@ private struct CalibHealthSections: View {
 
     private func statusDot(_ color: Color) -> some View {
         Circle().fill(color).frame(width: 8, height: 8).padding(.top, 5)
+    }
+}
+
+/// Read-only list of measured sensor profiles (R7-B1 item C) -- one row per
+/// `(camera, gain, offset)` combo, bias level/read noise/dark rate/EGAIN as
+/// measured by `SensorProfiler.measure`. Never edits anything itself; the
+/// "Mérés" button that actually runs a measurement lives on `CalibrationView`
+/// above this section.
+private struct SensorProfileSection: View {
+    let profiles: [SensorProfileRecord]
+
+    private struct Row: Identifiable {
+        let id: String
+        let profile: SensorProfileRecord
+    }
+
+    private var rows: [Row] {
+        let sorted = profiles.sorted { lhs, rhs in
+            if lhs.camera != rhs.camera { return lhs.camera < rhs.camera }
+            return (lhs.gain ?? -.infinity) < (rhs.gain ?? -.infinity)
+        }
+        return sorted.map { Row(id: rowID(for: $0), profile: $0) }
+    }
+
+    private func rowID(for profile: SensorProfileRecord) -> String {
+        let gainText = profile.gain.map { String($0) } ?? "-"
+        let offsetText = profile.offset.map { String($0) } ?? "-"
+        return "\(profile.camera)|\(gainText)|\(offsetText)"
+    }
+
+    var body: some View {
+        if profiles.isEmpty {
+            Text("Még nincs mért szenzor-profil — nyomd meg a Mérés gombot.")
+                .foregroundStyle(.secondary)
+        } else {
+            Table(rows) {
+                TableColumn("Kamera") { row in Text(row.profile.camera) }
+                    .width(min: 100, ideal: 140)
+                TableColumn("Gain") { row in Text(row.profile.gain.map { String(format: "%g", $0) } ?? "-") }
+                    .width(60)
+                TableColumn("Offset") { row in Text(row.profile.offset.map { String(format: "%g", $0) } ?? "-") }
+                    .width(60)
+                TableColumn("Bias (ADU)") { row in Text(row.profile.biasLevelADU.map { String(format: "%.0f", $0) } ?? "n/a") }
+                    .width(90)
+                TableColumn("Leolvasási zaj (e⁻)") { row in Text(row.profile.readNoiseE.map { String(format: "%.2f", $0) } ?? "n/a") }
+                    .width(130)
+                TableColumn("Dark (e⁻/s)") { row in Text(row.profile.darkRateEPerS.map { String(format: "%.4f", $0) } ?? "n/a") }
+                    .width(100)
+                TableColumn("Dark hőm. (°C)") { row in Text(row.profile.darkTempC.map { String(format: "%.1f", $0) } ?? "-") }
+                    .width(100)
+                TableColumn("EGAIN") { row in Text(row.profile.egain.map { String(format: "%.3f", $0) } ?? "n/a") }
+                    .width(80)
+            }
+        }
     }
 }

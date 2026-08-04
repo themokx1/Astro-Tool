@@ -60,6 +60,11 @@ final class AppState: @unchecked Sendable {
     /// fül. `nil` until `loadCalibHealth()` has run at least once this
     /// session.
     var calibHealth: CalibHealthReport?
+    /// Measured sensor characterization per `(camera, gain, offset)` combo
+    /// (R7-B1 item C) -- read-only "Szenzor-profilok" list on the
+    /// Kalibráció fül, `[]` until `loadSensorProfiles()`/
+    /// `measureSensorProfiles()` has run at least once this session.
+    var sensorProfiles: [SensorProfileRecord] = []
     var frameScores: [FrameScore] = []
 
     /// R7-1: the plate-solve backfill result shown in `PlateSolveSheet`
@@ -788,6 +793,61 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.calibHealth = result
                 self.progressText = "Kalibráció-egészség kész"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    // MARK: - Sensor profiles (R7-B1 item C)
+
+    /// Loads whatever's already persisted in `sensor_profile` -- read-only,
+    /// never runs a measurement itself. Shown as the "Szenzor-profilok" list
+    /// on the Kalibráció fül.
+    func loadSensorProfiles() {
+        guard let db else { return }
+
+        let opID = beginOperation("Szenzor-profilok betöltése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try db.allSensorProfiles()
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.sensorProfiles = result
+                self.progressText = "Szenzor-profilok betöltve: \(result.count) kombináció"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Runs `SensorProfiler.measure` in the background (the "Mérés" button):
+    /// re-derives every `(camera, gain, offset)` combo's bias level/read
+    /// noise/dark rate/EGAIN from tracked BIAS/DARK frames, persisting as it
+    /// goes, then refreshes `sensorProfiles` with the fresh set.
+    func measureSensorProfiles() {
+        guard let db else { return }
+        let cfg = config
+        let root = URL(fileURLWithPath: cfg.rootPath, isDirectory: true)
+
+        let opID = beginOperation("Szenzor-mérés indul…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) { [weak self] in
+                    try SensorProfiler.measure(db: db, config: cfg, root: root) { message in
+                        Task { @MainActor in
+                            self?.progressText = message
+                        }
+                    }
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.sensorProfiles = result
+                self.progressText = "Szenzor-mérés kész: \(result.count) kombináció"
             } catch {
                 self.handle(error)
             }

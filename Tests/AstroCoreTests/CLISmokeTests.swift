@@ -1227,6 +1227,129 @@ private func writeBogusSirilPathConfig(root: URL) throws {
     #expect(result.stderr.contains("siril not found"))
 }
 
+// MARK: - sensor (R7-B1 item C)
+
+/// Writes a full 16-bit FITS (real pixel data, not just a header) with the
+/// `GAIN`/`OFFSET`/`INSTRUME`/`EGAIN` cards `SensorProfiler` groups by --
+/// `writeLinkCalibFITS` above only writes `EXPTIME`/`SET-TEMP`, which isn't
+/// enough for a `sensor` CLI test to exercise the real grouping/measurement
+/// path end to end.
+private func writeSensorFITS(
+    _ relativePath: String, root: URL,
+    width: Int = 8, height: Int = 8, pixelValue: Int,
+    gain: Double? = 100, offset: Double? = 50, instrume: String = "ASI2600MC",
+    egain: Double? = 0.25, exptime: Double? = nil, ccdTemp: Double? = nil
+) throws {
+    let url = root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+    var cards = [
+        "SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2",
+        "NAXIS1  =                 \(width)", "NAXIS2  =                 \(height)",
+    ]
+    if let gain { cards.append("GAIN    =                \(gain)") }
+    if let offset { cards.append("OFFSET  =                \(offset)") }
+    cards.append("INSTRUME= '\(instrume)'")
+    if let egain { cards.append("EGAIN   =                \(egain)") }
+    if let exptime { cards.append("EXPTIME =                \(exptime)") }
+    if let ccdTemp { cards.append("CCD-TEMP=                \(ccdTemp)") }
+    cards.append("END")
+
+    var data = buildHeaderData(cards)
+    var pixelBytes = Data()
+    pixelBytes.reserveCapacity(width * height * 2)
+    let unsigned = UInt16(bitPattern: Int16(pixelValue))
+    for _ in 0..<(width * height) {
+        pixelBytes.append(UInt8(unsigned >> 8))
+        pixelBytes.append(UInt8(unsigned & 0xFF))
+    }
+    data.append(pixelBytes)
+    try data.write(to: url)
+}
+
+@Test func sensorWithoutMeasureFlagPrintsAlreadyStoredProfilesOnly() throws {
+    let root = try makeTempRoot("sensor-no-measure")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeSensorFITS("calibration_library/biases/bias_a.fit", root: root, pixelValue: 500)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    // No `--measure` yet -- nothing has ever been persisted to
+    // `sensor_profile`, so this must print "nothing measured" rather than
+    // silently running a measurement itself.
+    let result = try runCLI(["sensor", "--root", root.path, "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    #expect(json?.isEmpty == true)
+}
+
+@Test func sensorMeasureFlagRunsMeasurementAndPersistsThenJSONReportsBiasLevel() throws {
+    let root = try makeTempRoot("sensor-measure-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeSensorFITS("calibration_library/biases/bias_a.fit", root: root, pixelValue: 500, egain: 0.25)
+    try writeSensorFITS("calibration_library/biases/bias_b.fit", root: root, pixelValue: 500, egain: 0.25)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["sensor", "--root", root.path, "--measure", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let profiles = try #require(json)
+    let profile = try #require(profiles.first { $0["camera"] as? String == "ASI2600MC" })
+    #expect(profile["bias_level_adu"] as? Double == 500)
+    #expect(profile["gain"] as? Double == 100)
+    #expect(profile["offset"] as? Double == 50)
+
+    // A second, non-measuring call must still see the persisted profile.
+    let rerun = try runCLI(["sensor", "--root", root.path, "--json"])
+    #expect(rerun.exitCode == 0, "stderr: \(rerun.stderr)")
+    let rerunJSON = try JSONSerialization.jsonObject(with: Data(rerun.stdout.utf8)) as? [[String: Any]]
+    #expect(rerunJSON?.count == 1)
+}
+
+@Test func sensorHumanOutputPrintsHungarianLabelsWithBiasAndEGain() throws {
+    let root = try makeTempRoot("sensor-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeSensorFITS("calibration_library/biases/bias_a.fit", root: root, pixelValue: 501, egain: 0.243)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["sensor", "--root", root.path, "--measure"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("ASI2600MC"))
+    #expect(result.stdout.contains("gain 100"))
+    #expect(result.stdout.contains("offset 50"))
+    #expect(result.stdout.contains("bias 501"))
+    #expect(result.stdout.contains("EGAIN"))
+}
+
+@Test func sensorPrintsDriftWarningWhenLightsUseAComboWithNoMeasuredProfile() throws {
+    let root = try makeTempRoot("sensor-drift-warning")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    // A light frame at gain 100/offset 50 -- but NOT ONE bias frame at that
+    // combo anywhere, so `sensor_profile` never gets a row for it.
+    try writeSensorFITS(
+        "sessions/M31/2026-01-01/lights/light_0001.fit", root: root,
+        pixelValue: 600, gain: 100, offset: 50
+    )
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["sensor", "--root", root.path])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stderr.contains("nincs mérés ehhez"))
+    #expect(result.stderr.contains("ASI2600MC"))
+}
+
 // MARK: - misc
 
 @Test func unknownSubcommandExitsWithUsage() throws {

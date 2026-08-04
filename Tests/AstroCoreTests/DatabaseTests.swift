@@ -83,7 +83,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 6)
+    #expect(version == 7)
 }
 
 @Test func migrateIsIdempotentAndDoesNotDuplicateVersionRow() throws {
@@ -97,7 +97,7 @@ import Testing
 @Test func migrateCreatesAllExpectedTables() throws {
     let database = try Database(path: ":memory:")
 
-    let expectedTables = ["schema_version", "files", "fits_meta", "ratings", "findings", "runs", "tags", "session_notes"]
+    let expectedTables = ["schema_version", "files", "fits_meta", "ratings", "findings", "runs", "tags", "session_notes", "sensor_profile"]
     var found: Set<String> = []
     try database.db.query("SELECT name FROM sqlite_master WHERE type = 'table';") { row in
         if let name = row.string(0) { found.insert(name) }
@@ -144,7 +144,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 6)
+    #expect(version == 7)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -197,7 +197,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 6)
+    #expect(version == 7)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -266,7 +266,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 6)
+    #expect(version == 7)
 
     let fileID1 = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let meta1 = try database.fitsMeta(fileID: fileID1)
@@ -555,6 +555,97 @@ private func sampleRating(fileID: Int64, inputSig: String = "sig-1") -> RatingRe
     #expect(try database.rating(fileID: fileID) == nil)
 }
 
+@Test func upsertRatingRoundTripsPerBayerBackgroundColumns() throws {
+    let database = try Database(path: ":memory:")
+    let fileID = try database.upsertFile(sampleFile())
+    var rating = sampleRating(fileID: fileID)
+    rating.bg00 = 514.0
+    rating.bg01 = 508.0
+    rating.bg10 = 509.0
+    rating.bg11 = 506.0
+
+    try database.upsertRating(rating)
+
+    let fetched = try database.rating(fileID: fileID)
+    #expect(fetched?.bg00 == 514.0)
+    #expect(fetched?.bg01 == 508.0)
+    #expect(fetched?.bg10 == 509.0)
+    #expect(fetched?.bg11 == 506.0)
+}
+
+// MARK: - Database: sensor_profile
+
+private func sampleSensorProfile(
+    camera: String = "ASI2600MC",
+    gain: Double? = 100,
+    offset: Double? = 50
+) -> SensorProfileRecord {
+    SensorProfileRecord(
+        camera: camera,
+        gain: gain,
+        offset: offset,
+        biasLevelADU: 501,
+        readNoiseE: 1.30,
+        darkRateEPerS: 0.0,
+        darkTempC: -10.0,
+        egain: 0.242863,
+        measuredAt: 1_700_000_000,
+        frameCount: 2
+    )
+}
+
+@Test func upsertSensorProfileInsertsAndReadsBack() throws {
+    let database = try Database(path: ":memory:")
+    let profile = sampleSensorProfile()
+    try database.upsertSensorProfile(profile)
+
+    let fetched = try database.sensorProfile(camera: "ASI2600MC", gain: 100, offset: 50)
+    #expect(fetched == profile)
+}
+
+@Test func sensorProfileReturnsNilForUnknownCombo() throws {
+    let database = try Database(path: ":memory:")
+    #expect(try database.sensorProfile(camera: "ASI2600MC", gain: 100, offset: 50) == nil)
+}
+
+@Test func upsertSensorProfileKeyedByCameraGainOffsetOverwritesOnRemeasure() throws {
+    let database = try Database(path: ":memory:")
+    try database.upsertSensorProfile(sampleSensorProfile())
+
+    var updated = sampleSensorProfile()
+    updated.biasLevelADU = 505
+    updated.readNoiseE = 1.35
+    updated.measuredAt = 1_700_000_999
+    try database.upsertSensorProfile(updated)
+
+    let fetched = try database.sensorProfile(camera: "ASI2600MC", gain: 100, offset: 50)
+    #expect(fetched?.biasLevelADU == 505)
+    #expect(fetched?.readNoiseE == 1.35)
+
+    // Still exactly one row for this combo.
+    var count = 0
+    try database.db.query(
+        "SELECT camera FROM sensor_profile WHERE camera = ? AND gain = ? AND offset = ?;",
+        bind: [.text("ASI2600MC"), .real(100), .real(50)]
+    ) { _ in count += 1 }
+    #expect(count == 1)
+}
+
+@Test func upsertSensorProfileDistinguishesDifferentGainOffsetCombosForSameCamera() throws {
+    let database = try Database(path: ":memory:")
+    try database.upsertSensorProfile(sampleSensorProfile(gain: 100, offset: 50))
+    try database.upsertSensorProfile(sampleSensorProfile(gain: 0, offset: 30))
+
+    let all = try database.allSensorProfiles()
+    #expect(all.count == 2)
+    #expect(try database.sensorProfile(camera: "ASI2600MC", gain: 0, offset: 30)?.biasLevelADU == 501)
+}
+
+@Test func allSensorProfilesReturnsEmptyArrayWhenNoneMeasured() throws {
+    let database = try Database(path: ":memory:")
+    #expect(try database.allSensorProfiles().isEmpty)
+}
+
 // MARK: - Database: tags
 
 @Test func addTargetLevelTagThenListsIt() throws {
@@ -710,7 +801,7 @@ private func sampleRating(fileID: Int64, inputSig: String = "sig-1") -> RatingRe
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 6)
+    #expect(version == 7)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1, "the v4 row must survive the upgrade untouched")
@@ -764,7 +855,7 @@ private func sampleRating(fileID: Int64, inputSig: String = "sig-1") -> RatingRe
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 6)
+    #expect(version == 7)
 
     let fileID = try #require(try database.fileID(path: "sessions/M45_Pleiades/2026-01-01/lights/f1.cr3"))
     let metaBeforeSolve = try database.fitsMeta(fileID: fileID)
@@ -778,6 +869,63 @@ private func sampleRating(fileID: Int64, inputSig: String = "sig-1") -> RatingRe
     #expect(metaAfterSolve?.solvedDec == 24.1)
     #expect(metaAfterSolve?.solvedScaleArcsec == 1.2)
     #expect(metaAfterSolve?.solvedRotationDeg == 15.0)
+}
+
+@Test func migrateUpgradesExistingV6DatabaseToV7AddingBayerColumnsAndSensorProfileTable() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-migrate-v6-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("v6.sqlite").path
+
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.exec(Database.schemaSQLv1)
+        try raw.exec(Database.schemaSQLv2)
+        try raw.exec(Database.schemaSQLv3)
+        try raw.exec(Database.schemaSQLv4)
+        try raw.exec(Database.schemaSQLv5)
+        try raw.exec(Database.schemaSQLv6)
+        try raw.run("INSERT INTO schema_version(version) VALUES (6);")
+        try raw.run(
+            """
+            INSERT INTO files(path, size, mtime, ext, kind, area, target, session_date, role, content_hash, scanned_at, missing, inode, nlink)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            bind: [
+                .text("sessions/M31/2026-01-01/lights/f1.fits"), .int(1024), .real(1_700_000_000),
+                .text("fits"), .text("fits"), .text("sessions"), .text("M31"), .text("2026-01-01"),
+                .text("light"), .null, .real(1_700_000_100), .int(0), .null, .null,
+            ]
+        )
+        try raw.run(
+            "INSERT INTO ratings(file_id, background, rated_at, input_sig) VALUES (1, 100.0, ?, ?);",
+            bind: [.real(1_700_000_200), .text("sig-1")]
+        )
+    }
+
+    let database = try Database(path: path)
+
+    var version: Int64 = -1
+    try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
+        version = row.int64(0) ?? -1
+    }
+    #expect(version == 7)
+
+    let fileID = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
+    let rating = try database.rating(fileID: fileID)
+    #expect(rating?.background == 100.0, "the v6 row's pre-existing columns must survive the upgrade untouched")
+    #expect(rating?.bg00 == nil, "ALTER TABLE ADD COLUMN never backfills pre-existing rows")
+    #expect(rating?.bg01 == nil)
+    #expect(rating?.bg10 == nil)
+    #expect(rating?.bg11 == nil)
+
+    // sensor_profile table exists and is usable after the same migration.
+    #expect(try database.allSensorProfiles().isEmpty)
+    try database.upsertSensorProfile(
+        SensorProfileRecord(camera: "ASI2600MC", gain: 100, offset: 50, biasLevelADU: 501, measuredAt: 1_700_000_300)
+    )
+    #expect(try database.sensorProfile(camera: "ASI2600MC", gain: 100, offset: 50)?.biasLevelADU == 501)
 }
 
 @Test func updateSolvedWCSDoesNotDisturbHeaderJSONOrOtherColumns() throws {

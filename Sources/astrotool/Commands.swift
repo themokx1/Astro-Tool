@@ -47,6 +47,7 @@ Commands:
   panels        --target T [--root R] [--json]
   search        <query> [--root R] [--json]
   solve         --target T|--all [--frames N] [--force] [--root R] [--json]
+  sensor        [--measure] [--json] [--root R]
 
   --version     Print version and exit
   --help        Show this help
@@ -418,6 +419,10 @@ func cmdRate(_ args: [String]) throws -> Int32 {
 
     let rater = Rater(db: db, config: config, provider: provider)
     let results = try rater.rate(target: target, date: parsed.value("--date"))
+
+    if Rater.shouldWarnNoMetrics(results, providerWasUsed: provider != nil) {
+        eprint("a Siril nem adott metrikát egyetlen keretre sem — ellenőrizd a telepítést")
+    }
 
     if parsed.has("--json") {
         try printJSON(results)
@@ -1748,4 +1753,92 @@ func cmdSolve(_ args: [String]) throws -> Int32 {
         }
     }
     return 0
+}
+
+// MARK: - sensor (R7-B1 item C)
+
+/// `astrotool sensor [--measure] [--json]` -- measured per-`(camera, gain,
+/// offset)` sensor characterization: bias pedestal, read noise (from a bias
+/// pair), dark rate, EGAIN. Without `--measure`, prints whatever's already
+/// persisted in `sensor_profile` (`db.allSensorProfiles()`) -- this never
+/// runs a measurement itself, so a bare `astrotool sensor` is cheap and
+/// read-only. With `--measure`, re-derives every combo's profile from
+/// tracked BIAS/DARK frames first (`SensorProfiler.measure`, which upserts
+/// as it goes) and prints the freshly measured set.
+///
+/// Either way, also warns (stderr, never stdout -- so `--json` output stays
+/// parseable) about every `(camera, gain, offset)` combo actually used by
+/// tracked LIGHT frames that has no USABLE profile on record yet
+/// (`SensorProfiler.combosMissingProfile` -- a row with a `nil` bias level
+/// counts as missing too). This is the mechanism that catches "offset
+/// changed between sessions, the old master bias/profile silently stopped
+/// matching" before `SessionQuality`'s electron-domain numbers quietly go
+/// `nil` on the user.
+func cmdSensor(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--measure", takesValue: false),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+    let isJSON = parsed.has("--json")
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let profiles: [SensorProfileRecord]
+    if parsed.has("--measure") {
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        profiles = try SensorProfiler.measure(db: db, config: config, root: root) { message in
+            if !isJSON { eprint(message) }
+        }
+    } else {
+        profiles = try db.allSensorProfiles()
+    }
+
+    let allFiles = try db.allFiles(includeMissing: false)
+    let lights = allFiles.filter { $0.area == .sessions && $0.role == .light }
+    var metaByFileID: [Int64: FITSMetaRecord] = [:]
+    for file in lights {
+        guard let id = file.id else { continue }
+        if let meta = try db.fitsMeta(fileID: id) { metaByFileID[id] = meta }
+    }
+    let missingCombos = SensorProfiler.combosMissingProfile(lights: lights, meta: metaByFileID, profiles: profiles)
+    for combo in missingCombos {
+        eprint("nincs mérés ehhez: \(sensorComboDescription(camera: combo.camera, gain: combo.gain, offset: combo.offset)) (készíts legalább 2 bias frame-et)")
+    }
+
+    if isJSON {
+        try printJSON(profiles)
+    } else {
+        printSensorProfiles(profiles)
+    }
+    return 0
+}
+
+private func sensorComboDescription(camera: String, gain: Double?, offset: Double?) -> String {
+    let gainText = gain.map(formatted) ?? "-"
+    let offsetText = offset.map(formatted) ?? "-"
+    return "\(camera) · gain \(gainText) · offset \(offsetText)"
+}
+
+private func printSensorProfiles(_ profiles: [SensorProfileRecord]) {
+    guard !profiles.isEmpty else {
+        print("nincs mért szenzor-profil (astrotool sensor --measure)")
+        return
+    }
+    for p in profiles {
+        let biasText = p.biasLevelADU.map { String(format: "%.0f ADU", $0) } ?? "n/a"
+        let readNoiseText = p.readNoiseE.map { String(format: "%.2f e⁻ (mérve)", $0) } ?? "n/a (kell 2. bias frame)"
+        let darkText: String
+        if let darkRate = p.darkRateEPerS {
+            let tempText = p.darkTempC.map { String(format: "%.1f °C", $0) } ?? "?"
+            darkText = "dark \(tempText): \(String(format: "%.4f", darkRate)) e⁻/s"
+        } else {
+            darkText = "dark n/a (nincs dark ehhez a kombóhoz)"
+        }
+        let egainText = p.egain.map { String(format: "%.3f", $0) } ?? "n/a"
+        print("\(sensorComboDescription(camera: p.camera, gain: p.gain, offset: p.offset)): bias \(biasText), leolvasási zaj \(readNoiseText), \(darkText), EGAIN \(egainText)")
+    }
 }

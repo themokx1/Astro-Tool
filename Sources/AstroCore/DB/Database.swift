@@ -191,6 +191,16 @@ public struct RatingRecord: Codable, Equatable, Sendable {
     public var ratedAt: Double
     public var sirilVersion: String?
     public var inputSig: String
+    /// Per-Bayer-parity background medians -- schema v7, additive. Position
+    /// `(row%2, col%2)` in the frame's pixel grid, NOT yet mapped to R/G/G/B
+    /// (that mapping depends on the frame's `BAYERPAT` header and is done at
+    /// the consumer level by `BayerMap.channelMedians`). `nil` for every
+    /// frame rated before v7, and for a `.fz` frame whose `NativeStats` never
+    /// ran (same "no native stats" condition as `background` itself).
+    public var bg00: Double?
+    public var bg01: Double?
+    public var bg10: Double?
+    public var bg11: Double?
 
     public init(
         fileID: Int64,
@@ -202,7 +212,11 @@ public struct RatingRecord: Codable, Equatable, Sendable {
         score: Double? = nil,
         ratedAt: Double,
         sirilVersion: String? = nil,
-        inputSig: String
+        inputSig: String,
+        bg00: Double? = nil,
+        bg01: Double? = nil,
+        bg10: Double? = nil,
+        bg11: Double? = nil
     ) {
         self.fileID = fileID
         self.fwhm = fwhm
@@ -214,6 +228,55 @@ public struct RatingRecord: Codable, Equatable, Sendable {
         self.ratedAt = ratedAt
         self.sirilVersion = sirilVersion
         self.inputSig = inputSig
+        self.bg00 = bg00
+        self.bg01 = bg01
+        self.bg10 = bg10
+        self.bg11 = bg11
+    }
+}
+
+/// Measured sensor characterization for one `(camera, gain, offset)`
+/// combo -- schema v7. Populated by `SensorProfiler.measure`, consumed by
+/// `SessionQuality` (bias-pedestal subtraction) and the `astrotool sensor`
+/// CLI command. Every measured field is `Optional` because each is only
+/// derivable from a specific frame availability (bias level needs 1+ bias
+/// frames, read noise needs 2+, dark rate needs a matching dark) -- a
+/// combo with only a single bias frame still gets a row, just with
+/// `readNoiseE`/`darkRateEPerS` left `nil` rather than a fabricated value.
+public struct SensorProfileRecord: Codable, Equatable, Sendable {
+    public var camera: String
+    public var gain: Double?
+    public var offset: Double?
+    public var biasLevelADU: Double?
+    public var readNoiseE: Double?
+    public var darkRateEPerS: Double?
+    public var darkTempC: Double?
+    public var egain: Double?
+    public var measuredAt: Double
+    public var frameCount: Int?
+
+    public init(
+        camera: String,
+        gain: Double? = nil,
+        offset: Double? = nil,
+        biasLevelADU: Double? = nil,
+        readNoiseE: Double? = nil,
+        darkRateEPerS: Double? = nil,
+        darkTempC: Double? = nil,
+        egain: Double? = nil,
+        measuredAt: Double,
+        frameCount: Int? = nil
+    ) {
+        self.camera = camera
+        self.gain = gain
+        self.offset = offset
+        self.biasLevelADU = biasLevelADU
+        self.readNoiseE = readNoiseE
+        self.darkRateEPerS = darkRateEPerS
+        self.darkTempC = darkTempC
+        self.egain = egain
+        self.measuredAt = measuredAt
+        self.frameCount = frameCount
     }
 }
 
@@ -321,6 +384,25 @@ public final class Database: @unchecked Sendable {
     ALTER TABLE fits_meta ADD COLUMN solved_rotation_deg REAL;
     """
 
+    // Internal (not private) for the same reason as the earlier schemaSQLv*
+    // constants: migration tests apply this directly to a raw `SQLiteDB` to
+    // simulate an existing v6 database before verifying `Database(path:)`
+    // upgrades it in place. R7-B1: per-Bayer-parity background medians
+    // (additive `ratings` columns, never touched by pre-v7 code) + the new
+    // `sensor_profile` table (measured bias level/read noise/dark rate per
+    // `(camera, gain, offset)` -- see `SensorProfiler`).
+    static let schemaSQLv7 = """
+    ALTER TABLE ratings ADD COLUMN bg_00 REAL;
+    ALTER TABLE ratings ADD COLUMN bg_01 REAL;
+    ALTER TABLE ratings ADD COLUMN bg_10 REAL;
+    ALTER TABLE ratings ADD COLUMN bg_11 REAL;
+    CREATE TABLE IF NOT EXISTS sensor_profile(
+      camera TEXT NOT NULL, gain REAL, offset REAL,
+      bias_level_adu REAL, read_noise_e REAL, dark_rate_e_per_s REAL, dark_temp_c REAL,
+      egain REAL, measured_at REAL NOT NULL, frame_count INTEGER,
+      PRIMARY KEY(camera, gain, offset));
+    """
+
     public init(path: String) throws {
         self.db = try SQLiteDB(path: path)
         try migrate()
@@ -378,6 +460,12 @@ public final class Database: @unchecked Sendable {
             try db.exec(Self.schemaSQLv6)
             try db.run("UPDATE schema_version SET version = ?;", bind: [.int(6)])
             version = 6
+        }
+
+        if version < 7 {
+            try db.exec(Self.schemaSQLv7)
+            try db.run("UPDATE schema_version SET version = ?;", bind: [.int(7)])
+            version = 7
         }
     }
 
@@ -734,19 +822,22 @@ public final class Database: @unchecked Sendable {
         try withLock {
             try db.run(
                 """
-                INSERT INTO ratings(file_id, fwhm, roundness, star_count, background, saturated_fraction, score, rated_at, siril_version, input_sig)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO ratings(file_id, fwhm, roundness, star_count, background, saturated_fraction, score, rated_at, siril_version, input_sig, bg_00, bg_01, bg_10, bg_11)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(file_id) DO UPDATE SET
                   fwhm = excluded.fwhm, roundness = excluded.roundness, star_count = excluded.star_count,
                   background = excluded.background, saturated_fraction = excluded.saturated_fraction,
                   score = excluded.score, rated_at = excluded.rated_at, siril_version = excluded.siril_version,
-                  input_sig = excluded.input_sig;
+                  input_sig = excluded.input_sig, bg_00 = excluded.bg_00, bg_01 = excluded.bg_01,
+                  bg_10 = excluded.bg_10, bg_11 = excluded.bg_11;
                 """,
                 bind: [
                     .int(r.fileID), r.fwhm.map(SQLiteValue.real) ?? .null, r.roundness.map(SQLiteValue.real) ?? .null,
                     r.starCount.map { SQLiteValue.int(Int64($0)) } ?? .null, r.background.map(SQLiteValue.real) ?? .null,
                     r.saturatedFraction.map(SQLiteValue.real) ?? .null, r.score.map(SQLiteValue.real) ?? .null,
                     .real(r.ratedAt), r.sirilVersion.map(SQLiteValue.text) ?? .null, .text(r.inputSig),
+                    r.bg00.map(SQLiteValue.real) ?? .null, r.bg01.map(SQLiteValue.real) ?? .null,
+                    r.bg10.map(SQLiteValue.real) ?? .null, r.bg11.map(SQLiteValue.real) ?? .null,
                 ]
             )
         }
@@ -757,7 +848,7 @@ public final class Database: @unchecked Sendable {
             var record: RatingRecord?
             try db.query(
                 """
-                SELECT file_id, fwhm, roundness, star_count, background, saturated_fraction, score, rated_at, siril_version, input_sig
+                SELECT file_id, fwhm, roundness, star_count, background, saturated_fraction, score, rated_at, siril_version, input_sig, bg_00, bg_01, bg_10, bg_11
                 FROM ratings WHERE file_id = ?;
                 """,
                 bind: [.int(fileID)]
@@ -772,11 +863,102 @@ public final class Database: @unchecked Sendable {
                     score: row.double(6),
                     ratedAt: row.double(7) ?? 0,
                     sirilVersion: row.string(8),
-                    inputSig: row.string(9) ?? ""
+                    inputSig: row.string(9) ?? "",
+                    bg00: row.double(10),
+                    bg01: row.double(11),
+                    bg10: row.double(12),
+                    bg11: row.double(13)
                 )
             }
             return record
         }
+    }
+
+    // MARK: sensor_profile (R7-B1)
+
+    /// Upserts one `(camera, gain, offset)` combo's measured profile.
+    /// `ON CONFLICT` targets the composite primary key -- a re-measure
+    /// (e.g. after taking fresh bias frames) replaces every measured column
+    /// in place rather than accumulating duplicate rows. Note SQLite's
+    /// uniqueness on a composite key never fires when `gain`/`offset` is
+    /// `NULL` on both sides (`NULL` is never `= NULL`); every real camera
+    /// this targets (ASI-class) always reports both, so this is a
+    /// theoretical gap, not a practical one.
+    public func upsertSensorProfile(_ r: SensorProfileRecord) throws {
+        try withLock {
+            try db.run(
+                """
+                INSERT INTO sensor_profile(camera, gain, offset, bias_level_adu, read_noise_e, dark_rate_e_per_s, dark_temp_c, egain, measured_at, frame_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(camera, gain, offset) DO UPDATE SET
+                  bias_level_adu = excluded.bias_level_adu, read_noise_e = excluded.read_noise_e,
+                  dark_rate_e_per_s = excluded.dark_rate_e_per_s, dark_temp_c = excluded.dark_temp_c,
+                  egain = excluded.egain, measured_at = excluded.measured_at, frame_count = excluded.frame_count;
+                """,
+                bind: [
+                    .text(r.camera), r.gain.map(SQLiteValue.real) ?? .null, r.offset.map(SQLiteValue.real) ?? .null,
+                    r.biasLevelADU.map(SQLiteValue.real) ?? .null, r.readNoiseE.map(SQLiteValue.real) ?? .null,
+                    r.darkRateEPerS.map(SQLiteValue.real) ?? .null, r.darkTempC.map(SQLiteValue.real) ?? .null,
+                    r.egain.map(SQLiteValue.real) ?? .null, .real(r.measuredAt),
+                    r.frameCount.map { SQLiteValue.int(Int64($0)) } ?? .null,
+                ]
+            )
+        }
+    }
+
+    /// The measured profile for an EXACT `(camera, gain, offset)` match --
+    /// `IS` (SQLite's null-safe equality) rather than `=` so a combo with a
+    /// `NULL` gain/offset can still be looked up consistently. `nil` when no
+    /// profile has been measured for this exact combo -- callers (in
+    /// particular `SessionQuality`) must never fall back to a different
+    /// gain/offset's profile; see this method's call sites for why.
+    public func sensorProfile(camera: String, gain: Double?, offset: Double?) throws -> SensorProfileRecord? {
+        try withLock {
+            var record: SensorProfileRecord?
+            try db.query(
+                """
+                SELECT camera, gain, offset, bias_level_adu, read_noise_e, dark_rate_e_per_s, dark_temp_c, egain, measured_at, frame_count
+                FROM sensor_profile WHERE camera = ? AND gain IS ? AND offset IS ?;
+                """,
+                bind: [.text(camera), gain.map(SQLiteValue.real) ?? .null, offset.map(SQLiteValue.real) ?? .null]
+            ) { row in
+                record = Self.sensorProfileRecord(from: row)
+            }
+            return record
+        }
+    }
+
+    /// Every measured sensor profile on record, sorted by camera then gain
+    /// then offset -- backs `astrotool sensor` (no `--measure`) and the
+    /// app's read-only "Szenzor-profilok" list.
+    public func allSensorProfiles() throws -> [SensorProfileRecord] {
+        try withLock {
+            var results: [SensorProfileRecord] = []
+            try db.query(
+                """
+                SELECT camera, gain, offset, bias_level_adu, read_noise_e, dark_rate_e_per_s, dark_temp_c, egain, measured_at, frame_count
+                FROM sensor_profile ORDER BY camera, gain, offset;
+                """
+            ) { row in
+                results.append(Self.sensorProfileRecord(from: row))
+            }
+            return results
+        }
+    }
+
+    private static func sensorProfileRecord(from row: SQLiteRow) -> SensorProfileRecord {
+        SensorProfileRecord(
+            camera: row.string(0) ?? "",
+            gain: row.double(1),
+            offset: row.double(2),
+            biasLevelADU: row.double(3),
+            readNoiseE: row.double(4),
+            darkRateEPerS: row.double(5),
+            darkTempC: row.double(6),
+            egain: row.double(7),
+            measuredAt: row.double(8) ?? 0,
+            frameCount: row.int64(9).map(Int.init)
+        )
     }
 
     // MARK: tags

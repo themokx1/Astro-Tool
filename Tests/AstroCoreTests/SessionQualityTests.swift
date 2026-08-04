@@ -23,6 +23,9 @@ private func insertRatedLight(
     xpixsz: Double? = nil,
     focallen: Double? = nil,
     egain: Double? = nil,
+    camera: String? = nil,
+    gain: Double? = nil,
+    offset: Double? = nil,
     fwhm: Double? = nil,
     background: Double? = nil,
     starCount: Int? = nil,
@@ -48,7 +51,10 @@ private func insertRatedLight(
     // in its own dedup group of one, same as a real scan would.
     try db.backfillInode(id: fileID, inode: fileID, nlink: 1)
     try db.upsertFITSMeta(
-        FITSMetaRecord(fileID: fileID, exptime: exptime, focallen: focallen, xpixsz: xpixsz, egain: egain)
+        FITSMetaRecord(
+            fileID: fileID, exptime: exptime, gain: gain, offset: offset,
+            instrume: camera, focallen: focallen, xpixsz: xpixsz, egain: egain
+        )
     )
     if withRating {
         try db.upsertRating(
@@ -59,6 +65,25 @@ private func insertRatedLight(
         )
     }
     return fileID
+}
+
+/// Inserts a measured `sensor_profile` row directly -- the "synthetic
+/// fixtures must insert a sensor profile row to get numbers" setup the
+/// bias-pedestal fix (item A) requires, since `SessionQuality` now refuses
+/// to guess a bias level from anywhere else.
+@discardableResult
+private func insertSensorProfile(
+    db: Database,
+    camera: String,
+    gain: Double?,
+    offset: Double?,
+    biasLevelADU: Double?
+) throws -> SensorProfileRecord {
+    let profile = SensorProfileRecord(
+        camera: camera, gain: gain, offset: offset, biasLevelADU: biasLevelADU, measuredAt: 1_700_000_000
+    )
+    try db.upsertSensorProfile(profile)
+    return profile
 }
 
 // MARK: - Arcsec math
@@ -87,15 +112,20 @@ private func insertRatedLight(
     #expect(summary.frameCount == 1)
 }
 
-@Test func sessionQualityComputesBackgroundInElectronsPerSecondPerArcsec2() throws {
+@Test func sessionQualityComputesBackgroundInElectronsPerSecondPerArcsec2AfterSubtractingMeasuredBiasPedestal() throws {
     let db = try makeMemoryDB()
     // Chosen so the pixel scale comes out to exactly 1 arcsec/px
     // (206.265 * 1 / 206.265 == 1), so the background conversion's own
     // arithmetic is the only thing under test:
-    // background(ADU) * egain / exptime / scale^2 = 100 * 2.0 / 10 / 1 = 20.
+    // (background(ADU) - biasLevel) * egain / exptime / scale^2
+    //   = (100 - 20) * 2.0 / 10 / 1 = 16.
+    // This is the 64x-bug regression guard: the OLD formula (no bias
+    // subtraction) would have given 100 * 2.0 / 10 / 1 = 20 here instead.
+    try insertSensorProfile(db: db, camera: "ASI2600MC", gain: 100, offset: 50, biasLevelADU: 20)
     try insertRatedLight(
         db: db, target: "M31", date: "2026-02-02", name: "a",
         exptime: 10, xpixsz: 1.0, focallen: 206.265, egain: 2.0,
+        camera: "ASI2600MC", gain: 100, offset: 50,
         fwhm: 2.5, background: 100, starCount: 500, score: 0.1
     )
 
@@ -104,7 +134,62 @@ private func insertRatedLight(
 
     #expect(summary.medianBackgroundADU == 100)
     let backgroundE = try #require(summary.backgroundEPerSecPerArcsec2)
-    #expect(abs(backgroundE - 20.0) < 0.0001)
+    #expect(abs(backgroundE - 16.0) < 0.0001)
+}
+
+@Test func sessionQualityBackgroundIsNilWhenNoSensorProfileExistsForTheComboRatherThanAWrongNumber() throws {
+    let db = try makeMemoryDB()
+    // Same frame as the test above, MINUS the sensor profile row -- the
+    // real-world case of a camera/gain/offset combo nobody has ever
+    // measured a bias frame for yet. Must be `nil` ("n/a"), never a number
+    // computed as if bias were 0.
+    try insertRatedLight(
+        db: db, target: "M32", date: "2026-02-02", name: "a",
+        exptime: 10, xpixsz: 1.0, focallen: 206.265, egain: 2.0,
+        camera: "ASI2600MC", gain: 100, offset: 50,
+        fwhm: 2.5, background: 100, starCount: 500, score: 0.1
+    )
+
+    let summaries = try SessionQuality.summaries(target: "M32", db: db, config: AstroConfig())
+    let summary = try #require(summaries.first)
+
+    #expect(summary.medianBackgroundADU == 100)
+    #expect(summary.backgroundEPerSecPerArcsec2 == nil)
+}
+
+@Test func sessionQualityBackgroundRequiresAnExactCameraGainOffsetMatchNoGainOnlyFallback() throws {
+    let db = try makeMemoryDB()
+    // A profile exists for this camera, but at a DIFFERENT offset -- must
+    // NOT be used as a fallback. Exact (camera, gain, offset) match only,
+    // per the task spec ("exact or nil, document").
+    try insertSensorProfile(db: db, camera: "ASI2600MC", gain: 100, offset: 30, biasLevelADU: 20)
+    try insertRatedLight(
+        db: db, target: "M33", date: "2026-02-02", name: "a",
+        exptime: 10, xpixsz: 1.0, focallen: 206.265, egain: 2.0,
+        camera: "ASI2600MC", gain: 100, offset: 50,
+        fwhm: 2.5, background: 100, starCount: 500, score: 0.1
+    )
+
+    let summaries = try SessionQuality.summaries(target: "M33", db: db, config: AstroConfig())
+    let summary = try #require(summaries.first)
+    #expect(summary.backgroundEPerSecPerArcsec2 == nil)
+}
+
+@Test func sessionQualityClampsNegativeBackgroundToZeroRatherThanReportingBelowBiasNoise() throws {
+    let db = try makeMemoryDB()
+    // background(90) < biasLevel(100) -- plausible with real read noise --
+    // must clamp to 0, never a negative "e-/s/arcsec2".
+    try insertSensorProfile(db: db, camera: "ASI2600MC", gain: 100, offset: 50, biasLevelADU: 100)
+    try insertRatedLight(
+        db: db, target: "M34", date: "2026-02-02", name: "a",
+        exptime: 10, xpixsz: 1.0, focallen: 206.265, egain: 2.0,
+        camera: "ASI2600MC", gain: 100, offset: 50,
+        fwhm: 2.5, background: 90, starCount: 500, score: 0.1
+    )
+
+    let summaries = try SessionQuality.summaries(target: "M34", db: db, config: AstroConfig())
+    let summary = try #require(summaries.first)
+    #expect(summary.backgroundEPerSecPerArcsec2 == 0)
 }
 
 // MARK: - Median over multiple frames

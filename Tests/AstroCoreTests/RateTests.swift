@@ -351,6 +351,156 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(stats.backgroundMedian == 2.5)
 }
 
+// MARK: - Per-Bayer-parity medians (R7-B1)
+
+/// A 4x4 frame where every pixel's value is fully determined by its
+/// `(row%2, col%2)` parity -- 4 pixels landing in each of the 4 buckets, all
+/// sharing the SAME value within a bucket, so each bucket's median is exact
+/// and unambiguous.
+@Test func nativeStatsComputesExactPerBayerParityMediansForDistinctPositions() throws {
+    var pixels = [Int](repeating: 0, count: 16)
+    for row in 0..<4 {
+        for col in 0..<4 {
+            let value: Int
+            switch (row % 2, col % 2) {
+            case (0, 0): value = 100
+            case (0, 1): value = 200
+            case (1, 0): value = 300
+            default: value = 400
+            }
+            pixels[row * 4 + col] = value
+        }
+    }
+    let data = build16BitFITS(width: 4, height: 4, pixels: pixels)
+
+    let stats = try NativeStats.compute(data: data)
+    #expect(stats.backgroundMedian00 == 100)
+    #expect(stats.backgroundMedian01 == 200)
+    #expect(stats.backgroundMedian10 == 300)
+    #expect(stats.backgroundMedian11 == 400)
+    // Overall median is unaffected -- sorted [100,100,100,100,200,200,200,200,
+    // 300,300,300,300,400,400,400,400], mid two are 200 and 300.
+    #expect(stats.backgroundMedian == 250)
+}
+
+@Test func nativeStatsPerBayerParityMediansHandleEvenCountPerBucket() throws {
+    // 2x2 tile repeated 2x2 times (8x8 total), two distinct values PER
+    // bucket so each bucket's own median is an average of two values.
+    var pixels = [Int](repeating: 0, count: 64)
+    for row in 0..<8 {
+        for col in 0..<8 {
+            let base: Int
+            switch (row % 2, col % 2) {
+            case (0, 0): base = 10
+            case (0, 1): base = 20
+            case (1, 0): base = 30
+            default: base = 40
+            }
+            // Alternate base/base+2 across tiles so each bucket sees two
+            // distinct values in equal counts.
+            let tileIndex = (row / 2) * 4 + (col / 2)
+            pixels[row * 8 + col] = base + (tileIndex % 2 == 0 ? 0 : 2)
+        }
+    }
+    let data = build16BitFITS(width: 8, height: 8, pixels: pixels)
+
+    let stats = try NativeStats.compute(data: data)
+    #expect(stats.backgroundMedian00 == 11) // (10+12)/2
+    #expect(stats.backgroundMedian01 == 21)
+    #expect(stats.backgroundMedian10 == 31)
+    #expect(stats.backgroundMedian11 == 41)
+}
+
+@Test func nativeStatsPerBayerParityMediansNilForDegenerateSingleColumnFrame() throws {
+    // A single-column frame has no col%2==1 pixels at all -- buckets 01/11
+    // must be nil rather than crashing on an empty median.
+    let pixels = [10, 20, 30, 40]
+    let data = build16BitFITS(width: 1, height: 4, pixels: pixels)
+
+    let stats = try NativeStats.compute(data: data)
+    #expect(stats.backgroundMedian00 != nil)
+    #expect(stats.backgroundMedian01 == nil)
+    #expect(stats.backgroundMedian10 != nil)
+    #expect(stats.backgroundMedian11 == nil)
+}
+
+// MARK: - NativeStats.centralCropPixels (SensorProfiler's data-reading path)
+
+@Test func centralCropPixelsReadsOnlyTheCenterFractionInRowMajorOrder() throws {
+    // 4x4 frame, every pixel's value is row*10+col so the crop's exact
+    // contents are unambiguous. fraction=0.5 -> a 2x2 crop starting at
+    // (x0,y0) = (1,1), i.e. rows 1-2, cols 1-2.
+    var pixels = [Int](repeating: 0, count: 16)
+    for row in 0..<4 {
+        for col in 0..<4 {
+            pixels[row * 4 + col] = row * 10 + col
+        }
+    }
+    let data = build16BitFITS(width: 4, height: 4, pixels: pixels)
+
+    let crop = try NativeStats.centralCropPixels(data: data, fraction: 0.5)
+    #expect(crop == [11, 12, 21, 22])
+}
+
+@Test func centralCropPixelsReadsFromURL() throws {
+    let dir = try makeTempDir("central-crop-url")
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let pixels = [1, 2, 3, 4]
+    let data = build16BitFITS(width: 2, height: 2, pixels: pixels)
+    let url = dir.appendingPathComponent("frame.fit")
+    try data.write(to: url)
+
+    // fraction=1.0 over a 2x2 frame -> the whole frame, row-major.
+    let crop = try NativeStats.centralCropPixels(url: url, fraction: 1.0)
+    #expect(crop == [1, 2, 3, 4])
+}
+
+@Test func centralCropPixelsThrowsCorruptFITSForCompressedFZLayout() throws {
+    let data = buildFZShapedFITS(znaxis1: 10, znaxis2: 10, heapByteCount: 500)
+    #expect(throws: AstroError.self) {
+        _ = try NativeStats.centralCropPixels(data: data, fraction: 0.5)
+    }
+}
+
+// MARK: - BayerMap
+
+@Test func bayerMapRGGBMapsPositionsToRedGreenGreenBlue() {
+    let stats = NativeFrameStats(
+        backgroundMedian: 250, saturatedFraction: 0,
+        backgroundMedian00: 100, backgroundMedian01: 200,
+        backgroundMedian10: 300, backgroundMedian11: 400
+    )
+    let channels = BayerMap.channelMedians(stats: stats, bayerPattern: "RGGB")
+    #expect(channels.r == 100)
+    #expect(channels.g == 250) // average of 200 and 300
+    #expect(channels.b == 400)
+}
+
+@Test func bayerMapReturnsNilForUnknownBayerPattern() {
+    let stats = NativeFrameStats(
+        backgroundMedian: 250, saturatedFraction: 0,
+        backgroundMedian00: 100, backgroundMedian01: 200,
+        backgroundMedian10: 300, backgroundMedian11: 400
+    )
+    let channels = BayerMap.channelMedians(stats: stats, bayerPattern: "XYZW")
+    #expect(channels.r == nil)
+    #expect(channels.g == nil)
+    #expect(channels.b == nil)
+}
+
+@Test func bayerMapReturnsNilForNilBayerPattern() {
+    let stats = NativeFrameStats(
+        backgroundMedian: 250, saturatedFraction: 0,
+        backgroundMedian00: 100, backgroundMedian01: 200,
+        backgroundMedian10: 300, backgroundMedian11: 400
+    )
+    let channels = BayerMap.channelMedians(stats: stats, bayerPattern: nil)
+    #expect(channels.r == nil)
+    #expect(channels.g == nil)
+    #expect(channels.b == nil)
+}
+
 // MARK: - Crash regression: CR+LF byte pair inside NativeStats' own header scan
 //
 // `NativeStats.primaryHeaderInfo` duplicates `FITSReader.readOneHeader`'s
@@ -425,6 +575,52 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(SirilCLI.parseFindstarOutput(output) == nil)
 }
 
+/// Regression guard for the real bug found on this machine (item D):
+/// `ratings.fwhm/roundness/star_count` were 100% NULL on all 586 real rows
+/// because Siril 1.4's actual wording -- "Found N Gaussian profile stars"
+/// (extra words between the count and "stars") -- never matched the old
+/// `Found\s+(\d+)\s+star` pattern, which required "star" to sit immediately
+/// after the number. Exact wording observed from a real
+/// `siril-cli -s -` run against a synthetic star FITS on this machine.
+@Test func parseFindstarOutputParsesRealSiril144WordingWithGaussianProfilePhrase() {
+    let output = """
+    log: Findstar: processing for channel 0...
+    log: Found 5 Gaussian profile stars in image, channel #0 (FWHM 5.416091)
+    """
+    let metrics = SirilCLI.parseFindstarOutput(output)
+    #expect(metrics?.starCount == 5)
+    #expect(metrics?.fwhm == 5.416091)
+    #expect(metrics?.roundness == nil, "Siril 1.4's findstar log line carries no roundness figure at all")
+}
+
+// MARK: - SirilCLI.readVersion parsing
+
+/// Regression guard for the real bug found on this machine: `siril-cli
+/// --version`'s ACTUAL first line is a macOS-launch banner
+/// ("Siril is started as macOS application"), with the real version on
+/// line 2 ("siril 1.4.4") -- the old code kept only the first line
+/// verbatim, so every real rating row got `siril_version` set to the
+/// banner text instead of a version. Exact two-line output observed from a
+/// real `siril-cli --version` run on this machine.
+@Test func parseVersionOutputPrefersLineContainingSirilAndADigitOverAnEarlierBannerLine() {
+    let output = "Siril is started as macOS application\nsiril 1.4.4\n"
+    #expect(SirilCLI.parseVersionOutput(output) == "siril 1.4.4")
+}
+
+@Test func parseVersionOutputFallsBackToLastLineWithVersionPatternWhenNoSirilKeywordLineHasADigit() {
+    let output = "Siril is started as macOS application\nsome other line\n1.4.4\n"
+    #expect(SirilCLI.parseVersionOutput(output) == "1.4.4")
+}
+
+@Test func parseVersionOutputReturnsUnknownWhenNothingMatches() {
+    let output = "Siril is started as macOS application\nno version info here\n"
+    #expect(SirilCLI.parseVersionOutput(output) == "unknown")
+}
+
+@Test func parseVersionOutputReturnsUnknownForEmptyString() {
+    #expect(SirilCLI.parseVersionOutput("") == "unknown")
+}
+
 // MARK: - SirilCLI.init
 
 @Test func sirilCLIInitThrowsSirilNotFoundForNonexistentPath() {
@@ -463,6 +659,46 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(throws: SirilCLI.ProcessError.self) {
         _ = try SirilCLI.buildScript(imagePath: weirdPath)
     }
+}
+
+// MARK: - Rater.shouldWarnNoMetrics (item D.3 -- silent-failure guard)
+
+/// Structural guard against a repeat of the real bug (item D): if a Siril
+/// adapter goes silently non-functional again in the future (a new Siril
+/// version changing its log wording yet again, say), a whole batch quietly
+/// getting zero star metrics should be loud, not silent. `Rater` itself
+/// stays oblivious to *why* metrics are missing (a `nil` provider, a
+/// legitimately unmeasurable `.fz` frame, or a broken adapter all look the
+/// same at this layer) -- this predicate only fires the "something is
+/// probably wrong" signal when a provider WAS supplied and NOTHING in a
+/// batch big enough to be meaningful (>=5 frames) came back with metrics.
+@Test func shouldWarnNoMetricsIsTrueWhenProviderUsedAndBatchOfAtLeastFiveGetsZeroMetrics() throws {
+    let scores = (1...5).map { i in
+        FrameScore(path: "f\(i).fit", score: 0, isOutlier: false, metrics: nil, background: 100)
+    }
+    #expect(Rater.shouldWarnNoMetrics(scores, providerWasUsed: true))
+}
+
+@Test func shouldWarnNoMetricsIsFalseWhenProviderWasNotUsed() throws {
+    let scores = (1...5).map { i in
+        FrameScore(path: "f\(i).fit", score: 0, isOutlier: false, metrics: nil, background: 100)
+    }
+    #expect(!Rater.shouldWarnNoMetrics(scores, providerWasUsed: false))
+}
+
+@Test func shouldWarnNoMetricsIsFalseWhenBatchIsSmallerThanFive() throws {
+    let scores = (1...4).map { i in
+        FrameScore(path: "f\(i).fit", score: 0, isOutlier: false, metrics: nil, background: 100)
+    }
+    #expect(!Rater.shouldWarnNoMetrics(scores, providerWasUsed: true))
+}
+
+@Test func shouldWarnNoMetricsIsFalseWhenAtLeastOneFrameGotMetrics() throws {
+    var scores = (1...5).map { i in
+        FrameScore(path: "f\(i).fit", score: 0, isOutlier: false, metrics: nil, background: 100)
+    }
+    scores[0].metrics = StarMetrics(fwhm: 2.0, roundness: 0.9, starCount: 100)
+    #expect(!Rater.shouldWarnNoMetrics(scores, providerWasUsed: true))
 }
 
 // MARK: - Rater: no frames
@@ -511,6 +747,40 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(score.sessionSubdir == "lights/Junk")
     #expect(score.exptime == 120.0)
     #expect(score.saturatedFraction == 0)
+}
+
+@Test func rateWritesPerBayerBackgroundMediansOntoTheRatingRow() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    // 4x4 frame, one constant value per (row%2, col%2) parity -- same
+    // fixture shape as `NativeStatsTests`'s exact-median test.
+    var pixels = [Int](repeating: 0, count: 16)
+    for row in 0..<4 {
+        for col in 0..<4 {
+            let value: Int
+            switch (row % 2, col % 2) {
+            case (0, 0): value = 500
+            case (0, 1): value = 510
+            case (1, 0): value = 520
+            default: value = 530
+            }
+            pixels[row * 4 + col] = value
+        }
+    }
+    let (fileID, _) = try fixture.addLightFrame(
+        relativePath: "sessions/M31/2026-01-01/lights/light_0001.fit",
+        target: "M31", pixels: pixels, width: 4, height: 4
+    )
+
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: nil)
+    _ = try rater.rate(target: "M31")
+
+    let stored = try #require(try fixture.db.rating(fileID: fileID))
+    #expect(stored.bg00 == 500)
+    #expect(stored.bg01 == 510)
+    #expect(stored.bg10 == 520)
+    #expect(stored.bg11 == 530)
 }
 
 @Test func frameScoreSessionSubdirIsNilWhenFrameSitsDirectlyInDateDir() throws {
@@ -1000,11 +1270,81 @@ private final class ProgressRecorder: @unchecked Sendable {
 
     // A real Siril binary is present on this machine. Only smoke-test
     // `buildScript` + `version` here -- actually running `findstar` on a
-    // synthetic FITS via the real subprocess is slow and flaky in CI/dev
-    // environments, so it's deliberately out of scope for this test.
+    // synthetic FITS via the real subprocess is covered separately below
+    // (`realSirilCLIFindstarOnSyntheticStarFieldReturnsNonNilFWHMAndStars`).
     let cli = try SirilCLI(path: cfg.rating.sirilPath)
     #expect(!cli.version.isEmpty)
+    // Regression guard for the real bug on this machine: the version must
+    // never be the bare macOS-launch banner (see `parseVersionOutput`'s
+    // tests above for the exact two-line real output this parses).
+    #expect(cli.version.range(of: #"\d"#, options: .regularExpression) != nil, "expected an actual version string, got: \(cli.version)")
 
     let script = try SirilCLI.buildScript(imagePath: "/tmp/x.fit")
     #expect(script.contains("findstar"))
+}
+
+/// Builds a small mono 16-bit FITS with a handful of synthetic Gaussian
+/// star blobs on a flat background -- `FITSTestBuilder`'s plain
+/// `buildHeaderData` only builds headers, and `build16BitFITS` above only
+/// takes a flat pixel array, so this renders the blobs into that array
+/// first. Used only by the real-Siril integration test below: Siril's
+/// `findstar` needs an actual stellar PSF-like profile to detect anything,
+/// unlike `NativeStats`'s tests (which only care about pixel VALUES, not
+/// shape).
+private func buildSyntheticStarFieldFITS(
+    width: Int, height: Int, background: Int,
+    stars: [(x: Int, y: Int, amplitude: Double, sigma: Double)]
+) -> Data {
+    var pixels = [Double](repeating: Double(background), count: width * height)
+    for star in stars {
+        let radius = Int(star.sigma * 6) + 1
+        for y in max(0, star.y - radius)..<min(height, star.y + radius + 1) {
+            for x in max(0, star.x - radius)..<min(width, star.x + radius + 1) {
+                let dx = Double(x - star.x)
+                let dy = Double(y - star.y)
+                let value = star.amplitude * exp(-(dx * dx + dy * dy) / (2 * star.sigma * star.sigma))
+                pixels[y * width + x] += value
+            }
+        }
+    }
+    let intPixels = pixels.map { Int($0.rounded()) }
+    return build16BitFITS(width: width, height: height, pixels: intPixels)
+}
+
+/// Integration test (guard-skipped when Siril isn't installed): runs the
+/// REAL `siril-cli` subprocess's `load` + `findstar` against a synthetic
+/// star field in a TEMP directory (never touches the scanned image
+/// library) and verifies `SirilCLI.metrics` actually comes back with a
+/// positive star count and a non-nil FWHM -- the acceptance criterion for
+/// item D's fix. Before the fix, this reproduced the real bug exactly:
+/// Siril 1.4's actual findstar wording ("Found N Gaussian profile stars")
+/// never matched the old parser, so this call always threw
+/// `ProcessError.unparsableOutput`.
+@Test func realSirilCLIFindstarOnSyntheticStarFieldReturnsNonNilFWHMAndStarCount() throws {
+    let cfg = AstroConfig()
+    guard FileManager.default.isExecutableFile(atPath: cfg.rating.sirilPath) else { return }
+
+    let workDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-siril-findstar-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: workDir) }
+
+    let data = buildSyntheticStarFieldFITS(
+        width: 256, height: 256, background: 500,
+        stars: [
+            (x: 60, y: 60, amplitude: 8000, sigma: 2.0),
+            (x: 120, y: 90, amplitude: 20000, sigma: 2.5),
+            (x: 180, y: 150, amplitude: 5000, sigma: 1.8),
+            (x: 200, y: 40, amplitude: 12000, sigma: 2.2),
+            (x: 90, y: 200, amplitude: 30000, sigma: 3.0),
+        ]
+    )
+    let imageURL = workDir.appendingPathComponent("stars.fit")
+    try data.write(to: imageURL)
+
+    let cli = try SirilCLI(path: cfg.rating.sirilPath)
+    let metrics = try cli.metrics(for: imageURL, workDir: workDir)
+
+    #expect(metrics.starCount >= 1)
+    #expect(metrics.fwhm > 0)
 }
