@@ -83,7 +83,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 7)
+    #expect(version == 8)
 }
 
 @Test func migrateIsIdempotentAndDoesNotDuplicateVersionRow() throws {
@@ -144,7 +144,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 7)
+    #expect(version == 8)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -197,7 +197,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 7)
+    #expect(version == 8)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -266,7 +266,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 7)
+    #expect(version == 8)
 
     let fileID1 = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let meta1 = try database.fitsMeta(fileID: fileID1)
@@ -801,7 +801,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 7)
+    #expect(version == 8)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1, "the v4 row must survive the upgrade untouched")
@@ -855,7 +855,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 7)
+    #expect(version == 8)
 
     let fileID = try #require(try database.fileID(path: "sessions/M45_Pleiades/2026-01-01/lights/f1.cr3"))
     let metaBeforeSolve = try database.fitsMeta(fileID: fileID)
@@ -910,7 +910,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 7)
+    #expect(version == 8)
 
     let fileID = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let rating = try database.rating(fileID: fileID)
@@ -926,6 +926,141 @@ private func sampleSensorProfile(
         SensorProfileRecord(camera: "ASI2600MC", gain: 100, offset: 50, biasLevelADU: 501, measuredAt: 1_700_000_300)
     )
     #expect(try database.sensorProfile(camera: "ASI2600MC", gain: 100, offset: 50)?.biasLevelADU == 501)
+}
+
+// MARK: - ratings.source + user_verdicts (schema v8, R7-B2)
+
+@Test func migrateUpgradesExistingV7DatabaseToV8AddingSourceColumnAndUserVerdictsTable() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-migrate-v7-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("v7.sqlite").path
+
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.exec(Database.schemaSQLv1)
+        try raw.exec(Database.schemaSQLv2)
+        try raw.exec(Database.schemaSQLv3)
+        try raw.exec(Database.schemaSQLv4)
+        try raw.exec(Database.schemaSQLv5)
+        try raw.exec(Database.schemaSQLv6)
+        try raw.exec(Database.schemaSQLv7)
+        try raw.run("INSERT INTO schema_version(version) VALUES (7);")
+        try raw.run(
+            """
+            INSERT INTO files(path, size, mtime, ext, kind, area, target, session_date, role, content_hash, scanned_at, missing, inode, nlink)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            bind: [
+                .text("sessions/M31/2026-01-01/lights/f1.fits"), .int(1024), .real(1_700_000_000),
+                .text("fits"), .text("fits"), .text("sessions"), .text("M31"), .text("2026-01-01"),
+                .text("light"), .null, .real(1_700_000_100), .int(0), .null, .null,
+            ]
+        )
+        try raw.run(
+            "INSERT INTO ratings(file_id, background, rated_at, input_sig) VALUES (1, 100.0, ?, ?);",
+            bind: [.real(1_700_000_200), .text("sig-1")]
+        )
+    }
+
+    let database = try Database(path: path)
+
+    var version: Int64 = -1
+    try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
+        version = row.int64(0) ?? -1
+    }
+    #expect(version == 8)
+
+    let fileID = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
+    let rating = try database.rating(fileID: fileID)
+    #expect(rating?.background == 100.0, "the v7 row's pre-existing columns must survive the upgrade untouched")
+    #expect(rating?.source == nil, "ALTER TABLE ADD COLUMN never backfills pre-existing rows")
+
+    // user_verdicts table exists and is usable after the same migration.
+    #expect(try database.userVerdict(fileID: fileID) == nil)
+    try database.upsertUserVerdict(UserVerdictRecord(fileID: fileID, accepted: true, source: "dssfilelist", recordedAt: 1_700_000_300))
+    #expect(try database.userVerdict(fileID: fileID)?.accepted == true)
+}
+
+@Test func upsertRatingRoundTripsSourceColumn() throws {
+    let database = try Database(path: ":memory:")
+    let fileID = try database.upsertFile(sampleFile())
+    var rating = sampleRating(fileID: fileID)
+    rating.source = "dss"
+
+    try database.upsertRating(rating)
+
+    let fetched = try database.rating(fileID: fileID)
+    #expect(fetched?.source == "dss")
+}
+
+@Test func upsertUserVerdictInsertsAndReadsBack() throws {
+    let database = try Database(path: ":memory:")
+    let fileID = try database.upsertFile(sampleFile())
+    let verdict = UserVerdictRecord(fileID: fileID, accepted: true, source: "dssfilelist", recordedAt: 1_700_000_000)
+
+    try database.upsertUserVerdict(verdict)
+
+    #expect(try database.userVerdict(fileID: fileID) == verdict)
+}
+
+@Test func userVerdictReturnsNilWhenAbsent() throws {
+    let database = try Database(path: ":memory:")
+    let fileID = try database.upsertFile(sampleFile())
+    #expect(try database.userVerdict(fileID: fileID) == nil)
+}
+
+@Test func upsertUserVerdictKeyedByFileIDOverwritesOnReingest() throws {
+    let database = try Database(path: ":memory:")
+    let fileID = try database.upsertFile(sampleFile())
+
+    try database.upsertUserVerdict(UserVerdictRecord(fileID: fileID, accepted: true, source: "dssfilelist", recordedAt: 1_700_000_000))
+    try database.upsertUserVerdict(UserVerdictRecord(fileID: fileID, accepted: false, source: "dssfilelist", recordedAt: 1_700_000_500))
+
+    #expect(try database.userVerdict(fileID: fileID)?.accepted == false)
+
+    var count = 0
+    try database.db.query("SELECT file_id FROM user_verdicts WHERE file_id = ?;", bind: [.int(fileID)]) { _ in count += 1 }
+    #expect(count == 1)
+}
+
+@Test func acceptedCountsTalliesVerdictsForOneTargetSessionOnly() throws {
+    let database = try Database(path: ":memory:")
+    func file(_ path: String, sessionDate: String) -> FileRecord {
+        var record = sampleFile(path: path)
+        record.sessionDate = sessionDate
+        return record
+    }
+    let f1 = try database.upsertFile(file("sessions/M31/2026-01-01/lights/f1.fits", sessionDate: "2026-01-01"))
+    let f2 = try database.upsertFile(file("sessions/M31/2026-01-01/lights/f2.fits", sessionDate: "2026-01-01"))
+    let f3 = try database.upsertFile(file("sessions/M31/2026-02-02/lights/f3.fits", sessionDate: "2026-02-02"))
+
+    try database.upsertUserVerdict(UserVerdictRecord(fileID: f1, accepted: true, source: "dssfilelist", recordedAt: 1))
+    try database.upsertUserVerdict(UserVerdictRecord(fileID: f2, accepted: false, source: "dssfilelist", recordedAt: 1))
+    // Different session date for the same target -- must not be counted.
+    try database.upsertUserVerdict(UserVerdictRecord(fileID: f3, accepted: true, source: "dssfilelist", recordedAt: 1))
+
+    let counts = try database.acceptedCounts(target: "M31", date: "2026-01-01")
+    #expect(counts.accepted == 1)
+    #expect(counts.rejected == 1)
+}
+
+@Test func acceptedCountsReturnsZeroZeroWhenNoVerdictsRecorded() throws {
+    let database = try Database(path: ":memory:")
+    let counts = try database.acceptedCounts(target: "NoSuchTarget", date: "2026-01-01")
+    #expect(counts.accepted == 0)
+    #expect(counts.rejected == 0)
+}
+
+@Test func hasTrackedFileWithSuffixFindsAMatchingNonMissingFileOnly() throws {
+    let database = try Database(path: ":memory:")
+    #expect(try database.hasTrackedFileWithSuffix(".dssfilelist") == false)
+
+    var record = sampleFile(path: "sessions/M31/2026-01-01/session.dssfilelist")
+    record.kind = "other"
+    _ = try database.upsertFile(record)
+    #expect(try database.hasTrackedFileWithSuffix(".dssfilelist") == true)
 }
 
 @Test func updateSolvedWCSDoesNotDisturbHeaderJSONOrOtherColumns() throws {

@@ -12,6 +12,7 @@ struct OverviewView: View {
     @Binding var selectedTab: AppTab
 
     @State private var showNewSessionSheet = false
+    @State private var showDSSIngestAlert = false
 
     var body: some View {
         ScrollView {
@@ -42,6 +43,18 @@ struct OverviewView: View {
         .sheet(isPresented: $showNewSessionSheet) {
             NewSessionSheet()
         }
+        .onChange(of: appState.dssIngestSummary) { _, newValue in
+            showDSSIngestAlert = newValue != nil
+        }
+        .alert("DSS-adatok beolvasva", isPresented: $showDSSIngestAlert, presenting: appState.dssIngestSummary) { _ in
+            Button("OK") {}
+        } message: { summary in
+            Text(
+                "info.txt: \(summary.infoFilesParsed), rating: \(summary.ratingsUpserted), "
+                    + ".dssfilelist: \(summary.filelistsParsed), döntés: \(summary.verdictsRecorded), "
+                    + "kihagyva: \(summary.skipped)"
+            )
+        }
     }
 
     private var rootSection: some View {
@@ -56,6 +69,10 @@ struct OverviewView: View {
                     .disabled(appState.isBusy || appState.db == nil)
                 Button("Új session…") { showNewSessionSheet = true }
                     .disabled(appState.db == nil)
+                if appState.hasDSSFilelists {
+                    Button("DSS-adatok beolvasása") { appState.runIngestDSS() }
+                        .disabled(appState.isBusy || appState.db == nil)
+                }
             }
         }
     }

@@ -48,6 +48,11 @@ Commands:
   search        <query> [--root R] [--json]
   solve         --target T|--all [--frames N] [--force] [--root R] [--json]
   sensor        [--measure] [--json] [--root R]
+  ingest-dss    [--root R] [--json]
+                Harvests DeepSkyStacker <frame>.info.txt star metrics and
+                .dssfilelist accept/reject decisions already in the library.
+                Not run automatically by `scan --refresh-meta` -- DSS trees
+                can be large, so this stays an explicit, predictable step.
 
   --version     Print version and exit
   --help        Show this help
@@ -1841,4 +1846,44 @@ private func printSensorProfiles(_ profiles: [SensorProfileRecord]) {
         let egainText = p.egain.map { String(format: "%.3f", $0) } ?? "n/a"
         print("\(sensorComboDescription(camera: p.camera, gain: p.gain, offset: p.offset)): bias \(biasText), leolvasási zaj \(readNoiseText), \(darkText), EGAIN \(egainText)")
     }
+}
+
+// MARK: - ingest-dss (R7-B2)
+
+/// `astrotool ingest-dss [--root R] [--json]` -- harvests star metrics from
+/// every tracked `<frame>.info.txt` (DeepSkyStacker's own per-light
+/// measurement sidecar) into `ratings` (`source == "dss"`, never clobbering
+/// an existing astrotool/Siril rating), and the user's own accept/reject
+/// decisions from every tracked `.dssfilelist`'s `CHECKED` column into
+/// `user_verdicts`. Deliberately NOT run automatically by `scan
+/// --refresh-meta` -- a DSS project tree can be large, and this way running
+/// it is always an explicit, predictable choice rather than a surprise cost
+/// tacked onto an ordinary rescan.
+func cmdIngestDSS(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+    let isJSON = parsed.has("--json")
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+    let summary = try DSSIngest.ingest(db: db, config: config, root: root) { message in
+        if !isJSON { eprint(message) }
+    }
+
+    if isJSON {
+        try printJSON(summary)
+    } else {
+        print(
+            "info.txt feldolgozva: \(summary.infoFilesParsed), rating beszúrva/frissítve: \(summary.ratingsUpserted), "
+                + ".dssfilelist feldolgozva: \(summary.filelistsParsed), döntés rögzítve: \(summary.verdictsRecorded), "
+                + "kihagyva: \(summary.skipped)"
+        )
+    }
+    return 0
 }

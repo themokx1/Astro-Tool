@@ -329,3 +329,42 @@ private struct SessionStatsFixture {
     #expect(session.exposureBreakdown["unknown"] == 1)
     #expect(session.exposureBreakdown["300.0"] == 1)
 }
+
+// MARK: - dssAcceptedCount / dssRejectedCount (R7-B2)
+
+/// `SessionDetail.dssAcceptedCount`/`dssRejectedCount` come straight from
+/// `Database.acceptedCounts(target:date:)` -- this exercises the real
+/// `SessionStatsQueries.sessions` wiring end to end, not just the DAO call
+/// tested in `DatabaseTests`.
+@Test func sessionDetailCarriesDSSAcceptedAndRejectedCountsWhenVerdictsRecorded() throws {
+    let fixture = try SessionStatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0)
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l2.fit", exptime: 300.0)
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l3.fit", exptime: 300.0)
+    try fixture.scan()
+
+    let id1 = try #require(try fixture.db.fileID(path: "sessions/T1/2026-01-10/lights/l1.fit"))
+    let id2 = try #require(try fixture.db.fileID(path: "sessions/T1/2026-01-10/lights/l2.fit"))
+    try fixture.db.upsertUserVerdict(UserVerdictRecord(fileID: id1, accepted: true, source: "dssfilelist", recordedAt: 1))
+    try fixture.db.upsertUserVerdict(UserVerdictRecord(fileID: id2, accepted: false, source: "dssfilelist", recordedAt: 1))
+
+    let sessions = try SessionStatsQueries.sessions(target: "T1", db: fixture.db, config: fixture.config)
+    let session = try #require(sessions.first)
+    #expect(session.dssAcceptedCount == 1)
+    #expect(session.dssRejectedCount == 1)
+}
+
+@Test func sessionDetailLeavesDSSCountsNilWhenNoVerdictsWereEverRecorded() throws {
+    let fixture = try SessionStatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0)
+    try fixture.scan()
+
+    let sessions = try SessionStatsQueries.sessions(target: "T1", db: fixture.db, config: fixture.config)
+    let session = try #require(sessions.first)
+    #expect(session.dssAcceptedCount == nil)
+    #expect(session.dssRejectedCount == nil)
+}

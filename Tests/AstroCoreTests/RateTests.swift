@@ -849,6 +849,44 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(mock.callCount == 1, "provider must not be called again on a cache hit")
 }
 
+/// R7-B2: a `DSSIngest`-written rating (`source == "dss"`) whose `inputSig`
+/// still matches the light frame is exactly as much of a cache hit as any
+/// other stored rating -- `Rater` doesn't special-case `source` at all, it
+/// only ever compares `inputSig`. This is what lets a DSS-only frame (no
+/// Siril data, just harvested `.info.txt` metrics) participate in z-scoring
+/// without ever invoking the (expensive) provider.
+@Test func rateTreatsADSSSourcedRatingWithMatchingInputSigAsACacheHit() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    let pixels = Array(repeating: 100, count: 16)
+    let relativePath = "sessions/M51/2026-05-05/lights/light_0001.fit"
+    let (fileID, size) = try fixture.addLightFrame(
+        relativePath: relativePath, target: "M51", pixels: pixels, width: 4, height: 4,
+        mtime: 1_700_000_000
+    )
+
+    // Simulate DSSIngest having already written a rating for this exact
+    // frame (same inputSig convention as Rater's own: "<size>-<mtime>").
+    let dssRating = RatingRecord(
+        fileID: fileID, fwhm: 3.0, roundness: 0.8, starCount: 120,
+        ratedAt: 1_700_000_050, inputSig: "\(size)-1700000000", source: "dss"
+    )
+    try fixture.db.upsertRating(dssRating)
+
+    let mock = CountingMockProvider()
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: mock)
+    let results = try rater.rate(target: "M51")
+
+    #expect(results.count == 1)
+    #expect(mock.callCount == 0, "the provider must never be called for a cache-hit dss-sourced row")
+    #expect(results[0].metrics == StarMetrics(fwhm: 3.0, roundness: 0.8, starCount: 120))
+
+    let stored = try fixture.db.rating(fileID: fileID)
+    #expect(stored?.source == "dss", "scoring must not clear the dss source marker")
+    #expect(stored?.score != nil, "a cache-hit dss row still gets scored like any other rated frame")
+}
+
 // MARK: - Rater: provider throw keeps native stats
 
 @Test func providerThrowKeepsNativeStatsButDropsMetrics() throws {

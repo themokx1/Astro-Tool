@@ -302,6 +302,9 @@ struct StatsView: View {
             if !extras.isEmpty {
                 text += "  (+\(extras.joined(separator: " · ")))"
             }
+            if let accepted = detail.dssAcceptedCount, let rejected = detail.dssRejectedCount {
+                text += " · DSS: \(accepted)✓/\(rejected)✗"
+            }
             return text
         }
     }

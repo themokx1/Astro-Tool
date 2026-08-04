@@ -201,6 +201,13 @@ public struct RatingRecord: Codable, Equatable, Sendable {
     public var bg01: Double?
     public var bg10: Double?
     public var bg11: Double?
+    /// Where this rating's metrics came from -- schema v8, additive. `nil`
+    /// means the original astrotool/Siril pipeline (`Rater.rate`, the only
+    /// writer before v8); `"dss"` means `DSSIngest` harvested it from a
+    /// DeepSkyStacker `<frame>.info.txt` sidecar instead. `DSSIngest` never
+    /// overwrites a `nil`-source row with a `"dss"` one (see its own doc
+    /// comment) -- a real Siril-measured rating always wins.
+    public var source: String?
 
     public init(
         fileID: Int64,
@@ -216,7 +223,8 @@ public struct RatingRecord: Codable, Equatable, Sendable {
         bg00: Double? = nil,
         bg01: Double? = nil,
         bg10: Double? = nil,
-        bg11: Double? = nil
+        bg11: Double? = nil,
+        source: String? = nil
     ) {
         self.fileID = fileID
         self.fwhm = fwhm
@@ -232,6 +240,28 @@ public struct RatingRecord: Codable, Equatable, Sendable {
         self.bg01 = bg01
         self.bg10 = bg10
         self.bg11 = bg11
+        self.source = source
+    }
+}
+
+/// The user's own accept/reject decision for one light frame -- schema v8.
+/// One row per `files.id`, harvested by `DSSIngest` from a DeepSkyStacker
+/// `.dssfilelist`'s `CHECKED` column (`source == "dssfilelist"`). Kept as a
+/// separate table from `ratings` (rather than another rating column)
+/// because it's not a measured metric at all -- it's the user's own
+/// judgment call, worth preserving even for a frame `DSSIngest` never finds
+/// an `.info.txt` for.
+public struct UserVerdictRecord: Codable, Equatable, Sendable {
+    public var fileID: Int64
+    public var accepted: Bool
+    public var source: String
+    public var recordedAt: Double
+
+    public init(fileID: Int64, accepted: Bool, source: String, recordedAt: Double) {
+        self.fileID = fileID
+        self.accepted = accepted
+        self.source = source
+        self.recordedAt = recordedAt
     }
 }
 
@@ -403,6 +433,27 @@ public final class Database: @unchecked Sendable {
       PRIMARY KEY(camera, gain, offset));
     """
 
+    // Internal (not private) for the same reason as the earlier schemaSQLv*
+    // constants: migration tests apply this directly to a raw `SQLiteDB` to
+    // simulate an existing v7 database before verifying `Database(path:)`
+    // upgrades it in place. R7-B2 (`DSSIngest`): harvests star metrics and
+    // the user's own accept/reject decisions that already sit in the
+    // library as DeepSkyStacker `<frame>.info.txt` sidecars and
+    // `.dssfilelist` files. `ratings.source` (additive, never touched by
+    // pre-v8 code) distinguishes a `DSSIngest`-written row (`"dss"`) from
+    // the original astrotool/Siril pipeline (`NULL`) so a later `DSSIngest`
+    // run never clobbers a real Siril-measured rating. `user_verdicts` is a
+    // brand-new table -- the user's own judgment call, not a measured
+    // metric, so it's kept separate from `ratings` entirely.
+    static let schemaSQLv8 = """
+    ALTER TABLE ratings ADD COLUMN source TEXT;
+    CREATE TABLE IF NOT EXISTS user_verdicts(
+      file_id INTEGER PRIMARY KEY REFERENCES files(id),
+      accepted INTEGER NOT NULL,
+      source TEXT NOT NULL,
+      recorded_at REAL NOT NULL);
+    """
+
     public init(path: String) throws {
         self.db = try SQLiteDB(path: path)
         try migrate()
@@ -466,6 +517,12 @@ public final class Database: @unchecked Sendable {
             try db.exec(Self.schemaSQLv7)
             try db.run("UPDATE schema_version SET version = ?;", bind: [.int(7)])
             version = 7
+        }
+
+        if version < 8 {
+            try db.exec(Self.schemaSQLv8)
+            try db.run("UPDATE schema_version SET version = ?;", bind: [.int(8)])
+            version = 8
         }
     }
 
@@ -539,6 +596,22 @@ public final class Database: @unchecked Sendable {
                 throw AstroError.databaseError("upsertFile: no row for path after upsert")
             }
             return id
+        }
+    }
+
+    /// Whether any tracked (non-missing) file's path ends with `suffix` --
+    /// a single indexed-`LIKE`-free existence probe, cheaper than loading
+    /// `allFiles` just to answer a yes/no question. Used by the app to gate
+    /// the "DSS-adatok beolvasása" quick button on whether any
+    /// `.dssfilelist` is actually in the library (R7-B2).
+    public func hasTrackedFileWithSuffix(_ suffix: String) throws -> Bool {
+        try withLock {
+            var found = false
+            try db.query(
+                "SELECT 1 FROM files WHERE missing = 0 AND path LIKE ? LIMIT 1;",
+                bind: [.text("%" + suffix)]
+            ) { _ in found = true }
+            return found
         }
     }
 
@@ -822,14 +895,14 @@ public final class Database: @unchecked Sendable {
         try withLock {
             try db.run(
                 """
-                INSERT INTO ratings(file_id, fwhm, roundness, star_count, background, saturated_fraction, score, rated_at, siril_version, input_sig, bg_00, bg_01, bg_10, bg_11)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO ratings(file_id, fwhm, roundness, star_count, background, saturated_fraction, score, rated_at, siril_version, input_sig, bg_00, bg_01, bg_10, bg_11, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(file_id) DO UPDATE SET
                   fwhm = excluded.fwhm, roundness = excluded.roundness, star_count = excluded.star_count,
                   background = excluded.background, saturated_fraction = excluded.saturated_fraction,
                   score = excluded.score, rated_at = excluded.rated_at, siril_version = excluded.siril_version,
                   input_sig = excluded.input_sig, bg_00 = excluded.bg_00, bg_01 = excluded.bg_01,
-                  bg_10 = excluded.bg_10, bg_11 = excluded.bg_11;
+                  bg_10 = excluded.bg_10, bg_11 = excluded.bg_11, source = excluded.source;
                 """,
                 bind: [
                     .int(r.fileID), r.fwhm.map(SQLiteValue.real) ?? .null, r.roundness.map(SQLiteValue.real) ?? .null,
@@ -838,6 +911,7 @@ public final class Database: @unchecked Sendable {
                     .real(r.ratedAt), r.sirilVersion.map(SQLiteValue.text) ?? .null, .text(r.inputSig),
                     r.bg00.map(SQLiteValue.real) ?? .null, r.bg01.map(SQLiteValue.real) ?? .null,
                     r.bg10.map(SQLiteValue.real) ?? .null, r.bg11.map(SQLiteValue.real) ?? .null,
+                    r.source.map(SQLiteValue.text) ?? .null,
                 ]
             )
         }
@@ -848,7 +922,7 @@ public final class Database: @unchecked Sendable {
             var record: RatingRecord?
             try db.query(
                 """
-                SELECT file_id, fwhm, roundness, star_count, background, saturated_fraction, score, rated_at, siril_version, input_sig, bg_00, bg_01, bg_10, bg_11
+                SELECT file_id, fwhm, roundness, star_count, background, saturated_fraction, score, rated_at, siril_version, input_sig, bg_00, bg_01, bg_10, bg_11, source
                 FROM ratings WHERE file_id = ?;
                 """,
                 bind: [.int(fileID)]
@@ -867,10 +941,72 @@ public final class Database: @unchecked Sendable {
                     bg00: row.double(10),
                     bg01: row.double(11),
                     bg10: row.double(12),
-                    bg11: row.double(13)
+                    bg11: row.double(13),
+                    source: row.string(14)
                 )
             }
             return record
+        }
+    }
+
+    // MARK: user_verdicts (R7-B2)
+
+    /// Upserts one file's accept/reject verdict. `ON CONFLICT` targets the
+    /// primary key (`file_id`) -- a re-ingest of the same `.dssfilelist`
+    /// (or a different one covering the same frame) replaces the prior
+    /// verdict in place rather than accumulating duplicate rows.
+    public func upsertUserVerdict(_ v: UserVerdictRecord) throws {
+        try withLock {
+            try db.run(
+                """
+                INSERT INTO user_verdicts(file_id, accepted, source, recorded_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(file_id) DO UPDATE SET
+                  accepted = excluded.accepted, source = excluded.source, recorded_at = excluded.recorded_at;
+                """,
+                bind: [.int(v.fileID), .int(v.accepted ? 1 : 0), .text(v.source), .real(v.recordedAt)]
+            )
+        }
+    }
+
+    /// The recorded verdict for one file, `nil` if none was ever ingested.
+    public func userVerdict(fileID: Int64) throws -> UserVerdictRecord? {
+        try withLock {
+            var record: UserVerdictRecord?
+            try db.query(
+                "SELECT file_id, accepted, source, recorded_at FROM user_verdicts WHERE file_id = ?;",
+                bind: [.int(fileID)]
+            ) { row in
+                record = UserVerdictRecord(
+                    fileID: row.int64(0) ?? 0,
+                    accepted: (row.int64(1) ?? 0) != 0,
+                    source: row.string(2) ?? "",
+                    recordedAt: row.double(3) ?? 0
+                )
+            }
+            return record
+        }
+    }
+
+    /// Counts of accepted/rejected verdicts among LIGHT frames of one
+    /// target's session -- joined through `files` so the caller never needs
+    /// to resolve file IDs itself. `(0, 0)` when the session has no
+    /// recorded verdicts at all (e.g. never DSS-ingested).
+    public func acceptedCounts(target: String, date: String) throws -> (accepted: Int, rejected: Int) {
+        try withLock {
+            var accepted = 0
+            var rejected = 0
+            try db.query(
+                """
+                SELECT uv.accepted FROM user_verdicts uv
+                JOIN files f ON f.id = uv.file_id
+                WHERE f.target = ? AND f.session_date = ?;
+                """,
+                bind: [.text(target), .text(date)]
+            ) { row in
+                if (row.int64(0) ?? 0) != 0 { accepted += 1 } else { rejected += 1 }
+            }
+            return (accepted, rejected)
         }
     }
 

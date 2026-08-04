@@ -67,6 +67,18 @@ final class AppState: @unchecked Sendable {
     var sensorProfiles: [SensorProfileRecord] = []
     var frameScores: [FrameScore] = []
 
+    /// Whether any `.dssfilelist` is currently tracked -- gates the
+    /// Áttekintés "DSS-adatok beolvasása" quick button (R7-B2), so it's
+    /// never shown for a library with no DeepSkyStacker byproducts at all.
+    /// Refreshed after `openRoot`/`runScan` via the cheap, targeted
+    /// `Database.hasTrackedFileWithSuffix` query -- never a full `allFiles`
+    /// scan just to answer this one yes/no question.
+    var hasDSSFilelists: Bool = false
+    /// The result of the last `runIngestDSS()` run, shown as the Áttekintés
+    /// result alert. `nil` before the button has ever been used this
+    /// session.
+    var dssIngestSummary: DSSIngestSummary?
+
     /// R7-1: the plate-solve backfill result shown in `PlateSolveSheet`
     /// while it's open -- `nil` before the sheet's operation has finished
     /// (it shows a spinner until this is set), cleared when the sheet
@@ -213,8 +225,10 @@ final class AppState: @unchecked Sendable {
             let toolDir = url.appendingPathComponent(".astro_tool", isDirectory: true)
             try FileManager.default.createDirectory(at: toolDir, withIntermediateDirectories: true)
             let dbURL = toolDir.appendingPathComponent("astrotool.sqlite", isDirectory: false)
-            db = try Database(path: dbURL.path)
+            let opened = try Database(path: dbURL.path)
+            db = opened
             rootStatus = .notScanned
+            hasDSSFilelists = (try? opened.hasTrackedFileWithSuffix(".dssfilelist")) ?? false
         } catch let error as AstroError {
             handle(error)
         } catch {
@@ -336,6 +350,12 @@ final class AppState: @unchecked Sendable {
                 }
                 if let projectsResult = try? await projectsTask.value {
                     self.projectStates = projectsResult
+                }
+                let dssCheckTask = Task.detached(priority: .userInitiated) {
+                    try db.hasTrackedFileWithSuffix(".dssfilelist")
+                }
+                if let dssCheckResult = try? await dssCheckTask.value {
+                    self.hasDSSFilelists = dssCheckResult
                 }
             } catch {
                 self.handle(error)
@@ -848,6 +868,45 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.sensorProfiles = result
                 self.progressText = "Szenzor-mérés kész: \(result.count) kombináció"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    // MARK: - DSS ingest (R7-B2)
+
+    /// Runs `DSSIngest.ingest` in the background (Áttekintés
+    /// "DSS-adatok beolvasása" quick button): harvests every tracked
+    /// `<frame>.info.txt`'s star metrics and every tracked `.dssfilelist`'s
+    /// accept/reject decisions already sitting in the library. Refreshes
+    /// `stats`/`sessionDetailsByTarget` afterward (via `loadStats()`) so a
+    /// newly recorded DSS verdict count shows up on the Statisztika fül
+    /// without a separate manual "Frissítés".
+    func runIngestDSS() {
+        guard let db else { return }
+        let cfg = config
+        let root = URL(fileURLWithPath: cfg.rootPath, isDirectory: true)
+        dssIngestSummary = nil
+
+        let opID = beginOperation("DSS-adatok beolvasása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) { [weak self] in
+                    try DSSIngest.ingest(db: db, config: cfg, root: root) { message in
+                        Task { @MainActor in
+                            self?.progressText = message
+                        }
+                    }
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.dssIngestSummary = result
+                self.progressText =
+                    "DSS beolvasás kész: \(result.ratingsUpserted) rating, \(result.verdictsRecorded) döntés, " +
+                    "\(result.skipped) kihagyva"
+                self.loadStats()
             } catch {
                 self.handle(error)
             }

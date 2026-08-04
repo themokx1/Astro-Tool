@@ -68,6 +68,16 @@ public struct SessionDetail: Codable, Sendable, Equatable {
     /// Bortle"`, or any custom key the user typed) -- `[:]` when the
     /// session has no README.txt on record, or one with no parseable lines.
     public var notes: [String: String]
+    /// Count of this session's LIGHT frames the user marked CHECKED (kept)
+    /// in a DeepSkyStacker `.dssfilelist`, per `DSSIngest`/`Database.
+    /// acceptedCounts(target:date:)` -- schema v8/R7-B2. `nil` together with
+    /// `dssRejectedCount` when the session has no recorded verdicts at all
+    /// (never DSS-ingested, or ingested but this session had no
+    /// `.dssfilelist` covering it).
+    public var dssAcceptedCount: Int?
+    /// Count of this session's LIGHT frames the user marked unchecked
+    /// (rejected) in a `.dssfilelist` -- see `dssAcceptedCount`.
+    public var dssRejectedCount: Int?
 
     public init(
         target: String,
@@ -90,7 +100,9 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         duplicateLinkCount: Int = 0,
         isExcludedFromTotals: Bool = false,
         setupDescriptor: String? = nil,
-        notes: [String: String] = [:]
+        notes: [String: String] = [:],
+        dssAcceptedCount: Int? = nil,
+        dssRejectedCount: Int? = nil
     ) {
         self.target = target
         self.dateRaw = dateRaw
@@ -113,12 +125,15 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         self.isExcludedFromTotals = isExcludedFromTotals
         self.setupDescriptor = setupDescriptor
         self.notes = notes
+        self.dssAcceptedCount = dssAcceptedCount
+        self.dssRejectedCount = dssRejectedCount
     }
 
     private enum CodingKeys: String, CodingKey {
         case target, dateRaw, lightCount, flatCount, darkCount, biasCount, integrationSeconds,
              exposureBreakdown, cameras, focalLengthsMM, gains, sensorTempsC, filters, hasReadme, tags,
-             usableLightCount, rejectedCount, duplicateLinkCount, isExcludedFromTotals, setupDescriptor, notes
+             usableLightCount, rejectedCount, duplicateLinkCount, isExcludedFromTotals, setupDescriptor, notes,
+             dssAcceptedCount, dssRejectedCount
     }
 
     public init(from decoder: Decoder) throws {
@@ -150,6 +165,9 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         setupDescriptor = try c.decodeIfPresent(String.self, forKey: .setupDescriptor)
         // Additive R6-4 field: absent in pre-R6-4 JSON, falls back to [:].
         notes = try c.decodeIfPresent([String: String].self, forKey: .notes) ?? [:]
+        // Additive R7-B2 fields: absent in pre-R7-B2 JSON, fall back to nil.
+        dssAcceptedCount = try c.decodeIfPresent(Int.self, forKey: .dssAcceptedCount)
+        dssRejectedCount = try c.decodeIfPresent(Int.self, forKey: .dssRejectedCount)
     }
 }
 
@@ -225,6 +243,21 @@ public enum SessionStatsQueries {
         let tags = try db.tags(target: target, sessionDate: date)
         let notes = try db.sessionNotes(target: target, date: date)
 
+        // `nil` together (not `0`) when the session has no recorded
+        // verdicts at all, so a session never DSS-ingested doesn't show a
+        // misleading "0✓/0✗" -- see `SessionDetail.dssAcceptedCount`'s doc
+        // comment.
+        let verdictCounts = try db.acceptedCounts(target: target, date: date)
+        let dssAcceptedCount: Int?
+        let dssRejectedCount: Int?
+        if verdictCounts.accepted + verdictCounts.rejected > 0 {
+            dssAcceptedCount = verdictCounts.accepted
+            dssRejectedCount = verdictCounts.rejected
+        } else {
+            dssAcceptedCount = nil
+            dssRejectedCount = nil
+        }
+
         let excludedLabels = Set(config.stats.excludeLabels.map { $0.lowercased() })
         let isExcluded: Bool
         if let parsed = SessionDateParser.parse(date, patterns: config.intentional),
@@ -255,7 +288,9 @@ public enum SessionStatsQueries {
             duplicateLinkCount: frameBuckets.duplicateLinkCount,
             isExcludedFromTotals: isExcluded,
             setupDescriptor: setupDescriptor,
-            notes: notes
+            notes: notes,
+            dssAcceptedCount: dssAcceptedCount,
+            dssRejectedCount: dssRejectedCount
         )
     }
 }

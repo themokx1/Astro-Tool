@@ -36,6 +36,27 @@ történik.
 
 ### Added
 
+- **DSS-metrikák és döntések beolvasása (`astrotool ingest-dss`)**: a
+  könyvtárban meglévő 346 DeepSkyStacker `<frame>.info.txt` (mért
+  csillag-metrikák) és `.dssfilelist` (a felhasználó saját
+  elfogadás/elutasítás döntése a `CHECKED` oszlopban) fájl eddig
+  kihasználatlanul hevert a lemezen. Az új parancs mindkettőt beolvassa: az
+  `info.txt`-ből `fwhm ≈ 2×MeanRadius`, `roundness ≈ Circularity` (vagy a
+  per-csillag `Axises` tengelyarányok átlaga, ha nincs `Circularity`),
+  `star_count = NrStars` kerül a `ratings` táblába `source = 'dss'`
+  jelöléssel — SOSEM írja felül egy már meglévő astrotool/Siril mérést
+  (`source IS NULL` győz). A `.dssfilelist` `CHECKED` oszlopa az új
+  `user_verdicts` táblába kerül (`Database.acceptedCounts(target:date:)`).
+  Séma v8 (additív): `ratings.source`, `user_verdicts(file_id, accepted,
+  source, recorded_at)`. Ismétlődő futtatás idempotens (változatlan
+  `input_sig`-ű `dss`-sorokat kihagyja). `SessionDetail` mostantól
+  `dssAcceptedCount`/`dssRejectedCount`-ot is hordoz — a Statisztika fül
+  session-sorának "Keretek" oszlopa " · DSS: N✓/M✗" jelvényt kap, ha van
+  rögzített döntés. `astrotool ingest-dss [--root R] [--json]` — szándékosan
+  NEM fut automatikusan a `scan --refresh-meta`-val (egy DSS-fa nagy tud
+  lenni, ez marad egy explicit, kiszámítható lépés). App: Áttekintés
+  "DSS-adatok beolvasása" gomb (csak akkor jelenik meg, ha van nyilvántartott
+  `.dssfilelist`).
 - **Mért szenzor-karakterizáció (`astrotool sensor`)**: `(camera, gain,
   offset)` kombónként méri a bias-pedesztált, a leolvasási zajt (két bias
   frame különbségének 5σ-klippelt szórásából, NEM MAD-dal — az ADU-

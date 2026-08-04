@@ -42,6 +42,7 @@ do {
     case "search": exitCode = try cmdSearch(rest)
     case "solve": exitCode = try cmdSolve(rest)
     case "sensor": exitCode = try cmdSensor(rest)
+    case "ingest-dss": exitCode = try cmdIngestDSS(rest)
     default:
         eprint(usageText)
         exit(1)
