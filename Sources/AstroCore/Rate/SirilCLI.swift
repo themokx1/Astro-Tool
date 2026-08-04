@@ -1,5 +1,16 @@
 import Foundation
 
+/// A path containing either character could break out of a Siril script's
+/// quoted `"..."` string (e.g. a `load "..."` or `cd "..."` line) and inject
+/// arbitrary script commands. Shared by `SirilCLI.buildScript` and
+/// `PlateSolver`'s own script builder so the two guards can never silently
+/// diverge -- see `SirilCLI.buildScript`'s doc comment for why an outright
+/// rejection (rather than guessing at Siril's DSL escaping rules) is the
+/// right call here.
+func containsSirilScriptInjectionRisk(_ path: String) -> Bool {
+    path.contains("\"") || path.contains("\\")
+}
+
 /// Star-detection metrics for a single frame, as measured by whichever
 /// `StarMetricsProvider` produced them (currently only `SirilCLI`).
 public struct StarMetrics: Codable, Equatable, Sendable {
@@ -119,7 +130,7 @@ public struct SirilCLI: StarMetricsProvider {
     /// containing `"` or `\` is rejected outright -- neither character is
     /// expected in a real astrophotography library path.
     static func buildScript(imagePath: String) throws -> String {
-        guard !imagePath.contains("\""), !imagePath.contains("\\") else {
+        guard !containsSirilScriptInjectionRisk(imagePath) else {
             throw ProcessError.unsupportedPath(imagePath)
         }
         return """

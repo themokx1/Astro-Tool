@@ -31,7 +31,11 @@ private func insertLight(
     focallen: Double? = nil,
     naxis1: Int? = nil,
     naxis2: Int? = nil,
-    exptime: Double? = 60
+    exptime: Double? = 60,
+    solvedRA: Double? = nil,
+    solvedDec: Double? = nil,
+    solvedScaleArcsec: Double? = nil,
+    solvedRotationDeg: Double? = nil
 ) throws -> Int64 {
     let path = "sessions/\(target)/\(date)/lights/\(name).fit"
     let fileID = try db.upsertFile(
@@ -66,6 +70,9 @@ private func insertLight(
             headerJSON: cards.isEmpty ? nil : headerJSON(cards)
         )
     )
+    if solvedRA != nil || solvedDec != nil || solvedScaleArcsec != nil || solvedRotationDeg != nil {
+        try db.updateSolvedWCS(fileID: fileID, ra: solvedRA, dec: solvedDec, scale: solvedScaleArcsec, rotation: solvedRotationDeg)
+    }
     return fileID
 }
 
@@ -129,6 +136,40 @@ private func insertLight(
     let scale = try #require(field.pixelScaleArcsec)
     #expect(abs(scale - expectedScale) < 1e-6)
     #expect(field.rotationDeg == nil)
+}
+
+// MARK: - frameField solved-column fallback (R7-1)
+
+@Test func frameFieldFallsBackToSolvedColumnsWhenHeaderHasNoWCSAtAll() throws {
+    // A wide-field Canon CR3 frame: no FITS header at all (nil headerJSON),
+    // but `PlateSolver` has since persisted a solved coordinate + scale +
+    // rotation.
+    let field = try #require(FieldGeometry.frameField(
+        headerJSON: nil, naxis1: 6000, naxis2: 4000,
+        solvedRA: 56.75, solvedDec: 24.1, solvedScaleArcsec: 3.0, solvedRotationDeg: 12.0
+    ))
+    #expect(abs(field.raDeg - 56.75) < 1e-9)
+    #expect(abs(field.decDeg - 24.1) < 1e-9)
+    #expect(field.pixelScaleArcsec == 3.0)
+    #expect(field.rotationDeg == 12.0)
+    let fovWidth = try #require(field.fovWidthDeg)
+    #expect(abs(fovWidth - (6000.0 * 3.0 / 3600)) < 1e-9)
+}
+
+@Test func frameFieldPrefersHeaderWCSOverSolvedColumnsWhenBothPresent() throws {
+    let json = headerJSON(["CRVAL1": "100.0", "CRVAL2": "20.0"])
+    let field = try #require(FieldGeometry.frameField(
+        headerJSON: json, naxis1: nil, naxis2: nil,
+        solvedRA: 999, solvedDec: 999, solvedScaleArcsec: 999, solvedRotationDeg: 999
+    ))
+    #expect(abs(field.raDeg - 100.0) < 1e-9)
+    #expect(abs(field.decDeg - 20.0) < 1e-9)
+    #expect(field.pixelScaleArcsec == nil, "the header branch has no CD/xpixsz+focallen here, must not pick up the solved scale")
+}
+
+@Test func frameFieldReturnsNilWhenNeitherHeaderNorSolvedColumnsResolve() {
+    #expect(FieldGeometry.frameField(headerJSON: nil, naxis1: nil, naxis2: nil) == nil)
+    #expect(FieldGeometry.frameField(headerJSON: nil, naxis1: nil, naxis2: nil, solvedRA: 10.0) == nil, "solvedDec missing")
 }
 
 // MARK: - panels(target:db:config:)
@@ -214,6 +255,20 @@ private func insertLight(
     #expect(report.panels.count == 1)
     let center = report.panels[0].centerRaDeg
     #expect(center < 0.5 || center > 359.5)
+}
+
+@Test func panelsBuildsFieldsFromSolvedColumnsWhenNoFrameHasHeaderWCS() throws {
+    // Every frame here is a wide-field CR3 with no FITS header (headerJSON
+    // nil) -- only `PlateSolver`'s persisted solved_* columns carry a
+    // coordinate. `panels(target:db:config:)` must still cluster them.
+    let db = try makeMemoryDB()
+    try insertLight(db: db, target: "CR3T", date: "2026-06-01", name: "a0", solvedRA: 10.0, solvedDec: 0.0)
+    try insertLight(db: db, target: "CR3T", date: "2026-06-01", name: "a1", solvedRA: 10.01, solvedDec: 0.0)
+
+    let report = try FieldGeometry.panels(target: "CR3T", db: db, config: AstroConfig())
+    #expect(report.panels.count == 1)
+    #expect(report.panels[0].frameCount == 2)
+    #expect(report.isMosaic == false)
 }
 
 @Test func panelsReturnsEmptyReportWhenTargetHasNoUsableLightsAtAll() throws {

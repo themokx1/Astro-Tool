@@ -40,6 +40,7 @@ do {
     case "health": exitCode = try cmdHealth(rest)
     case "panels": exitCode = try cmdPanels(rest)
     case "search": exitCode = try cmdSearch(rest)
+    case "solve": exitCode = try cmdSolve(rest)
     default:
         eprint(usageText)
         exit(1)

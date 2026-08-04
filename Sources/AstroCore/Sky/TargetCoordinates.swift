@@ -17,16 +17,33 @@ public enum TargetCoordinates {
     ///
     /// `nil` if the header has neither a usable WCS solution nor a
     /// parseable `RA`/`DEC` pair (e.g. no `header_json` at all, or every
-    /// key is absent/unparseable).
-    public static func coordinates(headerJSON: String?) -> (raDeg: Double, decDeg: Double)? {
-        guard let header = parseHeader(headerJSON) else { return nil }
-
-        if let crval1 = header.double("CRVAL1"), let crval2 = header.double("CRVAL2") {
-            return (crval1, crval2)
+    /// key is absent/unparseable) AND no `solvedRA`/`solvedDec` fallback was
+    /// given either.
+    ///
+    /// `solvedRA`/`solvedDec` (R7-1): `PlateSolver`'s persisted
+    /// `fits_meta.solved_ra`/`solved_dec` columns, tried only as a LAST
+    /// resort after the header itself has been checked -- a wide-field
+    /// Canon CR3 frame has no FITS header at all (`headerJSON == nil`), so
+    /// this never short-circuits on that `nil` the way the original
+    /// header-only implementation did.
+    public static func coordinates(
+        headerJSON: String?,
+        solvedRA: Double? = nil,
+        solvedDec: Double? = nil
+    ) -> (raDeg: Double, decDeg: Double)? {
+        if let header = parseHeader(headerJSON) {
+            if let crval1 = header.double("CRVAL1"), let crval2 = header.double("CRVAL2") {
+                return (crval1, crval2)
+            }
+            if let ra = resolveRA(header), let dec = resolveDec(header) {
+                return (ra, dec)
+            }
         }
 
-        guard let ra = resolveRA(header), let dec = resolveDec(header) else { return nil }
-        return (ra, dec)
+        if let solvedRA, let solvedDec {
+            return (solvedRA, solvedDec)
+        }
+        return nil
     }
 
     private static func resolveRA(_ header: FITSHeader) -> Double? {
@@ -61,13 +78,16 @@ public enum TargetCoordinates {
 
     /// Median RA/Dec (degrees) across every one of `files` (already
     /// filtered to the target of interest by the caller) whose
-    /// `FITSMetaRecord` resolves to a coordinate pair. `nil` if none do.
+    /// `FITSMetaRecord` resolves to a coordinate pair -- header WCS/RA-DEC
+    /// preferred, falling back to `PlateSolver`'s `solved_ra`/`solved_dec`
+    /// columns per-file (see `coordinates(headerJSON:solvedRA:solvedDec:)`).
+    /// `nil` if none do.
     public static func medianCoordinates(files: [FileRecord], meta: [Int64: FITSMetaRecord]) -> (raDeg: Double, decDeg: Double)? {
         var ras: [Double] = []
         var decs: [Double] = []
         for file in files {
             guard let id = file.id, let record = meta[id],
-                  let coord = coordinates(headerJSON: record.headerJSON)
+                  let coord = coordinates(headerJSON: record.headerJSON, solvedRA: record.solvedRA, solvedDec: record.solvedDec)
             else { continue }
             ras.append(coord.raDeg)
             decs.append(coord.decDeg)

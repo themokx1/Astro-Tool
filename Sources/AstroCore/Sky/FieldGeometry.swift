@@ -131,46 +131,92 @@ public enum FieldGeometry {
     /// integration), a mosaic counts as unbalanced.
     private static let unbalancedRatioThreshold = 1.5
 
-    /// One frame's field geometry from its `header_json` (plus `NAXIS1`/
-    /// `NAXIS2`, needed for the FOV size). Requires `CRVAL1`/`CRVAL2` (the
-    /// plate-solved field center) -- `nil` when either is missing, same as
-    /// `TargetCoordinates.coordinates` requiring a WCS solution. `path` on
-    /// the returned value is always `""`; the caller fills in the real path
-    /// (see the struct's own doc for why).
-    public static func frameField(headerJSON: String?, naxis1: Int?, naxis2: Int?) -> FrameField? {
-        guard let headerJSON, let data = headerJSON.data(using: .utf8),
-              let cards = try? JSONDecoder().decode([String: String].self, from: data)
-        else { return nil }
-        let header = FITSHeader(rawValues: cards)
+    /// Derives (arcsec/pixel scale, rotation degrees) from a full WCS `CD`
+    /// matrix: `sqrt(|det CD|) * 3600` for the scale, `atan2(CD1_2, CD1_1)`
+    /// for the rotation -- shared by `frameField`'s own header-`CD` branch
+    /// and `PlateSolver`, which reads the same four cards straight off a
+    /// freshly Siril-solved FITS header (no `header_json` JSON blob
+    /// involved there), so the two call sites can never silently diverge in
+    /// their math.
+    public static func scaleAndRotation(cd11: Double, cd12: Double, cd21: Double, cd22: Double) -> (scaleArcsec: Double, rotationDeg: Double) {
+        let determinant = cd11 * cd22 - cd12 * cd21
+        let scale = sqrt(abs(determinant)) * 3600
+        let rotation = atan2(cd12, cd11) * 180 / .pi
+        return (scale, rotation)
+    }
 
-        guard let crval1 = header.double("CRVAL1"), let crval2 = header.double("CRVAL2") else { return nil }
-
-        var rotationDeg: Double?
-        var pixelScale: Double?
-
-        if let cd11 = header.double("CD1_1"), let cd12 = header.double("CD1_2"),
-           let cd21 = header.double("CD2_1"), let cd22 = header.double("CD2_2")
+    /// One frame's field geometry, preferring the plate-solved WCS
+    /// (`CRVAL1`/`CRVAL2`, plus rotation/scale from the `CD` matrix or the
+    /// `XPIXSZ`/`FOCALLEN` fallback) baked into `headerJSON` when present --
+    /// same requirement as `TargetCoordinates.coordinates`. When the header
+    /// has no WCS at all (a wide-field Canon CR3 frame has no FITS header to
+    /// begin with, so `headerJSON` itself may be `nil`), falls back to
+    /// `PlateSolver`'s persisted `solvedRA`/`solvedDec`/`solvedScaleArcsec`/
+    /// `solvedRotationDeg` (R7-1) -- `nil` when NEITHER source has a
+    /// coordinate. `path` on the returned value is always `""`; the caller
+    /// fills in the real path (see the struct's own doc for why).
+    public static func frameField(
+        headerJSON: String?,
+        naxis1: Int?,
+        naxis2: Int?,
+        solvedRA: Double? = nil,
+        solvedDec: Double? = nil,
+        solvedScaleArcsec: Double? = nil,
+        solvedRotationDeg: Double? = nil
+    ) -> FrameField? {
+        if let headerJSON, let data = headerJSON.data(using: .utf8),
+           let cards = try? JSONDecoder().decode([String: String].self, from: data)
         {
-            let determinant = cd11 * cd22 - cd12 * cd21
-            pixelScale = sqrt(abs(determinant)) * 3600
-            rotationDeg = atan2(cd12, cd11) * 180 / .pi
-        } else if let xpixsz = header.double("XPIXSZ"), let focallen = header.double("FOCALLEN") {
-            pixelScale = SessionQuality.pixelScaleArcsec(xpixsz: xpixsz, focallen: focallen)
+            let header = FITSHeader(rawValues: cards)
+
+            if let crval1 = header.double("CRVAL1"), let crval2 = header.double("CRVAL2") {
+                var rotationDeg: Double?
+                var pixelScale: Double?
+
+                if let cd11 = header.double("CD1_1"), let cd12 = header.double("CD1_2"),
+                   let cd21 = header.double("CD2_1"), let cd22 = header.double("CD2_2")
+                {
+                    let derived = scaleAndRotation(cd11: cd11, cd12: cd12, cd21: cd21, cd22: cd22)
+                    pixelScale = derived.scaleArcsec
+                    rotationDeg = derived.rotationDeg
+                } else if let xpixsz = header.double("XPIXSZ"), let focallen = header.double("FOCALLEN") {
+                    pixelScale = SessionQuality.pixelScaleArcsec(xpixsz: xpixsz, focallen: focallen)
+                }
+
+                var fovWidth: Double?
+                var fovHeight: Double?
+                if let pixelScale, let naxis1, let naxis2 {
+                    fovWidth = Double(naxis1) * pixelScale / 3600
+                    fovHeight = Double(naxis2) * pixelScale / 3600
+                }
+
+                return FrameField(
+                    path: "",
+                    raDeg: crval1,
+                    decDeg: crval2,
+                    rotationDeg: rotationDeg,
+                    pixelScaleArcsec: pixelScale,
+                    fovWidthDeg: fovWidth,
+                    fovHeightDeg: fovHeight
+                )
+            }
         }
+
+        guard let solvedRA, let solvedDec else { return nil }
 
         var fovWidth: Double?
         var fovHeight: Double?
-        if let pixelScale, let naxis1, let naxis2 {
-            fovWidth = Double(naxis1) * pixelScale / 3600
-            fovHeight = Double(naxis2) * pixelScale / 3600
+        if let solvedScaleArcsec, let naxis1, let naxis2 {
+            fovWidth = Double(naxis1) * solvedScaleArcsec / 3600
+            fovHeight = Double(naxis2) * solvedScaleArcsec / 3600
         }
 
         return FrameField(
             path: "",
-            raDeg: crval1,
-            decDeg: crval2,
-            rotationDeg: rotationDeg,
-            pixelScaleArcsec: pixelScale,
+            raDeg: solvedRA,
+            decDeg: solvedDec,
+            rotationDeg: solvedRotationDeg,
+            pixelScaleArcsec: solvedScaleArcsec,
             fovWidthDeg: fovWidth,
             fovHeightDeg: fovHeight
         )
@@ -215,7 +261,11 @@ public enum FieldGeometry {
         var integrationSeconds: [Double] = []
         for file in buckets.usable {
             guard let id = file.id, let meta = metaByFileID[id],
-                  var field = frameField(headerJSON: meta.headerJSON, naxis1: meta.naxis1, naxis2: meta.naxis2)
+                  var field = frameField(
+                      headerJSON: meta.headerJSON, naxis1: meta.naxis1, naxis2: meta.naxis2,
+                      solvedRA: meta.solvedRA, solvedDec: meta.solvedDec,
+                      solvedScaleArcsec: meta.solvedScaleArcsec, solvedRotationDeg: meta.solvedRotationDeg
+                  )
             else { continue }
             field.path = file.path
             fields.append(field)

@@ -94,6 +94,24 @@ public struct FITSMetaRecord: Codable, Equatable, Sendable {
     /// absolute sky-background metric (`SessionQuality`).
     public var egain: Double?
     public var headerJSON: String?
+    /// Plate-solved RA/Dec (degrees), schema v6, additive -- filled in by
+    /// `PlateSolver` (R7-1) for frames whose ORIGINAL header carries no WCS
+    /// solution at all (typically wide-field Canon CR3 lights, which have no
+    /// `CRVAL1`/`CRVAL2`). Deliberately kept separate from `headerJSON`
+    /// (never rewritten) so the original scanned header is never touched --
+    /// `TargetCoordinates`/`FieldGeometry` fall back to these columns only
+    /// when the header itself has no WCS. `nil` for every frame that hasn't
+    /// been (successfully) plate-solved.
+    public var solvedRA: Double?
+    public var solvedDec: Double?
+    /// Arcsec/pixel scale derived from the solved WCS `CD` matrix -- schema
+    /// v6, additive. `nil` when not yet solved, or the solve didn't yield a
+    /// full `CD` matrix.
+    public var solvedScaleArcsec: Double?
+    /// Field-rotation angle (degrees) derived from the solved WCS `CD`
+    /// matrix -- schema v6, additive, same `nil` conditions as
+    /// `solvedScaleArcsec`.
+    public var solvedRotationDeg: Double?
 
     public init(
         fileID: Int64,
@@ -111,7 +129,11 @@ public struct FITSMetaRecord: Codable, Equatable, Sendable {
         naxis2: Int? = nil,
         xpixsz: Double? = nil,
         egain: Double? = nil,
-        headerJSON: String? = nil
+        headerJSON: String? = nil,
+        solvedRA: Double? = nil,
+        solvedDec: Double? = nil,
+        solvedScaleArcsec: Double? = nil,
+        solvedRotationDeg: Double? = nil
     ) {
         self.fileID = fileID
         self.exptime = exptime
@@ -129,6 +151,10 @@ public struct FITSMetaRecord: Codable, Equatable, Sendable {
         self.xpixsz = xpixsz
         self.egain = egain
         self.headerJSON = headerJSON
+        self.solvedRA = solvedRA
+        self.solvedDec = solvedDec
+        self.solvedScaleArcsec = solvedScaleArcsec
+        self.solvedRotationDeg = solvedRotationDeg
     }
 }
 
@@ -281,6 +307,20 @@ public final class Database: @unchecked Sendable {
       PRIMARY KEY(target, session_date, key));
     """
 
+    // Internal (not private) for the same reason as the earlier schemaSQLv*
+    // constants: migration tests apply this directly to a raw `SQLiteDB` to
+    // simulate an existing v5 database before verifying `Database(path:)`
+    // upgrades it in place. R7-1 (`PlateSolver`): plate-solved RA/Dec/scale/
+    // rotation, additive columns never touched by `upsertFITSMeta`'s
+    // ON-CONFLICT update -- only `updateSolvedWCS` ever writes them, so a
+    // later rescan of the same file can never wipe out a solved coordinate.
+    static let schemaSQLv6 = """
+    ALTER TABLE fits_meta ADD COLUMN solved_ra REAL;
+    ALTER TABLE fits_meta ADD COLUMN solved_dec REAL;
+    ALTER TABLE fits_meta ADD COLUMN solved_scale_arcsec REAL;
+    ALTER TABLE fits_meta ADD COLUMN solved_rotation_deg REAL;
+    """
+
     public init(path: String) throws {
         self.db = try SQLiteDB(path: path)
         try migrate()
@@ -332,6 +372,12 @@ public final class Database: @unchecked Sendable {
             try db.exec(Self.schemaSQLv5)
             try db.run("UPDATE schema_version SET version = ?;", bind: [.int(5)])
             version = 5
+        }
+
+        if version < 6 {
+            try db.exec(Self.schemaSQLv6)
+            try db.run("UPDATE schema_version SET version = ?;", bind: [.int(6)])
+            version = 6
         }
     }
 
@@ -544,12 +590,38 @@ public final class Database: @unchecked Sendable {
         }
     }
 
+    /// Persists a `PlateSolver` result's WCS solution for one file, WITHOUT
+    /// touching any other `fits_meta` column (in particular `header_json`,
+    /// the original scanned header, which must never be rewritten). A plain
+    /// targeted `UPDATE` rather than routing through `upsertFITSMeta` -- that
+    /// call's `ON CONFLICT` clause sets every column from the caller's
+    /// record, so a scanner-built `FITSMetaRecord` (which never carries a
+    /// solved coordinate) would silently null these back out on the very
+    /// next rescan. No-op (affects zero rows) if `fileID` has no `fits_meta`
+    /// row yet -- callers only ever call this for files already scanned.
+    public func updateSolvedWCS(fileID: Int64, ra: Double?, dec: Double?, scale: Double?, rotation: Double?) throws {
+        try withLock {
+            try db.run(
+                """
+                UPDATE fits_meta
+                SET solved_ra = ?, solved_dec = ?, solved_scale_arcsec = ?, solved_rotation_deg = ?
+                WHERE file_id = ?;
+                """,
+                bind: [
+                    ra.map(SQLiteValue.real) ?? .null, dec.map(SQLiteValue.real) ?? .null,
+                    scale.map(SQLiteValue.real) ?? .null, rotation.map(SQLiteValue.real) ?? .null,
+                    .int(fileID),
+                ]
+            )
+        }
+    }
+
     public func fitsMeta(fileID: Int64) throws -> FITSMetaRecord? {
         try withLock {
             var record: FITSMetaRecord?
             try db.query(
                 """
-                SELECT file_id, exptime, gain, "offset", set_temp, ccd_temp, instrume, focallen, filter, date_obs, imagetyp, naxis1, naxis2, xpixsz, egain, header_json
+                SELECT file_id, exptime, gain, "offset", set_temp, ccd_temp, instrume, focallen, filter, date_obs, imagetyp, naxis1, naxis2, xpixsz, egain, header_json, solved_ra, solved_dec, solved_scale_arcsec, solved_rotation_deg
                 FROM fits_meta WHERE file_id = ?;
                 """,
                 bind: [.int(fileID)]
@@ -570,7 +642,11 @@ public final class Database: @unchecked Sendable {
                     naxis2: row.int64(12).map(Int.init),
                     xpixsz: row.double(13),
                     egain: row.double(14),
-                    headerJSON: row.string(15)
+                    headerJSON: row.string(15),
+                    solvedRA: row.double(16),
+                    solvedDec: row.double(17),
+                    solvedScaleArcsec: row.double(18),
+                    solvedRotationDeg: row.double(19)
                 )
             }
             return record

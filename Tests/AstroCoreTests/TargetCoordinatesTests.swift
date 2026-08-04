@@ -72,6 +72,29 @@ private func headerJSON(_ cards: [String: String]) -> String {
     #expect(TargetCoordinates.coordinates(headerJSON: nil) == nil)
 }
 
+// MARK: - coordinates(headerJSON:solvedRA:solvedDec:) -- R7-1 solved-column fallback
+
+@Test func coordinatesFallsBackToSolvedColumnsWhenHeaderHasNoWCSAtAll() throws {
+    // A wide-field Canon CR3 frame: no FITS header at all (nil headerJSON),
+    // but `PlateSolver` has since persisted a solved coordinate.
+    let coord = try #require(TargetCoordinates.coordinates(headerJSON: nil, solvedRA: 56.75, solvedDec: 24.1))
+    #expect(abs(coord.raDeg - 56.75) < 1e-9)
+    #expect(abs(coord.decDeg - 24.1) < 1e-9)
+}
+
+@Test func coordinatesPrefersHeaderCRVALOverSolvedColumnsWhenBothPresent() throws {
+    let json = headerJSON(["CRVAL1": "83.633083", "CRVAL2": "22.0145"])
+    let coord = try #require(TargetCoordinates.coordinates(headerJSON: json, solvedRA: 999, solvedDec: 999))
+    #expect(abs(coord.raDeg - 83.633083) < 1e-6)
+    #expect(abs(coord.decDeg - 22.0145) < 1e-6)
+}
+
+@Test func coordinatesReturnsNilWhenNeitherHeaderNorSolvedColumnsResolve() {
+    #expect(TargetCoordinates.coordinates(headerJSON: nil, solvedRA: nil, solvedDec: nil) == nil)
+    // A lone solvedRA with no matching solvedDec must not resolve either.
+    #expect(TargetCoordinates.coordinates(headerJSON: nil, solvedRA: 10.0, solvedDec: nil) == nil)
+}
+
 // MARK: - medianCoordinates
 
 @Test func medianCoordinatesIgnoresFilesWithoutResolvableHeader() throws {
@@ -84,6 +107,20 @@ private func headerJSON(_ cards: [String: String]) -> String {
         1: FITSMetaRecord(fileID: 1, headerJSON: headerJSON(["CRVAL1": "10.0", "CRVAL2": "20.0"])),
         2: FITSMetaRecord(fileID: 2, headerJSON: headerJSON(["CRVAL1": "12.0", "CRVAL2": "22.0"])),
         3: FITSMetaRecord(fileID: 3, headerJSON: nil),
+    ]
+    let coord = try #require(TargetCoordinates.medianCoordinates(files: files, meta: meta))
+    #expect(abs(coord.raDeg - 11.0) < 1e-9)
+    #expect(abs(coord.decDeg - 21.0) < 1e-9)
+}
+
+@Test func medianCoordinatesUsesSolvedColumnsForFilesWithNoHeaderWCS() throws {
+    let files = [
+        FileRecord(id: 1, path: "a.cr3", size: 0, mtime: 0, ext: "cr3", kind: "raw", area: .sessions, target: "T1", sessionDate: "2026-01-01", role: .light, scannedAt: 0),
+        FileRecord(id: 2, path: "b.cr3", size: 0, mtime: 0, ext: "cr3", kind: "raw", area: .sessions, target: "T1", sessionDate: "2026-01-01", role: .light, scannedAt: 0),
+    ]
+    let meta: [Int64: FITSMetaRecord] = [
+        1: FITSMetaRecord(fileID: 1, headerJSON: nil, solvedRA: 10.0, solvedDec: 20.0),
+        2: FITSMetaRecord(fileID: 2, headerJSON: nil, solvedRA: 12.0, solvedDec: 22.0),
     ]
     let coord = try #require(TargetCoordinates.medianCoordinates(files: files, meta: meta))
     #expect(abs(coord.raDeg - 11.0) < 1e-9)

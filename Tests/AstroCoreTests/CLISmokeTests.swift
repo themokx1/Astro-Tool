@@ -1159,6 +1159,74 @@ private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Doubl
     #expect(result.exitCode == 1)
 }
 
+// MARK: - solve (R7-1)
+//
+// Real plate-solving needs an actual Siril install and a real star field --
+// neither is feasible to fake for a CLI-level smoke test (the mock-backend
+// path is exercised in depth by `PlateSolverTests`, which drives
+// `PlateSolver` directly). These smoke tests only cover the CLI's own
+// input-validation/error-reporting paths, which don't need Siril to actually
+// run: a `--target`/`--all`-less invocation, an unknown `--target`, and a
+// missing-Siril-binary error message -- forced deterministically via a
+// config.json `rating.sirilPath` override, so the test doesn't depend on
+// whether the machine running it happens to have a real Siril installed.
+
+/// Writes `<root>/.astro_tool/config.json` with `rating.sirilPath` pointed
+/// at a path that is guaranteed not to exist, so `solve` deterministically
+/// hits its "siril not found" path regardless of whether this machine has a
+/// real Siril install.
+private func writeBogusSirilPathConfig(root: URL) throws {
+    let toolDir = root.appendingPathComponent(".astro_tool", isDirectory: true)
+    try FileManager.default.createDirectory(at: toolDir, withIntermediateDirectories: true)
+    let configURL = toolDir.appendingPathComponent("config.json", isDirectory: false)
+    let json = """
+    {"rating": {"sirilPath": "/definitely/not/a/real/siril-cli"}}
+    """
+    try Data(json.utf8).write(to: configURL)
+}
+
+@Test func solveWithoutTargetOrAllExitsWithError() throws {
+    let root = try makeTempRoot("solve-no-target")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["solve", "--root", root.path])
+    #expect(result.exitCode == 1)
+}
+
+@Test func solveWithUnknownTargetExitsWithError() throws {
+    let root = try makeTempRoot("solve-unknown-target")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["solve", "--root", root.path, "--target", "NoSuchTarget12345"])
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("target not found"))
+}
+
+@Test func solveWithSirilMissingExitsWithClearError() throws {
+    let root = try makeTempRoot("solve-siril-missing")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+    try writeBogusSirilPathConfig(root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    // A real target on record (`Fixtures.makeMessyLibrary` always plants
+    // M45_Pleiades), so this fails specifically on the missing Siril binary
+    // rather than on an unknown-target check.
+    let result = try runCLI(["solve", "--root", root.path, "--target", "M45_Pleiades"])
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("siril not found"))
+}
+
 // MARK: - misc
 
 @Test func unknownSubcommandExitsWithUsage() throws {

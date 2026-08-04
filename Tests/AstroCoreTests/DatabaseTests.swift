@@ -83,7 +83,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 5)
+    #expect(version == 6)
 }
 
 @Test func migrateIsIdempotentAndDoesNotDuplicateVersionRow() throws {
@@ -144,7 +144,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 5)
+    #expect(version == 6)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -197,7 +197,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 5)
+    #expect(version == 6)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -266,7 +266,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 5)
+    #expect(version == 6)
 
     let fileID1 = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let meta1 = try database.fitsMeta(fileID: fileID1)
@@ -710,7 +710,7 @@ private func sampleRating(fileID: Int64, inputSig: String = "sig-1") -> RatingRe
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 5)
+    #expect(version == 6)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1, "the v4 row must survive the upgrade untouched")
@@ -719,6 +719,101 @@ private func sampleRating(fileID: Int64, inputSig: String = "sig-1") -> RatingRe
     // Fresh table, usable via the DAO immediately after the upgrade.
     try database.upsertSessionNotes(target: "M31", date: "2026-01-01", notes: ["Camera": "ASI2600MC"])
     #expect(try database.sessionNotes(target: "M31", date: "2026-01-01") == ["Camera": "ASI2600MC"])
+}
+
+// MARK: - solved_* columns (schema v6, R7-1)
+
+/// Simulates an already-deployed v5 database (v1..v5 schema, `schema_
+/// version` stamped `5`) via a raw `SQLiteDB` connection, then opens it
+/// through `Database(path:)` and verifies the upgrade advances to v6, adds
+/// the new `solved_*` columns (NULL for the pre-existing row, same
+/// `ALTER TABLE ADD COLUMN` convention as every earlier additive migration),
+/// and that `updateSolvedWCS` is immediately usable via the DAO afterward.
+@Test func migrateUpgradesExistingV5DatabaseToV6AddingSolvedColumns() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-migrate-v5-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("v5.sqlite").path
+
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.exec(Database.schemaSQLv1)
+        try raw.exec(Database.schemaSQLv2)
+        try raw.exec(Database.schemaSQLv3)
+        try raw.exec(Database.schemaSQLv4)
+        try raw.exec(Database.schemaSQLv5)
+        try raw.run("INSERT INTO schema_version(version) VALUES (5);")
+        try raw.run(
+            """
+            INSERT INTO files(path, size, mtime, ext, kind, area, target, session_date, role, content_hash, scanned_at, missing, inode, nlink)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            bind: [
+                .text("sessions/M45_Pleiades/2026-01-01/lights/f1.cr3"), .int(1024), .real(1_700_000_000),
+                .text("cr3"), .text("raw"), .text("sessions"), .text("M45_Pleiades"), .text("2026-01-01"),
+                .text("light"), .null, .real(1_700_000_100), .int(0), .null, .null,
+            ]
+        )
+        try raw.run("INSERT INTO fits_meta(file_id, exptime) VALUES (1, 30.0);")
+    }
+
+    let database = try Database(path: path)
+
+    var version: Int64 = -1
+    try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
+        version = row.int64(0) ?? -1
+    }
+    #expect(version == 6)
+
+    let fileID = try #require(try database.fileID(path: "sessions/M45_Pleiades/2026-01-01/lights/f1.cr3"))
+    let metaBeforeSolve = try database.fitsMeta(fileID: fileID)
+    #expect(metaBeforeSolve?.solvedRA == nil, "ALTER TABLE ADD COLUMN never backfills pre-existing rows")
+    #expect(metaBeforeSolve?.solvedDec == nil)
+    #expect(metaBeforeSolve?.exptime == 30.0, "the v5 row's pre-existing columns must survive the upgrade untouched")
+
+    try database.updateSolvedWCS(fileID: fileID, ra: 56.75, dec: 24.1, scale: 1.2, rotation: 15.0)
+    let metaAfterSolve = try database.fitsMeta(fileID: fileID)
+    #expect(metaAfterSolve?.solvedRA == 56.75)
+    #expect(metaAfterSolve?.solvedDec == 24.1)
+    #expect(metaAfterSolve?.solvedScaleArcsec == 1.2)
+    #expect(metaAfterSolve?.solvedRotationDeg == 15.0)
+}
+
+@Test func updateSolvedWCSDoesNotDisturbHeaderJSONOrOtherColumns() throws {
+    let database = try Database(path: ":memory:")
+    let fileID = try database.upsertFile(sampleFile())
+    try database.upsertFITSMeta(FITSMetaRecord(fileID: fileID, exptime: 60, headerJSON: "{\"NAXIS\":2}"))
+
+    try database.updateSolvedWCS(fileID: fileID, ra: 10.5, dec: -5.25, scale: 2.0, rotation: 45.0)
+
+    let fetched = try database.fitsMeta(fileID: fileID)
+    #expect(fetched?.solvedRA == 10.5)
+    #expect(fetched?.solvedDec == -5.25)
+    #expect(fetched?.solvedScaleArcsec == 2.0)
+    #expect(fetched?.solvedRotationDeg == 45.0)
+    #expect(fetched?.exptime == 60, "updateSolvedWCS must not touch unrelated columns")
+    #expect(fetched?.headerJSON == "{\"NAXIS\":2}", "the original scanned header must never be rewritten by a solve")
+}
+
+/// Regression guard for the exact bug `updateSolvedWCS` exists to avoid: a
+/// plain `upsertFITSMeta` call (what a rescan does) must never wipe out a
+/// previously persisted solved coordinate, since a scanner-built
+/// `FITSMetaRecord` never carries one (it always defaults to `nil`).
+@Test func rescanUpsertFITSMetaDoesNotWipeOutPreviouslySolvedCoordinates() throws {
+    let database = try Database(path: ":memory:")
+    let fileID = try database.upsertFile(sampleFile())
+    try database.upsertFITSMeta(FITSMetaRecord(fileID: fileID, exptime: 60))
+    try database.updateSolvedWCS(fileID: fileID, ra: 10.5, dec: -5.25, scale: 2.0, rotation: 45.0)
+
+    // Simulates a rescan: the scanner re-upserts fits_meta with a freshly
+    // built record that (correctly) knows nothing about solved_ra/dec.
+    try database.upsertFITSMeta(FITSMetaRecord(fileID: fileID, exptime: 60, filter: "L"))
+
+    let fetched = try database.fitsMeta(fileID: fileID)
+    #expect(fetched?.solvedRA == 10.5, "a rescan must never erase a previously solved coordinate")
+    #expect(fetched?.solvedDec == -5.25)
+    #expect(fetched?.filter == "L")
 }
 
 @Test func upsertSessionNotesReplacesAllPriorNotesForThatSession() throws {

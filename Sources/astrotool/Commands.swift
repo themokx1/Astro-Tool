@@ -46,6 +46,7 @@ Commands:
   health        --target T [--date D] [--root R] [--json]
   panels        --target T [--root R] [--json]
   search        <query> [--root R] [--json]
+  solve         --target T|--all [--frames N] [--force] [--root R] [--json]
 
   --version     Print version and exit
   --help        Show this help
@@ -1638,4 +1639,113 @@ private func printPanelReport(_ report: PanelReport) {
     if report.isUnbalanced {
         print("⚠️  kiegyenlítetlen mozaik: a panelek integrációja jelentősen eltér egymástól")
     }
+}
+
+// MARK: - solve
+
+/// `astrotool solve --target T|--all [--frames N] [--force] [--root R]
+/// [--json]` -- R7-1's plate-solve backfill: blind-solves usable lights that
+/// have no WCS solution at all (typically wide-field Canon CR3 frames) via
+/// Siril, persisting the result into `fits_meta.solved_*` columns only --
+/// see `PlateSolver`'s doc for why the library itself is never touched.
+/// `--all` iterates every target with at least one session light on record
+/// that currently has no resolvable coordinate at all (median over
+/// `TargetCoordinates`), instead of a single `--target`. Always exits `0`
+/// once solving actually runs, even with per-frame failures or zero frames
+/// solved -- only a missing Siril binary or bad input (`--target` not on
+/// record, invalid `--frames`) is an error (exit 1).
+func cmdSolve(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--all", takesValue: false),
+        FlagSpec("--frames", takesValue: true),
+        FlagSpec("--force", takesValue: false),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    let targetFlag = parsed.value("--target")
+    let solveAll = parsed.has("--all")
+    guard targetFlag != nil || solveAll else {
+        eprint("error: --target or --all is required")
+        eprint(usageText)
+        return 1
+    }
+
+    var maxFrames = 1
+    if let raw = parsed.value("--frames") {
+        guard let value = Int(raw), value > 0 else {
+            eprint("error: invalid --frames: \(raw)")
+            return 1
+        }
+        maxFrames = value
+    }
+    let force = parsed.has("--force")
+    let isJSON = parsed.has("--json")
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let allFiles = try db.allFiles(includeMissing: false)
+    let lights = allFiles.filter { $0.area == .sessions && $0.role == .light }
+
+    let targets: [String]
+    if solveAll {
+        var metaByFileID: [Int64: FITSMetaRecord] = [:]
+        for file in lights {
+            guard let id = file.id else { continue }
+            if let meta = try db.fitsMeta(fileID: id) { metaByFileID[id] = meta }
+        }
+        let targetsWithFrames = Set(lights.compactMap(\.target)).sorted()
+        targets = targetsWithFrames.filter { t in
+            let targetLights = lights.filter { $0.target == t }
+            return TargetCoordinates.medianCoordinates(files: targetLights, meta: metaByFileID) == nil
+        }
+    } else {
+        guard let target = targetFlag, lights.contains(where: { $0.target == target }) else {
+            eprint("error: target not found: \(targetFlag ?? "")")
+            return 1
+        }
+        targets = [target]
+    }
+
+    guard !targets.isEmpty else {
+        if isJSON {
+            try printJSON([String: SolveSummary]())
+        } else {
+            print("nincs koordináta nélküli célpont")
+        }
+        return 0
+    }
+
+    let solver: PlateSolver
+    do {
+        solver = try PlateSolver(sirilPath: config.rating.sirilPath)
+    } catch {
+        eprint("siril not found at \(config.rating.sirilPath)")
+        return 1
+    }
+
+    var summaries: [String: SolveSummary] = [:]
+    for t in targets {
+        if !isJSON { eprint("solving \(t)…") }
+        let summary = try solver.solveTarget(
+            t, db: db, config: config, maxFramesPerSession: maxFrames, force: force
+        ) { done, total in
+            eprint("  \(t): \(done)/\(total)")
+        }
+        summaries[t] = summary
+    }
+
+    if isJSON {
+        try printJSON(summaries)
+    } else {
+        for t in targets {
+            guard let summary = summaries[t] else { continue }
+            print("\(t): attempted \(summary.attempted), solved \(summary.solved), failed \(summary.failed), skipped \(summary.skipped)")
+        }
+    }
+    return 0
 }

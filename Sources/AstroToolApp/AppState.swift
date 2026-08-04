@@ -62,6 +62,13 @@ final class AppState: @unchecked Sendable {
     var calibHealth: CalibHealthReport?
     var frameScores: [FrameScore] = []
 
+    /// R7-1: the plate-solve backfill result shown in `PlateSolveSheet`
+    /// while it's open -- `nil` before the sheet's operation has finished
+    /// (it shows a spinner until this is set), cleared when the sheet
+    /// closes so a stale previous target's result never flashes before the
+    /// next open's finishes.
+    var plateSolveSummary: SolveSummary?
+
     /// Tonight's observation plan (`Planner.plan`), shown in the
     /// "Ma este" box on the Áttekintés tab. `nil` until `loadPlan()` has
     /// run at least once this session.
@@ -813,6 +820,44 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.frameScores = results
                 self.progressText = "Pontozás kész: \(results.count) frame"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    // MARK: - Plate-solve backfill (R7-1)
+
+    /// Runs `PlateSolver.solveTarget` for `target` in the background,
+    /// showing per-frame progress via `progressText`. On completion (success
+    /// OR a caught `PlateSolver.init` failure -- missing Siril -- handled by
+    /// `handle(_:)`), `plateSolveSummary` is set so `PlateSolveSheet` can
+    /// show the result, and `loadStats()`/`loadPlan()` are re-run so a newly
+    /// solved coordinate immediately shows up in the plan/panel-tracking
+    /// data instead of only after the user manually refreshes.
+    func runPlateSolve(target: String) {
+        guard let db else { return }
+        let cfg = config
+        plateSolveSummary = nil
+
+        let opID = beginOperation("Plate-solve indul…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let summary = try await Task.detached(priority: .userInitiated) { [weak self] in
+                    let solver = try PlateSolver(sirilPath: cfg.rating.sirilPath)
+                    return try solver.solveTarget(target, db: db, config: cfg) { done, total in
+                        Task { @MainActor in
+                            self?.progressText = "Plate-solve: \(done)/\(total)"
+                        }
+                    }
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.plateSolveSummary = summary
+                self.progressText = "Plate-solve kész: \(summary.solved)/\(summary.attempted) megoldva"
+                self.loadStats()
+                self.loadPlan()
             } catch {
                 self.handle(error)
             }

@@ -8,6 +8,22 @@ történik.
 
 ## [Unreleased]
 
+### Added
+
+- **Plate-solve backfill Sirillel (`astrotool solve`)**: a wide-field Canon
+  CR3 célpontoknak nincs FITS fejlécük (és így WCS-ük sem) — a `plan`/
+  `panels` "nincs koordináta"-t adott rájuk. `astrotool solve --target T\|
+  --all [--frames N] [--force] [--json]` blind plate-solve-olja Sirillel a
+  koordináta nélküli usable lightokat, és az eredményt (RA/Dec/skála/
+  rotáció) a `fits_meta` séma v6 additív `solved_ra`/`solved_dec`/
+  `solved_scale_arcsec`/`solved_rotation_deg` oszlopaiba írja — a Siril
+  munka mindig egy ideiglenes scratch könyvtárban zajlik, a képkönyvtár
+  fájljait sosem módosítja. `TargetCoordinates`/`FieldGeometry` mostantól a
+  fejléc WCS-ét részesíti előnyben, és csak akkor esik vissza a solved
+  oszlopokra, ha a fejléc (vagy annak hiánya) nem ad koordinátát. App:
+  Statisztika fül célpont-sorának Műveletek menüje "Plate-solve…" gombot kap
+  koordináta nélküli célpontokon.
+
 ## [0.5.0] - 2026-08-03
 
 ### Added

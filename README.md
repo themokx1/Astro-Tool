@@ -19,6 +19,7 @@ Asztrofotó-könyvtár auditálása, minőség-pontozás és kalibráció-követ
 - **Új session létrehozás (new-session)** — kanonikus `YYYY-MM-DD` könyvtárstruktúra és README-sablon létrehozása egy célponthoz.
 - **Észlelés-tervező (plan)** — ma esti kulmináció, max magasság, láthatósági ablak és Hold-zavarás célpontonként, pontszám szerint rendezve.
 - **Kereshető éjszaka-napló (search)** — a session `README.txt`-jébe kézzel beírt Bortle/SQM/seeing/megjegyzés szöveg indexelve, kulcs vagy érték szerint kereshetően.
+- **Plate-solve backfill (solve)** — wide-field Canon CR3 célpontok koordináta-pótlása Siril blind plate-solve-jával, hogy a tervező és a mozaik-panel követés ezekre is működjön.
 
 ## ⛔ Vasszabály
 
@@ -93,6 +94,12 @@ astrotool plan
 
 astrotool export --target M31 --format astrobin
 # AstroBin bulk-import CSV a célpont TRUE (dedupolt) acquisition-adataiból, .astro_tool/exports/ alá írva.
+
+astrotool solve --target M_Milky_Way --frames 2
+# Koordináta nélküli (pl. Canon CR3) célpont session-jeinek plate-solve-olása Sirillel, session-önként max 2 kerettel.
+
+astrotool solve --all --json
+# Minden koordináta nélküli célpont megoldása, gépi olvasható összegzéssel.
 ```
 
 Minden parancs elfogadja a `--root <PATH>` kapcsolót az alapértelmezett könyvtár felülbírálására.
@@ -192,6 +199,44 @@ astrotool search sqm --json
 - `--refresh-meta` egy már korábban beszkennelt, de még jegyzet nélküli
   session `README.txt`-jét is újraolvassa (pl. R6-4 előtti scan után).
 - A fájlt a scan CSAK OLVASSA — sosem ír bele.
+
+## Plate-solve backfill
+
+Az ASIAIR FITS lightok szinte mindig plate-solve-oltak (`CRVAL1`/`CRVAL2` a
+fejlécben) — de egy wide-field Canon CR3 célpontnak nincs is FITS fejléce,
+így a `plan`/`panels` "nincs koordináta"-t ad rá. Az `astrotool solve`
+Sirillel blind plate-solve-olja a koordináta nélküli usable lightokat:
+
+```bash
+astrotool solve --target M_Milky_Way --frames 2
+# session-önként legfeljebb 2, koordináta nélküli keret megoldása (alapból 1)
+
+astrotool solve --all
+# minden koordináta nélküli célpont bejárása
+
+astrotool solve --target M_Milky_Way --force
+# már megoldott célpont ÚJRA-solve-olása is (a régi koordináta felülíródik)
+```
+
+- **Siril kell hozzá** (`siril-cli`, `config.json`-ban `rating.sirilPath`
+  alatt, ugyanaz a beállítás, amit a `rate` is használ). Hiányában exit 1,
+  világos hibaüzenettel.
+- **A könyvtár fájljaihoz sosem nyúl**: a Siril munka mindig egy ideiglenes
+  scratch könyvtárban zajlik (`cd` oda, `load` az EREDETI fájlt csak
+  olvasva, `platesolve`, `save` a scratch könyvtárba) — az eredmény kizárólag
+  a `fits_meta.solved_ra`/`solved_dec`/`solved_scale_arcsec`/
+  `solved_rotation_deg` oszlopokba kerül, a `header_json` (az eredeti
+  szkennelt fejléc) és maga a fájl érintetlen marad.
+  Session-önként csak néhány reprezentatív keretet old meg (alapból 1,
+  `--frames N`-nel állítható) — nem a session összes keretét, ami feleslegesen
+  lassú lenne.
+- A `plan`/`panels` a fejléc WCS-ét részesíti előnyben, és csak akkor esik
+  vissza a solved oszlopokra, ha a fejléc (vagy annak hiánya) nem ad
+  koordinátát — egy már ASIAIR-plate-solve-olt frame-et a `solve` sosem ír
+  felül feleslegesen (`--force` nélkül a meglévő koordinátájú kereteket
+  kihagyja).
+- Az alkalmazásban a Statisztika fül célpont-sorának Műveletek cellájában a
+  "Plate-solve…" gomb csak koordináta nélküli célpontokon jelenik meg.
 
 ## Konfiguráció
 

@@ -30,11 +30,31 @@ struct StatsView: View {
     /// linkelése…" button can be pressed at a time.
     @State private var linkingSession: LinkingSession?
     @State private var selection: StatsRow.ID?
+    /// The target currently shown in `PlateSolveSheet`, `nil` when closed --
+    /// same row-scoped-button pattern as `linkingSession`.
+    @State private var solvingTarget: SolvingTarget?
 
     private struct LinkingSession: Identifiable {
         let target: String
         let date: String
         var id: String { "\(target):\(date)" }
+    }
+
+    private struct SolvingTarget: Identifiable {
+        let target: String
+        var id: String { target }
+    }
+
+    /// `true` once `AppState.plan` has loaded and reports no resolvable
+    /// coordinate for `target` at all -- gates the "Plate-solve…" action so
+    /// it only shows up for targets that actually need it (ASIAIR lights are
+    /// already plate-solved; this is for wide-field Canon CR3 targets).
+    /// `false` (hidden) while `plan` hasn't loaded yet, same "don't guess"
+    /// stance as the mosaic-panel button only showing once `panelReportsByTarget`
+    /// has data.
+    private func targetLacksCoordinate(_ target: String) -> Bool {
+        guard let plan = appState.plan else { return false }
+        return plan.first(where: { $0.target == target })?.raDeg == nil
     }
 
     private var filteredTargets: [TargetStats] {
@@ -100,9 +120,15 @@ struct StatsView: View {
         }
         .onAppear {
             if appState.stats.isEmpty { appState.loadStats() }
+            // Needed for `targetLacksCoordinate` to gate the "Plate-solve…"
+            // action -- `plan` isn't otherwise loaded from this tab.
+            if appState.plan == nil { appState.loadPlan() }
         }
         .sheet(item: $linkingSession) { session in
             CalibLinkSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $solvingTarget) { solving in
+            PlateSolveSheet(target: solving.target)
         }
         .padding()
     }
@@ -372,6 +398,14 @@ struct StatsView: View {
 
                 if let panels = appState.panelReportsByTarget[stats.target], panels.isMosaic {
                     PanelsPopoverButton(report: panels)
+                }
+
+                if targetLacksCoordinate(stats.target) {
+                    Button("Plate-solve…") {
+                        solvingTarget = SolvingTarget(target: stats.target)
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
                 }
             }
         case .session(let target, let detail):
@@ -676,5 +710,59 @@ private struct CalibLinkSheet: View {
 
     private func groupedDestDirs(_ plan: CalibLinkPlan) -> [String] {
         Set(plan.items.map(\.destDir)).sorted()
+    }
+}
+
+// MARK: - Plate-solve sheet (R7-1)
+
+/// Runs `AppState.runPlateSolve(target:)` on appear and shows the resulting
+/// `SolveSummary` -- same "progress until `AppState` sets a result" pattern
+/// as `CalibLinkSheet`, just with no plan/confirm step (the operation always
+/// runs immediately; there's nothing to review beforehand since Siril work
+/// never touches the library).
+private struct PlateSolveSheet: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+
+    let target: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Plate-solve").font(.headline)
+            Text(target).foregroundStyle(.secondary)
+
+            if let summary = appState.plateSolveSummary {
+                resultView(summary)
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(appState.progressText).foregroundStyle(.secondary)
+                }
+            }
+
+            if let lastError = appState.lastError {
+                Text(lastError).foregroundStyle(.red)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 420, minHeight: 160)
+        .onAppear {
+            appState.runPlateSolve(target: target)
+        }
+        .onDisappear {
+            appState.plateSolveSummary = nil
+        }
+    }
+
+    private func resultView(_ summary: SolveSummary) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Megoldva: \(summary.solved) / \(summary.attempted) (sikertelen: \(summary.failed), kihagyva: \(summary.skipped))")
+                .font(.callout)
+            HStack {
+                Spacer()
+                Button("Bezárás") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
     }
 }
