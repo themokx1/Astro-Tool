@@ -135,6 +135,29 @@ private struct ProjectStatusFixture {
     #expect(t5.latestProcessedDate == "2026-01-10")
 }
 
+// MARK: - R8-1: StackDiscovery stack-evidence union
+
+@Test func projectStatusCountsDiscoveredStackOutsideStacksAreaAsStackEvidence() throws {
+    let fixture = try ProjectStatusFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight("sessions/T9/2026-01-10/lights/l1.fit", exptime: 3600 * 3)
+    try fixture.writeReadme("sessions/T9/2026-01-10/README.txt")
+    // A finished (ASIAIR-named) stack sitting loose in the session's own
+    // folder -- NOT under stacks/T9/2026-01-10/ at all. A plain
+    // `area == .stacks` scan would never see this; `StackDiscovery` finds
+    // it by filename alone, and `ProjectStatusQueries` must union its date
+    // into stack-evidence so T9 doesn't stay stuck in "stackelheto".
+    try fixture.writeFITSLight("sessions/T9/2026-01-10/T9_050x60sec_3000s_result.fit", exptime: nil)
+    try fixture.scan()
+
+    let projects = try ProjectStatusQueries.projects(db: fixture.db, config: fixture.config)
+    let t9 = try #require(projects.first { $0.target == "T9" })
+    #expect(t9.phase == .stacked)
+    #expect(t9.latestStackDate == "2026-01-10")
+    #expect(!t9.todos.contains { $0.hasPrefix("készíts stacket") })
+}
+
 // MARK: - _hibas exclusion
 
 @Test func projectStatusIgnoresHibasSessionInPhaseButMentionsItInTodos() throws {

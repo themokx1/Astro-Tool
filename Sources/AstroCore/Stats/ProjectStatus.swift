@@ -104,10 +104,20 @@ public enum ProjectStatusQueries {
     public static func projects(db: Database, config: AstroConfig) throws -> [ProjectState] {
         let stats = try StatsQueries.perTarget(db: db, config: config)
         let files = try db.allFiles(includeMissing: false)
+        // R8-1: `StackDiscovery` finds stack files that a plain `area ==
+        // .stacks` scan would miss (a finished stack sitting loose in the
+        // session folder, or at the target's `stacks/` root with no date
+        // subfolder) -- computed once here, up front, rather than per
+        // target inside `buildState` (which would re-run the same
+        // whole-library `discover` scan once per target).
+        let discoveredByTarget = Dictionary(
+            uniqueKeysWithValues: try StackDiscovery.discover(db: db, config: config).map { ($0.target, $0.stacks) }
+        )
 
         let states = try stats.map { stat -> ProjectState in
             let sessions = try SessionStatsQueries.sessions(target: stat.target, db: db, config: config)
-            return buildState(stat: stat, sessions: sessions, files: files, config: config)
+            let discoveredStacks = discoveredByTarget[stat.target] ?? []
+            return buildState(stat: stat, sessions: sessions, files: files, discoveredStacks: discoveredStacks, config: config)
         }
 
         return states.sorted { a, b in
@@ -152,6 +162,7 @@ public enum ProjectStatusQueries {
         stat: TargetStats,
         sessions: [SessionDetail],
         files: [FileRecord],
+        discoveredStacks: [StackFile],
         config: AstroConfig
     ) -> ProjectState {
         let target = stat.target
@@ -161,7 +172,21 @@ public enum ProjectStatusQueries {
         let actionableSessionSpans = allSessionSpans
             .filter { !excludedSet.contains($0.raw) }
             .sorted { $0.raw < $1.raw }
-        let stackSpans = spans(area: .stacks, target: target, files: files, config: config)
+        // R8-1: union `StackDiscovery`'s own (target, date) evidence into
+        // the plain `area == .stacks` spans -- a discovered stack sitting
+        // outside the canonical `stacks/<target>/<date>/` tree (e.g. loose
+        // in the session folder, or the target's `stacks/` root with no
+        // date subfolder at all) still counts as "this date is stacked".
+        // Deduped by raw date-dir name (`Dictionary(uniqueKeysWithValues:)`
+        // over `raw` -- the same span computed both ways is kept once).
+        let areaStackSpans = spans(area: .stacks, target: target, files: files, config: config)
+        let discoveredStackSpans = discoveredStacks.compactMap { stack -> DatedSpan? in
+            guard let date = stack.sessionDate, let parsed = SessionDateParser.parse(date, patterns: config.intentional) else { return nil }
+            return DatedSpan(raw: date, start: parsed.start, end: parsed.end)
+        }
+        let stackSpans = Array(
+            Dictionary((areaStackSpans + discoveredStackSpans).map { ($0.raw, $0) }, uniquingKeysWith: { first, _ in first }).values
+        )
         let processedSpans = spans(area: .processed, target: target, files: files, config: config)
 
         // Deliberately from the ACTIONABLE (non-excluded) spans only -- an

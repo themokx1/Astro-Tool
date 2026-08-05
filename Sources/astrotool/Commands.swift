@@ -68,6 +68,11 @@ Commands:
                 writes a .dssfilelist (DeepSkyStacker/Sirilic) and a .ssf
                 Siril script alongside it. Additive and idempotent -- never
                 touches your original files.
+  stacks        [--target T] [--json] [--root R]
+                Stack-file felderítés: minden már létrejött stack/feldolgozott
+                kimenet célpontonként, bárhol is legyen a lemezen -- nem csak
+                a kanonikus stacks/<cél>/<dátum>/ helyen. Ismeretlen célponthoz
+                sorolt találatok "Besorolatlan" alatt.
   report        --target T --date D [--out -] [--root R]
                 Self-contained HTML night-report card: frame/exposure
                 summary, timeline, quality, altitude/airmass + achieved Moon
@@ -2155,6 +2160,91 @@ private func printStackSelection(_ selection: StackSelection) {
         for line in selection.criteria {
             print("  - \(line)")
         }
+    }
+}
+
+// MARK: - stacks (R8-1)
+
+/// `astrotool stacks [--target T] [--json] [--root R]` -- R8-1's stack-file
+/// discovery (`StackDiscovery.discover`): every already-created stack/
+/// processed output on record for every target, wherever it actually lives
+/// -- not just the canonical `stacks/<target>/<date>/` location. Without
+/// `--target`, every target with at least one discovered stack (plus a
+/// trailing "Besorolatlan" group for stack-looking files matched to no known
+/// target at all); with `--target`, only that one target's group.
+func cmdStacks(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let reports = try StackDiscovery.discover(db: db, config: config)
+    let selected: [TargetStacks]
+    if let target = parsed.value("--target") {
+        selected = reports.filter { $0.target == target }
+    } else {
+        selected = reports
+    }
+
+    if parsed.has("--json") {
+        try printJSON(selected)
+    } else {
+        printStackReports(selected)
+    }
+    return 0
+}
+
+private func printStackReports(_ reports: [TargetStacks]) {
+    let nonEmpty = reports.filter { !$0.stacks.isEmpty }
+    guard !nonEmpty.isEmpty else {
+        print("nincs felfedezett stack")
+        return
+    }
+
+    for report in nonEmpty {
+        print("\(report.displayName)  (\(report.stacks.count) stack)")
+        print("  FÁJL                                              HELY        KERET×SUB      ÖSSZIDŐ  MÉRET      DÁTUM")
+        for stack in report.stacks {
+            let name = (stack.path as NSString).lastPathComponent
+            let location = locationLabel(for: stack.path)
+            let framesSub = stack.framesFromName.map { frames in
+                "\(frames)×\(stack.subSecondsFromName.map { String(format: "%.0f", $0) } ?? "?")s"
+            } ?? "-"
+            let total = stack.totalSecondsFromName.map(formatHoursMinutes) ?? "-"
+            let size = formatBytes(stack.sizeBytes)
+            let date = stack.sessionDate ?? "-"
+            var line = "  \(name.padding(toLength: 50, withPad: " ", startingAt: 0)) \(location.padding(toLength: 10, withPad: " ", startingAt: 0))  \(framesSub.padding(toLength: 13, withPad: " ", startingAt: 0))  \(total.padding(toLength: 7, withPad: " ", startingAt: 0))  \(size.padding(toLength: 9, withPad: " ", startingAt: 0))  \(date)"
+            if stack.kind != "stack" {
+                line += "  [\(stack.kind)]"
+            }
+            print(line)
+        }
+        if let best = report.stacks.first(where: { $0.totalSecondsFromName != nil }) {
+            let framesText = best.framesFromName.map(String.init) ?? "?"
+            let subText = best.subSecondsFromName.map { String(format: "%.0f", $0) } ?? "?"
+            print("  legjobb: \(framesText)×\(subText) s (\(formatHoursMinutes(best.totalSecondsFromName ?? 0)))")
+        }
+        print("")
+    }
+}
+
+/// `"stacks"`/`"processed"`/`"sessions"`/`"gyökér"` (a top-level file with no
+/// area subfolder at all -- practically never happens, but keeps every path
+/// labeled) from the path's own first component, purely for the human table
+/// -- the JSON output carries the full `path` instead.
+private func locationLabel(for path: String) -> String {
+    let top = path.split(separator: "/", maxSplits: 1).first.map(String.init) ?? path
+    switch top {
+    case "stacks": return "stacks"
+    case "processed": return "processed"
+    case "sessions": return "sessions"
+    default: return "gyökér"
     }
 }
 

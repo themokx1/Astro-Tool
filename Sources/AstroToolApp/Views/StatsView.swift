@@ -9,6 +9,12 @@ struct StatsRow: Identifiable {
     enum Kind {
         case target(TargetStats)
         case session(target: String, detail: SessionDetail)
+        /// A target's discovered-stacks summary (R8-1) -- always the LAST
+        /// child row under a target, after every session row. Only present
+        /// when `TargetStacks.stacks` is non-empty (a target with none
+        /// gets no row at all, same "don't show an empty summary" stance
+        /// as the mosaic-panel button only appearing for `isMosaic`).
+        case stacksSummary(target: String, report: TargetStacks)
     }
 
     /// "t:<target>" for a target row, "s:<target>:<dateRaw>" for a session
@@ -72,11 +78,22 @@ struct StatsView: View {
     private var rows: [StatsRow] {
         filteredTargets.map { stats in
             let sessions = appState.sessionDetailsByTarget[stats.target] ?? []
-            let childRows: [StatsRow] = sessions.map { detail in
+            var childRows: [StatsRow] = sessions.map { detail in
                 StatsRow(
                     id: "s:\(stats.target):\(detail.dateRaw)",
                     kind: .session(target: stats.target, detail: detail),
                     children: nil
+                )
+            }
+            // R8-1: the target's discovered-stacks summary, always LAST
+            // among the children (after every session row).
+            if let report = appState.stackReportsByTarget[stats.target], !report.stacks.isEmpty {
+                childRows.append(
+                    StatsRow(
+                        id: "k:\(stats.target)",
+                        kind: .stacksSummary(target: stats.target, report: report),
+                        children: nil
+                    )
                 )
             }
             return StatsRow(
@@ -248,6 +265,10 @@ struct StatsView: View {
             }
             .lineLimit(1)
             .opacity(detail.isExcludedFromTotals ? 0.5 : 1.0)
+        case .stacksSummary(_, let report):
+            Text(stacksSummaryLine(report))
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -270,7 +291,26 @@ struct StatsView: View {
         if let panels = appState.panelReportsByTarget[stats.target], panels.isMosaic {
             lines.append("Panelek: \(panelsSummaryLine(panels))")
         }
+        if let report = appState.stackReportsByTarget[stats.target], !report.stacks.isEmpty {
+            lines.append("Stackek: \(stacksSummaryLine(report))")
+        }
         return lines.joined(separator: "\n")
+    }
+
+    /// "3 stack, legjobb: 106×120 s (3:32)" (R8-1) -- the compact one-line
+    /// discovered-stacks summary shared by the target tooltip, the
+    /// "Stackek" child row, and the "Stackek…" popover's header. The "best"
+    /// stack is the first one in `report.stacks` that has a parsed
+    /// `totalSecondsFromName` -- the list is already sorted that way
+    /// (`StackDiscovery.discover`'s own convention).
+    private func stacksSummaryLine(_ report: TargetStacks) -> String {
+        var line = "\(report.stacks.count) stack"
+        if let best = report.stacks.first(where: { $0.totalSecondsFromName != nil }) {
+            let frames = best.framesFromName.map(String.init) ?? "?"
+            let sub = best.subSecondsFromName.map { String(format: "%.0f", $0) } ?? "?"
+            line += ", legjobb: \(frames)×\(sub) s (\(formatDuration(best.totalSecondsFromName ?? 0)))"
+        }
+        return line
     }
 
     /// Hover tooltip on a session row's "README" badge (R6-4): every note
@@ -300,6 +340,7 @@ struct StatsView: View {
         switch row.kind {
         case .target(let stats): return stats.totalIntegrationSeconds
         case .session(_, let detail): return detail.integrationSeconds
+        case .stacksSummary: return 0
         }
     }
 
@@ -326,6 +367,8 @@ struct StatsView: View {
                 text += " · DSS: \(accepted)✓/\(rejected)✗"
             }
             return text
+        case .stacksSummary(_, let report):
+            return "\(report.stacks.count) stack"
         }
     }
 
@@ -337,6 +380,8 @@ struct StatsView: View {
             return stats.lastSessionDate ?? "-"
         case .session(_, let detail):
             return exposureSummary(detail.exposureBreakdown)
+        case .stacksSummary:
+            return "-"
         }
     }
 
@@ -360,6 +405,8 @@ struct StatsView: View {
             return stats.cameras.isEmpty ? "-" : stats.cameras.joined(separator: ", ")
         case .session(_, let detail):
             return detail.cameras.isEmpty ? "-" : detail.cameras.joined(separator: ", ")
+        case .stacksSummary:
+            return "-"
         }
     }
 
@@ -400,6 +447,8 @@ struct StatsView: View {
                 onAdd: { tag in appState.addTag(target: target, date: detail.dateRaw, tag: tag) },
                 onRemove: { tag in appState.removeTag(target: target, date: detail.dateRaw, tag: tag) }
             )
+        case .stacksSummary:
+            EmptyView()
         }
     }
 
@@ -421,6 +470,10 @@ struct StatsView: View {
 
                 if let panels = appState.panelReportsByTarget[stats.target], panels.isMosaic {
                     PanelsPopoverButton(report: panels)
+                }
+
+                if let report = appState.stackReportsByTarget[stats.target], !report.stacks.isEmpty {
+                    StacksPopoverButton(report: report, summaryLine: stacksSummaryLine(report))
                 }
 
                 if targetLacksCoordinate(stats.target) {
@@ -451,6 +504,8 @@ struct StatsView: View {
                 .buttonStyle(.link)
                 .font(.caption)
             }
+        case .stacksSummary:
+            EmptyView()
         }
     }
 
@@ -592,6 +647,94 @@ private struct PanelsPopoverButton: View {
                 }
                 .padding()
             }
+    }
+
+    private func formatDuration(_ seconds: Double) -> String {
+        let totalMinutes = Int((seconds / 60).rounded())
+        return String(format: "%d:%02d", totalMinutes / 60, totalMinutes % 60)
+    }
+}
+
+// MARK: - Stacks popover (R8-1)
+
+/// "Stackek…" button on a target's row -- pops over the full discovered-
+/// stacks table (file, location, frame×sub, total integration, size, kind,
+/// date). Only ever shown when `TargetStacks.stacks` is non-empty (the
+/// caller checks that before instantiating this view, same convention as
+/// `PanelsPopoverButton`/`isMosaic`).
+private struct StacksPopoverButton: View {
+    let report: TargetStacks
+    let summaryLine: String
+
+    @State private var showPopover = false
+
+    var body: some View {
+        Button("Stackek…") { showPopover = true }
+            .buttonStyle(.link)
+            .font(.caption)
+            .popover(isPresented: $showPopover) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(report.displayName) — \(summaryLine)").font(.headline)
+
+                    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
+                        GridRow {
+                            Text("Fájl").bold()
+                            Text("Hely").bold()
+                            Text("Keret×sub").bold()
+                            Text("Össz.").bold()
+                            Text("Méret").bold()
+                            Text("Dátum").bold()
+                        }
+                        .font(.caption)
+                        ForEach(report.stacks, id: \.path) { stack in
+                            GridRow {
+                                Text((stack.path as NSString).lastPathComponent)
+                                    .help(stack.path)
+                                    .lineLimit(1)
+                                Text(locationLabel(for: stack.path))
+                                Text(framesSubText(stack))
+                                Text(stack.totalSecondsFromName.map(formatDuration) ?? "-")
+                                Text(formatBytes(stack.sizeBytes))
+                                HStack(spacing: 4) {
+                                    Text(stack.sessionDate ?? "-")
+                                    if stack.kind != "stack" {
+                                        Text(stack.kind)
+                                            .font(.caption2)
+                                            .foregroundStyle(.orange)
+                                    }
+                                }
+                            }
+                            .font(.caption)
+                        }
+                    }
+                }
+                .padding()
+            }
+    }
+
+    private func framesSubText(_ stack: StackFile) -> String {
+        guard let frames = stack.framesFromName else { return "-" }
+        let sub = stack.subSecondsFromName.map { String(format: "%.0f", $0) } ?? "?"
+        return "\(frames)×\(sub)s"
+    }
+
+    /// Same top-level-path-component labeling the CLI's `locationLabel`
+    /// uses -- kept as its own tiny copy here since the CLI target and this
+    /// app target don't share a module.
+    private func locationLabel(for path: String) -> String {
+        let top = path.split(separator: "/", maxSplits: 1).first.map(String.init) ?? path
+        switch top {
+        case "stacks": return "stacks"
+        case "processed": return "processed"
+        case "sessions": return "sessions"
+        default: return "gyökér"
+        }
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
     }
 
     private func formatDuration(_ seconds: Double) -> String {

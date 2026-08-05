@@ -45,6 +45,7 @@ do {
     case "ingest-dss": exitCode = try cmdIngestDSS(rest)
     case "expose": exitCode = try cmdExpose(rest)
     case "stacklist": exitCode = try cmdStackList(rest)
+    case "stacks": exitCode = try cmdStacks(rest)
     case "report": exitCode = try cmdReport(rest)
     default:
         eprint(usageText)

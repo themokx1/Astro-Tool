@@ -54,6 +54,13 @@ final class AppState: @unchecked Sendable {
     /// gets an entry so a re-render never has to guess "not loaded yet" vs.
     /// "genuinely a single field".
     var panelReportsByTarget: [String: PanelReport] = [:]
+    /// Every target's discovered stack files (`StackDiscovery.discover`,
+    /// R8-1), keyed by target name -- populated alongside `stats`/
+    /// `panelReportsByTarget` in `loadStats()`. A target with no discovered
+    /// stacks at all still gets an entry (`stacks == []`), same "never
+    /// guess not-loaded-yet vs. genuinely-empty" convention
+    /// `panelReportsByTarget` uses.
+    var stackReportsByTarget: [String: TargetStacks] = [:]
     var calibNeeds: [CalibNeed] = []
     /// `CalibHealth.report`'s result -- flat discipline, bias inventory, dark
     /// master health -- shown below the coverage table on the Kalibráció
@@ -571,10 +578,12 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let (result, sessionsByTarget, panelsByTarget) = try await Task.detached(priority: .userInitiated) {
+                let (result, sessionsByTarget, panelsByTarget, stacksByTarget) = try await Task.detached(priority: .userInitiated) {
                     let stats = try StatsQueries.perTarget(db: db, config: cfg)
                     var sessionsByTarget: [String: [SessionDetail]] = [:]
                     var panelsByTarget: [String: PanelReport] = [:]
+                    let discoveredStacks = try StackDiscovery.discover(db: db, config: cfg)
+                    let stacksByTarget = Dictionary(uniqueKeysWithValues: discoveredStacks.map { ($0.target, $0) })
                     for stat in stats {
                         sessionsByTarget[stat.target] = try SessionStatsQueries.sessions(
                             target: stat.target, db: db, config: cfg
@@ -583,12 +592,13 @@ final class AppState: @unchecked Sendable {
                             target: stat.target, db: db, config: cfg
                         )
                     }
-                    return (stats, sessionsByTarget, panelsByTarget)
+                    return (stats, sessionsByTarget, panelsByTarget, stacksByTarget)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.stats = result
                 self.sessionDetailsByTarget = sessionsByTarget
                 self.panelReportsByTarget = panelsByTarget
+                self.stackReportsByTarget = stacksByTarget
                 self.progressText = "Statisztika kész: \(result.count) célpont"
             } catch {
                 self.handle(error)

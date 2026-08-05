@@ -611,6 +611,63 @@ struct CLISmokeTests {
     #expect(result.exitCode == 1)
 }
 
+// MARK: - stacks (R8-1)
+
+/// `Fixtures.makeMessyLibrary` already plants `stacks/M42_Orion/2026-01-17/
+/// result.fit` -- a real "location signal only" case (the filename `result.fit`
+/// doesn't mention the target at all, so this exercises the "mappa"
+/// `match_source` path with zero extra fixture setup).
+@Test func stacksJSONAfterScanFindsExistingFixtureStack() throws {
+    let root = try makeTempRoot("stacks-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stacks", "--root", root.path, "--target", "M42_Orion", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let reports = try #require(json)
+    let report = try #require(reports.first { $0["target"] as? String == "M42_Orion" })
+    let stacks = try #require(report["stacks"] as? [[String: Any]])
+    #expect(stacks.contains { $0["path"] as? String == "stacks/M42_Orion/2026-01-17/result.fit" })
+    let found = try #require(stacks.first { $0["path"] as? String == "stacks/M42_Orion/2026-01-17/result.fit" })
+    #expect(found["match_source"] as? String == "mappa")
+    #expect(found["kind"] as? String == "stack")
+}
+
+@Test func stacksHumanOutputPrintsFileAndBestLine() throws {
+    let root = try makeTempRoot("stacks-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stacks", "--root", root.path, "--target", "M42_Orion"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("result.fit"))
+    #expect(result.stdout.contains("stacks"))
+}
+
+@Test func stacksWithoutTargetListsEveryTargetWithDiscoveredStacks() throws {
+    let root = try makeTempRoot("stacks-no-target")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stacks", "--root", root.path, "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let reports = try #require(json)
+    #expect(reports.contains { $0["target"] as? String == "M42_Orion" })
+}
+
 // MARK: - search
 
 /// `Fixtures.makeMessyLibrary` plants a real `README.txt` for

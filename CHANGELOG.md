@@ -8,6 +8,27 @@ történik.
 
 ## [Unreleased]
 
+### Added
+
+- **Stack-file felderítés a teljes könyvtárban, célpontonként/session-önként**
+  (R8-1, `astrotool stacks`): a `StackDiscovery` motor a teljes scannelt
+  könyvtárat átfésüli — nem csak a kanonikus `stacks/<célpont>/<dátum>/` és
+  `processed/<célpont>/<dátum>/` helyeken, hanem bárhol (session-mappában,
+  a célpont `stacks/` gyökerében dátum-almappa nélkül, vagy a könyvtár
+  gyökerében is) — és filename-alapú felismeréssel (ASIAIR autosave-stack
+  névalak, `*_stacked*`, `Autosave*.tif`, `MasterLight*`, mozaik-nevek,
+  ASIAIR számozott live-stack capture) találja meg a már létrejött
+  stack/feldolgozott kimeneteket. Egy calib-master névalakú találat
+  (`*_darks_stacked` stb.) listázva marad, csak `"master-jelölt"`-ként
+  jelölve; a `stacks/<T>/`/`processed/<T>/` fán kívüli találatokat
+  fájlnév-token-egyezés köti egy ismert célponthoz, egyezés nélkül egy
+  "Besorolatlan" csoportba kerülnek. `astrotool stacks [--target T] [--json]`
+  CLI parancs; az app Statisztika fülén a célpont sessionjei után egy
+  "Stackek" összegző sor (darabszám + legjobb) és egy "Stackek…" popover a
+  teljes táblával. `ProjectStatusQueries` a felfedezett stackek dátumait is
+  beleszámítja a "van-e már stack ehhez a session-höz" eldöntésébe, még ha a
+  stack fájl nem is a kanonikus `stacks/` fán van.
+
 ### Fixed
 
 - **Minőség fül panelei a pontozás után is a régi ("nincs adat"/"n/a")
