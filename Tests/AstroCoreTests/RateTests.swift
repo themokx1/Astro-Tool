@@ -887,6 +887,163 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(stored?.score != nil, "a cache-hit dss row still gets scored like any other rated frame")
 }
 
+// MARK: - Rater: cache self-heal (R7-B6, item 1)
+//
+// Real symptom this reproduces: 141 real frames sat at "Siril metrika:
+// 0/141" forever, because their cached ratings had the RIGHT `inputSig`
+// (the files themselves never changed) but were written while the Siril
+// adapter was silently broken -- plain `inputSig` equality treated that as
+// a permanent cache hit with no way to ever recover once the adapter got
+// fixed. These tests exercise `Rater.staleness` end to end through
+// `rate(target:)` itself, not just the predicate in isolation.
+
+/// A cached row whose native half is complete (background/bg00..11 already
+/// present, deliberately set to `999` -- a value `NativeStats` would never
+/// compute from the fixture's actual flat `100` pixels, so a wrongly
+/// triggered native recompute is caught) but whose star-metric columns are
+/// all `nil` and `source == nil` (astrotool's own pipeline, not a dss row).
+/// A provider newly available now must be called, and only the metrics
+/// half of the row should change.
+@Test func rateSelfHealsStaleNilMetricsRowWhenProviderIsNowAvailable() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    let pixels = Array(repeating: 100, count: 16)
+    let relativePath = "sessions/M60/2026-06-06/lights/light_0001.fit"
+    let (fileID, size) = try fixture.addLightFrame(
+        relativePath: relativePath, target: "M60", pixels: pixels, width: 4, height: 4,
+        mtime: 1_700_000_000
+    )
+
+    let staleRow = RatingRecord(
+        fileID: fileID, background: 999, ratedAt: 1_700_000_050,
+        inputSig: "\(size)-1700000000",
+        bg00: 999, bg01: 999, bg10: 999, bg11: 999
+    )
+    try fixture.db.upsertRating(staleRow)
+
+    let mock = CountingMockProvider()
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: mock)
+    let results = try rater.rate(target: "M60")
+
+    #expect(results.count == 1)
+    #expect(mock.callCount == 1, "a provider newly available for a stale nil-metrics row must be called")
+    #expect(results[0].metrics == StarMetrics(fwhm: 2.0, roundness: 0.9, starCount: 100))
+
+    let stored = try fixture.db.rating(fileID: fileID)
+    #expect(stored?.background == 999, "the native half was NOT stale -- must not be recomputed")
+    #expect(stored?.fwhm == 2.0)
+}
+
+/// A `DSSIngest`-written row (`source == "dss"`, real star metrics already
+/// present) whose native background/bg00..11 were never computed (DSS
+/// never fills those). Only the native half is stale -- the fix must
+/// recompute native stats WITHOUT touching the dss metrics/source, and
+/// must never call the Siril provider for a dss row.
+@Test func rateSelfHealsDSSRowMissingNativeStatsPreservingDSSMetricsAndSource() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    let pixels = Array(repeating: 250, count: 16)
+    let relativePath = "sessions/M61/2026-06-07/lights/light_0001.fit"
+    let (fileID, size) = try fixture.addLightFrame(
+        relativePath: relativePath, target: "M61", pixels: pixels, width: 4, height: 4,
+        mtime: 1_700_000_000
+    )
+
+    let dssRow = RatingRecord(
+        fileID: fileID, fwhm: 3.5, roundness: 0.75, starCount: 88,
+        ratedAt: 1_700_000_050, inputSig: "\(size)-1700000000", source: "dss"
+    )
+    try fixture.db.upsertRating(dssRow)
+
+    let mock = CountingMockProvider()
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: mock)
+    let results = try rater.rate(target: "M61")
+
+    #expect(results.count == 1)
+    #expect(mock.callCount == 0, "a dss-sourced row's real metrics must never trigger a fresh Siril run")
+    #expect(
+        results[0].metrics == StarMetrics(fwhm: 3.5, roundness: 0.75, starCount: 88),
+        "dss metrics must survive the self-heal untouched"
+    )
+
+    let stored = try fixture.db.rating(fileID: fileID)
+    #expect(stored?.source == "dss", "the dss source marker must survive a native-only self-heal")
+    #expect(stored?.background == 250, "the native half WAS stale -- must actually get computed")
+    #expect(stored?.bg00 == 250)
+}
+
+/// A row with both halves already complete must be a true cache hit: no
+/// native recompute, no provider call -- verified the same way the
+/// pre-existing `cacheHitReusesStoredRatingWithoutRecomputingOrCallingProvider`
+/// test does, by deleting the underlying file first.
+@Test func rateLeavesACompleteCachedRowUntouched() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    let pixels = Array(repeating: 100, count: 16)
+    let relativePath = "sessions/M62/2026-06-08/lights/light_0001.fit"
+    let (fileID, size) = try fixture.addLightFrame(
+        relativePath: relativePath, target: "M62", pixels: pixels, width: 4, height: 4,
+        mtime: 1_700_000_000
+    )
+
+    let completeRow = RatingRecord(
+        fileID: fileID, fwhm: 2.5, roundness: 0.85, starCount: 150,
+        background: 100, ratedAt: 1_700_000_050, inputSig: "\(size)-1700000000",
+        bg00: 100, bg01: 100, bg10: 100, bg11: 100
+    )
+    try fixture.db.upsertRating(completeRow)
+
+    let fileURL = fixture.libraryDir.appendingPathComponent(relativePath)
+    try FileManager.default.removeItem(at: fileURL)
+
+    let mock = CountingMockProvider()
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: mock)
+    let results = try rater.rate(target: "M62")
+
+    #expect(results.count == 1, "a complete cached row must still be usable even with the file gone")
+    #expect(mock.callCount == 0)
+    #expect(results[0].metrics == StarMetrics(fwhm: 2.5, roundness: 0.85, starCount: 150))
+}
+
+/// `force: true` must treat every frame as a cache miss regardless of how
+/// complete its cached row already looks -- a deliberate full re-measure,
+/// not just a targeted self-heal.
+@Test func rateForceRecomputesACompleteRowRegardlessOfCacheState() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    let pixels = Array(repeating: 100, count: 16)
+    let relativePath = "sessions/M63/2026-06-09/lights/light_0001.fit"
+    let (fileID, size) = try fixture.addLightFrame(
+        relativePath: relativePath, target: "M63", pixels: pixels, width: 4, height: 4,
+        mtime: 1_700_000_000
+    )
+
+    // A deliberately implausible "complete" row -- 999 sentinels
+    // `NativeStats` would never produce from this fixture's flat `100`
+    // pixels -- so a genuine force-recompute is unambiguous in the result.
+    let completeRow = RatingRecord(
+        fileID: fileID, fwhm: 999, roundness: 999, starCount: 999,
+        background: 999, ratedAt: 1_700_000_050, inputSig: "\(size)-1700000000",
+        bg00: 999, bg01: 999, bg10: 999, bg11: 999
+    )
+    try fixture.db.upsertRating(completeRow)
+
+    let mock = CountingMockProvider()
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: mock)
+    let results = try rater.rate(target: "M63", force: true)
+
+    #expect(results.count == 1)
+    #expect(mock.callCount == 1, "--force must call the provider even though the cached row already looked complete")
+    #expect(results[0].metrics == StarMetrics(fwhm: 2.0, roundness: 0.9, starCount: 100))
+
+    let stored = try fixture.db.rating(fileID: fileID)
+    #expect(stored?.background == 100, "force must genuinely recompute native stats too, not just reuse the stale sentinel")
+}
+
 // MARK: - Rater: provider throw keeps native stats
 
 @Test func providerThrowKeepsNativeStatsButDropsMetrics() throws {

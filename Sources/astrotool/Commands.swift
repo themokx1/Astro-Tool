@@ -28,7 +28,7 @@ Commands:
   scan          [--root R] [--path SUB] [--json]
   audit         [--root R] [--json] [--suggest] [--include-suspicious] [--no-duplicates]
   cleanup       [--root R] [--json] [--suggest] [--limit N]
-  rate          [--root R] --target T [--date D] [--json] [--no-siril]
+  rate          [--root R] --target T [--date D] [--json] [--no-siril] [--force]
   stats         [--root R] [--target T] [--json] [--gross] [--sessions (requires --target)] [--tag TAG]
                 [--timeline (requires --target) [--date D]]
   quality       --target T [--date D] [--root R] [--json]
@@ -410,6 +410,7 @@ func cmdRate(_ args: [String]) throws -> Int32 {
         FlagSpec("--date", takesValue: true),
         FlagSpec("--json", takesValue: false),
         FlagSpec("--no-siril", takesValue: false),
+        FlagSpec("--force", takesValue: false),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
 
@@ -434,7 +435,7 @@ func cmdRate(_ args: [String]) throws -> Int32 {
     }
 
     let rater = Rater(db: db, config: config, provider: provider)
-    let results = try rater.rate(target: target, date: parsed.value("--date"))
+    let results = try rater.rate(target: target, date: parsed.value("--date"), force: parsed.has("--force"))
 
     if Rater.shouldWarnNoMetrics(results, providerWasUsed: provider != nil) {
         eprint("a Siril nem adott metrikát egyetlen keretre sem — ellenőrizd a telepítést")

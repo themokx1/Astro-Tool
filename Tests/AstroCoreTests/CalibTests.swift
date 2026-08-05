@@ -447,6 +447,133 @@ private struct CalibFixture {
     #expect((need.masterAgeDays ?? 0) >= 399)
 }
 
+// MARK: - R7-B6: nominal-exposure grouping + todo disambiguation
+
+/// Ground-truthed against a real library (see R7-B6's investigation): the
+/// SAME nominal "30s" dark need showed up as two separate rows -- 822
+/// lights at `exptime == 30.0` and 91 more at `29.899999618523` -- because
+/// the old grouping only rounded to 0.1s. After switching to
+/// `NominalExposure`, both float-noisy readings must land in ONE combo
+/// with the summed light count.
+@Test func darkCoverageMergesFloatNoisyExptimesIntoOneNominalGroup() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 1...3 {
+        try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/a\(i).fit", exptime: 30.0, setTemp: -10.0)
+    }
+    // Float-noisy "30s" sub -- must be counted into the SAME combo, not its
+    // own separate row.
+    try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/b1.fit", exptime: 29.899999618523, setTemp: -10.0)
+
+    try fixture.scan()
+
+    let needs = try CalibAnalyzer.coverage(db: fixture.db, config: fixture.config)
+    #expect(needs.count == 1, "29.9s and 30.0s must merge into one nominal-exposure combo, not split into two rows")
+    let need = try #require(needs.first)
+    #expect(need.exposureSeconds == 30)
+    #expect(need.lightCount == 4)
+}
+
+/// A light with no cooler telemetry at all (DSLR, `SET-TEMP` never
+/// written) must get an explicit "(hőmérséklet nélkül)" callout in its todo
+/// text -- previously the temp clause was just silently omitted, which
+/// read the same as "temperature doesn't matter here" rather than "we
+/// don't actually know it".
+@Test func darkCoverageTodoLabelsNilTempExplicitly() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/l1.fit", exptime: 30.0, setTemp: nil)
+
+    try fixture.scan()
+
+    let needs = try CalibAnalyzer.coverage(db: fixture.db, config: fixture.config)
+    let need = try #require(needs.first)
+    #expect(need.todo?.contains("hőmérséklet nélkül") == true)
+}
+
+/// Real symptom: a "30s" dark need split into two rows -- 822 lights with
+/// no `GAIN` at all and 310 more at `gain == 1600` -- same nominal
+/// exposure/temp/camera otherwise. That split is real (this function must
+/// never silently pool different electronic settings together), but with
+/// no explanation it reads as a duplicate-row bug. Once more than one gain
+/// value exists at the same (exposure, temp, camera), each affected row's
+/// todo must name its own gain so the two rows are told apart.
+@Test func darkCoverageTodoNamesGainWhenAmbiguousAtSameExposureTempCamera() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 1...3 {
+        try fixture.writeFITSLight(
+            "sessions/T1/2026-01-10/lights/nogain\(i).fit",
+            exptime: 30.0, setTemp: nil, instrume: "Canon EOS R8"
+        )
+    }
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/gain1600.fit",
+        exptime: 30.0, setTemp: nil, gain: 1600, instrume: "Canon EOS R8"
+    )
+
+    try fixture.scan()
+
+    let needs = try CalibAnalyzer.coverage(db: fixture.db, config: fixture.config)
+    #expect(needs.count == 2, "different gain at the same nominal exposure/temp/camera must stay two separate combos")
+
+    let gainRow = try #require(needs.first { $0.lightCount == 1 })
+    #expect(gainRow.todo?.contains("gain: 1600") == true)
+
+    let noGainRow = try #require(needs.first { $0.lightCount == 3 })
+    #expect(noGainRow.todo?.contains("gain:") == false, "the unambiguous single-gain-value case shouldn't grow a gain clause of its own")
+}
+
+/// When more than one camera shows up among the scanned lights, each
+/// missing-combo todo must name its own camera so two rows at the same
+/// nominal exposure/temp aren't mistaken for one duplicated row.
+@Test func darkCoverageTodoNamesCameraWhenMoreThanOneCameraPresent() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/canon.fit",
+        exptime: 30.0, setTemp: nil, instrume: "Canon EOS R8"
+    )
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/asi.fit",
+        exptime: 30.0, setTemp: -10.0, instrume: "ZWO ASI2600MC Pro"
+    )
+
+    try fixture.scan()
+
+    let needs = try CalibAnalyzer.coverage(db: fixture.db, config: fixture.config)
+    #expect(needs.count == 2)
+
+    let canonRow = try #require(needs.first { $0.tempC == nil })
+    #expect(canonRow.todo?.contains("Canon EOS R8") == true)
+
+    let asiRow = try #require(needs.first { $0.tempC == -10.0 })
+    #expect(asiRow.todo?.contains("ZWO ASI2600MC Pro") == true)
+}
+
+/// A single-camera library (the common case) must keep the old, unadorned
+/// todo wording -- no gratuitous "kamera: …" clause when there's nothing to
+/// disambiguate.
+@Test func darkCoverageTodoOmitsCameraWhenOnlyOneCameraPresent() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/l1.fit",
+        exptime: 120.0, setTemp: -10.0, instrume: "ZWO ASI2600MC Pro"
+    )
+
+    try fixture.scan()
+
+    let needs = try CalibAnalyzer.coverage(db: fixture.db, config: fixture.config)
+    let need = try #require(needs.first)
+    #expect(need.todo == "készíts 120 s / -10 °C darkot (1 light frame-hez)")
+}
+
 @Test func darkCoverageDSLRLightWithISOInGainColumnDoesNotMatchASIMasterOnCameraMismatch() throws {
     let fixture = try CalibFixture.make()
     defer { fixture.cleanup() }

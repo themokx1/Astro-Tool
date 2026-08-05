@@ -33,6 +33,41 @@ történik.
   Siril-metrikát ("a Siril nem adott metrikát egyetlen keretre sem —
   ellenőrizd a telepítést") — pont ez a csendes hiba-mód maradt észrevétlen
   korábban.
+- **A `rate` gyorsítótár sosem gyógyult egy egyszer megsérült sorból**: ha
+  egy keret `ratings` sora egy törött Siril-adapter (vagy a `bg_00..11`
+  oszlopok bevezetése előtti) korból származott — `fwhm`/`roundness`/
+  `star_count` és/vagy `bg_00` `NULL` —, a puszta `input_sig`-egyezés
+  örökre cache-hitnek jelölte, akárhányszor futott is újra `rate` (a valós
+  DB-n 141 keret ragadt "Siril metrika: 0/141"-en). Javítva: egy
+  `input_sig`-egyező sor mostantól a hiányzó RÉSZÉT (natív statisztika
+  és/vagy csillag-metrika, egymástól függetlenül) újraszámolja, egy
+  `dss`-sorsú sort viszont sosem futtat újra Sirillel (a metrikái DSS-ből
+  jöttek) — meglévő, nem-hiányzó érték sosem íródik felül nil-lel. Új
+  `astrotool rate --force` (és app: "Újrapontozás" checkbox a Minőség
+  fülön) egy szándékos, teljes újramérésre, a gyorsítótártól függetlenül.
+- **A leolvasási-zaj becslő 1,02 e⁻-t mért, ahol a szakértői referencia
+  ~1,30 e⁻ volt**: a `clippedStandardDeviation` konvergenciáig iterált
+  5σ-klippelése valós, kvantált szenzoradaton egyre lejjebb konvergált (egy
+  MAD-alapú becsléssel statisztikailag megkülönböztethetetlen 1,02 e⁻-ig),
+  mert minden további kör a szenzor valós (bár kilengő, feltehetően
+  "twinkling"/RTS-pixel) viselkedését is levágta, nem csak a valódi
+  kiugrókat. Valós bias-pár ellenőrzésen (ZWO ASI2600MC Pro, gain 100):
+  klippelés nélküli σ 1,294 e⁻-t adott, egyetlen 5σ-klippelési kör 1,062
+  e⁻-t. Javítva: a becslő mostantól EGY klippelési kört futtat (nem
+  iterál konvergenciáig) — a `sensor --measure` valós újramérése 1,02-ről
+  1,06 e⁻-re javult.
+- **A kalibráció-lefedettség szétesett float-zajos expozíciókon**: "készíts
+  30 s darkot" két külön sorban jelent meg ugyanarra a névleges
+  expozícióra (pl. 822 és 91 keret 30,0s és 29,899999618523s `exptime`
+  mellett), mert a csoportosítás csak 0,1s-re kerekített, nem
+  `NominalExposure.nominal(_:)`-t használt (ami már létezett a `Rater`-hez,
+  csak a kalibráció-lefedettség sosem hívta). Javítva. Ahol a szétválás
+  VALÓS (pl. ugyanaz a névleges expozíció/kamera, de eltérő `GAIN`), a
+  todo-szöveg mostantól megnevezi a kamerát/gaint, ha az valóban ambiguus a
+  batchben — az egyértelmű, egykamerás/egygain-es esetben a szöveg
+  változatlan marad. Hiányzó hőmérséklet (`SET-TEMP`, tipikusan DSLR)
+  mostantól explicit "(hőmérséklet nélkül)" jelzést kap, ahol korábban a
+  hőmérséklet-tagmondat csendben csak kimaradt.
 
 ### Added
 

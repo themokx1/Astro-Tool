@@ -242,6 +242,43 @@ public struct RatingRecord: Codable, Equatable, Sendable {
         self.bg11 = bg11
         self.source = source
     }
+
+    /// Merges a partial re-measurement (`Rater`'s self-heal path, R7-B6)
+    /// into this cached row: `nativeStats`/`metrics` fields that were
+    /// actually recomputed this pass overwrite theirs, everything else
+    /// (including whichever of `nativeStats`/`metrics` was `nil` because
+    /// that half wasn't stale) is carried over from `self` UNCHANGED --
+    /// this is what stops the self-heal from ever erasing a value a
+    /// healthy earlier pass (or `DSSIngest`) already filled in.
+    /// `sirilVersion`/`source` only change when `metrics` is non-nil (a
+    /// fresh provider run that actually returned something); `ratedAt` and
+    /// `inputSig` always advance to reflect this pass.
+    func merging(
+        nativeStats: NativeFrameStats?,
+        metrics: StarMetrics?,
+        sirilVersion: String?,
+        inputSig: String
+    ) -> RatingRecord {
+        var result = self
+        result.inputSig = inputSig
+        result.ratedAt = Date().timeIntervalSince1970
+        if let nativeStats {
+            result.background = nativeStats.backgroundMedian
+            result.saturatedFraction = nativeStats.saturatedFraction
+            result.bg00 = nativeStats.backgroundMedian00
+            result.bg01 = nativeStats.backgroundMedian01
+            result.bg10 = nativeStats.backgroundMedian10
+            result.bg11 = nativeStats.backgroundMedian11
+        }
+        if let metrics {
+            result.fwhm = metrics.fwhm
+            result.roundness = metrics.roundness
+            result.starCount = metrics.starCount
+            result.sirilVersion = sirilVersion
+            result.source = nil
+        }
+        return result
+    }
 }
 
 /// The user's own accept/reject decision for one light frame -- schema v8.

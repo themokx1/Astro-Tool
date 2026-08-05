@@ -437,6 +437,25 @@ struct CLISmokeTests {
     #expect(result.exitCode == 1)
 }
 
+@Test func rateForceFlagReRatesAnAlreadyRatedTargetSuccessfully() throws {
+    let root = try makeTempRoot("rate-force")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let first = try runCLI(["rate", "--root", root.path, "--target", "M45_Pleiades", "--no-siril"])
+    #expect(first.exitCode == 0, "stderr: \(first.stderr)")
+
+    // A second `rate` run with `--force` must succeed too (end-to-end CLI
+    // wiring for `Rater.rate`'s `force` parameter, R7-B6 item 1) -- not
+    // just short-circuit as an already-cached hit.
+    let forced = try runCLI(["rate", "--root", root.path, "--target", "M45_Pleiades", "--no-siril", "--force"])
+    #expect(forced.exitCode == 0, "stderr: \(forced.stderr)")
+    #expect(!forced.stdout.isEmpty)
+}
+
 // MARK: - quality
 
 @Test func qualityJSONAfterRateDecodesForFixtureTarget() throws {

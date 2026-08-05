@@ -102,10 +102,14 @@ public final class Rater {
     /// Returns `[]` immediately if no such frames are on record. `progress`,
     /// when given, is called once per frame as it finishes (cache hit,
     /// freshly measured, or skipped for being unreadable) with
-    /// `(completedCount, totalCount)`.
+    /// `(completedCount, totalCount)`. `force`, when `true`, treats every
+    /// frame as a cache miss -- see `rate(target:date:progress:)`'s own
+    /// cache-hit/staleness doc comment above the loop for why a plain
+    /// `inputSig` match isn't always enough on its own.
     public func rate(
         target: String,
         date: String? = nil,
+        force: Bool = false,
         progress: (@Sendable (Int, Int) -> Void)? = nil
     ) throws -> [FrameScore] {
         let frames = try db.allFiles(includeMissing: false).filter { file in
@@ -137,9 +141,50 @@ public final class Rater {
             let exptime = try db.fitsMeta(fileID: fileID)?.exptime
 
             let inputSig = "\(file.size)-\(Int(file.mtime.rounded()))"
+            let cached = try db.rating(fileID: fileID)
+            let cacheValid = !force && cached != nil && cached!.inputSig == inputSig
+            let isFZ = file.ext.lowercased() == "fz"
 
-            if let cached = try db.rating(fileID: fileID), cached.inputSig == inputSig {
-                rated.append((file, cached, exptime))
+            if cacheValid {
+                let cachedRow = cached!
+                let stale = Self.staleness(of: cachedRow, isFZ: isFZ, providerAvailable: provider != nil)
+
+                if !stale.native && !stale.metrics {
+                    // TRUE cache hit -- reuse the stored row untouched,
+                    // neither `NativeStats` nor the provider is invoked.
+                    rated.append((file, cachedRow, exptime))
+                    continue
+                }
+
+                // Self-heal (item 1's real bug): this row's `inputSig`
+                // matches, but it's missing data a healthy pipeline would
+                // have filled in -- e.g. a rating written before `bg_00..11`
+                // existed, or before the Siril adapter was fixed. Only the
+                // missing PART is (re)computed; every already-present value
+                // that this pass doesn't touch is carried over unchanged
+                // (never erased) via `RatingRecord.merging`.
+                let url = root.appendingPathComponent(file.path)
+
+                var nativeStats: NativeFrameStats?
+                if stale.native {
+                    do {
+                        nativeStats = try autoreleasepool { try NativeStats.compute(url: url) }
+                    } catch {
+                        continue
+                    }
+                }
+
+                var metrics: StarMetrics?
+                if stale.metrics {
+                    metrics = try? provider?.metrics(for: url, workDir: workDir)
+                }
+
+                let record = cachedRow.merging(
+                    nativeStats: nativeStats, metrics: metrics,
+                    sirilVersion: provider?.version, inputSig: inputSig
+                )
+                try db.upsertRating(record)
+                rated.append((file, record, exptime))
                 continue
             }
 
@@ -154,7 +199,7 @@ public final class Rater {
             // `nil` (scoring already renormalizes weights over whichever
             // metrics are actually present for a frame).
             var nativeStats: NativeFrameStats?
-            if file.ext.lowercased() != "fz" {
+            if !isFZ {
                 do {
                     // `NativeStats.compute(url:)` loads the whole frame
                     // into memory to read its pixels. Wrapping just the
@@ -198,6 +243,42 @@ public final class Rater {
         guard !rated.isEmpty else { return [] }
 
         return try score(rated)
+    }
+
+    // MARK: - Cache self-heal (R7-B6, item 1)
+
+    /// Which parts of an `inputSig`-matching cached row still need
+    /// (re)computing. The real bug this guards against: a rating row can
+    /// have the RIGHT `inputSig` (the underlying file hasn't changed) while
+    /// still carrying data from a broken era of the pipeline -- ratings
+    /// written before `bg_00..11` existed, or written while the Siril
+    /// adapter was silently failing to parse its own output (see
+    /// `shouldWarnNoMetrics`'s doc comment for that real incident). Plain
+    /// `inputSig` equality treats that row as a full cache hit forever,
+    /// since the file itself never changes again -- this is what let 141
+    /// real frames sit at "Siril metrika: 0/141" no matter how many times
+    /// `rate` re-ran.
+    struct Staleness {
+        /// `bg_00` is `nil` while the file is one `NativeStats` could
+        /// actually analyze (a non-`.fz` FITS) -- the native-stats half of
+        /// the row was never (fully) computed.
+        var native: Bool
+        /// Every star-metric column is `nil`, a provider is available RIGHT
+        /// NOW to try filling them, AND this row isn't `source == "dss"` --
+        /// a `DSSIngest`-written row's `nil` metrics-columns-when-`source`-
+        /// is-set-to-"dss" case never applies here (dss rows always carry
+        /// real metrics), but the explicit `source == nil` check is what
+        /// stops a genuinely dss-sourced row's native-only gap (case b)
+        /// from also re-triggering a Siril run over data DSS already
+        /// supplied.
+        var metrics: Bool
+    }
+
+    static func staleness(of cached: RatingRecord, isFZ: Bool, providerAvailable: Bool) -> Staleness {
+        let native = !isFZ && cached.bg00 == nil
+        let metricsAllNil = cached.fwhm == nil && cached.roundness == nil && cached.starCount == nil
+        let metrics = metricsAllNil && providerAvailable && cached.source == nil
+        return Staleness(native: native, metrics: metrics)
     }
 
     // MARK: - Scoring

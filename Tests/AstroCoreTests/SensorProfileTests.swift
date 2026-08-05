@@ -163,6 +163,51 @@ private struct SensorFixture {
     #expect(abs(readNoise - expected) < 0.0001)
 }
 
+// MARK: - clippedStandardDeviation (R7-B6: single-pass, not iterated to convergence)
+
+/// Regression guard for the real bug: on discrete/quantized data, iterating
+/// sigma-clipping to convergence collapses the result toward a MAD-based
+/// estimate, which reads noticeably low. A clean discrete population (no
+/// outliers at all) must come back through unmodified as its own plain
+/// (population) sigma -- NOT the MAD×1.4826 figure, which is measurably
+/// different even on this small synthetic set.
+@Test func clippedStandardDeviationOnCleanDiscreteDataEqualsPlainSigmaNotMAD() throws {
+    // 200 each of -2,-1,0,1,2 -- population variance = mean of squares =
+    // (4+1+0+1+4)/5 = 2, so sigma == sqrt(2) exactly.
+    var values: [Double] = []
+    for v in [-2.0, -1.0, 0.0, 1.0, 2.0] {
+        values.append(contentsOf: Array(repeating: v, count: 200))
+    }
+    let expectedPlainSigma = 2.0.squareRoot()
+    // MAD on this same set: median 0, sorted absolute deviations put the
+    // median abs-dev at 1 -> MAD-scaled (x1.4826) == 1.4826, a ~5% but very
+    // real difference from the true sqrt(2) -- exactly the kind of gap that
+    // made the old iterated estimator read low on real sensor data.
+    let madScaled = 1.4826
+
+    let result = SensorProfiler.clippedStandardDeviation(values)
+    #expect(abs(result - expectedPlainSigma) < 0.0001, "clean data has no outliers -- a single clipping pass must change nothing")
+    #expect(abs(result - madScaled) > 0.01, "must NOT collapse toward the MAD-scaled estimate")
+}
+
+/// A single clipping pass must still do its actual job: genuine far
+/// outliers (a hot/corrupt pixel, a cosmic-ray hit) get dropped, and the
+/// returned sigma reflects the clean core population, not one blown up by
+/// the outliers.
+@Test func clippedStandardDeviationDropsGenuineOutliersInASinglePass() throws {
+    var values: [Double] = []
+    for v in [-2.0, -1.0, 0.0, 1.0, 2.0] {
+        values.append(contentsOf: Array(repeating: v, count: 200))
+    }
+    // A handful of extreme outliers, far beyond any plausible multiple of
+    // the core's own sigma (sqrt(2) ~= 1.41).
+    values.append(contentsOf: Array(repeating: 1000.0, count: 5))
+
+    let expectedPlainSigmaOfCore = 2.0.squareRoot()
+    let result = SensorProfiler.clippedStandardDeviation(values)
+    #expect(abs(result - expectedPlainSigmaOfCore) < 0.01, "a single 5-sigma pass must drop the outliers and return the clean core's own sigma")
+}
+
 // MARK: - dark_rate_e_per_s
 
 @Test func sensorProfilerMeasuresDarkRateFromMatchingDarkFrameClampedAtZero() throws {

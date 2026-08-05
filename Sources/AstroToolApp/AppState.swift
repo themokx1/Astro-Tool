@@ -996,7 +996,11 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - Rate
 
-    func runRate(target: String, date: String?) {
+    /// `force`, when `true`, passes through to `Rater.rate` -- a deliberate
+    /// full re-measure of every frame regardless of cache state, driven by
+    /// QualityView's "Újrapontozás" checkbox (the manual escape hatch next
+    /// to the self-heal `Rater` already does automatically for stale rows).
+    func runRate(target: String, date: String?, force: Bool = false) {
         guard let db else { return }
         let cfg = config
 
@@ -1010,7 +1014,7 @@ final class AppState: @unchecked Sendable {
                         provider = try? SirilCLI(path: cfg.rating.sirilPath)
                     }
                     let rater = Rater(db: db, config: cfg, provider: provider)
-                    return try rater.rate(target: target, date: date) { done, total in
+                    return try rater.rate(target: target, date: date, force: force) { done, total in
                         Task { @MainActor in
                             self?.progressText = "Pontozás: \(done)/\(total)"
                         }

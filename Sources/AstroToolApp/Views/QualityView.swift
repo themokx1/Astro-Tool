@@ -6,6 +6,10 @@ struct QualityView: View {
     @Environment(AppState.self) private var appState
     @State private var selectedTarget: String?
     @State private var dateText: String = ""
+    /// Drives `Rater.rate`'s `force` parameter -- a manual full re-measure
+    /// of every frame, independent of `Rater`'s own automatic cache
+    /// self-heal (which only recomputes a row's actually-missing half).
+    @State private var forceRescore: Bool = false
     @State private var sortOrder = [KeyPathComparator(\Row.score, order: .reverse)]
     /// The session date currently selected in the quality-summary section,
     /// `nil` until the user picks one -- drives `sessionTimeline`'s "Ablak…"
@@ -117,9 +121,13 @@ struct QualityView: View {
 
                 Button("Pontozás") {
                     guard let selectedTarget else { return }
-                    appState.runRate(target: selectedTarget, date: dateText.isEmpty ? nil : dateText)
+                    appState.runRate(target: selectedTarget, date: dateText.isEmpty ? nil : dateText, force: forceRescore)
                 }
                 .disabled(selectedTarget == nil || appState.isBusy)
+
+                Toggle("Újrapontozás", isOn: $forceRescore)
+                    .toggleStyle(.checkbox)
+                    .help("Minden keret teljes újramérése, a gyorsítótártól függetlenül (nem csak a hiányos sorok pótlása)")
 
                 Spacer()
 

@@ -35,7 +35,6 @@ public enum SensorProfiler {
     /// `NAXIS2`, which two frames from the same camera/combo always do.
     private static let cropFraction = 0.5
     private static let clipSigmaThreshold = 5.0
-    private static let maxClipIterations = 5
 
     /// Groups tracked BIAS (and DARK) frames by `(instrume, gain, offset)`
     /// and measures one `SensorProfileRecord` per combo that has at least
@@ -198,35 +197,47 @@ public enum SensorProfiler {
         values.isEmpty ? nil : median(values)
     }
 
-    /// 5σ-clipped standard deviation of `values`: iteratively computes the
-    /// population mean/std, discards points more than `sigma` away from the
-    /// mean, and recomputes -- up to `maxIterations` times, or stopping the
-    /// moment nothing more gets clipped. This (not MAD) is what the
-    /// expert-measured ground truth used: on this sensor, ADU quantization
-    /// (~4 e⁻/ADU at typical gain) makes MAD under-read the true read noise
-    /// (1.02 e⁻ from MAD vs. the correct 1.30 e⁻ from clipped σ) -- MAD's
-    /// robustness to outliers comes at the cost of exactly the precision
-    /// this measurement needs when the underlying data is coarsely
-    /// quantized to begin with.
-    static func clippedStandardDeviation(_ values: [Double], sigma: Double = clipSigmaThreshold, maxIterations: Int = maxClipIterations) -> Double {
+    /// A single 5σ-clipped standard deviation of `values`: computes the
+    /// population mean/std ONCE over the full (unclipped) set, discards
+    /// points more than `sigma` away from that mean, and returns the plain
+    /// standard deviation of the survivors -- exactly ONE pass, never
+    /// iterated to convergence.
+    ///
+    /// This replaces an earlier version that re-computed mean/std on the
+    /// surviving subset and repeated until nothing more got clipped (or
+    /// `maxIterations` was hit). On real, quantized sensor data that
+    /// iterate-to-convergence loop collapses much further than a single
+    /// pass warrants: verified on a real ZWO ASI2600MC Pro bias pair (gain
+    /// 100, EGAIN 0.2429 e⁻/ADU, 6.5M-pixel central crop), the old
+    /// iterated version landed on read noise 1.02 e⁻ -- statistically
+    /// indistinguishable from a straight MAD×1.4826 estimate (1.02 e⁻) --
+    /// while a single clipping pass gave 1.06 e⁻ and the *unclipped*
+    /// population σ gave 1.29 e⁻, matching the expert's independently
+    /// measured reference of ~1.30 e⁻ far more closely. That gap traces to
+    /// this specific sensor's real per-pixel behavior: ~0.5% of pixels in
+    /// the crop sit far outside a Gaussian tail at 5σ (a true Gaussian at
+    /// this sample size would put ~4 pixels there, not 33,000+) -- almost
+    /// certainly RTS/"twinkling" pixel behavior documented for this sensor
+    /// family, not cosmic rays. Each further clipping pass throws away more
+    /// of that real (if unusual) pixel population, which is why iterating
+    /// to convergence keeps sliding the estimate down toward MAD's answer
+    /// rather than settling near the true value. A single pass still guards
+    /// against a genuinely corrupt/saturated frame (see the regression
+    /// tests in `SensorProfileTests.swift`) without compounding that
+    /// masking effect across repeated passes.
+    static func clippedStandardDeviation(_ values: [Double], sigma: Double = clipSigmaThreshold) -> Double {
         guard values.count > 1 else { return 0 }
-        var current = values
 
-        for _ in 0..<maxIterations {
-            let mean = current.reduce(0, +) / Double(current.count)
-            let variance = current.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(current.count)
-            let std = variance.squareRoot()
-            guard std > 0 else { return std }
+        let mean = values.reduce(0, +) / Double(values.count)
+        let variance = values.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(values.count)
+        let std = variance.squareRoot()
+        guard std > 0 else { return std }
 
-            let filtered = current.filter { abs($0 - mean) <= sigma * std }
-            if filtered.count == current.count || filtered.count < 2 {
-                return std
-            }
-            current = filtered
-        }
+        let survivors = values.filter { abs($0 - mean) <= sigma * std }
+        guard survivors.count > 1 else { return std }
 
-        let mean = current.reduce(0, +) / Double(current.count)
-        let variance = current.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(current.count)
-        return variance.squareRoot()
+        let survivorMean = survivors.reduce(0, +) / Double(survivors.count)
+        let survivorVariance = survivors.reduce(0) { $0 + ($1 - survivorMean) * ($1 - survivorMean) } / Double(survivors.count)
+        return survivorVariance.squareRoot()
     }
 }

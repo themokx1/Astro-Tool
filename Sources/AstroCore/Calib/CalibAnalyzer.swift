@@ -19,15 +19,19 @@ struct CalibCombo: Hashable {
     var offset: Double?
     var camera: String?
 
-    /// Rounds `exptime` to the nearest 0.1s and `setTemp` to the nearest
-    /// 0.5°C -- coarse enough to bucket a camera's own exposure/temperature
-    /// jitter (e.g. `300.0` vs `300.04`) into the same combo, fine enough to
-    /// keep genuinely distinct dark-frame setups apart. `gain`/`offset`/
-    /// `camera` are taken as-is (a session's electronic settings don't
-    /// jitter the way exposure/temperature do).
+    /// Rounds `exptime` via `NominalExposure` (whole seconds at 10s+, 0.1s
+    /// below that -- see its own doc comment for why: real acquisition
+    /// software reports the same nominal "30s" sub as `30.0` for most
+    /// frames and `29.899999618523` for others, and a naive 0.1s-only
+    /// rounding still keeps those apart) and `setTemp` to the nearest
+    /// 0.5°C -- coarse enough to bucket a camera's own temperature jitter
+    /// into the same combo, fine enough to keep genuinely distinct
+    /// dark-frame setups apart. `gain`/`offset`/`camera` are taken as-is (a
+    /// session's electronic settings don't jitter the way exposure/
+    /// temperature do).
     static func rounded(exptime: Double, setTemp: Double?, gain: Double?, offset: Double?, camera: String?) -> CalibCombo {
         CalibCombo(
-            exposureS: (exptime * 10).rounded() / 10,
+            exposureS: NominalExposure.nominal(exptime),
             tempC: setTemp.map { ($0 / 0.5).rounded() * 0.5 },
             gain: gain,
             offset: offset,
@@ -149,6 +153,39 @@ public enum CalibAnalyzer {
         let calib = config.calib
         let staleThresholdDays = calib.darkMaxAgeMonths * 30
 
+        // Ambiguity context for the todo text, computed once over every
+        // combo in this batch (not per-row) -- see the real bug this fixes:
+        // a light-frame library scanned two representations of the same
+        // captures (e.g. a Canon `.CR3` original alongside a converted
+        // `.tif` whose header happens to carry a `GAIN`/ISO value the raw
+        // file's header didn't), which legitimately produces two distinct
+        // `CalibCombo`s at the very same nominal exposure/temp/camera. That
+        // split is real (this function must not silently merge rows with
+        // different electronic settings), but showing only "822" and "310"
+        // side by side with no explanation reads as a bug to a user. Naming
+        // the camera/gain in the todo only when it's ACTUALLY ambiguous
+        // (rather than always) keeps the common, unambiguous case's
+        // wording unchanged.
+        let allCameras = Set(groups.keys.compactMap(\.camera))
+        let cameraAmbiguous = allCameras.count > 1
+
+        struct ExposureTempCameraKey: Hashable {
+            var exposureS: Double
+            var tempC: Double?
+            var camera: String?
+        }
+        // `nil` is included alongside real values here (unlike the camera
+        // set above) -- the real-world split this guards against is
+        // exactly "some frames at this exposure/temp/camera have a GAIN
+        // reading and some don't" (e.g. `822` with no GAIN card at all vs.
+        // `310` more at `gain == 1600`), not just two different non-nil
+        // values.
+        var gainsByExposureTempCamera: [ExposureTempCameraKey: Set<Double?>] = [:]
+        for key in groups.keys {
+            let bucket = ExposureTempCameraKey(exposureS: key.exposureS, tempC: key.tempC, camera: key.camera)
+            gainsByExposureTempCamera[bucket, default: []].insert(key.gain)
+        }
+
         var needs: [CalibNeed] = []
         needs.reserveCapacity(groups.count)
 
@@ -168,13 +205,20 @@ public enum CalibAnalyzer {
             let ageDays = matched.map { dayCount(fromInstant: $0.newestInstant, to: now) }
             let isStale = matched != nil && (ageDays ?? 0) > staleThresholdDays
 
+            let gainBucket = ExposureTempCameraKey(exposureS: key.exposureS, tempC: key.tempC, camera: key.camera)
+            let gainAmbiguous = (gainsByExposureTempCamera[gainBucket]?.count ?? 0) > 1
+
             let todo = todoString(
                 matched: matched,
                 exposureS: key.exposureS,
                 tempC: key.tempC,
                 lightCount: info.count,
                 ageDays: ageDays,
-                isStale: isStale
+                isStale: isStale,
+                camera: key.camera,
+                gain: key.gain,
+                cameraAmbiguous: cameraAmbiguous,
+                gainAmbiguous: gainAmbiguous
             )
 
             let hasMismatch = matched == nil && !outcome.mismatchReasons.isEmpty
@@ -582,20 +626,44 @@ public enum CalibAnalyzer {
 
     // MARK: - Todo strings
 
+    /// `camera`/`gain` are only ever mentioned in the returned text when
+    /// `cameraAmbiguous`/`gainAmbiguous` say there's actually more than one
+    /// value for that dimension among this batch's combos -- see
+    /// `coverage()`'s own doc comment on why that ambiguity can be real
+    /// (not a bug) and still confusing to read without it. `tempC == nil`
+    /// always gets its own "(hőmérséklet nélkül)" callout, independent of
+    /// the camera/gain flags -- a light with no cooler telemetry at all is
+    /// worth flagging regardless of how many cameras/gains are in play.
     private static func todoString(
         matched: MasterDir?,
         exposureS: Double,
         tempC: Double?,
         lightCount: Int,
         ageDays: Int?,
-        isStale: Bool
+        isStale: Bool,
+        camera: String?,
+        gain: Double?,
+        cameraAmbiguous: Bool,
+        gainAmbiguous: Bool
     ) -> String? {
         guard let matched else {
             let expStr = formatted(exposureS)
-            if let tempC {
-                return "készíts \(expStr) s / \(formatted(tempC)) °C darkot (\(lightCount) light frame-hez)"
+
+            var detail = "\(lightCount) light frame-hez"
+            if tempC == nil {
+                detail += ", hőmérséklet nélkül"
             }
-            return "készíts \(expStr) s darkot (\(lightCount) light frame-hez)"
+            if cameraAmbiguous, let camera {
+                detail += ", kamera: \(camera)"
+            }
+            if gainAmbiguous, let gain {
+                detail += ", gain: \(formatted(gain))"
+            }
+
+            if let tempC {
+                return "készíts \(expStr) s / \(formatted(tempC)) °C darkot (\(detail))"
+            }
+            return "készíts \(expStr) s darkot (\(detail))"
         }
 
         guard isStale, let ageDays else { return nil }
