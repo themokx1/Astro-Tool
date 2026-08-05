@@ -33,6 +33,9 @@ struct StatsView: View {
     /// The target currently shown in `PlateSolveSheet`, `nil` when closed --
     /// same row-scoped-button pattern as `linkingSession`.
     @State private var solvingTarget: SolvingTarget?
+    /// The session currently shown in `StackListSheet` (R7-B4), `nil` when
+    /// closed -- same row-scoped-button pattern as `linkingSession`.
+    @State private var stackListingSession: LinkingSession?
 
     private struct LinkingSession: Identifiable {
         let target: String
@@ -130,6 +133,9 @@ struct StatsView: View {
         .sheet(item: $solvingTarget) { solving in
             PlateSolveSheet(target: solving.target)
         }
+        .sheet(item: $stackListingSession) { session in
+            StackListSheet(target: session.target, date: session.date)
+        }
         .padding()
     }
 
@@ -182,7 +188,7 @@ struct StatsView: View {
             TableColumn("Műveletek") { row in
                 actionsCell(row)
             }
-            .width(min: 80, ideal: 140)
+            .width(min: 80, ideal: 240)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
     }
@@ -412,11 +418,19 @@ struct StatsView: View {
                 }
             }
         case .session(let target, let detail):
-            Button("Kalibráció linkelése…") {
-                linkingSession = LinkingSession(target: target, date: detail.dateRaw)
+            HStack(spacing: 8) {
+                Button("Kalibráció linkelése…") {
+                    linkingSession = LinkingSession(target: target, date: detail.dateRaw)
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+
+                Button("Stack-lista…") {
+                    stackListingSession = LinkingSession(target: target, date: detail.dateRaw)
+                }
+                .buttonStyle(.link)
+                .font(.caption)
             }
-            .buttonStyle(.link)
-            .font(.caption)
         }
     }
 
@@ -761,6 +775,109 @@ private struct PlateSolveSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Megoldva: \(summary.solved) / \(summary.attempted) (sikertelen: \(summary.failed), kihagyva: \(summary.skipped))")
                 .font(.callout)
+            HStack {
+                Spacer()
+                Button("Bezárás") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+    }
+}
+
+// MARK: - Stack-list export (R7-B4)
+
+/// "Stack-lista…" sheet: a keep-fraction slider (50-100%) drives a live
+/// `StackList.select` preview (criteria + selected/total counts), and
+/// "Exportálás" runs `StackList.export` -- the additive hard-link + `.
+/// dssfilelist`/`.ssf` write this whole feature bridges frame scoring to
+/// actual stacking with. Same "load on appear, clear on disappear" pattern
+/// as `CalibLinkSheet`/`PlateSolveSheet`; unlike `CalibLinkSheet` there's no
+/// separate `--dry-run` state -- adjusting the slider just recomputes the
+/// (read-only) preview in place.
+private struct StackListSheet: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+
+    let target: String
+    let date: String
+
+    @State private var keepFraction: Double = 0.8
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Stack-lista").font(.headline)
+            Text("\(target) / \(date)").foregroundStyle(.secondary)
+
+            HStack {
+                Text("Megtartás:")
+                Slider(value: $keepFraction, in: 0.5...1.0, step: 0.05)
+                Text("\(Int((keepFraction * 100).rounded()))%")
+                    .monospacedDigit()
+                    .frame(width: 44, alignment: .trailing)
+            }
+            .disabled(appState.stackListExportDir != nil)
+            .onChange(of: keepFraction) { _, newValue in
+                appState.loadStackListSelection(target: target, date: date, keepFraction: newValue)
+            }
+
+            if let exportDir = appState.stackListExportDir {
+                resultView(exportDir)
+            } else if let selection = appState.stackListSelection {
+                selectionView(selection)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+
+            if let lastError = appState.lastError {
+                Text(lastError).foregroundStyle(.red)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 480, minHeight: 320)
+        .onAppear {
+            appState.loadStackListSelection(target: target, date: date, keepFraction: keepFraction)
+        }
+        .onDisappear {
+            appState.clearStackListSelection()
+        }
+    }
+
+    @ViewBuilder
+    private func selectionView(_ selection: StackSelection) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Kiválasztva: \(selection.selectedFrames) / \(selection.totalFrames)").font(.callout)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(selection.criteria, id: \.self) { line in
+                        Text("•  \(line)").font(.caption)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 160)
+        }
+
+        HStack {
+            Spacer()
+            if appState.isBusy {
+                ProgressView().controlSize(.small)
+            }
+            Button("Mégse") { dismiss() }
+            Button("Exportálás") { appState.exportStackList() }
+                .keyboardShortcut(.defaultAction)
+                .disabled(selection.selectedFrames == 0 || appState.isBusy)
+                .help(selection.selectedFrames == 0 ? "Nincs kiválasztható keret" : "")
+        }
+    }
+
+    private func resultView(_ dir: URL) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Exportálva: \(dir.lastPathComponent)").font(.callout)
+            Text(dir.path)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
             HStack {
                 Spacer()
                 Button("Bezárás") { dismiss() }

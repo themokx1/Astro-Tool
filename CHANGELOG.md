@@ -36,6 +36,29 @@ történik.
 
 ### Added
 
+- **Stack-lista export (`astrotool stacklist`)**: híd a keret-pontozás
+  (`rate` / DSS-verdiktek) és a tényleges stackelés között. Kiválasztja egy
+  session legjobb frame-jeit, majd olyan artifacteket ír, amiket a
+  felhasználó valódi eszközei (DeepSkyStacker + Siril/Sirilic) közvetlenül
+  beolvasnak — mivel Siril 1.4-ben nincs "stackeld ezt a listát" parancs, és
+  a sequence-index select/unselect törékeny, a kiválasztott lightokat egy
+  külön mappába HARDLINKELI, és fölé egy sima `convert`/`register`/`stack`
+  Siril-scriptet generál. Kiválasztás: a `FrameSet` usable (dedupolt, nem
+  `Reject/`) lightjaiból hard drop a DSS-ben elvetett (`user_verdicts`) és a
+  kiugróan gyenge (`score < -outlierZScore`) keretekre, majd a maradék
+  `score` szerinti rangsorból `keepFraction` (alapból 80%, min. 3 keret)
+  tartása — egy pontozatlan keret SOSEM esik ki a hiányzó adat miatt, mindig
+  megtartva. Export: `.astro_tool/stacklists/<cél>-<dátum>/lights/` alá
+  hardlinkeli a kiválasztott frame-eket (`WriteGuard.linkStackListFile` —
+  additív, sosem felülíró, idempotens), mellé ír egy `.dssfilelist`-et
+  (csak a kiválasztott frame-ek, `CHECKED=1` sorokkal) és egy `.ssf`
+  Siril-scriptet (fejléc-kommenttel a kalibráció-mesterek saját kézi
+  beillesztéséről — sosem `rm`, sosem destruktív parancs). CLI `astrotool
+  stacklist --target T --date D [--keep 0.8] [--json] [--root R]` — nincs
+  `--dry-run`/`--yes` kapu, mindig lefut és beszámol (additív/idempotens).
+  App: Statisztika fül session-sorának Műveletek cellájában "Stack-lista…"
+  gomb → megtartás-csúszka (50–100%) + élő szempont-előnézet, "Exportálás" →
+  háttérművelet → Finder-reveal.
 - **Expozíció-tanácsadó (`astrotool expose`)**: mennyi legyen egy sub
   hossza — a mért szenzor-adatokból (`sensor_profile` bias-szintje/
   leolvasási zaja/EGAIN-je) és a mért per-Bayer háttérből (`ratings.bg_00/

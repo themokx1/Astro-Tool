@@ -58,6 +58,12 @@ Commands:
                 from measured sensor-profile + per-Bayer background data.
                 Without --target: one row per target. With --target: full
                 advice for that target.
+  stacklist     --target T --date D [--keep 0.8] [--json] [--root R]
+                Best-frame stack-list export: hardlinks the selected lights
+                into .astro_tool/stacklists/<target>-<date>/lights/ and
+                writes a .dssfilelist (DeepSkyStacker/Sirilic) and a .ssf
+                Siril script alongside it. Additive and idempotent -- never
+                touches your original files.
 
   --version     Print version and exit
   --help        Show this help
@@ -1991,5 +1997,74 @@ private func printExposeTable(_ all: [ExposureAdvice]) {
         let share = (advice.currentReadNoiseSharePercent.map { String(format: "%.0f%%", $0) } ?? "-").padding(toLength: 9, withPad: " ", startingAt: 0)
         let tip = advice.notAvailableReason ?? advice.advice.first ?? "-"
         print("\(target)  \(current)  \(recommended)  \(share)  \(tip)")
+    }
+}
+
+// MARK: - stacklist (R7-B4)
+
+/// Selects the best frames of one session and exports the artifacts the
+/// user's real stacking tools consume: a `.astro_tool/stacklists/<slug>/
+/// lights/` hardlink folder, a `.dssfilelist`, and a `.ssf` Siril script.
+/// Unlike `link-calib`, there's no `--dry-run`/`--yes` gate -- both the
+/// selection and the export are read-only against the user's actual light
+/// frames (hardlink-only, additive, idempotent), so this always runs both
+/// steps and reports what it did.
+func cmdStackList(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--date", takesValue: true),
+        FlagSpec("--keep", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    guard let target = parsed.value("--target"), let date = parsed.value("--date") else {
+        eprint("error: --target and --date are required")
+        eprint(usageText)
+        return 1
+    }
+
+    var keepFraction = 0.8
+    if let keepText = parsed.value("--keep") {
+        guard let parsedKeep = Double(keepText), parsedKeep > 0, parsedKeep <= 1 else {
+            eprint("error: --keep must be a number in (0, 1]")
+            return 1
+        }
+        keepFraction = parsedKeep
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let selection = try StackList.select(target: target, date: date, keepFraction: keepFraction, db: db, config: config)
+    let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+    let writeGuard = makeWriteGuard(config: config)
+    let stacklistDir = try StackList.export(selection, root: root, using: writeGuard)
+
+    if parsed.has("--json") {
+        struct Output: Encodable {
+            var selection: StackSelection
+            var stackListDir: String
+        }
+        try printJSON(Output(selection: selection, stackListDir: stacklistDir.path))
+    } else {
+        printStackSelection(selection)
+        print("exportálva: \(stacklistDir.path)")
+    }
+    return 0
+}
+
+private func printStackSelection(_ selection: StackSelection) {
+    print("target: \(selection.target)")
+    print("date: \(selection.date)")
+    print("összes használható: \(selection.totalFrames)")
+    print("kiválasztva: \(selection.selectedFrames)")
+    if !selection.criteria.isEmpty {
+        print("szempontok:")
+        for line in selection.criteria {
+            print("  - \(line)")
+        }
     }
 }

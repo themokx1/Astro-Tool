@@ -225,6 +225,83 @@ public struct WriteGuard: Sendable {
         return destFileURL
     }
 
+    /// Hard-links one SELECTED light frame from `sessions/...` into a
+    /// stack-list export's own `lights/` folder under `.astro_tool/
+    /// stacklists/<slug>/lights` -- the export-side counterpart of
+    /// `linkCalibrationFile` (R7-B4, `StackList.export`): additive,
+    /// same-volume, hardlink only, and (same as every other WriteGuard
+    /// write) never overwrites anything already there.
+    ///
+    /// Validates, in order:
+    /// - `sourceRelative` resolves (via `standardizedFileURL`, same
+    ///   traversal defense as every other WriteGuard check) to a path
+    ///   inside `<root>/sessions/` -- this only ever links a frame that's
+    ///   actually part of the scanned session library, never an arbitrary
+    ///   file elsewhere (in particular, never anything under
+    ///   `calibration_library/`, which is `linkCalibrationFile`'s domain,
+    ///   not this one's).
+    /// - `destDirRelative` is *exactly* `.astro_tool/stacklists/<slug>/
+    ///   lights` -- one slug component (validated the same way `target`/
+    ///   `dateDir` are: non-empty, no path separators, not `.`/`..`), the
+    ///   literal `lights` role directory, no more and no fewer -- both as a
+    ///   raw component check (rejecting empty/`.`/`..` segments outright)
+    ///   and, again, via `standardizedFileURL` containment inside `toolDir`
+    ///   for defense in depth.
+    ///
+    /// Creates `destDirRelative` (mkdir -p semantics) if it doesn't exist
+    /// yet. The destination file name is always the source file's own last
+    /// path component. If a file already sits there, this makes NO change
+    /// and returns `nil` -- a re-export of the same selection is fully
+    /// idempotent, exactly like `linkCalibrationFile`'s own re-run
+    /// behavior. Permission failures are reclassified as
+    /// `AstroError.accessDenied`, same as every other write in this type.
+    @discardableResult
+    public func linkStackListFile(sourceRelative: String, destDirRelative: String) throws -> URL? {
+        guard !sourceRelative.hasPrefix("/") else {
+            throw AstroError.writeForbidden(path: sourceRelative)
+        }
+
+        let sessionsBase = root.appendingPathComponent("sessions", isDirectory: true).standardizedFileURL
+        let sourceCandidate = root.appendingPathComponent(sourceRelative).standardizedFileURL
+        guard sourceCandidate.path.hasPrefix(sessionsBase.path + "/") else {
+            throw AstroError.writeForbidden(path: sourceRelative)
+        }
+
+        guard !destDirRelative.hasPrefix("/") else {
+            throw AstroError.writeForbidden(path: destDirRelative)
+        }
+
+        let destComponents = destDirRelative.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard destComponents.count == 4,
+              destComponents[0] == ".astro_tool",
+              destComponents[1] == "stacklists",
+              destComponents[3] == "lights"
+        else {
+            throw AstroError.writeForbidden(path: destDirRelative)
+        }
+        try Self.validatePathComponent(destComponents[2])
+
+        let toolBase = toolDir.standardizedFileURL
+        let destDirCandidate = root.appendingPathComponent(destDirRelative, isDirectory: true).standardizedFileURL
+        guard destDirCandidate.path.hasPrefix(toolBase.path + "/") else {
+            throw AstroError.writeForbidden(path: destDirRelative)
+        }
+
+        let fm = FileManager.default
+        let destFileURL = destDirCandidate.appendingPathComponent(sourceCandidate.lastPathComponent, isDirectory: false)
+
+        guard !fm.fileExists(atPath: destFileURL.path) else {
+            return nil
+        }
+
+        try Self.classifyingPermissionErrors(path: destFileURL.path) {
+            try fm.createDirectory(at: destDirCandidate, withIntermediateDirectories: true)
+            try fm.linkItem(at: sourceCandidate, to: destFileURL)
+        }
+
+        return destFileURL
+    }
+
     /// Runs a filesystem-writing `body`, reclassifying a permission failure
     /// (TCC / EPERM / EACCES -- e.g. a read-only root, or a directory whose
     /// TCC grant was revoked mid-session) as `AstroError.accessDenied(path:)`

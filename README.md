@@ -21,6 +21,7 @@ Asztrofotó-könyvtár auditálása, minőség-pontozás és kalibráció-követ
 - **Kereshető éjszaka-napló (search)** — a session `README.txt`-jébe kézzel beírt Bortle/SQM/seeing/megjegyzés szöveg indexelve, kulcs vagy érték szerint kereshetően.
 - **Plate-solve backfill (solve)** — wide-field Canon CR3 célpontok koordináta-pótlása Siril blind plate-solve-jával, hogy a tervező és a mozaik-panel követés ezekre is működjön.
 - **Expozíció-tanácsadó (expose)** — mért szenzor-zajból és per-Bayer égháttérből számolt ideális sub-hossz + relatív SNR-tanács ("mennyivel javul a jel, ha még N órát integrálok").
+- **Stack-lista export (stacklist)** — egy session legjobb frame-jeinek kiválasztása (pontszám + DSS-verdikt alapján) és exportálása hardlinkek + `.dssfilelist` + Siril `.ssf` script formájában, közvetlenül a DeepSkyStacker/Siril/Sirilic munkafolyamathoz.
 
 ## ⛔ Vasszabály
 
@@ -101,6 +102,9 @@ astrotool solve --target M_Milky_Way --frames 2
 
 astrotool solve --all --json
 # Minden koordináta nélküli célpont megoldása, gépi olvasható összegzéssel.
+
+astrotool stacklist --target M31 --date 2026-03-15
+# A session legjobb frame-jeinek kiválasztása és exportálása (hardlinkek + .dssfilelist + .ssf) DSS/Sirilbe töltéshez.
 ```
 
 Minden parancs elfogadja a `--root <PATH>` kapcsolót az alapértelmezett könyvtár felülbírálására.
@@ -297,6 +301,61 @@ Tanács:
   ezt őszintén megmondja.
 - Az alkalmazásban a Minőség fülön a session-összegzés fölött egy
   "Expozíció-tanácsadó" doboz mutatja ugyanezt a kiválasztott célpontra.
+
+## Stack-lista
+
+Híd a keret-pontozás (`astrotool rate`, DSS-verdiktek) és a tényleges
+stackelés között: kiválasztja egy session legjobb frame-jeit, és olyan
+formában teszi le őket, ahogy a valódi eszközök (DeepSkyStacker +
+Siril/Sirilic) beolvassák.
+
+```bash
+astrotool stacklist --target M31 --date 2026-03-15 --keep 0.8
+```
+
+```
+target: M31
+date: 2026-03-15
+összes használható: 42
+kiválasztva: 34
+szempontok:
+  - használható (deduplikált, nem elvetett) light: 42
+  - DSS-ben elvetett: 3
+  - kiugróan gyenge: 1
+  - nem pontozott: 5 — megtartva
+  - megtartva: 34 / 38 (keepFraction 80%)
+exportálva: /path/to/library/.astro_tool/stacklists/M31-2026-03-15
+```
+
+- **Miért nem "stackeld ezt a listát"**: Siril 1.4-ben nincs ilyen parancs,
+  és a szekvencia-index alapú select/unselect törékeny egy átrendezéssel
+  szemben. Ehelyett a kiválasztott lightokat egy külön mappába
+  HARDLINKELI (`.astro_tool/stacklists/<cél>-<dátum>/lights/` — additív,
+  a te eredeti fájljaidhoz sosem nyúl), és afölé egy sima
+  `convert`/`register`/`stack` Siril-scriptet ír.
+- **Kiválasztás**: a `FrameSet` usable (dedupolt, nem `Reject/`)
+  lightjaiból hard drop, ami a DSS-ben elvetett (`.dssfilelist`
+  `CHECKED=0`) és a kiugróan gyenge (a mért `score` a session átlagától
+  `outlierZScore`-nál jobban lemarad) kereteket kiszűri; a maradékból
+  `--keep` (alapból 80%, sosem kevesebb 3 keretnél, ha van elég) a
+  legjobban pontozottakat tartja meg. Egy pontozatlan keret (még sosem
+  futott rá `astrotool rate`) SOSEM esik ki emiatt — a hiányzó adat nem
+  bizonyíték a gyenge keretre, mindig megtartva.
+- **Mit ír**: a hardlinkelt `lights/` mappa mellé egy `.dssfilelist`-et
+  (DeepSkyStacker/Sirilic közvetlenül beolvassa — csak a kiválasztott
+  frame-ek szerepelnek benne, `CHECKED=1` sorokkal) és egy `.ssf`
+  Siril-scriptet (fejléc-kommenttel, hogy a kalibráció-mestereket saját
+  kézzel illeszd be a `convert`/`register` közé, ha a session-nek kell —
+  a script sosem tartalmaz `rm`-et vagy más destruktív parancsot,
+  áttekintésre szánva, akárcsak az audit javaslat-script).
+- Nincs `--dry-run`/`--yes` kapu: mind a kiválasztás, mind az export
+  additív, idempotens (egy már meglévő hardlinket sosem bont/ír felül) és
+  csak-olvasás a te eredeti fájljaidon, ezért a parancs mindig lefut és
+  beszámol.
+- Az alkalmazásban a Statisztika fül session-sorának Műveletek cellájában
+  a "Stack-lista…" gomb nyit egy sheetet megtartás-csúszkával (50–100%) és
+  élő szempont-előnézettel; az "Exportálás" gomb után a Finder megnyitja a
+  létrehozott mappát.
 
 ## Konfiguráció
 

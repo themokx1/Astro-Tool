@@ -1494,6 +1494,94 @@ private func writeBayerLightFITS(
     #expect(humanResult.stdout.contains("CÉLPONT"))
 }
 
+// MARK: - stacklist
+
+private func writeStackListLight(_ relativePath: String, root: URL) throws {
+    let url = root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "dummy light: \(relativePath)".write(to: url, atomically: true, encoding: .utf8)
+}
+
+@Test func stackListJSONExportsHardlinksDssfilelistAndSsf() throws {
+    let root = try makeTempRoot("stacklist-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    for i in 1...3 {
+        try writeStackListLight("sessions/T1/2026-01-10/lights/l\(i).fit", root: root)
+    }
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+    let payload = try #require(json)
+    let selection = try #require(payload["selection"] as? [String: Any])
+    #expect(selection["total_frames"] as? Int == 3)
+    #expect(selection["selected_frames"] as? Int == 3)
+
+    let stackListDirPath = try #require(payload["stack_list_dir"] as? String)
+    let stackListDir = URL(fileURLWithPath: stackListDirPath, isDirectory: true)
+    #expect(stackListDir.path == root.appendingPathComponent(".astro_tool/stacklists/T1-2026-01-10").path)
+
+    for i in 1...3 {
+        #expect(FileManager.default.fileExists(atPath: stackListDir.appendingPathComponent("lights/l\(i).fit").path))
+    }
+    #expect(FileManager.default.fileExists(atPath: stackListDir.appendingPathComponent("stack.dssfilelist").path))
+    #expect(FileManager.default.fileExists(atPath: stackListDir.appendingPathComponent("stack.ssf").path))
+}
+
+@Test func stackListHumanReadableOutputPrintsSummaryAndDir() throws {
+    let root = try makeTempRoot("stacklist-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l2.fit", root: root)
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l3.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("T1"))
+    #expect(result.stdout.contains("2026-01-10"))
+    #expect(result.stdout.contains("stacklists/T1-2026-01-10"))
+}
+
+@Test func stackListWithoutTargetOrDateExitsWithError() throws {
+    let root = try makeTempRoot("stacklist-missing-args")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let result = try runCLI(["stacklist", "--root", root.path, "--target", "T1"])
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("--target and --date are required"))
+}
+
+@Test func stackListRerunIsIdempotent() throws {
+    let root = try makeTempRoot("stacklist-idempotent")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l2.fit", root: root)
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l3.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let first = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
+    #expect(first.exitCode == 0, "stderr: \(first.stderr)")
+
+    let second = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
+    #expect(second.exitCode == 0, "stderr: \(second.stderr)")
+
+    let stackListDir = root.appendingPathComponent(".astro_tool/stacklists/T1-2026-01-10/lights")
+    let contents = try FileManager.default.contentsOfDirectory(atPath: stackListDir.path)
+    #expect(Set(contents) == Set(["l1.fit", "l2.fit", "l3.fit"]))
+}
+
 // MARK: - misc
 
 @Test func unknownSubcommandExitsWithUsage() throws {

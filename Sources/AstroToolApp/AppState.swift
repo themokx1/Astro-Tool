@@ -125,6 +125,16 @@ final class AppState: @unchecked Sendable {
     /// showing the plan to showing this result.
     var calibLinkResult: LinkResult?
 
+    /// The best-frame selection currently shown in `StackListSheet` (R7-B4),
+    /// `nil` while it's still (re)computing -- recomputed every time the
+    /// sheet's keep-fraction slider settles on a new value, since `select`
+    /// is a cheap, read-only query. Cleared whenever the sheet closes so a
+    /// stale previous session's selection never flashes on next open.
+    var stackListSelection: StackSelection?
+    /// Set once `exportStackList()` finishes -- the sheet's "Exportálás"
+    /// button switches to a "kész" state and shows this path.
+    var stackListExportDir: URL?
+
     var isBusy: Bool = false
     var progressText: String = ""
     var lastError: String?
@@ -777,6 +787,70 @@ final class AppState: @unchecked Sendable {
     func clearCalibLinkPlan() {
         calibLinkPlan = nil
         calibLinkResult = nil
+    }
+
+    // MARK: - Stack-list export (R7-B4)
+
+    /// Computes `StackList.select` for one session at the given keep
+    /// fraction -- read-only, safe to call every time `StackListSheet`
+    /// appears AND every time its keep-slider settles on a new value.
+    /// `stackListExportDir` is reset too, so adjusting the slider after a
+    /// successful export goes back to showing the (now stale) selection
+    /// preview rather than the old export result.
+    func loadStackListSelection(target: String, date: String, keepFraction: Double) {
+        guard let db else { return }
+        let cfg = config
+        stackListSelection = nil
+        stackListExportDir = nil
+
+        let opID = beginOperation("Stack-lista számítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let selection = try await Task.detached(priority: .userInitiated) {
+                    try StackList.select(target: target, date: date, keepFraction: keepFraction, db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.stackListSelection = selection
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Exports `stackListSelection` through `StackList.export`
+    /// (WriteGuard-gated hardlinking + `.dssfilelist`/`.ssf` writing) and
+    /// reveals the resulting stacklist directory in Finder. On success,
+    /// `stackListExportDir` is set so the sheet can switch to a "kész" state.
+    func exportStackList() {
+        guard let selection = stackListSelection else { return }
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        let writeGuard = WriteGuard(root: root)
+
+        let opID = beginOperation("Stack-lista exportálása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let dir = try await Task.detached(priority: .userInitiated) {
+                    try StackList.export(selection, root: root, using: writeGuard)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.stackListExportDir = dir
+                self.progressText = "Exportálva: \(dir.lastPathComponent)"
+                NSWorkspace.shared.activateFileViewerSelecting([dir])
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Called when `StackListSheet` closes, so its state never leaks into
+    /// the next time it's opened (for this session or another one).
+    func clearStackListSelection() {
+        stackListSelection = nil
+        stackListExportDir = nil
     }
 
     // MARK: - Calibration coverage

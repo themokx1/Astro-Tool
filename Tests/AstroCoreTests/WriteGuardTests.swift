@@ -293,3 +293,132 @@ private func inode(_ url: URL) throws -> UInt64 {
     #expect(FileManager.default.fileExists(atPath: destDirPath, isDirectory: &isDir))
     #expect(isDir.boolValue)
 }
+
+// MARK: - linkStackListFile (R7-B4)
+
+@Test func linkStackListFileCreatesHardLinkWithSameInode() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+
+    let sourceDir = root.appendingPathComponent("sessions/T1/2026-01-10/lights", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+    let sourceURL = sourceDir.appendingPathComponent("light_0001.fit")
+    try Data("light frame content".utf8).write(to: sourceURL)
+
+    let destURL = try guardian.linkStackListFile(
+        sourceRelative: "sessions/T1/2026-01-10/lights/light_0001.fit",
+        destDirRelative: ".astro_tool/stacklists/T1-2026-01-10/lights"
+    )
+
+    let unwrapped = try #require(destURL)
+    #expect(
+        unwrapped.standardizedFileURL.path
+            == root.appendingPathComponent(".astro_tool/stacklists/T1-2026-01-10/lights/light_0001.fit").standardizedFileURL.path
+    )
+    #expect(FileManager.default.fileExists(atPath: unwrapped.path))
+    #expect(try inode(unwrapped) == inode(sourceURL))
+    #expect(try Data(contentsOf: unwrapped) == Data("light frame content".utf8))
+}
+
+@Test func linkStackListFileReturnsNilWhenDestinationExistsAndLeavesItUntouched() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+
+    let sourceDir = root.appendingPathComponent("sessions/T1/2026-01-10/lights", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+    let sourceURL = sourceDir.appendingPathComponent("light_0001.fit")
+    try Data("light frame content".utf8).write(to: sourceURL)
+
+    let destDir = root.appendingPathComponent(".astro_tool/stacklists/T1-2026-01-10/lights", isDirectory: true)
+    try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
+    let destURL = destDir.appendingPathComponent("light_0001.fit")
+    try Data("already linked from an earlier export".utf8).write(to: destURL)
+
+    let result = try guardian.linkStackListFile(
+        sourceRelative: "sessions/T1/2026-01-10/lights/light_0001.fit",
+        destDirRelative: ".astro_tool/stacklists/T1-2026-01-10/lights"
+    )
+
+    #expect(result == nil)
+    #expect(try Data(contentsOf: destURL) == Data("already linked from an earlier export".utf8))
+    #expect(try Data(contentsOf: sourceURL) == Data("light frame content".utf8))
+}
+
+@Test func linkStackListFileRejectsSourceOutsideSessions() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+
+    let strayDir = root.appendingPathComponent("calibration_library/darks/300sec_-10deg", isDirectory: true)
+    try FileManager.default.createDirectory(at: strayDir, withIntermediateDirectories: true)
+    try Data("x".utf8).write(to: strayDir.appendingPathComponent("master.fit"))
+
+    #expect(throws: AstroError.self) {
+        try guardian.linkStackListFile(
+            sourceRelative: "calibration_library/darks/300sec_-10deg/master.fit",
+            destDirRelative: ".astro_tool/stacklists/T1-2026-01-10/lights"
+        )
+    }
+
+    #expect(throws: AstroError.self) {
+        try guardian.linkStackListFile(
+            sourceRelative: "../evil",
+            destDirRelative: ".astro_tool/stacklists/T1-2026-01-10/lights"
+        )
+    }
+}
+
+@Test func linkStackListFileRejectsDestDirOutsideAllowedPattern() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+
+    let sourceDir = root.appendingPathComponent("sessions/T1/2026-01-10/lights", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+    let sourceURL = sourceDir.appendingPathComponent("light_0001.fit")
+    try Data("x".utf8).write(to: sourceURL)
+    let sourceRelative = "sessions/T1/2026-01-10/lights/light_0001.fit"
+
+    // Wrong role directory name.
+    #expect(throws: AstroError.self) {
+        try guardian.linkStackListFile(sourceRelative: sourceRelative, destDirRelative: ".astro_tool/stacklists/T1-2026-01-10/rejects")
+    }
+    // Missing slug component entirely.
+    #expect(throws: AstroError.self) {
+        try guardian.linkStackListFile(sourceRelative: sourceRelative, destDirRelative: ".astro_tool/stacklists/lights")
+    }
+    // Outside .astro_tool altogether.
+    #expect(throws: AstroError.self) {
+        try guardian.linkStackListFile(sourceRelative: sourceRelative, destDirRelative: "sessions/T1/2026-01-10/lights")
+    }
+    // Traversal attempt inside the slug component.
+    #expect(throws: AstroError.self) {
+        try guardian.linkStackListFile(sourceRelative: sourceRelative, destDirRelative: ".astro_tool/stacklists/../../evil/lights")
+    }
+
+    // Nothing was ever created under a bogus destination.
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("evil").path))
+}
+
+@Test func linkStackListFileCreatesMissingDestDir() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+
+    let sourceDir = root.appendingPathComponent("sessions/T1/2026-01-10/lights", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+    try Data("x".utf8).write(to: sourceDir.appendingPathComponent("light_0001.fit"))
+
+    let destURL = try guardian.linkStackListFile(
+        sourceRelative: "sessions/T1/2026-01-10/lights/light_0001.fit",
+        destDirRelative: ".astro_tool/stacklists/T1-2026-01-10/lights"
+    )
+
+    #expect(destURL != nil)
+    var isDir: ObjCBool = false
+    let destDirPath = root.appendingPathComponent(".astro_tool/stacklists/T1-2026-01-10/lights").path
+    #expect(FileManager.default.fileExists(atPath: destDirPath, isDirectory: &isDir))
+    #expect(isDir.boolValue)
+}

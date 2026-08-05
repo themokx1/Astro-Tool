@@ -44,6 +44,7 @@ do {
     case "sensor": exitCode = try cmdSensor(rest)
     case "ingest-dss": exitCode = try cmdIngestDSS(rest)
     case "expose": exitCode = try cmdExpose(rest)
+    case "stacklist": exitCode = try cmdStackList(rest)
     default:
         eprint(usageText)
         exit(1)
