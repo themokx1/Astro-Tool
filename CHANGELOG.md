@@ -8,6 +8,32 @@ történik.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Minőség fül panelei a pontozás után is a régi ("nincs adat"/"n/a")
+  állapotot mutatták**: a "Session-minőség" és "Expozíció-tanácsadó" panel
+  (`AppState.qualitySummaries`/`exposureAdvice`) csak a célpont-picker
+  változásán töltődött újra — a "Pontozás"/"Újrapontozás" gomb a
+  keret-táblázatot (`frameScores`) frissítette, a két panelt nem, hiába
+  volt friss adat a DB-ben. `AppState.runRate` mostantól sikeres pontozás
+  után, még a saját műveletén belül, újraszámolja és beállítja mindkét
+  property-t.
+- **A tervező (`plan`/`plan --month`) hónapokkal korábbi session-WCS-ből
+  származó üstökös-koordinátára hamis "ma jó" verdiktet adott**, és a havi
+  naptár top-3 célpontja közé sorolta — üstökösök napi több fokot mozognak,
+  a felvétel idejéből származó koordináta a tervezéskor már értelmetlen.
+  Üstökös célpontok (`C/<év> <hó-betű><szám>` designáció) mostantól
+  `plan`-ben "üstökös — a tárolt koordináta a felvétel idejéből való, ma
+  már nem érvényes" verdiktet és `0` pontszámot kapnak (kulmináció/
+  láthatóság/Hold-adat nélkül), `plan --month`-ban teljesen kimaradnak a
+  havi naptár legjobb célpontjai közül.
+- **Két különböző mappa (pl. egy üstökös normál és `_Wide` felvétele) ugyanarra
+  a katalógus-designációra oldódott fel, megkülönböztethetetlen sorokat adva**
+  a `plan` CLI-táblában és az app "Ma este" dobozában. `Planner.plan`
+  mostantól, ütköző megjelenített név esetén, zárójeles egyedi
+  mappanév-utótagot fűz a névhez (pl. `"C/2025 R3 (Panstarrs)"` /
+  `"C/2025 R3 (Panstarrs_Wide)"`).
+
 ## [0.6.0] - 2026-08-05
 
 ### Fixed

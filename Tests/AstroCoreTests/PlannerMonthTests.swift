@@ -135,6 +135,28 @@ private struct MonthFixture {
     }
 }
 
+// MARK: - Comet excluded entirely from best-target windows
+
+/// Same "transits at zenith, never Moon-vetoed" coordinate as
+/// `monthGivesAlwaysUpTargetUsableHoursCloseToDarkWindow`'s target -- would
+/// otherwise top `bestTargets` every night. A comet's session-derived
+/// coordinate is stale by the time this calendar is looked at, so `month`
+/// must exclude it from `bestTargets` entirely, not merely rank it low.
+@Test func monthExcludesCometFromBestTargetsEntirely() throws {
+    var fixture = try MonthFixture.make()
+    defer { fixture.cleanup() }
+    let lat = 47.5, lon = 19.0
+    fixture.config.site = SiteRule(latitudeDeg: lat, longitudeDeg: lon)
+
+    let referenceDate = utc(2026, 8, 27)
+    try fixture.addLight(target: "C2025_R3_Panstarrs", extraCards: ["CRVAL1": "10.0", "CRVAL2": "80.0"])
+
+    let summaries = try Planner.month(from: referenceDate, nights: 1, db: fixture.db, config: fixture.config)
+    let night = try #require(summaries.first)
+
+    #expect(!night.bestTargets.contains { $0.target == "C2025_R3_Panstarrs" })
+}
+
 // MARK: - 4. No site at all -> every night notes it, no crash
 
 @Test func monthNotesMissingSiteWithoutCrashing() throws {

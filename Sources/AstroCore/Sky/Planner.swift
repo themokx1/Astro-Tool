@@ -169,6 +169,11 @@ public enum Planner {
             String(format: "Hold zavar (%.0f°, %.0f%%)", separationDeg, illuminationPercent)
         }
         static let good = "ma jó"
+        /// Comets move degrees per day -- a session-derived coordinate
+        /// (from whenever those frames were actually shot, possibly months
+        /// ago) says nothing about where the comet is TONIGHT, so `plan`
+        /// never computes a real "ma jó"/altitude/Moon verdict for one.
+        static let cometStaleCoordinate = "üstökös — a tárolt koordináta a felvétel idejéből való, ma már nem érvényes"
     }
 
     /// Resolves the effective observing site: `config.site`'s explicit
@@ -233,6 +238,12 @@ public enum Planner {
         if site.latitudeDeg != nil, site.longitudeDeg != nil {
             let stats = try StatsQueries.perTarget(db: db, config: config)
             for stat in stats {
+                // Comets excluded entirely from the planning calendar's
+                // best-target windows -- their session-derived coordinate is
+                // stale by the time this calendar is even looked at (see
+                // `Verdict.cometStaleCoordinate`'s doc comment), so any
+                // "usable hours" computed from it would be meaningless.
+                guard !TargetNameResolver.resolve(folderName: stat.target).isComet else { continue }
                 let targetLights = allLights.filter { $0.target == stat.target }
                 if let coord = TargetCoordinates.medianCoordinates(files: targetLights, meta: allMeta) {
                     targetCoords.append((stat.target, coord.raDeg, coord.decDeg))
@@ -367,6 +378,7 @@ public enum Planner {
             let targetLights = allLights.filter { $0.target == stat.target }
             let coord = TargetCoordinates.medianCoordinates(files: targetLights, meta: allMeta)
             let goalSeconds = GoalTag.parse(tags: stat.tags)
+            let isComet = TargetNameResolver.resolve(folderName: stat.target).isComet
 
             plans.append(buildPlan(
                 target: stat.target,
@@ -374,6 +386,7 @@ public enum Planner {
                 usableIntegrationSeconds: stat.usableIntegrationSeconds,
                 goalSeconds: goalSeconds,
                 coord: coord,
+                isComet: isComet,
                 minAltitudeDeg: minAltitudeDeg,
                 siteLat: siteLat,
                 siteLon: siteLon,
@@ -382,7 +395,62 @@ public enum Planner {
             ))
         }
 
-        return plans.sorted { $0.score > $1.score }
+        return dedupeDisplayNames(plans.sorted { $0.score > $1.score })
+    }
+
+    // MARK: - Duplicate displayName disambiguation
+
+    /// When two or more `TargetPlan`s share the same `displayName` (e.g. a
+    /// comet's normal and `_Wide` folder variants both resolving to the same
+    /// `"C/2025 R3"` designation), the plan table/"Ma este" box would render
+    /// indistinguishable rows since both just print `displayName`. Appends,
+    /// in parens, each colliding target's own raw-folder-name tokens beyond
+    /// whatever prefix EVERY member of the group shares -- e.g.
+    /// `"C/2025 R3 (Panstarrs)"` / `"C/2025 R3 (Panstarrs_Wide)"` for
+    /// `"C2025_R3_Panstarrs"` / `"C2025_R3_Panstarrs_Wide"`. The shared
+    /// prefix is capped one token short of the SHORTEST member's own length
+    /// so every member always keeps at least one distinguishing token (never
+    /// an empty, useless suffix) -- distinct `target` strings guarantee the
+    /// appended text differs across the group even in a pathological case
+    /// where the capped suffix still collides token-for-token. Targets with
+    /// a unique `displayName` are returned unchanged.
+    private static func dedupeDisplayNames(_ plans: [TargetPlan]) -> [TargetPlan] {
+        var countByName: [String: Int] = [:]
+        for plan in plans { countByName[plan.displayName, default: 0] += 1 }
+
+        var indicesByName: [String: [Int]] = [:]
+        for (index, plan) in plans.enumerated() where (countByName[plan.displayName] ?? 0) > 1 {
+            indicesByName[plan.displayName, default: []].append(index)
+        }
+        guard !indicesByName.isEmpty else { return plans }
+
+        var result = plans
+        for indices in indicesByName.values {
+            let tokenLists = indices.map { plans[$0].target.split(separator: "_").map(String.init) }
+            let minTokenCount = tokenLists.map(\.count).min() ?? 0
+            // Keep at least one trailing token for every member.
+            let maxPrefixLength = max(0, minTokenCount - 1)
+            let sharedPrefixLength = min(commonTokenPrefixLength(tokenLists), maxPrefixLength)
+
+            for (listIndex, planIndex) in indices.enumerated() {
+                let suffix = tokenLists[listIndex].dropFirst(sharedPrefixLength).joined(separator: "_")
+                result[planIndex].displayName = "\(plans[planIndex].displayName) (\(suffix))"
+            }
+        }
+        return result
+    }
+
+    /// Length of the longest token run every list in `tokenLists` starts
+    /// with, identically.
+    private static func commonTokenPrefixLength(_ tokenLists: [[String]]) -> Int {
+        guard let first = tokenLists.first else { return 0 }
+        var length = 0
+        while length < first.count {
+            let candidate = first[length]
+            guard !tokenLists.contains(where: { $0.count <= length || $0[length] != candidate }) else { break }
+            length += 1
+        }
+        return length
     }
 
     // MARK: - Per-target assembly
@@ -393,12 +461,26 @@ public enum Planner {
         usableIntegrationSeconds: Double,
         goalSeconds: Double?,
         coord: (raDeg: Double, decDeg: Double)?,
+        isComet: Bool,
         minAltitudeDeg: Double,
         siteLat: Double?,
         siteLon: Double?,
         night: SunMoon.TwilightResult?,
         timeZone: TimeZone
     ) -> TargetPlan {
+        guard !isComet else {
+            return TargetPlan(
+                target: target,
+                displayName: displayName,
+                raDeg: coord?.raDeg,
+                decDeg: coord?.decDeg,
+                usableIntegrationSeconds: usableIntegrationSeconds,
+                goalSeconds: goalSeconds,
+                verdict: Verdict.cometStaleCoordinate,
+                score: 0
+            )
+        }
+
         guard let coord, let siteLat, let siteLon, let night,
               let duskUTC = night.duskUTC, let dawnUTC = night.dawnUTC
         else {

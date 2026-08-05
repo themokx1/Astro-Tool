@@ -230,6 +230,68 @@ private struct PlannerFixture {
     #expect((plan.moonSeparationDeg ?? 999) < 40)
 }
 
+// MARK: - Comet verdict (session-derived coordinate is stale by "tonight")
+
+/// A comet folder's coordinate comes from whenever those frames were shot
+/// (possibly months ago) -- `plan` must never compute a real altitude/Moon
+/// "ma jó" verdict from it, regardless of how favorably it would otherwise
+/// place relative to the site/night.
+@Test func plannerGivesCometAnHonestStaleCoordinateVerdictInsteadOfMaJo() throws {
+    var fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    fixture.config.site = SiteRule(latitudeDeg: 47.5, longitudeDeg: 19.0)
+
+    // Same "transits at zenith" coordinate as the high-altitude test above
+    // -- would otherwise score well and read "ma jó".
+    try fixture.addLight(target: "C2025_R3_Panstarrs", extraCards: ["CRVAL1": "350.0", "CRVAL2": "47.5"])
+
+    let plans = try Planner.plan(date: utc(2026, 8, 10), db: fixture.db, config: fixture.config)
+    let plan = try #require(plans.first { $0.target == "C2025_R3_Panstarrs" })
+    #expect(plan.verdict == "üstökös — a tárolt koordináta a felvétel idejéből való, ma már nem érvényes")
+    #expect(plan.score == 0)
+    #expect(plan.culminationUTC == nil)
+    #expect(plan.visibleHours == nil)
+    #expect(plan.moonSeparationDeg == nil)
+}
+
+// MARK: - Duplicate displayName disambiguation
+
+/// The comet's normal and `_Wide` folder variants both resolve to the same
+/// `"C/2025 R3"` designation -- indistinguishable in the plan table/"Ma
+/// este" box unless `plan` disambiguates their `displayName`s itself.
+@Test func plannerDisambiguatesCollidingDisplayNamesWithFolderSuffix() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.addLight(target: "C2025_R3_Panstarrs", extraCards: [:])
+    try fixture.addLight(target: "C2025_R3_Panstarrs_Wide", extraCards: [:])
+
+    let plans = try Planner.plan(db: fixture.db, config: fixture.config)
+    let plain = try #require(plans.first { $0.target == "C2025_R3_Panstarrs" })
+    let wide = try #require(plans.first { $0.target == "C2025_R3_Panstarrs_Wide" })
+
+    #expect(plain.displayName != wide.displayName)
+    #expect(plain.displayName == "C/2025 R3 (Panstarrs)")
+    #expect(wide.displayName == "C/2025 R3 (Panstarrs_Wide)")
+}
+
+/// Targets whose displayNames don't collide must come back unchanged --
+/// the dedup post-pass is a no-op outside an actual collision.
+@Test func plannerLeavesNonCollidingDisplayNamesUnchanged() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.addLight(target: "M42_Orion_wide_field", extraCards: [:])
+    try fixture.addLight(target: "NGC_7000_North_American_Nebula", extraCards: [:])
+
+    let plans = try Planner.plan(db: fixture.db, config: fixture.config)
+    let m42 = try #require(plans.first { $0.target == "M42_Orion_wide_field" })
+    let ngc7000 = try #require(plans.first { $0.target == "NGC_7000_North_American_Nebula" })
+
+    #expect(m42.displayName == "M 42 · Orion-köd")
+    #expect(ngc7000.displayName == "NGC 7000 · Észak-Amerika-köd")
+}
+
 // MARK: - Sorting
 
 @Test func plannerSortsDescendingByScore() throws {

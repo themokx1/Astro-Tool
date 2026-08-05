@@ -1060,6 +1060,29 @@ final class AppState: @unchecked Sendable {
     /// full re-measure of every frame regardless of cache state, driven by
     /// QualityView's "Újrapontozás" checkbox (the manual escape hatch next
     /// to the self-heal `Rater` already does automatically for stale rows).
+    ///
+    /// On success, also refreshes the Minőség fül's "Session-minőség"
+    /// (`qualitySummaries`) and "Expozíció-tanácsadó" (`exposureAdvice`)
+    /// panels for the same target -- both key off frame-score/quality data
+    /// this very call just changed, and QualityView only otherwise
+    /// refreshes them on a target-PICKER change (`.onChange(of:
+    /// selectedTarget)`), never on a re-rate of the already-selected
+    /// target. Without this, the two panels are left showing whatever
+    /// stale ("nincs adat"/"n/a") state they had before rating, even
+    /// though the frame table below updates fine from `frameScores`.
+    ///
+    /// Deliberately done INLINE, inside this same `Task`/`opID`, rather
+    /// than by calling the public `loadQualitySummaries(target:)`/
+    /// `loadExposureAdvice(target:)` -- each of those calls its OWN
+    /// `beginOperation`, which does `currentTask?.cancel()` on whatever
+    /// `currentTask` currently is. Called back-to-back synchronously (no
+    /// `await` between them), the second call would cancel the FIRST
+    /// call's still-pending `Task` before its detached work even finishes,
+    /// and that Task's own `guard !Task.isCancelled` would then silently
+    /// discard its result once it resumes -- so only the last chained load
+    /// would ever actually land. (The same latent race already exists in
+    /// `runPlateSolve`'s `loadStats(); loadPlan()` chain; left alone here
+    /// since it's a separate, pre-existing issue outside this fix's scope.)
     func runRate(target: String, date: String?, force: Bool = false) {
         guard let db else { return }
         let cfg = config
@@ -1083,6 +1106,15 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.frameScores = results
                 self.progressText = "Pontozás kész: \(results.count) frame"
+
+                let (summaries, advice) = try await Task.detached(priority: .userInitiated) {
+                    let summaries = try SessionQuality.summaries(target: target, db: db, config: cfg)
+                    let advice = try ExposureAdvisor.advise(target: target, db: db, config: cfg)
+                    return (summaries, advice)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.qualitySummaries = summaries
+                self.exposureAdvice = advice
             } catch {
                 self.handle(error)
             }

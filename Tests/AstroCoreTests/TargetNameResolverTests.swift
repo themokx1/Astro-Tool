@@ -77,6 +77,18 @@ import Testing
     #expect(resolved.designation == "C/2025 R3")
 }
 
+// MARK: - isComet
+
+@Test func resolverFlagsCometDesignationAsComet() {
+    let resolved = TargetNameResolver.resolve(folderName: "C2025_R3_Panstarrs")
+    #expect(resolved.isComet)
+}
+
+@Test func resolverDoesNotFlagOrdinaryCatalogTargetAsComet() {
+    let resolved = TargetNameResolver.resolve(folderName: "M42_Orion_wide_field")
+    #expect(!resolved.isComet)
+}
+
 // MARK: - M_ with no digits (special-case, no designation)
 
 @Test func resolverResolvesBareMFolderByKeywordWithNoDesignation() {

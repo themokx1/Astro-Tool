@@ -19,6 +19,15 @@ public struct ResolvedTargetName: Codable, Equatable, Sendable {
     /// case), and the folder name itself (underscores turned into spaces)
     /// when neither is known.
     public var displayName: String
+    /// `true` when `designation` is a comet's provisional designation
+    /// (`matchComet`'s `"C/<year> <letter><number>"` output format).
+    /// Computed, not stored -- comets are identified purely by the shape of
+    /// `designation`, so this needs no extra state and doesn't affect
+    /// `Codable`/`Equatable` (both are stored-properties-only). Callers
+    /// (`Planner`) use this to treat a comet's session-derived coordinate as
+    /// stale by the time anyone looks at "is it up tonight" -- comets move
+    /// degrees per day, unlike every other cataloged target here.
+    public var isComet: Bool { designation?.hasPrefix("C/") ?? false }
 
     public init(designation: String?, properName: String?, displayName: String) {
         self.designation = designation
