@@ -578,28 +578,9 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let (result, sessionsByTarget, panelsByTarget, stacksByTarget) = try await Task.detached(priority: .userInitiated) {
-                    let stats = try StatsQueries.perTarget(db: db, config: cfg)
-                    var sessionsByTarget: [String: [SessionDetail]] = [:]
-                    var panelsByTarget: [String: PanelReport] = [:]
-                    let discoveredStacks = try StackDiscovery.discover(db: db, config: cfg)
-                    let stacksByTarget = Dictionary(uniqueKeysWithValues: discoveredStacks.map { ($0.target, $0) })
-                    for stat in stats {
-                        sessionsByTarget[stat.target] = try SessionStatsQueries.sessions(
-                            target: stat.target, db: db, config: cfg
-                        )
-                        panelsByTarget[stat.target] = try FieldGeometry.panels(
-                            target: stat.target, db: db, config: cfg
-                        )
-                    }
-                    return (stats, sessionsByTarget, panelsByTarget, stacksByTarget)
-                }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.stats = result
-                self.sessionDetailsByTarget = sessionsByTarget
-                self.panelReportsByTarget = panelsByTarget
-                self.stackReportsByTarget = stacksByTarget
-                self.progressText = "Statisztika kész: \(result.count) célpont"
+                if let count = try await self.refreshStatsCore(db: db, cfg: cfg) {
+                    self.progressText = "Statisztika kész: \(count) célpont"
+                }
             } catch {
                 self.handle(error)
             }
@@ -624,15 +605,40 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let (result, resolvedSite) = try await Task.detached(priority: .userInitiated) {
-                    let plans = try Planner.plan(db: db, config: cfg)
-                    let site = try Planner.resolveSite(db: db, config: cfg)
-                    return (plans, site)
-                }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.plan = result
-                self.config.site = resolvedSite
-                self.progressText = "Terv kész: \(result.count) célpont"
+                if let count = try await self.refreshPlanCore(db: db, cfg: cfg) {
+                    self.progressText = "Terv kész: \(count) célpont"
+                }
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// StatsView's `.onAppear`: loads whichever of `stats`/`plan` is still
+    /// missing, as ONE operation. Deliberately not `loadStats()` +
+    /// `loadPlan()` called back-to-back from the view -- two synchronous
+    /// `beginOperation`-based calls chain-cancel each other (see the
+    /// refresh-core comment at the bottom of this file), so on first
+    /// appearance only the plan would ever land and the stats table stayed
+    /// empty until a second visit.
+    func loadStatsTabIfNeeded() {
+        guard let db else { return }
+        let cfg = config
+        let needStats = stats.isEmpty
+        let needPlan = plan == nil
+        guard needStats || needPlan else { return }
+
+        let opID = beginOperation("Statisztika számítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                if needStats, let count = try await self.refreshStatsCore(db: db, cfg: cfg) {
+                    self.progressText = "Statisztika kész: \(count) célpont"
+                }
+                if needPlan, let count = try await self.refreshPlanCore(db: db, cfg: cfg) {
+                    self.progressText = "Terv kész: \(count) célpont"
+                }
             } catch {
                 self.handle(error)
             }
@@ -963,12 +969,9 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try CalibAnalyzer.coverage(db: db, config: cfg)
-                }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.calibNeeds = result
-                self.progressText = "Kalibráció kész: \(result.count) kombináció"
+                if let count = try await self.refreshCalibCore(db: db, cfg: cfg) {
+                    self.progressText = "Kalibráció kész: \(count) kombináció"
+                }
             } catch {
                 self.handle(error)
             }
@@ -987,12 +990,44 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try CalibHealth.report(db: db, config: cfg)
-                }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.calibHealth = result
-                self.progressText = "Kalibráció-egészség kész"
+                if try await self.refreshCalibHealthCore(db: db, cfg: cfg) {
+                    self.progressText = "Kalibráció-egészség kész"
+                }
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// CalibrationView's `.onAppear`: loads whichever of the Kalibráció
+    /// fül's three data sets (`calibNeeds`/`calibHealth`/`sensorProfiles`)
+    /// is still missing, as ONE operation. Deliberately not three
+    /// conditional `loadX()` calls back-to-back from the view -- those
+    /// chain-cancel each other (see the refresh-core comment at the bottom
+    /// of this file), so on first appearance only the LAST load in the
+    /// chain ever landed and the tab needed several visits to fill in.
+    func loadCalibTabIfNeeded() {
+        guard let db else { return }
+        let cfg = config
+        let needCoverage = calibNeeds.isEmpty
+        let needHealth = calibHealth == nil
+        let needProfiles = sensorProfiles.isEmpty
+        guard needCoverage || needHealth || needProfiles else { return }
+
+        let opID = beginOperation("Kalibrációs adatok betöltése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                if needCoverage, let count = try await self.refreshCalibCore(db: db, cfg: cfg) {
+                    self.progressText = "Kalibráció kész: \(count) kombináció"
+                }
+                if needHealth, try await self.refreshCalibHealthCore(db: db, cfg: cfg) {
+                    self.progressText = "Kalibráció-egészség kész"
+                }
+                if needProfiles, let count = try await self.refreshSensorProfilesCore(db: db) {
+                    self.progressText = "Szenzor-profilok betöltve: \(count) kombináció"
+                }
             } catch {
                 self.handle(error)
             }
@@ -1012,12 +1047,9 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try db.allSensorProfiles()
-                }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.sensorProfiles = result
-                self.progressText = "Szenzor-profilok betöltve: \(result.count) kombináció"
+                if let count = try await self.refreshSensorProfilesCore(db: db) {
+                    self.progressText = "Szenzor-profilok betöltve: \(count) kombináció"
+                }
             } catch {
                 self.handle(error)
             }
@@ -1061,9 +1093,10 @@ final class AppState: @unchecked Sendable {
     /// "DSS-adatok beolvasása" quick button): harvests every tracked
     /// `<frame>.info.txt`'s star metrics and every tracked `.dssfilelist`'s
     /// accept/reject decisions already sitting in the library. Refreshes
-    /// `stats`/`sessionDetailsByTarget` afterward (via `loadStats()`) so a
-    /// newly recorded DSS verdict count shows up on the Statisztika fül
-    /// without a separate manual "Frissítés".
+    /// `stats`/`sessionDetailsByTarget` afterward (via `refreshStatsCore`,
+    /// inside this same operation) so a newly recorded DSS verdict count
+    /// shows up on the Statisztika fül without a separate manual
+    /// "Frissítés".
     func runIngestDSS() {
         guard let db else { return }
         let cfg = config
@@ -1086,7 +1119,7 @@ final class AppState: @unchecked Sendable {
                 self.progressText =
                     "DSS beolvasás kész: \(result.ratingsUpserted) rating, \(result.verdictsRecorded) döntés, " +
                     "\(result.skipped) kihagyva"
-                self.loadStats()
+                try await self.refreshStatsCore(db: db, cfg: cfg)
             } catch {
                 self.handle(error)
             }
@@ -1111,18 +1144,11 @@ final class AppState: @unchecked Sendable {
     /// stale ("nincs adat"/"n/a") state they had before rating, even
     /// though the frame table below updates fine from `frameScores`.
     ///
-    /// Deliberately done INLINE, inside this same `Task`/`opID`, rather
-    /// than by calling the public `loadQualitySummaries(target:)`/
-    /// `loadExposureAdvice(target:)` -- each of those calls its OWN
-    /// `beginOperation`, which does `currentTask?.cancel()` on whatever
-    /// `currentTask` currently is. Called back-to-back synchronously (no
-    /// `await` between them), the second call would cancel the FIRST
-    /// call's still-pending `Task` before its detached work even finishes,
-    /// and that Task's own `guard !Task.isCancelled` would then silently
-    /// discard its result once it resumes -- so only the last chained load
-    /// would ever actually land. (The same latent race already exists in
-    /// `runPlateSolve`'s `loadStats(); loadPlan()` chain; left alone here
-    /// since it's a separate, pre-existing issue outside this fix's scope.)
+    /// Deliberately done INLINE, inside this same `Task`/`opID` (via
+    /// `refreshQualityPanelsCore`), rather than by starting new
+    /// `beginOperation`-based loads -- chained public loads cancel each
+    /// other's Tasks (see the refresh-core comment at the bottom of this
+    /// file for the full race).
     func runRate(target: String, date: String?, force: Bool = false) {
         guard let db else { return }
         let cfg = config
@@ -1147,14 +1173,7 @@ final class AppState: @unchecked Sendable {
                 self.frameScores = results
                 self.progressText = "Pontozás kész: \(results.count) frame"
 
-                let (summaries, advice) = try await Task.detached(priority: .userInitiated) {
-                    let summaries = try SessionQuality.summaries(target: target, db: db, config: cfg)
-                    let advice = try ExposureAdvisor.advise(target: target, db: db, config: cfg)
-                    return (summaries, advice)
-                }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.qualitySummaries = summaries
-                self.exposureAdvice = advice
+                try await self.refreshQualityPanelsCore(target: target, db: db, cfg: cfg)
             } catch {
                 self.handle(error)
             }
@@ -1168,9 +1187,16 @@ final class AppState: @unchecked Sendable {
     /// showing per-frame progress via `progressText`. On completion (success
     /// OR a caught `PlateSolver.init` failure -- missing Siril -- handled by
     /// `handle(_:)`), `plateSolveSummary` is set so `PlateSolveSheet` can
-    /// show the result, and `loadStats()`/`loadPlan()` are re-run so a newly
+    /// show the result, and the stats + plan data is refreshed so a newly
     /// solved coordinate immediately shows up in the plan/panel-tracking
     /// data instead of only after the user manually refreshes.
+    ///
+    /// The refresh happens INLINE, inside this same `Task`/`opID` (via
+    /// `refreshStatsCore`/`refreshPlanCore`) -- it used to be
+    /// `self.loadStats(); self.loadPlan()`, but two `beginOperation`-based
+    /// loads called back-to-back cancel each other's Tasks, so the stats
+    /// refresh was silently dropped every time (see the refresh-core
+    /// comment at the bottom of this file for the full race).
     func runPlateSolve(target: String) {
         guard let db else { return }
         let cfg = config
@@ -1191,8 +1217,8 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.plateSolveSummary = summary
                 self.progressText = "Plate-solve kész: \(summary.solved)/\(summary.attempted) megoldva"
-                self.loadStats()
-                self.loadPlan()
+                try await self.refreshStatsCore(db: db, cfg: cfg)
+                try await self.refreshPlanCore(db: db, cfg: cfg)
             } catch {
                 self.handle(error)
             }
@@ -1202,52 +1228,32 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - Session quality (absolute metrics + night timeline)
 
-    /// Loads `qualitySummaries` for `target` -- called whenever the Minőség
-    /// fül's target picker changes. Clears `sessionTimeline` too, since a
-    /// previously selected session's timeline no longer applies once the
-    /// target itself changes.
-    func loadQualitySummaries(target: String) {
+    /// Loads `qualitySummaries` AND `exposureAdvice` (R7-B3
+    /// `ExposureAdvisor`) for `target` as ONE operation -- called whenever
+    /// the Minőség fül's target picker changes. Deliberately one combined
+    /// method rather than separate summary/advice loads called back-to-back
+    /// from the view -- those chain-cancel each other (see the refresh-core
+    /// comment at the bottom of this file), which used to silently drop the
+    /// summaries on every target change. Clears `sessionTimeline`/
+    /// `nightHealth` too, since a previously selected session's rows no
+    /// longer apply once the target itself changes. An advisor "no data"
+    /// condition is never an app error -- it comes back as
+    /// `ExposureAdvice.notAvailableReason`, an ordinary (if unhelpful)
+    /// result, not a failure.
+    func loadQualityPanels(target: String) {
         guard let db else { return }
         let cfg = config
         sessionTimeline = nil
         nightHealth = nil
+        exposureAdvice = nil
 
         let opID = beginOperation("Minőség-összegzés számítása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try SessionQuality.summaries(target: target, db: db, config: cfg)
-                }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.qualitySummaries = result
-                self.progressText = "Minőség-összegzés kész: \(result.count) session"
-            } catch {
-                self.handle(error)
-            }
-            self.endOperation(opID)
-        }
-    }
-
-    /// Loads `exposureAdvice` for `target` (R7-B3 `ExposureAdvisor`) --
-    /// called alongside `loadQualitySummaries` whenever the Minőség fül's
-    /// target picker changes. Never surfaces a "no data" condition as an
-    /// app error -- that comes back as `ExposureAdvice.notAvailableReason`,
-    /// an ordinary (if unhelpful) result, not a failure.
-    func loadExposureAdvice(target: String) {
-        guard let db else { return }
-        let cfg = config
-        exposureAdvice = nil
-
-        let opID = beginOperation("Expozíció-tanácsadó számítása…")
-        currentTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try ExposureAdvisor.advise(target: target, db: db, config: cfg)
-                }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.exposureAdvice = result
+                if let count = try await self.refreshQualityPanelsCore(target: target, db: db, cfg: cfg) {
+                    self.progressText = "Minőség-összegzés kész: \(count) session"
+                }
             } catch {
                 self.handle(error)
             }
@@ -1322,6 +1328,130 @@ final class AppState: @unchecked Sendable {
             }
             self.endOperation(opID)
         }
+    }
+
+    // MARK: - Shared refresh cores
+
+    /// The computation + apply-to-published-state halves of the `loadX()`
+    /// operations above, WITHOUT any `beginOperation`/`endOperation`/
+    /// `currentTask` bookkeeping of their own -- so an already-running
+    /// operation (`runPlateSolve`, `runRate`, `runIngestDSS`, the combined
+    /// tab loaders) can await them inside its own `Task`/opID.
+    ///
+    /// Why they exist: calling two public `loadX(); loadY()` methods
+    /// back-to-back synchronously does NOT run both. Each goes through
+    /// `beginOperation`, which does `currentTask?.cancel()` -- and with no
+    /// `await` between the two calls, the second cancels the FIRST call's
+    /// just-created `Task` before its closure even starts. The cancelled
+    /// Task still runs its detached computation (a `Task.detached` child is
+    /// an independent root task), but its `guard !Task.isCancelled` then
+    /// silently discards the result -- so only the LAST load in such a
+    /// chain ever lands. This bit `runPlateSolve` (stats refresh dropped
+    /// after every solve) and every view that chained loads in `.onAppear`/
+    /// `.onChange`.
+    ///
+    /// Each core checks `Task.isCancelled` after its detached computation
+    /// and applies nothing if the SURROUNDING operation was cancelled
+    /// meanwhile -- returning `nil` (or `false`) so wrappers know not to
+    /// update `progressText` either.
+
+    /// Core of `loadStats()`: recomputes `stats` + every target's session/
+    /// panel/stack detail. Returns the target count, or `nil` if cancelled.
+    @discardableResult
+    private func refreshStatsCore(db: Database, cfg: AstroConfig) async throws -> Int? {
+        let (result, sessionsByTarget, panelsByTarget, stacksByTarget) = try await Task.detached(priority: .userInitiated) {
+            let stats = try StatsQueries.perTarget(db: db, config: cfg)
+            var sessionsByTarget: [String: [SessionDetail]] = [:]
+            var panelsByTarget: [String: PanelReport] = [:]
+            let discoveredStacks = try StackDiscovery.discover(db: db, config: cfg)
+            let stacksByTarget = Dictionary(uniqueKeysWithValues: discoveredStacks.map { ($0.target, $0) })
+            for stat in stats {
+                sessionsByTarget[stat.target] = try SessionStatsQueries.sessions(
+                    target: stat.target, db: db, config: cfg
+                )
+                panelsByTarget[stat.target] = try FieldGeometry.panels(
+                    target: stat.target, db: db, config: cfg
+                )
+            }
+            return (stats, sessionsByTarget, panelsByTarget, stacksByTarget)
+        }.value
+        guard !Task.isCancelled else { return nil }
+        self.stats = result
+        self.sessionDetailsByTarget = sessionsByTarget
+        self.panelReportsByTarget = panelsByTarget
+        self.stackReportsByTarget = stacksByTarget
+        return result.count
+    }
+
+    /// Core of `loadPlan()`: recomputes `plan` and caches the resolved
+    /// observing site back into `config.site` (in memory only). Returns the
+    /// planned-target count, or `nil` if cancelled.
+    @discardableResult
+    private func refreshPlanCore(db: Database, cfg: AstroConfig) async throws -> Int? {
+        let (result, resolvedSite) = try await Task.detached(priority: .userInitiated) {
+            let plans = try Planner.plan(db: db, config: cfg)
+            let site = try Planner.resolveSite(db: db, config: cfg)
+            return (plans, site)
+        }.value
+        guard !Task.isCancelled else { return nil }
+        self.plan = result
+        self.config.site = resolvedSite
+        return result.count
+    }
+
+    /// Core of `loadQualityPanels(target:)` and `runRate`'s post-rate
+    /// refresh: recomputes `qualitySummaries` + `exposureAdvice` for one
+    /// target in a single background hop (both are cheap DB reads over the
+    /// same target). Returns the session-summary count, or `nil` if
+    /// cancelled.
+    @discardableResult
+    private func refreshQualityPanelsCore(target: String, db: Database, cfg: AstroConfig) async throws -> Int? {
+        let (summaries, advice) = try await Task.detached(priority: .userInitiated) {
+            let summaries = try SessionQuality.summaries(target: target, db: db, config: cfg)
+            let advice = try ExposureAdvisor.advise(target: target, db: db, config: cfg)
+            return (summaries, advice)
+        }.value
+        guard !Task.isCancelled else { return nil }
+        self.qualitySummaries = summaries
+        self.exposureAdvice = advice
+        return summaries.count
+    }
+
+    /// Core of `loadCalib()`: recomputes `calibNeeds`. Returns the
+    /// combination count, or `nil` if cancelled.
+    @discardableResult
+    private func refreshCalibCore(db: Database, cfg: AstroConfig) async throws -> Int? {
+        let result = try await Task.detached(priority: .userInitiated) {
+            try CalibAnalyzer.coverage(db: db, config: cfg)
+        }.value
+        guard !Task.isCancelled else { return nil }
+        self.calibNeeds = result
+        return result.count
+    }
+
+    /// Core of `loadCalibHealth()`: recomputes `calibHealth`. Returns
+    /// whether the result was applied (`false` if cancelled).
+    @discardableResult
+    private func refreshCalibHealthCore(db: Database, cfg: AstroConfig) async throws -> Bool {
+        let result = try await Task.detached(priority: .userInitiated) {
+            try CalibHealth.report(db: db, config: cfg)
+        }.value
+        guard !Task.isCancelled else { return false }
+        self.calibHealth = result
+        return true
+    }
+
+    /// Core of `loadSensorProfiles()`: reloads the persisted
+    /// `sensor_profile` rows. Returns the profile count, or `nil` if
+    /// cancelled.
+    @discardableResult
+    private func refreshSensorProfilesCore(db: Database) async throws -> Int? {
+        let result = try await Task.detached(priority: .userInitiated) {
+            try db.allSensorProfiles()
+        }.value
+        guard !Task.isCancelled else { return nil }
+        self.sensorProfiles = result
+        return result.count
     }
 
     // MARK: - Busy bookkeeping

@@ -247,8 +247,7 @@ struct QualityView: View {
             appState.sessionTimeline = nil
             appState.nightHealth = nil
             if let newTarget {
-                appState.loadQualitySummaries(target: newTarget)
-                appState.loadExposureAdvice(target: newTarget)
+                appState.loadQualityPanels(target: newTarget)
             } else {
                 appState.qualitySummaries = []
                 appState.exposureAdvice = nil

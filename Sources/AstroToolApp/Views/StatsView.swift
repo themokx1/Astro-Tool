@@ -140,10 +140,11 @@ struct StatsView: View {
             }
         }
         .onAppear {
-            if appState.stats.isEmpty { appState.loadStats() }
-            // Needed for `targetLacksCoordinate` to gate the "Plate-solve…"
-            // action -- `plan` isn't otherwise loaded from this tab.
-            if appState.plan == nil { appState.loadPlan() }
+            // Loads `stats` and -- needed for `targetLacksCoordinate` to
+            // gate the "Plate-solve…" action -- `plan`, as one combined
+            // operation: `loadStats()` + `loadPlan()` called back-to-back
+            // would cancel each other (see AppState's refresh-core comment).
+            appState.loadStatsTabIfNeeded()
         }
         .sheet(item: $linkingSession) { session in
             CalibLinkSheet(target: session.target, date: session.date)

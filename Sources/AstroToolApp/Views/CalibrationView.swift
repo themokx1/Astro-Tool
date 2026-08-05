@@ -114,9 +114,10 @@ struct CalibrationView: View {
             SensorProfileSection(profiles: appState.sensorProfiles)
         }
         .onAppear {
-            if appState.calibNeeds.isEmpty { appState.loadCalib() }
-            if appState.calibHealth == nil { appState.loadCalibHealth() }
-            if appState.sensorProfiles.isEmpty { appState.loadSensorProfiles() }
+            // One combined load for whichever of the three data sets is
+            // missing: three conditional `loadX()` calls back-to-back would
+            // cancel each other (see AppState's refresh-core comment).
+            appState.loadCalibTabIfNeeded()
         }
         .padding()
     }
