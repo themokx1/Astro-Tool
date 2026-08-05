@@ -432,6 +432,41 @@ astrotool report --target M31 --date 2026-03-15 --out -
   az "Éjszaka-riport" gomb a háttérben elkészíti, majd a rendszer
   alapértelmezett böngészőjében megnyitja.
 
+## Célpont-riport
+
+Az Éjszaka-riport mintájára, de EGY célpont TELJES történetéről — minden
+session, minden stack, minden kalibráció-státusz egy lapon:
+
+```bash
+astrotool target-report --target M31
+# .astro_tool/reports/target-M31.html
+
+astrotool target-report --target M31 --out -
+# a HTML stdoutra, fájl írása nélkül
+```
+
+- **Tartalma**: fejléc (feloldott név + mappanév + katalógus-designáció,
+  RA/Dec óra/fok-formátumban a forrással, setup-fingerprint(ek), goal-tag és
+  wide-field jelző), összkép (usable/gross integráció, keret-bontás,
+  session-szám, első–utolsó dátum, pipeline-fázis + teendők), sessionök
+  táblázata (mindegyik saját sorban: keret/integráció/expozíció/kamera/
+  gyújtótáv/gain/hőm./szűrő + README/DSS/kizárt jelzők — és ha az adott
+  éjszakának már van saját Éjszaka-riportja, "van éjszaka-riport" jelzés),
+  minőség-táblázat rang-kiemeléssel + expozíció-tanácsadó mondatok,
+  felderített stackek (legjobb kiemelve), kalibráció (session-szintű +
+  flat-higiénia), mozaik-panelek (ha van), tervezés (mai láthatóság/verdikt/
+  Hold, goal-hiány, +10% relatív SNR költsége), és README-jegyzetek
+  session-önként.
+- Minden szekció-fejléc mindig megjelenik, akkor is, ha az adott célponthoz
+  nincs mit mutatni — hiányzó adatnál egy magyarázó megjegyzés lép a
+  táblázat helyére, a riport szerkezete sosem függ attól, mi van pontosan
+  felderítve.
+- Egyetlen fájl, beágyazott CSS (ugyanaz a dark theme, mint az
+  Éjszaka-riporté), nincs `<script>` és nincs külső erőforrás.
+- Az alkalmazásban a Statisztika fül célpont-sorának "Exportálás…" menüjében
+  a "Célpont-riport" tétel a háttérben elkészíti, majd megnyitja a rendszer
+  alapértelmezett böngészőjében.
+
 ## Konfiguráció
 
 A konfiguráció a `<ROOT>/.astro_tool/config.json` fájlban van; hiányzó kulcsok esetén az eszköz beépített alapértékeket használ, így egy régebbi config fájl is mindig érvényes marad.

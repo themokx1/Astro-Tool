@@ -47,6 +47,7 @@ do {
     case "stacklist": exitCode = try cmdStackList(rest)
     case "stacks": exitCode = try cmdStacks(rest)
     case "report": exitCode = try cmdReport(rest)
+    case "target-report": exitCode = try cmdTargetReport(rest)
     default:
         eprint(usageText)
         exit(1)

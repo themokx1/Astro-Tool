@@ -10,6 +10,24 @@ történik.
 
 ### Added
 
+- **Célpont-riport HTML** (R8-2, `astrotool target-report`): az "éjszaka
+  riport" mintájára, de EGY célpont teljes történetéről — fejléc (feloldott
+  név, katalógus-designáció, RA/Dec, setup-fingerprint(ek), goal-tag,
+  wide-field jelző), összkép (usable/gross integráció, keret-bontás,
+  pipeline-fázis + teendők), sessionök táblázata (keret/integráció/
+  expozíció/kamera/gyújtótáv/gain/hőm./szűrő/README/DSS/kizárt jelzők, plusz
+  "van éjszaka-riport" jelzés ha az adott éjszakának már van saját
+  `NightReport`-ja), minőség-táblázat + expozíció-tanácsadó, felderített
+  stackek (R8-1) legjobb-kiemeléssel, kalibráció (session-szintű +
+  flat-higiénia), mozaik-panelek (ha van), tervezés (`Planner`
+  láthatóság/verdikt/Hold, goal-hiány, +10% SNR költsége), README-jegyzetek
+  session-önként. Minden szekció-fejléc mindig megjelenik, hiányzó adatnál
+  Hungarian megjegyzés lép a helyére. `.astro_tool/reports/
+  target-<célpont>.html`-be íródik. `astrotool target-report --target T
+  [--out -] [--root R]`; az app Statisztika fülének célpont-sor
+  "Exportálás…" menüjében új "Célpont-riport" tétel. A megosztott dark-theme
+  CSS `Sources/AstroCore/Export/ReportStyle.swift`-be került (`NightReport`
+  ugyanazt használja, viselkedése változatlan).
 - **Stack-file felderítés a teljes könyvtárban, célpontonként/session-önként**
   (R8-1, `astrotool stacks`): a `StackDiscovery` motor a teljes scannelt
   könyvtárat átfésüli — nem csak a kanonikus `stacks/<célpont>/<dátum>/` és

@@ -923,6 +923,36 @@ final class AppState: @unchecked Sendable {
         }
     }
 
+    // MARK: - Target report (R8-2)
+
+    /// Renders and writes the full "everything about one target" HTML
+    /// report (`TargetReport.write`) under `.astro_tool/reports/`, then
+    /// opens it in the user's default browser -- the Statisztika tab's
+    /// per-target "Célpont-riport" menu item, same open-in-browser
+    /// convention as `exportNightReport`.
+    func exportTargetReport(target: String) {
+        guard let db else { return }
+        let cfg = config
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        let writeGuard = WriteGuard(root: root)
+
+        let opID = beginOperation("Célpont-riport készítése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let url = try await Task.detached(priority: .userInitiated) {
+                    try TargetReport.write(target: target, db: db, config: cfg, using: writeGuard)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.progressText = "Riport kész: \(url.lastPathComponent)"
+                NSWorkspace.shared.open(url)
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
     // MARK: - Calibration coverage
 
     func loadCalib() {

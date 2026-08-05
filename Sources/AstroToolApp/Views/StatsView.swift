@@ -463,6 +463,8 @@ struct StatsView: View {
                     Button("AstroBin CSV") { appState.exportAcquisition(target: stats.target, format: .astrobin) }
                     Button("CSV") { appState.exportAcquisition(target: stats.target, format: .csv) }
                     Button("Markdown") { appState.exportAcquisition(target: stats.target, format: .md) }
+                    Divider()
+                    Button("Célpont-riport") { appState.exportTargetReport(target: stats.target) }
                 }
                 .menuStyle(.borderlessButton)
                 .font(.caption)

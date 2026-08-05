@@ -80,6 +80,14 @@ Commands:
                 README notes, and to-dos. Written to
                 .astro_tool/reports/<target>-<date>.html; --out - prints
                 the HTML to stdout instead.
+  target-report --target T [--out -] [--root R]
+                Self-contained HTML target-report: everything on record for
+                one target across every session -- coordinates, setup,
+                sessions table, quality/exposure advice, discovered stacks
+                (R8-1), calibration status, mosaic panels, tonight's plan,
+                README notes, and pipeline to-dos. Written to
+                .astro_tool/reports/target-<target>.html; --out - prints
+                the HTML to stdout instead.
 
   --version     Print version and exit
   --help        Show this help
@@ -2282,6 +2290,46 @@ func cmdReport(_ args: [String]) throws -> Int32 {
 
     let writeGuard = makeWriteGuard(config: config)
     let url = try NightReport.write(target: target, date: date, timestamp: Date(), db: db, config: config, using: writeGuard)
+    print(url.path)
+    return 0
+}
+
+// MARK: - target-report (R8-2)
+
+/// `astrotool target-report --target T [--out -] [--root R]` -- the full
+/// "everything about one target" self-contained HTML report (see
+/// `TargetReport`). Default behavior writes under `.astro_tool/reports/`
+/// via `WriteGuard` and prints the resulting path; `--out -` prints the
+/// rendered HTML to stdout instead (same convention as `report --out -`/
+/// `export --out -`). An unknown target surfaces as `AstroError.pathNotFound`,
+/// caught by `main.swift`'s generic handler (exit code 1), same as every
+/// other command that resolves a target this way.
+func cmdTargetReport(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--out", takesValue: true),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    guard let target = parsed.value("--target") else {
+        eprint("error: --target is required")
+        eprint(usageText)
+        return 1
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    if parsed.value("--out") == "-" {
+        let html = try TargetReport.render(target: target, db: db, config: config)
+        print(html, terminator: "")
+        return 0
+    }
+
+    let writeGuard = makeWriteGuard(config: config)
+    let url = try TargetReport.write(target: target, db: db, config: config, using: writeGuard)
     print(url.path)
     return 0
 }

@@ -1706,6 +1706,58 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
     #expect(result.stderr.contains("--target and --date are required"))
 }
 
+// MARK: - target-report (R8-2)
+
+@Test func targetReportOutDashPrintsHTMLToStdoutWithoutWritingAFile() throws {
+    let root = try makeTempRoot("target-report-stdout")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["target-report", "--root", root.path, "--target", "T1", "--out", "-"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.hasPrefix("<!doctype html>"))
+    #expect(result.stdout.contains("T1"))
+    #expect(!result.stdout.contains("<script"))
+
+    let reportsDir = root.appendingPathComponent(".astro_tool/reports")
+    #expect(!FileManager.default.fileExists(atPath: reportsDir.path))
+}
+
+@Test func targetReportDefaultModeWritesFileUnderReportsAndPrintsPath() throws {
+    let root = try makeTempRoot("target-report-file")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["target-report", "--root", root.path, "--target", "T1"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let printedPath = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    let expectedPath = root.appendingPathComponent(".astro_tool/reports/target-T1.html").path
+    #expect(printedPath == expectedPath)
+    #expect(FileManager.default.fileExists(atPath: printedPath))
+}
+
+@Test func targetReportWithUnknownTargetExitsWithError() throws {
+    let root = try makeTempRoot("target-report-unknown")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["target-report", "--root", root.path, "--target", "Nope"])
+    #expect(result.exitCode == 1)
+}
+
 // MARK: - plan --month (R7-B5)
 
 @Test func planMonthJSONReportsThirtyNightsForFixtureLibrary() throws {
