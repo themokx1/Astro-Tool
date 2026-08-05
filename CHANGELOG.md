@@ -8,6 +8,8 @@ történik.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-05
+
 ### Added
 
 - **Célpont-riport HTML** (R8-2, `astrotool target-report`): az "éjszaka
