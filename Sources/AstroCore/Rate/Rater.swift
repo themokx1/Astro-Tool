@@ -259,9 +259,13 @@ public final class Rater {
     /// real frames sit at "Siril metrika: 0/141" no matter how many times
     /// `rate` re-ran.
     struct Staleness {
-        /// `bg_00` is `nil` while the file is one `NativeStats` could
-        /// actually analyze (a non-`.fz` FITS) -- the native-stats half of
-        /// the row was never (fully) computed.
+        /// ANY of `bg_00`/`bg_01`/`bg_10`/`bg_11` is `nil` while the file is
+        /// one `NativeStats` could actually analyze (a non-`.fz` FITS) -- the
+        /// native-stats half of the row was never (fully) computed. Checking
+        /// all four, not just `bg_00`, is what lets a row written while
+        /// `NativeStats`'s sampling only ever populated the even-column
+        /// buckets (`bg_00`/`bg_10`) self-heal here once that bug is fixed --
+        /// `bg_00` alone being non-`nil` used to look like a complete row.
         var native: Bool
         /// Every star-metric column is `nil`, a provider is available RIGHT
         /// NOW to try filling them, AND this row isn't `source == "dss"` --
@@ -275,7 +279,7 @@ public final class Rater {
     }
 
     static func staleness(of cached: RatingRecord, isFZ: Bool, providerAvailable: Bool) -> Staleness {
-        let native = !isFZ && cached.bg00 == nil
+        let native = !isFZ && (cached.bg00 == nil || cached.bg01 == nil || cached.bg10 == nil || cached.bg11 == nil)
         let metricsAllNil = cached.fwhm == nil && cached.roundness == nil && cached.starCount == nil
         let metrics = metricsAllNil && providerAvailable && cached.source == nil
         return Staleness(native: native, metrics: metrics)

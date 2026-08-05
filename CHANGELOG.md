@@ -8,6 +8,37 @@ történik.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Per-Bayer paritás-mediánok páratlan oszlopa mindig `NULL` volt**
+  (`bg_01`/`bg_11`): a valós DB-n minden pontozott keretnél a páros oszlopok
+  (`bg_00`/`bg_10`) ki voltak töltve, a páratlanok soha. Ok:
+  `NativeStats`-ban a nagy (1M pixel felett mintavételezett) keretek stride-ja
+  páros volt, ami páros `NAXIS1` (minden valós kamera) mellett azt jelentette,
+  hogy MINDEN mintázott pixelindex páros oszlopra esett — a páratlan
+  oszlopok egyszerűen soha nem kaptak mintát. Javítás: a mintavételezés most
+  2×2 Bayer-CELLÁKAT választ stride-dal (`bayerCellStride`/
+  `isBayerCellSampled`), és egy kiválasztott cella MIND a 4 pixelét felveszi
+  — így minden paritás garantáltan kap mintát. **Öngyógyítás**: a `Rater`
+  staleness-ellenőrzése régen csak `bg_00 == nil`-t nézte (egy félig kitöltött
+  sor "kész"-nek tűnt); most `bg_00`/`bg_01`/`bg_10`/`bg_11` bármelyikének
+  `nil`-je stale-nek számít, így egy sima `rate` (nem csak `--force`)
+  automatikusan újraszámolja és pótolja a hiányzó bucketeket minden már
+  létező, félig kitöltött sornál — nincs szükség kézi beavatkozásra.
+- **Olvasási zaj alulmért volt** (`SensorProfiler`, ~1.06 e⁻ a mért ~1.30 e⁻
+  helyett, IMX571-en): a bias-pár különbségén futó egypasszos 5σ-clip a
+  szenzor valódi (nem kozmikus-sugár) zajának egy részét — az IMX571 RTS-
+  ("csillogó") pixeleinek kb. 0.5%-át — is levágta, ezzel a mért szórást a
+  MAD-becslés felé (1.02-1.06 e⁻) torzítva, jóval a független szakértői
+  referencia (~1.30 e⁻) alá. Javítás: a clip-küszöb 5σ → 10σ — ez még
+  védekezik a valóban korrupt/telített keret extrém kilógóival szemben, de a
+  farkat (és a benne rejlő valódi szenzorzajt) a megtartott mintában hagyja.
+  **Fontos**: a tárolt szenzor-profilokat újra kell mérni
+  (`astrotool sensor --measure` / app "Mérés" gomb — az upsert felülírja a
+  meglévő sort), és a pontozást újra kell futtatni a `bg_01`/`bg_11`
+  oszlopok pótlásához (ez automatikus a következő `rate` futáskor, lásd
+  fent).
+
 ## [0.7.0] - 2026-08-05
 
 ### Added

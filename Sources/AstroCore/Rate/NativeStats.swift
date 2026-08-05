@@ -198,6 +198,41 @@ public enum NativeStats {
         }
     }
 
+    /// Chooses a stride over 2x2 Bayer CELLS (not individual pixels) so that
+    /// subsampling a large frame still yields samples at all four
+    /// `(row%2, col%2)` parities. Sampling every k-th pixel in row-major
+    /// order (the previous approach) is wrong here: whenever `naxis1` is
+    /// even (every real camera width in this pipeline) and the stride `k` is
+    /// even too -- which it always was once a frame passed
+    /// `sampleThreshold`, since `targetSampleCount` is chosen so
+    /// `pixelCount / targetSampleCount` lands well above 1 -- every sampled
+    /// pixel index `i` is even, and an even `i` against an even `naxis1`
+    /// forces `col = i % naxis1` to always be even too. Odd-column parities
+    /// (`backgroundMedian01`/`11`) would then never receive a single sample
+    /// and stay permanently `nil`. Striding over whole cells instead and
+    /// taking every pixel inside a selected cell sidesteps the parity
+    /// entirely: a selected cell always contributes one sample to each of
+    /// the (up to) four buckets.
+    private static func bayerCellStride(pixelCount: Int, naxis1: Int) -> Int {
+        guard pixelCount > sampleThreshold else { return 1 }
+        let naxis2 = pixelCount / naxis1
+        let numCellsX = (naxis1 + 1) / 2
+        let numCellsY = (naxis2 + 1) / 2
+        let totalCells = max(1, numCellsX * numCellsY)
+        let cellsNeeded = max(1, targetSampleCount / 4)
+        return max(1, totalCells / cellsNeeded)
+    }
+
+    /// Whether the 2x2 cell containing pixel `(row, col)` is one of the
+    /// cells selected by `cellStride` (see `bayerCellStride`). Cell identity
+    /// is `(row / 2, col / 2)`, flattened row-major over the cell grid.
+    private static func isBayerCellSampled(row: Int, col: Int, naxis1: Int, cellStride: Int) -> Bool {
+        guard cellStride > 1 else { return true }
+        let numCellsX = (naxis1 + 1) / 2
+        let cellIndex = (row / 2) * numCellsX + (col / 2)
+        return cellIndex % cellStride == 0
+    }
+
     private static func compute16Bit(
         data: Data, dataOffset: Int, pixelCount: Int, naxis1: Int, isUnsigned: Bool, maxValue: Double
     ) throws -> NativeFrameStats {
@@ -206,7 +241,7 @@ public enum NativeStats {
             throw AstroError.corruptFITS(path: "<data>", reason: "truncated pixel data")
         }
 
-        let stride = max(1, pixelCount / targetSampleCount)
+        let cellStride = bayerCellStride(pixelCount: pixelCount, naxis1: naxis1)
         var samples: [Double] = []
         samples.reserveCapacity(min(pixelCount, targetSampleCount) + 1)
         var buckets = BayerBuckets()
@@ -222,9 +257,11 @@ public enum NativeStats {
                 let value: Double = isUnsigned ? Double(Int32(rawValue) + 32768) : Double(rawValue)
 
                 if value >= 0.98 * maxValue { saturatedCount += 1 }
-                if i % stride == 0 {
+                let row = i / naxis1
+                let col = i % naxis1
+                if isBayerCellSampled(row: row, col: col, naxis1: naxis1, cellStride: cellStride) {
                     samples.append(value)
-                    buckets.append(value, row: i / naxis1, col: i % naxis1)
+                    buckets.append(value, row: row, col: col)
                 }
             }
         }
@@ -246,7 +283,7 @@ public enum NativeStats {
             throw AstroError.corruptFITS(path: "<data>", reason: "truncated pixel data")
         }
 
-        let stride = max(1, pixelCount / targetSampleCount)
+        let cellStride = bayerCellStride(pixelCount: pixelCount, naxis1: naxis1)
         var samples: [Double] = []
         samples.reserveCapacity(min(pixelCount, targetSampleCount) + 1)
         var buckets = BayerBuckets()
@@ -257,9 +294,11 @@ public enum NativeStats {
             for i in 0..<pixelCount {
                 let value = Double(base.load(fromByteOffset: i, as: UInt8.self))
                 if value >= 0.98 * maxValue { saturatedCount += 1 }
-                if i % stride == 0 {
+                let row = i / naxis1
+                let col = i % naxis1
+                if isBayerCellSampled(row: row, col: col, naxis1: naxis1, cellStride: cellStride) {
                     samples.append(value)
-                    buckets.append(value, row: i / naxis1, col: i % naxis1)
+                    buckets.append(value, row: row, col: col)
                 }
             }
         }

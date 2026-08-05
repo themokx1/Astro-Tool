@@ -34,7 +34,7 @@ public enum SensorProfiler {
     /// pixel (same shape, same offset) as long as they share `NAXIS1`/
     /// `NAXIS2`, which two frames from the same camera/combo always do.
     private static let cropFraction = 0.5
-    private static let clipSigmaThreshold = 5.0
+    private static let clipSigmaThreshold = 10.0
 
     /// Groups tracked BIAS (and DARK) frames by `(instrume, gain, offset)`
     /// and measures one `SensorProfileRecord` per combo that has at least
@@ -197,7 +197,7 @@ public enum SensorProfiler {
         values.isEmpty ? nil : median(values)
     }
 
-    /// A single 5σ-clipped standard deviation of `values`: computes the
+    /// A single 10σ-clipped standard deviation of `values`: computes the
     /// population mean/std ONCE over the full (unclipped) set, discards
     /// points more than `sigma` away from that mean, and returns the plain
     /// standard deviation of the survivors -- exactly ONE pass, never
@@ -211,20 +211,21 @@ public enum SensorProfiler {
     /// 100, EGAIN 0.2429 e⁻/ADU, 6.5M-pixel central crop), the old
     /// iterated version landed on read noise 1.02 e⁻ -- statistically
     /// indistinguishable from a straight MAD×1.4826 estimate (1.02 e⁻) --
-    /// while a single clipping pass gave 1.06 e⁻ and the *unclipped*
+    /// while a single 5σ clipping pass gave 1.06 e⁻ and the *unclipped*
     /// population σ gave 1.29 e⁻, matching the expert's independently
     /// measured reference of ~1.30 e⁻ far more closely. That gap traces to
     /// this specific sensor's real per-pixel behavior: ~0.5% of pixels in
     /// the crop sit far outside a Gaussian tail at 5σ (a true Gaussian at
     /// this sample size would put ~4 pixels there, not 33,000+) -- almost
     /// certainly RTS/"twinkling" pixel behavior documented for this sensor
-    /// family, not cosmic rays. Each further clipping pass throws away more
-    /// of that real (if unusual) pixel population, which is why iterating
-    /// to convergence keeps sliding the estimate down toward MAD's answer
-    /// rather than settling near the true value. A single pass still guards
-    /// against a genuinely corrupt/saturated frame (see the regression
-    /// tests in `SensorProfileTests.swift`) without compounding that
-    /// masking effect across repeated passes.
+    /// family, not cosmic rays. A 5σ clip -- meant only to guard against a
+    /// genuinely corrupt/saturated frame -- was catching a big chunk of that
+    /// real RTS tail too, which is why even a single 5σ pass already read
+    /// low (1.06 e⁻) against the 1.29-1.30 e⁻ true value. Widening the clip
+    /// to 10σ still drops a truly corrupt/saturated frame's extreme values
+    /// (see the regression tests in `SensorProfileTests.swift`) while
+    /// leaving the RTS tail -- and with it, the genuine sensor noise it
+    /// represents -- inside the surviving population.
     static func clippedStandardDeviation(_ values: [Double], sigma: Double = clipSigmaThreshold) -> Double {
         guard values.count > 1 else { return 0 }
 

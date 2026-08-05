@@ -208,6 +208,58 @@ private struct SensorFixture {
     #expect(abs(result - expectedPlainSigmaOfCore) < 0.01, "a single 5-sigma pass must drop the outliers and return the clean core's own sigma")
 }
 
+/// Regression guard for the real read-noise under-read bug: on a real
+/// IMX571 bias-pair difference, ~0.5% of pixels are genuine sensor noise
+/// (RTS/"twinkling" pixels), not cosmic rays -- an earlier 5σ clip pass was
+/// discarding that whole tail, reading 1.06 e⁻ against a true ~1.30 e⁻
+/// (matching an independently measured expert reference). The fix widens
+/// the clip to 10σ so that tail survives. Verified directly against
+/// `clippedStandardDeviation` (not through the full `SensorProfiler.measure`
+/// pipeline) by comparing the SAME data at both thresholds: an explicit 5σ
+/// pass must still drop the tail (collapsing to the core-only sigma), while
+/// the actual default (10σ) must keep it (landing on the full, unclipped
+/// population sigma instead).
+@Test func clippedStandardDeviationAt10SigmaKeepsFatTailRTSPixelsA5SigmaClipWouldDrop() throws {
+    // Core: 1000 samples, sigma == sqrt(2) exactly (same clean discrete
+    // population as the sibling tests above).
+    var values: [Double] = []
+    for v in [-2.0, -1.0, 0.0, 1.0, 2.0] {
+        values.append(contentsOf: Array(repeating: v, count: 200))
+    }
+    let coreSigma = 2.0.squareRoot()
+
+    // ~0.5% fat tail (5 of 1005 total) at 6x the core sigma -- far enough
+    // out to sit beyond a 5σ clip of the full (tail-inflated) population,
+    // but still well inside a 10σ one.
+    let tailValue = 6.0 * coreSigma
+    values.append(contentsOf: Array(repeating: tailValue, count: 5))
+
+    let fiveSigmaResult = SensorProfiler.clippedStandardDeviation(values, sigma: 5.0)
+    let tenSigmaResult = SensorProfiler.clippedStandardDeviation(values, sigma: 10.0)
+
+    #expect(
+        abs(fiveSigmaResult - coreSigma) < 0.01,
+        "a 5-sigma clip drops the tail entirely and collapses back to the core-only sigma"
+    )
+
+    // The default (`SensorProfiler`'s own `clipSigmaThreshold`) must behave
+    // exactly like the explicit 10σ call above.
+    #expect(SensorProfiler.clippedStandardDeviation(values) == tenSigmaResult)
+
+    let fullMean = values.reduce(0, +) / Double(values.count)
+    let fullVariance = values.reduce(0) { $0 + ($1 - fullMean) * ($1 - fullMean) } / Double(values.count)
+    let fullSigma = fullVariance.squareRoot()
+
+    #expect(
+        abs(tenSigmaResult - fullSigma) < 0.0001,
+        "a 10-sigma clip keeps every sample -- must equal the plain (unclipped) population sigma"
+    )
+    #expect(
+        tenSigmaResult - fiveSigmaResult > 0.05,
+        "10-sigma must retain measurably more spread than 5-sigma's tail-dropped result -- the whole point of widening the clip"
+    )
+}
+
 // MARK: - dark_rate_e_per_s
 
 @Test func sensorProfilerMeasuresDarkRateFromMatchingDarkFrameClampedAtZero() throws {

@@ -411,6 +411,47 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(stats.backgroundMedian11 == 41)
 }
 
+/// Regression guard for the real bug: on the DB, `bg_00`/`bg_10` (even
+/// columns) were always populated but `bg_01`/`bg_11` (odd columns) were
+/// always `NULL` for every rated frame. Root cause was `NativeStats`'s
+/// large-frame subsampling stride -- for a real camera frame (even
+/// `NAXIS1`) above `sampleThreshold`, the stride landed even too, so every
+/// sampled pixel index was even, which forces `col = i % naxis1` to always
+/// land even as well (`naxis1` even). Odd-column buckets never received a
+/// single sample. This frame is deliberately built ABOVE the 1,000,000-pixel
+/// sampling threshold (the smaller fixtures above all sit below it and so
+/// never exercised the buggy stride at all) -- 2000x600 = 1,200,000 pixels,
+/// still small enough to build and scan quickly in a test. Every pixel's
+/// value is fully determined by its `(row%2, col%2)` parity, so each
+/// bucket's median is exact and unambiguous regardless of exactly which
+/// cells the subsampler happens to land on.
+@Test func nativeStatsFillsAllFourBayerParityMediansOnALargeSubsampledFrame() throws {
+    let width = 2000
+    let height = 600
+    precondition(width * height > 1_000_000, "must exceed NativeStats's sampling threshold")
+
+    var pixels = [Int](repeating: 0, count: width * height)
+    for row in 0..<height {
+        for col in 0..<width {
+            let value: Int
+            switch (row % 2, col % 2) {
+            case (0, 0): value = 100
+            case (0, 1): value = 200
+            case (1, 0): value = 300
+            default: value = 400
+            }
+            pixels[row * width + col] = value
+        }
+    }
+    let data = build16BitFITS(width: width, height: height, pixels: pixels)
+
+    let stats = try NativeStats.compute(data: data)
+    #expect(stats.backgroundMedian00 == 100, "bg_00 (even row, even col) must still be sampled")
+    #expect(stats.backgroundMedian01 == 200, "bg_01 (even row, odd col) was the always-NULL bug -- must now be sampled")
+    #expect(stats.backgroundMedian10 == 300, "bg_10 (odd row, even col) must still be sampled")
+    #expect(stats.backgroundMedian11 == 400, "bg_11 (odd row, odd col) was the always-NULL bug -- must now be sampled")
+}
+
 @Test func nativeStatsPerBayerParityMediansNilForDegenerateSingleColumnFrame() throws {
     // A single-column frame has no col%2==1 pixels at all -- buckets 01/11
     // must be nil rather than crashing on an empty median.
@@ -972,6 +1013,68 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(stored?.source == "dss", "the dss source marker must survive a native-only self-heal")
     #expect(stored?.background == 250, "the native half WAS stale -- must actually get computed")
     #expect(stored?.bg00 == 250)
+}
+
+/// Regression guard for the real consequence of the always-NULL-odd-column
+/// bug (see `nativeStatsFillsAllFourBayerParityMediansOnALargeSubsampledFrame`):
+/// every real rated row on disk has `bg_00`/`bg_10` populated but
+/// `bg_01`/`bg_11` permanently `nil`, written back before the sampling fix
+/// existed. The OLD staleness check (`cached.bg00 == nil`) would see
+/// `bg00` present and treat a row exactly like this as a complete cache
+/// hit forever, even after the sampling bug is fixed -- these half-filled
+/// rows would never self-heal on a subsequent `rate` run. The fix must
+/// treat ANY of the four `nil` as native-stale, so a plain re-`rate` (no
+/// `--force`) recomputes and overwrites the whole native half from the
+/// actual file, not just carry the half-filled row forward.
+@Test func rateSelfHealsHalfFilledBayerRowWhenOnlyOddColumnBucketsAreNil() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    // 4x4 frame, one constant value per (row%2, col%2) parity -- same shape
+    // as `rateWritesPerBayerBackgroundMediansOntoTheRatingRow`, so the
+    // self-healed values are exact and unambiguous.
+    var pixels = [Int](repeating: 0, count: 16)
+    for row in 0..<4 {
+        for col in 0..<4 {
+            let value: Int
+            switch (row % 2, col % 2) {
+            case (0, 0): value = 500
+            case (0, 1): value = 510
+            case (1, 0): value = 520
+            default: value = 530
+            }
+            pixels[row * 4 + col] = value
+        }
+    }
+    let relativePath = "sessions/M64/2026-06-10/lights/light_0001.fit"
+    let (fileID, size) = try fixture.addLightFrame(
+        relativePath: relativePath, target: "M64", pixels: pixels, width: 4, height: 4,
+        mtime: 1_700_000_000
+    )
+
+    // Simulate the pre-fix on-disk state: even-column buckets already
+    // populated with sentinel `999` values `NativeStats` would never
+    // produce from these actual pixels, odd-column buckets `nil` --
+    // exactly what the bug wrote for every real frame.
+    let halfFilledRow = RatingRecord(
+        fileID: fileID, background: 999, ratedAt: 1_700_000_050,
+        inputSig: "\(size)-1700000000",
+        bg00: 999, bg01: nil, bg10: 999, bg11: nil
+    )
+    try fixture.db.upsertRating(halfFilledRow)
+
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: nil)
+    let results = try rater.rate(target: "M64")
+
+    #expect(results.count == 1)
+    let stored = try #require(try fixture.db.rating(fileID: fileID))
+    #expect(stored.bg00 == 500, "must be recomputed from the actual file, not left at the 999 sentinel")
+    #expect(stored.bg01 == 510, "the previously-nil odd-column bucket must now be filled")
+    #expect(stored.bg10 == 520)
+    #expect(stored.bg11 == 530, "the previously-nil odd-column bucket must now be filled")
+    // Overall median over all 16 pixels (four each of 500/510/520/530,
+    // sorted) -- middle two values are 510 and 520.
+    #expect(stored.background == 515, "the whole native half is recomputed together, not just the missing buckets")
 }
 
 /// A row with both halves already complete must be a true cache hit: no
