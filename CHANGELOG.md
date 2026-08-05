@@ -10,6 +10,18 @@ történik.
 
 ### Fixed
 
+- **Kalibráció-lefedettség és session-párosítás duplán számolta a
+  CR3+TIF-párokat** (az R7-B6 sor follow-up bejegyzésében jelzett hiba):
+  `CalibAnalyzer.lightGroups`/`coverage` és `SessionMatcher.match` a
+  session `role == .light` fájlokat közvetlenül számolta, nem a
+  `FrameSet.lightBuckets(...).usable` deduplikált halmazát (ahogy a
+  `StatsQueries` már tette) — egy fizikailag egyetlen DSLR-felvétel
+  eredeti `.CR3` ÉS a belőle konvertált `.tif` alakja egyaránt `role =
+  light`-ként volt nyilvántartva, ezért kétszer számított bele a
+  `lightCount`-ba/`SessionCalibration.lights`-ba. Javítva: mindkettő most
+  a deduplikált, nem-elvetett keretkészletet használja. `NightHealth`/
+  `ExposureAdvisor` ellenőrizve — azok már eleve `FrameSet.lightBuckets`-en
+  mentek át.
 - **⚠️ Minden e⁻/s/arcsec² égháttér-érték ~64×-esen inflálva volt a 0.4.0
   óta** (`SessionQuality.backgroundEPerSecPerArcsec2`, és minden rá épülő
   `quality`/`health`/export szám): a képlet sosem vonta le a szenzor
@@ -71,6 +83,21 @@ történik.
 
 ### Added
 
+- **Helyes célpont-megjelenítés (beépített katalógus-feloldás)**: a
+  mappanevek (`NGC_7000_North_American_Nebula`, `M42_Orion_wide_field`,
+  `IC1805-1848_Heart-and-Soul_Nebula`, `C2025_R3_C2025_R3_Panstarrs`,
+  `M_Milky_Way`, ...) helyett a feloldott katalógusnév látszik, a
+  mappanévvel másodlagos infóként — pl. `"NGC 7000 · Észak-Amerika-köd"`.
+  Új `Sources/AstroCore/Stats/TargetNameResolver.swift`: tisztán szöveges
+  parser (nincs DB/fájlrendszer-hozzáférés), amely `M`/`NGC`/`IC` (incl.
+  IC-tartomány, pl. `IC1805-1848`)/`Sh2`/üstökös (`C<yyyy>_<betű><szám>`,
+  duplikált prefixszel is) designációkat ismer fel, és egy beépített
+  magyar közismert-név táblázatból (`CatalogNames.swift`, ~55 bejegyzés)
+  próbál hozzájuk köznapi nevet találni. Egy `name:<szöveg>` cél-tag
+  felülírhatja a talált köznapi nevet (`NameTag`). Bekötve: `TargetStats`/
+  `TargetPlan`/`ProjectState` additív `displayName` mezője, CLI `stats`/
+  `plan`/`projects` emberi táblái, az app Statisztika/Áttekintés/Minőség
+  fülei, és az éjszaka-riport fejléce/címe.
 - **Éjszaka-riport HTML (`astrotool report`) + havi tervező naptár (`plan
   --month`)**: `astrotool report --target T --date D` egyetlen
   önmagában-is-megnyitható HTML fájlt ír (`.astro_tool/reports/

@@ -57,6 +57,19 @@ private struct PlannerFixture {
     }
 }
 
+// MARK: - R7-B7: displayName
+
+@Test func plannerResolvesDisplayNameFromTargetFolderName() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.addLight(target: "M42_Orion_wide_field", extraCards: [:])
+
+    let plans = try Planner.plan(db: fixture.db, config: fixture.config)
+    let plan = try #require(plans.first { $0.target == "M42_Orion_wide_field" })
+    #expect(plan.displayName == "M 42 · Orion-köd")
+}
+
 // MARK: - No coordinate
 
 @Test func plannerMarksTargetWithNoResolvableCoordinateAsNoCoordinate() throws {

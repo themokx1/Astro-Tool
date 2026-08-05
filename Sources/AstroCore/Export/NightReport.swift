@@ -44,12 +44,14 @@ public enum NightReport {
         let health = try NightHealth.report(target: target, date: date, db: db, config: config)
         let calib = try SessionMatcher.match(target: target, date: date, db: db, config: config)
         let advice = try ExposureAdvisor.advise(target: target, db: db, config: config)
-        let projectTodos = try ProjectStatusQueries.projects(db: db, config: config)
-            .first { $0.target == target }?.todos ?? []
+        let projectState = try ProjectStatusQueries.projects(db: db, config: config).first { $0.target == target }
+        let projectTodos = projectState?.todos ?? []
+        let displayName = projectState?.displayName ?? target.replacingOccurrences(of: "_", with: " ")
         let sky = try computeSkySections(target: target, date: date, timeline: timeline, db: db, config: config)
 
         return renderHTML(
             target: target,
+            displayName: displayName,
             date: date,
             session: session,
             timeline: timeline,
@@ -230,6 +232,7 @@ public enum NightReport {
 
     private static func renderHTML(
         target: String,
+        displayName: String,
         date: String,
         session: SessionDetail,
         timeline: SessionTimeline,
@@ -242,7 +245,7 @@ public enum NightReport {
         moon: MoonGeometry?
     ) -> String {
         var body = ""
-        body += renderHeader(target: target, date: date, session: session)
+        body += renderHeader(target: target, displayName: displayName, date: date, session: session)
         body += renderSummary(session: session, timeline: timeline)
         body += renderTimeline(timeline: timeline)
         body += renderQuality(quality: quality, advice: advice)
@@ -263,7 +266,7 @@ public enum NightReport {
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Éjszaka-riport — \(escapeHTML(target)) — \(escapeHTML(date))</title>
+        <title>Éjszaka-riport — \(escapeHTML(displayName)) — \(escapeHTML(date))</title>
         <style>\(css)</style>
         </head>
         <body>
@@ -331,9 +334,14 @@ public enum NightReport {
 
     // MARK: - Header
 
-    private static func renderHeader(target: String, date: String, session: SessionDetail) -> String {
+    /// `"Cél: M 42 · Orion-köd (M42_Orion)"` when `displayName` resolved to
+    /// something other than the raw folder name, just `"Cél: <target>"`
+    /// otherwise (an unresolved/junk folder name, where printing the same
+    /// text twice would be noise).
+    private static func renderHeader(target: String, displayName: String, date: String, session: SessionDetail) -> String {
+        let title = displayName != target ? "Cél: \(displayName) (\(target))" : "Cél: \(target)"
         var lines = [
-            "<h1>\(escapeHTML(target))</h1>",
+            "<h1>\(escapeHTML(title))</h1>",
             "<p class=\"sub\">\(escapeHTML(date)) · <code>sessions/\(escapeHTML(target))/\(escapeHTML(date))</code>",
         ]
         if let descriptor = session.setupDescriptor {

@@ -192,6 +192,31 @@ private struct SessionMatcherFixture {
     }
 }
 
+// MARK: - 8. CR3+TIF dedup (R7-B7)
+
+@Test func sessionMatcherDedupesCR3AndTIFPairCountingOneLight() throws {
+    let fixture = try SessionMatcherFixture.make()
+    defer { fixture.cleanup() }
+
+    // Same physical DSLR shot kept as both `.cr3` and a converted `.tif` --
+    // `SessionMatcher.match` must report ONE light, not two, and pick a
+    // dominant combo from the deduped set. `writeTestTIFF` writes real,
+    // ImageIO-decodable TIFF bytes regardless of the target extension.
+    let cr3URL = fixture.libraryDir.appendingPathComponent("sessions/T1/2026-01-10/lights/IMG_0001.cr3")
+    let tifURL = fixture.libraryDir.appendingPathComponent("sessions/T1/2026-01-10/lights/IMG_0001.tif")
+    try FileManager.default.createDirectory(at: cr3URL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try writeTestTIFF(to: cr3URL, dateTimeOriginal: "2026:01:10 20:00:00", exposureSeconds: 300.0)
+    try writeTestTIFF(to: tifURL, dateTimeOriginal: "2026:01:10 20:00:00", exposureSeconds: 300.0)
+    try fixture.writeDummy("sessions/T1/2026-01-10/flats/f1.fit")
+    try fixture.writeDummy("calibration_library/darks/300sec_0deg/master.fit")
+
+    try fixture.scan()
+
+    let result = try SessionMatcher.match(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
+
+    #expect(result.lights == 1)
+}
+
 // MARK: - 7. Dominant combo selection
 
 @Test func sessionMatcherPicksLibraryDarkForDominantComboAmongMixedLights() throws {

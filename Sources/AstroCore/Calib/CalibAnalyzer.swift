@@ -147,7 +147,7 @@ public enum CalibAnalyzer {
     public static func coverage(db: Database, config: AstroConfig, now: Date = Date()) throws -> [CalibNeed] {
         let files = try db.allFiles(includeMissing: false)
 
-        let groups = try lightGroups(files: files, db: db)
+        let groups = try lightGroups(files: files, db: db, config: config)
         let masters = try masterDirs(files: files, db: db)
 
         let calib = config.calib
@@ -420,14 +420,30 @@ public enum CalibAnalyzer {
     /// Groups scanned session lights by rounded (exptime, setTemp, gain,
     /// offset, camera). Lights with no `fits_meta` row or a nil `exptime`
     /// are skipped entirely -- there's nothing to match a dark against.
-    private static func lightGroups(files: [FileRecord], db: Database) throws -> [CalibCombo: GroupInfo] {
+    ///
+    /// Counts only the DEDUPED, non-rejected frames (`FrameSet.lightBuckets`
+    /// -- same source of truth `StatsQueries`/`NightHealth`/`ExposureAdvisor`
+    /// use), not every raw `role == .light` row: a physical DSLR shot kept
+    /// as both its original `.cr3` and a converted `.tif` used to be counted
+    /// TWICE here, inflating `lightCount` (and thus which combos look
+    /// "missing" vs. "covered").
+    private static func lightGroups(files: [FileRecord], db: Database, config: AstroConfig) throws -> [CalibCombo: GroupInfo] {
+        let sessionLights = files.filter { $0.area == .sessions && $0.role == .light }
+
+        var metaByFileID: [Int64: FITSMetaRecord] = [:]
+        for file in sessionLights {
+            guard let id = file.id else { continue }
+            if let meta = try db.fitsMeta(fileID: id) {
+                metaByFileID[id] = meta
+            }
+        }
+
+        let usable = FrameSet.lightBuckets(files: sessionLights, meta: metaByFileID, config: config).usable
+
         var groups: [CalibCombo: GroupInfo] = [:]
 
-        for file in files where file.area == .sessions && file.role == .light {
-            guard let id = file.id,
-                  let meta = try db.fitsMeta(fileID: id),
-                  let exptime = meta.exptime
-            else { continue }
+        for file in usable {
+            guard let id = file.id, let meta = metaByFileID[id], let exptime = meta.exptime else { continue }
 
             let key = CalibCombo.rounded(
                 exptime: exptime,

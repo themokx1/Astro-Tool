@@ -245,7 +245,9 @@ struct OverviewView: View {
 
     private func tonightRow(_ row: TargetPlan) -> some View {
         HStack(spacing: 12) {
-            Text(row.target)
+            Text(row.displayName)
+                .lineLimit(1)
+                .help(row.displayName != row.target ? row.target : "")
                 .frame(minWidth: 140, alignment: .leading)
             Text(row.goalSeconds != nil ? missingHoursText(row) : "—")
                 .foregroundStyle(.secondary)

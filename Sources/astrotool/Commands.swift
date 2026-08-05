@@ -645,18 +645,32 @@ private func formatHoursMinutes(_ seconds: Double) -> String {
     return String(format: "%d:%02d", hours, minutes)
 }
 
+/// `displayName` when it differs from the raw folder `target`, with the
+/// folder name kept alongside in parentheses (truncated to a sane overall
+/// width for the table); just `target` when they're the same (an
+/// unresolved/junk folder name, where `displayName` is only `target` with
+/// underscores turned into spaces -- printing it twice would be noise).
+private func statsNameColumnText(_ s: TargetStats, maxWidth: Int = 40) -> String {
+    guard s.displayName != s.target else { return s.target }
+    let full = "\(s.displayName) (\(s.target))"
+    guard full.count > maxWidth else { return full }
+    let truncatedDisplay = String(s.displayName.prefix(max(1, maxWidth - s.target.count - 4))) + "…"
+    return "\(truncatedDisplay) (\(s.target))"
+}
+
 private func printStatsTable(_ stats: [TargetStats], showGross: Bool) {
     guard !stats.isEmpty else {
         print("no targets")
         return
     }
 
-    let targetWidth = max(stats.map { $0.target.count }.max() ?? 6, 6)
+    let names = stats.map { statsNameColumnText($0) }
+    let targetWidth = max(names.map(\.count).max() ?? 6, 6)
     let header = "TARGET".padding(toLength: targetWidth, withPad: " ", startingAt: 0)
     let grossHeader = showGross ? "  GROSS      " : ""
     print("\(header)  INTEGRATION  \(grossHeader)SESSIONS  LAST DATE   WIDE")
-    for s in stats {
-        let name = s.target.padding(toLength: targetWidth, withPad: " ", startingAt: 0)
+    for (s, nameText) in zip(stats, names) {
+        let name = nameText.padding(toLength: targetWidth, withPad: " ", startingAt: 0)
         let integration = formatHoursMinutes(s.totalIntegrationSeconds).padding(toLength: 11, withPad: " ", startingAt: 0)
         let gross = showGross ? formatHoursMinutes(s.grossIntegrationSeconds).padding(toLength: 11, withPad: " ", startingAt: 0) + "  " : ""
         let sessions = String(s.sessionDates.count).padding(toLength: 8, withPad: " ", startingAt: 0)
@@ -667,7 +681,11 @@ private func printStatsTable(_ stats: [TargetStats], showGross: Bool) {
 }
 
 private func printSingleTargetStats(_ s: TargetStats, showGross: Bool) {
-    print("target: \(s.target)")
+    if s.displayName != s.target {
+        print("target: \(s.displayName) (\(s.target))")
+    } else {
+        print("target: \(s.target)")
+    }
     print("integration: \(formatHoursMinutes(s.totalIntegrationSeconds))")
     if showGross {
         print("gross (undeduped): \(formatHoursMinutes(s.grossIntegrationSeconds))")
@@ -1467,18 +1485,27 @@ private func formatLocalTime(_ date: Date, timeZone: TimeZone) -> String {
     return formatter.string(from: date)
 }
 
+/// `displayName` when it differs from the raw folder `target` (folder name
+/// kept alongside in parentheses), just `target` otherwise -- same
+/// convention as `statsNameColumnText`.
+private func planNameColumnText(_ plan: TargetPlan) -> String {
+    guard plan.displayName != plan.target else { return plan.target }
+    return "\(plan.displayName) (\(plan.target))"
+}
+
 private func printPlanTable(_ plans: [TargetPlan]) {
     guard !plans.isEmpty else {
         print("no targets")
         return
     }
 
-    let targetWidth = max(plans.map { $0.target.count }.max() ?? 7, 7)
+    let names = plans.map(planNameColumnText)
+    let targetWidth = max(names.map(\.count).max() ?? 7, 7)
     let header = "CÉLPONT".padding(toLength: targetWidth, withPad: " ", startingAt: 0)
     print("\(header)  MEGVAN   CÉL      KULMINÁCIÓ  MAX ALT  ABLAK          HOLD        VERDIKT")
 
-    for plan in plans {
-        let name = plan.target.padding(toLength: targetWidth, withPad: " ", startingAt: 0)
+    for (plan, nameText) in zip(plans, names) {
+        let name = nameText.padding(toLength: targetWidth, withPad: " ", startingAt: 0)
         let have = formatHoursMinutes(plan.usableIntegrationSeconds).padding(toLength: 7, withPad: " ", startingAt: 0)
         let goal = (plan.goalSeconds.map(formatHoursMinutes) ?? "—").padding(toLength: 7, withPad: " ", startingAt: 0)
         let culmination = (plan.culminationLocal ?? "-").padding(toLength: 10, withPad: " ", startingAt: 0)
@@ -1541,7 +1568,8 @@ private func printProjectsGrouped(_ projects: [ProjectState]) {
         for p in items {
             let have = formatHoursMinutes(p.usableIntegrationSeconds)
             let goal = p.goalSeconds.map(formatHoursMinutes) ?? "—"
-            print("  \(p.target)  \(have) / \(goal)")
+            let name = p.displayName != p.target ? "\(p.displayName) (\(p.target))" : p.target
+            print("  \(name)  \(have) / \(goal)")
             for todo in p.todos.prefix(2) {
                 print("    - \(todo)")
             }

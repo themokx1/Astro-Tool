@@ -68,6 +68,14 @@ struct QualityView: View {
         appState.stats.map(\.target).sorted()
     }
 
+    /// Resolved catalog designation/common name (R7-B7) for the picker's
+    /// label -- the picker's VALUE stays the raw folder name (`target`,
+    /// what every `AppState` call underneath actually needs), only the
+    /// displayed text changes.
+    private func displayName(for target: String) -> String {
+        appState.stats.first { $0.target == target }?.displayName ?? target
+    }
+
     private var rows: [Row] {
         appState.frameScores.map(Row.init).sorted(using: sortOrder)
     }
@@ -111,7 +119,7 @@ struct QualityView: View {
                 Picker("Célpont", selection: $selectedTarget) {
                     Text("Válassz célpontot…").tag(String?.none)
                     ForEach(targets, id: \.self) { target in
-                        Text(target).tag(Optional(target))
+                        Text(displayName(for: target)).tag(Optional(target))
                     }
                 }
                 .frame(width: 260)

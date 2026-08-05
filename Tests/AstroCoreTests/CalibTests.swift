@@ -281,6 +281,32 @@ private struct CalibFixture {
     #expect(needs.isEmpty)
 }
 
+@Test func darkCoverageDedupesCR3AndTIFPairCountingOneLight() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    // A physical DSLR shot kept as both its original `.cr3` and a converted
+    // `.tif` -- same matching stem/DATE-OBS, same EXPTIME -- must count as
+    // ONE light, not two (see R7-B7: this used to inflate `lightCount`
+    // because `CalibAnalyzer` iterated every raw `role == .light` row
+    // instead of going through `FrameSet.lightBuckets`, same as
+    // `StatsQueries`). `writeTestTIFF` writes real, ImageIO-decodable TIFF
+    // bytes regardless of the target extension, so EXIF EXPTIME/DATE-OBS
+    // come through for the `.cr3`-named file too, even though a real CR3
+    // can't be fabricated in tests.
+    let cr3URL = fixture.libraryDir.appendingPathComponent("sessions/T1/2026-01-10/lights/IMG_0001.cr3")
+    let tifURL = fixture.libraryDir.appendingPathComponent("sessions/T1/2026-01-10/lights/IMG_0001.tif")
+    try FileManager.default.createDirectory(at: cr3URL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try writeTestTIFF(to: cr3URL, dateTimeOriginal: "2026:01:10 20:00:00", exposureSeconds: 300.0)
+    try writeTestTIFF(to: tifURL, dateTimeOriginal: "2026:01:10 20:00:00", exposureSeconds: 300.0)
+
+    try fixture.scan()
+
+    let needs = try CalibAnalyzer.coverage(db: fixture.db, config: fixture.config)
+    let need = try #require(needs.first { $0.exposureSeconds == 300 })
+    #expect(need.lightCount == 1)
+}
+
 @Test func darkCoverageIgnoresMalformedMasterDirNames() throws {
     let fixture = try CalibFixture.make()
     defer { fixture.cleanup() }

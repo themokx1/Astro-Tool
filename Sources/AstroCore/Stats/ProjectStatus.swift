@@ -22,6 +22,11 @@ public enum ProjectPhase: String, Codable, Sendable, Equatable {
 /// -- the answer to "cloudy tonight, what should I work on?".
 public struct ProjectState: Codable, Sendable, Equatable {
     public var target: String
+    /// Resolved catalog designation/Hungarian common name for `target` --
+    /// same `TargetStats.displayName` this comes straight from (via
+    /// `StatsQueries.perTarget`), so it's already override-aware
+    /// (`name:<text>` tag).
+    public var displayName: String
     public var phase: ProjectPhase
     public var usableIntegrationSeconds: Double
     public var goalSeconds: Double?
@@ -42,6 +47,7 @@ public struct ProjectState: Codable, Sendable, Equatable {
 
     public init(
         target: String,
+        displayName: String? = nil,
         phase: ProjectPhase,
         usableIntegrationSeconds: Double,
         goalSeconds: Double? = nil,
@@ -52,6 +58,7 @@ public struct ProjectState: Codable, Sendable, Equatable {
         todos: [String] = []
     ) {
         self.target = target
+        self.displayName = displayName ?? target.replacingOccurrences(of: "_", with: " ")
         self.phase = phase
         self.usableIntegrationSeconds = usableIntegrationSeconds
         self.goalSeconds = goalSeconds
@@ -60,6 +67,27 @@ public struct ProjectState: Codable, Sendable, Equatable {
         self.latestStackDate = latestStackDate
         self.latestProcessedDate = latestProcessedDate
         self.todos = todos
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case target, displayName, phase, usableIntegrationSeconds, goalSeconds, missingSeconds,
+             latestSessionDate, latestStackDate, latestProcessedDate, todos
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        target = try c.decode(String.self, forKey: .target)
+        // Absent in JSON produced before this field existed -- fall back to
+        // the cleaned target name, same default the memberwise `init` uses.
+        displayName = try c.decodeIfPresent(String.self, forKey: .displayName) ?? target.replacingOccurrences(of: "_", with: " ")
+        phase = try c.decode(ProjectPhase.self, forKey: .phase)
+        usableIntegrationSeconds = try c.decode(Double.self, forKey: .usableIntegrationSeconds)
+        goalSeconds = try c.decodeIfPresent(Double.self, forKey: .goalSeconds)
+        missingSeconds = try c.decodeIfPresent(Double.self, forKey: .missingSeconds)
+        latestSessionDate = try c.decodeIfPresent(String.self, forKey: .latestSessionDate)
+        latestStackDate = try c.decodeIfPresent(String.self, forKey: .latestStackDate)
+        latestProcessedDate = try c.decodeIfPresent(String.self, forKey: .latestProcessedDate)
+        todos = try c.decodeIfPresent([String].self, forKey: .todos) ?? []
     }
 }
 
@@ -196,6 +224,7 @@ public enum ProjectStatusQueries {
 
         return ProjectState(
             target: target,
+            displayName: stat.displayName,
             phase: phase,
             usableIntegrationSeconds: stat.usableIntegrationSeconds,
             goalSeconds: goalSeconds,

@@ -8,6 +8,15 @@ import Foundation
 /// underlying lights.
 public struct TargetStats: Codable, Sendable, Equatable {
     public var target: String
+    /// The best available display name for this target -- a resolved
+    /// catalog designation/Hungarian common name (via `TargetNameResolver`,
+    /// `target`'s raw folder name as input) when one can be parsed out,
+    /// with a `name:<text>` target tag (via `NameTag`) overriding the
+    /// resolver's own common name when present, and `target` itself
+    /// (with underscores turned into spaces) as the last-resort fallback.
+    /// ALWAYS non-empty; equals `target`'s cleaned form whenever nothing
+    /// better is known, so callers can print it unconditionally.
+    public var displayName: String
     public var isWideField: Bool
     /// Now EQUALS `usableIntegrationSeconds` -- the headline number must be
     /// the TRUE one (deduped, non-rejected, non-excluded-session), not the
@@ -69,6 +78,7 @@ public struct TargetStats: Codable, Sendable, Equatable {
 
     public init(
         target: String,
+        displayName: String? = nil,
         isWideField: Bool,
         totalIntegrationSeconds: Double,
         sessionDates: [String],
@@ -86,6 +96,7 @@ public struct TargetStats: Codable, Sendable, Equatable {
         excludedSessionDates: [String] = []
     ) {
         self.target = target
+        self.displayName = displayName ?? target.replacingOccurrences(of: "_", with: " ")
         self.isWideField = isWideField
         self.totalIntegrationSeconds = totalIntegrationSeconds
         self.sessionDates = sessionDates
@@ -104,7 +115,7 @@ public struct TargetStats: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case target, isWideField, totalIntegrationSeconds, sessionDates, exposureBreakdown,
+        case target, displayName, isWideField, totalIntegrationSeconds, sessionDates, exposureBreakdown,
              lastSessionDate, cameras, filters, tags, usableIntegrationSeconds, grossIntegrationSeconds,
              usableFrameCount, duplicateLinkCount, rejectedFrameCount, nonFrameFileCount, excludedSessionDates
     }
@@ -112,6 +123,9 @@ public struct TargetStats: Codable, Sendable, Equatable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         target = try c.decode(String.self, forKey: .target)
+        // Absent in JSON produced before this field existed -- fall back to
+        // the cleaned target name, same default the memberwise `init` uses.
+        displayName = try c.decodeIfPresent(String.self, forKey: .displayName) ?? target.replacingOccurrences(of: "_", with: " ")
         isWideField = try c.decode(Bool.self, forKey: .isWideField)
         totalIntegrationSeconds = try c.decode(Double.self, forKey: .totalIntegrationSeconds)
         sessionDates = try c.decode([String].self, forKey: .sessionDates)
@@ -244,9 +258,11 @@ public enum StatsQueries {
         )
 
         let tags = try db.tags(target: target, sessionDate: nil)
+        let resolvedName = NameTag.apply(to: TargetNameResolver.resolve(folderName: target), tags: tags)
 
         return TargetStats(
             target: target,
+            displayName: resolvedName.displayName,
             isWideField: isWideField,
             totalIntegrationSeconds: usableSeconds,
             sessionDates: sessionDates,

@@ -454,3 +454,65 @@ private func lightFile(_ id: Int64, ext: String, target: String) -> FileRecord {
     let files = [lightFile(1, ext: "fit", target: "M31")]
     #expect(!WideFieldHeuristic.isWideField(target: "M31", files: files, meta: [:], rule: rule))
 }
+
+// MARK: - R7-B7: displayName (built-in catalog resolution)
+
+@Test func statsDisplayNameResolvesCatalogDesignationFromFolderName() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/NGC_7000_North_American_Nebula/2026-01-10/lights/l1.fit",
+        exptime: 300.0, instrume: nil, filter: nil
+    )
+    try fixture.scan()
+
+    let stats = try #require(try StatsQueries.target("NGC_7000_North_American_Nebula", db: fixture.db, config: fixture.config))
+    #expect(stats.displayName == "NGC 7000 · Észak-Amerika-köd")
+}
+
+@Test func statsDisplayNameFallsBackToCleanedFolderNameWhenUnresolved() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/Random_Junk_Target/2026-01-10/lights/l1.fit",
+        exptime: 300.0, instrume: nil, filter: nil
+    )
+    try fixture.scan()
+
+    let stats = try #require(try StatsQueries.target("Random_Junk_Target", db: fixture.db, config: fixture.config))
+    #expect(stats.displayName == "Random Junk Target")
+}
+
+@Test func statsDisplayNameIsOverriddenByNameTag() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/NGC_7000_North_American_Nebula/2026-01-10/lights/l1.fit",
+        exptime: 300.0, instrume: nil, filter: nil
+    )
+    try fixture.scan()
+    try fixture.db.addTag(TagRecord(kind: "target", target: "NGC_7000_North_American_Nebula", sessionDate: nil, tag: "name:Saját Név"))
+
+    let stats = try #require(try StatsQueries.target("NGC_7000_North_American_Nebula", db: fixture.db, config: fixture.config))
+    #expect(stats.displayName == "NGC 7000 · Saját Név")
+}
+
+@Test func targetStatsDecodesDisplayNameLenientlyFromOlderJSONWithoutIt() throws {
+    let legacyJSON = """
+    {
+        "target": "NGC_7000_North_American_Nebula",
+        "isWideField": false,
+        "totalIntegrationSeconds": 300.0,
+        "sessionDates": ["2026-01-10"],
+        "exposureBreakdown": {"300.0": 1},
+        "lastSessionDate": "2026-01-10",
+        "cameras": [],
+        "filters": []
+    }
+    """
+    let decoded = try JSONDecoder().decode(TargetStats.self, from: Data(legacyJSON.utf8))
+    #expect(decoded.displayName == "NGC 7000 North American Nebula")
+}

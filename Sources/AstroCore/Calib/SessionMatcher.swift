@@ -68,10 +68,22 @@ public enum SessionMatcher {
             throw AstroError.pathNotFound(path: "sessions/\(target)/\(date)")
         }
 
-        let lights = sessionFiles.filter { $0.role == .light }
+        let rawLights = sessionFiles.filter { $0.role == .light }
         let flats = sessionFiles.filter { $0.role == .flat }.map(\.path).sorted()
         let darks = sessionFiles.filter { $0.role == .dark }.map(\.path).sorted()
         let biases = sessionFiles.filter { $0.role == .bias }.map(\.path).sorted()
+
+        // Deduped, usable lights (`FrameSet.lightBuckets` -- same source of
+        // truth as `StatsQueries`/`CalibAnalyzer`): a physical DSLR shot kept
+        // as both its original `.cr3` and a converted `.tif` must count once,
+        // not twice, both for the reported `lights` count and for the
+        // dominant-combo fallback-dark lookup below.
+        var metaByFileID: [Int64: FITSMetaRecord] = [:]
+        for file in rawLights {
+            guard let id = file.id else { continue }
+            if let meta = try db.fitsMeta(fileID: id) { metaByFileID[id] = meta }
+        }
+        let lights = FrameSet.lightBuckets(files: rawLights, meta: metaByFileID, config: config).usable
 
         var problems: [Finding] = []
 

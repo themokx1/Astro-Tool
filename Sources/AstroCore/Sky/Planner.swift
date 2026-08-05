@@ -7,6 +7,13 @@ import Foundation
 /// and a verdict summing all of that up in one line.
 public struct TargetPlan: Codable, Sendable, Equatable {
     public var target: String
+    /// Resolved catalog designation/Hungarian common name for `target`
+    /// (via `TargetNameResolver`, `name:<text>` tag override applied via
+    /// `NameTag`) -- see `TargetStats.displayName`'s own doc comment for
+    /// the exact composition rules. Absent in JSON produced before this
+    /// field existed; decodes to `target`'s cleaned form in that case (see
+    /// the lenient `init(from:)`).
+    public var displayName: String
     public var raDeg: Double?
     public var decDeg: Double?
     public var usableIntegrationSeconds: Double
@@ -32,6 +39,7 @@ public struct TargetPlan: Codable, Sendable, Equatable {
 
     public init(
         target: String,
+        displayName: String? = nil,
         raDeg: Double? = nil,
         decDeg: Double? = nil,
         usableIntegrationSeconds: Double,
@@ -47,6 +55,7 @@ public struct TargetPlan: Codable, Sendable, Equatable {
         score: Double
     ) {
         self.target = target
+        self.displayName = displayName ?? target.replacingOccurrences(of: "_", with: " ")
         self.raDeg = raDeg
         self.decDeg = decDeg
         self.usableIntegrationSeconds = usableIntegrationSeconds
@@ -60,6 +69,33 @@ public struct TargetPlan: Codable, Sendable, Equatable {
         self.moonSeparationDeg = moonSeparationDeg
         self.verdict = verdict
         self.score = score
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case target, displayName, raDeg, decDeg, usableIntegrationSeconds, goalSeconds,
+             culminationUTC, culminationLocal, maxAltitudeDeg, visibleWindowLocal, visibleHours,
+             moonIlluminationPercent, moonSeparationDeg, verdict, score
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        target = try c.decode(String.self, forKey: .target)
+        // Absent in JSON produced before this field existed -- fall back to
+        // the cleaned target name, same default the memberwise `init` uses.
+        displayName = try c.decodeIfPresent(String.self, forKey: .displayName) ?? target.replacingOccurrences(of: "_", with: " ")
+        raDeg = try c.decodeIfPresent(Double.self, forKey: .raDeg)
+        decDeg = try c.decodeIfPresent(Double.self, forKey: .decDeg)
+        usableIntegrationSeconds = try c.decode(Double.self, forKey: .usableIntegrationSeconds)
+        goalSeconds = try c.decodeIfPresent(Double.self, forKey: .goalSeconds)
+        culminationUTC = try c.decodeIfPresent(String.self, forKey: .culminationUTC)
+        culminationLocal = try c.decodeIfPresent(String.self, forKey: .culminationLocal)
+        maxAltitudeDeg = try c.decodeIfPresent(Double.self, forKey: .maxAltitudeDeg)
+        visibleWindowLocal = try c.decodeIfPresent(String.self, forKey: .visibleWindowLocal)
+        visibleHours = try c.decodeIfPresent(Double.self, forKey: .visibleHours)
+        moonIlluminationPercent = try c.decodeIfPresent(Double.self, forKey: .moonIlluminationPercent)
+        moonSeparationDeg = try c.decodeIfPresent(Double.self, forKey: .moonSeparationDeg)
+        verdict = try c.decode(String.self, forKey: .verdict)
+        score = try c.decode(Double.self, forKey: .score)
     }
 }
 
@@ -334,6 +370,7 @@ public enum Planner {
 
             plans.append(buildPlan(
                 target: stat.target,
+                displayName: stat.displayName,
                 usableIntegrationSeconds: stat.usableIntegrationSeconds,
                 goalSeconds: goalSeconds,
                 coord: coord,
@@ -352,6 +389,7 @@ public enum Planner {
 
     private static func buildPlan(
         target: String,
+        displayName: String,
         usableIntegrationSeconds: Double,
         goalSeconds: Double?,
         coord: (raDeg: Double, decDeg: Double)?,
@@ -366,6 +404,7 @@ public enum Planner {
         else {
             return TargetPlan(
                 target: target,
+                displayName: displayName,
                 raDeg: coord?.raDeg,
                 decDeg: coord?.decDeg,
                 usableIntegrationSeconds: usableIntegrationSeconds,
@@ -413,6 +452,7 @@ public enum Planner {
 
         return TargetPlan(
             target: target,
+            displayName: displayName,
             raDeg: coord.raDeg,
             decDeg: coord.decDeg,
             usableIntegrationSeconds: usableIntegrationSeconds,

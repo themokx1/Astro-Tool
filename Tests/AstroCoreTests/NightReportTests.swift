@@ -98,6 +98,19 @@ private func makeRichFixture() throws -> (db: Database, config: AstroConfig) {
     #expect(html.contains("2026-04-18"))
 }
 
+// MARK: - R7-B7: resolved display name in header/title
+
+@Test func renderHeaderShowsResolvedDisplayNameAlongsideFolderName() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+    try insertLight(db: db, target: "M42_Orion_test", date: "2026-04-18", name: "a", dateObs: "2026-04-18T21:00:00", withCoordinates: false)
+
+    let html = try NightReport.render(target: "M42_Orion_test", date: "2026-04-18", db: db, config: config)
+
+    #expect(html.contains("Cél: M 42 · Orion-köd (M42_Orion_test)"))
+    #expect(html.contains("<title>Éjszaka-riport — M 42 · Orion-köd — 2026-04-18</title>"))
+}
+
 // MARK: - 2. Correct duty %
 
 @Test func renderShowsCorrectDutyCycle() throws {

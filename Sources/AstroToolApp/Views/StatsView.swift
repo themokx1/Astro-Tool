@@ -64,6 +64,7 @@ struct StatsView: View {
         guard !searchText.isEmpty else { return appState.stats }
         return appState.stats.filter { stats in
             stats.target.localizedCaseInsensitiveContains(searchText)
+                || stats.displayName.localizedCaseInsensitiveContains(searchText)
                 || stats.tags.contains { $0.localizedCaseInsensitiveContains(searchText) }
         }
     }
@@ -199,17 +200,30 @@ struct StatsView: View {
     private func nameCell(_ row: StatsRow) -> some View {
         switch row.kind {
         case .target(let stats):
-            HStack(spacing: 6) {
-                Text(stats.target).bold()
-                if stats.isWideField {
-                    Text("wide-field")
-                        .font(.caption2)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.orange.opacity(0.2)))
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(stats.displayName).bold()
+                    if stats.isWideField {
+                        Text("wide-field")
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.orange.opacity(0.2)))
+                    }
+                }
+                .lineLimit(1)
+                // Resolved catalog designation/common name (R7-B7) --
+                // secondary caption with the raw folder name underneath,
+                // only when it actually differs (an unresolved/junk folder
+                // name already equals `displayName`, so showing it twice
+                // would be noise).
+                if stats.displayName != stats.target {
+                    Text(stats.target)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
-            .lineLimit(1)
             .help(targetBreakdownTooltip(stats))
         case .session(_, let detail):
             HStack(spacing: 6) {
