@@ -649,7 +649,9 @@ struct CLISmokeTests {
     let result = try runCLI(["stacks", "--root", root.path, "--target", "M42_Orion"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("result.fit"))
-    #expect(result.stdout.contains("stacks"))
+    // R8-3: human output is grouped now -- one "N stack-csoport, M fájl"
+    // header line per target instead of a flat per-file table.
+    #expect(result.stdout.contains("stack-csoport"))
 }
 
 @Test func stacksWithoutTargetListsEveryTargetWithDiscoveredStacks() throws {
@@ -666,6 +668,61 @@ struct CLISmokeTests {
     let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
     let reports = try #require(json)
     #expect(reports.contains { $0["target"] as? String == "M42_Orion" })
+}
+
+// MARK: - stacks --grouped / --verbose (R8-3)
+
+@Test func stacksJSONGroupedReturnsStackGroupShapeInsteadOfFlatTargetStacks() throws {
+    let root = try makeTempRoot("stacks-grouped-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stacks", "--root", root.path, "--target", "M42_Orion", "--json", "--grouped"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let groups = try #require(json)
+    let group = try #require(groups.first)
+    // `StackGroup`'s own shape -- "stem"/"base"/"variants" -- not
+    // `TargetStacks`'s "target"/"displayName"/"stacks".
+    #expect(group["stem"] != nil)
+    let base = try #require(group["base"] as? [String: Any])
+    #expect(base["path"] as? String == "stacks/M42_Orion/2026-01-17/result.fit")
+}
+
+@Test func stacksHumanVerboseListsVariantsIndentedUnderneathTheirGroup() throws {
+    let root = try makeTempRoot("stacks-verbose")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let fm = FileManager.default
+    func writeStackFile(_ relativePath: String) throws {
+        let url = root.appendingPathComponent(relativePath, isDirectory: false)
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "dummy stack bytes".write(to: url, atomically: true, encoding: .utf8)
+    }
+    // Real on-disk family shape, NGC2237_Rosette_Nebula -- an `_og` original
+    // plus its `starless_` variant, same stem.
+    try writeStackFile(
+        "stacks/NGC2237_Rosette_Nebula/2026-04-04/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og.fit"
+    )
+    try writeStackFile(
+        "stacks/NGC2237_Rosette_Nebula/2026-04-04/starless_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956.fit"
+    )
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let plain = try runCLI(["stacks", "--root", root.path, "--target", "NGC2237_Rosette_Nebula"])
+    #expect(plain.exitCode == 0, "stderr: \(plain.stderr)")
+    #expect(plain.stdout.contains("(+1 starless)"))
+    #expect(!plain.stdout.contains("starless_NGC"))
+
+    let verbose = try runCLI(["stacks", "--root", root.path, "--target", "NGC2237_Rosette_Nebula", "--verbose"])
+    #expect(verbose.exitCode == 0, "stderr: \(verbose.stderr)")
+    #expect(verbose.stdout.contains("starless_NGC"))
 }
 
 // MARK: - search

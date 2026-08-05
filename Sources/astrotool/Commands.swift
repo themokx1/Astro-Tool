@@ -68,11 +68,16 @@ Commands:
                 writes a .dssfilelist (DeepSkyStacker/Sirilic) and a .ssf
                 Siril script alongside it. Additive and idempotent -- never
                 touches your original files.
-  stacks        [--target T] [--json] [--root R]
+  stacks        [--target T] [--json] [--grouped] [--verbose] [--root R]
                 Stack-file felderítés: minden már létrejött stack/feldolgozott
                 kimenet célpontonként, bárhol is legyen a lemezen -- nem csak
                 a kanonikus stacks/<cél>/<dátum>/ helyen. Ismeretlen célponthoz
-                sorolt találatok "Besorolatlan" alatt.
+                sorolt találatok "Besorolatlan" alatt. Emberi kimenet
+                variáns-családokba csoportosítva (R8-3): eredeti/szerkesztett/
+                starless/starmask/export egy stackhez tartozó fájljai egy
+                sorban; --verbose behúzva kilistázza a variánsokat is. --json
+                alapból a lapos [TargetStacks] listát adja; --json --grouped
+                a csoportosított [StackGroup] listát.
   report        --target T --date D [--out -] [--root R]
                 Self-contained HTML night-report card: frame/exposure
                 summary, timeline, quality, altitude/airmass + achieved Moon
@@ -2173,18 +2178,29 @@ private func printStackSelection(_ selection: StackSelection) {
 
 // MARK: - stacks (R8-1)
 
-/// `astrotool stacks [--target T] [--json] [--root R]` -- R8-1's stack-file
-/// discovery (`StackDiscovery.discover`): every already-created stack/
-/// processed output on record for every target, wherever it actually lives
-/// -- not just the canonical `stacks/<target>/<date>/` location. Without
-/// `--target`, every target with at least one discovered stack (plus a
-/// trailing "Besorolatlan" group for stack-looking files matched to no known
-/// target at all); with `--target`, only that one target's group.
+/// `astrotool stacks [--target T] [--json] [--grouped] [--verbose] [--root R]`
+/// -- R8-1's stack-file discovery (`StackDiscovery.discover`): every
+/// already-created stack/processed output on record for every target,
+/// wherever it actually lives -- not just the canonical
+/// `stacks/<target>/<date>/` location. Without `--target`, every target with
+/// at least one discovered stack (plus a trailing "Besorolatlan" group for
+/// stack-looking files matched to no known target at all); with `--target`,
+/// only that one target's group.
+///
+/// R8-3: the human output always groups into variant families
+/// (`StackDiscovery.groupedStacks`) now instead of dumping one flat row per
+/// file -- `--verbose` additionally lists each group's variants indented
+/// underneath. `--json` keeps returning the flat `[TargetStacks]` shape by
+/// default (unchanged, so existing scripts don't break); `--json --grouped`
+/// switches it to a flat `[StackGroup]` array instead (each entry's own
+/// `base.target` identifies which target it belongs to).
 func cmdStacks(_ args: [String]) throws -> Int32 {
     let specs = [
         FlagSpec("--root", takesValue: true),
         FlagSpec("--target", takesValue: true),
         FlagSpec("--json", takesValue: false),
+        FlagSpec("--grouped", takesValue: false),
+        FlagSpec("--verbose", takesValue: false),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
 
@@ -2201,14 +2217,22 @@ func cmdStacks(_ args: [String]) throws -> Int32 {
     }
 
     if parsed.has("--json") {
-        try printJSON(selected)
+        if parsed.has("--grouped") {
+            var groups: [StackGroup] = []
+            for report in selected where !report.stacks.isEmpty {
+                groups += try StackDiscovery.groupedStacks(target: report.target, db: db, config: config)
+            }
+            try printJSON(groups)
+        } else {
+            try printJSON(selected)
+        }
     } else {
-        printStackReports(selected)
+        try printGroupedStackReports(selected, db: db, config: config, verbose: parsed.has("--verbose"))
     }
     return 0
 }
 
-private func printStackReports(_ reports: [TargetStacks]) {
+private func printGroupedStackReports(_ reports: [TargetStacks], db: Database, config: AstroConfig, verbose: Bool) throws {
     let nonEmpty = reports.filter { !$0.stacks.isEmpty }
     guard !nonEmpty.isEmpty else {
         print("nincs felfedezett stack")
@@ -2216,29 +2240,56 @@ private func printStackReports(_ reports: [TargetStacks]) {
     }
 
     for report in nonEmpty {
-        print("\(report.displayName)  (\(report.stacks.count) stack)")
-        print("  FÁJL                                              HELY        KERET×SUB      ÖSSZIDŐ  MÉRET      DÁTUM")
-        for stack in report.stacks {
-            let name = (stack.path as NSString).lastPathComponent
-            let location = locationLabel(for: stack.path)
-            let framesSub = stack.framesFromName.map { frames in
-                "\(frames)×\(stack.subSecondsFromName.map { String(format: "%.0f", $0) } ?? "?")s"
-            } ?? "-"
-            let total = stack.totalSecondsFromName.map(formatHoursMinutes) ?? "-"
-            let size = formatBytes(stack.sizeBytes)
-            let date = stack.sessionDate ?? "-"
-            var line = "  \(name.padding(toLength: 50, withPad: " ", startingAt: 0)) \(location.padding(toLength: 10, withPad: " ", startingAt: 0))  \(framesSub.padding(toLength: 13, withPad: " ", startingAt: 0))  \(total.padding(toLength: 7, withPad: " ", startingAt: 0))  \(size.padding(toLength: 9, withPad: " ", startingAt: 0))  \(date)"
-            if stack.kind != "stack" {
-                line += "  [\(stack.kind)]"
+        let groups = try StackDiscovery.groupedStacks(target: report.target, db: db, config: config)
+        print("\(report.displayName)  (\(groups.count) stack-csoport, \(report.stacks.count) fájl)")
+        for group in groups {
+            print("  \(groupSummaryLine(group))")
+            if verbose {
+                for variant in group.variants {
+                    let name = (variant.path as NSString).lastPathComponent
+                    let location = locationLabel(for: variant.path)
+                    let size = formatBytes(variant.sizeBytes)
+                    let date = variant.sessionDate ?? "-"
+                    print(
+                        "      \(name.padding(toLength: 60, withPad: " ", startingAt: 0))  [\(variant.variantKind.rawValue.padding(toLength: 12, withPad: " ", startingAt: 0))]"
+                            + "  \(location.padding(toLength: 10, withPad: " ", startingAt: 0))  \(size.padding(toLength: 9, withPad: " ", startingAt: 0))  \(date)"
+                    )
+                }
             }
-            print(line)
-        }
-        if let best = report.stacks.first(where: { $0.totalSecondsFromName != nil }) {
-            let framesText = best.framesFromName.map(String.init) ?? "?"
-            let subText = best.subSecondsFromName.map { String(format: "%.0f", $0) } ?? "?"
-            print("  legjobb: \(framesText)×\(subText) s (\(formatHoursMinutes(best.totalSecondsFromName ?? 0)))")
         }
         print("")
+    }
+}
+
+/// "NGC_..._og.fit  145×120s (3:25:00)  (+9 szerkesztett · 2 starless)" --
+/// one group's summary line: base filename, best-known exposure (name-parsed
+/// or header fallback, flagged `[headerből]` when it's the latter), and a
+/// kind-count breakdown of its variants.
+private func groupSummaryLine(_ group: StackGroup) -> String {
+    let name = (group.base.path as NSString).lastPathComponent
+    var line = name
+    if let frames = group.framesBest {
+        let sub = group.subSecondsBest.map { String(format: "%.0f", $0) } ?? "?"
+        line += "  \(frames)×\(sub)s"
+        if let total = group.totalSecondsBest {
+            line += " (\(formatHoursMinutes(total)))"
+        }
+        if group.fromHeader { line += " [headerből]" }
+    }
+    let counts = variantKindCounts(group.variants)
+    if !counts.isEmpty {
+        line += "  (+\(counts.joined(separator: " · ")))"
+    }
+    return line
+}
+
+private func variantKindCounts(_ variants: [StackFile]) -> [String] {
+    var counts: [StackVariantKind: Int] = [:]
+    for variant in variants { counts[variant.variantKind, default: 0] += 1 }
+    let order: [StackVariantKind] = [.edited, .starless, .starmask, .export_, .original]
+    return order.compactMap { kind in
+        guard let count = counts[kind], count > 0 else { return nil }
+        return "\(count) \(kind.rawValue)"
     }
 }
 

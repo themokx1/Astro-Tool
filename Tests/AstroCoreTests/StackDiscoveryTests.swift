@@ -306,3 +306,145 @@ private func insertFile(
     let stacks = try StackDiscovery.stacks(target: "M42_Orion", db: db, config: AstroConfig())
     #expect(stacks.isEmpty)
 }
+
+// MARK: - variantKind (R8-3)
+
+@Test func variantKindClassifiesBareOgNameAsOriginal() throws {
+    // Real on-disk name, NGC2237_Rosette_Nebula/stacks/2026-04-04.
+    #expect(StackDiscovery.variantKind(
+        fileName: "NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og.fit"
+    ) == .original)
+}
+
+@Test func variantKindClassifiesGraxpertWorkChainAsEdited() throws {
+    // Real on-disk name, NGC2237_Rosette_Nebula/sessions/2026-02-25_2026-03-15.
+    #expect(StackDiscovery.variantKind(
+        fileName: "NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_result_HOO_Improved.fit"
+    ) == .edited)
+}
+
+@Test func variantKindRecognizesEveryChannelCompositeResultToken() throws {
+    for token in ["HOO", "HSO", "SHO", "OSH"] {
+        #expect(StackDiscovery.variantKind(fileName: "stack_og_work_graxpert_result_\(token)_Improved.fit") == .edited)
+    }
+}
+
+@Test func variantKindClassifiesStarlessPrefixEvenOverEditMarkers() throws {
+    // Real on-disk name, NGC2237_Rosette_Nebula/sessions -- starless wins even
+    // though "_seti"/"_strech" are also edit markers.
+    #expect(StackDiscovery.variantKind(
+        fileName: "starless_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_seti_strech.fit"
+    ) == .starless)
+}
+
+@Test func variantKindClassifiesStarmaskPrefix() throws {
+    #expect(StackDiscovery.variantKind(
+        fileName: "starmask_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956.fit"
+    ) == .starmask)
+}
+
+@Test func variantKindClassifiesJPEGExportRegardlessOfEditMarkers() throws {
+    // Real on-disk name, NGC2237_Rosette_Nebula/sessions -- carries "_seti"/
+    // "_strech" edit markers, but the .jpg extension wins.
+    #expect(StackDiscovery.variantKind(
+        fileName: "NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_seti_strech.jpg"
+    ) == .export_)
+}
+
+// MARK: - stem (R8-3)
+
+@Test func stemGroupsRealNGC2244FamilyUnderOneKey() throws {
+    // Every one of these is a REAL on-disk filename for the exact family the
+    // user's screenshot complained about (NGC2237_Rosette_Nebula).
+    let original = StackDiscovery.stem(for: "NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og.fit")
+    let edited = StackDiscovery.stem(for: "NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_result_HOO_Improved.fit")
+    let starless = StackDiscovery.stem(for: "starless_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_seti_strech.fit")
+    let starmask = StackDiscovery.stem(for: "starmask_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956.fit")
+    let jpgExport = StackDiscovery.stem(for: "NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_seti_strech.jpg")
+
+    let expected = "ngc_2244_satellite_cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956"
+    #expect(original == expected)
+    #expect(edited == expected)
+    #expect(starless == expected)
+    #expect(starmask == expected)
+    #expect(jpgExport == expected)
+}
+
+@Test func stemFallbackStripsSuffixMarkerWhenNoNxSubCore() throws {
+    // Real on-disk shape: a bare "result.fit"/"result_final.tif" pair with
+    // no ASIAIR NxSUBsec_TOTALs core to anchor on at all.
+    #expect(StackDiscovery.stem(for: "result.fit") == "result")
+    #expect(StackDiscovery.stem(for: "result_final.tif") == "result")
+}
+
+// MARK: - groupedStacks (R8-3)
+
+@Test func groupedStacksGroupsNGC2244FamilyPreferringOriginalAsBase() throws {
+    let db = try makeMemoryDB()
+    try insertFile(
+        db: db,
+        path: "stacks/NGC2237_Rosette_Nebula/2026-04-04/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og.fit",
+        size: 50_000_000, ext: "fit", area: .stacks, target: "NGC2237_Rosette_Nebula", sessionDate: "2026-04-04", role: .stack
+    )
+    try insertFile(
+        db: db,
+        path: "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_result_HOO_Improved.fit",
+        size: 900_000_000, ext: "fit", area: .sessions, target: "NGC2237_Rosette_Nebula", sessionDate: "2026-02-25_2026-03-15", role: .other
+    )
+    try insertFile(
+        db: db,
+        path: "stacks/NGC2237_Rosette_Nebula/2026-04-04/starless_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956.fit",
+        size: 60_000_000, ext: "fit", area: .stacks, target: "NGC2237_Rosette_Nebula", sessionDate: "2026-04-04", role: .stack
+    )
+
+    let groups = try StackDiscovery.groupedStacks(target: "NGC2237_Rosette_Nebula", db: db, config: AstroConfig())
+    #expect(groups.count == 1)
+    let group = try #require(groups.first)
+    #expect(group.base.path.hasSuffix("_1956_og.fit"))
+    #expect(group.variants.count == 2)
+    #expect(group.framesBest == 145)
+    #expect(group.totalSecondsBest == 12300)
+    #expect(group.fromHeader == false)
+}
+
+@Test func groupedStacksFallsBackToHeaderSTACKCNTAndLIVETIMEWhenNameHasNoExposure() throws {
+    let db = try makeMemoryDB()
+    let fileID = try insertFile(
+        db: db, path: "stacks/M42_Orion/2026-01-17/result.fit",
+        ext: "fit", area: .stacks, target: "M42_Orion", sessionDate: "2026-01-17", role: .stack
+    )
+    // Real header_json shape (queried from the actual library's fits_meta).
+    let header = #"{"STACKCNT":"155","LIVETIME":"13740.","EXPTIME":"120."}"#
+    try db.upsertFITSMeta(FITSMetaRecord(fileID: fileID, headerJSON: header))
+
+    let groups = try StackDiscovery.groupedStacks(target: "M42_Orion", db: db, config: AstroConfig())
+    let group = try #require(groups.first)
+    #expect(group.framesBest == 155)
+    #expect(group.totalSecondsBest == 13740)
+    #expect(group.fromHeader == true)
+    #expect(group.subSecondsBest == 13740.0 / 155.0)
+}
+
+@Test func groupedStacksReturnsSingletonForFileWithNoOtherVariant() throws {
+    let db = try makeMemoryDB()
+    try insertFile(
+        db: db, path: "stacks/M42_Orion/2026-01-17/result.fit",
+        ext: "fit", area: .stacks, target: "M42_Orion", sessionDate: "2026-01-17", role: .stack
+    )
+
+    let groups = try StackDiscovery.groupedStacks(target: "M42_Orion", db: db, config: AstroConfig())
+    #expect(groups.count == 1)
+    #expect(groups.first?.variants.isEmpty == true)
+    #expect(groups.first?.base.path == "stacks/M42_Orion/2026-01-17/result.fit")
+}
+
+@Test func groupedStacksReturnsEmptyForTargetWithNoDiscoveredStacks() throws {
+    let db = try makeMemoryDB()
+    try insertFile(
+        db: db, path: "sessions/M42_Orion/2026-01-17/lights/l1.fit",
+        ext: "fit", area: .sessions, target: "M42_Orion", sessionDate: "2026-01-17", role: .light
+    )
+
+    let groups = try StackDiscovery.groupedStacks(target: "M42_Orion", db: db, config: AstroConfig())
+    #expect(groups.isEmpty)
+}

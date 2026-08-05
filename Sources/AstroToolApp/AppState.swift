@@ -61,6 +61,13 @@ final class AppState: @unchecked Sendable {
     /// guess not-loaded-yet vs. genuinely-empty" convention
     /// `panelReportsByTarget` uses.
     var stackReportsByTarget: [String: TargetStacks] = [:]
+    /// Every target's discovered stacks, grouped into variant families
+    /// (`StackDiscovery.groupedStacks`, R8-3) -- keyed by target name,
+    /// populated alongside `stackReportsByTarget` in `loadStats()`. Powers
+    /// `StackGroupSheet`'s hierarchical table; a target with no discovered
+    /// stacks still gets an entry (`[]`), same convention as
+    /// `stackReportsByTarget`.
+    var stackGroupsByTarget: [String: [StackGroup]] = [:]
     var calibNeeds: [CalibNeed] = []
     /// `CalibHealth.report`'s result -- flat discipline, bias inventory, dark
     /// master health -- shown below the coverage table on the Kalibráció
@@ -578,10 +585,11 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let (result, sessionsByTarget, panelsByTarget, stacksByTarget) = try await Task.detached(priority: .userInitiated) {
+                let (result, sessionsByTarget, panelsByTarget, stacksByTarget, stackGroupsByTarget) = try await Task.detached(priority: .userInitiated) {
                     let stats = try StatsQueries.perTarget(db: db, config: cfg)
                     var sessionsByTarget: [String: [SessionDetail]] = [:]
                     var panelsByTarget: [String: PanelReport] = [:]
+                    var stackGroupsByTarget: [String: [StackGroup]] = [:]
                     let discoveredStacks = try StackDiscovery.discover(db: db, config: cfg)
                     let stacksByTarget = Dictionary(uniqueKeysWithValues: discoveredStacks.map { ($0.target, $0) })
                     for stat in stats {
@@ -591,14 +599,23 @@ final class AppState: @unchecked Sendable {
                         panelsByTarget[stat.target] = try FieldGeometry.panels(
                             target: stat.target, db: db, config: cfg
                         )
+                        // R8-3: only worth grouping targets that actually have
+                        // discovered stacks -- same "don't do useless work"
+                        // stance as skipping an empty `stacksByTarget` entry.
+                        if let report = stacksByTarget[stat.target], !report.stacks.isEmpty {
+                            stackGroupsByTarget[stat.target] = try StackDiscovery.groupedStacks(
+                                target: stat.target, db: db, config: cfg
+                            )
+                        }
                     }
-                    return (stats, sessionsByTarget, panelsByTarget, stacksByTarget)
+                    return (stats, sessionsByTarget, panelsByTarget, stacksByTarget, stackGroupsByTarget)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.stats = result
                 self.sessionDetailsByTarget = sessionsByTarget
                 self.panelReportsByTarget = panelsByTarget
                 self.stackReportsByTarget = stacksByTarget
+                self.stackGroupsByTarget = stackGroupsByTarget
                 self.progressText = "Statisztika kész: \(result.count) célpont"
             } catch {
                 self.handle(error)

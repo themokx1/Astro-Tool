@@ -8,6 +8,29 @@ történik.
 
 ## [Unreleased]
 
+### Added
+
+- **Csoportosított stack-nézet variánsokkal, szerkesztett/eredeti jelzéssel,
+  expozícióval és Finder-gombokkal** (R8-3): valós screenshot alapú
+  visszajelzésre válaszul — egy NGC2237-stack tucatnyi variánsa (`_og`,
+  `starless_`, `starmask_`, `..._work_graxpert_result_HOO_Improved`,
+  `..._seti_strech.jpg`) eddig kezelhetetlen lapos listaként jelent meg. A
+  `StackDiscovery` most `StackVariantKind`-ot (eredeti/szerkesztett/starless/
+  starmask/export) rendel minden fájlhoz a fájlnév alapján, és
+  `StackGroup`-okba (`groupedStacks`) fésüli az egy stackhez tartozó
+  variánsokat a közös `stem` (a `NxSUBsec_TOTALs` + drizzle + időbélyeg mag)
+  szerint; a legjobb ismert expozíció a névből, vagy — ha a névben nincs
+  keretszám — a FITS header `STACKCNT`/`LIVETIME`/`EXPTIME` mezőiből. A
+  Statisztika fülön a "Stackek…" popover helyett egy átméretezhető
+  (min. 800×500) sheet nyílik: hierarchikus táblázat csoport-sorokkal
+  (típus-badge, **kövér** expo, "headerből" jelzés) és behúzott
+  variáns-sorokkal (színes típus-badge, kiemelt "edit chain" névrész),
+  minden soron "Megnyitás" és "Finderben" gombbal. `astrotool stacks` emberi
+  kimenete mostantól csoportosítva listáz (típus-bontással, pl.
+  "(+9 szerkesztett · 2 starless)"), `--verbose` a variánsokat is kilistázza;
+  `--json --grouped` az új `[StackGroup]` alakot adja vissza (az alapértelmezett
+  `--json` változatlan marad).
+
 ### Fixed
 
 - **Per-Bayer paritás-mediánok páratlan oszlopa mindig `NULL` volt**

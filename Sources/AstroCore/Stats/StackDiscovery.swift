@@ -87,6 +87,86 @@ public struct TargetStacks: Codable, Sendable, Equatable {
     }
 }
 
+/// R8-3: which "flavor" of the same underlying stack a discovered file is --
+/// the popover's dozens of flat rows (`NGC_2244_..._og.fit`,
+/// `starless_..._og.fit`, `..._og_work_graxpert_result_HOO_Improved.fit`,
+/// `..._seti_strech.jpg`, ...) are all THIS classification applied to one
+/// filename, purely from the filename itself (no path, no database) -- same
+/// "recognition is filename-driven" convention as `looksLikeStackOutput`.
+public enum StackVariantKind: String, Codable, Sendable {
+    /// Raw stacker output, no edit markers at all: `*_og.fit`, a plain
+    /// `NxSUBsec_TOTALs` name, `result.fit`, `Autosave*.tif`.
+    case original = "eredeti"
+    /// Carries at least one recognized post-processing marker: `_work`,
+    /// `_strech`/`_stretch`, `graxpert`, `denoise[d]`, `_seti`, `_spcc`,
+    /// `parallax`, `prisim`, `resampled`, `alchemy`, a "copy" suffix,
+    /// `Improved`, or an `_HOO`/`_HSO`/`_SHO`/`_OSH`-style channel-composite
+    /// result token.
+    case edited = "szerkesztett"
+    /// Filename starts with `starless_` (star-removed variant).
+    case starless = "starless"
+    /// Filename starts with `starmask_` (extracted star-mask variant).
+    case starmask = "starmask"
+    /// `.jpg`/`.jpeg`/`.png` regardless of any other marker -- a rendered
+    /// export always classifies as this, even when it also carries edit
+    /// markers (e.g. `..._seti_strech.jpg`).
+    case export_ = "export"
+}
+
+/// One "family" of stack variants sharing the same underlying capture --
+/// R8-3's fix for the "dozens of flat unmanageable rows" complaint. `base` is
+/// the primary/representative file (preferring a `.original`-kind member,
+/// else the largest); `variants` is everything else in the group, sorted
+/// `.original` (any extra copies) then `.edited`/`.starless`/`.starmask`/
+/// `.export_`, then by name within each kind.
+public struct StackGroup: Codable, Sendable {
+    /// The grouping key derived by `StackDiscovery.stem(for:)` -- shared by
+    /// every member's filename.
+    public var stem: String
+    public var base: StackFile
+    public var variants: [StackFile]
+    /// Best-known total integration seconds for this group -- `base`'s own
+    /// `totalSecondsFromName` when present, else a `header_json` fallback
+    /// (see `fromHeader`).
+    public var totalSecondsBest: Double?
+    /// Best-known frame count, same fallback rule as `totalSecondsBest`.
+    public var framesBest: Int?
+    /// Best-known per-sub exposure seconds, same fallback rule.
+    public var subSecondsBest: Double?
+    /// `true` when any of `framesBest`/`totalSecondsBest`/`subSecondsBest`
+    /// came from `base`'s FITS header (`STACKCNT`/`LIVETIME`/`EXPTIME`)
+    /// rather than being parsed from its filename -- lets the UI show a
+    /// "headerből" ("from header") hint instead of implying the name itself
+    /// carried the numbers.
+    public var fromHeader: Bool
+
+    public init(
+        stem: String,
+        base: StackFile,
+        variants: [StackFile],
+        totalSecondsBest: Double? = nil,
+        framesBest: Int? = nil,
+        subSecondsBest: Double? = nil,
+        fromHeader: Bool = false
+    ) {
+        self.stem = stem
+        self.base = base
+        self.variants = variants
+        self.totalSecondsBest = totalSecondsBest
+        self.framesBest = framesBest
+        self.subSecondsBest = subSecondsBest
+        self.fromHeader = fromHeader
+    }
+}
+
+/// `variantKind`, computed purely from the file's own basename -- see
+/// `StackDiscovery.variantKind(fileName:)` for the recognition rules.
+public extension StackFile {
+    var variantKind: StackVariantKind {
+        StackDiscovery.variantKind(fileName: (path as NSString).lastPathComponent)
+    }
+}
+
 /// R8-1: finds every already-created stack/processed output for every
 /// target, wherever it actually lives on disk -- NOT just the canonical
 /// `stacks/<target>/<date>/` and `processed/<target>/<date>/` locations.
@@ -179,6 +259,60 @@ public enum StackDiscovery {
     /// (including if `target` itself isn't known to the library at all).
     public static func stacks(target: String, db: Database, config: AstroConfig) throws -> [StackFile] {
         try discover(db: db, config: config).first { $0.target == target }?.stacks ?? []
+    }
+
+    /// R8-3: `stacks(target:...)`, collapsed into families sharing the same
+    /// underlying capture (`stem(for:)`) -- the fix for the "dozens of flat
+    /// unmanageable rows" complaint. Group order follows `stacks(target:...)`'s
+    /// own sort (best-integration-first), one `StackGroup` per distinct stem.
+    /// `[]` under the exact same conditions `stacks(target:...)` returns `[]`.
+    public static func groupedStacks(target: String, db: Database, config: AstroConfig) throws -> [StackGroup] {
+        let files = try stacks(target: target, db: db, config: config)
+        guard !files.isEmpty else { return [] }
+
+        var order: [String] = []
+        var membersByStem: [String: [StackFile]] = [:]
+        for file in files {
+            let baseName = (file.path as NSString).lastPathComponent
+            let key = stem(for: baseName)
+            if membersByStem[key] == nil { order.append(key) }
+            membersByStem[key, default: []].append(file)
+        }
+
+        return try order.map { key in
+            let members = membersByStem[key] ?? []
+            let base = chooseBase(members)
+            let variants = members.filter { $0.path != base.path }.sorted(by: variantIsOrderedBeforeInGroup)
+
+            var framesBest = base.framesFromName
+            var subSecondsBest = base.subSecondsFromName
+            var totalSecondsBest = base.totalSecondsFromName
+            var fromHeader = false
+
+            if framesBest == nil, let header = try headerExposure(path: base.path, db: db) {
+                if let headerFrames = header.frames {
+                    framesBest = headerFrames
+                    fromHeader = true
+                }
+                if totalSecondsBest == nil, let headerTotal = header.totalSeconds {
+                    totalSecondsBest = headerTotal
+                    fromHeader = true
+                }
+                if subSecondsBest == nil, let frames = framesBest, frames > 0, let total = totalSecondsBest {
+                    subSecondsBest = total / Double(frames)
+                }
+            }
+
+            return StackGroup(
+                stem: key,
+                base: base,
+                variants: variants,
+                totalSecondsBest: totalSecondsBest,
+                framesBest: framesBest,
+                subSecondsBest: subSecondsBest,
+                fromHeader: fromHeader
+            )
+        }
     }
 
     // MARK: - Recognition
@@ -394,5 +528,165 @@ public enum StackDiscovery {
         guard !target.isEmpty else { return "Besorolatlan" }
         let tags = try db.tags(target: target, sessionDate: nil)
         return NameTag.apply(to: TargetNameResolver.resolve(folderName: target), tags: tags).displayName
+    }
+
+    // MARK: - Grouping (R8-3)
+
+    /// The `NxSUBsec_TOTALs` core (reusing `stackNameRegex`'s own numbers),
+    /// plus an optional immediately-following `_drizzle-A-Bx` token (one OR
+    /// two underscores before it -- the real ASIAIR naming sometimes doubles
+    /// up, e.g. `"12300s__drizzle-2-0x"`) and an optional
+    /// `_YYYY-MM-DD_HHMM` autosave timestamp right after that. Matched
+    /// against a name that's already lowercased/extension-stripped/
+    /// starless-starmask-prefix-stripped; greedy optional groups mean the
+    /// match extends through whichever of drizzle/timestamp are actually
+    /// present, so `stem(for:)` only needs the single overall match range.
+    private static let stemCoreRegex = try! NSRegularExpression(
+        pattern: #"^.+?\d+x[0-9.]+sec_[0-9.]+s(?:_+drizzle-[0-9.]+-[0-9.]+x)?(?:_\d{4}-\d{2}-\d{2}_\d{4})?"#
+    )
+
+    /// Suffix markers stripped, left-to-right (leftmost occurrence across all
+    /// of them wins, so one pass fully separates the "core" name from
+    /// whatever post-processing chain follows) when a name has no
+    /// `NxSUBsec_TOTALs` core to anchor on at all -- e.g. `"result_final.tif"`,
+    /// `"Autosave001.tif"`. Applied to an already lowercased,
+    /// extension-stripped, starless-/starmask-prefix-stripped name.
+    private static let stemFallbackMarkers = [
+        "_work", "_og", "_result", "_strech", "_stretch", "_graxpert", "_denoised",
+        "_seti", "_spcc", "_parallax", "_prisim", "_improved", "_hoo", "_hso", "_sho", "_osh",
+        " copy", "_workú", "_final", "_alchemy", "_resampled",
+    ]
+
+    /// R8-3's grouping key: the same for every variant of one underlying
+    /// stack (`NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_
+    /// 2026-03-17_1956` for the whole `_og`/`starless_`/`_work_graxpert_
+    /// result_HOO_Improved` family). Lowercase, extension-stripped, with a
+    /// leading `starless_`/`starmask_` prefix removed first (so a starless
+    /// variant groups with its parent instead of forming its own singleton).
+    static func stem(for fileName: String) -> String {
+        var name = (fileName as NSString).deletingPathExtension.lowercased()
+        for prefix in ["starless_", "starmask_"] {
+            if name.hasPrefix(prefix) {
+                name = String(name.dropFirst(prefix.count))
+                break
+            }
+        }
+
+        let range = NSRange(name.startIndex..., in: name)
+        if let match = stemCoreRegex.firstMatch(in: name, range: range), let matchRange = Range(match.range, in: name) {
+            return String(name[matchRange])
+        }
+        return stripFallbackMarkerSuffix(name)
+    }
+
+    private static func stripFallbackMarkerSuffix(_ name: String) -> String {
+        var cutIndex: String.Index?
+        for marker in stemFallbackMarkers {
+            guard let markerRange = name.range(of: marker) else { continue }
+            if cutIndex == nil || markerRange.lowerBound < cutIndex! {
+                cutIndex = markerRange.lowerBound
+            }
+        }
+        var result = cutIndex.map { String(name[name.startIndex..<$0]) } ?? name
+        while result.hasSuffix("_") { result.removeLast() }
+        return result
+    }
+
+    /// Loose, order-independent substring markers for `.edited` -- any one
+    /// hit is enough. `"denois"` catches both `denoise`/`denoised`; the
+    /// `_hoo`/`_hso`/`_sho`/`_osh`-family channel-composite tokens are
+    /// handled separately by `channelCompositeRegex` since a bare substring
+    /// check on 3-letter tokens like `"sho"` risks false positives (e.g. an
+    /// incidental `"shortcut"`).
+    private static let editedMarkers = [
+        "_work", "_strech", "_stretch", "graxpert", "denois", "_seti", "_spcc",
+        "parallax", "prisim", "resampled", "alchemy", "copy", "improved",
+    ]
+
+    /// `_HOO_`/`_HSO_`/`_SHO_`/`_OSH_`/`_HOS_`/`_OHS_`/`_SOH_`-style
+    /// channel-composite result tokens (every permutation of H/O/S is
+    /// accepted, real on-disk names use several) -- underscore-anchored on
+    /// both sides (or end-of-string/`.` on the trailing side) so a bare
+    /// substring match never fires on unrelated text.
+    private static let channelCompositeRegex = try! NSRegularExpression(
+        pattern: "_(?:hoo|hso|sho|osh|hos|ohs|soh)(?:_|\\.|$)"
+    )
+
+    /// R8-3's per-file recognition: purely from `fileName` (bare, no path),
+    /// same "no database" convention as `looksLikeStackOutput`. Order matters
+    /// -- a `starless_`/`starmask_` prefix wins even over a `.jpg` extension
+    /// or an edit marker (the star-removal/star-mask identity is the more
+    /// important signal to surface), then export extension, then edit
+    /// markers, else `.original`.
+    static func variantKind(fileName: String) -> StackVariantKind {
+        let lower = fileName.lowercased()
+        if lower.hasPrefix("starless_") { return .starless }
+        if lower.hasPrefix("starmask_") { return .starmask }
+
+        let ext = (fileName as NSString).pathExtension.lowercased()
+        if ["jpg", "jpeg", "png"].contains(ext) { return .export_ }
+
+        if editedMarkers.contains(where: lower.contains) { return .edited }
+        let range = NSRange(lower.startIndex..., in: lower)
+        if channelCompositeRegex.firstMatch(in: lower, range: range) != nil { return .edited }
+
+        return .original
+    }
+
+    /// `groupedStacks`' base-selection: prefer a `.original`-kind member
+    /// (there's usually exactly one -- the raw stacker output the whole
+    /// family descends from), else the largest file in the group. `members`
+    /// is always non-empty (built from a non-empty stem bucket).
+    private static func chooseBase(_ members: [StackFile]) -> StackFile {
+        if let original = members.first(where: { $0.variantKind == .original }) {
+            return original
+        }
+        return members.max(by: { $0.sizeBytes < $1.sizeBytes }) ?? members[0]
+    }
+
+    /// Variant display order within one group: `.original` (any extra copies
+    /// beyond the chosen `base`) first, then `.edited`/`.starless`/
+    /// `.starmask`/`.export_` per R8-3's spec order, then alphabetically by
+    /// filename within each kind.
+    private static func variantRank(_ kind: StackVariantKind) -> Int {
+        switch kind {
+        case .original: return 0
+        case .edited: return 1
+        case .starless: return 2
+        case .starmask: return 3
+        case .export_: return 4
+        }
+    }
+
+    private static func variantIsOrderedBeforeInGroup(_ a: StackFile, _ b: StackFile) -> Bool {
+        let rankA = variantRank(a.variantKind)
+        let rankB = variantRank(b.variantKind)
+        if rankA != rankB { return rankA < rankB }
+        return (a.path as NSString).lastPathComponent < (b.path as NSString).lastPathComponent
+    }
+
+    /// `groupedStacks`' header fallback for a group whose `base` filename
+    /// carries no parsed frame count: reads `base`'s own `fits_meta.
+    /// header_json` for `STACKCNT` (frames) and `LIVETIME`/`EXPTIME` (total
+    /// seconds, `LIVETIME` preferred -- Siril writes both, `LIVETIME` is the
+    /// true stacked integration while `EXPTIME` is only the per-sub length,
+    /// but a per-sub number is still better than nothing when `LIVETIME`
+    /// itself is absent). `nil` when `base` isn't tracked, has no
+    /// `fits_meta` row, no `header_json`, or neither key parses.
+    private static func headerExposure(path: String, db: Database) throws -> (frames: Int?, totalSeconds: Double?)? {
+        guard let fileID = try db.fileID(path: path), let meta = try db.fitsMeta(fileID: fileID),
+              let headerJSON = meta.headerJSON, let data = headerJSON.data(using: .utf8),
+              let cards = try? JSONDecoder().decode([String: String].self, from: data)
+        else { return nil }
+
+        func numeric(_ key: String) -> Double? {
+            guard let raw = cards[key] else { return nil }
+            return Double(raw.trimmingCharacters(in: .whitespaces))
+        }
+
+        let frames = numeric("STACKCNT").map { Int($0) }
+        let totalSeconds = numeric("LIVETIME") ?? numeric("EXPTIME")
+        guard frames != nil || totalSeconds != nil else { return nil }
+        return (frames, totalSeconds)
     }
 }
