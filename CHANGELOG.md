@@ -8,6 +8,8 @@ történik.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-05
+
 ### Fixed
 
 - **Kalibráció-lefedettség és session-párosítás duplán számolta a
