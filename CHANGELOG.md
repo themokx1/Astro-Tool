@@ -218,6 +218,21 @@ történik.
   oszlopokra, ha a fejléc (vagy annak hiánya) nem ad koordinátát. App:
   Statisztika fül célpont-sorának Műveletek menüje "Plate-solve…" gombot kap
   koordináta nélküli célpontokon.
+- **Dokumentációs weboldal + tutorial**: a `docs/` GitHub Pages-oldal
+  egyoldalas letöltő-lapból 4-oldalas oldallá bővült, közös dark
+  starry-theme navval (`Kezdőlap · Tutorial · Funkciók · CLI · Letöltés`).
+  Új `docs/tutorial.html` — kezdőbarát, magyar tutorial a könyvtár
+  felépítéséről (`sessions`/`stacks`/`processed`/`calibration_library`,
+  mappánként 1 mondattal), az elnevezési szabályokról (célpontnév-képzés,
+  dátum, szándékos jelölések: `-2` futás-utótag, dátum-tartomány, `-OSC`,
+  `_hibas`), egy éjszaka munkafolyamatáról (`scan → audit → rate →
+  stacklist → stackelés → report`, plusz `plan`/`projects` mikor-melyiket),
+  kalibráció-gyorstalpalóról (`<exp>sec_<temp>deg` konvenció, flat-rotátor,
+  `link-calib`) és a vasszabályról (mit ír/nem ír az eszköz). `docs/
+  index.html` átdolgozva: 6 kiemelt-képesség kártya valós projekt-számokkal.
+  Új `docs/features.html` (teljes funkciólista az app 5 füle szerint) és
+  `docs/cli.html` (mind a 24 CLI-alparancs csoportosítva, egy-egy
+  leírással és példával). Docs-only változás, nincs Swift-kód érintve.
 
 ## [0.5.0] - 2026-08-03
 

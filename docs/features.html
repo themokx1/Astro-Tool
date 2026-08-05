@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AstroTool — funkciók</title>
+<meta name="description" content="AstroTool teljes funkciólistája az app füleiben (Áttekintés, Audit, Minőség, Kalibráció, Statisztika) és CLI-only extrák.">
+
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<meta name="theme-color" content="#405282">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="AstroTool — funkciók">
+<meta property="og:description" content="Teljes funkciólista az app füleiben és CLI-only extrák.">
+<meta property="og:url" content="https://themokx1.github.io/Astro-Tool/features.html">
+<meta property="og:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AstroTool — funkciók">
+<meta name="twitter:description" content="Teljes funkciólista az app füleiben és CLI-only extrák.">
+<meta name="twitter:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+<style>
+  :root {
+    --bg: #f5f5f7; --card: #ffffff; --text: #1d1d1f; --muted: #6e6e73;
+    --line: #e5e5ea; --accent: #405282; --accent2: #7a2bff; --code-bg: #f0f0f3;
+    --star: transparent;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #06081a; --card: #10142c; --text: #f2f3fb; --muted: #9096b8;
+      --line: #262c4d; --accent: #9fb2e8; --accent2: #c7d3ff; --code-bg: #171b38;
+      --star: #ffffff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased; display: flex; justify-content: center;
+    padding: 40px 20px 48px; position: relative; overflow-x: hidden;
+  }
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      radial-gradient(1.6px 1.6px at 8% 12%, var(--star), transparent),
+      radial-gradient(1.2px 1.2px at 22% 38%, var(--star), transparent),
+      radial-gradient(1.8px 1.8px at 34% 8%, var(--star), transparent),
+      radial-gradient(1.2px 1.2px at 47% 52%, var(--star), transparent),
+      radial-gradient(1.5px 1.5px at 63% 22%, var(--star), transparent),
+      radial-gradient(1.1px 1.1px at 78% 44%, var(--star), transparent),
+      radial-gradient(1.7px 1.7px at 89% 15%, var(--star), transparent),
+      radial-gradient(1.3px 1.3px at 12% 70%, var(--star), transparent),
+      radial-gradient(1.6px 1.6px at 29% 86%, var(--star), transparent),
+      radial-gradient(1.1px 1.1px at 55% 78%, var(--star), transparent),
+      radial-gradient(1.4px 1.4px at 71% 92%, var(--star), transparent),
+      radial-gradient(1.2px 1.2px at 94% 68%, var(--star), transparent),
+      radial-gradient(1.5px 1.5px at 5% 95%, var(--star), transparent),
+      radial-gradient(1.3px 1.3px at 85% 88%, var(--star), transparent);
+    opacity: .55;
+  }
+  main { width: 100%; max-width: 720px; position: relative; z-index: 1; }
+  nav.topnav {
+    display: flex; justify-content: center; gap: 4px; flex-wrap: wrap; margin: 0 0 32px;
+  }
+  nav.topnav a {
+    color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 600;
+    padding: 8px 14px; border-radius: 999px; transition: background .12s ease, color .12s ease;
+  }
+  nav.topnav a:hover { background: var(--code-bg); color: var(--text); }
+  nav.topnav a.active { color: var(--text); background: var(--card); border: 1px solid var(--line); }
+  h1.pagetitle { font-size: 30px; margin: 0 0 6px; letter-spacing: -.02em; text-align: center; }
+  p.pagesub { color: var(--muted); font-size: 16px; margin: 0 0 32px; text-align: center; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 24px 26px; margin-top: 22px;
+  }
+  .card h2 { font-size: 16px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+  .card .tabname {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 16px;
+  }
+  ul.flist { list-style: none; margin: 0; padding: 0; }
+  ul.flist li { margin: 12px 0; padding-left: 22px; position: relative; font-size: 14.5px; }
+  ul.flist li::before { content: "›"; position: absolute; left: 0; color: var(--accent2); font-weight: 700; }
+  code {
+    background: var(--code-bg); border-radius: 6px; padding: 2px 7px;
+    font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word;
+  }
+  .cliextra { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 16px; }
+  .cliextra h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+  footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 36px; }
+  a { color: var(--accent2); }
+</style>
+</head>
+<body>
+<main>
+  <nav class="topnav">
+    <a href="index.html">Kezdőlap</a>
+    <a href="tutorial.html">Tutorial</a>
+    <a class="active" href="features.html">Funkciók</a>
+    <a href="cli.html">CLI</a>
+    <a href="https://github.com/themokx1/Astro-Tool/releases/latest">Letöltés</a>
+  </nav>
+
+  <h1 class="pagetitle">Funkciók</h1>
+  <p class="pagesub">A teljes lista az app füleinek sorrendjében, plusz a CLI-only extrák.</p>
+
+  <div class="card">
+    <h2>🏠 Áttekintés</h2>
+    <p class="tabname">Overview fül</p>
+    <ul class="flist">
+      <li><strong>Ma este</strong> — célpontonként megvan/hiányzó óra, kulmináció, max magasság, láthatósági ablak, Hold-zavarás, verdikt, pontszám szerint rendezve.</li>
+      <li><strong>Hónap…</strong> — 30 éjszakás tervező-naptár: sötét óra, Hold%, minden éjszaka top 3 célpontja, kiemelve a legjobb éjszakák.</li>
+      <li><strong>DSS-adatok beolvasása</strong> — csak akkor jelenik meg, ha a könyvtárban van feldolgozatlan DeepSkyStacker <code>.dssfilelist</code>; a mért csillag-metrikákat és accept/reject döntéseket importálja.</li>
+      <li><strong>Beállítások fül</strong> — a jelenlegi konfiguráció megtekintése (gyökér, tűrések, súlyok) ugyanabból a <code>config.json</code>-ból, amit a CLI is használ.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>🛡️ Audit</h2>
+    <p class="tabname">Audit fül</p>
+    <ul class="flist">
+      <li><strong>Három súlyossági szint</strong> — <em>biztos hiba</em> (sérült/hiányos FITS fejléc, üres fájl), <em>gyanús</em> (szokatlan méret/metaadat), <em>valószínűleg szándékos</em> (ismert reziduum-minta) csoportosítva.</li>
+      <li><strong>Duplikátum-keresés</strong> — kikapcsolható (<code>--no-duplicates</code>), ha csak a strukturális hibákra vagy koncentrálnál.</li>
+      <li><strong>Javaslat-script</strong> — kérésre (<code>--suggest</code>) egy átnézhető <code>.sh</code> scriptet generál a <code>.astro_tool/suggestions/</code> mappába; az eszköz sosem futtatja le magától.</li>
+      <li><strong>Cleanup-összegzés</strong> — a már azonosított reziduum/duplikátum-találatok gyors, elemszám-korlátos összegzése.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>⭐ Minőség</h2>
+    <p class="tabname">Quality fül</p>
+    <ul class="flist">
+      <li><strong>Pontozás (rate)</strong> — light frame-ek natív metrikákkal (FWHM, kerekség, csillagszám, háttér), opcionálisan Siril CLI hibriddel; kiugró keretek jelölésével.</li>
+      <li><strong>Expozíció-tanácsadó</strong> — a session-összegzés fölött mutatja a mért szenzor-zajból és per-Bayer háttérből számolt ideális sub-hosszt és relatív SNR-tanácsot.</li>
+      <li><strong>DSS-jelvények</strong> — a session-sor "DSS: N✓/M✗" jelvénnyel mutatja, ha van rögzített DeepSkyStacker-döntés.</li>
+      <li><strong>Újrapontozás</strong> — a "Pontozás" gomb melletti checkbox kényszeríti a teljes újramérést a gyorsítótártól függetlenül.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>🌡️ Kalibráció</h2>
+    <p class="tabname">Calibration fül</p>
+    <ul class="flist">
+      <li><strong>Lefedettség-hiánylista</strong> — mely expozíció/hőmérséklet/kamera/gain kombinációhoz van dark/flat/bias, és mihez kell még.</li>
+      <li><strong>Flat-higiénia / egészség riport</strong> — a flat-fegyelem ellenőrzése (rotátor-állás egyezés, elévülési szabályok) egy átfogó egészség-jelentésben.</li>
+      <li><strong>Szenzor-profilok</strong> — read-only táblázat a mért bias-szintről, leolvasási zajról, dark-rátáról és EGAIN-ről kamera/gain/offset kombónként, "Mérés" gombbal az újraméréshez.</li>
+      <li><strong>Kalibráció-linkelés</strong> — a megfelelő mesterkereteket hardlinkeli a session mellé, előnézettel (dry-run) és jóváhagyással.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>📈 Statisztika</h2>
+    <p class="tabname">Stats fül</p>
+    <ul class="flist">
+      <li><strong>Célpont-áttekintés</strong> — feloldott katalógusnév (pl. "NGC 7000 · Észak-Amerika-köd") a mappanévvel másodlagos infóként, integrációs idő, session-szám, utolsó felvétel, wide-field/deep-sky besorolás.</li>
+      <li><strong>Session-részletek</strong> — session-önkénti idővonal, keretszám, README-jegyzetek hover-tooltipben.</li>
+      <li><strong>Session-műveletek</strong> — a session-sor Műveletek menüjéből: <em>Éjszaka-riport</em> (HTML megnyitása), <em>Stack-lista…</em> (megtartás-csúszkával), <em>Plate-solve…</em> (csak koordináta nélküli célponton), <em>Exportálás…</em> (AstroBin/CSV/Markdown).</li>
+      <li><strong>Keresés</strong> — célpontnév vagy a session README-jegyzetek (Bortle, SQM, seeing) szerint, ugyanaz az index, amit a <code>search</code> CLI-parancs használ.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>⌨️ CLI-only extrák</h2>
+    <p style="color:var(--muted);font-size:14px;margin-bottom:14px;">Ezek a parancsok jelenleg csak a terminálból érhetők el, nincs hozzájuk dedikált app-nézet:</p>
+    <div class="cliextra">
+      <ul class="flist">
+        <li><code>new-session</code> — kanonikus <code>YYYY-MM-DD</code> könyvtár + README-sablon létrehozása egy célponthoz.</li>
+        <li><code>tag</code> — szabadszöveges célpont-/session-címkék hozzáadása, törlése, listázása (pl. <code>goal:8h</code> cél-óraszám).</li>
+        <li><code>match</code> — egy adott session light/flat/dark/bias készletének összerendelése és a talált problémák listája.</li>
+        <li><code>projects</code> — célpontonkénti pipeline-státusz (felvétel/kalibráció/stack/feldolgozás hol tart).</li>
+        <li><code>panels</code> — egy mozaik-célpont paneljeinek WCS-alapú integrációs követése.</li>
+        <li><code>health</code> — éjszakai hardver-egészség (hűtő-stabilitás, fókusz-trend) egy session-re.</li>
+        <li><code>solve</code> — koordináta nélküli (pl. wide-field CR3) célpontok plate-solve-olása Sirillel.</li>
+        <li><code>sensor</code> — mért szenzor-profilok mérése/listázása (a Kalibráció fül "Szenzor-profilok" táblázata ugyanezt olvassa).</li>
+        <li><code>ingest-dss</code> — DeepSkyStacker metrikák/döntések beolvasása (az app-gomb ugyanezt hívja).</li>
+        <li><code>config</code> — a jelenleg érvényes konfiguráció vagy a <code>config.json</code> útjának kiírása.</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>
+    Részletes parancs-referenciáért lásd a <a href="cli.html">CLI-oldalt</a>. · MIT licenc · <a href="https://github.com/themokx1/Astro-Tool">forráskód a GitHubon</a>
+  </footer>
+</main>
+</body>
+</html>

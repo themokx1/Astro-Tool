@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AstroTool — CLI-referencia</title>
+<meta name="description" content="AstroTool teljes CLI-parancs referencia csoportosítva: alap, minőség, kalibráció, tervezés, export, egyéb — mindegyik egy sor leírással és példával.">
+
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<meta name="theme-color" content="#405282">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="AstroTool — CLI-referencia">
+<meta property="og:description" content="Teljes CLI-parancs referencia, csoportosítva, egy-egy példával.">
+<meta property="og:url" content="https://themokx1.github.io/Astro-Tool/cli.html">
+<meta property="og:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AstroTool — CLI-referencia">
+<meta name="twitter:description" content="Teljes CLI-parancs referencia, csoportosítva, egy-egy példával.">
+<meta name="twitter:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+<style>
+  :root {
+    --bg: #f5f5f7; --card: #ffffff; --text: #1d1d1f; --muted: #6e6e73;
+    --line: #e5e5ea; --accent: #405282; --accent2: #7a2bff; --code-bg: #f0f0f3;
+    --star: transparent;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #06081a; --card: #10142c; --text: #f2f3fb; --muted: #9096b8;
+      --line: #262c4d; --accent: #9fb2e8; --accent2: #c7d3ff; --code-bg: #171b38;
+      --star: #ffffff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased; display: flex; justify-content: center;
+    padding: 40px 20px 48px; position: relative; overflow-x: hidden;
+  }
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      radial-gradient(1.6px 1.6px at 8% 12%, var(--star), transparent),
+      radial-gradient(1.2px 1.2px at 22% 38%, var(--star), transparent),
+      radial-gradient(1.8px 1.8px at 34% 8%, var(--star), transparent),
+      radial-gradient(1.2px 1.2px at 47% 52%, var(--star), transparent),
+      radial-gradient(1.5px 1.5px at 63% 22%, var(--star), transparent),
+      radial-gradient(1.1px 1.1px at 78% 44%, var(--star), transparent),
+      radial-gradient(1.7px 1.7px at 89% 15%, var(--star), transparent),
+      radial-gradient(1.3px 1.3px at 12% 70%, var(--star), transparent),
+      radial-gradient(1.6px 1.6px at 29% 86%, var(--star), transparent),
+      radial-gradient(1.1px 1.1px at 55% 78%, var(--star), transparent),
+      radial-gradient(1.4px 1.4px at 71% 92%, var(--star), transparent),
+      radial-gradient(1.2px 1.2px at 94% 68%, var(--star), transparent),
+      radial-gradient(1.5px 1.5px at 5% 95%, var(--star), transparent),
+      radial-gradient(1.3px 1.3px at 85% 88%, var(--star), transparent);
+    opacity: .55;
+  }
+  main { width: 100%; max-width: 760px; position: relative; z-index: 1; }
+  nav.topnav {
+    display: flex; justify-content: center; gap: 4px; flex-wrap: wrap; margin: 0 0 32px;
+  }
+  nav.topnav a {
+    color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 600;
+    padding: 8px 14px; border-radius: 999px; transition: background .12s ease, color .12s ease;
+  }
+  nav.topnav a:hover { background: var(--code-bg); color: var(--text); }
+  nav.topnav a.active { color: var(--text); background: var(--card); border: 1px solid var(--line); }
+  h1.pagetitle { font-size: 30px; margin: 0 0 6px; letter-spacing: -.02em; text-align: center; }
+  p.pagesub { color: var(--muted); font-size: 16px; margin: 0 0 32px; text-align: center; }
+  .req {
+    background: var(--code-bg); border-radius: 12px; padding: 14px 18px; font-size: 14px; margin-bottom: 24px;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 22px 24px; margin-top: 20px;
+  }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--accent2); margin: 0 0 16px; }
+  .cmd { padding: 14px 0; border-top: 1px solid var(--line); }
+  .cmd:first-of-type { border-top: none; padding-top: 0; }
+  .cmd .name {
+    font: 15px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; margin-bottom: 4px;
+  }
+  .cmd .desc { font-size: 14px; color: var(--text); margin-bottom: 8px; }
+  .cmd pre.example {
+    background: var(--code-bg); border-radius: 8px; padding: 10px 14px; margin: 0; overflow-x: auto;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  code {
+    background: var(--code-bg); border-radius: 6px; padding: 2px 7px;
+    font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word;
+  }
+  footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 36px; }
+  a { color: var(--accent2); }
+</style>
+</head>
+<body>
+<main>
+  <nav class="topnav">
+    <a href="index.html">Kezdőlap</a>
+    <a href="tutorial.html">Tutorial</a>
+    <a href="features.html">Funkciók</a>
+    <a class="active" href="cli.html">CLI</a>
+    <a href="https://github.com/themokx1/Astro-Tool/releases/latest">Letöltés</a>
+  </nav>
+
+  <h1 class="pagetitle">CLI-referencia</h1>
+  <p class="pagesub">Minden alparancs, csoportosítva, egy sor leírással és egy futtatható példával.</p>
+  <div class="req">Minden parancs elfogadja a <code>--root PATH</code> kapcsolót a könyvtár felülbírálására, és a legtöbb támogatja a <code>--json</code> kapcsolót gépi olvasható (snake_case, rendezett) kimenethez.</div>
+
+  <div class="card">
+    <h2>Alap</h2>
+    <div class="cmd">
+      <div class="name">scan</div>
+      <div class="desc">Bejárja a könyvtárat, frissíti a belső SQLite indexet — mindig ez az első lépés.</div>
+      <pre class="example">astrotool scan --root /Volumes/images/Astro</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">audit</div>
+      <div class="desc">Három súlyossági szintbe sorolt hibalista + duplikátum-keresés; <code>--suggest</code> esetén átnézhető javaslat-scriptet ír.</div>
+      <pre class="example">astrotool audit --suggest --include-suspicious</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">cleanup</div>
+      <div class="desc">A már azonosított reziduum/duplikátum-találatok korlátozott elemszámú összegzése és javaslat-script generálás.</div>
+      <pre class="example">astrotool cleanup --suggest --limit 50</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">new-session</div>
+      <div class="desc">Új session könyvtár létrehozása (<code>YYYY-MM-DD</code>) README-sablonnal egy célponthoz.</div>
+      <pre class="example">astrotool new-session --catalog M --name 31 --date 2026-03-15</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">config</div>
+      <div class="desc">A jelenleg érvényes konfiguráció (<code>show</code>) vagy a <code>config.json</code> elérési útja (<code>path</code>).</div>
+      <pre class="example">astrotool config show</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">tag</div>
+      <div class="desc">Célpont- vagy session-szintű szabadszöveges címkék hozzáadása, törlése, listázása.</div>
+      <pre class="example">astrotool tag add --target M31 goal:8h</pre>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Minőség</h2>
+    <div class="cmd">
+      <div class="name">rate</div>
+      <div class="desc">Light frame-ek pontozása natív metrikákkal, opcionálisan Siril CLI hibriddel; kiugró keretek jelölésével.</div>
+      <pre class="example">astrotool rate --target M31 --date 2026-03-15</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">quality</div>
+      <div class="desc">Egy adott célpont/session mért minőség-összegzése (FWHM, háttér, rang, kiugrók).</div>
+      <pre class="example">astrotool quality --target M31 --date 2026-03-15</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">sensor</div>
+      <div class="desc">Mért szenzor-profilok (bias-szint, leolvasási zaj, dark-ráta, EGAIN) listázása, vagy <code>--measure</code>-rel újramérés bias/dark keretekből.</div>
+      <pre class="example">astrotool sensor --measure</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">ingest-dss</div>
+      <div class="desc">DeepSkyStacker <code>.info.txt</code> csillag-metrikák és <code>.dssfilelist</code> accept/reject döntések beolvasása; nem fut automatikusan a scan-nel.</div>
+      <pre class="example">astrotool ingest-dss</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">expose</div>
+      <div class="desc">Mért szenzor-zajból és per-Bayer égháttérből számolt ideális sub-hossz + relatív SNR-tanács. <code>--target</code> nélkül egysoros táblázat célpontonként.</div>
+      <pre class="example">astrotool expose --target NGC7000</pre>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Kalibráció</h2>
+    <div class="cmd">
+      <div class="name">calib</div>
+      <div class="desc">Kalibrációs lefedettség-hiánylista (mely expozíció/hőmérséklet kombinációhoz kell még dark/flat/bias); <code>--health</code> a flat-higiénia riporthoz.</div>
+      <pre class="example">astrotool calib --health</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">match</div>
+      <div class="desc">Egy adott célpont+dátum session light/flat/dark/bias készletének összerendelése és a talált problémák listája.</div>
+      <pre class="example">astrotool match --target M31 --date 2026-03-15</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">link-calib</div>
+      <div class="desc">A megfelelő mester-kalibrációs kereteket hardlinkeli a session mellé; <code>--dry-run</code> előnézet, <code>--yes</code> nélkül csak jelöl.</div>
+      <pre class="example">astrotool link-calib --target M31 --date 2026-03-15 --dry-run</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">health</div>
+      <div class="desc">Éjszakai hardver-egészség: hűtő-stabilitás és fókusz-trend egy session-re.</div>
+      <pre class="example">astrotool health --target M31 --date 2026-03-15</pre>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Tervezés</h2>
+    <div class="cmd">
+      <div class="name">plan</div>
+      <div class="desc">Ma esti célpont-rangsor (kulmináció, max magasság, láthatósági ablak, Hold-zavarás); <code>--month</code> a 30 éjszakás tervező-naptárhoz.</div>
+      <pre class="example">astrotool plan --min-alt 25</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">projects</div>
+      <div class="desc">Célpontonkénti pipeline-státusz — hol tart a felvétel/kalibráció/stack/feldolgozás.</div>
+      <pre class="example">astrotool projects</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">panels</div>
+      <div class="desc">Egy mozaik-célpont paneljeinek WCS-alapú integrációs követése (mely panel mennyi időt kapott).</div>
+      <pre class="example">astrotool panels --target M_Milky_Way</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">solve</div>
+      <div class="desc">Koordináta nélküli (pl. wide-field Canon CR3) célpontok plate-solve-olása Sirillel, session-önként korlátozott keretszámmal.</div>
+      <pre class="example">astrotool solve --target M_Milky_Way --frames 2</pre>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Export</h2>
+    <div class="cmd">
+      <div class="name">export</div>
+      <div class="desc">AstroBin bulk-import CSV, gazdagabb session-CSV vagy emberi Markdown napló egy célponthoz.</div>
+      <pre class="example">astrotool export --target M31 --format astrobin</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">stacklist</div>
+      <div class="desc">A session legjobb frame-jeinek kiválasztása és exportálása (hardlink + <code>.dssfilelist</code> + Siril <code>.ssf</code>) a DSS/Siril munkafolyamathoz.</div>
+      <pre class="example">astrotool stacklist --target M31 --date 2026-03-15 --keep 0.8</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">report</div>
+      <div class="desc">Önmagában megnyitható HTML éjszaka-riport: idővonal, minőség, magasság &amp; Hold, kalibráció, teendők.</div>
+      <pre class="example">astrotool report --target M31 --date 2026-03-15</pre>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Egyéb</h2>
+    <div class="cmd">
+      <div class="name">search</div>
+      <div class="desc">A session <code>README.txt</code>-jébe írt Bortle/SQM/seeing jegyzetek kulcs vagy érték szerinti keresése.</div>
+      <pre class="example">astrotool search bortle</pre>
+    </div>
+  </div>
+
+  <footer>
+    A funkciók bővebb leírásáért lásd a <a href="features.html">Funkciók oldalt</a>, kezdéshez a <a href="tutorial.html">Tutorialt</a>. · MIT licenc · <a href="https://github.com/themokx1/Astro-Tool">forráskód a GitHubon</a>
+  </footer>
+</main>
+</body>
+</html>
