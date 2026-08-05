@@ -1,0 +1,608 @@
+import Foundation
+
+/// One night's self-contained HTML report card for a target's session
+/// (R7-B5, `astrotool report`): pure composition of already-existing
+/// queries -- `SessionStatsQueries` (frames/exposures/camera/README notes),
+/// `SessionTimeline` (window/gaps/duty cycle), `SessionQuality` (FWHM/
+/// background/rank), `NightHealth` (cooler/focus verdicts), `SessionMatcher`
+/// (calibration status), `ExposureAdvisor` (sub-length advice when
+/// available), and `ProjectStatusQueries` (this target's to-do list) -- plus
+/// two computations nothing else in the tool surfaces yet:
+///
+/// - **Altitude/airmass track**: for every USABLE light's `DATE-OBS`, the
+///   target's altitude at that instant (`AltAz` + `SiderealTime`, site from
+///   `config.site`/median FITS headers via `Planner.resolveSite`, target
+///   coordinates via `TargetCoordinates` including the plate-solved
+///   fallback) -- min/median/max altitude, and the fraction of frames shot
+///   below 30 degrees.
+/// - **Achieved Moon geometry**: the Moon's illumination at the session
+///   window's midpoint, the median target-Moon separation across the same
+///   usable lights, and the Moon's own max altitude at the window's
+///   start/mid/end.
+///
+/// Both are nil-safe: without a resolvable target coordinate AND site, the
+/// "Magasság & Hold" section still renders, but with an explanatory note in
+/// place of numbers, rather than guessing or crashing.
+///
+/// Read-only against `db`; the only filesystem write anywhere in this type
+/// is `write`'s own call into `WriteGuard`.
+public enum NightReport {
+    // MARK: - Public API
+
+    /// Renders the full report as a single self-contained HTML string --
+    /// inline CSS, no external resources, no `<script>` anywhere. Throws
+    /// `AstroError.pathNotFound` if `target`/`date` names no session on
+    /// record at all.
+    public static func render(target: String, date: String, db: Database, config: AstroConfig) throws -> String {
+        let sessions = try SessionStatsQueries.sessions(target: target, db: db, config: config)
+        guard let session = sessions.first(where: { $0.dateRaw == date }) else {
+            throw AstroError.pathNotFound(path: "sessions/\(target)/\(date)")
+        }
+
+        let timeline = try SessionTimeline.timeline(target: target, date: date, db: db, config: config)
+        let quality = try SessionQuality.summaries(target: target, db: db, config: config).first { $0.date == date }
+        let health = try NightHealth.report(target: target, date: date, db: db, config: config)
+        let calib = try SessionMatcher.match(target: target, date: date, db: db, config: config)
+        let advice = try ExposureAdvisor.advise(target: target, db: db, config: config)
+        let projectTodos = try ProjectStatusQueries.projects(db: db, config: config)
+            .first { $0.target == target }?.todos ?? []
+        let sky = try computeSkySections(target: target, date: date, timeline: timeline, db: db, config: config)
+
+        return renderHTML(
+            target: target,
+            date: date,
+            session: session,
+            timeline: timeline,
+            quality: quality,
+            health: health,
+            calib: calib,
+            advice: advice,
+            projectTodos: projectTodos,
+            altitude: sky.altitude,
+            moon: sky.moon
+        )
+    }
+
+    /// Renders and writes the report to `.astro_tool/reports/
+    /// <sanitized-target>-<date>.html` via `writeGuard` -- overwrites any
+    /// earlier report for the same target/date, same "tool's own state, may
+    /// freely be rewritten" convention as every other `.astro_tool/` write.
+    /// `timestamp` is accepted for signature symmetry with
+    /// `AcquisitionExport.write` but never used: this file's own name is
+    /// deterministic (`target`/`date`, no timestamp component), so `write`'s
+    /// output always equals `render`'s for the same inputs.
+    @discardableResult
+    public static func write(
+        target: String,
+        date: String,
+        timestamp: Date,
+        db: Database,
+        config: AstroConfig,
+        using writeGuard: WriteGuard
+    ) throws -> URL {
+        _ = timestamp
+        let html = try render(target: target, date: date, db: db, config: config)
+        let sanitizedTarget = Sanitizer.sanitize(target)
+        let relativePath = "reports/\(sanitizedTarget)-\(date).html"
+        return try writeGuard.writeToolFile(relativePath: relativePath, data: Data(html.utf8))
+    }
+
+    // MARK: - Sky sections (altitude track + achieved Moon geometry)
+
+    struct AltitudeTrack {
+        var minAltitudeDeg: Double
+        var medianAltitudeDeg: Double
+        var maxAltitudeDeg: Double
+        var belowThresholdPercent: Double
+        var frameCount: Int
+    }
+
+    struct MoonGeometry {
+        var illuminationPercent: Double
+        var medianSeparationDeg: Double
+        var maxAltitudeDeg: Double
+    }
+
+    private struct SkySections {
+        var altitude: AltitudeTrack?
+        var moon: MoonGeometry?
+    }
+
+    /// The altitude threshold "Magasság & Hold" reports the below-fraction
+    /// against -- a fixed 30 degrees per the R7-B5 spec, independent of
+    /// `Planner`'s own (configurable) `minAltitudeDeg`, since this section
+    /// describes what actually happened, not a planning threshold.
+    private static let altitudeThresholdDeg = 30.0
+
+    /// Builds both sky sections from one pass over the session's usable
+    /// lights' `DATE-OBS` -- `nil`/`nil` when there's no resolvable target
+    /// coordinate, no resolvable site, or no usable light has a parseable
+    /// `DATE-OBS` at all.
+    private static func computeSkySections(
+        target: String,
+        date: String,
+        timeline: SessionTimeline,
+        db: Database,
+        config: AstroConfig
+    ) throws -> SkySections {
+        let allFiles = try db.allFiles(includeMissing: false)
+        let dayLights = allFiles.filter {
+            $0.target == target && $0.area == .sessions && $0.sessionDate == date && $0.role == .light
+        }
+
+        var metaByFileID: [Int64: FITSMetaRecord] = [:]
+        for file in dayLights {
+            guard let id = file.id else { continue }
+            if let meta = try db.fitsMeta(fileID: id) { metaByFileID[id] = meta }
+        }
+
+        let buckets = FrameSet.lightBuckets(files: dayLights, meta: metaByFileID, config: config)
+
+        guard let coord = TargetCoordinates.medianCoordinates(files: buckets.usable, meta: metaByFileID) else {
+            return SkySections(altitude: nil, moon: nil)
+        }
+        let site = try Planner.resolveSite(db: db, config: config)
+        guard let lat = site.latitudeDeg, let lon = site.longitudeDeg else {
+            return SkySections(altitude: nil, moon: nil)
+        }
+
+        var instants: [Date] = []
+        for file in buckets.usable {
+            guard let id = file.id, let raw = metaByFileID[id]?.dateObs,
+                  let instant = SessionTimeline.parseDateObs(raw)
+            else { continue }
+            instants.append(instant)
+        }
+        guard !instants.isEmpty else { return SkySections(altitude: nil, moon: nil) }
+
+        var altitudes: [Double] = []
+        var separations: [Double] = []
+        for instant in instants {
+            let jd = JulianDate.julianDay(instant)
+            let lst = SiderealTime.lstHours(julianDay: jd, longitudeDeg: lon)
+            let position = AltAz.position(raDeg: coord.raDeg, decDeg: coord.decDeg, lstHours: lst, latDeg: lat)
+            altitudes.append(position.altitudeDeg)
+
+            let moonPos = SunMoon.moonPosition(julianDay: jd)
+            separations.append(
+                SunMoon.angularSeparationDeg(ra1: coord.raDeg, dec1: coord.decDeg, ra2: moonPos.raDeg, dec2: moonPos.decDeg)
+            )
+        }
+
+        let belowCount = altitudes.filter { $0 < altitudeThresholdDeg }.count
+        let track = AltitudeTrack(
+            minAltitudeDeg: altitudes.min() ?? 0,
+            medianAltitudeDeg: median(altitudes),
+            maxAltitudeDeg: altitudes.max() ?? 0,
+            belowThresholdPercent: Double(belowCount) / Double(altitudes.count) * 100,
+            frameCount: altitudes.count
+        )
+
+        var moon: MoonGeometry?
+        if let windowStartISO = timeline.windowStart, let windowEndISO = timeline.windowEnd,
+           let start = parseISOZ(windowStartISO), let end = parseISOZ(windowEndISO)
+        {
+            let mid = start.addingTimeInterval(end.timeIntervalSince(start) / 2)
+            let illum = SunMoon.moonIlluminationPercent(julianDay: JulianDate.julianDay(mid))
+            let maxMoonAlt = [start, mid, end].map { instant -> Double in
+                let jd = JulianDate.julianDay(instant)
+                let lst = SiderealTime.lstHours(julianDay: jd, longitudeDeg: lon)
+                let moonPos = SunMoon.moonPosition(julianDay: jd)
+                return AltAz.position(raDeg: moonPos.raDeg, decDeg: moonPos.decDeg, lstHours: lst, latDeg: lat).altitudeDeg
+            }.max() ?? 0
+            moon = MoonGeometry(
+                illuminationPercent: illum,
+                medianSeparationDeg: median(separations),
+                maxAltitudeDeg: maxMoonAlt
+            )
+        }
+
+        return SkySections(altitude: track, moon: moon)
+    }
+
+    private static func median(_ values: [Double]) -> Double {
+        guard !values.isEmpty else { return 0 }
+        let sorted = values.sorted()
+        let mid = sorted.count / 2
+        if sorted.count % 2 == 0 {
+            return (sorted[mid - 1] + sorted[mid]) / 2
+        }
+        return sorted[mid]
+    }
+
+    /// Parses the exact `"yyyy-MM-dd'T'HH:mm:ss'Z'"` shape
+    /// `SessionTimeline.timeline`'s own `windowStart`/`windowEnd` are
+    /// formatted in -- a plain round-trip of that one fixed format, not a
+    /// general ISO 8601 parser.
+    private static func parseISOZ(_ raw: String) -> Date? {
+        isoZFormatter.date(from: raw)
+    }
+
+    private static let isoZFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
+        return formatter
+    }()
+
+    // MARK: - HTML rendering
+
+    private static func renderHTML(
+        target: String,
+        date: String,
+        session: SessionDetail,
+        timeline: SessionTimeline,
+        quality: SessionQualitySummary?,
+        health: NightHealthReport,
+        calib: SessionCalibration,
+        advice: ExposureAdvice,
+        projectTodos: [String],
+        altitude: AltitudeTrack?,
+        moon: MoonGeometry?
+    ) -> String {
+        var body = ""
+        body += renderHeader(target: target, date: date, session: session)
+        body += renderSummary(session: session, timeline: timeline)
+        body += renderTimeline(timeline: timeline)
+        body += renderQuality(quality: quality, advice: advice)
+        body += renderAltitudeAndMoon(altitude: altitude, moon: moon)
+        body += renderHardware(health: health)
+        body += renderCalibration(calib: calib)
+        if let accepted = session.dssAcceptedCount, let rejected = session.dssRejectedCount {
+            body += renderDSSVerdicts(accepted: accepted, rejected: rejected)
+        }
+        if !session.notes.isEmpty {
+            body += renderNotes(notes: session.notes)
+        }
+        body += renderTodos(todos: projectTodos)
+
+        return """
+        <!doctype html>
+        <html lang="hu">
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Éjszaka-riport — \(escapeHTML(target)) — \(escapeHTML(date))</title>
+        <style>\(css)</style>
+        </head>
+        <body>
+        <main>
+        \(body)
+        </main>
+        </body>
+        </html>
+        """
+    }
+
+    private static let css = """
+      :root {
+        --bg: #06081a; --card: #10142c; --text: #f2f3fb; --muted: #9096b8;
+        --line: #262c4d; --accent: #9fb2e8; --accent2: #c7d3ff; --code-bg: #171b38;
+        --good: #4fbf78; --warn: #ffb545; --bad: #ff5c5c;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--bg); color: var(--text);
+        font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        padding: 32px 20px;
+      }
+      main { max-width: 800px; margin: 0 auto; }
+      h1 { font-size: 26px; margin: 0 0 4px; }
+      h2 {
+        font-size: 14px; text-transform: uppercase; letter-spacing: .04em;
+        color: var(--muted); margin: 28px 0 10px;
+      }
+      .sub { color: var(--muted); margin: 0 0 20px; }
+      .card {
+        background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+        padding: 16px 18px; margin-bottom: 8px;
+      }
+      .grid { display: flex; flex-wrap: wrap; gap: 10px; }
+      .stat {
+        background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+        padding: 10px 14px; min-width: 140px;
+      }
+      .stat .label { color: var(--muted); font-size: 12px; margin-bottom: 3px; }
+      .stat .value { font-size: 17px; font-weight: 600; }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; }
+      td, th { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+      code {
+        background: var(--code-bg); border-radius: 5px; padding: 1px 6px;
+        font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .timeline-bar {
+        display: flex; height: 16px; width: 100%; border-radius: 6px; overflow: hidden;
+        background: var(--code-bg); margin: 10px 0;
+      }
+      .timeline-bar .active { background: var(--good); }
+      .timeline-bar .gap { background: var(--bad); }
+      ul.notice { margin: 6px 0; padding-left: 20px; }
+      ul.notice li { margin: 4px 0; }
+      .muted { color: var(--muted); }
+      .badge {
+        display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px;
+        border-radius: 999px; margin-right: 6px;
+      }
+      .badge.good { background: rgba(79,191,120,.15); color: var(--good); }
+      .badge.warn { background: rgba(255,181,69,.15); color: var(--warn); }
+      .badge.bad { background: rgba(255,92,92,.15); color: var(--bad); }
+    """
+
+    // MARK: - Header
+
+    private static func renderHeader(target: String, date: String, session: SessionDetail) -> String {
+        var lines = [
+            "<h1>\(escapeHTML(target))</h1>",
+            "<p class=\"sub\">\(escapeHTML(date)) · <code>sessions/\(escapeHTML(target))/\(escapeHTML(date))</code>",
+        ]
+        if let descriptor = session.setupDescriptor {
+            lines[lines.count - 1] += " · \(escapeHTML(descriptor))"
+        }
+        lines[lines.count - 1] += "</p>"
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    // MARK: - Összefoglaló számok
+
+    private static func renderSummary(session: SessionDetail, timeline: SessionTimeline) -> String {
+        var stats: [(String, String)] = []
+        if let start = timeline.windowStart, let end = timeline.windowEnd {
+            stats.append(("Ablak", "\(shortTime(start)) – \(shortTime(end))"))
+        }
+        stats.append(("Integráció", formatHM(session.integrationSeconds)))
+        if let duty = timeline.dutyCycle {
+            stats.append(("Hatékonyság", formatPercent(duty * 100)))
+        }
+        stats.append(("Használható keretek", "\(session.usableLightCount)"))
+        if session.rejectedCount > 0 {
+            stats.append(("Elvetett keretek", "\(session.rejectedCount)"))
+        }
+        if session.duplicateLinkCount > 0 {
+            stats.append(("Duplikált/link keretek", "\(session.duplicateLinkCount)"))
+        }
+
+        var html = "<h2>Összefoglaló számok</h2>\n<div class=\"grid\">\n"
+        for (label, value) in stats {
+            html += "<div class=\"stat\"><div class=\"label\">\(escapeHTML(label))</div><div class=\"value\">\(escapeHTML(value))</div></div>\n"
+        }
+        html += "</div>\n"
+        return html
+    }
+
+    // MARK: - Idővonal
+
+    private static func renderTimeline(timeline: SessionTimeline) -> String {
+        var html = "<h2>Idővonal</h2>\n"
+
+        if let bar = renderTimelineBar(timeline) {
+            html += bar
+        } else {
+            html += "<p class=\"muted\">Nincs elég DATE-OBS adat az idővonalhoz.</p>\n"
+        }
+
+        if timeline.gaps.isEmpty {
+            html += "<p class=\"muted\">Nem volt jelentős szünet.</p>\n"
+        } else {
+            html += "<ul class=\"notice\">\n"
+            for gap in timeline.gaps {
+                html += "<li>\(shortTime(gap.start)) → \(shortTime(gap.end)) (\(formatHM(gap.seconds)))</li>\n"
+            }
+            html += "</ul>\n"
+        }
+        return html
+    }
+
+    /// Pure CSS-bar timeline visualization: alternating "active" (integration)
+    /// and "gap" segments, each sized proportionally to `timeline.windowSeconds`
+    /// -- plain `<div>`s with inline `width:`, no JS. `nil` when the window
+    /// itself can't be resolved (no usable light had a parseable `DATE-OBS`).
+    private static func renderTimelineBar(_ timeline: SessionTimeline) -> String? {
+        guard let windowStartISO = timeline.windowStart, let windowEndISO = timeline.windowEnd,
+              let start = parseISOZ(windowStartISO), let end = parseISOZ(windowEndISO),
+              let windowSeconds = timeline.windowSeconds, windowSeconds > 0
+        else { return nil }
+
+        var segments: [(widthPercent: Double, isGap: Bool)] = []
+        var cursor = start
+        for gap in timeline.gaps.sorted(by: { $0.start < $1.start }) {
+            guard let gapStart = parseISOZ(gap.start), let gapEnd = parseISOZ(gap.end) else { continue }
+            let activeSeconds = gapStart.timeIntervalSince(cursor)
+            if activeSeconds > 0 {
+                segments.append((activeSeconds / windowSeconds * 100, false))
+            }
+            segments.append((gap.seconds / windowSeconds * 100, true))
+            cursor = gapEnd
+        }
+        let trailing = end.timeIntervalSince(cursor)
+        if trailing > 0 {
+            segments.append((trailing / windowSeconds * 100, false))
+        }
+
+        let bars = segments.map { segment in
+            "<div class=\"\(segment.isGap ? "gap" : "active")\" style=\"width:\(String(format: "%.3f", segment.widthPercent))%\"></div>"
+        }.joined()
+        return "<div class=\"timeline-bar\">\(bars)</div>\n"
+    }
+
+    // MARK: - Minőség
+
+    private static func renderQuality(quality: SessionQualitySummary?, advice: ExposureAdvice) -> String {
+        var html = "<h2>Minőség</h2>\n"
+
+        if let quality, quality.frameCount > 0 {
+            html += "<div class=\"grid\">\n"
+            if let fwhm = quality.medianFWHMArcsec {
+                html += stat("FWHM", String(format: "%.2f\"", fwhm))
+            } else if let fwhmPx = quality.medianFWHMPixels {
+                html += stat("FWHM", String(format: "%.2f px", fwhmPx))
+            }
+            if let background = quality.backgroundEPerSecPerArcsec2 {
+                html += stat("Háttér", String(format: "%.4f e⁻/s/arcsec²", background))
+            }
+            if let rank = quality.rankAmongSessions, let total = quality.sessionCountForTarget {
+                html += stat("Rang", "\(rank) / \(total)")
+            }
+            if let outlier = quality.outlierFraction {
+                html += stat("Kiugrók", formatPercent(outlier * 100))
+            }
+            html += "</div>\n"
+        } else {
+            html += "<p class=\"muted\">Nincs pontozott keret ehhez a session-höz.</p>\n"
+        }
+
+        if let reason = advice.notAvailableReason {
+            html += "<p class=\"muted\">Expozíció-javaslat: n/a — \(escapeHTML(reason))</p>\n"
+        } else if !advice.advice.isEmpty {
+            html += "<p><strong>Expozíció-javaslat:</strong></p>\n<ul class=\"notice\">\n"
+            for line in advice.advice {
+                html += "<li>\(escapeHTML(line))</li>\n"
+            }
+            html += "</ul>\n"
+        }
+
+        return html
+    }
+
+    // MARK: - Magasság & Hold
+
+    private static func renderAltitudeAndMoon(altitude: AltitudeTrack?, moon: MoonGeometry?) -> String {
+        var html = "<h2>Magasság & Hold</h2>\n<div class=\"grid\">\n"
+
+        if let altitude {
+            html += stat("Min. magasság", String(format: "%.0f°", altitude.minAltitudeDeg))
+            html += stat("Medián magasság", String(format: "%.0f°", altitude.medianAltitudeDeg))
+            html += stat("Max. magasság", String(format: "%.0f°", altitude.maxAltitudeDeg))
+            html += stat("30° alatt", formatPercent(altitude.belowThresholdPercent))
+        }
+        if let moon {
+            html += stat("Hold megvilágítás", formatPercent(moon.illuminationPercent))
+            html += stat("Hold-szeparáció (medián)", String(format: "%.0f°", moon.medianSeparationDeg))
+            html += stat("Hold max. magasság", String(format: "%.0f°", moon.maxAltitudeDeg))
+        }
+        html += "</div>\n"
+
+        if altitude == nil {
+            html += "<p class=\"muted\">n/a — nincs koordináta vagy site adat a magasság-számításhoz.</p>\n"
+        }
+        if moon == nil {
+            html += "<p class=\"muted\">n/a — nincs koordináta, site, vagy idővonal-ablak a Hold-geometriához.</p>\n"
+        }
+
+        return html
+    }
+
+    // MARK: - Hardver
+
+    private static func renderHardware(health: NightHealthReport) -> String {
+        var html = "<h2>Hardver</h2>\n<div class=\"grid\">\n"
+        html += stat("Hűtő", health.cooler.verdict)
+        html += stat("Fókusz", health.focus.verdict)
+        html += "</div>\n"
+        return html
+    }
+
+    // MARK: - Kalibráció
+
+    private static func renderCalibration(calib: SessionCalibration) -> String {
+        var html = "<h2>Kalibráció</h2>\n<div class=\"grid\">\n"
+        html += stat("Flat", "\(calib.flats.count)")
+        if calib.darks.isEmpty, let libraryDark = calib.libraryDark {
+            html += stat("Dark", "library: \((libraryDark as NSString).lastPathComponent)")
+        } else {
+            html += stat("Dark", "\(calib.darks.count)")
+        }
+        html += stat("Bias", "\(calib.biases.count)")
+        html += "</div>\n"
+
+        if !calib.libraryDarkMismatchReasons.isEmpty {
+            html += "<p class=\"muted\">Library dark eltérések: \(escapeHTML(calib.libraryDarkMismatchReasons.joined(separator: ", ")))</p>\n"
+        }
+        if !calib.problems.isEmpty {
+            html += "<ul class=\"notice\">\n"
+            for problem in calib.problems {
+                html += "<li>\(escapeHTML(problem.message))</li>\n"
+            }
+            html += "</ul>\n"
+        }
+        return html
+    }
+
+    // MARK: - DSS-verdiktek
+
+    private static func renderDSSVerdicts(accepted: Int, rejected: Int) -> String {
+        """
+        <h2>DSS-verdiktek</h2>
+        <div class="grid">
+        \(stat("Elfogadva", "\(accepted)"))\(stat("Elvetve", "\(rejected)"))
+        </div>
+
+        """
+    }
+
+    // MARK: - README-jegyzetek
+
+    private static func renderNotes(notes: [String: String]) -> String {
+        var html = "<h2>README-jegyzetek</h2>\n<table>\n"
+        for key in notes.keys.sorted() {
+            html += "<tr><td>\(escapeHTML(key))</td><td>\(escapeHTML(notes[key] ?? ""))</td></tr>\n"
+        }
+        html += "</table>\n"
+        return html
+    }
+
+    // MARK: - Teendők
+
+    private static func renderTodos(todos: [String]) -> String {
+        var html = "<h2>Teendők</h2>\n"
+        if todos.isEmpty {
+            html += "<p class=\"muted\">Nincs teendő.</p>\n"
+        } else {
+            html += "<ul class=\"notice\">\n"
+            for todo in todos {
+                html += "<li>\(escapeHTML(todo))</li>\n"
+            }
+            html += "</ul>\n"
+        }
+        return html
+    }
+
+    // MARK: - Small shared helpers
+
+    private static func stat(_ label: String, _ value: String) -> String {
+        "<div class=\"stat\"><div class=\"label\">\(escapeHTML(label))</div><div class=\"value\">\(escapeHTML(value))</div></div>\n"
+    }
+
+    private static func formatHM(_ seconds: Double) -> String {
+        let totalMinutes = Int((seconds / 60).rounded())
+        return String(format: "%d:%02d", totalMinutes / 60, totalMinutes % 60)
+    }
+
+    private static func formatPercent(_ value: Double) -> String {
+        "\(Int(value.rounded()))%"
+    }
+
+    /// `"HH:mm"` out of `SessionTimeline`'s `"yyyy-MM-ddTHH:mm:ssZ"` ISO
+    /// strings -- a plain substring slice, same convention as
+    /// `AcquisitionExport.shortTime`.
+    private static func shortTime(_ iso: String) -> String {
+        guard iso.count >= 16 else { return iso }
+        let start = iso.index(iso.startIndex, offsetBy: 11)
+        let end = iso.index(iso.startIndex, offsetBy: 16)
+        return String(iso[start..<end])
+    }
+
+    /// Minimal HTML-entity escaping for user/library-derived text (target
+    /// names, README note values, Finding messages, ...) landing inside this
+    /// self-contained page -- never trust that a target/tag/note is free of
+    /// `<`/`&`.
+    private static func escapeHTML(_ raw: String) -> String {
+        var result = raw
+        result = result.replacingOccurrences(of: "&", with: "&amp;")
+        result = result.replacingOccurrences(of: "<", with: "&lt;")
+        result = result.replacingOccurrences(of: ">", with: "&gt;")
+        result = result.replacingOccurrences(of: "\"", with: "&quot;")
+        result = result.replacingOccurrences(of: "'", with: "&#39;")
+        return result
+    }
+}

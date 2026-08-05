@@ -63,6 +63,59 @@ public struct TargetPlan: Codable, Sendable, Equatable {
     }
 }
 
+/// One calendar night's planning-calendar summary (R7-B5, `astrotool plan
+/// --month`) -- coarser than `TargetPlan` (no per-target verdict, no score),
+/// built for a whole month at a glance rather than "what should I shoot
+/// right now".
+public struct NightSummary: Codable, Sendable, Equatable {
+    /// One target's usable-overlap hours for this night -- see
+    /// `Planner.month`'s doc comment for exactly what "usable" means.
+    public struct BestWindow: Codable, Sendable, Equatable {
+        public var target: String
+        public var usableHours: Double
+
+        public init(target: String, usableHours: Double) {
+            self.target = target
+            self.usableHours = usableHours
+        }
+    }
+
+    /// Local night-of date, `"yyyy-MM-dd"`.
+    public var date: String
+    /// Hours of TRUE astronomical night (`SunMoon.astronomicalTwilight`
+    /// without its nautical fallback) -- `nil` when the night never reaches
+    /// -18° (common in summer at high latitude); `note` explains why
+    /// whenever this is `nil`.
+    public var astroDarkHours: Double?
+    /// Set exactly when `astroDarkHours` is `nil`: either the night fell
+    /// back to nautical twilight (-12°) or, at the extreme, never got dark
+    /// at all ("fehér éjszaka" -- white night).
+    public var note: String?
+    /// Moon illumination at this night's dark-window midpoint (or, when
+    /// there's no dark window at all, at local civil midnight) -- always
+    /// computed, since it needs no target coordinate or site altitude math.
+    public var moonIlluminationPercent: Double
+    /// Top 3 targets (by `usableHours`, descending) with a resolvable
+    /// coordinate whose usable overlap is `> 0` this night -- `[]` when no
+    /// target clears the bar (no dark window, every target vetoed by the
+    /// Moon, or the library has no target with a coordinate at all).
+    public var bestTargets: [BestWindow]
+
+    public init(
+        date: String,
+        astroDarkHours: Double? = nil,
+        note: String? = nil,
+        moonIlluminationPercent: Double,
+        bestTargets: [BestWindow] = []
+    ) {
+        self.date = date
+        self.astroDarkHours = astroDarkHours
+        self.note = note
+        self.moonIlluminationPercent = moonIlluminationPercent
+        self.bestTargets = bestTargets
+    }
+}
+
 /// Builds tonight's `TargetPlan` for every target the library knows about
 /// (same target universe as `StatsQueries.perTarget`).
 public enum Planner {
@@ -93,6 +146,157 @@ public enum Planner {
         let lights = files.filter { $0.area == .sessions && $0.role == .light }
         let meta = try metaByFileID(for: lights, db: db)
         return TargetCoordinates.resolveSite(files: lights, meta: meta, config: config.site)
+    }
+
+    /// Builds a month-at-a-glance planning calendar (R7-B5, `astrotool plan
+    /// --month`): one `NightSummary` per night, starting at `from` (defaults
+    /// to today, local time) and covering `nights` consecutive nights.
+    ///
+    /// Per night: resolves the dark window (`SunMoon.astronomicalTwilight`,
+    /// same fallback behavior `plan(...)` already relies on) and the Moon's
+    /// illumination at that window's midpoint, then -- for every target with
+    /// a resolvable coordinate -- scores "usable overlap hours" as the
+    /// intersection of (altitude ≥ `minAltitudeDeg`) AND (inside the dark
+    /// window) AND (Moon OK: separation ≥ 40° from the target OR
+    /// illumination < 60%, evaluated ONCE at the window's midpoint -- same
+    /// rule, same single-point evaluation, as `plan(...)`'s own per-target
+    /// verdict). A target the Moon vetoes contributes exactly `0` usable
+    /// hours for that night (not a reduced number) and is therefore never
+    /// among that night's `bestTargets` -- the veto is binary, not a partial
+    /// penalty, since the Moon is either close and bright enough to ruin
+    /// the exposure or it isn't.
+    ///
+    /// Sampling is coarsened to 10-minute steps for the overlap scan (vs.
+    /// `plan`'s 2-minute steps): `nights x targets x samples-per-night`
+    /// would otherwise scale poorly for a full month against a library with
+    /// many targets, and a few minutes of granularity is more than enough
+    /// accuracy at planning-calendar (not pointing) resolution.
+    public static func month(
+        from date: Date? = nil,
+        nights: Int = 30,
+        minAltitudeDeg: Double = 30,
+        db: Database,
+        config: AstroConfig
+    ) throws -> [NightSummary] {
+        let referenceDate = date ?? Date()
+        let timeZone = TimeZone.current
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.timeZone = timeZone
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+
+        let allFiles = try db.allFiles(includeMissing: false)
+        let allLights = allFiles.filter { $0.area == .sessions && $0.role == .light }
+        let allMeta = try metaByFileID(for: allLights, db: db)
+        let site = TargetCoordinates.resolveSite(files: allLights, meta: allMeta, config: config.site)
+
+        var targetCoords: [(target: String, raDeg: Double, decDeg: Double)] = []
+        if site.latitudeDeg != nil, site.longitudeDeg != nil {
+            let stats = try StatsQueries.perTarget(db: db, config: config)
+            for stat in stats {
+                let targetLights = allLights.filter { $0.target == stat.target }
+                if let coord = TargetCoordinates.medianCoordinates(files: targetLights, meta: allMeta) {
+                    targetCoords.append((stat.target, coord.raDeg, coord.decDeg))
+                }
+            }
+        }
+
+        var summaries: [NightSummary] = []
+        for offset in 0..<nights {
+            guard let day = calendar.date(byAdding: .day, value: offset, to: referenceDate) else { continue }
+            let dateString = dateFormatter.string(from: day)
+
+            guard let lat = site.latitudeDeg, let lon = site.longitudeDeg else {
+                let illum = civilMidnightMoonIllumination(day: day, calendar: calendar)
+                summaries.append(NightSummary(date: dateString, note: "nincs site-koordináta", moonIlluminationPercent: illum))
+                continue
+            }
+
+            let night = SunMoon.astronomicalTwilight(nightOf: day, latDeg: lat, lonDeg: lon, timeZone: timeZone)
+            guard let duskUTC = night.duskUTC, let dawnUTC = night.dawnUTC else {
+                let illum = civilMidnightMoonIllumination(day: day, calendar: calendar)
+                summaries.append(NightSummary(date: dateString, note: "nincs sötét ablak (fehér éjszaka)", moonIlluminationPercent: illum))
+                continue
+            }
+
+            let windowSeconds = dawnUTC.timeIntervalSince(duskUTC)
+            let astroDarkHours: Double? = night.usedNauticalFallback ? nil : windowSeconds / 3600.0
+            let note: String? = night.usedNauticalFallback
+                ? "nincs csillagászati éjszaka -- nautikus szürkület alapján számolva"
+                : nil
+
+            let midNight = duskUTC.addingTimeInterval(windowSeconds / 2)
+            let midJD = JulianDate.julianDay(midNight)
+            let moonIllum = SunMoon.moonIlluminationPercent(julianDay: midJD)
+            let moonAtMidnight = SunMoon.moonPosition(julianDay: midJD)
+
+            var windows: [NightSummary.BestWindow] = []
+            for entry in targetCoords {
+                let separation = SunMoon.angularSeparationDeg(
+                    ra1: entry.raDeg, dec1: entry.decDeg, ra2: moonAtMidnight.raDeg, dec2: moonAtMidnight.decDeg
+                )
+                let moonOK = separation >= 40 || moonIllum < 60
+                guard moonOK else { continue }
+
+                let usableSeconds = overlapSeconds(
+                    raDeg: entry.raDeg, decDeg: entry.decDeg, latDeg: lat, lonDeg: lon,
+                    duskUTC: duskUTC, dawnUTC: dawnUTC, minAltitudeDeg: minAltitudeDeg
+                )
+                guard usableSeconds > 0 else { continue }
+                windows.append(NightSummary.BestWindow(target: entry.target, usableHours: usableSeconds / 3600.0))
+            }
+
+            let bestTargets = Array(windows.sorted { $0.usableHours > $1.usableHours }.prefix(3))
+            summaries.append(NightSummary(
+                date: dateString, astroDarkHours: astroDarkHours, note: note,
+                moonIlluminationPercent: moonIllum, bestTargets: bestTargets
+            ))
+        }
+
+        return summaries
+    }
+
+    /// Moon illumination at LOCAL civil midnight starting the night after
+    /// `day` -- the fallback used when no dark window resolves at all (no
+    /// site, or even nautical twilight never happens), since illumination
+    /// itself needs no site/altitude math and shouldn't be withheld just
+    /// because the rest of the night's numbers are unavailable.
+    private static func civilMidnightMoonIllumination(day: Date, calendar: Calendar) -> Double {
+        let startOfDay = calendar.startOfDay(for: day)
+        let midnight = calendar.date(byAdding: .day, value: 1, to: startOfDay) ?? startOfDay
+        return SunMoon.moonIlluminationPercent(julianDay: JulianDate.julianDay(midnight))
+    }
+
+    /// Seconds, within `[duskUTC, dawnUTC]`, that the target's altitude is
+    /// `>= minAltitudeDeg` -- a coarser (`stepMinutes`, default 10) sibling
+    /// of `sweepNight`'s per-plan altitude scan, used only by `month`'s
+    /// per-night x per-target overlap scoring.
+    private static func overlapSeconds(
+        raDeg: Double,
+        decDeg: Double,
+        latDeg: Double,
+        lonDeg: Double,
+        duskUTC: Date,
+        dawnUTC: Date,
+        minAltitudeDeg: Double,
+        stepMinutes: Double = 10
+    ) -> Double {
+        var visibleSampleCount = 0
+        let stepSeconds = stepMinutes * 60
+        var t = duskUTC
+        while t <= dawnUTC {
+            let jd = JulianDate.julianDay(t)
+            let lst = SiderealTime.lstHours(julianDay: jd, longitudeDeg: lonDeg)
+            let position = AltAz.position(raDeg: raDeg, decDeg: decDeg, lstHours: lst, latDeg: latDeg)
+            if position.altitudeDeg >= minAltitudeDeg {
+                visibleSampleCount += 1
+            }
+            t = t.addingTimeInterval(stepSeconds)
+        }
+        return Double(visibleSampleCount) * stepSeconds
     }
 
     /// Builds tonight's plan for every target on record, sorted by `score`

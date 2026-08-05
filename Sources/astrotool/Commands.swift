@@ -41,6 +41,10 @@ Commands:
   tag remove    --target T [--date D] <tag> [--root R] [--json]
   tag list      [--target T] [--date D] [--root R] [--json]
   plan          [--date YYYY-MM-DD] [--min-alt 30] [--root R] [--json]
+                [--month [--nights 30]]
+                Without --month: tonight's per-target observation plan.
+                With --month: a month-at-a-glance planning calendar (dark
+                hours, Moon%, top-3 targets per night) instead.
   projects      [--root R] [--json]
   export        --target T --format astrobin|csv|md [--out PATH] [--root R]
   health        --target T [--date D] [--root R] [--json]
@@ -64,6 +68,13 @@ Commands:
                 writes a .dssfilelist (DeepSkyStacker/Sirilic) and a .ssf
                 Siril script alongside it. Additive and idempotent -- never
                 touches your original files.
+  report        --target T --date D [--out -] [--root R]
+                Self-contained HTML night-report card: frame/exposure
+                summary, timeline, quality, altitude/airmass + achieved Moon
+                geometry, hardware health, calibration status, DSS verdicts,
+                README notes, and to-dos. Written to
+                .astro_tool/reports/<target>-<date>.html; --out - prints
+                the HTML to stdout instead.
 
   --version     Print version and exit
   --help        Show this help
@@ -1319,12 +1330,16 @@ private func printSearchResultsGrouped(_ results: [(target: String, date: String
 
 /// `astrotool plan [--date YYYY-MM-DD] [--min-alt 30] [--json]` -- tonight's
 /// observation plan for every target on record (see `Planner.plan`).
+/// `astrotool plan --month [--nights 30] [--json]` -- a month-at-a-glance
+/// planning calendar instead (see `Planner.month`, R7-B5).
 func cmdPlan(_ args: [String]) throws -> Int32 {
     let specs = [
         FlagSpec("--root", takesValue: true),
         FlagSpec("--date", takesValue: true),
         FlagSpec("--min-alt", takesValue: true),
         FlagSpec("--json", takesValue: false),
+        FlagSpec("--month", takesValue: false),
+        FlagSpec("--nights", takesValue: true),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
 
@@ -1350,6 +1365,25 @@ func cmdPlan(_ args: [String]) throws -> Int32 {
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
 
+    if parsed.has("--month") {
+        var nights = 30
+        if let raw = parsed.value("--nights") {
+            guard let value = Int(raw), value > 0 else {
+                eprint("error: invalid --nights: \(raw)")
+                return 1
+            }
+            nights = value
+        }
+
+        let summaries = try Planner.month(from: date, nights: nights, minAltitudeDeg: minAlt, db: db, config: config)
+        if parsed.has("--json") {
+            try printJSON(summaries)
+        } else {
+            printMonthTable(summaries)
+        }
+        return 0
+    }
+
     let plans = try Planner.plan(date: date, minAltitudeDeg: minAlt, db: db, config: config)
 
     if parsed.has("--json") {
@@ -1359,6 +1393,32 @@ func cmdPlan(_ args: [String]) throws -> Int32 {
         printPlanTable(plans)
     }
     return 0
+}
+
+/// The nights ≥ this dark-hour count AND < this Moon illumination get a `▲`
+/// prefix in `printMonthTable` -- "worth circling on the calendar" nights.
+private let monthHighlightMinDarkHours = 4.0
+private let monthHighlightMaxMoonPercent = 30.0
+
+private func printMonthTable(_ summaries: [NightSummary]) {
+    guard !summaries.isEmpty else {
+        print("no nights")
+        return
+    }
+
+    print("   DÁTUM       SÖTÉT ÓRA  HOLD%   LEGJOBB CÉLPONTOK")
+    for summary in summaries {
+        let isHighlight = (summary.astroDarkHours ?? 0) >= monthHighlightMinDarkHours
+            && summary.moonIlluminationPercent < monthHighlightMaxMoonPercent
+        let prefix = isHighlight ? "▲ " : "  "
+        let darkText = (summary.astroDarkHours.map { String(format: "%.1f", $0) } ?? "n/a").padding(toLength: 9, withPad: " ", startingAt: 0)
+        let moonText = String(format: "%3.0f%%", summary.moonIlluminationPercent)
+        let bestText = summary.bestTargets.map { "\($0.target) (\(String(format: "%.1f", $0.usableHours))h)" }.joined(separator: ", ")
+        print("\(prefix)\(summary.date)  \(darkText)  \(moonText)   \(bestText.isEmpty ? "-" : bestText)")
+        if let note = summary.note {
+            print("      \(note)")
+        }
+    }
 }
 
 /// Parses a bare `YYYY-MM-DD` date (UTC, offset to local noon so it safely
@@ -2068,4 +2128,42 @@ private func printStackSelection(_ selection: StackSelection) {
             print("  - \(line)")
         }
     }
+}
+
+// MARK: - report (R7-B5)
+
+/// `astrotool report --target T --date D [--out -] [--root R]` -- one
+/// night's self-contained HTML report card (see `NightReport`). Default
+/// behavior writes under `.astro_tool/reports/` via `WriteGuard` and prints
+/// the resulting path; `--out -` prints the rendered HTML to stdout instead
+/// (same convention as `export --out -`).
+func cmdReport(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--date", takesValue: true),
+        FlagSpec("--out", takesValue: true),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    guard let target = parsed.value("--target"), let date = parsed.value("--date") else {
+        eprint("error: --target and --date are required")
+        eprint(usageText)
+        return 1
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    if parsed.value("--out") == "-" {
+        let html = try NightReport.render(target: target, date: date, db: db, config: config)
+        print(html, terminator: "")
+        return 0
+    }
+
+    let writeGuard = makeWriteGuard(config: config)
+    let url = try NightReport.write(target: target, date: date, timestamp: Date(), db: db, config: config, using: writeGuard)
+    print(url.path)
+    return 0
 }

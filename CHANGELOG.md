@@ -71,6 +71,31 @@ történik.
 
 ### Added
 
+- **Éjszaka-riport HTML (`astrotool report`) + havi tervező naptár (`plan
+  --month`)**: `astrotool report --target T --date D` egyetlen
+  önmagában-is-megnyitható HTML fájlt ír (`.astro_tool/reports/
+  <cél>-<dátum>.html`, `--out -` stdout-ra), sötét témával, JS/külső
+  erőforrás nélkül — tisztán a már meglévő lekérdezések (`SessionStats`,
+  `SessionTimeline`, `SessionQuality`, `NightHealth`, `SessionMatcher`,
+  `ExposureAdvisor`, `ProjectStatusQueries`) összefésülése, plusz két új
+  számítás: a session usable lightjainak magasság/légmassza-menete
+  (`DATE-OBS` × `AltAz`/`SiderealTime`, koordináta `TargetCoordinates`-ből
+  plate-solve fallback-kel) és a session ablaka alatt VALÓBAN elért
+  Hold-geometria (megvilágítás az ablak közepén, medián szeparáció, Hold
+  max. magassága) — mindkettő nil-safe, koordináta/site hiányában
+  magyarázó megjegyzéssel marad ki, sosem hasal el. Az alkalmazásban a
+  session sor "Éjszaka-riport" gombja a háttérben elkészíti és megnyitja a
+  böngészőben.
+  `astrotool plan --month [--nights 30] [--json]` egy 30 éjszakás
+  tervező-naptárat ad (`Planner.month`): sötét óra (valódi csillagászati
+  éjszaka, nautikai fallback esetén `n/a` + megjegyzés), Hold-fázis, és
+  éjszakánként a top 3 célpont a `(magasság ≥ min) ∩ (sötét ablak) ∩ (Hold
+  rendben: szeparáció ≥ 40° VAGY megvilágítás < 60%)` átfedés szerint — a
+  Hold-veto nem csökkenti, NULLÁZZA az adott célpont aznapi óráit. A havi
+  szken 10 perces mintavétellel fut (a `plan`/`stats --timeline` 2 perces
+  felbontásához képest szándékosan durvább — havi tervezéshez elég pontos,
+  és `night × target × sample` méretben ez tartja olcsón). A Áttekintés fül
+  "Ma este" doboza fölött "Hónap…" gomb nyitja meg a táblát.
 - **Stack-lista export (`astrotool stacklist`)**: híd a keret-pontozás
   (`rate` / DSS-verdiktek) és a tényleges stackelés között. Kiválasztja egy
   session legjobb frame-jeit, majd olyan artifacteket ír, amiket a

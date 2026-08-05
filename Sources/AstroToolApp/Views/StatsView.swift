@@ -430,6 +430,12 @@ struct StatsView: View {
                 }
                 .buttonStyle(.link)
                 .font(.caption)
+
+                Button("Éjszaka-riport") {
+                    appState.exportNightReport(target: target, date: detail.dateRaw)
+                }
+                .buttonStyle(.link)
+                .font(.caption)
             }
         }
     }

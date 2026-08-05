@@ -13,6 +13,7 @@ struct OverviewView: View {
 
     @State private var showNewSessionSheet = false
     @State private var showDSSIngestAlert = false
+    @State private var showMonthSheet = false
 
     var body: some View {
         ScrollView {
@@ -42,6 +43,9 @@ struct OverviewView: View {
         }
         .sheet(isPresented: $showNewSessionSheet) {
             NewSessionSheet()
+        }
+        .sheet(isPresented: $showMonthSheet) {
+            MonthPlanSheet()
         }
         .onChange(of: appState.dssIngestSummary) { _, newValue in
             showDSSIngestAlert = newValue != nil
@@ -219,6 +223,8 @@ struct OverviewView: View {
             HStack {
                 Text("Ma este").font(.headline)
                 Spacer()
+                Button("Hónap…") { showMonthSheet = true }
+                    .disabled(appState.isBusy || appState.db == nil)
                 Button("Frissítés") { appState.loadPlan() }
                     .disabled(appState.isBusy || appState.db == nil)
             }
@@ -314,5 +320,85 @@ struct OverviewView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// The "Hónap…" sheet off "Ma este": a 30-night planning calendar
+/// (`Planner.month`, R7-B5) as a plain `List` -- dark hours, Moon%, and the
+/// top-3 targets for each night. Loads fresh every time the sheet opens
+/// (same "time-of-day-sensitive, no caching across opens" stance as
+/// `AppState.loadPlan()`'s own manual-refresh-only design).
+private struct MonthPlanSheet: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let month = appState.monthPlan {
+                    if month.isEmpty {
+                        ContentUnavailableView("Nincs adat", systemImage: "moon.stars")
+                    } else {
+                        List(month, id: \.date) { night in
+                            monthRow(night)
+                        }
+                    }
+                } else if appState.isBusy {
+                    ProgressView("Havi terv számítása…")
+                } else {
+                    ContentUnavailableView("Még nincs számolva", systemImage: "calendar")
+                }
+            }
+            .navigationTitle("Hónap")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Bezárás") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Frissítés") { appState.loadMonthPlan() }
+                        .disabled(appState.isBusy)
+                }
+            }
+        }
+        .frame(minWidth: 520, minHeight: 480)
+        .onAppear {
+            if appState.monthPlan == nil { appState.loadMonthPlan() }
+        }
+    }
+
+    private func monthRow(_ night: NightSummary) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                if isHighlighted(night) {
+                    Image(systemName: "arrowtriangle.up.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                }
+                Text(night.date).font(.callout.bold())
+                Spacer()
+                Text(night.astroDarkHours.map { String(format: "%.1f óra sötét", $0) } ?? "n/a sötét")
+                    .foregroundStyle(.secondary)
+                Text(String(format: "Hold: %.0f%%", night.moonIlluminationPercent))
+                    .foregroundStyle(.secondary)
+            }
+            .font(.callout)
+
+            if let note = night.note {
+                Text(note).font(.caption).foregroundStyle(.orange)
+            }
+
+            if night.bestTargets.isEmpty {
+                Text("—").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text(night.bestTargets.map { "\($0.target) (\(String(format: "%.1f", $0.usableHours))h)" }.joined(separator: ", "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func isHighlighted(_ night: NightSummary) -> Bool {
+        (night.astroDarkHours ?? 0) >= 4 && night.moonIlluminationPercent < 30
     }
 }

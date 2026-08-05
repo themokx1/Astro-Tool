@@ -91,6 +91,13 @@ final class AppState: @unchecked Sendable {
     /// run at least once this session.
     var plan: [TargetPlan]?
 
+    /// The month-at-a-glance planning calendar (`Planner.month`, R7-B5),
+    /// shown in the "Hónap" sheet off the Áttekintés tab. `nil` until
+    /// `loadMonthPlan()` has run at least once this session -- never loaded
+    /// automatically (same "time-of-day-sensitive, don't auto-refresh"
+    /// stance as `plan`).
+    var monthPlan: [NightSummary]?
+
     /// Every target's pipeline status (`ProjectStatusQueries.projects`),
     /// shown in the "Projektek" box on the Áttekintés tab. `[]` until
     /// `loadProjects()` has run at least once this session (also refreshed
@@ -623,6 +630,30 @@ final class AppState: @unchecked Sendable {
         }
     }
 
+    /// Loads the month-at-a-glance planning calendar (`Planner.month`,
+    /// R7-B5) for the "Hónap" sheet. Never triggered automatically, same
+    /// "time-of-day-sensitive" reasoning as `loadPlan()`.
+    func loadMonthPlan() {
+        guard let db else { return }
+        let cfg = config
+
+        let opID = beginOperation("Havi terv számítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try Planner.month(db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.monthPlan = result
+                self.progressText = "Havi terv kész: \(result.count) éjszaka"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
     // MARK: - Project pipeline status
 
     /// Loads every target's pipeline status for the "Projektek" box. Safe to
@@ -851,6 +882,35 @@ final class AppState: @unchecked Sendable {
     func clearStackListSelection() {
         stackListSelection = nil
         stackListExportDir = nil
+    }
+
+    // MARK: - Night report (R7-B5)
+
+    /// Renders and writes one session's HTML night-report card
+    /// (`NightReport.write`) under `.astro_tool/reports/`, then opens it in
+    /// the user's default browser -- the Statisztika tab's per-session
+    /// "Éjszaka-riport…" button.
+    func exportNightReport(target: String, date: String) {
+        guard let db else { return }
+        let cfg = config
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        let writeGuard = WriteGuard(root: root)
+
+        let opID = beginOperation("Éjszaka-riport készítése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let url = try await Task.detached(priority: .userInitiated) {
+                    try NightReport.write(target: target, date: date, timestamp: Date(), db: db, config: cfg, using: writeGuard)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.progressText = "Riport kész: \(url.lastPathComponent)"
+                NSWorkspace.shared.open(url)
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
     }
 
     // MARK: - Calibration coverage

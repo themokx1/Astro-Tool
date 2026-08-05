@@ -105,6 +105,12 @@ astrotool solve --all --json
 
 astrotool stacklist --target M31 --date 2026-03-15
 # A session legjobb frame-jeinek kiválasztása és exportálása (hardlinkek + .dssfilelist + .ssf) DSS/Sirilbe töltéshez.
+
+astrotool report --target M31 --date 2026-03-15
+# Önmagában megnyitható HTML éjszaka-riport (.astro_tool/reports/ alá írva).
+
+astrotool plan --month
+# 30 éjszakás tervező-naptár: sötét óra, Hold%, éjszakánként a top 3 célpont.
 ```
 
 Minden parancs elfogadja a `--root <PATH>` kapcsolót az alapértelmezett könyvtár felülbírálására.
@@ -139,6 +145,39 @@ M31_Andromeda  0:05     —        03:10       74°      22:44–03:10    32°/7
 - **Cél**: a célpont-szintű `goal:<óra>h` tag (pl. `astrotool tag add
   --target M31 goal:8h`) adja meg, mennyi integrációt szeretnél összesen —
   ennek hiányában a "CÉL" oszlop `—`.
+
+### Havi tervező naptár
+
+`astrotool plan --month` a napi tervet 30 éjszakára tágítja ki egy
+áttekintő táblázattá:
+
+```bash
+astrotool plan --month --nights 14
+```
+
+```
+   DÁTUM       SÖTÉT ÓRA  HOLD%   LEGJOBB CÉLPONTOK
+▲ 2026-08-10  6.2        12%   M31 (5.8h), NGC7000 (4.1h)
+  2026-08-11  6.1        20%   M31 (5.6h)
+  2026-08-12  n/a        28%   -
+      nincs csillagászati éjszaka -- nautikus szürkület alapján számolva
+```
+
+- **Sötét óra**: a VALÓDI csillagászati éjszaka (Nap -18° alatt) hossza;
+  `n/a` + magyarázó sor, ha az éjszaka csak nautikai szürkületig sötétedik
+  (nyári, magas szélességi fokú éjszaka), vagy egyáltalán nem sötétedik be
+  ("fehér éjszaka").
+- **Legjobb célpontok**: a top 3 célpont a `(magasság ≥ --min-alt) ∩ (sötét
+  ablak) ∩ (Hold rendben: szeparáció ≥ 40° VAGY megvilágítás < 60%)`
+  átfedés szerint, csökkenő sorrendben. A Hold-veto nem csökkenti, hanem
+  NULLÁZZA az adott célpont aznapi óráit — vagy zavar, vagy nem.
+- **▲ kiemelés**: legalább 4 óra sötét ÉS 30% alatti Hold-megvilágítás
+  esetén.
+- A havi szken 10 perces mintavétellel fut (a napi `plan` 2 perces
+  felbontásához képest szándékosan durvább — havi tervezéshez elég pontos,
+  és így `éjszaka × célpont × minta` mérete olcsó marad).
+- Az alkalmazásban a "Ma este" doboz "Hónap…" gombja nyitja meg ugyanezt
+  egy listaként.
 
 ## Exportálás
 
@@ -356,6 +395,42 @@ exportálva: /path/to/library/.astro_tool/stacklists/M31-2026-03-15
   a "Stack-lista…" gomb nyit egy sheetet megtartás-csúszkával (50–100%) és
   élő szempont-előnézettel; az "Exportálás" gomb után a Finder megnyitja a
   létrehozott mappát.
+
+## Éjszaka-riport
+
+Egy session mindenre kiterjedő, önmagában megnyitható HTML "report card"-ja
+— tisztán a már meglévő lekérdezések összefésülése, plusz két új
+számítás, amit eddig semmi más nem mutatott meg:
+
+```bash
+astrotool report --target M31 --date 2026-03-15
+# .astro_tool/reports/M31-2026-03-15.html
+
+astrotool report --target M31 --date 2026-03-15 --out -
+# a HTML stdoutra, fájl írása nélkül
+```
+
+- **Tartalma**: fejléc (célpont, dátum, setup), összefoglaló számok (ablak,
+  integráció, hatékonyság%, usable/elvetett/link keretek), idővonal
+  (szünet-lista + egyszerű CSS-sávos vizualizáció, JS nélkül), minőség
+  (FWHM, háttér, rang, kiugrók, expozíció-tanácsadó mondatok ha vannak),
+  magasság & Hold, hardver (hűtő/fókusz verdikt), kalibráció
+  (flat/dark/bias státusz + eltérés-okok), DSS-verdiktek és README-jegyzetek
+  (ha vannak), és a célpont teendő-listája.
+- **Magasság & Hold** (új, eddig sehol nem volt meg): a session usable
+  lightjainak `DATE-OBS`-ából a célpont magassága az adott pillanatban
+  (`AltAz` + `SiderealTime`, koordináta `TargetCoordinates`-ből — plate-solve
+  fallback-kel is) → min/medián/max magasság és "a keretek N%-a készült 30°
+  alatt"; plusz a session ablaka alatt VALÓBAN elért Hold-geometria (Hold
+  megvilágítása az ablak közepén, medián target-Hold szeparáció, Hold max.
+  magassága induláskor/középidőben/végén). Koordináta vagy helyszín
+  hiányában a szakasz megmarad, csak egy magyarázó megjegyzéssel a számok
+  helyén — sosem hasal el, sosem tippel.
+- Egyetlen fájl, beágyazott CSS, nincs `<script>` és nincs külső erőforrás
+  — bármelyik böngészőben, internet nélkül is megnyílik.
+- Az alkalmazásban a Statisztika fül session-sorának Műveletek cellájában
+  az "Éjszaka-riport" gomb a háttérben elkészíti, majd a rendszer
+  alapértelmezett böngészőjében megnyitja.
 
 ## Konfiguráció
 
