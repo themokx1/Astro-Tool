@@ -89,10 +89,10 @@ struct CalibrationPage: View {
 
     private var tiles: some View {
         HStack(spacing: 12) {
-            CalibStatTile(title: "Hiányzó", value: "\(missingCount)", color: .red)
-            CalibStatTile(title: "Elavult", value: "\(staleCount)", color: .orange)
-            CalibStatTile(title: "Friss", value: "\(freshCount)", color: .green)
-            CalibStatTile(title: "Master darkok", value: masterDarkCountText, color: .gray)
+            StatTile(title: "Hiányzó", value: "\(missingCount)", color: .red)
+            StatTile(title: "Elavult", value: "\(staleCount)", color: .orange)
+            StatTile(title: "Friss", value: "\(freshCount)", color: .green)
+            StatTile(title: "Master darkok", value: masterDarkCountText, color: .gray)
         }
     }
 
@@ -165,10 +165,16 @@ struct CalibrationPage: View {
 
     private var coverageTable: some View {
         Table(coverageRows, selection: $selectedNeedID) {
-            TableColumn("Típus") { row in Text(row.need.kind.rawValue) }
-                .width(60)
-            TableColumn("Exp. (s)") { row in Text(formattedExposure(row.need.exposureSeconds)) }
-                .width(60)
+            // R10-B7: grouped so the table stays AT (not over) `Table`'s
+            // 10-top-level-column cap once the trailing "⋯" actions column
+            // below needs its own slot -- same `Group { }` workaround
+            // `QualitySegment.frameTable` already established.
+            Group {
+                TableColumn("Típus") { row in Text(kindText(row)) }
+                    .width(60)
+                TableColumn("Exp. (s)") { row in Text(formattedExposure(row.need.exposureSeconds)) }
+                    .width(60)
+            }
             TableColumn("Hőm. (°C)") { row in Text(row.need.tempC.map { String(format: "%.1f", $0) } ?? "-") }
                 .width(70)
             TableColumn("Gain") { row in Text(row.need.requiredGain.map { String(format: "%g", $0) } ?? "-") }
@@ -202,6 +208,19 @@ struct CalibrationPage: View {
                 }
             }
             .width(min: 140, ideal: 200)
+            // R10-B7: visible row-actions -- mirrors `coverageContextMenuItems`
+            // exactly (same function, both call sites), so the right-click
+            // menu and this borderless "⋯" button can never drift apart.
+            TableColumn("") { row in
+                Menu {
+                    coverageContextMenuItems(row.need)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 24)
+            }
+            .width(36)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         .contextMenu(forSelectionType: CoverageRow.ID.self) { ids in
@@ -240,6 +259,16 @@ struct CalibrationPage: View {
         String(format: "%g", value)
     }
 
+    /// R10-B7: pulled out of the "Típus" column's cell closure -- inlined
+    /// directly (`Text(row.need.kind.rawValue)`), the type-checker couldn't
+    /// infer the closure parameter's type inside the `Group { }` above.
+    /// Routing through a plain helper (same convention `formattedExposure`
+    /// right above already follows) gives it a concrete return type to
+    /// anchor on instead.
+    private func kindText(_ row: CoverageRow) -> String {
+        row.need.kind.rawValue
+    }
+
     // MARK: - Egészség
 
     private var healthSegment: some View {
@@ -270,26 +299,6 @@ struct CoverageRow: Identifiable {
         return "\(need.kind.rawValue)|\(need.exposureSeconds)|\(temp)|\(gain)|\(camera)"
     }
     let need: CalibNeed
-}
-
-/// Small colored stat tile, same look as `AuditPage`'s private `StatTile` --
-/// kept as its own (differently-named) private type per that file's own
-/// convention of each page owning its tile view rather than sharing one
-/// globally.
-private struct CalibStatTile: View {
-    let title: String
-    let value: String
-    let color: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title2.bold()).foregroundStyle(color)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(color.opacity(0.12)))
-    }
 }
 
 /// The "Kalibráció-egészség" section's three collapsible blocks (flat

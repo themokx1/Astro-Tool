@@ -239,23 +239,10 @@ struct DiscoveryPage: View {
 
     private var tilesRow: some View {
         HStack(spacing: 12) {
-            tile(title: "Ma ajánlott", value: "\(recommendedCount)")
-            tile(title: "Katalógus", value: "\(filteredRows.count) / \(TargetCatalog.all.count)", caption: "látható / teljes")
-            tile(title: "Setup látómező", value: fovTileValueText, caption: fovTileCaptionText)
+            StatTile(title: "Ma ajánlott", value: "\(recommendedCount)", compact: true)
+            StatTile(title: "Katalógus", value: "\(filteredRows.count) / \(TargetCatalog.all.count)", caption: "látható / teljes", compact: true)
+            StatTile(title: "Setup látómező", value: fovTileValueText, caption: fovTileCaptionText, compact: true)
         }
-    }
-
-    private func tile(title: String, value: String, caption: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title3).bold()
-            if let caption {
-                Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
     }
 
     // MARK: - Metric info (R9-T6/B16(a) convention)
@@ -297,10 +284,16 @@ struct DiscoveryPage: View {
                 .width(min: 170, ideal: 210)
             TableColumn("Típus", value: \.kindSortKey) { row in Text(kindLabel(row.kind)) }
                 .width(min: 90, ideal: 120)
-            TableColumn("Méret", value: \.sizeSortKey) { row in Text(sizeText(row)) }
-                .width(min: 55, ideal: 65)
-            TableColumn("Magn.", value: \.magnitudeSortKey) { row in Text(magnitudeText(row)) }
-                .width(min: 50, ideal: 60)
+            // R10-B7: grouped so the table stays AT (not over) `Table`'s
+            // 10-top-level-column cap once the trailing "⋯" actions column
+            // below needs its own slot -- same `Group { }` workaround
+            // `QualitySegment.frameTable` already established.
+            Group {
+                TableColumn("Méret", value: \.sizeSortKey) { row in Text(sizeText(row)) }
+                    .width(min: 55, ideal: 65)
+                TableColumn("Magn.", value: \.magnitudeSortKey) { row in Text(magnitudeText(row)) }
+                    .width(min: 50, ideal: 60)
+            }
             TableColumn("Kulminál", value: \.culminationSortKey) { row in Text(row.culminationLocal ?? "-") }
                 .width(min: 70, ideal: 80)
             TableColumn("Max. mag.", value: \.maxAltSortKey) { row in Text(maxAltText(row)) }
@@ -313,6 +306,19 @@ struct DiscoveryPage: View {
                 .width(min: 90, ideal: 140)
             TableColumn("Döntés", value: \.verdictSortKey) { row in verdictChip(row.verdict) }
                 .width(min: 120, ideal: 150)
+            // R10-B7: visible row-actions -- mirrors `contextMenuItems(for:)`
+            // exactly (same function, both call sites), so the right-click
+            // menu and this borderless "⋯" button can never drift apart.
+            TableColumn("") { row in
+                Menu {
+                    contextMenuItems(for: row)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 24)
+            }
+            .width(36)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         // Row-scoped context menu + double-click-to-open, same pattern

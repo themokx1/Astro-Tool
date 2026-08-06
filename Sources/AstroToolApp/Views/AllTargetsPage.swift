@@ -146,10 +146,10 @@ struct AllTargetsPage: View {
 
     private var tilesRow: some View {
         HStack(spacing: 12) {
-            AllTargetsStatTile(title: "Célpontok", value: "\(appState.stats.count)", color: .blue)
-            AllTargetsStatTile(title: "Sessionök", value: "\(sessionCount)", color: .blue)
-            AllTargetsStatTile(title: "Összes integráció", value: formatDuration(totalIntegrationSeconds), color: .green)
-            AllTargetsStatTile(title: "Kész / folyamatban", value: "\(doneCount) / \(inProgressCount)", color: .orange)
+            StatTile(title: "Célpontok", value: "\(appState.stats.count)", color: .blue)
+            StatTile(title: "Sessionök", value: "\(sessionCount)", color: .blue)
+            StatTile(title: "Összes integráció", value: formatDuration(totalIntegrationSeconds), color: .green)
+            StatTile(title: "Kész / folyamatban", value: "\(doneCount) / \(inProgressCount)", color: .orange)
         }
     }
 
@@ -297,20 +297,26 @@ struct AllTargetsPage: View {
             }
             .width(min: 60, ideal: 70)
 
-            // R9-D8/c: target rows only -- "N csoport" from
-            // `AppState.stackGroupsByTarget` (R8-3's variant grouping), `-`
-            // for a target with no discovered stacks at all.
-            TableColumn("Stackek") { row in
-                Text(stacksText(row)).foregroundStyle(.secondary)
-            }
-            .width(min: 70, ideal: 90)
+            // R10-B7: grouped so the table stays AT (not over) `Table`'s
+            // 10-top-level-column cap once the trailing "⋯" actions column
+            // below needs its own slot -- same `Group { }` workaround
+            // `QualitySegment.frameTable` already established.
+            Group {
+                // R9-D8/c: target rows only -- "N csoport" from
+                // `AppState.stackGroupsByTarget` (R8-3's variant grouping),
+                // `-` for a target with no discovered stacks at all.
+                TableColumn("Stackek") { row in
+                    Text(stacksText(row)).foregroundStyle(.secondary)
+                }
+                .width(min: 70, ideal: 90)
 
-            TableColumn("Keretek") { row in
-                Text(framesText(row))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                TableColumn("Keretek") { row in
+                    Text(framesText(row))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .width(min: 120, ideal: 150)
             }
-            .width(min: 120, ideal: 150)
 
             TableColumn("Expozíciók / Utolsó dátum") { row in
                 Text(exposureOrLastDateText(row))
@@ -340,6 +346,27 @@ struct AllTargetsPage: View {
                 tagsCell(row)
             }
             .width(min: 120, ideal: 180)
+
+            // R10-B7: visible row-actions -- mirrors the exact same
+            // `targetContextMenuItems`/`sessionContextMenuItems` switch the
+            // row-scoped `.contextMenu(forSelectionType:)` below uses, so
+            // the right-click menu and this borderless "⋯" button can never
+            // drift apart.
+            TableColumn("") { row in
+                Menu {
+                    switch row.kind {
+                    case .target(let stats):
+                        targetContextMenuItems(stats)
+                    case .session(let target, let detail):
+                        sessionContextMenuItems(target: target, detail: detail)
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 24)
+            }
+            .width(36)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         // R9-D8/h: row-scoped context menu + double-click-to-open, same
@@ -367,36 +394,7 @@ struct AllTargetsPage: View {
     @ViewBuilder
     private func phaseCell(_ row: StatsRow) -> some View {
         if case .target(let stats) = row.kind {
-            phaseChip(appState.projectStates.first { $0.target == stats.target }?.phase)
-        }
-    }
-
-    private func phaseChip(_ phase: ProjectPhase?) -> some View {
-        Text(phaseLabel(phase))
-            .font(.caption.bold())
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(phaseColor(phase).opacity(0.15), in: Capsule())
-            .foregroundStyle(phaseColor(phase))
-    }
-
-    private func phaseLabel(_ phase: ProjectPhase?) -> String {
-        switch phase {
-        case .collecting: return "gyűjtés"
-        case .readyToStack: return "stackelhető"
-        case .stacked: return "feldolgozásra vár"
-        case .done: return "kész"
-        case nil: return "-"
-        }
-    }
-
-    private func phaseColor(_ phase: ProjectPhase?) -> Color {
-        switch phase {
-        case .collecting: return .blue
-        case .readyToStack: return .yellow
-        case .stacked: return .orange
-        case .done: return .green
-        case nil: return .gray
+            PhaseChip(phase: appState.projectStates.first { $0.target == stats.target }?.phase)
         }
     }
 
@@ -778,28 +776,6 @@ struct AllTargetsPage: View {
 
     private static func formatNumber(_ value: Double) -> String {
         value == value.rounded() ? String(format: "%.0f", value) : String(format: "%.1f", value)
-    }
-}
-
-// MARK: - Tile
-
-/// Small colored stat tile, same look/convention as `AuditPage`'s private
-/// `StatTile`/`CalibrationPage`'s private `CalibStatTile` -- kept as its own
-/// (differently-named) private type per those files' own convention of each
-/// page owning its tile view rather than sharing one globally.
-private struct AllTargetsStatTile: View {
-    let title: String
-    let value: String
-    let color: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title2.bold()).foregroundStyle(color)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(color.opacity(0.12)))
     }
 }
 

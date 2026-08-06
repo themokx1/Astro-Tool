@@ -163,6 +163,7 @@ struct SidebarView: View {
                 ForEach(targetRows) { row in
                     targetRow(row)
                 }
+                phaseLegendRow
             }
 
             Section("ÁLLAPOT") {
@@ -254,26 +255,35 @@ struct SidebarView: View {
                 .truncationMode(.tail)
         }
         .tag(Page.target(row.target))
-        .help(phaseLabel(row.phase))
+        // The row's own dot is color-only -- `phaseLabel`'s fuller
+        // "ismeretlen állapot" wording (rather than the compact "-" its
+        // other callers use inside a table chip) reads better as a hover
+        // tooltip sentence than the table-chip default does.
+        .help(phaseLabel(row.phase, unknown: "ismeretlen állapot"))
     }
 
-    private func phaseColor(_ phase: ProjectPhase?) -> Color {
-        switch phase {
-        case .collecting: return .blue
-        case .readyToStack: return .yellow
-        case .stacked: return .orange
-        case .done: return .green
-        case nil: return .gray
+    /// R10-B7: the sidebar's 4pt phase dots are color-only, their meaning
+    /// only discoverable via `targetRow`'s hover tooltip above -- this
+    /// always-visible one-line legend at the bottom of KÖNYVTÁR spells out
+    /// the same four colors/labels with no interaction of its own (a `?`
+    /// button would just be one more thing to click for information this
+    /// can show for free).
+    private var phaseLegendRow: some View {
+        HStack(spacing: 8) {
+            legendDot(.blue, "gyűjtés")
+            legendDot(.yellow, "stackelhető")
+            legendDot(.orange, "feldolgozásra vár")
+            legendDot(.green, "kész")
         }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .allowsHitTesting(false)
     }
 
-    private func phaseLabel(_ phase: ProjectPhase?) -> String {
-        switch phase {
-        case .collecting: return "gyűjtés"
-        case .readyToStack: return "stackelhető"
-        case .stacked: return "feldolgozásra vár"
-        case .done: return "kész"
-        case nil: return "ismeretlen állapot"
+    private func legendDot(_ color: Color, _ label: String) -> some View {
+        HStack(spacing: 3) {
+            Circle().fill(color).frame(width: 4, height: 4)
+            Text(label)
         }
     }
 

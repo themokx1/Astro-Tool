@@ -81,6 +81,9 @@ struct LocationSettingsView: View {
 
             Section {
                 HStack {
+                    if isDirty {
+                        Text("Nem mentett módosítások").font(.caption).foregroundStyle(.orange)
+                    }
                     Button("Mentés") { save() }
                     if let saveMessage {
                         Text(saveMessage).foregroundStyle(.green)
@@ -119,6 +122,25 @@ struct LocationSettingsView: View {
             longitudeText = appState.resolvedSite.longitudeDeg.map { String(format: "%.4f", $0) } ?? ""
         }
         weatherEnabled = appState.config.weather.enabled
+    }
+
+    /// R10-B7: "Nem mentett módosítások" indicator next to Mentés. `mode`/
+    /// `weatherEnabled` compare directly against what `loadFromConfig()`
+    /// would set right now; `latitudeText`/`longitudeText` only get
+    /// compared in "Kézi" mode, since that's the only mode where they're
+    /// actually editable at all -- in "Automatikus" mode they're a
+    /// read-only mirror of `appState.resolvedSite` (via `LabeledContent`
+    /// above, not a `TextField`), so they can never hold an unsaved EDIT
+    /// while automatic no matter what they currently display.
+    private var isDirty: Bool {
+        let site = appState.config.site
+        let loadedMode: UseMode = (site.latitudeDeg != nil && site.longitudeDeg != nil) ? .manual : .automatic
+        if mode != loadedMode { return true }
+        if weatherEnabled != appState.config.weather.enabled { return true }
+        guard mode == .manual else { return false }
+        let loadedLat = site.latitudeDeg.map { String(format: "%.4f", $0) } ?? ""
+        let loadedLon = site.longitudeDeg.map { String(format: "%.4f", $0) } ?? ""
+        return latitudeText != loadedLat || longitudeText != loadedLon
     }
 
     /// Parses the "47.5000, 19.0400" clipboard convention (spec A.7) -- two

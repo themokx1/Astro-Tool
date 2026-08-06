@@ -112,14 +112,41 @@ struct SessionsSegment: View {
             TableColumn("Rang") { row in rankChip(for: row.detail.dateRaw) }
                 .width(min: 60, ideal: 70)
 
-            TableColumn("Hűtés") { row in Text(coolerText(for: row.detail.dateRaw)).foregroundStyle(verdictColor(coolerVerdict(for: row.detail.dateRaw))) }
-                .width(min: 80, ideal: 100)
+            // R10-B7: grouped so the table stays AT (not over) `Table`'s
+            // 10-top-level-column cap once the trailing "⋯" actions column
+            // below needs its own slot -- same `Group { }` workaround
+            // `QualitySegment.frameTable` already established. Routed
+            // through `coolerCell`/`focusCell` (rather than inlining
+            // `Text(...).foregroundStyle(...)` directly) since even a
+            // helper-function-composed expression inline in a `Group { }`
+            // cell closure hit the same "cannot infer closure parameter
+            // type" error `CalibrationPage`'s R10-B7 fix hit -- wrapping
+            // the whole cell body in its own `@ViewBuilder` gives the
+            // type-checker a concrete anchor instead.
+            Group {
+                TableColumn("Hűtés") { row in coolerCell(row) }
+                    .width(min: 80, ideal: 100)
 
-            TableColumn("Fókusz") { row in Text(focusText(for: row.detail.dateRaw)).foregroundStyle(verdictColor(focusVerdict(for: row.detail.dateRaw))) }
-                .width(min: 80, ideal: 100)
+                TableColumn("Fókusz") { row in focusCell(row) }
+                    .width(min: 80, ideal: 100)
+            }
 
             TableColumn("README") { row in Text(row.detail.hasReadme ? "✓" : "-").foregroundStyle(.secondary) }
                 .width(min: 50, ideal: 60)
+
+            // R10-B7: visible row-actions -- mirrors `contextMenuItems(for:)`
+            // exactly (same function, both call sites), so the right-click
+            // menu and this borderless "⋯" button can never drift apart.
+            TableColumn("") { row in
+                Menu {
+                    contextMenuItems(for: row.detail)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 24)
+            }
+            .width(36)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         .contextMenu(forSelectionType: String.self) { ids in
@@ -208,6 +235,16 @@ struct SessionsSegment: View {
     private func focusVerdict(for date: String) -> String { appState.targetNightHealthByDate[date]?.focus.verdict ?? "n/a" }
     private func coolerText(for date: String) -> String { coolerVerdict(for: date) }
     private func focusText(for date: String) -> String { focusVerdict(for: date) }
+
+    @ViewBuilder
+    private func coolerCell(_ row: Row) -> some View {
+        Text(coolerText(for: row.detail.dateRaw)).foregroundStyle(verdictColor(coolerVerdict(for: row.detail.dateRaw)))
+    }
+
+    @ViewBuilder
+    private func focusCell(_ row: Row) -> some View {
+        Text(focusText(for: row.detail.dateRaw)).foregroundStyle(verdictColor(focusVerdict(for: row.detail.dateRaw)))
+    }
 
     private func verdictColor(_ verdict: String) -> Color {
         if verdict == "stabil" || verdict == "stabil fókusz" { return .green }

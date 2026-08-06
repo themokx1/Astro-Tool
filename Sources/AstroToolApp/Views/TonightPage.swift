@@ -242,31 +242,18 @@ struct TonightPage: View {
 
     private var tilesRow: some View {
         HStack(spacing: 12) {
-            tile(title: "Sötét idő", value: darkHoursText, caption: appState.nightInfo?.note)
-            tile(title: "Hold", value: moonTileText)
-            tile(title: "Ajánlott", value: "\(recommendedCount)")
+            StatTile(title: "Sötét idő", value: darkHoursText, caption: appState.nightInfo?.note, compact: true)
+            StatTile(title: "Hold", value: moonTileText, compact: true)
+            StatTile(title: "Ajánlott", value: "\(recommendedCount)", compact: true)
             Button {
                 appState.settingsTab = .location
                 openSettings()
             } label: {
-                tile(title: "Helyszín", value: locationValueText, caption: locationCaptionText)
+                StatTile(title: "Helyszín", value: locationValueText, caption: locationCaptionText, compact: true)
             }
             .buttonStyle(.plain)
             cloudTile
         }
-    }
-
-    private func tile(title: String, value: String, caption: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title3).bold()
-            if let caption {
-                Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
     }
 
     // MARK: - Felhőzet tile (R10-B6)
@@ -279,13 +266,13 @@ struct TonightPage: View {
     private var cloudTile: some View {
         let info = cloudTileInfo
         if appState.config.weather.enabled {
-            tile(title: "Felhőzet", value: info.value, caption: info.caption)
+            StatTile(title: "Felhőzet", value: info.value, caption: info.caption, compact: true)
         } else {
             Button {
                 appState.settingsTab = .location
                 openSettings()
             } label: {
-                tile(title: "Felhőzet", value: info.value, caption: info.caption)
+                StatTile(title: "Felhőzet", value: info.value, caption: info.caption, compact: true)
             }
             .buttonStyle(.plain)
         }
@@ -428,7 +415,7 @@ struct TonightPage: View {
         Table(planRows, selection: $selectedPlanTarget, sortOrder: $sortOrder) {
             TableColumn("Célpont", value: \.displayName) { row in targetCell(row) }
                 .width(min: 200, ideal: 240)
-            TableColumn("Állapot", value: \.phaseRank) { row in phaseChip(row.phase) }
+            TableColumn("Állapot", value: \.phaseRank) { row in PhaseChip(phase: row.phase) }
                 .width(130)
             TableColumn("Integráció", value: \.integrationSeconds) { row in
                 Text(TDFormat.hm(row.integrationSeconds))
@@ -438,18 +425,37 @@ struct TonightPage: View {
                 .width(110)
             TableColumn("Hiányzik", value: \.missingSortKey) { row in missingCell(row) }
                 .width(90)
-            TableColumn("Kulminál", value: \.culminationSortKey) { row in
-                Text(row.plan.culminationLocal ?? "-")
-            }
-            .width(80)
-            TableColumn("Max. mag.", value: \.maxAltSortKey) { row in Text(maxAltText(row)) }
+            // R10-B7: grouped so the table stays AT (not over) `Table`'s
+            // 10-top-level-column cap once the trailing "⋯" actions column
+            // below needs its own slot -- same `Group { }` workaround
+            // `QualitySegment.frameTable` already established.
+            Group {
+                TableColumn("Kulminál", value: \.culminationSortKey) { row in
+                    Text(culminationText(row))
+                }
                 .width(80)
+                TableColumn("Max. mag.", value: \.maxAltSortKey) { row in Text(maxAltText(row)) }
+                    .width(80)
+            }
             TableColumn("Látható", value: \.visibleHoursSortKey) { row in Text(visibleText(row)) }
                 .width(150)
             TableColumn("Hold", value: \.moonSortKey) { row in Text(moonRowText(row)) }
                 .width(110)
             TableColumn("Döntés", value: \.verdictSortKey) { row in verdictChip(row.plan.verdict) }
                 .width(140)
+            // R10-B7: visible row-actions -- mirrors `planContextMenuItems`
+            // exactly (same function, both call sites), so the right-click
+            // menu and this borderless "⋯" button can never drift apart.
+            TableColumn("") { row in
+                Menu {
+                    planContextMenuItems(row)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 24)
+            }
+            .width(36)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         // R9-D11: row-scoped context menu + double-click-to-open, same
@@ -550,6 +556,16 @@ struct TonightPage: View {
         }
     }
 
+    /// R10-B7: pulled out of the "Kulminál" column's cell closure -- inlined
+    /// directly (`Text(row.plan.culminationLocal ?? "-")`) inside the
+    /// `Group { }` above, the type-checker couldn't resolve the whole
+    /// `Table` builder expression in reasonable time. Routing through a
+    /// plain helper (same convention `maxAltText` right below already
+    /// follows) gives it a concrete return type to anchor on instead.
+    private func culminationText(_ row: PlanRow) -> String {
+        row.plan.culminationLocal ?? "-"
+    }
+
     private func maxAltText(_ row: PlanRow) -> String {
         guard let alt = row.plan.maxAltitudeDeg else { return "-" }
         return "\(Int(alt.rounded()))°"
@@ -570,35 +586,6 @@ struct TonightPage: View {
     }
 
     // MARK: Chips
-
-    private func phaseChip(_ phase: ProjectPhase?) -> some View {
-        Text(phaseLabel(phase))
-            .font(.caption.bold())
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(phaseColor(phase).opacity(0.15), in: Capsule())
-            .foregroundStyle(phaseColor(phase))
-    }
-
-    private func phaseLabel(_ phase: ProjectPhase?) -> String {
-        switch phase {
-        case .collecting: return "gyűjtés"
-        case .readyToStack: return "stackelhető"
-        case .stacked: return "feldolgozásra vár"
-        case .done: return "kész"
-        case nil: return "-"
-        }
-    }
-
-    private func phaseColor(_ phase: ProjectPhase?) -> Color {
-        switch phase {
-        case .collecting: return .blue
-        case .readyToStack: return .yellow
-        case .stacked: return .orange
-        case .done: return .green
-        case nil: return .gray
-        }
-    }
 
     private func verdictChip(_ verdict: String) -> some View {
         Text(verdict)
@@ -866,60 +853,6 @@ struct TonightPage: View {
     private static var todayString: String { isoDateFormatter.string(from: Date()) }
     private static var tomorrowString: String {
         isoDateFormatter.string(from: Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date())
-    }
-}
-
-// MARK: - Goal-editing sheet (row context menu + "Cél" column link)
-
-/// Identifies which target's goal is being edited so a `@State` of this type
-/// can drive `.sheet(item:)` -- a SHEET (not the popover `TargetDetailPage`'s
-/// header goal-tile uses) because this one is triggered from BOTH a `Table`
-/// cell's plain link AND a row context-menu item, and a popover needs a
-/// still-on-screen anchor view to attach to, which a context-menu item
-/// (which closes immediately on selection) can't provide. Not `private`:
-/// `AllTargetsPage`'s target row context menu reuses this same sheet for
-/// its own "Cél beállítása…" item (R9-D8/e) rather than duplicating it.
-struct GoalEditingTarget: Identifiable {
-    let target: String
-    let currentHours: Double
-    var id: String { target }
-}
-
-struct GoalEditSheet: View {
-    @Environment(AppState.self) private var appState
-    @Environment(\.dismiss) private var dismiss
-
-    let target: String
-    @State private var hours: Double
-
-    init(target: String, initialHours: Double) {
-        self.target = target
-        _hours = State(initialValue: initialHours)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Cél (óra)").font(.headline)
-            Text(target).foregroundStyle(.secondary)
-            Stepper(value: $hours, in: 0...300, step: 0.5) {
-                Text(String(format: "%.1f óra", hours))
-            }
-            HStack {
-                Button("Cél törlése") {
-                    appState.setGoal(target: target, hours: nil)
-                    dismiss()
-                }
-                Spacer()
-                Button("Mégse") { dismiss() }
-                Button("Mentés") {
-                    appState.setGoal(target: target, hours: hours)
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(20)
-        .frame(width: 280)
     }
 }
 

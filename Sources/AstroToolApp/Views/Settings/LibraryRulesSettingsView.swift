@@ -125,6 +125,9 @@ struct LibraryRulesSettingsView: View {
                 HStack {
                     Button("Alaphelyzetbe állítás…") { showResetConfirm = true }
                     Spacer()
+                    if isDirty {
+                        Text("Nem mentett módosítások").font(.caption).foregroundStyle(.orange)
+                    }
                     Button("Mentés") { save() }
                     if let saveMessage {
                         Text(saveMessage).foregroundStyle(.green)
@@ -161,6 +164,26 @@ struct LibraryRulesSettingsView: View {
                     .multilineTextAlignment(.trailing)
             }
         }
+    }
+
+    /// R10-B7: "Nem mentett módosítások" indicator next to Mentés -- true
+    /// whenever the draft differs from `appState.config` (as opposed to
+    /// each row's own `↺`, which compares against `AstroConfig()`/
+    /// `IntentionalPatterns()` DEFAULTS instead).
+    private var isDirty: Bool {
+        let config = appState.config
+        return residuePatterns != config.residuePatterns
+            || residueDirNames != config.residueDirNames
+            || toolOutputDirNames != config.toolOutputDirNames
+            || intentionalLabels != config.intentional.labels
+            || runSuffix != config.intentional.runSuffix
+            || dateRange != config.intentional.dateRange
+            || wideFieldExtensions != config.wideField.extensions
+            || wideFieldNameMarkers != config.wideField.nameMarkers
+            || maxFocalLengthMM != config.wideField.maxFocalLengthMM
+            || statsExcludeLabels != config.stats.excludeLabels
+            || gapThresholdSeconds != config.stats.gapThresholdSeconds
+            || collectingThresholdSeconds != config.stats.collectingThresholdSeconds
     }
 
     private func resetAll() {

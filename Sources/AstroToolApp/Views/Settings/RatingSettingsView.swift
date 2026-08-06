@@ -96,6 +96,9 @@ struct RatingSettingsView: View {
                 HStack {
                     Button("Alaphelyzetbe állítás…") { showResetConfirm = true }
                     Spacer()
+                    if isDirty {
+                        Text("Nem mentett módosítások").font(.caption).foregroundStyle(.orange)
+                    }
                     Button("Mentés") { save() }
                     if let saveMessage {
                         Text(saveMessage).foregroundStyle(.green)
@@ -129,6 +132,25 @@ struct RatingSettingsView: View {
         }
     }
 
+    /// R10-B7: "Nem mentett módosítások" indicator next to Mentés -- true
+    /// whenever the draft differs from `appState.config` (as opposed to
+    /// `weightsMatchDefault`/the two `numberRow` calls' own `↺`s, which
+    /// compare against `AstroConfig()` DEFAULTS instead). Weight comparison
+    /// uses the same tolerance `weightsMatchDefault` does, since floating-
+    /// point rescaling in `adjustWeight` can leave a weight a hair off an
+    /// exact round-trip of what was loaded even with no real user edit.
+    private var isDirty: Bool {
+        let cfg = appState.config
+        if outlierZScore != cfg.rating.outlierZScore { return true }
+        if workers != cfg.rating.workers { return true }
+        if sirilPathText != cfg.rating.sirilPath { return true }
+        if maxSubSeconds != cfg.expose.maxSubSeconds { return true }
+        if noiseContributionC != cfg.expose.noiseContributionC { return true }
+        return !Self.weightOrder.allSatisfy { entry in
+            abs((weights[entry.key] ?? 0) - (cfg.rating.weights[entry.key] ?? 0)) < 0.001
+        }
+    }
+
     private func weightSlider(key: String, label: String) -> some View {
         HStack {
             Text(label).frame(width: 90, alignment: .leading)
@@ -139,9 +161,23 @@ struct RatingSettingsView: View {
                 ),
                 in: 0...1
             )
-            Text("\(Int(((weights[key] ?? 0) * 100).rounded()))%")
-                .monospacedDigit()
-                .frame(width: 40, alignment: .trailing)
+            // R10-B7: was a read-only "NN%" `Text` -- now a two-way-bound
+            // numeric field so an exact weight can be typed directly
+            // instead of only dragged. Goes through the exact same
+            // `adjustWeight` the slider itself uses, so typing e.g. 40 here
+            // rescales the other three weights proportionally, identically
+            // to dragging the slider to 40%.
+            TextField(
+                "",
+                value: Binding(
+                    get: { ((weights[key] ?? 0) * 100).rounded() },
+                    set: { adjustWeight(key: key, to: $0 / 100) }
+                ),
+                format: .number
+            )
+            .frame(width: 56)
+            .multilineTextAlignment(.trailing)
+            Text("%").foregroundStyle(.secondary)
         }
     }
 

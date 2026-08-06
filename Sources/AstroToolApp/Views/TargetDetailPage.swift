@@ -21,8 +21,13 @@ struct TargetDetailPage: View {
     let target: String
 
     @State private var segment: Segment = .overview
-    @State private var goalPopoverPresented = false
-    @State private var goalHours: Double = 0
+    /// R10-B7: drives `.sheet(item:)` presenting the app's single
+    /// `GoalEditSheet` -- this header's pencil/"Nincs cél" button used to
+    /// present its own private `popover`-based editor (`goalHours`/
+    /// `goalPopoverPresented`); killed in favor of the exact same sheet
+    /// `TonightPage`'s plan table and `AllTargetsPage`'s context menu
+    /// already present, so there's one goal editor in the app, not three.
+    @State private var goalEditingTarget: GoalEditingTarget?
     @State private var todosExpanded = false
 
     // Row-scoped sheet triggers, shared with every segment/context menu that
@@ -70,6 +75,9 @@ struct TargetDetailPage: View {
         .sheet(item: $linkingSession) { session in CalibLinkSheet(target: session.target, date: session.date) }
         .sheet(item: $solvingTarget) { solving in PlateSolveSheet(target: solving.target) }
         .sheet(item: $stackListingSession) { session in StackListSheet(target: session.target, date: session.date) }
+        .sheet(item: $goalEditingTarget) { editing in
+            GoalEditSheet(target: editing.target, initialHours: editing.currentHours)
+        }
     }
 
     @ViewBuilder
@@ -112,7 +120,7 @@ struct TargetDetailPage: View {
                             .background(Capsule().fill(Color.orange.opacity(0.2)))
                     }
                     if let phase = projectState?.phase {
-                        phaseChip(phase)
+                        PhaseChip(phase: phase, bold: false, backgroundOpacity: 0.2)
                     }
                 }
                 if let stat, stat.displayName != stat.target {
@@ -136,58 +144,40 @@ struct TargetDetailPage: View {
         }
     }
 
-    private func phaseChip(_ phase: ProjectPhase) -> some View {
-        Text(phaseLabel(phase))
-            .font(.caption)
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(Capsule().fill(phaseColor(phase).opacity(0.2)))
-            .foregroundStyle(phaseColor(phase))
-    }
-
-    private func phaseColor(_ phase: ProjectPhase) -> Color {
-        switch phase {
-        case .collecting: return .blue
-        case .readyToStack: return .yellow
-        case .stacked: return .orange
-        case .done: return .green
-        }
-    }
-
-    private func phaseLabel(_ phase: ProjectPhase) -> String {
-        switch phase {
-        case .collecting: return "gyűjtés"
-        case .readyToStack: return "stackelhető"
-        case .stacked: return "feldolgozásra vár"
-        case .done: return "kész"
-        }
-    }
-
     // MARK: Row 2 -- 5 headline tiles
 
     private var headerRow2: some View {
         HStack(spacing: 12) {
-            tile(
+            StatTile(
                 title: "Valós integráció",
                 value: stat.map { TDFormat.hm($0.usableIntegrationSeconds) } ?? "-",
-                caption: stat.map { "bruttó \(TDFormat.hm($0.grossIntegrationSeconds))" }
+                caption: stat.map { "bruttó \(TDFormat.hm($0.grossIntegrationSeconds))" },
+                compact: true,
+                tintsBackground: false
             )
             goalTile
-            tile(
+            StatTile(
                 title: "Hiányzik",
                 value: missingValueText,
-                valueColor: (projectState?.missingSeconds ?? 0) > 0 ? .orange : .primary
+                color: (projectState?.missingSeconds ?? 0) > 0 ? .orange : .primary,
+                compact: true,
+                tintsBackground: false
             )
-            tile(
+            StatTile(
                 title: "Sessionök",
                 value: "\(stat?.sessionDates.count ?? 0)",
-                caption: sessionSpanCaption
+                caption: sessionSpanCaption,
+                compact: true,
+                tintsBackground: false
             )
-            tile(
+            StatTile(
                 title: "Legjobb session",
                 value: bestSession?.date ?? "-",
                 caption: bestSession.flatMap { summary in
                     summary.medianFWHMArcsec.map { String(format: "FWHM %.2f\"", $0) }
-                }
+                },
+                compact: true,
+                tintsBackground: false
             )
         }
     }
@@ -202,6 +192,11 @@ struct TargetDetailPage: View {
         return first == last ? first : "\(first) → \(last)"
     }
 
+    /// R10-B7: the pencil/"Nincs cél" button now presents the app's single
+    /// `GoalEditSheet` (via `goalEditingTarget`) instead of a private
+    /// `popover`-based editor -- same sheet `TonightPage`'s plan table and
+    /// `AllTargetsPage`'s context menu already use, defaulting to 10h same
+    /// as those call sites' own "no goal yet" default.
     private var goalTile: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Cél").font(.caption).foregroundStyle(.secondary)
@@ -209,60 +204,20 @@ struct TargetDetailPage: View {
                 HStack(spacing: 4) {
                     Text(TDFormat.hm(goalSeconds)).font(.title3).bold()
                     Button {
-                        goalHours = goalSeconds / 3600.0
-                        goalPopoverPresented = true
+                        goalEditingTarget = GoalEditingTarget(target: target, currentHours: goalSeconds / 3600.0)
                     } label: {
                         Image(systemName: "pencil.circle").font(.caption)
                     }
                     .buttonStyle(.plain)
-                    .popover(isPresented: $goalPopoverPresented) { goalEditor }
                 }
             } else {
                 Button {
-                    goalHours = 10
-                    goalPopoverPresented = true
+                    goalEditingTarget = GoalEditingTarget(target: target, currentHours: 10)
                 } label: {
                     Text("Nincs cél · Beállítás").font(.callout)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .popover(isPresented: $goalPopoverPresented) { goalEditor }
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
-    }
-
-    private var goalEditor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Cél (óra)").font(.headline)
-            Stepper(value: $goalHours, in: 0...300, step: 0.5) {
-                Text(String(format: "%.1f óra", goalHours))
-            }
-            HStack {
-                Button("Cél törlése") {
-                    appState.setGoal(target: target, hours: nil)
-                    goalPopoverPresented = false
-                }
-                Spacer()
-                Button("Mentés") {
-                    appState.setGoal(target: target, hours: goalHours)
-                    goalPopoverPresented = false
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding()
-        .frame(width: 240)
-    }
-
-    private func tile(title: String, value: String, caption: String? = nil, valueColor: Color = .primary) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title3).bold().foregroundStyle(valueColor)
-            if let caption {
-                Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
         }
         .padding(10)
