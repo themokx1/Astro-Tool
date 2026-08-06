@@ -504,6 +504,90 @@ struct CLISmokeTests {
     #expect(result.exitCode == 1)
 }
 
+// MARK: - nights (R10-A3)
+
+/// `Fixtures.makeMessyLibrary` plants session lights under BOTH
+/// `M45_Pleiades` and `IC1805-1848_Heart_and_Soul_Nebula` -- the minimum
+/// needed to exercise the CROSS-target join `stats --sessions`/`quality`
+/// (both scoped to one target) never had to do.
+@Test func nightsJSONAfterScanCoversMultipleTargetsNewestFirst() throws {
+    let root = try makeTempRoot("nights-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["nights", "--root", root.path, "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let rows = try #require(json)
+    let targets = Set(rows.compactMap { $0["target"] as? String })
+    #expect(targets.contains("M45_Pleiades"))
+    #expect(targets.contains("IC1805-1848_Heart_and_Soul_Nebula"))
+    #expect(rows.allSatisfy { $0["usable_light_count"] != nil && $0["exposure_summary"] != nil })
+
+    // Newest calendar date first across the WHOLE list, not just within one
+    // target. Same-night variants (the fixture's run-suffix/labeled dates
+    // all sharing one calendar day, e.g. "2026-03-15-OSC" and
+    // "2026-03-15_hibas") may tie and land in either order -- only the
+    // underlying calendar date (its first 10 characters) must never
+    // increase later in the list.
+    let dates = rows.compactMap { $0["date"] as? String }
+    let calendarDates = dates.map { String($0.prefix(10)) }
+    #expect(calendarDates == calendarDates.sorted(by: >))
+
+    // The fixture's own `_hibas`-labeled date-dir variant must still be
+    // listed here (browsing surface), just flagged.
+    let excludedRow = try #require(rows.first { $0["date"] as? String == "2026-03-15_hibas" })
+    #expect(excludedRow["is_excluded_from_totals"] as? Bool == true)
+}
+
+@Test func nightsHumanOutputPrintsHungarianHeaders() throws {
+    let root = try makeTempRoot("nights-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["nights", "--root", root.path])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("DÁTUM"))
+    #expect(result.stdout.contains("CÉLPONT"))
+}
+
+@Test func nightsYearAndMonthFilterOnlyShowsMatchingSessions() throws {
+    let root = try makeTempRoot("nights-year-filter")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    // The fixture's "2026-04-06-2" run-suffix date-dir is the only session
+    // whose canonical start date falls in April 2026.
+    let result = try runCLI(["nights", "--root", root.path, "--year", "2026", "--month", "4", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let rows = try #require(json)
+    #expect(!rows.isEmpty)
+    #expect(rows.allSatisfy { ($0["date"] as? String)?.hasPrefix("2026-04") == true })
+}
+
+@Test func nightsMonthWithoutYearExitsWithError() throws {
+    let root = try makeTempRoot("nights-month-no-year")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["nights", "--root", root.path, "--month", "3"])
+    #expect(result.exitCode == 1)
+}
+
 // MARK: - health
 
 @Test func healthJSONAfterScanDecodesForFixtureTarget() throws {

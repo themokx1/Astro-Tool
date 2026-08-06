@@ -1,0 +1,217 @@
+import Foundation
+
+/// One session date-dir, browsable across EVERY target at once -- the
+/// cross-target counterpart to `SessionStatsQueries.sessions(target:...)`,
+/// which only ever answers "show me one target's nights". Built by joining
+/// that type's own `SessionDetail` with `SessionQuality`'s per-session
+/// summary and `SessionTimeline`'s duty cycle, keyed on `(target, date)` --
+/// no frame-level computation of its own, no filesystem access, no re-read
+/// of pixel data (every quantity here already lives in `Database`).
+///
+/// This is a BROWSING surface, not a stats roll-up: an excluded (e.g.
+/// `_hibas`-labeled) session still gets its own row here, flagged via
+/// `isExcludedFromTotals`, exactly the way `SessionDetail` itself already
+/// carries that flag for its target's own roll-up.
+public struct NightRow: Codable, Sendable, Equatable {
+    public var target: String
+    /// The best available display name for `target` -- same resolution
+    /// (`TargetNameResolver` plus a `name:<text>` tag override) `StatsQueries`
+    /// already applies for its own `TargetStats.displayName`.
+    public var displayName: String
+    /// Raw session-date dir name, verbatim as it appears on disk under
+    /// `sessions/<target>/` -- same convention as `SessionDetail.dateRaw`.
+    public var date: String
+    public var usableLightCount: Int
+    public var integrationSeconds: Double
+    /// `"120s×42, 300s×8"` -- ascending by the exposure-length key text, an
+    /// unknown-exptime bucket (if any) prints as `"?×N"`. Same convention as
+    /// `AcquisitionExport`'s own per-session exposure text; `"-"` for a
+    /// session with no usable lights at all (e.g. a calibration-only or
+    /// README-only date-dir).
+    public var exposureSummary: String
+    public var cameras: [String]
+    public var filters: [String]
+    /// From `SessionQualitySummary.medianFWHMArcsec` -- `nil` whenever the
+    /// session has no rated frame with a derivable arcsec value (including
+    /// "never rated at all").
+    public var medianFWHMArcsec: Double?
+    /// From `SessionQualitySummary.backgroundEPerSecPerArcsec2` -- `nil`
+    /// under the same "n/a, never a guessed number" rule that type documents
+    /// (missing sensor profile, missing exposure/pixel-scale metadata, or no
+    /// rated frame at all).
+    public var backgroundEPerSecPerArcsec2: Double?
+    /// From `SessionTimeline.dutyCycle`, scaled to 0...100 (the "Percent"
+    /// naming convention `Planner`'s `moonIlluminationPercent` already
+    /// uses) -- `nil` when no usable light has a parseable `DATE-OBS`.
+    public var dutyCyclePercent: Double?
+    /// `true` when this session has any note on record -- either parsed
+    /// from its `README.txt` (`Database.sessionNotes`) or typed into the
+    /// note editor (`SessionNoteStore`); see `SessionDetail.notes`, which
+    /// already merges both sources (the README wins a key collision).
+    public var hasNotes: Bool
+    /// Mirrors `SessionDetail.isExcludedFromTotals` -- this session is still
+    /// listed here with its own real numbers (this is a browsing surface,
+    /// not a stats roll-up), just flagged as excluded from its TARGET's own
+    /// usable totals (e.g. the user's own `_hibas` "bad night" marker).
+    public var isExcludedFromTotals: Bool
+
+    public init(
+        target: String,
+        displayName: String,
+        date: String,
+        usableLightCount: Int,
+        integrationSeconds: Double,
+        exposureSummary: String,
+        cameras: [String],
+        filters: [String],
+        medianFWHMArcsec: Double? = nil,
+        backgroundEPerSecPerArcsec2: Double? = nil,
+        dutyCyclePercent: Double? = nil,
+        hasNotes: Bool = false,
+        isExcludedFromTotals: Bool = false
+    ) {
+        self.target = target
+        self.displayName = displayName
+        self.date = date
+        self.usableLightCount = usableLightCount
+        self.integrationSeconds = integrationSeconds
+        self.exposureSummary = exposureSummary
+        self.cameras = cameras
+        self.filters = filters
+        self.medianFWHMArcsec = medianFWHMArcsec
+        self.backgroundEPerSecPerArcsec2 = backgroundEPerSecPerArcsec2
+        self.dutyCyclePercent = dutyCyclePercent
+        self.hasNotes = hasNotes
+        self.isExcludedFromTotals = isExcludedFromTotals
+    }
+}
+
+/// Builds `NightRow`s across EVERY target on record -- the answer to "show
+/// me all my imaging nights, best seeing first" or "what did I shoot in
+/// March?", which no existing query can give since `SessionStatsQueries`/
+/// `SessionQuality`/`SessionTimeline` are all scoped to one target at a
+/// time. Reuses those three untouched (one pass per target each, the same
+/// shape `StatsQueries.perTarget` already loops with for its own per-target
+/// roll-up), so this type owns no frame-level computation of its own --
+/// purely a join plus a sort. Read-only against `db`; never touches the
+/// filesystem.
+public enum NightsQueries {
+    /// Every session across every target, newest date first (ties on the
+    /// same calendar date broken by target name, then by the raw date-dir
+    /// text, both ascending, purely for a deterministic order). `year`/
+    /// `month` optionally filter on the session's parsed CANONICAL start
+    /// date (`SessionDateParser`'s own `YYYY-MM-DD` prefix, so a run-suffix
+    /// or `_hibas`-labeled date-dir still matches on its underlying
+    /// calendar date) -- a session whose date-dir name doesn't parse as a
+    /// date at all is excluded whenever a `year` filter is active (there is
+    /// no calendar date left to compare against), but still listed when
+    /// browsing without any filter. `month` without `year` is ignored here;
+    /// enforcing "month requires year" is the CLI layer's job (see
+    /// `astrotool nights --help`), not this query's.
+    public static func allNights(
+        db: Database, config: AstroConfig, year: Int? = nil, month: Int? = nil
+    ) throws -> [NightRow] {
+        let targets = Set(try db.allSessionPairs().map { $0.target }).sorted()
+
+        var rows: [(row: NightRow, sortDate: String)] = []
+        for target in targets {
+            let sessions = try SessionStatsQueries.sessions(target: target, db: db, config: config)
+            guard !sessions.isEmpty else { continue }
+
+            // Both keyed on the exact same date set as `sessions` above --
+            // `SessionQuality.summaries`/`SessionStatsQueries.sessions` (and
+            // `SessionTimeline.timeline`, called per-date below) all derive
+            // their dates from the identical `area == .sessions` filter, so
+            // this lookup is never expected to miss.
+            let qualityByDate = Dictionary(
+                uniqueKeysWithValues: try SessionQuality.summaries(target: target, db: db, config: config)
+                    .map { ($0.date, $0) }
+            )
+
+            let tags = try db.tags(target: target, sessionDate: nil)
+            let displayName = NameTag.apply(to: TargetNameResolver.resolve(folderName: target), tags: tags).displayName
+
+            for session in sessions {
+                let parsedStart = SessionDateParser.parse(session.dateRaw, patterns: config.intentional)?.start
+                guard matchesFilter(parsedStart: parsedStart, year: year, month: month) else { continue }
+
+                let quality = qualityByDate[session.dateRaw]
+                let timeline = try SessionTimeline.timeline(target: target, date: session.dateRaw, db: db, config: config)
+
+                let row = NightRow(
+                    target: target,
+                    displayName: displayName,
+                    date: session.dateRaw,
+                    usableLightCount: session.usableLightCount,
+                    integrationSeconds: session.integrationSeconds,
+                    exposureSummary: exposureSummaryText(session.exposureBreakdown),
+                    cameras: session.cameras,
+                    filters: session.filters,
+                    medianFWHMArcsec: quality?.medianFWHMArcsec,
+                    backgroundEPerSecPerArcsec2: quality?.backgroundEPerSecPerArcsec2,
+                    dutyCyclePercent: timeline.dutyCycle.map { $0 * 100 },
+                    hasNotes: !session.notes.isEmpty,
+                    isExcludedFromTotals: session.isExcludedFromTotals
+                )
+                // Falls back to the raw text itself when it doesn't parse as
+                // a date at all, so the sort below still has SOME stable key
+                // to compare with (rather than crashing or reordering
+                // unpredictably) -- an edge case `matchesFilter` already
+                // excludes whenever a real `year` filter is active.
+                rows.append((row, parsedStart ?? session.dateRaw))
+            }
+        }
+
+        rows.sort { lhs, rhs in
+            if lhs.sortDate != rhs.sortDate { return lhs.sortDate > rhs.sortDate }
+            if lhs.row.target != rhs.row.target { return lhs.row.target < rhs.row.target }
+            return lhs.row.date < rhs.row.date
+        }
+        return rows.map(\.row)
+    }
+
+    // MARK: - Year/month filter
+
+    /// `true` when `parsedStart` (the session's canonical `YYYY-MM-DD`, or
+    /// `nil` if its date-dir name didn't parse as a date at all) satisfies
+    /// the `year`/`month` filter -- no filter at all (`year == nil`) always
+    /// matches, and an unparseable date never matches an active filter.
+    private static func matchesFilter(parsedStart: String?, year: Int?, month: Int?) -> Bool {
+        guard let year else { return true }
+        guard let parsedStart else { return false }
+        let parts = parsedStart.split(separator: "-")
+        guard parts.count == 3, let y = Int(parts[0]) else { return false }
+        guard y == year else { return false }
+        guard let month else { return true }
+        guard let m = Int(parts[1]) else { return false }
+        return m == month
+    }
+
+    // MARK: - Exposure summary text
+
+    /// `"120s×42, 300s×8"` -- ascending by the (textual) exposure-length
+    /// key, an unknown-exptime bucket prints as `"?×N"`. Same convention as
+    /// `AcquisitionExport.exposureSummaryText`, duplicated rather than
+    /// shared since that one stays `private` to its own file and this type
+    /// needs a plain `String` (`NightRow.exposureSummary`), not the
+    /// `[String: Int]` breakdown dict `SessionDetail` already exposes.
+    private static func exposureSummaryText(_ breakdown: [String: Int]) -> String {
+        guard !breakdown.isEmpty else { return "-" }
+        return breakdown
+            .sorted { $0.key < $1.key }
+            .map { key, count -> String in
+                if key == "unknown" { return "?×\(count)" }
+                let label = Double(key).map(formatTrimmedSeconds) ?? key
+                return "\(label)s×\(count)"
+            }
+            .joined(separator: ", ")
+    }
+
+    /// Whole numbers print without a decimal point (`"120"`, not
+    /// `"120.0"`); everything else keeps one decimal digit (`"6.8"`) --
+    /// matches `NominalExposure`'s own rounding granularity (whole seconds
+    /// at/above 10s, 0.1s below).
+    private static func formatTrimmedSeconds(_ value: Double) -> String {
+        value == value.rounded() ? String(format: "%.0f", value) : String(format: "%.1f", value)
+    }
+}

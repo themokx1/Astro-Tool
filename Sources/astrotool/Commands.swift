@@ -32,6 +32,12 @@ Commands:
   stats         [--root R] [--target T] [--json] [--gross] [--sessions (requires --target)] [--tag TAG]
                 [--timeline (requires --target) [--date D]]
   quality       --target T [--date D] [--root R] [--json]
+  nights        [--root R] [--json] [--year Y] [--month M (requires --year)]
+                Cross-target session browser: every imaging night across
+                every target in one list, newest date first, with per-night
+                quality (FWHM/duty cycle) alongside frame/integration
+                counts -- the counterpart to `stats --sessions`, which is
+                scoped to one target at a time.
   calib         [--root R] [--json] [--health]
   match         [--root R] --target T --date D [--json]
   link-calib    --target T --date D [--dry-run] [--yes] [--root R] [--json]
@@ -774,6 +780,97 @@ private func printQualityTable(_ summaries: [SessionQualitySummary]) {
         let outlier = (s.outlierFraction.map { String(format: "%.0f%%", $0 * 100) } ?? "-").padding(toLength: 8, withPad: " ", startingAt: 0)
         let rank = s.rankAmongSessions.map { "\($0)/\(s.sessionCountForTarget ?? 0)" } ?? "-"
         print("\(date)  \(s.frameCount)       \(fwhmPx)  \(fwhmArc)  \(background)  \(stars)  \(outlier)  \(rank)")
+    }
+}
+
+// MARK: - nights
+
+/// `astrotool nights [--year Y] [--month M] [--json]` -- every imaging night
+/// across every target, newest date first (`NightsQueries.allNights`,
+/// R10-A3). The cross-target counterpart to `stats --sessions`, which only
+/// ever answers for one target at a time.
+func cmdNights(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+        FlagSpec("--year", takesValue: true),
+        FlagSpec("--month", takesValue: true),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    var year: Int?
+    if let raw = parsed.value("--year") {
+        guard let value = Int(raw) else {
+            eprint("error: invalid --year: \(raw)")
+            return 1
+        }
+        year = value
+    }
+
+    var month: Int?
+    if let raw = parsed.value("--month") {
+        guard year != nil else {
+            eprint("error: --month requires --year")
+            return 1
+        }
+        guard let value = Int(raw), (1...12).contains(value) else {
+            eprint("error: invalid --month: \(raw)")
+            return 1
+        }
+        month = value
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let rows = try NightsQueries.allNights(db: db, config: config, year: year, month: month)
+    if parsed.has("--json") {
+        try printJSON(rows)
+    } else {
+        printNightsTable(rows)
+    }
+    return 0
+}
+
+/// `displayName` when it differs from the raw folder `target` (folder name
+/// kept alongside in parentheses, truncated to a sane overall width for the
+/// table); just `target` otherwise -- same convention as `statsNameColumnText`/
+/// `planNameColumnText`.
+private func nightsNameColumnText(_ row: NightRow, maxWidth: Int = 28) -> String {
+    guard row.displayName != row.target else { return row.target }
+    let full = "\(row.displayName) (\(row.target))"
+    guard full.count > maxWidth else { return full }
+    let truncatedDisplay = String(row.displayName.prefix(max(1, maxWidth - row.target.count - 4))) + "…"
+    return "\(truncatedDisplay) (\(row.target))"
+}
+
+private func printNightsTable(_ rows: [NightRow]) {
+    guard !rows.isEmpty else {
+        print("no nights")
+        return
+    }
+
+    let dateWidth = max(rows.map { $0.date.count }.max() ?? 10, 10)
+    let names = rows.map { nightsNameColumnText($0) }
+    let targetWidth = max(names.map(\.count).max() ?? 7, 7)
+
+    let dateHeader = "DÁTUM".padding(toLength: dateWidth, withPad: " ", startingAt: 0)
+    let targetHeader = "CÉLPONT".padding(toLength: targetWidth, withPad: " ", startingAt: 0)
+    print("\(dateHeader)  \(targetHeader)  LIGHT  INTEGRÁCIÓ  FWHM(\")  DUTY%  JEGYZET")
+
+    for (row, nameText) in zip(rows, names) {
+        let date = row.date.padding(toLength: dateWidth, withPad: " ", startingAt: 0)
+        let name = nameText.padding(toLength: targetWidth, withPad: " ", startingAt: 0)
+        let lights = String(row.usableLightCount).padding(toLength: 5, withPad: " ", startingAt: 0)
+        let integration = formatHoursMinutes(row.integrationSeconds).padding(toLength: 10, withPad: " ", startingAt: 0)
+        let fwhm = fmt(row.medianFWHMArcsec, 2).padding(toLength: 7, withPad: " ", startingAt: 0)
+        let duty = (row.dutyCyclePercent.map { String(format: "%.0f%%", $0) } ?? "-").padding(toLength: 5, withPad: " ", startingAt: 0)
+        // Same plain-marker convention `printRateTable` uses for
+        // `isOutlier` -- a short flag column, not a full word.
+        let notes = row.hasNotes ? "*" : ""
+        let excludedSuffix = row.isExcludedFromTotals ? "  [kizárva]" : ""
+        print("\(date)  \(name)  \(lights)  \(integration)  \(fwhm)  \(duty)  \(notes)\(excludedSuffix)")
     }
 }
 
