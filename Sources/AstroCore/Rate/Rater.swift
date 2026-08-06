@@ -2,11 +2,11 @@ import Foundation
 
 /// A single light frame's rating result, as returned by `Rater.rate`.
 ///
-/// `saturatedFraction`, `exptime`, and `sessionSubdir` were added after the
-/// initial release. They're all `Optional`, so Swift's synthesized
-/// `Codable` conformance decodes them via `decodeIfPresent` -- JSON produced
-/// before these fields existed (e.g. a cached CLI `--json` capture) still
-/// decodes fine, with all three simply `nil`.
+/// `saturatedFraction`, `exptime`, `sessionSubdir`, and `dateObs` were added
+/// after the initial release. They're all `Optional`, so Swift's
+/// synthesized `Codable` conformance decodes them via `decodeIfPresent` --
+/// JSON produced before these fields existed (e.g. a cached CLI `--json`
+/// capture) still decodes fine, with all four simply `nil`.
 public struct FrameScore: Codable, Sendable {
     public var path: String
     public var score: Double
@@ -22,6 +22,15 @@ public struct FrameScore: Codable, Sendable {
     /// directly in the quality table instead of only being visible by
     /// reading the full path.
     public var sessionSubdir: String?
+    /// Raw `fits_meta.date_obs` for this frame (FITS or EXIF-style text,
+    /// whichever the header carried) -- `nil` when the frame has no
+    /// `fits_meta` row at all, or that row's `date_obs` column is empty.
+    /// R10-B5: added so the Minőség segment's per-session FWHM-over-time
+    /// trend chart has a capture timestamp per frame without a second
+    /// per-file `fits_meta` query -- parse with `SessionTimeline.
+    /// parseDateObs`, the same shared parser every OTHER DATE-OBS consumer
+    /// in this package already uses, rather than hand-rolling a second one.
+    public var dateObs: String?
 
     /// The filename only (last path component) -- computed, not stored, so
     /// it never affects `Codable` (old JSON without it still decodes, and
@@ -38,7 +47,8 @@ public struct FrameScore: Codable, Sendable {
         background: Double?,
         saturatedFraction: Double? = nil,
         exptime: Double? = nil,
-        sessionSubdir: String? = nil
+        sessionSubdir: String? = nil,
+        dateObs: String? = nil
     ) {
         self.path = path
         self.score = score
@@ -48,6 +58,7 @@ public struct FrameScore: Codable, Sendable {
         self.saturatedFraction = saturatedFraction
         self.exptime = exptime
         self.sessionSubdir = sessionSubdir
+        self.dateObs = dateObs
     }
 }
 
@@ -125,7 +136,7 @@ public final class Rater {
 
         let total = frames.count
         var done = 0
-        var rated: [(file: FileRecord, record: RatingRecord, exptime: Double?)] = []
+        var rated: [(file: FileRecord, record: RatingRecord, exptime: Double?, dateObs: String?)] = []
         rated.reserveCapacity(frames.count)
 
         let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
@@ -137,8 +148,11 @@ public final class Rater {
             }
             guard let fileID = file.id else { continue }
 
-            // Needed for exposure-group scoring regardless of cache hit/miss.
-            let exptime = try db.fitsMeta(fileID: fileID)?.exptime
+            // Needed for exposure-group scoring (exptime) and the FWHM-over-
+            // night trend chart (dateObs) regardless of cache hit/miss.
+            let meta = try db.fitsMeta(fileID: fileID)
+            let exptime = meta?.exptime
+            let dateObs = meta?.dateObs
 
             let inputSig = "\(file.size)-\(Int(file.mtime.rounded()))"
             let cached = try db.rating(fileID: fileID)
@@ -152,7 +166,7 @@ public final class Rater {
                 if !stale.native && !stale.metrics {
                     // TRUE cache hit -- reuse the stored row untouched,
                     // neither `NativeStats` nor the provider is invoked.
-                    rated.append((file, cachedRow, exptime))
+                    rated.append((file, cachedRow, exptime, dateObs))
                     continue
                 }
 
@@ -184,7 +198,7 @@ public final class Rater {
                     sirilVersion: provider?.version, inputSig: inputSig
                 )
                 try db.upsertRating(record)
-                rated.append((file, record, exptime))
+                rated.append((file, record, exptime, dateObs))
                 continue
             }
 
@@ -237,7 +251,7 @@ public final class Rater {
                 bg11: nativeStats?.backgroundMedian11
             )
             try db.upsertRating(record)
-            rated.append((file, record, exptime))
+            rated.append((file, record, exptime, dateObs))
         }
 
         guard !rated.isEmpty else { return [] }
@@ -284,6 +298,7 @@ public final class Rater {
             else { continue }
 
             let exptime = metaByFileID[fileID]?.exptime
+            let dateObs = metaByFileID[fileID]?.dateObs
             let metrics: StarMetrics? = {
                 guard let fwhm = record.fwhm, let starCount = record.starCount else { return nil }
                 return StarMetrics(fwhm: fwhm, roundness: record.roundness, starCount: starCount)
@@ -298,7 +313,8 @@ public final class Rater {
                     background: record.background,
                     saturatedFraction: record.saturatedFraction,
                     exptime: exptime,
-                    sessionSubdir: sessionSubdir(path: file.path)
+                    sessionSubdir: sessionSubdir(path: file.path),
+                    dateObs: dateObs
                 )
             )
         }
@@ -375,11 +391,11 @@ public final class Rater {
     /// scores each group independently, so a frame's z-scores only ever
     /// compare it against other frames shot the same night at the same
     /// nominal exposure time.
-    private func score(_ rated: [(file: FileRecord, record: RatingRecord, exptime: Double?)]) throws -> [FrameScore] {
-        var groups: [ExposureGroupKey: [(file: FileRecord, record: RatingRecord, exptime: Double?)]] = [:]
+    private func score(_ rated: [(file: FileRecord, record: RatingRecord, exptime: Double?, dateObs: String?)]) throws -> [FrameScore] {
+        var groups: [ExposureGroupKey: [(file: FileRecord, record: RatingRecord, exptime: Double?, dateObs: String?)]] = [:]
         for entry in rated {
             let key = Self.exposureGroupKey(sessionDate: entry.file.sessionDate, exptime: entry.exptime)
-            groups[key, default: []].append((entry.file, entry.record, entry.exptime))
+            groups[key, default: []].append((entry.file, entry.record, entry.exptime, entry.dateObs))
         }
 
         var results: [FrameScore] = []
@@ -391,7 +407,7 @@ public final class Rater {
         return results.sorted { $0.score > $1.score }
     }
 
-    private func scoreGroup(_ rated: [(file: FileRecord, record: RatingRecord, exptime: Double?)]) throws -> [FrameScore] {
+    private func scoreGroup(_ rated: [(file: FileRecord, record: RatingRecord, exptime: Double?, dateObs: String?)]) throws -> [FrameScore] {
         let weights = config.rating.weights
 
         let fwhmStats = Self.metricStats(rated.compactMap { $0.record.fwhm })
@@ -402,7 +418,7 @@ public final class Rater {
         var results: [FrameScore] = []
         results.reserveCapacity(rated.count)
 
-        for (file, original, exptime) in rated {
+        for (file, original, exptime, dateObs) in rated {
             var record = original
             var weightedSum = 0.0
             var weightTotal = 0.0
@@ -451,7 +467,8 @@ public final class Rater {
                     background: record.background,
                     saturatedFraction: record.saturatedFraction,
                     exptime: exptime,
-                    sessionSubdir: Self.sessionSubdir(path: file.path)
+                    sessionSubdir: Self.sessionSubdir(path: file.path),
+                    dateObs: dateObs
                 )
             )
         }

@@ -1624,6 +1624,42 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(none.isEmpty)
 }
 
+// R10-B5: `FrameScore.dateObs` (added for the Minőség segment's per-session
+// FWHM-over-time trend chart) must be populated from `fits_meta.date_obs` in
+// BOTH the fresh-rate path AND the read-only `cachedScores` path -- a real
+// bug class this codebase has hit before is a field that flows through one
+// scoring path but not the other (see `Rater.staleness`'s own doc comment).
+@Test func rateAndCachedScoresBothPopulateDateObsFromFITSMeta() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    let (fileID, _) = try fixture.addLightFrame(
+        relativePath: "sessions/T/2026-01-01/lights/A.fit",
+        target: "T", pixels: Array(repeating: 50, count: 4), width: 2, height: 2
+    )
+    try fixture.db.upsertFITSMeta(FITSMetaRecord(fileID: fileID, dateObs: "2026-01-01T20:15:30"))
+    // A second frame with NO `date_obs` at all -- must come back `nil`
+    // rather than fabricating a timestamp.
+    try fixture.addLightFrame(
+        relativePath: "sessions/T/2026-01-01/lights/B.fit",
+        target: "T", pixels: Array(repeating: 60, count: 4), width: 2, height: 2
+    )
+
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: nil)
+    let rated = try rater.rate(target: "T")
+    #expect(rated.count == 2)
+    #expect(rated.first { $0.path.hasSuffix("A.fit") }?.dateObs == "2026-01-01T20:15:30")
+    #expect(rated.first { $0.path.hasSuffix("B.fit") }?.dateObs == nil)
+
+    // `cachedScores` must reproduce the same `dateObs` purely from
+    // `fits_meta`/`ratings` -- proving it flows through the read-only path
+    // too, not just the fresh-rate path above.
+    let cached = try Rater.cachedScores(target: "T", db: fixture.db, config: fixture.config)
+    #expect(cached.count == 2)
+    #expect(cached.first { $0.path.hasSuffix("A.fit") }?.dateObs == "2026-01-01T20:15:30")
+    #expect(cached.first { $0.path.hasSuffix("B.fit") }?.dateObs == nil)
+}
+
 // MARK: - Real Siril smoke test (integration, guarded)
 
 @Test func realSirilCLISmokeTestBuildScriptAndVersion() throws {

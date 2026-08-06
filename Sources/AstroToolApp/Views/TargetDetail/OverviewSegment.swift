@@ -1,4 +1,5 @@
 import AstroCore
+import Charts
 import SwiftUI
 
 /// R9-T3/A.3's "Áttekintés" segment: coordinates, setup fingerprint,
@@ -17,6 +18,12 @@ struct OverviewSegment: View {
     private var plan: TargetPlan? { appState.plan?.first { $0.target == target } }
     private var panelReport: PanelReport? { appState.panelReportsByTarget[target] }
     private var targetFlats: [FlatDiscipline] { appState.calibHealth?.flats.filter { $0.target == target } ?? [] }
+    /// Same lookup `TargetDetailPage`'s own header/goal tile already use --
+    /// duplicated here (rather than threaded down as a parameter) since this
+    /// segment is constructed with just `target`/`solvingTarget` today, and
+    /// `AppState.projectStates` is already a live `@Observable` array cheap
+    /// to re-filter per render.
+    private var projectState: ProjectState? { appState.projectStates.first { $0.target == target } }
 
     var body: some View {
         ScrollView {
@@ -25,6 +32,7 @@ struct OverviewSegment: View {
                 setupFingerprintBlock
                 visibilityBlock
                 skyChartBlock
+                integrationTrendBlock
                 exposureAdviceBlock
                 if let panelReport, panelReport.isMosaic {
                     MosaicPanelTable(report: panelReport)
@@ -165,6 +173,161 @@ struct OverviewSegment: View {
                 }
             }
         }
+    }
+
+    // MARK: - Integráció-halmozódás (R10-B5)
+
+    /// One session's contribution to the cumulative-integration trend --
+    /// `Identifiable` (not `ForEach(..., id: \.date)`) because a
+    /// `runSuffix`/labeled session sharing its calendar day with another
+    /// (`SessionDateParser`'s own "more than one session, same night"
+    /// cases) would otherwise collide on that shared `date` value.
+    private struct IntegrationPoint: Identifiable {
+        let id = UUID()
+        let date: Date
+        let cumulativeHours: Double
+    }
+
+    /// Running sum of `integrationSeconds` over this target's sessions,
+    /// sorted by calendar date ascending -- same "usable" convention
+    /// `AcquisitionExport`'s own per-target rollups use (`for session in
+    /// sessions where !session.isExcludedFromTotals`): an excluded
+    /// (`_hibas`-tagged) session contributes NOTHING to the running total
+    /// and isn't plotted as its own point either. That's a deliberate
+    /// simplification over drawing it as a "gap" -- this tool already
+    /// treats that session's data as not counting toward the target's real
+    /// progress everywhere else (`TargetStats`, the goal tile), so plotting
+    /// it here even as a non-contributing marker would suggest otherwise.
+    /// A session whose date-dir name doesn't even parse as a calendar date
+    /// (shouldn't happen in practice -- `SessionDateParser` gates what
+    /// reaches `sessionDate` in the first place) is silently skipped too,
+    /// same "skip rather than guess" rule as everywhere else in this app.
+    private var integrationPoints: [IntegrationPoint] {
+        let parsed = sessions
+            .filter { !$0.isExcludedFromTotals }
+            .compactMap { session -> (date: Date, dateRaw: String, seconds: Double)? in
+                guard let date = Self.parseSessionDate(session.dateRaw) else { return nil }
+                return (date, session.dateRaw, session.integrationSeconds)
+            }
+            .sorted { lhs, rhs in
+                lhs.date != rhs.date ? lhs.date < rhs.date : lhs.dateRaw < rhs.dateRaw
+            }
+
+        var runningSeconds = 0.0
+        return parsed.map { entry in
+            runningSeconds += entry.seconds
+            return IntegrationPoint(date: entry.date, cumulativeHours: runningSeconds / 3600.0)
+        }
+    }
+
+    /// `projectState.goalSeconds` in hours -- `nil` when no goal tag is set,
+    /// same as the goal tile on `TargetDetailPage`'s own header.
+    private var goalHours: Double? {
+        projectState?.goalSeconds.map { $0 / 3600.0 }
+    }
+
+    private var integrationTrendBlock: some View {
+        section("Integráció-halmozódás") {
+            if integrationPoints.count < 2 {
+                Text("Egy sessionnél még nincs mit halmozni.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                Chart {
+                    integrationArea
+                    integrationLine
+                    integrationPointMarks
+                    goalRule
+                }
+                .chartLegend(.hidden)
+                .chartYAxisLabel("óra")
+                .chartXAxis {
+                    AxisMarks { _ in
+                        AxisGridLine().foregroundStyle(.secondary)
+                        AxisTick()
+                        AxisValueLabel()
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks { _ in
+                        AxisGridLine().foregroundStyle(.secondary)
+                        AxisTick()
+                        AxisValueLabel()
+                    }
+                }
+                .frame(height: 190)
+            }
+        }
+    }
+
+    @ChartContentBuilder
+    private var integrationArea: some ChartContent {
+        ForEach(integrationPoints) { point in
+            AreaMark(
+                x: .value("Dátum", point.date),
+                y: .value("Halmozott óra", point.cumulativeHours)
+            )
+        }
+        .interpolationMethod(.stepEnd)
+        .foregroundStyle(Color.accentColor.opacity(0.15))
+    }
+
+    @ChartContentBuilder
+    private var integrationLine: some ChartContent {
+        ForEach(integrationPoints) { point in
+            LineMark(
+                x: .value("Dátum", point.date),
+                y: .value("Halmozott óra", point.cumulativeHours)
+            )
+        }
+        .interpolationMethod(.stepEnd)
+        .foregroundStyle(Color.accentColor)
+        .lineStyle(StrokeStyle(lineWidth: 2))
+    }
+
+    @ChartContentBuilder
+    private var integrationPointMarks: some ChartContent {
+        ForEach(integrationPoints) { point in
+            PointMark(
+                x: .value("Dátum", point.date),
+                y: .value("Halmozott óra", point.cumulativeHours)
+            )
+        }
+        .foregroundStyle(Color.accentColor)
+        .symbolSize(24)
+    }
+
+    @ChartContentBuilder
+    private var goalRule: some ChartContent {
+        if let goalHours {
+            RuleMark(y: .value("Cél", goalHours))
+                .foregroundStyle(.secondary)
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 2]))
+                .annotation(position: .top, alignment: .trailing) {
+                    Text("cél: \(Int(goalHours.rounded())) ó")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+        }
+    }
+
+    /// `"yyyy-MM-dd"` prefix of a session's raw date-dir name -- every
+    /// `SessionDate` shape (`canonical`/`runSuffix`/`range`/`labeled`,
+    /// `SessionDateParser.swift`) starts with a real 10-character calendar
+    /// date, so a plain prefix slice is enough without pulling in the
+    /// parser itself. `en_US_POSIX`/`.current`, same convention as
+    /// `TonightPage.isoDateFormatter`.
+    private static let sessionDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private static func parseSessionDate(_ dateRaw: String) -> Date? {
+        guard dateRaw.count >= 10 else { return nil }
+        return sessionDateFormatter.date(from: String(dateRaw.prefix(10)))
     }
 
     // MARK: - Expozíció-tanácsadó (moved from QualityView)
