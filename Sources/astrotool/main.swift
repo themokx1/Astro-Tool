@@ -9,7 +9,7 @@ guard let subcommand = arguments.first else {
 }
 
 if subcommand == "--version" {
-    print("astrotool 0.10.0")
+    print("astrotool 0.11.0")
     exit(0)
 }
 if subcommand == "--help" || subcommand == "help" {

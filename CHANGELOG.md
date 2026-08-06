@@ -8,6 +8,31 @@ történik.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-06
+
+Az R10-es kör lezárása — a 0.10.0-ból kimaradt két utolsó tétel.
+
+### Added
+
+- **Felfedezés oldal** (R10-B4): új "Felfedezés" sidebar-sor (⌘9) a beágyazott
+  217 objektumos katalógus fölé — mi áll ma este jól, ami még nincs a
+  könyvtárban ("már gyűjtöd" elrejtés-kapcsolóval), típus-szűrővel,
+  FOV-illeszkedés verdikttel a domináns setuphoz (új
+  `FieldGeometry.dominantFOV` helper + 7 teszt), sortolható táblával,
+  sor-műveletekkel ("Ma esti ív" chart-sheet, "Új session létrehozása…" a
+  katalógus-designációval előtöltve — a `NewSessionSheet` új
+  `prefillDesignation` paramétere).
+- **Kézreállóság-csomag** (R10-B7): látható "⋯" művelet-gomb mind a 8 fő
+  tábla soraiban (pontosan a jobbklikk-menük tartalmával, közös
+  builder-ből); fázis-jelmagyarázat a sidebar KÖNYVTÁR szekciója alján; a
+  6 párhuzamos tile-implementáció és a duplikált fázis-chip helperek
+  egységesítése (`Views/SharedComponents.swift`); egységes cél-szerkesztő
+  (a `GoalEditSheet` saját fájlba került, a célpont-fejléc popovere is ezt
+  nyitja); "Fogalomtár…" link a ⓘ metrika-popoverek aljáról
+  (`InfoHeader.swift` → `MetricInfoButton.swift` átnevezés); Settings:
+  "Nem mentett módosítások" jelzés mind az 5 fülön + numerikus %-mezők a
+  pontozási súly-csúszkák mellett.
+
 ## [0.10.0] - 2026-08-06
 
 Az R10-es kör ("a vizuális kör") első kiadása — a teljes terv a repó
