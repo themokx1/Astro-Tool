@@ -1209,6 +1209,61 @@ public final class Database: @unchecked Sendable {
         }
     }
 
+    /// Batch form of `userVerdict(fileID:)`, just the `accepted` flag
+    /// (without `source`/`recordedAt`) keyed by file id -- what
+    /// `AppState.loadFrameScores`/`runRate` (R10-B1) need to populate the
+    /// Minőség segment's "Saját döntés" column and the `FrameReviewSheet`
+    /// blink sheet for a whole target's worth of frames without one query
+    /// per frame. Same "one query per 500 ids" chunking `ratingsBatch`/
+    /// `fitsMetaBatch` already use; a file with no recorded verdict is
+    /// simply absent from the result, same "no row" semantics as every
+    /// other batch lookup in this file.
+    public func userVerdicts(forFileIDs fileIDs: [Int64]) throws -> [Int64: Bool] {
+        guard !fileIDs.isEmpty else { return [:] }
+        return try withLock {
+            var result: [Int64: Bool] = [:]
+            for chunk in fileIDs.chunked(into: 500) {
+                let placeholders = chunk.map { _ in "?" }.joined(separator: ", ")
+                try db.query(
+                    "SELECT file_id, accepted FROM user_verdicts WHERE file_id IN (\(placeholders));",
+                    bind: chunk.map(SQLiteValue.int)
+                ) { row in
+                    guard let fileID = row.int64(0) else { return }
+                    result[fileID] = (row.int64(1) ?? 0) != 0
+                }
+            }
+            return result
+        }
+    }
+
+    /// Records (or overwrites) one file's manual accept/reject verdict --
+    /// R10-B1: `QualitySegment`'s frame context menu and `FrameReviewSheet`'s
+    /// A/X keys, both always passing `source == "app"` to distinguish a
+    /// verdict recorded IN this app from one `DSSIngest` harvested from a
+    /// `.dssfilelist` (`source == "dssfilelist"`) -- `StackList.select`
+    /// treats the two identically (any `accepted == false` row hard-drops
+    /// the frame regardless of score), this is provenance only. A thin
+    /// wrapper over `upsertUserVerdict` so call sites never build a
+    /// `UserVerdictRecord`/stamp `recordedAt` themselves.
+    public func setUserVerdict(fileID: Int64, accepted: Bool, source: String) throws {
+        try upsertUserVerdict(
+            UserVerdictRecord(fileID: fileID, accepted: accepted, source: source, recordedAt: Date().timeIntervalSince1970)
+        )
+    }
+
+    /// Clears a file's verdict entirely -- the blink sheet's "Döntés
+    /// törlése" / `U` key (R10-B1). A plain `DELETE` rather than a
+    /// tri-state column: once cleared, `userVerdict(fileID:)` goes back to
+    /// `nil`, indistinguishable from "never recorded" -- exactly what
+    /// `StackList.select`'s own `userVerdict(fileID:) == nil` branch
+    /// already treats as "no opinion, don't drop". A no-op if no verdict
+    /// was recorded for this file.
+    public func clearUserVerdict(fileID: Int64) throws {
+        try withLock {
+            try db.run("DELETE FROM user_verdicts WHERE file_id = ?;", bind: [.int(fileID)])
+        }
+    }
+
     // MARK: sensor_profile (R7-B1)
 
     /// Upserts one `(camera, gain, offset)` combo's measured profile.

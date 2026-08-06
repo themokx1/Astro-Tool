@@ -2,11 +2,14 @@ import AppKit
 import AstroCore
 import SwiftUI
 
-/// R9-T3/A.3's "Minőség" segment: the same 10-column frame `Table`
-/// `QualityView` used to show (unchanged), but with the control bar rebuilt
-/// per spec -- a single primary "Keretek pontozása" button with a
-/// Menu-chevron for `--force`/`--no-siril`, a session-date `Menu` instead of
-/// a free-text date field, and a 10-bucket score histogram above the table.
+/// R9-T3/A.3's "Minőség" segment: the same frame `Table` `QualityView` used
+/// to show (originally 10 columns, unchanged as of that task), but with the
+/// control bar rebuilt per spec -- a single primary "Keretek pontozása"
+/// button with a Menu-chevron for `--force`/`--no-siril`, a session-date
+/// `Menu` instead of a free-text date field, and a 10-bucket score histogram
+/// above the table. R10-B1 later added an 11th column ("Saját döntés") plus
+/// the "Átnézés…" blink-review sheet -- see `frameTable`'s own doc comment
+/// for how an 11th column fits `Table`'s 10-slot column-builder limit.
 struct QualitySegment: View {
     @Environment(AppState.self) private var appState
     let target: String
@@ -15,11 +18,17 @@ struct QualitySegment: View {
     /// the old free-text field's "empty means all sessions" convention.
     @State private var selectedDate: String?
     @State private var sortOrder = [KeyPathComparator(\Row.score, order: .reverse)]
+    /// Drives the "Átnézés…" (blink review) sheet -- R10-B1.
+    @State private var showingReview = false
 
     /// Flattened, display-ready view of a `FrameScore` -- ported verbatim
     /// from the deleted `QualityView.Row`.
     private struct Row: Identifiable {
         let id = UUID()
+        /// Kept around (not just flattened into the fields below) so
+        /// `FrameReviewSheet` can be handed the table's current sort/filter
+        /// order by simply mapping `rows` back to `FrameScore` -- R10-B1.
+        let frameScore: FrameScore
         let path: String
         let fileName: String
         let sessionSubdir: String?
@@ -31,8 +40,14 @@ struct QualitySegment: View {
         let saturatedFraction: Double?
         let exptime: Double?
         let isOutlier: Bool
+        /// The user's own manual verdict for this frame (R10-B1) -- `nil`
+        /// means no verdict recorded at all, from either this app or a past
+        /// DSS import; `AppState.frameVerdicts` is the single source both
+        /// this column and `FrameReviewSheet` read from.
+        let verdict: Bool?
 
-        init(_ frameScore: FrameScore) {
+        init(_ frameScore: FrameScore, verdict: Bool?) {
+            self.frameScore = frameScore
             path = frameScore.path
             fileName = frameScore.fileName
             sessionSubdir = frameScore.sessionSubdir
@@ -44,6 +59,7 @@ struct QualitySegment: View {
             saturatedFraction = frameScore.saturatedFraction
             exptime = frameScore.exptime
             isOutlier = frameScore.isOutlier
+            self.verdict = verdict
         }
 
         var sessionSubdirSortKey: String { sessionSubdir ?? "" }
@@ -56,7 +72,11 @@ struct QualitySegment: View {
     }
 
     private var sessionDates: [String] { appState.stats.first { $0.target == target }?.sessionDates ?? [] }
-    private var rows: [Row] { filteredFrameScores.map(Row.init).sorted(using: sortOrder) }
+    private var rows: [Row] {
+        filteredFrameScores
+            .map { Row($0, verdict: appState.frameVerdicts[$0.path]) }
+            .sorted(using: sortOrder)
+    }
     private var sirilAvailable: Bool { FileManager.default.isExecutableFile(atPath: appState.config.rating.sirilPath) }
 
     /// R10-A5: `selectedDate` used to only ever affect the NEXT "Keretek
@@ -161,6 +181,14 @@ struct QualitySegment: View {
                 appState.loadFrameScores(target: target, date: selectedDate)
             }
         }
+        .sheet(isPresented: $showingReview) {
+            // R10-B1: hands the sheet the table's CURRENT sort/filter order
+            // (`rows` already applies both `filteredFrameScores`'s date
+            // filter and the user's own column sort) -- blinking through
+            // frames must never silently show them in a different order
+            // than what's on screen behind the sheet.
+            FrameReviewSheet(frames: rows.map(\.frameScore))
+        }
     }
 
     // MARK: - Control bar (rebuilt per A.3)
@@ -217,6 +245,19 @@ struct QualitySegment: View {
             .disabled(appState.isBusy)
             .fixedSize()
 
+            // R10-B1: opens the "Átnézés" (blink review) sheet over exactly
+            // the frames currently shown below (date filter + sort already
+            // applied) -- disabled rather than hidden when there's nothing
+            // to review, same convention every other conditionally-useless
+            // control bar button in this app already follows.
+            Button("Átnézés…") { showingReview = true }
+                .disabled(filteredFrameScores.isEmpty)
+                .help(
+                    filteredFrameScores.isEmpty
+                        ? "Nincs megjeleníthető keret"
+                        : "Keretek egyenkénti átnézése, elfogadása/elvetése"
+                )
+
             MetricInfoButton(metrics: Self.frameMetricInfo)
 
             Spacer()
@@ -246,6 +287,10 @@ struct QualitySegment: View {
         .init(
             title: "Szat. %",
             explanation: "A keret pixeleinek hány százaléka éri el a szenzor telítési szintjét (túlexponált csillagmagok, fényszennyezés). Mikor hazudik: a telítési küszöb becsült, nem a szenzor tényleges bit-mélységéből mért."
+        ),
+        .init(
+            title: "Saját döntés",
+            explanation: "A felhasználó saját elfogadás/elvetés döntése (Átnézés ablak, vagy a sor helyi menüje). Stackelésnél ELSŐBBSÉGET kap a pontszámmal szemben: egy elvetett keret a legjobb pontszám mellett is kimarad a stacklistből. A DeepSkyStacker .dssfilelist-jéből importált döntések (DSS-adatok beolvasása) is itt jelennek meg, forrástól függetlenül. Mikor hazudik: ez nem mérőszám, hanem az Ön saját szeme -- pontosságát semmi nem ellenőrzi."
         ),
     ]
 
@@ -296,8 +341,14 @@ struct QualitySegment: View {
         Table(rows, sortOrder: $sortOrder) {
             // R9-T6/B7: the thumbnail rides along in the "Fájl" column
             // itself rather than as its own `TableColumn` -- `Table`'s
-            // column-builder overloads top out at 10, and this table
-            // already has exactly 10 without one more.
+            // column-builder overloads top out at 10 top-level items.
+            // R10-B1 added an 11th VISIBLE column ("Saját döntés") on top of
+            // the 10 already here -- rather than embedding it into an
+            // existing cell the way the thumbnail was, "Szat. %"/"Exp."
+            // below are grouped into one `Group { }` (a `TableColumnContent`
+            // conformance meant exactly for this): that's still 2 real
+            // columns, it just costs the builder only 1 top-level slot, and
+            // frees the slot "Saját döntés" needs.
             TableColumn("Fájl", value: \.fileName) { row in
                 HStack(spacing: 6) {
                     ThumbnailCell(url: fileURL(row), size: 22)
@@ -340,18 +391,27 @@ struct QualitySegment: View {
             }
             .width(70)
 
-            TableColumn("Szat. %", value: \.saturatedFractionSortKey) { row in
-                Text(row.saturatedFraction.map { String(format: "%.2f", $0 * 100) } ?? "-").monospacedDigit().foregroundColor(tint(row))
-            }
-            .width(70)
+            Group {
+                TableColumn("Szat. %", value: \.saturatedFractionSortKey) { row in
+                    Text(row.saturatedFraction.map { String(format: "%.2f", $0 * 100) } ?? "-").monospacedDigit().foregroundColor(tint(row))
+                }
+                .width(70)
 
-            TableColumn("Exp.", value: \.exptimeSortKey) { row in
-                Text(row.exptime.map(Self.formatExptime) ?? "-").monospacedDigit().foregroundColor(tint(row))
+                TableColumn("Exp.", value: \.exptimeSortKey) { row in
+                    Text(row.exptime.map(Self.formatExptime) ?? "-").monospacedDigit().foregroundColor(tint(row))
+                }
+                .width(60)
             }
-            .width(60)
 
             TableColumn("Kiugró") { row in Text(row.isOutlier ? "⚠️" : "") }
                 .width(50)
+
+            // R10-B1: ✓/✗/— for the user's own manual verdict -- see
+            // `verdictCell(_:)` below. Not sortable (no `value:` binding),
+            // same convention "Kiugró" right above already uses for a
+            // glance-only signal column.
+            TableColumn("Saját döntés") { row in verdictCell(row.verdict) }
+                .width(90)
         }
     }
 
@@ -363,6 +423,35 @@ struct QualitySegment: View {
         // isn't wired (see `QuickLookController`'s doc comment for why),
         // this context-menu item is the documented fallback.
         Button("Quick Look") { QuickLookController.shared.preview(fileURL(row)) }
+        Divider()
+        // R10-B1: shown CONTEXTUALLY -- whichever action would just repeat
+        // the frame's current verdict is hidden rather than shown-but-inert,
+        // and "Döntés törlése" only appears at all once there's something
+        // to clear.
+        if row.verdict != true {
+            Button("Elfogadás") { appState.setFrameVerdict(path: row.path, accepted: true) }
+        }
+        if row.verdict != false {
+            Button("Elvetés") { appState.setFrameVerdict(path: row.path, accepted: false) }
+        }
+        if row.verdict != nil {
+            Button("Döntés törlése") { appState.setFrameVerdict(path: row.path, accepted: nil) }
+        }
+    }
+
+    /// ✓ (green, accepted) / ✗ (red, rejected) / — (no verdict recorded) --
+    /// the "Saját döntés" column's cell, and the same three states
+    /// `FrameReviewSheet`'s verdict chip shows in its header (R10-B1).
+    @ViewBuilder
+    private func verdictCell(_ verdict: Bool?) -> some View {
+        switch verdict {
+        case .some(true):
+            Text("✓").bold().foregroundStyle(.green)
+        case .some(false):
+            Text("✗").bold().foregroundStyle(.red)
+        case .none:
+            Text("—").foregroundStyle(.secondary)
+        }
     }
 
     private func fileURL(_ row: Row) -> URL {

@@ -337,6 +337,16 @@ final class AppState: @unchecked Sendable {
     /// this session.
     var sensorProfiles: [SensorProfileRecord] = []
     var frameScores: [FrameScore] = []
+    /// The user's own manual accept/reject verdict for each frame currently
+    /// in `frameScores`, keyed by `FrameScore.path` (R10-B1) -- `FrameScore`
+    /// itself carries no file id, only a path, so this is path-keyed rather
+    /// than the `user_verdicts` table's own `Int64` file id. Populated
+    /// alongside `frameScores` by `loadFrameScores`/`runRate`/`runRateAll`
+    /// (see `loadVerdicts(forScores:db:)`), patched directly by
+    /// `setFrameVerdict` without a full reload. A path absent from this
+    /// dictionary means "no verdict recorded", same as `Database
+    /// .userVerdict(fileID:)` returning `nil`.
+    var frameVerdicts: [String: Bool] = [:]
 
     /// Whether any `.dssfilelist` is currently tracked -- gates the
     /// toolbar's "Műveletek" menu's "DSS-döntések importálása" item (R7-B2;
@@ -1577,6 +1587,12 @@ final class AppState: @unchecked Sendable {
         // any) happened to load -- a target with no rated frames at all
         // would show A's table forever.
         frameScores = []
+        // R10-B1: same staleness class as `frameScores` immediately above --
+        // without this, switching targets could leave A's verdicts showing
+        // against B's (path-keyed, so a same-named file under a different
+        // target would silently show the wrong verdict) until B's own
+        // `loadFrameScores`/`runRate` happened to run.
+        frameVerdicts = [:]
 
         // D12: looked up on the main actor BEFORE the background hop, so the
         // detached closure below can stay a plain (non-isolated) function of
@@ -2177,6 +2193,15 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.qualitySummaries = summaries
                 self.exposureAdvice = advice
+
+                // R10-B1: `frameVerdicts` alongside `frameScores` -- same
+                // "extend the bundle, don't leave it stale" shape as the
+                // `qualitySummaries`/`exposureAdvice` reload just above.
+                let verdicts = try await Task.detached(priority: .userInitiated) {
+                    try Self.loadVerdicts(forScores: results, db: db)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.frameVerdicts = verdicts
             } catch {
                 self.handle(error)
             }
@@ -2206,10 +2231,86 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.frameScores = results
                 self.progressText = "Pontszámok betöltve: \(results.count) frame"
+
+                // R10-B1: `frameVerdicts` alongside `frameScores`, same as
+                // `runRate` above -- opening the Minőség segment (this is
+                // its own on-appear load, see the doc comment above) must
+                // show manual verdicts too, not just scores.
+                let verdicts = try await Task.detached(priority: .userInitiated) {
+                    try Self.loadVerdicts(forScores: results, db: db)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.frameVerdicts = verdicts
             } catch {
                 self.handle(error)
             }
             self.endOperation(opID)
+        }
+    }
+
+    /// Resolves `scores`' recorded verdicts, keyed back to each frame's own
+    /// `path` -- shared by `runRate`/`loadFrameScores`/`runRateAll` so all
+    /// three populate `frameVerdicts` the exact same way. `FrameScore`
+    /// carries no file id, so this resolves one via `fileID(path:)` per
+    /// frame first (an indexed point lookup, same cost class as any other
+    /// single-row query in this file), THEN batches the actual verdict
+    /// fetch through `userVerdicts(forFileIDs:)` -- the part that would
+    /// otherwise be one query per frame, chunked by 500 like every other
+    /// batch lookup `Database` exposes. Explicitly `nonisolated` (touches
+    /// only its parameters, never `self`) -- `AppState` itself is
+    /// `@MainActor`, so a plain `static func` on it would STILL be
+    /// main-actor-isolated by default and couldn't be called from inside
+    /// `Task.detached`'s off-actor closure below, the same way
+    /// `Rater.cachedScores`/`StatsQueries.perTarget` (plain AstroCore
+    /// functions, never actor-isolated at all) already can be.
+    private nonisolated static func loadVerdicts(forScores scores: [FrameScore], db: Database) throws -> [String: Bool] {
+        var idByPath: [String: Int64] = [:]
+        for score in scores {
+            if let id = try db.fileID(path: score.path) { idByPath[score.path] = id }
+        }
+        guard !idByPath.isEmpty else { return [:] }
+
+        let verdictsByID = try db.userVerdicts(forFileIDs: Array(idByPath.values))
+        guard !verdictsByID.isEmpty else { return [:] }
+
+        var result: [String: Bool] = [:]
+        for (path, id) in idByPath {
+            if let verdict = verdictsByID[id] { result[path] = verdict }
+        }
+        return result
+    }
+
+    /// Sets (`accepted` non-`nil`) or clears (`nil`) one frame's manual
+    /// verdict -- `QualitySegment`'s frame context menu ("Elfogadás" /
+    /// "Elvetés" / "Döntés törlése") and `FrameReviewSheet`'s `A`/`X`/`U`
+    /// keys (R10-B1). Always writes `source == "app"`, distinguishing this
+    /// from a `DSSIngest`-harvested `.dssfilelist` verdict --
+    /// `StackList.select` doesn't care which source wrote a given row, only
+    /// `accepted`.
+    ///
+    /// Deliberately a plain, synchronous, unwrapped DB call -- the same
+    /// "small enough to just do it, no `beginOperation`/spinner ceremony"
+    /// shape `ackFindingGroup`/`unackFindingGroup` already use for their own
+    /// single-row writes -- rather than the `Task`/`Task.detached` dance
+    /// every OTHER mutation in this file goes through. `FrameReviewSheet`
+    /// calls this once per keystroke while blinking through a whole
+    /// session; it must never make the UI wait on a spinner for a
+    /// single-row SQLite write. `frameVerdicts` is patched in place instead
+    /// of re-running `loadFrameScores`: a verdict never adds, removes, or
+    /// reorders a `frameScores` row, so a full reload would only add
+    /// latency for zero behavioral difference.
+    func setFrameVerdict(path: String, accepted: Bool?) {
+        guard let db else { return }
+        do {
+            guard let fileID = try db.fileID(path: path) else { return }
+            if let accepted {
+                try db.setUserVerdict(fileID: fileID, accepted: accepted, source: "app")
+            } else {
+                try db.clearUserVerdict(fileID: fileID)
+            }
+            frameVerdicts[path] = accepted
+        } catch {
+            handle(error)
         }
     }
 
@@ -2530,11 +2631,16 @@ final class AppState: @unchecked Sendable {
                 }()
                 let (newStats, targetReload) = try await Task.detached(priority: .userInitiated) {
                     let newStats = try StatsQueries.perTarget(db: db, config: cfg)
-                    var targetReload: ([FrameScore], [SessionQualitySummary])?
+                    var targetReload: ([FrameScore], [SessionQualitySummary], [String: Bool])?
                     if let openTarget {
                         let scores = try Rater.cachedScores(target: openTarget, date: nil, db: db, config: cfg)
                         let summaries = try SessionQuality.summaries(target: openTarget, db: db, config: cfg)
-                        targetReload = (scores, summaries)
+                        // R10-B1: same staleness class D33 already fixed for
+                        // `scores`/`summaries` -- without this, rating every
+                        // target left the open target's "Saját döntés"
+                        // column showing whatever it held before the run.
+                        let verdicts = try Self.loadVerdicts(forScores: scores, db: db)
+                        targetReload = (scores, summaries, verdicts)
                     }
                     return (newStats, targetReload)
                 }.value
@@ -2543,6 +2649,7 @@ final class AppState: @unchecked Sendable {
                 if let targetReload {
                     self.frameScores = targetReload.0
                     self.qualitySummaries = targetReload.1
+                    self.frameVerdicts = targetReload.2
                 }
                 self.progressText = "Pontozás kész: \(targets.count) célpont"
             } catch {
