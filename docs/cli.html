@@ -132,9 +132,19 @@
       <pre class="example">astrotool cleanup --suggest --limit 50</pre>
     </div>
     <div class="cmd">
+      <div class="name">ack</div>
+      <div class="desc">Az Audit-oldal "rendben van, ismerem" jelöléseinek CLI-változata: hiba-csoportok elfogadása (<code>add</code>), visszavonása (<code>remove</code>), listázása (<code>list</code>). A <code>&lt;category|groupKey&gt;</code> pontosan az <code>audit --json</code> találatainak saját ack-kulcs alakja.</div>
+      <pre class="example">astrotool ack add "residue|*.seq" --note "ismert, szándékos"</pre>
+    </div>
+    <div class="cmd">
       <div class="name">stats</div>
-      <div class="desc">Célpontonkénti integráció/keret-összegzés; <code>--target</code>-tel session-bontás, <code>--tag</code>-gel szűrés.</div>
-      <pre class="example">astrotool stats --target M31 --sessions</pre>
+      <div class="desc">Célpontonkénti integráció/keret-összegzés; <code>--target</code>-tel session-bontás, <code>--tag</code>-gel szűrés, <code>--filters</code>-szel szűrőnkénti integráció-bontás (mono LRGB/SHO "hány óra van meg szűrőnként").</div>
+      <pre class="example">astrotool stats --target M31 --filters</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">nights</div>
+      <div class="desc">Célpontokon átívelő éjszaka-böngésző: minden session egy táblában, legújabb dátum elöl, keret/integráció és minőség-oszlopokkal (FWHM, duty cycle) — a <code>stats --sessions</code> egy célpontra szűkített nézetének kereszt-célpontos megfelelője.</div>
+      <pre class="example">astrotool nights --year 2026 --month 3</pre>
     </div>
     <div class="cmd">
       <div class="name">new-session</div>
@@ -150,6 +160,16 @@
       <div class="name">tag</div>
       <div class="desc">Célpont- vagy session-szintű szabadszöveges címkék hozzáadása, törlése, listázása.</div>
       <pre class="example">astrotool tag add --target M31 goal:8h</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">goal</div>
+      <div class="desc">Célpont cél-óraszám (<code>goal:&lt;óra&gt;h</code> címke) beállítása vagy törlése — ugyanaz a formátum, mint amit az app cél-szerkesztője ír, így a kettő szabadon felcserélhető.</div>
+      <pre class="example">astrotool goal set --target M31 --hours 8</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">note</div>
+      <div class="desc">Session éjszakai jegyzetek (Bortle/SQM/seeing/szabadszöveg) megjelenítése (<code>show</code>, README-vel egyesítve) vagy írása (<code>set</code>). Sosem érinti a <code>README.txt</code>-t; egy üres <code>--value</code> törli a kulcsot.</div>
+      <pre class="example">astrotool note set --target M31 --date 2026-03-15 --key Bortle --value 5</pre>
     </div>
   </div>
 
@@ -214,6 +234,11 @@
       <pre class="example">astrotool plan --min-alt 25</pre>
     </div>
     <div class="cmd">
+      <div class="name">night-info</div>
+      <div class="desc">Csak a ma esti sötét-óra/Hold összegzés (cél-koordináta nélkül is): sötét órák száma, Hold-megvilágítottság és kelés/nyugvás-időpont, ugyanazzal a helyszín-felderítéssel, amit a <code>plan</code> is használ.</div>
+      <pre class="example">astrotool night-info --date 2026-03-15</pre>
+    </div>
+    <div class="cmd">
       <div class="name">projects</div>
       <div class="desc">Célpontonkénti pipeline-státusz — hol tart a felvétel/kalibráció/stack/feldolgozás.</div>
       <pre class="example">astrotool projects</pre>
@@ -263,8 +288,8 @@
     <h2>Egyéb</h2>
     <div class="cmd">
       <div class="name">search</div>
-      <div class="desc">A session <code>README.txt</code>-jébe írt Bortle/SQM/seeing jegyzetek kulcs vagy érték szerinti keresése.</div>
-      <pre class="example">astrotool search bortle</pre>
+      <div class="desc">A session <code>README.txt</code>-jébe (és a jegyzet-szerkesztőbe) írt Bortle/SQM/seeing jegyzetek kulcs vagy érték szerinti keresése; <code>--all</code> esetén a teljes oldalsáv-keresés helyette — célpontok, session-ök, fájlok és jegyzetek egyszerre.</div>
+      <pre class="example">astrotool search M31 --all</pre>
     </div>
   </div>
 

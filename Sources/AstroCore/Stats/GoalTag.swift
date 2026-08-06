@@ -19,4 +19,16 @@ public enum GoalTag {
         }
         return nil
     }
+
+    /// Formats `hours` as a `"goal:<hours>h"` tag -- integral hours print
+    /// without a decimal (`"goal:6h"`, not `"goal:6.0h"`), anything else
+    /// gets one decimal place (`"goal:6.5h"`). MUST stay byte-for-byte
+    /// identical to `AppState.formatGoalTag` (private, `AstroToolApp`,
+    /// deliberately not touched/imported from here) so a goal set from the
+    /// CLI and one set from the app's hour-stepper popover always produce
+    /// the exact same tag text and round-trip identically through `parse`.
+    public static func format(hours: Double) -> String {
+        if hours.rounded() == hours { return "goal:\(Int(hours))h" }
+        return "goal:\(String(format: "%.1f", hours))h"
+    }
 }

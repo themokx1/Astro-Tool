@@ -456,6 +456,82 @@ struct CLISmokeTests {
     #expect(!forced.stdout.isEmpty)
 }
 
+// MARK: - stats --filters (R10-B8)
+
+@Test func statsFiltersJSONFrameCountsSumToPlainStatsUsableFrameCount() throws {
+    let root = try makeTempRoot("stats-filters-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let plain = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--json"])
+    #expect(plain.exitCode == 0, "stderr: \(plain.stderr)")
+    let plainJSON = try #require(try JSONSerialization.jsonObject(with: Data(plain.stdout.utf8)) as? [String: Any])
+    let expectedFrameCount = try #require(plainJSON["usable_frame_count"] as? Int)
+    #expect(expectedFrameCount > 0)
+
+    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--filters", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let rows = try #require(json)
+    let totalFrames = rows.compactMap { $0["usable_frame_count"] as? Int }.reduce(0, +)
+    // The per-filter rows must add up to the exact same usable-frame total
+    // the plain (non-broken-down) `stats` reports -- both share the same
+    // dedup + `_hibas`-exclusion convention, so they can never disagree.
+    #expect(totalFrames == expectedFrameCount)
+}
+
+@Test func statsFiltersHumanOutputPrintsHungarianHeaders() throws {
+    let root = try makeTempRoot("stats-filters-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--filters"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("SZŰRŐ"))
+    #expect(result.stdout.contains("KERET"))
+    #expect(result.stdout.contains("INTEGRÁCIÓ"))
+}
+
+/// The `2026-03-15_hibas` session in `Fixtures.makeMessyLibrary` is excluded
+/// from `M45_Pleiades`'s whole-target roll-up (asserted indirectly above,
+/// via the frame-count-sum invariant) -- scoping `--filters` to exactly that
+/// date must still report its own real frame, never an empty result.
+@Test func statsFiltersWithDateStillReportsAnExcludedHibasSessionsOwnFrames() throws {
+    let root = try makeTempRoot("stats-filters-date-hibas")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI([
+        "stats", "--root", root.path, "--target", "M45_Pleiades", "--filters", "--date", "2026-03-15_hibas", "--json",
+    ])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let rows = try #require(json)
+    let totalFrames = rows.compactMap { $0["usable_frame_count"] as? Int }.reduce(0, +)
+    #expect(totalFrames == 1)
+}
+
+@Test func statsFiltersWithoutTargetExitsWithError() throws {
+    let root = try makeTempRoot("stats-filters-no-target")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stats", "--root", root.path, "--filters", "--json"])
+    #expect(result.exitCode == 1)
+}
+
 // MARK: - quality
 
 @Test func qualityJSONAfterRateDecodesForFixtureTarget() throws {
@@ -843,6 +919,84 @@ struct CLISmokeTests {
     #expect(result.stdout.contains("no matches"))
 }
 
+// MARK: - search --all (R10-B8)
+
+@Test func searchAllJSONFindsTargetByFolderNameSubstring() throws {
+    let root = try makeTempRoot("search-all-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["search", "Pleiades", "--root", root.path, "--all", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try #require(try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+    let targets = try #require(json["targets"] as? [[String: Any]])
+    #expect(targets.contains { ($0["target"] as? String) == "M45_Pleiades" })
+    // The plain shape check: every documented section key is present, even
+    // when empty, so a caller never has to special-case a missing key.
+    #expect(json["sessions"] != nil)
+    #expect(json["files"] != nil)
+    #expect(json["notes"] != nil)
+    #expect(json["total_file_matches"] != nil)
+}
+
+/// `search --all` must union in `SessionNoteStore`-written notes (the same
+/// merge `AppState.runSearch` performs), not just `Database.searchAll`'s
+/// own README-only notes section -- write one via `note set`, then confirm
+/// `search --all` finds it by value.
+@Test func searchAllFindsNoteWrittenThroughNoteSetCommand() throws {
+    let root = try makeTempRoot("search-all-store-note")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let setNote = try runCLI([
+        "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
+        "--key", "Seeing", "--value", "kivételesen stabil éjszaka", "--root", root.path,
+    ])
+    #expect(setNote.exitCode == 0, "stderr: \(setNote.stderr)")
+
+    let result = try runCLI(["search", "kivételesen stabil", "--root", root.path, "--all", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    let json = try #require(try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+    let notes = try #require(json["notes"] as? [[String: Any]])
+    #expect(notes.contains {
+        ($0["target"] as? String) == "M45_Pleiades" && ($0["key"] as? String) == "Seeing"
+    })
+}
+
+@Test func searchAllHumanOutputListsSectionsInPageOrder() throws {
+    let root = try makeTempRoot("search-all-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["search", "Pleiades", "--root", root.path, "--all"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("Célpontok"))
+    #expect(result.stdout.contains("M45_Pleiades"))
+}
+
+@Test func searchAllWithNoMatchesStillExitsZero() throws {
+    let root = try makeTempRoot("search-all-miss")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["search", "nonexistent-term-xyz", "--root", root.path, "--all"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("no matches"))
+}
+
 // MARK: - tag
 
 @Test func tagAddThenListShowsIt() throws {
@@ -972,6 +1126,280 @@ struct CLISmokeTests {
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     let result = try runCLI(["tag", "add", "favorite", "--root", root.path])
+    #expect(result.exitCode == 1)
+}
+
+// MARK: - ack (R10-B8)
+
+@Test func ackAddThenListShowsAckedKeyAndNote() throws {
+    let root = try makeTempRoot("ack-add-list")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let add = try runCLI(["ack", "add", "residue|*.seq", "--note", "ismert, szándékos", "--root", root.path])
+    #expect(add.exitCode == 0, "stderr: \(add.stderr)")
+
+    let list = try runCLI(["ack", "list", "--root", root.path, "--json"])
+    #expect(list.exitCode == 0, "stderr: \(list.stderr)")
+    let json = try JSONSerialization.jsonObject(with: Data(list.stdout.utf8)) as? [[String: Any]]
+    let acks = try #require(json)
+    #expect(acks.count == 1)
+    #expect(acks[0]["category"] as? String == "residue")
+    #expect(acks[0]["group_key"] as? String == "*.seq")
+    #expect(acks[0]["note"] as? String == "ismert, szándékos")
+    #expect(acks[0]["acked_at"] != nil)
+}
+
+@Test func ackAddThenRemoveClearsIt() throws {
+    let root = try makeTempRoot("ack-add-remove")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let add = try runCLI(["ack", "add", "misplaced-file|sessions/M31/2026-01-01", "--root", root.path])
+    #expect(add.exitCode == 0, "stderr: \(add.stderr)")
+    let remove = try runCLI(["ack", "remove", "misplaced-file|sessions/M31/2026-01-01", "--root", root.path])
+    #expect(remove.exitCode == 0, "stderr: \(remove.stderr)")
+
+    let list = try runCLI(["ack", "list", "--root", root.path, "--json"])
+    #expect(list.exitCode == 0, "stderr: \(list.stderr)")
+    let json = try JSONSerialization.jsonObject(with: Data(list.stdout.utf8)) as? [[String: Any]]
+    #expect(try #require(json).isEmpty)
+}
+
+@Test func ackListHumanOutputPrintsKeyAndTimestamp() throws {
+    let root = try makeTempRoot("ack-list-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let add = try runCLI(["ack", "add", "residue|*.seq", "--root", root.path])
+    #expect(add.exitCode == 0, "stderr: \(add.stderr)")
+
+    let list = try runCLI(["ack", "list", "--root", root.path])
+    #expect(list.exitCode == 0, "stderr: \(list.stderr)")
+    #expect(list.stdout.contains("residue|*.seq"))
+    #expect(list.stdout.contains("acked:"))
+}
+
+/// The positional must look exactly like an `ack_key` (`category|groupKey`)
+/// -- missing the `|` separator is a usage error, not a silent no-op.
+@Test func ackAddRejectsPositionalWithoutPipeSeparator() throws {
+    let root = try makeTempRoot("ack-bad-positional")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI(["ack", "add", "no-pipe-here", "--root", root.path])
+    #expect(result.exitCode == 1)
+}
+
+@Test func ackAddWithoutPositionalExitsWithError() throws {
+    let root = try makeTempRoot("ack-no-positional")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI(["ack", "add", "--root", root.path])
+    #expect(result.exitCode == 1)
+}
+
+// MARK: - note (R10-B8)
+
+@Test func noteSetThenShowRoundTrips() throws {
+    let root = try makeTempRoot("note-set-show")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let set = try runCLI([
+        "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
+        "--key", "Bortle", "--value", "5", "--root", root.path,
+    ])
+    #expect(set.exitCode == 0, "stderr: \(set.stderr)")
+
+    let show = try runCLI([
+        "note", "show", "--target", "M45_Pleiades", "--date", "2026-01-10", "--root", root.path, "--json",
+    ])
+    #expect(show.exitCode == 0, "stderr: \(show.stderr)")
+    let json = try JSONSerialization.jsonObject(with: Data(show.stdout.utf8)) as? [String: String]
+    #expect(json?["Bortle"] == "5")
+
+    // Never touches README.txt -- the iron rule, directly asserted here too.
+    let readmeURL = root.appendingPathComponent("sessions/M45_Pleiades/2026-01-10/README.txt")
+    let readmeContentAfter = try String(contentsOf: readmeURL, encoding: .utf8)
+    #expect(readmeContentAfter.contains("Camera: ZWO ASI2600MC Pro"))
+    #expect(!readmeContentAfter.contains("Bortle"))
+}
+
+/// `SessionStatsQueries.computeSessionDetail`'s own "README nyer" merge:
+/// a store-written key that ALSO exists in the README-sourced
+/// `session_notes` (populated by `scan` from `README.txt`) must show the
+/// README's value, not the store's.
+@Test func noteShowLetsReadmeWinAKeyCollisionWithTheStore() throws {
+    let root = try makeTempRoot("note-show-readme-wins")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    // The fixture's README has "Camera: ZWO ASI2600MC Pro" -- collide with
+    // that exact key via the store and confirm the README's value wins.
+    let set = try runCLI([
+        "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
+        "--key", "Camera", "--value", "store-value-should-lose", "--root", root.path,
+    ])
+    #expect(set.exitCode == 0, "stderr: \(set.stderr)")
+
+    let show = try runCLI([
+        "note", "show", "--target", "M45_Pleiades", "--date", "2026-01-10", "--root", root.path, "--json",
+    ])
+    #expect(show.exitCode == 0, "stderr: \(show.stderr)")
+    let json = try JSONSerialization.jsonObject(with: Data(show.stdout.utf8)) as? [String: String]
+    #expect(json?["Camera"] == "ZWO ASI2600MC Pro")
+}
+
+/// An empty (or omitted) `--value` removes that key -- `SessionNoteStore`
+/// already drops blank-value pairs on save; this asserts the CLI round-trip
+/// of that behavior end to end.
+@Test func noteSetWithEmptyValueRemovesTheKey() throws {
+    let root = try makeTempRoot("note-set-empty-removes")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let set = try runCLI([
+        "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
+        "--key", "Szél", "--value", "erős", "--root", root.path,
+    ])
+    #expect(set.exitCode == 0, "stderr: \(set.stderr)")
+    let clear = try runCLI([
+        "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
+        "--key", "Szél", "--value", "", "--root", root.path,
+    ])
+    #expect(clear.exitCode == 0, "stderr: \(clear.stderr)")
+
+    let show = try runCLI([
+        "note", "show", "--target", "M45_Pleiades", "--date", "2026-01-10", "--root", root.path, "--json",
+    ])
+    #expect(show.exitCode == 0, "stderr: \(show.stderr)")
+    let json = try JSONSerialization.jsonObject(with: Data(show.stdout.utf8)) as? [String: String]
+    #expect(json?["Szél"] == nil)
+}
+
+@Test func noteShowWithoutTargetOrDateExitsWithError() throws {
+    let root = try makeTempRoot("note-show-no-target")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI(["note", "show", "--target", "M45_Pleiades", "--root", root.path])
+    #expect(result.exitCode == 1)
+}
+
+@Test func noteSetWithoutKeyExitsWithError() throws {
+    let root = try makeTempRoot("note-set-no-key")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI([
+        "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10", "--value", "x", "--root", root.path,
+    ])
+    #expect(result.exitCode == 1)
+}
+
+// MARK: - goal (R10-B8)
+
+@Test func goalSetThenClearRoundTrips() throws {
+    let root = try makeTempRoot("goal-set-clear")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let set = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "6", "--root", root.path, "--json"])
+    #expect(set.exitCode == 0, "stderr: \(set.stderr)")
+    let setJSON = try #require(try JSONSerialization.jsonObject(with: Data(set.stdout.utf8)) as? [String: Any])
+    // Integral hours print without a decimal -- must match
+    // `AppState.formatGoalTag`'s exact text so app and CLI round-trip.
+    #expect(setJSON["goal_tag"] as? String == "goal:6h")
+
+    let tagList = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    #expect(tagList.exitCode == 0, "stderr: \(tagList.stderr)")
+    let tags = try JSONSerialization.jsonObject(with: Data(tagList.stdout.utf8)) as? [String]
+    #expect(tags == ["goal:6h"])
+
+    let clear = try runCLI(["goal", "clear", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    #expect(clear.exitCode == 0, "stderr: \(clear.stderr)")
+    let clearJSON = try #require(try JSONSerialization.jsonObject(with: Data(clear.stdout.utf8)) as? [String: Any])
+    #expect(clearJSON["goal_tag"] == nil || clearJSON["goal_tag"] is NSNull)
+
+    let tagListAfterClear = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    #expect(tagListAfterClear.exitCode == 0, "stderr: \(tagListAfterClear.stderr)")
+    let tagsAfterClear = try JSONSerialization.jsonObject(with: Data(tagListAfterClear.stdout.utf8)) as? [String]
+    #expect(tagsAfterClear == [])
+}
+
+/// Fractional hours format with exactly one decimal place, same as
+/// `AppState.formatGoalTag`'s non-integral branch.
+@Test func goalSetWithFractionalHoursFormatsWithOneDecimal() throws {
+    let root = try makeTempRoot("goal-set-fractional")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let set = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "6.5", "--root", root.path, "--json"])
+    #expect(set.exitCode == 0, "stderr: \(set.stderr)")
+    let setJSON = try #require(try JSONSerialization.jsonObject(with: Data(set.stdout.utf8)) as? [String: Any])
+    #expect(setJSON["goal_tag"] as? String == "goal:6.5h")
+}
+
+/// Setting a new goal must replace (not accumulate alongside) any prior
+/// `goal:*` tag -- same "there should only ever be at most one" invariant
+/// `AppState.setGoal` documents.
+@Test func goalSetReplacesAnyPriorGoalTagRatherThanAddingASecondOne() throws {
+    let root = try makeTempRoot("goal-set-replaces")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let first = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "4", "--root", root.path])
+    #expect(first.exitCode == 0, "stderr: \(first.stderr)")
+    let second = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "8", "--root", root.path])
+    #expect(second.exitCode == 0, "stderr: \(second.stderr)")
+
+    let tagList = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    #expect(tagList.exitCode == 0, "stderr: \(tagList.stderr)")
+    let tags = try JSONSerialization.jsonObject(with: Data(tagList.stdout.utf8)) as? [String]
+    #expect(tags == ["goal:8h"])
+}
+
+@Test func goalSetRejectsZeroOrMissingHours() throws {
+    let root = try makeTempRoot("goal-set-bad-hours")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let zero = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "0", "--root", root.path])
+    #expect(zero.exitCode == 1)
+
+    let missing = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--root", root.path])
+    #expect(missing.exitCode == 1)
+}
+
+@Test func goalSetWithoutTargetExitsWithError() throws {
+    let root = try makeTempRoot("goal-set-no-target")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI(["goal", "set", "--hours", "6", "--root", root.path])
     #expect(result.exitCode == 1)
 }
 
@@ -1276,6 +1704,75 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
     let result = try runCLI(["plan", "--root", root.path, "--date", "not-a-date"])
+    #expect(result.exitCode == 1)
+}
+
+// MARK: - night-info (R10-B8)
+
+@Test func nightInfoJSONReportsDarkHoursAndMoonWhenSiteResolvable() throws {
+    let root = try makeTempRoot("night-info-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writePlanFITS(
+        "sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root,
+        crval1: 10.6847, crval2: 41.2687, dateObs: "2026-08-01T22:00:00"
+    )
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["night-info", "--root", root.path, "--date", "2026-08-10", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    let json = try #require(try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+    #expect(json["moon_illumination_percent"] != nil)
+    #expect(json["dark_hours"] != nil)
+}
+
+@Test func nightInfoHumanOutputPrintsDarkHoursAndMoonLinesWithoutLeakingCoordinates() throws {
+    let root = try makeTempRoot("night-info-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writePlanFITS(
+        "sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root,
+        crval1: 10.6847, crval2: 41.2687, dateObs: "2026-08-01T22:00:00"
+    )
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["night-info", "--root", root.path, "--date", "2026-08-10"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("sötét óra:"))
+    #expect(result.stdout.contains("Hold:"))
+
+    // PRIVACY: same rule `printPlanHeader` follows -- never leak the site's
+    // actual coordinates (47.5 / 19.0) into human output.
+    #expect(!result.stdout.contains("47.5"))
+    #expect(!result.stdout.contains("19.0"))
+}
+
+@Test func nightInfoWithoutSiteCoordinatesStillReportsMoonIlluminationAndExplainsWhy() throws {
+    let root = try makeTempRoot("night-info-no-site")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["night-info", "--root", root.path, "--date", "2026-08-10", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    let json = try #require(try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+    #expect(json["dark_hours"] == nil || json["dark_hours"] is NSNull)
+    #expect(json["note"] as? String == "nincs site-koordináta")
+    #expect(json["moon_illumination_percent"] != nil)
+}
+
+@Test func nightInfoWithInvalidDateExitsWithError() throws {
+    let root = try makeTempRoot("night-info-bad-date")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI(["night-info", "--root", root.path, "--date", "not-a-date"])
     #expect(result.exitCode == 1)
 }
 

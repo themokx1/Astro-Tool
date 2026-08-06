@@ -158,7 +158,7 @@ public struct NightSummary: Codable, Sendable, Equatable {
 /// midpoint or civil midnight) this also reports whether/when the Moon
 /// crosses the horizon during the night, for the "Hold" tile's "felkel
 /// 23:41" wording. See `Planner.nightInfo(date:site:)`.
-public struct NightInfo: Sendable, Equatable {
+public struct NightInfo: Codable, Sendable, Equatable {
     /// Hours of true astronomical night (`SunMoon.astronomicalTwilight`
     /// without its nautical fallback) -- `nil` under the same conditions
     /// `NightSummary.astroDarkHours` is: no resolvable site, no dark window

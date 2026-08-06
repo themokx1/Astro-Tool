@@ -359,6 +359,27 @@ public struct SensorProfileRecord: Codable, Equatable, Sendable {
     }
 }
 
+/// One acknowledged finding-group row (`finding_acks`, R9-T2/B5) -- the ack
+/// DAO's fuller read type, added for `astrotool ack list` (R10-B8). The app
+/// only ever needs `ackedKeys()`'s lighter `Set<String>` membership test, so
+/// this is purely additive, not a replacement for it.
+public struct FindingAckRecord: Codable, Equatable, Sendable {
+    public var category: String
+    public var groupKey: String
+    /// `Date().timeIntervalSince1970` at the moment this group was acked
+    /// (or last re-acked) -- same epoch-seconds convention every other
+    /// `*At`/`*edAt` column in this schema uses.
+    public var ackedAt: Double
+    public var note: String?
+
+    public init(category: String, groupKey: String, ackedAt: Double, note: String? = nil) {
+        self.category = category
+        self.groupKey = groupKey
+        self.ackedAt = ackedAt
+        self.note = note
+    }
+}
+
 /// The sidebar's ⌘F -> `SearchResultsPage` result set (R9-T6/B3):
 /// `Database.searchAll`'s four sections. See that method's doc comment for
 /// exactly what does and doesn't match, and why `notes` never sees notes
@@ -390,6 +411,38 @@ public struct SearchResults: Sendable {
     /// `ContentUnavailableView.search` gate.
     public var isEmpty: Bool {
         targets.isEmpty && sessions.isEmpty && files.isEmpty && notes.isEmpty
+    }
+}
+
+/// Manual `Encodable` conformance (R10-B8, `astrotool search --all --json`)
+/// -- tuples can never conform to `Encodable` themselves, and the stored
+/// properties above must stay tuples: `SearchResultsPage` (`AstroToolApp`,
+/// out of scope for this change) types its row-builder functions against
+/// those exact tuple shapes (e.g. `targetRow(_ hit: (target: String,
+/// displayName: String))`), so swapping them for nominal DTOs would break
+/// the app's call sites. Encoding each section through a private one-off DTO
+/// sidesteps that entirely -- `SearchResults` itself gains `--json` support
+/// with no change to how the app already reads it. `Decodable` is
+/// deliberately not added alongside: nothing anywhere reconstructs a
+/// `SearchResults` from JSON, only `astrotool search --all --json` ever
+/// produces one.
+extension SearchResults: Encodable {
+    private enum CodingKeys: String, CodingKey {
+        case targets, sessions, files, totalFileMatches, notes
+    }
+
+    private struct TargetHit: Encodable { let target: String; let displayName: String }
+    private struct SessionHit: Encodable { let target: String; let date: String }
+    private struct FileHit: Encodable { let path: String; let kind: String; let sizeBytes: Int64 }
+    private struct NoteHit: Encodable { let target: String; let date: String; let key: String; let value: String }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(targets.map { TargetHit(target: $0.target, displayName: $0.displayName) }, forKey: .targets)
+        try container.encode(sessions.map { SessionHit(target: $0.target, date: $0.date) }, forKey: .sessions)
+        try container.encode(files.map { FileHit(path: $0.path, kind: $0.kind, sizeBytes: $0.sizeBytes) }, forKey: .files)
+        try container.encode(totalFileMatches, forKey: .totalFileMatches)
+        try container.encode(notes.map { NoteHit(target: $0.target, date: $0.date, key: $0.key, value: $0.value) }, forKey: .notes)
     }
 }
 
@@ -1705,6 +1758,24 @@ public final class Database: @unchecked Sendable {
             var result: Set<String> = []
             try db.query("SELECT ack_key FROM finding_acks;") { row in
                 if let key = row.string(0) { result.insert(key) }
+            }
+            return result
+        }
+    }
+
+    /// Every acknowledged finding-group row, newest ack first -- `ackedKeys`'s
+    /// fuller sibling for a caller that needs the `(category, groupKey)` pair,
+    /// timestamp, and note, not just set membership (R10-B8, `astrotool ack
+    /// list`).
+    public func allAcks() throws -> [FindingAckRecord] {
+        try withLock {
+            var result: [FindingAckRecord] = []
+            try db.query(
+                "SELECT category, group_key, acked_at, note FROM finding_acks ORDER BY acked_at DESC;"
+            ) { row in
+                guard let category = row.string(0), let groupKey = row.string(1), let ackedAt = row.double(2)
+                else { return }
+                result.append(FindingAckRecord(category: category, groupKey: groupKey, ackedAt: ackedAt, note: row.string(3)))
             }
             return result
         }
