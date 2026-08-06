@@ -8,6 +8,8 @@ történik.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-05
+
 ### Added
 
 - **Globális keresés + éjszaka-jegyzet-szerkesztő + thumbnailek/Quick Look +
