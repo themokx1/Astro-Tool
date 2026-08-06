@@ -176,6 +176,9 @@ final class AppState: @unchecked Sendable {
     enum SettingsTab: Hashable {
         case library
         case location
+        case calibration
+        case rating
+        case libraryRules
     }
     var settingsTab: SettingsTab = .library
 
@@ -310,6 +313,16 @@ final class AppState: @unchecked Sendable {
     /// Set once `applyCalibLinkPlan()` finishes -- the sheet switches from
     /// showing the plan to showing this result.
     var calibLinkResult: LinkResult?
+
+    /// R9-T5/A.4: the session `CalibLinkSheet` is currently open for from
+    /// `CalibrationPage`'s Lefedettség action cards / row context menu.
+    /// `CalibNeed` only records which TARGETS need a combo, not which
+    /// session -- `openCalibLinkSheet(forNeed:)` resolves this pragmatically
+    /// (first target, most recent session date) and sets this, which drives
+    /// `CalibrationPage`'s `.sheet(item:)`. Separate from `StatsView`'s/
+    /// `TargetDetailPage`'s own `linkingSession` `@State` so the three call
+    /// sites never fight over one shared trigger.
+    var calibNeedLinkSession: LinkingSession?
 
     /// The best-frame selection currently shown in `StackListSheet` (R7-B4),
     /// `nil` while it's still (re)computing -- recomputed every time the
@@ -1435,6 +1448,40 @@ final class AppState: @unchecked Sendable {
     func clearCalibLinkPlan() {
         calibLinkPlan = nil
         calibLinkResult = nil
+    }
+
+    /// R9-T5/A.4: resolves a `CalibNeed` (from the Lefedettség coverage
+    /// table/action cards) to a concrete `(target, date)` pair and opens
+    /// `CalibLinkSheet` for it -- pragmatic per spec ("map CalibNeed.targets
+    /// to a session picker or link the first"): the need's first target, at
+    /// its most recent session date. Uses `sessionDetailsByTarget` if
+    /// already cached (from `loadStats()`), otherwise fetches it via
+    /// `SessionStatsQueries.sessions` on demand -- the Kalibráció page never
+    /// requires visiting "Minden célpont" first just to make "Linkelés…"
+    /// work.
+    func openCalibLinkSheet(forNeed need: CalibNeed) {
+        guard let target = need.targets.first else { return }
+        if let date = sessionDetailsByTarget[target]?.map(\.dateRaw).max() {
+            calibNeedLinkSession = LinkingSession(target: target, date: date)
+            return
+        }
+        guard let db else { return }
+        let cfg = config
+        Task { [weak self] in
+            guard let self else { return }
+            let sessions: [SessionDetail]
+            do {
+                sessions = try await Task.detached(priority: .userInitiated) {
+                    try SessionStatsQueries.sessions(target: target, db: db, config: cfg)
+                }.value
+            } catch {
+                return
+            }
+            self.sessionDetailsByTarget[target] = sessions
+            if let date = sessions.map(\.dateRaw).max() {
+                self.calibNeedLinkSession = LinkingSession(target: target, date: date)
+            }
+        }
     }
 
     // MARK: - Stack-list export (R7-B4)

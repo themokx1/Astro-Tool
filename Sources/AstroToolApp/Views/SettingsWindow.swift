@@ -17,13 +17,22 @@ struct SettingsWindow: View {
         @Bindable var appState = appState
 
         TabView(selection: $appState.settingsTab) {
-            SettingsView()
+            LibrarySettingsView()
                 .tabItem { Text("Könyvtár") }
                 .tag(AppState.SettingsTab.library)
             LocationSettingsView()
                 .tabItem { Text("Helyszín") }
                 .tag(AppState.SettingsTab.location)
+            CalibrationSettingsView()
+                .tabItem { Text("Kalibráció") }
+                .tag(AppState.SettingsTab.calibration)
+            RatingSettingsView()
+                .tabItem { Text("Pontozás & expozíció") }
+                .tag(AppState.SettingsTab.rating)
+            LibraryRulesSettingsView()
+                .tabItem { Text("Könyvtár-szabályok") }
+                .tag(AppState.SettingsTab.libraryRules)
         }
-        .frame(width: 520, height: 420)
+        .frame(width: 560, height: 480)
     }
 }

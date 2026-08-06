@@ -10,6 +10,46 @@ történik.
 
 ### Added
 
+- **Kalibráció-oldal polírozása + Szenzor-oldal + teljes Settings-szerkesztő**
+  (R9-T5/B12): `Views/CalibrationPage.swift` (a régi `CalibrationView`
+  felváltása) `Picker(.segmented)`-tel (Lefedettség/Egészség) + 4 tile
+  (Hiányzó/Elavult/Friss/Master darkok). Lefedettség: a Teendők felülre
+  kerültek akció-kártyaként ("Linkelés…" gombbal, ahol egy session
+  azonosítható -- új `AppState.openCalibLinkSheet(forNeed:)` pragmatikusan a
+  `CalibNeed` első targetjének legutóbbi session-dátumára oldja fel), a
+  tábla 3 új kolonnát kapott a modellből, ami eddig sosem volt megjelenítve:
+  `Típus` (`CalibNeed.kind`), `Gain` (`requiredGain`), `Kamera`
+  (`requiredCamera`); sor context-menü (Kalibráció linkelése… / Master
+  mappa megnyitása Finderben / Érintett sessionök megjelenítése). Egészség:
+  a három `DisclosureGroup` fejléce státusz-bontást kapott ("Flat-fegyelem
+  — 2 hibás / 34 rendben"), minden problémás sor "Megnyitás Finderben"
+  context-menüt kapott. Egyetlen "Újraszámolás" a toolbaron a régi három
+  azonos "Frissítés" helyett.
+  `Views/SensorPage.swift` teljes átépítése: 3 tile (Profilok/Kamerák/
+  Legutóbbi mérés), új `Mért` kolonna + frissesség-figyelmeztetés (sárga
+  sor + "Újramérés javasolt…") minden `measuredAt`-nál a leolvasási-zaj-
+  becslő javítása (2026-08-05, commit `0928189`) előtt mért profilra,
+  primary toolbar "Szenzor mérése…" → confirm-sheet (mit olvas, mennyi
+  ideig tart, "csak egy adatbázis-sort ír, a könyvtárhoz nem nyúl"),
+  állandó "mire jó?" magyarázó blokk, `ContentUnavailableView` empty state.
+  **Teljes config-szerkesztő (B12)**: `Views/SettingsWindow.swift` mostantól
+  5 fület mutat; új `Views/Settings/` alkönyvtár -- `LibrarySettingsView.swift`
+  (a régi `SettingsView` helyén, `excludedDirNames`/`excludedPaths` mostantól
+  szerkeszthető +/− lista, nem vesszős string), `LocationSettingsView.swift`
+  (T4, áthelyezve, tartalom változatlan), új `CalibrationSettingsView.swift`
+  (mind a 8 `CalibRule` szám + a 4 `match*` toggle), új
+  `RatingSettingsView.swift` (`outlierZScore`/`workers`/`sirilPath` +
+  `Tallózás…` + élő zöld/piros Siril-verzió-indikátor, a 4 `rating.weights`
+  csúszkaként MINDIG 1,00-ra normalizálva, `expose.*`), új
+  `LibraryRulesSettingsView.swift` (`residuePatterns`/`residueDirNames`/
+  `toolOutputDirNames`/`intentional.labels`+2 toggle/`wideField.*`/
+  `stats.*`), és egy megosztott `SettingsShared.swift`
+  (`SettingsResetRow` -- a generikus per-kulcs `↺` reset, csak ha az érték
+  eltér az `AstroConfig()` defaulttól -- és `EditableStringListView`).
+  Minden fülnek van "Alaphelyzetbe állítás…" (megerősítéssel) + "Mentés"
+  láblábja. AstroCore-t ez a task nem módosította (all UI). 820 teszt zöld
+  (változatlan).
+
 - **Ma este + Naptár oldal, helyszín-beállítás** (R9-T4): új `Views/TonightPage.swift`
   egy `Picker(.segmented)`-tel ("Ma este" | "Következő 30 éjszaka") felváltja
   a törölt `OverviewView`-t ÉS a törölt `CalendarPage`-et (a havi terv most
