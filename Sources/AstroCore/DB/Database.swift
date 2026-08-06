@@ -491,6 +491,22 @@ public final class Database: @unchecked Sendable {
       recorded_at REAL NOT NULL);
     """
 
+    // Internal (not private) for the same reason as the earlier schemaSQLv*
+    // constants: migration tests apply this directly to a raw `SQLiteDB` to
+    // simulate an existing v8 database before verifying `Database(path:)`
+    // upgrades it in place. R9-T2/B5: acknowledged audit-finding groups.
+    // `ack_key` is `"<category>|<groupKey>"` (`FindingGrouper`'s own group
+    // key) rather than `findings.id` -- the whole point is that an ack
+    // survives a re-audit, which assigns every finding a brand-new id.
+    static let schemaSQLv9 = """
+    CREATE TABLE IF NOT EXISTS finding_acks(
+      ack_key TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      group_key TEXT NOT NULL,
+      acked_at REAL NOT NULL,
+      note TEXT);
+    """
+
     public init(path: String) throws {
         self.db = try SQLiteDB(path: path)
         try migrate()
@@ -560,6 +576,12 @@ public final class Database: @unchecked Sendable {
             try db.exec(Self.schemaSQLv8)
             try db.run("UPDATE schema_version SET version = ?;", bind: [.int(8)])
             version = 8
+        }
+
+        if version < 9 {
+            try db.exec(Self.schemaSQLv9)
+            try db.run("UPDATE schema_version SET version = ?;", bind: [.int(9)])
+            version = 9
         }
     }
 
@@ -1360,6 +1382,85 @@ public final class Database: @unchecked Sendable {
                 result.append((target, date, key, value))
             }
             return result
+        }
+    }
+
+    // MARK: - finding_acks (R9-T2/B5)
+
+    /// The stable key one ack row is addressed by: `(category, groupKey)`,
+    /// matching `FindingGrouper.Key`'s pair of the same name -- deliberately
+    /// NOT `findings.id`, so an ack survives a later audit run that
+    /// re-discovers the same logical group under brand-new finding rows.
+    public static func ackKey(category: String, groupKey: String) -> String {
+        "\(category)|\(groupKey)"
+    }
+
+    /// Marks one finding group as acknowledged ("rendben van, ismerem, nem
+    /// hiba") -- upserts on `ack_key` so re-acking (e.g. to change `note`)
+    /// never duplicates the row.
+    public func ackFindingGroup(category: String, groupKey: String, note: String? = nil) throws {
+        let key = Self.ackKey(category: category, groupKey: groupKey)
+        try withLock {
+            try db.run(
+                """
+                INSERT INTO finding_acks(ack_key, category, group_key, acked_at, note) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(ack_key) DO UPDATE SET acked_at = excluded.acked_at, note = excluded.note;
+                """,
+                bind: [
+                    .text(key), .text(category), .text(groupKey), .real(Date().timeIntervalSince1970),
+                    note.map(SQLiteValue.text) ?? .null,
+                ]
+            )
+        }
+    }
+
+    /// Reverses `ackFindingGroup` -- a no-op if the group was never acked.
+    public func unackFindingGroup(category: String, groupKey: String) throws {
+        let key = Self.ackKey(category: category, groupKey: groupKey)
+        try withLock {
+            try db.run("DELETE FROM finding_acks WHERE ack_key = ?;", bind: [.text(key)])
+        }
+    }
+
+    /// Every currently-acked group's key, for the app layer to filter
+    /// `FindingGrouper.group(...)` output against (hide by default, dim when
+    /// shown) and to exclude from the sidebar's sure-error badge count.
+    public func ackedKeys() throws -> Set<String> {
+        try withLock {
+            var result: Set<String> = []
+            try db.query("SELECT ack_key FROM finding_acks;") { row in
+                if let key = row.string(0) { result.insert(key) }
+            }
+            return result
+        }
+    }
+
+    // MARK: - findings retention (B20)
+
+    /// Deletes `findings` rows belonging to any `"audit"`-kind run except the
+    /// most recent `keepRuns` -- the `runs` rows themselves are left alone
+    /// (only their child findings are pruned), and runs of any other kind
+    /// (and their findings, if they ever have any) are never touched.
+    ///
+    /// This is the app's OWN `.astro_tool` database, not the image library
+    /// the iron rule protects -- deleting rows here is ordinary DAO
+    /// housekeeping, the same class of operation as `markMissing`'s UPDATE or
+    /// `removeTag`'s DELETE elsewhere in this file. Called once at the end of
+    /// every `AuditEngine.run` so the table (32k+ rows across 12 runs on a
+    /// real library, never pruned before this) stops growing unbounded.
+    public func pruneFindings(keepRuns: Int = 3) throws {
+        try withLock {
+            try db.run(
+                """
+                DELETE FROM findings WHERE run_id IN (
+                  SELECT id FROM runs WHERE kind = 'audit'
+                  AND id NOT IN (
+                    SELECT id FROM runs WHERE kind = 'audit' ORDER BY started_at DESC LIMIT ?
+                  )
+                );
+                """,
+                bind: [.int(Int64(keepRuns))]
+            )
         }
     }
 }

@@ -83,7 +83,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 8)
+    #expect(version == 9)
 }
 
 @Test func migrateIsIdempotentAndDoesNotDuplicateVersionRow() throws {
@@ -97,7 +97,10 @@ import Testing
 @Test func migrateCreatesAllExpectedTables() throws {
     let database = try Database(path: ":memory:")
 
-    let expectedTables = ["schema_version", "files", "fits_meta", "ratings", "findings", "runs", "tags", "session_notes", "sensor_profile"]
+    let expectedTables = [
+        "schema_version", "files", "fits_meta", "ratings", "findings", "runs", "tags", "session_notes",
+        "sensor_profile", "finding_acks",
+    ]
     var found: Set<String> = []
     try database.db.query("SELECT name FROM sqlite_master WHERE type = 'table';") { row in
         if let name = row.string(0) { found.insert(name) }
@@ -144,7 +147,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 8)
+    #expect(version == 9)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -197,7 +200,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 8)
+    #expect(version == 9)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -266,7 +269,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 8)
+    #expect(version == 9)
 
     let fileID1 = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let meta1 = try database.fitsMeta(fileID: fileID1)
@@ -829,7 +832,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 8)
+    #expect(version == 9)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1, "the v4 row must survive the upgrade untouched")
@@ -883,7 +886,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 8)
+    #expect(version == 9)
 
     let fileID = try #require(try database.fileID(path: "sessions/M45_Pleiades/2026-01-01/lights/f1.cr3"))
     let metaBeforeSolve = try database.fitsMeta(fileID: fileID)
@@ -938,7 +941,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 8)
+    #expect(version == 9)
 
     let fileID = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let rating = try database.rating(fileID: fileID)
@@ -998,7 +1001,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 8)
+    #expect(version == 9)
 
     let fileID = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let rating = try database.rating(fileID: fileID)
@@ -1180,4 +1183,165 @@ private func sampleSensorProfile(
     #expect(byKey.first?.value == "falu, 4")
 
     #expect(try database.searchNotes(query: "nonexistent-term").isEmpty)
+}
+
+// MARK: - finding_acks (schema v9, R9-T2/B5)
+
+/// Simulates a real, already-deployed v8 database (every earlier schema step
+/// applied directly via the raw `SQLiteDB`, `schema_version` stamped `8`)
+/// then opens it through `Database(path:)` -- the production upgrade path --
+/// and verifies the version advances to 9 and the new `finding_acks` table
+/// exists and is usable, mirroring the v7->v8 migration test above.
+@Test func migrateUpgradesExistingV8DatabaseToV9AddingFindingAcksTable() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-migrate-v8-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("v8.sqlite").path
+
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.exec(Database.schemaSQLv1)
+        try raw.exec(Database.schemaSQLv2)
+        try raw.exec(Database.schemaSQLv3)
+        try raw.exec(Database.schemaSQLv4)
+        try raw.exec(Database.schemaSQLv5)
+        try raw.exec(Database.schemaSQLv6)
+        try raw.exec(Database.schemaSQLv7)
+        try raw.exec(Database.schemaSQLv8)
+        try raw.run("INSERT INTO schema_version(version) VALUES (8);")
+    }
+
+    let database = try Database(path: path)
+
+    var version: Int64 = -1
+    try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
+        version = row.int64(0) ?? -1
+    }
+    #expect(version == 9)
+
+    // finding_acks table exists and is usable after the same migration.
+    #expect(try database.ackedKeys().isEmpty)
+    try database.ackFindingGroup(category: "residue", groupKey: "*.seq", note: "known Siril leftovers")
+    #expect(try database.ackedKeys() == ["residue|*.seq"])
+}
+
+@Test func ackFindingGroupThenUnackRoundTrips() throws {
+    let database = try Database(path: ":memory:")
+
+    #expect(try database.ackedKeys().isEmpty)
+
+    try database.ackFindingGroup(category: "residue", groupKey: ".DS_Store")
+    #expect(try database.ackedKeys() == ["residue|.DS_Store"])
+
+    try database.unackFindingGroup(category: "residue", groupKey: ".DS_Store")
+    #expect(try database.ackedKeys().isEmpty)
+}
+
+/// The ack key is `(category, groupKey)` -- deliberately NOT `findings.id` --
+/// so it survives a fresh audit run inserting a brand-new set of `findings`
+/// rows (with brand-new ids) that happen to reduce to the same group.
+@Test func ackFindingGroupKeySurvivesReinsertOfFindingsWithNewIDs() throws {
+    let database = try Database(path: ":memory:")
+
+    try database.ackFindingGroup(category: "residue", groupKey: "*.seq")
+
+    let runID1 = try database.beginRun(kind: "audit", root: "/lib", configJSON: nil)
+    try database.insertFinding(runID: runID1, Finding(severity: .suspicious, category: "residue", path: "a.seq", message: "m"))
+    try database.finishRun(id: runID1)
+
+    // A second, independent audit run re-discovers the same logical group
+    // under brand-new finding ids.
+    let runID2 = try database.beginRun(kind: "audit", root: "/lib", configJSON: nil)
+    try database.insertFinding(runID: runID2, Finding(severity: .suspicious, category: "residue", path: "b.seq", message: "m"))
+    try database.finishRun(id: runID2)
+
+    #expect(try database.ackedKeys().contains("residue|*.seq"))
+}
+
+@Test func ackFindingGroupUpsertsRatherThanDuplicating() throws {
+    let database = try Database(path: ":memory:")
+
+    try database.ackFindingGroup(category: "residue", groupKey: "*.seq", note: "first")
+    try database.ackFindingGroup(category: "residue", groupKey: "*.seq", note: "second")
+
+    var rowCount = 0
+    try database.db.query("SELECT ack_key FROM finding_acks;") { _ in rowCount += 1 }
+    #expect(rowCount == 1)
+}
+
+// MARK: - pruneFindings (B20 retention)
+
+/// The app's OWN `.astro_tool` database, not the image library the iron rule
+/// protects -- deleting rows here (via `pruneFindings`) is ordinary DAO
+/// housekeeping, same class as `markMissing`'s UPDATE or `removeTag`'s
+/// DELETE elsewhere in this file.
+@Test func pruneFindingsKeepsOnlyNewestAuditRunsFindings() throws {
+    let database = try Database(path: ":memory:")
+
+    var runIDs: [Int64] = []
+    for i in 0..<5 {
+        let runID = try database.beginRun(kind: "audit", root: "/lib", configJSON: nil)
+        try database.insertFinding(runID: runID, Finding(severity: .suspicious, category: "residue", path: "run\(i).seq", message: "m"))
+        try database.finishRun(id: runID)
+        runIDs.append(runID)
+    }
+
+    try database.pruneFindings(keepRuns: 3)
+
+    let keptRunIDs = Set(runIDs.suffix(3))
+    var seenRunIDs: Set<Int64> = []
+    try database.db.query("SELECT run_id FROM findings;") { row in
+        if let id = row.int64(0) { seenRunIDs.insert(id) }
+    }
+    #expect(seenRunIDs == keptRunIDs)
+
+    // The `runs` rows themselves are never deleted, only their findings.
+    var runRowCount = 0
+    try database.db.query("SELECT id FROM runs;") { _ in runRowCount += 1 }
+    #expect(runRowCount == 5)
+}
+
+@Test func pruneFindingsLeavesOtherRunKindsUntouched() throws {
+    let database = try Database(path: ":memory:")
+
+    // A non-"audit" run with its own findings row (hypothetical -- only
+    // AuditEngine writes findings in practice, but the DAO-level contract
+    // must not assume that) must never be touched by an audit-scoped prune.
+    let scanRunID = try database.beginRun(kind: "scan", root: "/lib", configJSON: nil)
+    try database.insertFinding(runID: scanRunID, Finding(severity: .suspicious, category: "residue", path: "scan.seq", message: "m"))
+    try database.finishRun(id: scanRunID)
+
+    for i in 0..<4 {
+        let runID = try database.beginRun(kind: "audit", root: "/lib", configJSON: nil)
+        try database.insertFinding(runID: runID, Finding(severity: .suspicious, category: "residue", path: "run\(i).seq", message: "m"))
+        try database.finishRun(id: runID)
+    }
+
+    try database.pruneFindings(keepRuns: 3)
+
+    var scanFindingCount = 0
+    try database.db.query("SELECT run_id FROM findings WHERE run_id = ?;", bind: [.int(scanRunID)]) { _ in scanFindingCount += 1 }
+    #expect(scanFindingCount == 1)
+}
+
+@Test func pruneFindingsIsIdempotent() throws {
+    let database = try Database(path: ":memory:")
+
+    for i in 0..<5 {
+        let runID = try database.beginRun(kind: "audit", root: "/lib", configJSON: nil)
+        try database.insertFinding(runID: runID, Finding(severity: .suspicious, category: "residue", path: "run\(i).seq", message: "m"))
+        try database.finishRun(id: runID)
+    }
+
+    try database.pruneFindings(keepRuns: 3)
+    var countAfterFirstPrune = 0
+    try database.db.query("SELECT run_id FROM findings;") { _ in countAfterFirstPrune += 1 }
+
+    try database.pruneFindings(keepRuns: 3)
+    var countAfterSecondPrune = 0
+    try database.db.query("SELECT run_id FROM findings;") { _ in countAfterSecondPrune += 1 }
+
+    #expect(countAfterFirstPrune == 3)
+    #expect(countAfterSecondPrune == 3)
 }

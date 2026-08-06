@@ -101,10 +101,6 @@ struct SidebarView: View {
         appState.calibNeeds.count { $0.matchedMasterPath == nil }
     }
 
-    private var sureErrorCount: Int {
-        appState.findings.count { $0.severity == .sureError }
-    }
-
     var body: some View {
         @Bindable var appState = appState
 
@@ -122,14 +118,29 @@ struct SidebarView: View {
             }
 
             Section("ÁLLAPOT") {
-                navRow("Kalibráció", systemImage: "thermometer", page: .calibration, badgeCount: missingCalibCount, badgeRed: missingCalibCount > 0)
-                navRow("Audit", systemImage: "checkmark.shield", page: .audit, badgeCount: sureErrorCount, badgeRed: sureErrorCount > 0)
-                // T2 adds a dedicated Takarítás segment/page; for now this
-                // routes to Audit (spec's explicit interim behavior).
                 navRow(
-                    "Takarítás", systemImage: "trash", page: .audit,
-                    badgeText: cleanupBadgeText
+                    "Kalibráció", systemImage: "thermometer", page: .calibration,
+                    badgeCount: missingCalibCount, badgeRed: missingCalibCount > 0
                 )
+                navRow(
+                    "Audit", systemImage: "checkmark.shield", page: .audit,
+                    badgeCount: appState.auditErrorBadgeCount, badgeRed: appState.auditErrorBadgeCount > 0
+                )
+                // R9-T2: routes to the Audit page's "Takarítható" segment
+                // (rather than a standalone page) -- `CleanupSummary` groups
+                // ARE the Audit page's third segment now, per A.5. A plain
+                // `Button` (not a `navRow`/`.tag`) because this row's tap
+                // needs a side effect (preselecting the segment) beyond
+                // what `List(selection:)`'s tag-based routing alone gives;
+                // the "Audit" row above still highlights whenever
+                // `currentPage == .audit`, tag-matched as usual.
+                Button {
+                    appState.auditSegment = .cleanable
+                    appState.currentPage = .audit
+                } label: {
+                    navRowLabel("Takarítás", systemImage: "trash", badgeText: cleanupBadgeText)
+                }
+                .buttonStyle(.plain)
             }
 
             Section("ESZKÖZÖK") {
@@ -156,6 +167,19 @@ struct SidebarView: View {
         _ title: String, systemImage: String, page: Page,
         badgeCount: Int? = nil, badgeText: String? = nil, badgeRed: Bool = false
     ) -> some View {
+        navRowLabel(title, systemImage: systemImage, badgeCount: badgeCount, badgeText: badgeText, badgeRed: badgeRed)
+            .tag(page)
+    }
+
+    /// Just the label half of `navRow` -- factored out so the "Takarítás"
+    /// row (a plain `Button`, not a `.tag`-selectable row, since it needs a
+    /// tap side effect beyond routing) can reuse the exact same title/icon/
+    /// badge layout.
+    @ViewBuilder
+    private func navRowLabel(
+        _ title: String, systemImage: String,
+        badgeCount: Int? = nil, badgeText: String? = nil, badgeRed: Bool = false
+    ) -> some View {
         let resolvedBadgeText = badgeText ?? badgeCount.flatMap { $0 > 0 ? "\($0)" : nil }
         Label {
             HStack {
@@ -168,7 +192,6 @@ struct SidebarView: View {
         } icon: {
             Image(systemName: systemImage)
         }
-        .tag(page)
     }
 
     private func targetRow(_ row: TargetRow) -> some View {

@@ -126,6 +126,35 @@ final class AppState: @unchecked Sendable {
     var includeSuspiciousInScript: Bool = false
 
     var cleanupSummary: CleanupSummary?
+    /// R9-T2/A.5's "Takarítható" segment `Limit` stepper -- how many paths
+    /// each expanded cleanup-category row shows before an "…további N" row,
+    /// same idea as the CLI `cleanup --limit` display cap (default 10).
+    /// Purely a view-layer display cap: `CleanupReport.build`'s own
+    /// `maxPathsPerGroup` (50) already limits what's fetched from the DB at
+    /// all; this only limits what's shown from that.
+    var cleanupLimit: Int = 10
+
+    /// R9-T2/A.5's three-segment Audit page picker.
+    enum AuditSegment: Hashable {
+        case errors
+        case suspicious
+        case cleanable
+    }
+    /// Which segment `AuditPage` shows -- settable by the sidebar's
+    /// "Takarítás" row (which preselects `.cleanable` before navigating to
+    /// `.audit`) as well as the page's own segmented picker.
+    var auditSegment: AuditSegment = .errors
+    /// R9-T2/A.5's toolbar toggle: when `false` (the default), any group
+    /// whose ack key is in `ackedKeys` is hidden entirely from the Hibák/
+    /// Gyanús list; when `true`, acked groups reappear, dimmed, with their
+    /// `⋯` menu offering "Rendben-jelölés visszavonása" instead of "...
+    /// megjelölése rendben lévőként".
+    var showAckedFindings: Bool = false
+    /// B5: every currently-acked `(category, groupKey)` key
+    /// (`Database.ackKey`), loaded once when the root opens (`openRoot`) and
+    /// kept in sync locally by `ackFindingGroup`/`unackFindingGroup` so a
+    /// view never has to re-query the DB just to check one group's state.
+    var ackedKeys: Set<String> = []
 
     var stats: [TargetStats] = []
     /// Every target's session detail rows, keyed by target name -- populated
@@ -413,6 +442,10 @@ final class AppState: @unchecked Sendable {
             rootStatus = .notScanned
             hasDSSFilelists = (try? opened.hasTrackedFileWithSuffix(".dssfilelist")) ?? false
             lastScanDate = try? opened.lastRunDate(kind: "scan")
+            // B5: acked groups must be known before the sidebar's badge or
+            // the Audit page can honor them, and neither is guaranteed to
+            // call into an explicit "load" method first.
+            ackedKeys = (try? opened.ackedKeys()) ?? []
         } catch let error as AstroError {
             handle(error)
         } catch {
@@ -561,9 +594,12 @@ final class AppState: @unchecked Sendable {
 
     /// `includeSuspicious` is stashed for later use by `generateSuggestions()`
     /// (and mirrors whatever the "Gyanúsak is a scriptbe" toggle is bound
-    /// to) -- the audit run itself always evaluates every rule plus
-    /// duplicate detection, same as the CLI's default.
-    func runAudit(includeSuspicious: Bool) {
+    /// to). `includeDuplicates` (R9-T2/A.5's "Duplikátum-keresés nélkül
+    /// (gyors)" menu item) skips `DuplicateFinder`'s content hashing -- the
+    /// slow part of a full audit on a large library -- while every
+    /// protocol-based rule still runs; defaults to `true` so every existing
+    /// call site (and the CLI's own default) is unaffected.
+    func runAudit(includeSuspicious: Bool, includeDuplicates: Bool = true) {
         guard let db else { return }
         let cfg = config
         includeSuspiciousInScript = includeSuspicious
@@ -574,7 +610,7 @@ final class AppState: @unchecked Sendable {
             do {
                 let (runID, findings) = try await Task.detached(priority: .userInitiated) {
                     let engine = AuditEngine(config: cfg, db: db)
-                    return try engine.run(includeDuplicates: true)
+                    return try engine.run(includeDuplicates: includeDuplicates)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.lastRunID = runID
@@ -594,6 +630,46 @@ final class AppState: @unchecked Sendable {
                 self.handle(error)
             }
             self.endOperation(opID)
+        }
+    }
+
+    // MARK: - Finding acks (B5)
+
+    /// The sidebar's Audit badge (spec A.5/T2's "sidebar Audit badge counts
+    /// sureError groups EXCLUDING acked ones") -- grouped via the same
+    /// `FindingGrouper` the page itself uses, so a single recurring root
+    /// cause (e.g. one nested-session-tree finding) counts once, and any
+    /// group the user has already acked away is excluded so the badge stops
+    /// nagging about something already reviewed.
+    var auditErrorBadgeCount: Int {
+        let sureErrors = findings.filter { $0.severity == .sureError }
+        let groups = FindingGrouper.group(sureErrors, config: config)
+        return groups.filter { !ackedKeys.contains(Database.ackKey(category: $0.key.category, groupKey: $0.key.groupKey)) }.count
+    }
+
+    /// Marks one `FindingGrouper` group as acknowledged so it stays hidden
+    /// (unless `showAckedFindings` is on) across re-audits -- keyed on
+    /// `(category, groupKey)`, not any individual finding's id, which is why
+    /// this survives `runAudit` inserting a fresh set of `findings` rows.
+    func ackFindingGroup(category: String, groupKey: String, note: String? = nil) {
+        guard let db else { return }
+        do {
+            try db.ackFindingGroup(category: category, groupKey: groupKey, note: note)
+            ackedKeys.insert(Database.ackKey(category: category, groupKey: groupKey))
+        } catch {
+            handle(error)
+        }
+    }
+
+    /// Reverses `ackFindingGroup` -- the group reappears (undimmed) the next
+    /// time findings are shown.
+    func unackFindingGroup(category: String, groupKey: String) {
+        guard let db else { return }
+        do {
+            try db.unackFindingGroup(category: category, groupKey: groupKey)
+            ackedKeys.remove(Database.ackKey(category: category, groupKey: groupKey))
+        } catch {
+            handle(error)
         }
     }
 
@@ -1548,6 +1624,22 @@ final class AppState: @unchecked Sendable {
             .appendingPathComponent(".astro_tool", isDirectory: true)
             .appendingPathComponent("config.json", isDirectory: false)
         NSWorkspace.shared.activateFileViewerSelecting([configURL])
+    }
+
+    /// Reveals one root-relative path in Finder -- the Audit page's group
+    /// `⋯` menu's "Első fájl megnyitása Finderben" (R9-T2/A.5).
+    func revealPathInFinder(_ relativePath: String) {
+        let url = URL(fileURLWithPath: config.rootPath, isDirectory: true).appendingPathComponent(relativePath)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    /// Copies every given root-relative path, one per line, to the general
+    /// pasteboard -- the Audit page's group `⋯` menu's "Összes útvonal
+    /// másolása" (R9-T2/A.5).
+    func copyPathsToPasteboard(_ paths: [String]) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(paths.joined(separator: "\n"), forType: .string)
     }
 
     // MARK: - First-run / staleness

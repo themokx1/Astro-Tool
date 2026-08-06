@@ -8,6 +8,33 @@ történik.
 
 ## [Unreleased]
 
+### Added
+
+- **Audit-oldal átépítése: Hibák/Gyanús/Takarítható háromszegmenses reframing +
+  találat-elfogadás (ack) + findings-retenció** (R9-T2): a régi egyetlen
+  "Gyanús" vödör (a valós könyvtáron 3 545, 88%-ban takarítható maradék) helyett
+  `Views/AuditPage.swift` egy `Picker(.segmented)`-et ad — `Hibák` (biztos
+  hiba) / `Gyanús` (gyanús MÍNUSZ residue MÍNUSZ duplicate-content) /
+  `Takarítható` (a `CleanupSummary` csoportjai) —, 4 fejléc-tile-lal (Biztos
+  hiba/Gyanús/Takarítható GB/Szándékos). A Hibák/Gyanús csoport-fejlécek `⋯`
+  menüt kaptak (Csoport megjelölése rendben lévőként/Rendben-jelölés
+  visszavonása, Első fájl megnyitása Finderben, Összes útvonal másolása); a
+  szabadszöveges kategória-szűrő többválasztós `Menu` lett; toolbar-toggle
+  "Rendben-jelöltek megjelenítése" mutatja/rejti az elfogadott csoportokat. A
+  Takarítható szegmens hierarchikus `Table`-t ad (Kategória/Fájlok/Méret,
+  kinyitható útvonal-listával + "…további N" sorral, `Limit` stepperrel) egy
+  állandó banner alatt a Vasszabályról ("a script `mv`-vel karanténba mozgat,
+  soha nem töröl"). Toolbar: "Audit futtatása" `Menu`-primary-actionnel
+  ("Duplikátum-keresés nélkül (gyors)" menüponttal, a menüsorban is), a két
+  script egy "Script…" menübe ("Javító script (hibák)…" /
+  "Karantén-script (takarítható)…"). Új `finding_acks` tábla (schema v9,
+  `Database.ackFindingGroup`/`unackFindingGroup`/`ackedKeys`, kulcs
+  `(category, groupKey)` — túléli az újra-auditot); a sidebar Audit-badge
+  ezt a csoport-szintű, ack-mentes számot mutatja. `AuditEngine.run` minden
+  audit végén `Database.pruneFindings(keepRuns: 3)`-t hív, hogy a `findings`
+  tábla (32k+ sor 12 run-ból, korábban soha nem takarítva) ne nőjön
+  korlátlanul.
+
 ## [0.8.0] - 2026-08-05
 
 ### Added

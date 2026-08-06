@@ -119,6 +119,15 @@ public final class AuditEngine {
         }
         try db.finishRun(id: runID)
 
+        // B20 retention: the `findings` table otherwise grows unbounded (32k+
+        // rows across 12 runs on a real library, never pruned before this) --
+        // this is the app's OWN `.astro_tool` database, not the image
+        // library the iron rule protects, so deleting old rows here is
+        // ordinary housekeeping. One call site (here, not the CLI or the app
+        // layer) so both benefit; best-effort, since a pruning failure must
+        // never turn an otherwise-successful audit into a reported error.
+        try? db.pruneFindings(keepRuns: 3)
+
         let sorted = findings.sorted { lhs, rhs in
             let leftRank = Self.severityRank(lhs.severity)
             let rightRank = Self.severityRank(rhs.severity)

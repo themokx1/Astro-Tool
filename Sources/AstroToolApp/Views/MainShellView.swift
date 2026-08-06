@@ -103,7 +103,7 @@ private struct DetailContainerView: View {
         case .allTargets: StatsView()
         case .target(let name): QualityView(initialTarget: name)
         case .calibration: CalibrationView()
-        case .audit: AuditView()
+        case .audit: AuditPage()
         case .sensor: SensorPage()
         case .searchResults: SearchResultsPage()
         }

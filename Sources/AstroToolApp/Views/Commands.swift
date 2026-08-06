@@ -85,6 +85,14 @@ struct AstroToolCommands: Commands {
             .keyboardShortcut("a", modifiers: [.command, .option])
             .disabled(AppState.shared?.db == nil)
 
+            // R9-T2/A.8: same "skip content hashing" fast path as the Audit
+            // page toolbar's Menu item, exposed at the menu-bar level too.
+            Button("Duplikátum-keresés nélkül auditálás") {
+                guard let appState = AppState.shared else { return }
+                appState.runAudit(includeSuspicious: appState.includeSuspiciousInScript, includeDuplicates: false)
+            }
+            .disabled(AppState.shared?.db == nil)
+
             Divider()
 
             // T6 wires these against the real batch operations; kept here

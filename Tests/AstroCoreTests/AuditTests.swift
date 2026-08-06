@@ -513,6 +513,32 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
     }
 }
 
+// MARK: - Findings retention (B20)
+
+/// `AuditEngine.run` calls `Database.pruneFindings(keepRuns: 3)` at the end
+/// of every run (see its own unit tests in `DatabaseTests.swift` for the
+/// DAO-level behavior) -- this is the integration-level guard that the real
+/// call site actually wires it up, using the same fixture library every
+/// other `AuditEngine` test in this file uses.
+@Test func auditEngineRunPrunesFindingsToNewestThreeRunsAutomatically() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    let engine = AuditEngine(config: fixture.config, db: fixture.db)
+    var runIDs: [Int64] = []
+    for _ in 0..<5 {
+        let (runID, _) = try engine.run()
+        runIDs.append(runID)
+    }
+
+    var seenRunIDs: Set<Int64> = []
+    try fixture.db.db.query("SELECT DISTINCT run_id FROM findings;") { row in
+        if let id = row.int64(0) { seenRunIDs.insert(id) }
+    }
+
+    #expect(seenRunIDs == Set(runIDs.suffix(3)))
+}
+
 // MARK: - Unit tests for the small helpers
 
 @Test func globMatcherHandlesSimpleWildcards() throws {
