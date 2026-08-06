@@ -31,6 +31,10 @@ Commands:
   rate          [--root R] --target T [--date D] [--json] [--no-siril] [--force]
   stats         [--root R] [--target T] [--json] [--gross] [--sessions (requires --target)] [--tag TAG]
                 [--timeline (requires --target) [--date D]]
+                [--filters (requires --target) [--date D]]
+                --filters: per-filter usable integration breakdown (mono
+                LRGB/SHO "how many hours per filter") instead of the normal
+                target stats; --date scopes it to one session.
   quality       --target T [--date D] [--root R] [--json]
   nights        [--root R] [--json] [--year Y] [--month M (requires --year)]
                 Cross-target session browser: every imaging night across
@@ -46,16 +50,39 @@ Commands:
   tag add       --target T [--date D] <tag> [--root R] [--json]
   tag remove    --target T [--date D] <tag> [--root R] [--json]
   tag list      [--target T] [--date D] [--root R] [--json]
+  ack list      [--root R] [--json]
+  ack add       <category|groupKey> [--note N] [--root R] [--json]
+  ack remove    <category|groupKey> [--root R] [--json]
+                Finding-group acknowledgments (Audit page "Rendben van,
+                ismerem" state). <category|groupKey> is the exact ack_key
+                shape (e.g. as seen in `audit --json` finding rows).
+  note show     --target T --date D [--root R] [--json]
+  note set      --target T --date D --key K --value V [--root R] [--json]
+                Session night-notes (Bortle/SQM/seeing/... editor). `show`
+                merges the store with README-sourced notes (README wins);
+                `set` never touches README.txt; an empty/omitted --value
+                removes that key.
+  goal set      --target T --hours H [--root R] [--json]
+  goal clear    --target T [--root R] [--json]
+                Target goal-hours tag (`goal:<hours>h`) editing; --hours
+                must be > 0 for 'set'. Prints the resulting tag state.
   plan          [--date YYYY-MM-DD] [--min-alt 30] [--root R] [--json]
                 [--month [--nights 30]]
                 Without --month: tonight's per-target observation plan.
                 With --month: a month-at-a-glance planning calendar (dark
                 hours, Moon%, top-3 targets per night) instead.
+  night-info    [--date YYYY-MM-DD] [--root R] [--json]
+                Tonight's dark-hours/Moon summary alone (no target
+                coordinate needed) -- illumination, rise/set label, and the
+                same site resolution `plan` uses.
   projects      [--root R] [--json]
   export        --target T --format astrobin|csv|md [--out PATH] [--root R]
   health        --target T [--date D] [--root R] [--json]
   panels        --target T [--root R] [--json]
-  search        <query> [--root R] [--json]
+  search        <query> [--root R] [--json] [--all]
+                Without --all: session-notes-only lookup (Bortle/SQM/free
+                text). With --all: the sidebar's global search instead --
+                targets, sessions, files, and notes in one result set.
   solve         --target T|--all [--frames N] [--force] [--root R] [--json]
   sensor        [--measure] [--json] [--root R]
   ingest-dss    [--root R] [--json]
@@ -526,6 +553,7 @@ func cmdStats(_ args: [String]) throws -> Int32 {
         FlagSpec("--sessions", takesValue: false),
         FlagSpec("--tag", takesValue: true),
         FlagSpec("--timeline", takesValue: false),
+        FlagSpec("--filters", takesValue: false),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
     let showGross = parsed.has("--gross")
@@ -537,6 +565,10 @@ func cmdStats(_ args: [String]) throws -> Int32 {
         }
         if parsed.has("--timeline") {
             eprint("error: --timeline requires --target")
+            return 1
+        }
+        if parsed.has("--filters") {
+            eprint("error: --filters requires --target")
             return 1
         }
         let config = try resolveConfig(rootFlag: parsed.value("--root"))
@@ -558,6 +590,25 @@ func cmdStats(_ args: [String]) throws -> Int32 {
     let config = try resolveConfig(rootFlag: parsed.value("--root"))
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
+
+    // R10-B8: per-filter integration breakdown -- a distinct report mode,
+    // same "replaces the normal target stats entirely" precedent
+    // `--sessions`/`--timeline` already set, checked first since it's the
+    // most specific ask.
+    if parsed.has("--filters") {
+        let breakdown: [FilterIntegration]
+        if let date = parsed.value("--date") {
+            breakdown = try FilterBreakdownQueries.breakdown(db: db, config: config, target: target, date: date)
+        } else {
+            breakdown = try FilterBreakdownQueries.breakdown(db: db, config: config, target: target)
+        }
+        if parsed.has("--json") {
+            try printJSON(breakdown)
+        } else {
+            printFilterBreakdown(breakdown)
+        }
+        return 0
+    }
 
     if parsed.has("--sessions") {
         let sessions = try SessionStatsQueries.sessions(target: target, db: db, config: config)
@@ -723,6 +774,26 @@ private func printSingleTargetStats(_ s: TargetStats, showGross: Bool) {
     print("wide field: \(s.isWideField ? "yes" : "no")")
     print("cameras: \(s.cameras.joined(separator: ", "))")
     print("filters: \(s.filters.joined(separator: ", "))")
+}
+
+/// `stats --target T --filters` table -- Hungarian SZŰRŐ/KERET/INTEGRÁCIÓ
+/// columns, same padded-column style `printStatsTable`/`printPlanTable` use.
+/// Rows already arrive seconds-descending from
+/// `FilterBreakdownQueries.breakdown`.
+private func printFilterBreakdown(_ breakdown: [FilterIntegration]) {
+    guard !breakdown.isEmpty else {
+        print("nincs szűrő-adat")
+        return
+    }
+
+    let filterWidth = max(breakdown.map { $0.filter.count }.max() ?? 5, 5)
+    let header = "SZŰRŐ".padding(toLength: filterWidth, withPad: " ", startingAt: 0)
+    print("\(header)  KERET  INTEGRÁCIÓ")
+    for f in breakdown {
+        let name = f.filter.padding(toLength: filterWidth, withPad: " ", startingAt: 0)
+        let frames = String(f.usableFrameCount).padding(toLength: 5, withPad: " ", startingAt: 0)
+        print("\(name)  \(frames)  \(formatHoursMinutes(f.integrationSeconds))")
+    }
 }
 
 // MARK: - quality
@@ -1390,16 +1461,21 @@ private func splitPositionalArgs(_ args: [String], specs: [FlagSpec]) -> (flagAr
 
 // MARK: - search
 
-/// `astrotool search <query> [--root R] [--json]` -- R6-4's searchable
-/// night log: a plain `LIKE` lookup over `session_notes` (Bortle, SQM,
-/// seeing, dew, free-form notes -- everything the user typed into a
+/// `astrotool search <query> [--root R] [--json] [--all]` -- R6-4's
+/// searchable night log: a plain `LIKE` lookup over `session_notes` (Bortle,
+/// SQM, seeing, dew, free-form notes -- everything the user typed into a
 /// session's `README.txt` that a FITS header could never carry). Takes a
 /// bare positional `<query>` alongside its flags, same
 /// `splitPositionalArgs` split as `tag add`/`tag remove` use.
+///
+/// `--all` (R10-B8) switches to the sidebar's ⌘F global search
+/// (`Database.searchAll` -- targets/sessions/files/notes) instead of the
+/// notes-only lookup above.
 func cmdSearch(_ args: [String]) throws -> Int32 {
     let specs = [
         FlagSpec("--root", takesValue: true),
         FlagSpec("--json", takesValue: false),
+        FlagSpec("--all", takesValue: false),
     ]
     let (flagArgs, positionals) = splitPositionalArgs(args, specs: specs)
     guard positionals.count == 1 else {
@@ -1413,6 +1489,29 @@ func cmdSearch(_ args: [String]) throws -> Int32 {
     let config = try resolveConfig(rootFlag: parsed.value("--root"))
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
+
+    if parsed.has("--all") {
+        // Exactly `AppState.runSearch`'s own sequence: `searchAll`'s notes
+        // section only ever sees README-sourced notes, so union in whatever
+        // the T6 note editor additionally holds, README winning any
+        // `(target, date, key)` collision -- `mergeNoteSearchResults` below
+        // is the same precedence rule, just reused instead of a second copy.
+        var results = try db.searchAll(query: query)
+        let sessionCandidates = try db.allSessionPairs()
+        let storeHits = SessionNoteStore.search(
+            query: query, root: URL(fileURLWithPath: config.rootPath, isDirectory: true), sessions: sessionCandidates
+        )
+        results.notes = mergeNoteSearchResults(readme: results.notes, store: storeHits)
+
+        if parsed.has("--json") {
+            try printJSON(results)
+        } else if results.isEmpty {
+            print("no matches for \"\(query)\"")
+        } else {
+            printSearchAllResults(results)
+        }
+        return 0
+    }
 
     // T6/B4: `db.searchNotes` only ever sees README-parsed notes -- union in
     // whatever the note editor (`SessionNoteStore`, `.astro_tool/notes/`)
@@ -1439,6 +1538,41 @@ func cmdSearch(_ args: [String]) throws -> Int32 {
         printSearchResultsGrouped(results)
     }
     return 0
+}
+
+/// Human output for `search <query> --all` -- mirrors
+/// `SearchResultsPage.resultsList`'s section order (Célpontok/Sessionök/
+/// Fájlok/Jegyzetek) and its `fileSectionTitle` "N / total" convention when
+/// `searchFileCap` truncated the file list.
+private func printSearchAllResults(_ results: SearchResults) {
+    if !results.targets.isEmpty {
+        print("Célpontok (\(results.targets.count)):")
+        for hit in results.targets {
+            let suffix = hit.displayName != hit.target ? " (\(hit.target))" : ""
+            print("  \(hit.displayName)\(suffix)")
+        }
+    }
+    if !results.sessions.isEmpty {
+        print("Sessionök (\(results.sessions.count)):")
+        for hit in results.sessions {
+            print("  \(hit.target) [\(hit.date)]")
+        }
+    }
+    if !results.files.isEmpty {
+        let header = results.totalFileMatches > results.files.count
+            ? "Fájlok (\(results.files.count) / \(results.totalFileMatches)):"
+            : "Fájlok (\(results.files.count)):"
+        print(header)
+        for hit in results.files {
+            print("  \(hit.path)  (\(hit.kind), \(hit.sizeBytes) B)")
+        }
+    }
+    if !results.notes.isEmpty {
+        print("Jegyzetek (\(results.notes.count)):")
+        for hit in results.notes {
+            print("  \(hit.target) [\(hit.date)] \(hit.key): \(hit.value)")
+        }
+    }
 }
 
 /// Unions `readme` (`db.searchNotes`) with `store` (`SessionNoteStore.search`)
@@ -1493,6 +1627,311 @@ private func printSearchResultsGrouped(_ results: [(target: String, date: String
             print("  \(row.key): \(row.value)")
         }
     }
+}
+
+// MARK: - ack (R10-B8)
+
+/// `astrotool ack list|add|remove` -- CLI parity for the Audit page's
+/// finding-group acknowledgments (`finding_acks`, R9-T2/B5), app-only until
+/// now. `add`/`remove` take a single positional formatted exactly like
+/// `Database.ackKey`'s own `"<category>|<groupKey>"` shape (visible in
+/// `audit --json`'s finding rows, or copyable from the app) rather than two
+/// separate flags -- `category` never contains `|` (it's always one of the
+/// small fixed set of `Finding.category` values), so splitting on the FIRST
+/// `|` unambiguously recovers `groupKey` even when IT contains one (a
+/// `groupKey` is often a filesystem path). Same `splitPositionalArgs` split
+/// `tag add`/`search` already use for their own positionals.
+func cmdAck(_ args: [String]) throws -> Int32 {
+    guard let sub = args.first else {
+        eprint("error: expected 'list', 'add', or 'remove'")
+        eprint(usageText)
+        return 1
+    }
+    let rest = Array(args.dropFirst())
+
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+        FlagSpec("--note", takesValue: true),
+    ]
+
+    switch sub {
+    case "list":
+        return try cmdAckList(rest, specs: specs)
+    case "add", "remove":
+        return try cmdAckAddOrRemove(rest, specs: specs, isAdd: sub == "add")
+    default:
+        eprint("error: expected 'list', 'add', or 'remove', got '\(sub)'")
+        eprint(usageText)
+        return 1
+    }
+}
+
+private func cmdAckList(_ args: [String], specs: [FlagSpec]) throws -> Int32 {
+    let (flagArgs, positionals) = splitPositionalArgs(args, specs: specs)
+    guard positionals.isEmpty else {
+        eprint("error: unexpected argument: \(positionals.joined(separator: " "))")
+        eprint(usageText)
+        return 1
+    }
+    let parsed = try ArgParser.parse(flagArgs, specs: specs)
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    let acks = try db.allAcks()
+
+    if parsed.has("--json") {
+        try printJSON(acks)
+    } else {
+        printAckList(acks)
+    }
+    return 0
+}
+
+private func cmdAckAddOrRemove(_ args: [String], specs: [FlagSpec], isAdd: Bool) throws -> Int32 {
+    let (flagArgs, positionals) = splitPositionalArgs(args, specs: specs)
+    guard positionals.count == 1 else {
+        eprint("error: expected a single <category|groupKey> argument, got \(positionals.count)")
+        eprint(usageText)
+        return 1
+    }
+    let raw = positionals[0]
+    guard let sepIndex = raw.firstIndex(of: "|") else {
+        eprint("error: expected <category|groupKey> (the same shape as an ack_key), got '\(raw)'")
+        eprint(usageText)
+        return 1
+    }
+    let category = String(raw[raw.startIndex..<sepIndex])
+    let groupKey = String(raw[raw.index(after: sepIndex)...])
+    guard !category.isEmpty, !groupKey.isEmpty else {
+        eprint("error: both category and groupKey must be non-empty in <category|groupKey>")
+        return 1
+    }
+    let parsed = try ArgParser.parse(flagArgs, specs: specs)
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+
+    if isAdd {
+        try db.ackFindingGroup(category: category, groupKey: groupKey, note: parsed.value("--note"))
+    } else {
+        try db.unackFindingGroup(category: category, groupKey: groupKey)
+    }
+
+    let ackKey = Database.ackKey(category: category, groupKey: groupKey)
+    if parsed.has("--json") {
+        try printJSON(["ack_key": ackKey])
+    } else {
+        print("\(isAdd ? "acked" : "unacked"): \(ackKey)")
+    }
+    return 0
+}
+
+private func printAckList(_ acks: [FindingAckRecord]) {
+    guard !acks.isEmpty else {
+        print("no acked finding groups")
+        return
+    }
+    for ack in acks {
+        let key = Database.ackKey(category: ack.category, groupKey: ack.groupKey)
+        var line = "\(key)  (acked: \(formatTimestamp(ack.ackedAt)))"
+        if let note = ack.note, !note.isEmpty {
+            line += "  note: \(note)"
+        }
+        print(line)
+    }
+}
+
+private func formatTimestamp(_ epochSeconds: Double) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone.current
+    formatter.dateFormat = "yyyy-MM-dd HH:mm"
+    return formatter.string(from: Date(timeIntervalSince1970: epochSeconds))
+}
+
+// MARK: - note (R10-B8)
+
+/// `astrotool note show|set` -- CLI parity for the session night-notes
+/// editor (`SessionNoteStore`, R9-T6/B4), app-only until now. Never touches
+/// `README.txt` -- see `SessionNoteStore`'s own doc comment for why; `show`
+/// merges it with the README-sourced notes the exact way
+/// `SessionStatsQueries.computeSessionDetail` does (README wins any key
+/// collision), `set` only ever writes to `.astro_tool/notes/`.
+func cmdNote(_ args: [String]) throws -> Int32 {
+    guard let sub = args.first else {
+        eprint("error: expected 'show' or 'set'")
+        eprint(usageText)
+        return 1
+    }
+    let rest = Array(args.dropFirst())
+
+    switch sub {
+    case "show":
+        return try cmdNoteShow(rest)
+    case "set":
+        return try cmdNoteSet(rest)
+    default:
+        eprint("error: expected 'show' or 'set', got '\(sub)'")
+        eprint(usageText)
+        return 1
+    }
+}
+
+private func cmdNoteShow(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--date", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    guard let target = parsed.value("--target"), let date = parsed.value("--date") else {
+        eprint("error: --target and --date are required")
+        eprint(usageText)
+        return 1
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+
+    // Same merge `SessionStatsQueries.computeSessionDetail` uses for
+    // `SessionDetail.notes`: store-written notes fill in, README wins any
+    // key collision ("README nyer").
+    let readmeNotes = try db.sessionNotes(target: target, date: date)
+    let storeNotes = SessionNoteStore.load(
+        target: target, date: date, root: URL(fileURLWithPath: config.rootPath, isDirectory: true)
+    )
+    let notes = storeNotes.merging(readmeNotes) { _, readmeValue in readmeValue }
+
+    if parsed.has("--json") {
+        try printJSON(notes)
+    } else if notes.isEmpty {
+        print("no notes for \(target) [\(date)]")
+    } else {
+        for key in notes.keys.sorted() {
+            print("\(key): \(notes[key] ?? "")")
+        }
+    }
+    return 0
+}
+
+private func cmdNoteSet(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--date", takesValue: true),
+        FlagSpec("--key", takesValue: true),
+        FlagSpec("--value", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    guard let target = parsed.value("--target"), let date = parsed.value("--date"), let key = parsed.value("--key") else {
+        eprint("error: --target, --date, and --key are required")
+        eprint(usageText)
+        return 1
+    }
+    // An absent OR blank --value REMOVES the key: `SessionNoteStore.save`
+    // already drops any blank-value pair when it writes the file (see its
+    // own doc comment), so merging in an empty string here and saving is
+    // exactly a delete -- no separate "remove" code path needed.
+    let value = parsed.value("--value") ?? ""
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    // No DB involved (`SessionNoteStore` is filesystem-only) -- same
+    // TCC/volume-mount classification as `new-session`'s own write path,
+    // without opening a database this command has no use for.
+    try ensureRootAccessible(config)
+    let writeGuard = makeWriteGuard(config: config)
+    let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+
+    var notes = SessionNoteStore.load(target: target, date: date, root: root)
+    notes[key] = value
+    try SessionNoteStore.save(target: target, date: date, notes: notes.map { ($0.key, $0.value) }, using: writeGuard)
+
+    let path = writeGuard.toolDir.appendingPathComponent(SessionNoteStore.relativePath(target: target, date: date)).path
+    if parsed.has("--json") {
+        try printJSON(["path": path])
+    } else {
+        print("saved: \(path)")
+    }
+    return 0
+}
+
+// MARK: - goal (R10-B8)
+
+/// `astrotool goal set|clear --target T [--hours H]` -- CLI parity for the
+/// target-detail page's inline goal hour-stepper (`AppState.setGoal`,
+/// R9-T3/B11), app-only until now. Reuses the exact `goal:<hours>h` tag
+/// text `GoalTag.format` produces (kept byte-for-byte identical to
+/// `AppState`'s own private `formatGoalTag` -- see that function's doc
+/// comment) so a goal set from either surface round-trips through
+/// `GoalTag.parse` the same way and never produces two different-looking
+/// tags for the same target.
+func cmdGoal(_ args: [String]) throws -> Int32 {
+    guard let sub = args.first else {
+        eprint("error: expected 'set' or 'clear'")
+        eprint(usageText)
+        return 1
+    }
+    let rest = Array(args.dropFirst())
+
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--hours", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(rest, specs: specs)
+
+    guard let target = parsed.value("--target") else {
+        eprint("error: --target is required")
+        eprint(usageText)
+        return 1
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    let existingGoalTags = try db.tags(target: target, sessionDate: nil).filter { $0.lowercased().hasPrefix("goal:") }
+
+    switch sub {
+    case "set":
+        guard let hoursRaw = parsed.value("--hours"), let hours = Double(hoursRaw), hours > 0 else {
+            eprint("error: --hours (a number > 0) is required for 'set'")
+            eprint(usageText)
+            return 1
+        }
+        for tag in existingGoalTags {
+            try db.removeTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: tag))
+        }
+        try db.addTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: GoalTag.format(hours: hours)))
+    case "clear":
+        for tag in existingGoalTags {
+            try db.removeTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: tag))
+        }
+    default:
+        eprint("error: expected 'set' or 'clear', got '\(sub)'")
+        eprint(usageText)
+        return 1
+    }
+
+    let resultTag = try db.tags(target: target, sessionDate: nil).first { $0.lowercased().hasPrefix("goal:") }
+    if parsed.has("--json") {
+        try printJSON(GoalResult(target: target, goalTag: resultTag))
+    } else {
+        print("\(target): \(resultTag ?? "nincs cél")")
+    }
+    return 0
+}
+
+/// `goal set`/`goal clear`'s JSON echo of the resulting tag state --
+/// `goalTag` is `nil` after a `clear` (or a `set` on a target that somehow
+/// still has none), never a fabricated placeholder.
+private struct GoalResult: Encodable {
+    let target: String
+    let goalTag: String?
 }
 
 // MARK: - plan
@@ -1670,6 +2109,60 @@ private func printPlanTable(_ plans: [TargetPlan]) {
 private func moonColumnText(_ plan: TargetPlan) -> String {
     guard let illum = plan.moonIlluminationPercent, let sep = plan.moonSeparationDeg else { return "-" }
     return String(format: "%.0f°/%.0f%%", sep, illum)
+}
+
+// MARK: - night-info (R10-B8)
+
+/// `astrotool night-info [--date YYYY-MM-DD] [--json]` -- exposes
+/// `Planner.nightInfo` (the "Ma este" tile row's dark-time/Moon summary,
+/// R9-T4/A.1) standalone: dark hours, note (set exactly when `darkHours` is
+/// `nil`), Moon illumination, and the Moon's rise/set/always-up/always-down
+/// label for the night -- without needing a target coordinate at all,
+/// unlike `plan`. Resolves the site the same way `plan` does
+/// (`Planner.resolveSite`), so the two commands never disagree about where
+/// "tonight" is being computed for.
+func cmdNightInfo(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--date", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    var date: Date?
+    if let raw = parsed.value("--date") {
+        guard let parsedDate = parsePlanDate(raw) else {
+            eprint("error: invalid --date (expected YYYY-MM-DD): \(raw)")
+            return 1
+        }
+        date = parsedDate
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let site = try Planner.resolveSite(db: db, config: config)
+    let info = Planner.nightInfo(date: date, site: site)
+
+    if parsed.has("--json") {
+        try printJSON(info)
+    } else {
+        printNightInfo(info)
+    }
+    return 0
+}
+
+/// PRIVACY: never prints the site's actual latitude/longitude -- same rule
+/// `printPlanHeader` follows, only derived times/phase are shown.
+private func printNightInfo(_ info: NightInfo) {
+    if let darkHours = info.darkHours {
+        print("sötét óra: \(String(format: "%.1f", darkHours))")
+    } else {
+        print("sötét óra: n/a\(info.note.map { " (\($0))" } ?? "")")
+    }
+    let moonEvent = info.moonEventLabel.map { ", \($0)" } ?? ""
+    print("Hold: \(String(format: "%.0f%%", info.moonIlluminationPercent))\(moonEvent)")
 }
 
 // MARK: - projects
