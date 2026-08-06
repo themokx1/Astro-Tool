@@ -391,4 +391,68 @@ public enum FieldGeometry {
         let second = index % letters.count
         return String(letters[first]) + String(letters[second])
     }
+
+    // MARK: - Dominant-setup field of view (R10-B4)
+
+    /// The astrophotography library's dominant equipment setup's median
+    /// field of view, across every usable, WCS-resolved light frame on
+    /// record -- "if I don't already have a specific target/session in
+    /// mind, this is roughly what my camera+telescope sees" for the
+    /// "Felfedezés" catalog-discovery page (R10-B4), which needs a FOV to
+    /// judge whether a catalog target would fit in one frame with NO
+    /// specific target/session context to draw one from (unlike `panels`,
+    /// which is always scoped to one target's own frames).
+    ///
+    /// "Dominant setup" reuses `EquipmentProfile`'s own fingerprint/dominant
+    /// logic verbatim (never reinvented): every usable light in the WHOLE
+    /// library (not scoped to one target, unlike `EquipmentProfile.
+    /// sessionFingerprints`, which is scoped to one target+date) is
+    /// fingerprinted, and the most common fingerprint's OWN frames are the
+    /// population this function draws its median from. A frame with no
+    /// derivable fingerprint at all, one whose fingerprint isn't the
+    /// dominant one, or one whose `frameField` doesn't resolve BOTH
+    /// `fovWidthDeg` and `fovHeightDeg` (no WCS resolution at all, or a
+    /// scale with no matching `NAXISn` to turn into a FOV) contributes
+    /// nothing -- both widths and heights are always medianed over the SAME
+    /// population of frames, never independently. `nil` when that
+    /// population ends up empty (no usable light in the whole library both
+    /// matches the dominant fingerprint AND has a resolvable FOV) --
+    /// "honest n/a", never a guess, same R10 rule every other Sky/Stats
+    /// query follows.
+    public static func dominantFOV(db: Database, config: AstroConfig) throws -> (widthDeg: Double, heightDeg: Double)? {
+        let files = try db.allFiles(includeMissing: false)
+        let lights = files.filter { $0.area == .sessions && $0.role == .light }
+        guard !lights.isEmpty else { return nil }
+
+        var metaByFileID: [Int64: FITSMetaRecord] = [:]
+        for file in lights {
+            guard let id = file.id else { continue }
+            if let meta = try db.fitsMeta(fileID: id) { metaByFileID[id] = meta }
+        }
+
+        let buckets = FrameSet.lightBuckets(files: lights, meta: metaByFileID, config: config)
+        guard !buckets.usable.isEmpty else { return nil }
+
+        let counts = EquipmentProfile.fingerprintCounts(usableLights: buckets.usable, meta: metaByFileID)
+        guard let dominant = EquipmentProfile.dominant(counts) else { return nil }
+
+        var widths: [Double] = []
+        var heights: [Double] = []
+        for file in buckets.usable {
+            guard let id = file.id, let meta = metaByFileID[id],
+                  EquipmentProfile.fingerprint(meta: meta, headerJSON: meta.headerJSON) == dominant,
+                  let field = frameField(
+                      headerJSON: meta.headerJSON, naxis1: meta.naxis1, naxis2: meta.naxis2,
+                      solvedRA: meta.solvedRA, solvedDec: meta.solvedDec,
+                      solvedScaleArcsec: meta.solvedScaleArcsec, solvedRotationDeg: meta.solvedRotationDeg
+                  ),
+                  let width = field.fovWidthDeg, let height = field.fovHeightDeg
+            else { continue }
+            widths.append(width)
+            heights.append(height)
+        }
+        guard !widths.isEmpty else { return nil }
+
+        return (widthDeg: TargetCoordinates.median(widths), heightDeg: TargetCoordinates.median(heights))
+    }
 }

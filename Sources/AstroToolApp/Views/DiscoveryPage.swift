@@ -1,0 +1,611 @@
+import AstroCore
+import SwiftUI
+
+/// R10-B4's "Felfedezés" page: what should I shoot tonight from the
+/// built-in catalog (`TargetCatalog`, 217 Messier + bright NGC/IC/Sharpless
+/// targets, R10-A4) that I'm not already collecting? Backed by
+/// `DiscoveryPlanner.discover` -- the exact same altitude/Moon/verdict/score
+/// math `Planner.plan` runs for the user's OWN library, just swept over the
+/// static catalog instead, plus `FieldGeometry.dominantFOV` for the FOV-fit
+/// column/tile. `AppState.loadDiscovery()` is lazily triggered from this
+/// page's own `onAppear`, same "don't auto-refresh, this is tonight-
+/// specific" stance `TonightPage`/`NightsPage` already take for their own
+/// on-demand datasets.
+struct DiscoveryPage: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.openSettings) private var openSettings
+
+    /// Default ON (spec) -- most visits are "what's NEW to shoot", not a
+    /// reminder of what's already being collected.
+    @State private var hideAlreadyInLibrary = true
+    @State private var kindFilter: KindFilter = .all
+    @State private var sortOrder = [KeyPathComparator(\DiscoveryTableRow.score, order: .reverse)]
+    @State private var selectedDesignation: String?
+    @State private var skyArcItem: SkyArcItem?
+    @State private var newSessionPrefill: NewSessionPrefillItem?
+
+    // MARK: - Body
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            controlRow
+
+            if let lastError = appState.lastError {
+                Text(lastError).foregroundStyle(.red)
+            }
+
+            if !hasResolvedSite {
+                noSiteBanner
+                noSiteUnavailableView
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                Group {
+                    if appState.discovery != nil {
+                        VStack(alignment: .leading, spacing: 12) {
+                            tilesRow
+                            if filteredRows.isEmpty {
+                                ContentUnavailableView.search(text: filterDescriptionText)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            } else {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Spacer()
+                                        MetricInfoButton(metrics: Self.metricInfo)
+                                    }
+                                    table
+                                }
+                            }
+                        }
+                    } else if appState.isBusy {
+                        ProgressView("Felfedezés számítása…")
+                    } else {
+                        notLoadedState
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+        }
+        .padding()
+        .onAppear {
+            if appState.discovery == nil && !appState.isBusy { appState.loadDiscovery() }
+        }
+        .sheet(item: $skyArcItem) { item in
+            SkyArcSheet(row: item.row)
+        }
+        .sheet(item: $newSessionPrefill) { item in
+            NewSessionSheet(prefillDesignation: item.designation)
+        }
+    }
+
+    // MARK: - Control row
+
+    private var controlRow: some View {
+        HStack {
+            Toggle("Meglévő célpontok elrejtése", isOn: $hideAlreadyInLibrary)
+            kindFilterMenu
+            Spacer()
+            if appState.isBusy {
+                ProgressView().controlSize(.small)
+            }
+            Button("Frissítés") { appState.loadDiscovery() }
+                .disabled(appState.isBusy || appState.db == nil)
+        }
+    }
+
+    private var kindFilterMenu: some View {
+        Menu {
+            ForEach(KindFilter.allCases, id: \.self) { option in
+                Button {
+                    kindFilter = option
+                } label: {
+                    HStack {
+                        if kindFilter == option { Image(systemName: "checkmark") }
+                        Text(option.label)
+                    }
+                }
+            }
+        } label: {
+            Label(kindFilter == .all ? "Típus" : "Típus: \(kindFilter.label)", systemImage: "line.3.horizontal.decrease.circle")
+        }
+        .frame(width: 220, alignment: .leading)
+    }
+
+    // MARK: - No-site state
+
+    private var hasResolvedSite: Bool {
+        appState.resolvedSite.latitudeDeg != nil && appState.resolvedSite.longitudeDeg != nil
+    }
+
+    /// Same yellow inline banner `TonightPage.noSiteBanner` uses, adapted
+    /// wording -- unlike that page (which still shows an altitude/
+    /// culmination table with a "FITS-fejlécekből becsült" fallback
+    /// caveat), Felfedezés has no per-target frame history to fall back to
+    /// AT ALL for a catalog target, so this page can't offer that same
+    /// degraded-but-honest middle ground -- see `noSiteUnavailableView`.
+    private var noSiteBanner: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+            Text("Nincs megfigyelési helyszín beállítva — a Felfedezés helyszín nélkül nem tud magasságot/láthatóságot számolni.")
+                .font(.callout)
+            Spacer()
+            Button("Beállítás…") {
+                appState.settingsTab = .location
+                openSettings()
+            }
+            .buttonStyle(.link)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.yellow.opacity(0.15)))
+    }
+
+    private var noSiteUnavailableView: some View {
+        ContentUnavailableView {
+            Label("Nincs megfigyelési helyszín", systemImage: "location.slash")
+        } description: {
+            Text("A katalógus-felfedezéshez ismerni kell a megfigyelőhely koordinátáit — állítsd be a Beállítások ▸ Helyszín lapon, majd nyomj Frissítést.")
+        } actions: {
+            Button("Beállítás…") {
+                appState.settingsTab = .location
+                openSettings()
+            }
+        }
+    }
+
+    // MARK: - Not-loaded state
+
+    private var notLoadedState: some View {
+        ContentUnavailableView {
+            Label("Még nincs betöltve", systemImage: "sparkles")
+        } description: {
+            Text("Töltsd be a katalógus-felfedezést, hogy lásd, mit érdemes ma este lefotózni a beépített katalógusból.")
+        } actions: {
+            Button("Betöltés") { appState.loadDiscovery() }
+                .disabled(appState.db == nil)
+        }
+    }
+
+    // MARK: - Rows / filtering
+
+    private var allRows: [DiscoveryTableRow] {
+        (appState.discovery ?? []).map(DiscoveryTableRow.init)
+    }
+
+    private var filteredRows: [DiscoveryTableRow] {
+        allRows
+            .filter { !hideAlreadyInLibrary || !$0.alreadyInLibrary }
+            .filter { kindFilter.matches($0.kind) }
+            .sorted(using: sortOrder)
+    }
+
+    private func row(withID id: String) -> DiscoveryTableRow? {
+        filteredRows.first { $0.id == id }
+    }
+
+    /// Describes the currently-active filter combination -- feeds
+    /// `ContentUnavailableView.search(text:)`'s "no results for…" message
+    /// when a filter narrows the 217-entry catalog down to zero rows, same
+    /// pattern `NightsPage.filterDescriptionText` already establishes for
+    /// its own year/month filter.
+    private var filterDescriptionText: String {
+        var parts: [String] = []
+        if kindFilter != .all { parts.append(kindFilter.label) }
+        if hideAlreadyInLibrary { parts.append("meglévők elrejtve") }
+        return parts.joined(separator: ", ")
+    }
+
+    /// Reverse of `DiscoveryPlanner.existingDesignations(stats:)`: maps a
+    /// catalog designation back to the library's OWN target folder name, so
+    /// an `alreadyInLibrary` row's context menu/double-click can navigate
+    /// straight to `Page.target(_:)`. Built off `appState.stats` (already
+    /// loaded, never triggers its own load) by re-running the exact same
+    /// `TargetNameResolver.resolve(folderName:)` call `existingDesignations`
+    /// itself uses -- pure/deterministic, so bucketing by `.designation`
+    /// here can never disagree with what `discovery`'s own
+    /// `alreadyInLibrary` flags were computed against. When two library
+    /// targets somehow resolve to the SAME designation (shouldn't happen in
+    /// a healthy library), the first one wins -- an arbitrary but stable
+    /// tie-break, not something worth surfacing here.
+    private var targetByDesignation: [String: String] {
+        var map: [String: String] = [:]
+        for stat in appState.stats {
+            guard let designation = TargetNameResolver.resolve(folderName: stat.target).designation else { continue }
+            if map[designation] == nil { map[designation] = stat.target }
+        }
+        return map
+    }
+
+    private func openOrCreate(_ row: DiscoveryTableRow) {
+        if let target = targetByDesignation[row.designation] {
+            appState.currentPage = .target(target)
+        } else {
+            newSessionPrefill = NewSessionPrefillItem(designation: row.designation)
+        }
+    }
+
+    // MARK: - Tiles
+
+    private var recommendedCount: Int {
+        filteredRows.count { $0.verdict == SkyVerdictText.good }
+    }
+
+    private var fovTileValueText: String {
+        guard let fov = appState.discoveryFOV else { return "n/a" }
+        return String(format: "%.1f° × %.1f°", fov.widthDeg, fov.heightDeg)
+    }
+
+    private var fovTileCaptionText: String? {
+        appState.discoveryFOV == nil ? "nincs WCS-adat" : nil
+    }
+
+    private var tilesRow: some View {
+        HStack(spacing: 12) {
+            tile(title: "Ma ajánlott", value: "\(recommendedCount)")
+            tile(title: "Katalógus", value: "\(filteredRows.count) / \(TargetCatalog.all.count)", caption: "látható / teljes")
+            tile(title: "Setup látómező", value: fovTileValueText, caption: fovTileCaptionText)
+        }
+    }
+
+    private func tile(title: String, value: String, caption: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.title3).bold()
+            if let caption {
+                Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+    }
+
+    // MARK: - Metric info (R9-T6/B16(a) convention)
+
+    /// Mirrors `TonightPage.planMetricInfo`'s entries for the columns this
+    /// page shares in spirit (Max. mag./Látható/Hold/Döntés), reworded only
+    /// where the underlying data actually differs (this page's "Látható"
+    /// has no visible-window range to show, just hours; "Hold" has no
+    /// per-row illumination percent, just separation) -- plus a new "FOV"
+    /// entry.
+    private static let metricInfo: [MetricInfoButton.Metric] = [
+        .init(
+            title: "Max. mag.",
+            explanation: "A célpont legnagyobb magassága fokban a ma esti látszó ívén (nem fényesség!). Mikor hazudik: helyszín nélkül ez az egész oszlop „-”."
+        ),
+        .init(
+            title: "Látható",
+            explanation: "A célpont horizont feletti (illetve az alapértelmezett minimum-magasság feletti) ideje a mai éjszaka sötét szakaszában, órában. Mikor hazudik: „-” marad, ha a célpont ma éjjel egyáltalán nem éri el a minimum-magasságot."
+        ),
+        .init(
+            title: "Hold",
+            explanation: "A célponttól mért szögtávolság a Holdtól, fokban, a mai sötét szakasz közepén becsülve. Mikor hazudik: ez önmagában nem mutatja a Hold megvilágítottságát -- egy távoli, de tele Hold is ronthatja a kontrasztot."
+        ),
+        .init(
+            title: "FOV",
+            explanation: "A célpont mérete a könyvtár domináns felszerelésének medián látómezejéhez mérve („befér” / „mozaik kellene” / „túl kicsi a képmezőhöz”). Mikor hazudik: reduktor/barlow (vagy kamera) váltás után a RÉGI, most már nem domináns setup FOV-ját mutatja, amíg elég új keret nem gyűlik össze az új felszereléssel."
+        ),
+        .init(
+            title: "Döntés",
+            explanation: "Összesítő ajánlás („ma jó” / „Hold zavar (…)” / „nem látszik ma éjjel” / „alacsony (…)” / „nincs koordináta”) a magasság, a láthatósági ablak és a Hold-közelség alapján. Mikor hazudik: csak MA éjjelre szól -- egy ma jó célpont holnap már más döntést kaphat."
+        ),
+    ]
+
+    // MARK: - Table
+
+    private var table: some View {
+        Table(filteredRows, selection: $selectedDesignation, sortOrder: $sortOrder) {
+            TableColumn("Objektum", value: \.designationSortKey) { row in objektumCell(row) }
+                .width(min: 170, ideal: 210)
+            TableColumn("Típus", value: \.kindSortKey) { row in Text(kindLabel(row.kind)) }
+                .width(min: 90, ideal: 120)
+            TableColumn("Méret", value: \.sizeSortKey) { row in Text(sizeText(row)) }
+                .width(min: 55, ideal: 65)
+            TableColumn("Magn.", value: \.magnitudeSortKey) { row in Text(magnitudeText(row)) }
+                .width(min: 50, ideal: 60)
+            TableColumn("Kulminál", value: \.culminationSortKey) { row in Text(row.culminationLocal ?? "-") }
+                .width(min: 70, ideal: 80)
+            TableColumn("Max. mag.", value: \.maxAltSortKey) { row in Text(maxAltText(row)) }
+                .width(min: 70, ideal: 80)
+            TableColumn("Látható", value: \.visibleHoursSortKey) { row in Text(visibleText(row)) }
+                .width(min: 65, ideal: 80)
+            TableColumn("Hold", value: \.moonSortKey) { row in Text(moonText(row)) }
+                .width(min: 55, ideal: 65)
+            TableColumn("FOV", value: \.fovFitSortKey) { row in fovCell(row) }
+                .width(min: 90, ideal: 140)
+            TableColumn("Döntés", value: \.verdictSortKey) { row in verdictChip(row.verdict) }
+                .width(min: 120, ideal: 150)
+        }
+        .tableStyle(.inset(alternatesRowBackgrounds: true))
+        // Row-scoped context menu + double-click-to-open, same pattern
+        // `TonightPage.planTable`/`NightsPage.table` use.
+        .contextMenu(forSelectionType: DiscoveryTableRow.ID.self) { ids in
+            if let id = ids.first, let row = row(withID: id) {
+                contextMenuItems(for: row)
+            }
+        } primaryAction: { ids in
+            if let id = ids.first, let row = row(withID: id) {
+                openOrCreate(row)
+            }
+        }
+    }
+
+    // MARK: - Cell content
+
+    private func objektumCell(_ row: DiscoveryTableRow) -> some View {
+        HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(row.designation).bold().lineLimit(1)
+                if let commonNameHU = row.commonNameHU {
+                    Text(commonNameHU).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            if row.alreadyInLibrary {
+                alreadyInLibraryBadge
+            }
+        }
+    }
+
+    private var alreadyInLibraryBadge: some View {
+        Text("már gyűjtöd")
+            .font(.caption2)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.gray.opacity(0.15)))
+            .foregroundStyle(.gray)
+    }
+
+    private func sizeText(_ row: DiscoveryTableRow) -> String {
+        guard let size = row.sizeArcmin else { return "-" }
+        return String(format: "%.1f′", size)
+    }
+
+    private func magnitudeText(_ row: DiscoveryTableRow) -> String {
+        guard let magnitude = row.magnitude else { return "-" }
+        return String(format: "%.1f", magnitude)
+    }
+
+    private func maxAltText(_ row: DiscoveryTableRow) -> String {
+        guard let alt = row.maxAltitudeDeg else { return "-" }
+        return "\(Int(alt.rounded()))°"
+    }
+
+    private func visibleText(_ row: DiscoveryTableRow) -> String {
+        guard let hours = row.visibleHours else { return "-" }
+        return String(format: "%.1f ó", hours)
+    }
+
+    private func moonText(_ row: DiscoveryTableRow) -> String {
+        guard let sep = row.moonSeparationDeg else { return "-" }
+        return "\(Int(sep.rounded()))°"
+    }
+
+    @ViewBuilder
+    private func fovCell(_ row: DiscoveryTableRow) -> some View {
+        if let label = row.fovFitLabel {
+            Text(label).foregroundStyle(fovFitColor(label))
+        } else {
+            Text("-").foregroundStyle(.secondary)
+        }
+    }
+
+    /// "befér" = green, "mozaik kellene" = orange, everything else (i.e.
+    /// "túl kicsi a képmezőhöz") = secondary -- exactly the three
+    /// `DiscoveryPlanner.fovFitLabel` strings, spelled out rather than
+    /// switched over an enum since that function's return type is a plain
+    /// `String?` (see its own doc for why -- only two cutoffs actually
+    /// distinguish three labels).
+    private func fovFitColor(_ label: String) -> Color {
+        switch label {
+        case "befér": return .green
+        case "mozaik kellene": return .orange
+        default: return .secondary
+        }
+    }
+
+    // MARK: - Verdict chip (mirrors TonightPage.planTable's vocabulary)
+
+    private func verdictChip(_ verdict: String) -> some View {
+        Text(verdict)
+            .font(.caption.bold())
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(verdictColor(verdict).opacity(0.15), in: Capsule())
+            .foregroundStyle(verdictColor(verdict))
+    }
+
+    private func verdictColor(_ verdict: String) -> Color {
+        if verdict == SkyVerdictText.good { return .green }
+        if verdict.hasPrefix("Hold zavar") { return .yellow }
+        if verdict.hasPrefix("alacsony") || verdict == SkyVerdictText.notVisibleTonight { return .orange }
+        return .gray // "nincs koordináta"
+    }
+
+    // MARK: - Context menu
+
+    @ViewBuilder
+    private func contextMenuItems(for row: DiscoveryTableRow) -> some View {
+        if let target = targetByDesignation[row.designation] {
+            Button("Célpont megnyitása") { appState.currentPage = .target(target) }
+        } else {
+            Button("Új session létrehozása…") { newSessionPrefill = NewSessionPrefillItem(designation: row.designation) }
+        }
+        Divider()
+        Button("Ma esti ív") { skyArcItem = SkyArcItem(row: row.discoveryRow) }
+    }
+}
+
+// MARK: - Hungarian kind label
+
+/// The "Típus" column's cell text -- exhaustive over every
+/// `CatalogTargetKind` case (including `.darkNebula`, unused by any of
+/// `TargetCatalog.all`'s 217 entries today but still switched over here so
+/// a future catalog addition can't silently fall through to nothing).
+private func kindLabel(_ kind: CatalogTargetKind) -> String {
+    switch kind {
+    case .galaxy: return "Galaxis"
+    case .emissionNebula: return "Emissziós köd"
+    case .planetaryNebula: return "Planetáris köd"
+    case .supernovaRemnant: return "Szupernóva-maradvány"
+    case .openCluster: return "Nyílthalmaz"
+    case .globularCluster: return "Gömbhalmaz"
+    case .reflectionNebula: return "Reflexiós köd"
+    case .darkNebula: return "Sötét köd"
+    case .other: return "Egyéb"
+    }
+}
+
+/// A handful of `SkyVerdict`'s own string constants, duplicated here (they
+/// aren't `public` on the AstroCore side -- see that type's own doc) purely
+/// so `recommendedCount`/`verdictColor` can compare against the exact
+/// values `DiscoveryPlanner.discover` actually produces instead of a
+/// hand-typed literal drifting out of sync with them.
+private enum SkyVerdictText {
+    static let good = "ma jó"
+    static let notVisibleTonight = "nem látszik ma éjjel"
+}
+
+// MARK: - Type filter (control row's "Menu")
+
+/// The type-filter Menu's own option set (spec: "Mind / Galaxis /
+/// Emissziós köd / Planetáris köd / Szupernóva-maradvány / Nyílthalmaz /
+/// Gömbhalmaz / Reflexiós köd / egyéb") -- 7 named kinds plus an "egyéb"
+/// catch-all that groups BOTH `.other` and `.darkNebula` together (the two
+/// `CatalogTargetKind` cases with no dedicated menu entry of their own),
+/// rather than a 1:1 mirror of that enum's 9 cases.
+private enum KindFilter: CaseIterable, Hashable {
+    case all, galaxy, emissionNebula, planetaryNebula, supernovaRemnant, openCluster, globularCluster, reflectionNebula, other
+
+    var label: String {
+        switch self {
+        case .all: return "Mind"
+        case .galaxy: return "Galaxis"
+        case .emissionNebula: return "Emissziós köd"
+        case .planetaryNebula: return "Planetáris köd"
+        case .supernovaRemnant: return "Szupernóva-maradvány"
+        case .openCluster: return "Nyílthalmaz"
+        case .globularCluster: return "Gömbhalmaz"
+        case .reflectionNebula: return "Reflexiós köd"
+        case .other: return "egyéb"
+        }
+    }
+
+    func matches(_ kind: CatalogTargetKind) -> Bool {
+        switch self {
+        case .all: return true
+        case .galaxy: return kind == .galaxy
+        case .emissionNebula: return kind == .emissionNebula
+        case .planetaryNebula: return kind == .planetaryNebula
+        case .supernovaRemnant: return kind == .supernovaRemnant
+        case .openCluster: return kind == .openCluster
+        case .globularCluster: return kind == .globularCluster
+        case .reflectionNebula: return kind == .reflectionNebula
+        case .other: return kind == .other || kind == .darkNebula
+        }
+    }
+}
+
+// MARK: - Table row
+
+/// Flattened, `KeyPathComparator`-friendly wrapper over `DiscoveryRow` --
+/// same "one `Identifiable` row struct per table" pattern
+/// `TonightPage.PlanRow`/`NightsPage.NightTableRow` already establish.
+/// Sentinel sort keys for nullable numeric columns follow the SAME "-1,
+/// missing sorts first on an ascending sort" convention those two types
+/// document -- safe here too, since no field `TargetCatalog` actually
+/// stores (size in arcmin, magnitude, altitude in degrees, hours, angular
+/// separation in degrees) ever takes a negative value in practice.
+private struct DiscoveryTableRow: Identifiable {
+    let discoveryRow: DiscoveryRow
+
+    var id: String { discoveryRow.target.designation }
+    var designation: String { discoveryRow.target.designation }
+    var commonNameHU: String? { discoveryRow.target.commonNameHU }
+    var kind: CatalogTargetKind { discoveryRow.target.kind }
+    var sizeArcmin: Double? { discoveryRow.target.sizeArcmin }
+    var magnitude: Double? { discoveryRow.target.magnitude }
+    var culminationLocal: String? { discoveryRow.culminationLocal }
+    var maxAltitudeDeg: Double? { discoveryRow.maxAltitudeDeg }
+    var visibleHours: Double? { discoveryRow.visibleHours }
+    var moonSeparationDeg: Double? { discoveryRow.moonSeparationDeg }
+    var fovFitLabel: String? { discoveryRow.fovFitLabel }
+    var verdict: String { discoveryRow.verdict }
+    var score: Double { discoveryRow.score }
+    var alreadyInLibrary: Bool { discoveryRow.alreadyInLibrary }
+
+    var designationSortKey: String { designation }
+    var kindSortKey: String { kindLabel(kind) }
+    var sizeSortKey: Double { sizeArcmin ?? -1 }
+    var magnitudeSortKey: Double { magnitude ?? -1 }
+    var culminationSortKey: String { culminationLocal ?? "" }
+    var maxAltSortKey: Double { maxAltitudeDeg ?? -999 }
+    var visibleHoursSortKey: Double { visibleHours ?? -1 }
+    var moonSortKey: Double { moonSeparationDeg ?? -1 }
+    var fovFitSortKey: String { fovFitLabel ?? "" }
+    var verdictSortKey: String { verdict }
+}
+
+// MARK: - Row-scoped sheets
+
+/// Identifies which row's "Ma esti ív" sheet is open -- same row-scoped
+/// `.sheet(item:)` pattern `LinkingSession`/`SolvingTarget`
+/// (`Views/TargetDetail/Shared.swift`) already establish elsewhere.
+private struct SkyArcItem: Identifiable {
+    let row: DiscoveryRow
+    var id: String { row.target.designation }
+}
+
+/// Identifies which row's "Új session létrehozása…" sheet is open, carrying
+/// just the designation `NewSessionSheet(prefillDesignation:)` needs to
+/// split apart.
+private struct NewSessionPrefillItem: Identifiable {
+    let designation: String
+    var id: String { designation }
+}
+
+/// "Ma esti ív" (spec): a small standalone sheet reusing `SkyChartView` for
+/// one catalog target's altitude curve tonight -- cheap, pure math
+/// (`SkyTrack.altitudeTrack`), no `Database` access, so this sheet needs
+/// nothing beyond the row itself plus the already-resolved site. Only ever
+/// presented from `DiscoveryPage`'s table, which itself only renders once
+/// `hasResolvedSite` is true -- the `else` branch below is defensive, not
+/// expected to be reachable in practice.
+private struct SkyArcSheet: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+
+    let row: DiscoveryRow
+
+    private var displayName: String {
+        guard let commonNameHU = row.target.commonNameHU else { return row.target.designation }
+        return "\(row.target.designation) — \(commonNameHU)"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Ma esti ív").font(.headline)
+                Spacer()
+                Button("Bezárás") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+
+            if let lat = appState.resolvedSite.latitudeDeg, let lon = appState.resolvedSite.longitudeDeg {
+                let night = Date()
+                SkyChartView(
+                    targetName: displayName,
+                    targetTrack: SkyTrack.altitudeTrack(raDeg: row.target.raDeg, decDeg: row.target.decDeg, nightOf: night, latDeg: lat, lonDeg: lon),
+                    moonTrack: SkyTrack.moonAltitudeTrack(nightOf: night, latDeg: lat, lonDeg: lon),
+                    markers: SkyTrack.nightWindowMarkers(nightOf: night, latDeg: lat, lonDeg: lon),
+                    minAltitudeDeg: plannerDefaultMinAltitudeDeg,
+                    isTonight: true,
+                    nightOf: night,
+                    moonIlluminationPercent: nil
+                )
+            } else {
+                Text("Nincs megfigyelési helyszín beállítva.").foregroundStyle(.secondary)
+            }
+        }
+        .padding(20)
+        .frame(width: 480, height: 320)
+    }
+}

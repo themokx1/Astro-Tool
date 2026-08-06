@@ -89,6 +89,12 @@ struct AstroToolCommands: Commands {
             .keyboardShortcut("7", modifiers: .command)
             Button("Szenzor") { AppState.shared?.currentPage = .sensor }
                 .keyboardShortcut("8", modifiers: .command)
+            // R10-B4: appended at ⌘9 rather than renumbering 1-8 again
+            // (B3 already renumbered everything once for "Éjszakák") --
+            // "Felfedezés" is reachable, just not in the 1-8 muscle-memory
+            // block.
+            Button("Felfedezés") { AppState.shared?.currentPage = .discover }
+                .keyboardShortcut("9", modifiers: .command)
 
             Divider()
 

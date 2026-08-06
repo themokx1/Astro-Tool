@@ -32,6 +32,13 @@ enum RootStatus: Equatable {
 enum Page: Hashable {
     case tonight
     case calendar
+    /// R10-B4: "Felfedezés" -- the embedded-catalog discovery sweep
+    /// (`DiscoveryPlanner.discover`) suggesting well-placed NON-library
+    /// targets for tonight. Sits in the same unnamed top section as
+    /// "Ma este"/"Naptár" (a night-planning tool, not a library-browsing
+    /// one) -- deliberately NOT next to "Éjszakák" under KÖNYVTÁR, which
+    /// only ever shows targets/sessions the user already has.
+    case discover
     case allTargets
     /// R10-B3: the "Éjszakák" cross-target session browser -- every session
     /// across every target in one sortable table (`NightsPage`), the flat
@@ -43,6 +50,17 @@ enum Page: Hashable {
     case cleanup
     case sensor
     case searchResults
+}
+
+/// `FieldGeometry.dominantFOV`'s bare tuple result, wrapped for
+/// `@Observable`/SwiftUI `Equatable` diffing -- a plain
+/// `(widthDeg: Double, heightDeg: Double)` tuple can't itself be compared
+/// with `==` (`@Observable`'s change tracking, and any `.onChange(of:)`
+/// watching this property, need a concrete `Equatable` type). See
+/// `AppState.discoveryFOV`'s own doc for how it's used.
+struct DiscoveryFOV: Equatable {
+    var widthDeg: Double
+    var heightDeg: Double
 }
 
 /// The app's single source of truth. Thin by design: every real operation
@@ -422,6 +440,25 @@ final class AppState: @unchecked Sendable {
     /// loaded automatically, same "lazily loaded on the page's own
     /// `onAppear`" stance `monthPlan` takes.
     var nights: [NightRow]?
+
+    /// The catalog "what should I shoot tonight that I don't already have"
+    /// sweep (`DiscoveryPlanner.discover`, R10-A4), backing the
+    /// "Felfedezés" page (`DiscoveryPage`, R10-B4). `nil` until
+    /// `loadDiscovery()` has run at least once this session -- never
+    /// loaded automatically, same "lazily loaded on the page's own
+    /// `onAppear`" stance `nights`/`monthPlan` already take.
+    var discovery: [DiscoveryRow]?
+    /// The library's dominant equipment setup's median field of view
+    /// (`FieldGeometry.dominantFOV`, R10-B4), computed alongside
+    /// `discovery` by the SAME `loadDiscovery()` call and handed to
+    /// `DiscoveryPlanner.discover` as its `setupFOVDeg` -- kept as its own
+    /// property (not folded into a per-row field) since every row's FOV-fit
+    /// column judges against this ONE shared value, not something
+    /// per-target. `nil` exactly when `FieldGeometry.dominantFOV` itself
+    /// returns `nil` (no usable, WCS-resolved light in the whole library
+    /// shares the dominant setup's fingerprint) -- `DiscoveryPage` shows
+    /// "n/a" for the FOV tile/column in that case, never a guess.
+    var discoveryFOV: DiscoveryFOV?
 
     // MARK: - Weather (R10-B6)
 
@@ -1202,6 +1239,57 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.nights = result
                 self.progressText = "Éjszakák betöltve: \(result.count) session"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    // MARK: - Discovery (R10-B4)
+
+    /// Loads the "Felfedezés" page's catalog sweep for tonight. Resolves
+    /// the site itself (`Planner.resolveSite`, cached into `resolvedSite`
+    /// the same way `loadPlan()`/`loadDashboardData()` already do) rather
+    /// than trusting whatever `resolvedSite` already holds -- a user who
+    /// navigates straight to "Felfedezés" without ever visiting "Ma este"
+    /// this session would otherwise see the stale, unresolved default
+    /// `SiteRule()`. `existingDesignations` is computed off whatever
+    /// `stats` already holds (empty when `stats` itself is still empty --
+    /// this does NOT itself trigger `loadStats()`/`loadDashboardData()`,
+    /// same "loader is only responsible for its own dataset" stance every
+    /// other loader here takes). `date` is always "now" -- unlike
+    /// `loadPlan(date:)`, this page has no "Terv erre az éjszakára"
+    /// calendar hand-off to revisit a different night for.
+    ///
+    /// Never triggered by `loadDashboardData()` -- lazily loaded from
+    /// `DiscoveryPage.onAppear` only, same stance `loadNights()` takes for
+    /// its own on-demand dataset.
+    func loadDiscovery() {
+        guard let db else { return }
+        let cfg = config
+        let currentStats = stats
+
+        let opID = beginOperation("Felfedezés számítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let (rows, fov, site) = try await Task.detached(priority: .userInitiated) {
+                    let site = try Planner.resolveSite(db: db, config: cfg)
+                    let existing = DiscoveryPlanner.existingDesignations(stats: currentStats)
+                    let fov = try FieldGeometry.dominantFOV(db: db, config: cfg)
+                    let rows = DiscoveryPlanner.discover(
+                        date: Date(), site: site, minAltitudeDeg: plannerDefaultMinAltitudeDeg,
+                        existingDesignations: existing,
+                        setupFOVDeg: fov.map { (width: $0.widthDeg, height: $0.heightDeg) }
+                    )
+                    return (rows, fov, site)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.discovery = rows
+                self.discoveryFOV = fov.map { DiscoveryFOV(widthDeg: $0.widthDeg, heightDeg: $0.heightDeg) }
+                self.resolvedSite = site
+                self.progressText = "Felfedezés kész: \(rows.count) katalógustétel"
             } catch {
                 self.handle(error)
             }
