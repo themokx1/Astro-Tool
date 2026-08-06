@@ -82,9 +82,9 @@ struct SensorPage: View {
 
     private var tiles: some View {
         HStack(spacing: 12) {
-            SensorStatTile(title: "Profilok", value: "\(profiles.count)")
-            SensorStatTile(title: "Kamerák", value: "\(distinctCameraCount)")
-            SensorStatTile(title: "Legutóbbi mérés", value: latestMeasurementText)
+            StatTile(title: "Profilok", value: "\(profiles.count)")
+            StatTile(title: "Kamerák", value: "\(distinctCameraCount)")
+            StatTile(title: "Legutóbbi mérés", value: latestMeasurementText)
         }
     }
 
@@ -119,21 +119,6 @@ struct SensorPage: View {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
-}
-
-private struct SensorStatTile: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title2.bold())
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.12)))
-    }
 }
 
 /// "Szenzor mérése…" confirmation sheet (A.6): explains what the operation

@@ -590,23 +590,3 @@ struct AuditPage: View {
     }
 }
 
-/// A small headline stat tile -- `title` caption + bold colored `value`,
-/// shared by all four of this page's header tiles (A.5's "4 tile" row).
-/// Kept local to this file since no other page has adopted the "4 tile"
-/// convention yet (R9-T3..T5 will, per the review doc -- if/when they do,
-/// this is the natural thing to promote to a shared file).
-private struct StatTile: View {
-    let title: String
-    let value: String
-    let color: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title2.bold()).foregroundStyle(color)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(color.opacity(0.12)))
-    }
-}

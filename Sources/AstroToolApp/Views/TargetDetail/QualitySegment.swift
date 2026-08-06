@@ -596,16 +596,51 @@ struct QualitySegment: View {
                 .width(60)
             }
 
-            TableColumn("Kiugró") { row in Text(row.isOutlier ? "⚠️" : "") }
-                .width(50)
+            // R10-B7: grouped so the table stays AT (not over) `Table`'s
+            // 10-top-level-column cap once the trailing "⋯" actions column
+            // below needs its own slot -- same `Group { }` workaround
+            // this table's own "Szat. %"/"Exp." pair above already
+            // established (R10-B1's own doc comment on this table's
+            // header). `outlierText(_:)` routes through a helper rather
+            // than inlining `row.isOutlier ? "⚠️" : ""` directly here --
+            // learned from `CalibrationPage`/`TonightPage`/`NightsPage`'s
+            // own R10-B7 fixes, where an inline ternary/optional-coalesce
+            // directly inside a `Group { }` cell closure made the type-
+            // checker either fail to infer the closure parameter's type or
+            // time out outright; a plain function call is a cheap anchor
+            // either way.
+            Group {
+                TableColumn("Kiugró") { row in Text(outlierText(row)) }
+                    .width(50)
 
-            // R10-B1: ✓/✗/— for the user's own manual verdict -- see
-            // `verdictCell(_:)` below. Not sortable (no `value:` binding),
-            // same convention "Kiugró" right above already uses for a
-            // glance-only signal column.
-            TableColumn("Saját döntés") { row in verdictCell(row.verdict) }
-                .width(90)
+                // R10-B1: ✓/✗/— for the user's own manual verdict -- see
+                // `verdictCell(_:)` below. Not sortable (no `value:`
+                // binding), same convention "Kiugró" right above already
+                // uses for a glance-only signal column.
+                TableColumn("Saját döntés") { row in verdictCell(row.verdict) }
+                    .width(90)
+            }
+
+            // R10-B7: visible row-actions -- mirrors `frameContextMenuItems`
+            // exactly (same function, both call sites: this column's Menu
+            // AND the "Fájl" cell's own `.contextMenu` above), so the
+            // right-click menu and this borderless "⋯" button can never
+            // drift apart.
+            TableColumn("") { row in
+                Menu {
+                    frameContextMenuItems(row)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 24)
+            }
+            .width(36)
         }
+    }
+
+    private func outlierText(_ row: Row) -> String {
+        row.isOutlier ? "⚠️" : ""
     }
 
     @ViewBuilder

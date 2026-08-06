@@ -137,6 +137,22 @@ struct StacksSegment: View {
                 .width(min: 70, ideal: 90)
             TableColumn("Dátum") { row in Text(date(of: row) ?? "-") }
                 .width(min: 90, ideal: 100)
+
+            // R10-B7: visible row-actions -- mirrors `rowContextMenuItems`
+            // exactly (same function, both call sites), so the right-click
+            // menu and this borderless "⋯" button can never drift apart.
+            // Well under `Table`'s 10-top-level-column cap here (8 total),
+            // so no `Group { }` grouping needed.
+            TableColumn("") { row in
+                Menu {
+                    rowContextMenuItems(row)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 24)
+            }
+            .width(36)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         // D24: every action a row can do (open/reveal/preview) now lives

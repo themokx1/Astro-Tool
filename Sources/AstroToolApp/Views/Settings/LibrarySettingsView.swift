@@ -61,6 +61,9 @@ struct LibrarySettingsView: View {
                 HStack {
                     Button("Alaphelyzetbe állítás…") { showResetConfirm = true }
                     Spacer()
+                    if isDirty {
+                        Text("Nem mentett módosítások").font(.caption).foregroundStyle(.orange)
+                    }
                     Button("Mentés") { save() }
                     if let saveMessage {
                         Text(saveMessage).foregroundStyle(.green)
@@ -83,6 +86,16 @@ struct LibrarySettingsView: View {
                 excludedPaths = defaults.excludedPaths
             }
         }
+    }
+
+    /// R10-B7: "Nem mentett módosítások" indicator next to Mentés -- true
+    /// whenever the draft differs from what's actually loaded/saved in
+    /// `appState.config` (as opposed to `SettingsResetRow`'s per-field
+    /// `isModified`, which compares against `AstroConfig()` DEFAULTS above
+    /// -- a different question: "did I change this from factory" vs. "do I
+    /// have unsaved edits right now").
+    private var isDirty: Bool {
+        excludedDirNames != appState.config.excludedDirNames || excludedPaths != appState.config.excludedPaths
     }
 
     private func loadFromConfig() {

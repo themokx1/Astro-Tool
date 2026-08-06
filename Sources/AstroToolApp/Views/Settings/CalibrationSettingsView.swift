@@ -113,6 +113,9 @@ struct CalibrationSettingsView: View {
                 HStack {
                     Button("Alaphelyzetbe állítás…") { showResetConfirm = true }
                     Spacer()
+                    if isDirty {
+                        Text("Nem mentett módosítások").font(.caption).foregroundStyle(.orange)
+                    }
                     Button("Mentés") { save() }
                     if let saveMessage {
                         Text(saveMessage).foregroundStyle(.green)
@@ -149,6 +152,26 @@ struct CalibrationSettingsView: View {
                     .multilineTextAlignment(.trailing)
             }
         }
+    }
+
+    /// R10-B7: "Nem mentett módosítások" indicator next to Mentés -- true
+    /// whenever the draft differs from `appState.config.calib` (as opposed
+    /// to each row's own `↺`, which compares against `CalibRule()`
+    /// DEFAULTS instead).
+    private var isDirty: Bool {
+        let calib = appState.config.calib
+        return darkMaxAgeMonths != calib.darkMaxAgeMonths
+            || tempToleranceC != calib.tempToleranceC
+            || exposureToleranceS != calib.exposureToleranceS
+            || exposureToleranceFraction != calib.exposureToleranceFraction
+            || coolerToleranceC != calib.coolerToleranceC
+            || flatMaxAgeDays != calib.flatMaxAgeDays
+            || rotatorToleranceDeg != calib.rotatorToleranceDeg
+            || gainTolerance != calib.gainTolerance
+            || matchGain != calib.matchGain
+            || matchOffset != calib.matchOffset
+            || matchBinning != calib.matchBinning
+            || matchCamera != calib.matchCamera
     }
 
     private func resetAll() {

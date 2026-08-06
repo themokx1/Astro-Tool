@@ -151,9 +151,9 @@ struct NightsPage: View {
 
     private var tilesRow: some View {
         HStack(spacing: 12) {
-            NightsStatTile(title: "Éjszakák", value: "\(filteredNightRows.count)", color: .blue)
-            NightsStatTile(title: "Összes integráció", value: TDFormat.hm(totalIntegrationSeconds), color: .green)
-            NightsStatTile(title: "Legjobb FWHM", value: bestFWHMValueText, color: .orange, caption: bestFWHMCaptionText)
+            StatTile(title: "Éjszakák", value: "\(filteredNightRows.count)", color: .blue)
+            StatTile(title: "Összes integráció", value: TDFormat.hm(totalIntegrationSeconds), color: .green)
+            StatTile(title: "Legjobb FWHM", value: bestFWHMValueText, color: .orange, caption: bestFWHMCaptionText)
         }
     }
 
@@ -304,14 +304,31 @@ struct NightsPage: View {
                 .width(min: 90, ideal: 120)
             TableColumn("Hatékonyság", value: \.dutySortKey) { row in Text(dutyText(row)) }
                 .width(min: 80, ideal: 100)
-            TableColumn("Szűrők", value: \.filtersText) { row in
-                Text(row.filtersText).lineLimit(1).truncationMode(.tail)
+            // R10-B7: grouped so the table stays AT (not over) `Table`'s
+            // 10-top-level-column cap once the trailing "⋯" actions column
+            // below needs its own slot -- same `Group { }` workaround
+            // `QualitySegment.frameTable` already established.
+            Group {
+                TableColumn("Szűrők", value: \.filtersText) { row in filtersCell(row) }
+                    .width(min: 80, ideal: 110)
+                TableColumn("Jegyzet", value: \.noteSortKey) { row in
+                    Text(row.hasNotes ? "✓" : "—").foregroundStyle(.secondary)
+                }
+                .width(min: 50, ideal: 60)
             }
-            .width(min: 80, ideal: 110)
-            TableColumn("Jegyzet", value: \.noteSortKey) { row in
-                Text(row.hasNotes ? "✓" : "—").foregroundStyle(.secondary)
+            // R10-B7: visible row-actions -- mirrors `contextMenuItems(for:)`
+            // exactly (same function, both call sites), so the right-click
+            // menu and this borderless "⋯" button can never drift apart.
+            TableColumn("") { row in
+                Menu {
+                    contextMenuItems(for: row)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 24)
             }
-            .width(min: 50, ideal: 60)
+            .width(36)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         // Row-scoped context menu + double-click-to-open, same pattern
@@ -374,6 +391,17 @@ struct NightsPage: View {
         return String(format: "%.0f%%", value)
     }
 
+    /// R10-B7: pulled out of the "Szűrők" column's cell closure -- inlined
+    /// directly (`Text(row.filtersText).lineLimit(1).truncationMode(.tail)`)
+    /// inside the `Group { }` below, the type-checker couldn't resolve the
+    /// whole `Table` builder expression in reasonable time. Routing through
+    /// a plain `@ViewBuilder` helper (same convention every other cell in
+    /// this table already follows) gives it a concrete anchor instead.
+    @ViewBuilder
+    private func filtersCell(_ row: NightTableRow) -> some View {
+        Text(row.filtersText).lineLimit(1).truncationMode(.tail)
+    }
+
     // MARK: - Row interactions
 
     /// Both the row's double-click AND its context menu's "Megnyitás" land
@@ -400,32 +428,5 @@ struct NightsPage: View {
         let url = URL(fileURLWithPath: appState.config.rootPath, isDirectory: true)
             .appendingPathComponent("sessions/\(target)/\(date)")
         NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-}
-
-// MARK: - Tile
-
-/// Same visual language `AllTargetsPage`'s private `AllTargetsStatTile`
-/// uses -- own private copy per this app target's "each page owns its tile
-/// view" convention -- plus an optional caption line (`TonightPage`'s own
-/// `tile(title:value:caption:)` free-function helper already supports one,
-/// for this page's "Legjobb FWHM" tile's target/date caption).
-private struct NightsStatTile: View {
-    let title: String
-    let value: String
-    let color: Color
-    var caption: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title2.bold()).foregroundStyle(color)
-            if let caption {
-                Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(color.opacity(0.12)))
     }
 }
