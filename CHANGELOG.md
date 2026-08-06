@@ -8,6 +8,62 @@ történik.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-06
+
+Az R10-es kör felülvizsgálati menete: egy teljes kód-review (nem talált
+funkcionális hibát) + egy 23 tételes UX-konzisztencia-sweep, minden
+találat javítva, plusz a valós könyvtáron futtatott end-to-end CLI-teszt
+két lelete.
+
+### Fixed
+
+- **`astrotool nights` név-oszlop**: hosszú mappanévnél a megjelenítendő
+  nevet csonkolta 1 betűre a nyers mappanév javára ("N… (NGC_7000_…)") —
+  mostantól az emberi név az elsődleges, a nyers név marad el, ha nem fér.
+- **Elveszett művelet-visszajelzések**: a "Plate-solve minden koordináta
+  nélküli célpontra…" (és az egy-célpontos párja) `endOperation`-je a
+  frissítő `loadDashboardData()` MÖGÖTT futott, így a művelet-azonosító
+  átíródott és se toast, se tevékenység-napló bejegyzés nem született; a
+  Beolvasás "Kész — új/frissült/hiányzó" összegzése pedig sosem ért el a
+  felhasználóig. Mindhárom javítva (sorrend + toast-címek).
+- **Menüsor-műveletek futó munka alatt**: a menüsorból indított Beolvasás/
+  pontozás/plate-solve/szenzor-mérés/tanácsadó nem volt letiltva `isBusy`
+  alatt, így csendben megszakíthatta a futó scant — mostantól a toolbar-beli
+  párjukkal azonosan tiltódnak.
+- **Minőség-tábla interakciók**: a keret-tábla jobbklikk-menüje csak a
+  fájlnév-cella fölött működött (a régi R9-D11 hiba mintája) — mostantól
+  sor-szintű a kijelölés, a context-menü és a dupla-katt (megnyitás).
+- **Időjárás-hiba szennyezése**: egy elbukott Open-Meteo-hívás piros
+  `lastError`-sávot húzott a Ma este/Éjszakák/Felfedezés oldalakra — már
+  csak a Felhőzet-tile + egy hiba-toast jelzi.
+- **Éjszakák FWHM-oszlop**: arcsec-pixelskála nélkül "-" helyett mostantól
+  a pixel-alapú érték jelenik meg " px" jelöléssel (a `NightRow` új
+  `medianFWHMPixels` mezője + teszt), a Sessionök-tábla konvenciója szerint.
+
+### Changed
+
+- **⌘-gyorsbillentyűk a sidebar sorrendjében**: Ma este ⌘1 · Naptár ⌘2 ·
+  Felfedezés ⌘3 · Minden célpont ⌘4 · Éjszakák ⌘5 · Kalibráció ⌘6 ·
+  Audit ⌘7 · Takarítás ⌘8 · Szenzor ⌘9; új "Keresés" tétel a Nézet menüben,
+  a ⌘F átnevezve "Kereső fókuszálása"-ra.
+- **Terminológia-egységesítés az összes felületen**: "Célpont megnyitása" /
+  "Megnyitás Finderben" / "Nagy előnézet" / "Frissítés" mindenhol azonosan;
+  a verdikt-chip egyetlen közös komponens (a célpont Áttekintésen is színes
+  már); a hiányzó érték táblacellában "-", tile-ban "n/a"; az időtartamok
+  kanonikus h:mm formában; a Minőség-tábla FWHM-oszlopa jelzi a pixelt.
+- **Zsákutcák felszámolása**: a Naptár is kapott ⋯ művelet-gombot; a
+  kikapcsolt időjárásnál a "Felhő" oszlop kattintható "ki" linkké vált; a
+  no-site chart-üzenetek "Beállítás…" gombot kaptak; az FWHM-trend
+  eltűnése helyett magyarázó sor; a Fogalomtár az R10-es fogalmakkal bővült
+  (Hatékonyság, FOV-illeszkedés, Saját döntés, Felhőzet-előrejelzés);
+  a Beállítások "Mentve." és "Nem mentett módosítások" jelzése többé nem
+  látszik egyszerre.
+
+### Removed
+
+- `PLAN-R10.md` — a kör lezárult, minden tétele leszállítva és a
+  CHANGELOG-ban dokumentálva.
+
 ## [0.11.0] - 2026-08-06
 
 Az R10-es kör lezárása — a 0.10.0-ból kimaradt két utolsó tétel.
