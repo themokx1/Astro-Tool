@@ -912,8 +912,12 @@ private func nightsNameColumnText(_ row: NightRow, maxWidth: Int = 28) -> String
     guard row.displayName != row.target else { return row.target }
     let full = "\(row.displayName) (\(row.target))"
     guard full.count > maxWidth else { return full }
-    let truncatedDisplay = String(row.displayName.prefix(max(1, maxWidth - row.target.count - 4))) + "…"
-    return "\(truncatedDisplay) (\(row.target))"
+    // The display name is the human-facing half -- when the combined form
+    // doesn't fit, drop (or truncate) the raw folder name, never the display
+    // name. (The original did the opposite and could shrink the display name
+    // to a single letter next to a fully spelled-out folder name.)
+    guard row.displayName.count > maxWidth else { return row.displayName }
+    return String(row.displayName.prefix(maxWidth - 1)) + "…"
 }
 
 private func printNightsTable(_ rows: [NightRow]) {

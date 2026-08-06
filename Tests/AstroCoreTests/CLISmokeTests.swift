@@ -634,6 +634,29 @@ struct CLISmokeTests {
     #expect(result.stdout.contains("CÉLPONT"))
 }
 
+@Test func nightsHumanOutputKeepsDisplayNameWhenFolderNameIsLong() throws {
+    let root = try makeTempRoot("nights-long-name")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+    // A real-world long folder name whose resolved display name differs.
+    // The name column must keep the human-facing display name and drop the
+    // raw folder name when the combined form doesn't fit -- the original
+    // helper did the reverse and printed "N… (NGC_7000_North_American_Nebula)".
+    let lights = root.appendingPathComponent(
+        "sessions/NGC_7000_North_American_Nebula/2026-03-01/lights", isDirectory: true)
+    try FileManager.default.createDirectory(at: lights, withIntermediateDirectories: true)
+    try "dummy light\n".write(
+        to: lights.appendingPathComponent("Light_001.fit"), atomically: true, encoding: .utf8)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["nights", "--root", root.path])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("NGC 7000"), "display name was truncated away: \(result.stdout)")
+    #expect(!result.stdout.contains("… ("), "raw name kept while display name truncated: \(result.stdout)")
+}
+
 @Test func nightsYearAndMonthFilterOnlyShowsMatchingSessions() throws {
     let root = try makeTempRoot("nights-year-filter")
     defer { try? FileManager.default.removeItem(at: root) }
