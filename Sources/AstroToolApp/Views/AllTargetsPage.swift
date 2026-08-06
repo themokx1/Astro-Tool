@@ -169,7 +169,12 @@ struct AllTargetsPage: View {
                 HStack {
                     TextField("Keresés célpont vagy címke szerint", text: $searchText)
                         .frame(width: 280)
-                    Button("Újraszámolás") { appState.loadDashboardData() }
+                    // R10 review (item 9): "Frissítés" is this app's
+                    // standard label for a re-run-the-load button
+                    // (`NightsPage`/`DiscoveryPage` already use it) -- was
+                    // one of two remaining "Újraszámolás" holdouts (the
+                    // other: `CalibrationPage`).
+                    Button("Frissítés") { appState.loadDashboardData() }
                         .disabled(appState.isBusy || appState.db == nil)
                     Spacer()
                     if appState.isBusy {
@@ -471,12 +476,17 @@ struct AllTargetsPage: View {
     /// own Célpont-részletek page). R9-D8/e adds "Cél beállítása…"/"Kész
     /// stackek…" (moved off the header/tooltip-only treatment they had
     /// before; a "Mozaik-panelek…" item that briefly lived alongside them
-    /// was removed in N12/R9 round 3 -- it just duplicated "Megnyitás"),
-    /// and R9-D8/d moves tag add/remove here (the "Címkék" column itself is
-    /// now read-only chips).
+    /// was removed in N12/R9 round 3 -- it just duplicated "Célpont
+    /// megnyitása"), and R9-D8/d moves tag add/remove here (the "Címkék"
+    /// column itself is now read-only chips).
     @ViewBuilder
     private func targetContextMenuItems(_ stats: TargetStats) -> some View {
-        Button("Megnyitás") { appState.currentPage = .target(stats.target) }
+        // R10 review (item 8): "Célpont megnyitása" everywhere a row's
+        // primary action navigates to the target page (`NightsPage`
+        // already uses this exact wording) -- was a bare "Megnyitás", which
+        // reads as "open the FILE" the way `QualitySegment`'s identically-
+        // named (but genuinely file-opening) context-menu item does.
+        Button("Célpont megnyitása") { appState.currentPage = .target(stats.target) }
         Button("Megnyitás Finderben") { revealInFinder(relativePath: "sessions/\(stats.target)") }
         Divider()
         Button("Cél beállítása…") {
@@ -490,7 +500,7 @@ struct AllTargetsPage: View {
             }
         }
         // N12 (R9 round 3): "Mozaik-panelek…" used to do EXACTLY what
-        // "Megnyitás" already does (jump to the target's default
+        // "Célpont megnyitása" already does (jump to the target's default
         // Áttekintés segment, which already has the inline mosaic table) --
         // dropped as a pure duplicate rather than given its own preselect.
         Divider()

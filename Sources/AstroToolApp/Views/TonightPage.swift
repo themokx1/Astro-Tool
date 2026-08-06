@@ -209,13 +209,18 @@ struct TonightPage: View {
         appState.resolvedSite.latitudeDeg != nil && appState.resolvedSite.longitudeDeg != nil
     }
 
+    // R10 review (item 20): TILES use "n/a" for a missing value, not "-"
+    // (which reads as a dash/minus rather than "no data" at tile scale) --
+    // see `TDFormat`'s own doc comment for the full rule. `darkHoursText`/
+    // `moonTileText`/`locationValueText` feed `StatTile`s below; `cloudTile`
+    // already used "n/a" correctly (R10-B6).
     private var darkHoursText: String {
-        guard let hours = appState.nightInfo?.darkHours else { return "-" }
+        guard let hours = appState.nightInfo?.darkHours else { return "n/a" }
         return String(format: "%.1f óra", hours)
     }
 
     private var moonTileText: String {
-        guard let info = appState.nightInfo else { return "-" }
+        guard let info = appState.nightInfo else { return "n/a" }
         var text = TDFormat.percent(info.moonIlluminationPercent)
         if let label = info.moonEventLabel { text += " · \(label)" }
         return text
@@ -227,7 +232,7 @@ struct TonightPage: View {
 
     private var locationValueText: String {
         guard hasResolvedSite, let lat = appState.resolvedSite.latitudeDeg, let lon = appState.resolvedSite.longitudeDeg else {
-            return "-"
+            return "n/a"
         }
         let latDir = lat >= 0 ? "N" : "S"
         let lonDir = lon >= 0 ? "E" : "W"
@@ -407,7 +412,13 @@ struct TonightPage: View {
         ),
         .init(
             title: "Döntés",
-            explanation: "Összesítő ajánlás („ma jó”/„Hold zavar”/„nem látható ma éjjel”/„túl alacsony”/…) a magasság, a láthatósági ablak és a Hold-közelség alapján. Mikor hazudik: csak MA éjjelre szól, egy korábban jó célpont holnap már más döntést kaphat."
+            // R10 review (item 10): quoted verdicts now match the REAL
+            // strings `NightSweep`/`Planner.plan` actually produce (was
+            // „nem látható ma éjjel”/„túl alacsony”, neither of which this
+            // app ever shows -- the real ones are „nem látszik ma éjjel”
+            // and „alacsony (max N°)”) -- copied from `DiscoveryPage`'s own
+            // (correct) copy of this same explanation.
+            explanation: "Összesítő ajánlás („ma jó” / „Hold zavar (…)” / „nem látszik ma éjjel” / „alacsony (max N°)” / „nincs koordináta”) a magasság, a láthatósági ablak és a Hold-közelség alapján. Mikor hazudik: csak MA éjjelre szól, egy korábban jó célpont holnap már más döntést kaphat."
         ),
     ]
 
@@ -441,7 +452,7 @@ struct TonightPage: View {
                 .width(150)
             TableColumn("Hold", value: \.moonSortKey) { row in Text(moonRowText(row)) }
                 .width(110)
-            TableColumn("Döntés", value: \.verdictSortKey) { row in verdictChip(row.plan.verdict) }
+            TableColumn("Döntés", value: \.verdictSortKey) { row in VerdictChip(verdict: row.plan.verdict) }
                 .width(140)
             // R10-B7: visible row-actions -- mirrors `planContextMenuItems`
             // exactly (same function, both call sites), so the right-click
@@ -516,11 +527,22 @@ struct TonightPage: View {
             .padding(.top, 6)
     }
 
+    // R10 review (item 15): a real deep link (same `settingsTab = .location;
+    // openSettings()` pattern the "Helyszín" tile/`noSiteBanner` above
+    // already use), replacing a plain sentence that just NAMED the
+    // settings location without a way to jump there.
     private var noSiteChartHint: some View {
-        Text("Nincs megfigyelési helyszín beállítva — állítsd be itt: Beállítások ▸ Helyszín.")
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .padding(.top, 6)
+        HStack(spacing: 8) {
+            Text("Nincs megfigyelési helyszín beállítva.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Button("Beállítás…") {
+                appState.settingsTab = .location
+                openSettings()
+            }
+            .buttonStyle(.link)
+        }
+        .padding(.top, 6)
     }
 
     // MARK: Cell content
@@ -552,7 +574,9 @@ struct TonightPage: View {
         if let missing = row.missingSeconds {
             Text(TDFormat.hm(missing)).foregroundStyle(missing > 0 ? .red : .secondary)
         } else {
-            Text("—").foregroundStyle(.secondary)
+            // R10 review (item 20): table CELLS use "-", not "—" -- see
+            // `TDFormat`'s own doc comment for the full rule.
+            Text("-").foregroundStyle(.secondary)
         }
     }
 
@@ -583,25 +607,6 @@ struct TonightPage: View {
             text += " · \(Int(sep.rounded()))°"
         }
         return text
-    }
-
-    // MARK: Chips
-
-    private func verdictChip(_ verdict: String) -> some View {
-        Text(verdict)
-            .font(.caption.bold())
-            .lineLimit(1)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(verdictColor(verdict).opacity(0.15), in: Capsule())
-            .foregroundStyle(verdictColor(verdict))
-    }
-
-    private func verdictColor(_ verdict: String) -> Color {
-        if verdict == "ma jó" { return .green }
-        if verdict.hasPrefix("Hold zavar") { return .yellow }
-        if verdict.hasPrefix("alacsony") || verdict == "nem látszik ma éjjel" { return .orange }
-        return .gray // "nincs koordináta" / üstökös
     }
 
     // MARK: Context menu
@@ -677,7 +682,7 @@ struct TonightPage: View {
     private static let calendarMetricInfo: [MetricInfoButton.Metric] = [
         .init(
             title: "Felhő",
-            explanation: "Az adott éjszaka 20:00-04:00 közti óránkénti Open-Meteo mintáinak átlagos felhőzete, százalékban. Mikor hazudik: a 7 napos előrejelzésen túl, vagy ha az előrejelzés ki van kapcsolva, „—”."
+            explanation: "Az adott éjszaka 20:00-04:00 közti óránkénti Open-Meteo mintáinak átlagos felhőzete, százalékban. Mikor hazudik: a 7 napos előrejelzésen túl „-”; ha az előrejelzés ki van kapcsolva, „ki” (kattintható link a Beállítások ▸ Helyszín laphoz)."
         ),
     ]
 
@@ -704,6 +709,22 @@ struct TonightPage: View {
             TableColumn("Legjobb 3 célpont") { row in bestTargetsCell(row.night) }
             TableColumn("") { row in markerCell(row.night) }
                 .width(30)
+            // R10 review (item 6): the standard trailing "⋯" actions column
+            // every other main table already has (`QualitySegment.frameTable`/
+            // `NightsPage.table`/`DiscoveryPage.table`/`planTable` above) --
+            // this table's own row action ("Terv erre az éjszakára") used to
+            // be reachable ONLY via right-click or double-click, with no
+            // always-visible affordance hinting it exists at all.
+            TableColumn("") { row in
+                Menu {
+                    planForNightMenuItem(row.night)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 24)
+            }
+            .width(36)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         // R9-D11: same row-scoped context-menu/double-click pattern as
@@ -757,19 +778,30 @@ struct TonightPage: View {
         }
     }
 
-    /// R10-B6: "—" whenever `night.date` has no entry in
-    /// `weatherDailySummaries` -- covers BOTH "feature disabled" (the
-    /// dictionary never gets populated at all, see `loadWeather`'s guard)
-    /// and "beyond Open-Meteo's 7-day horizon" (that date's bucket was never
-    /// produced) with the exact same honest-n/a code path, no extra branch
-    /// needed for either.
+    /// R10-B6/R10 review (item 16): `night.date` having no entry in
+    /// `weatherDailySummaries` used to render the exact same "—" for two
+    /// different reasons -- "feature disabled" (the dictionary never gets
+    /// populated at all, see `loadWeather`'s guard) and "beyond Open-Meteo's
+    /// 7-day horizon"/still loading (that date's bucket wasn't produced
+    /// YET, or ever). The first is one click away from fixed (a deep link,
+    /// same "ki" pattern `TonightPage.cloudTile` uses); the second genuinely
+    /// has nothing to show. Table CELLS use "-" for that second, honest-n/a
+    /// case -- see `TDFormat`'s own doc comment for the full rule.
     @ViewBuilder
     private func cloudCell(_ night: NightSummary) -> some View {
         if let summary = appState.weatherDailySummaries[night.date] {
             Text(TDFormat.percent(summary.meanPercent))
                 .foregroundStyle(cloudColor(summary.meanPercent))
+        } else if !appState.config.weather.enabled {
+            Button("ki") {
+                appState.settingsTab = .location
+                openSettings()
+            }
+            .buttonStyle(.link)
+            .font(.callout)
+            .foregroundStyle(.secondary)
         } else {
-            Text("—").foregroundStyle(.secondary)
+            Text("-").foregroundStyle(.secondary)
         }
     }
 
@@ -793,7 +825,8 @@ struct TonightPage: View {
     @ViewBuilder
     private func bestTargetsCell(_ night: NightSummary) -> some View {
         if night.bestTargets.isEmpty {
-            Text("—").foregroundStyle(.secondary)
+            // R10 review (item 20): table CELLS use "-", not "—".
+            Text("-").foregroundStyle(.secondary)
         } else {
             HStack(spacing: 4) {
                 ForEach(Array(night.bestTargets.enumerated()), id: \.offset) { index, best in

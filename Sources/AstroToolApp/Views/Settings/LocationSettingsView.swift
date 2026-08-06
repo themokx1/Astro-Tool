@@ -96,6 +96,24 @@ struct LocationSettingsView: View {
         }
         .formStyle(.grouped)
         .onAppear { loadFromConfig() }
+        // R10 review (item 17): a fresh edit re-dirtying the draft after a
+        // previous save's feedback is still showing must clear that stale
+        // feedback -- otherwise "Mentve." (or a stale error) sits there
+        // looking current while actually describing a DIFFERENT draft.
+        // Only fires on the false -> true transition: `save()` itself
+        // already sets `saveMessage`/`saveError` right as it also makes
+        // `isDirty` become `false` again (a successful save syncs
+        // `appState.config` to match the draft) -- reacting to EVERY
+        // change here would immediately wipe that fresh feedback back out
+        // before the user ever saw it, and a FAILED save leaves `isDirty`
+        // unchanged (still `true`, no transition fires at all), so
+        // `saveError` survives to actually be read.
+        .onChange(of: isDirty) { _, newValue in
+            if newValue {
+                saveMessage = nil
+                saveError = nil
+            }
+        }
     }
 
     private var resolvedLatitudeText: String {

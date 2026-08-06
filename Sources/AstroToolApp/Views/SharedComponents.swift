@@ -103,3 +103,38 @@ struct PhaseChip: View {
             .foregroundStyle(phaseColor(phase))
     }
 }
+
+// MARK: - Verdict chip (R10 review)
+
+/// Shared "tonight verdict" chip -- unifies three near-identical copies
+/// (`TonightPage.planTable`'s `verdictChip`/`verdictColor`,
+/// `DiscoveryPage.table`'s identical pair, and `OverviewSegment`'s own
+/// "Láthatóság ma este" card, which only ever distinguished green/"ma jó"
+/// from gray/everything-else -- Hold-zavar and alacsony/nem-látszik verdicts
+/// there rendered the same flat gray as "nincs koordináta"). Every verdict
+/// string this is ever handed comes from `NightSweep`'s fixed vocabulary
+/// (`Planner.plan`/`DiscoveryPlanner.discover` both route through it): "ma
+/// jó", "Hold zavar (…°, …%)", "alacsony (max …°)", "nem látszik ma éjjel",
+/// "nincs koordináta" -- matched by prefix rather than full equality for the
+/// two that carry a parenthetical, so a changed number inside it still
+/// colors correctly.
+struct VerdictChip: View {
+    let verdict: String
+
+    var body: some View {
+        Text(verdict)
+            .font(.caption.bold())
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Self.color(for: verdict).opacity(0.15), in: Capsule())
+            .foregroundStyle(Self.color(for: verdict))
+    }
+
+    static func color(for verdict: String) -> Color {
+        if verdict == "ma jó" { return .green }
+        if verdict.hasPrefix("Hold zavar") { return .yellow }
+        if verdict.hasPrefix("alacsony") || verdict == "nem látszik ma éjjel" { return .orange }
+        return .gray // "nincs koordináta" / üstökös
+    }
+}

@@ -24,7 +24,7 @@ struct SearchResultsPage: View {
         Group {
             if appState.searchQuery.isEmpty {
                 ContentUnavailableView(
-                    "Kereső",
+                    "Keresés",
                     systemImage: "magnifyingglass",
                     description: Text("Írj be egy célpont-, session-, fájl- vagy jegyzet-keresést a bal oldali mezőbe.")
                 )
@@ -34,7 +34,10 @@ struct SearchResultsPage: View {
                 ContentUnavailableView.search(text: appState.searchQuery)
             }
         }
-        .navigationTitle("Kereső")
+        // R10 review: matches `MainShellView.title(for: .searchResults)`'s
+        // rename -- was "Kereső", now "Keresés" (this page's own identity,
+        // distinct from the ⌘F "Kereső fókuszálása" field-focus command).
+        .navigationTitle("Keresés")
     }
 
     @ViewBuilder
@@ -147,7 +150,7 @@ struct SearchResultsPage: View {
                 Button("Célpont") { appState.currentPage = .target(parentTarget) }
                     .buttonStyle(.link).font(.caption)
             }
-            Button("Finderben") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            Button("Megnyitás Finderben") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                 .buttonStyle(.link).font(.caption)
         }
     }

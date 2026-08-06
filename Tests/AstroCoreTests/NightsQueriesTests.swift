@@ -216,6 +216,26 @@ private func insertSensorProfile(
     #expect(rated.backgroundEPerSecPerArcsec2 == expectedQuality.backgroundEPerSecPerArcsec2)
 }
 
+/// R10 review (item 11): `NightsPage.fwhmText` needs a pixel-only fallback
+/// (like `SessionsSegment.fwhmText`) for a rated session with no derivable
+/// arcsec value -- `NightRow` didn't carry `medianFWHMPixels` at all before
+/// this, even though `SessionQualitySummary` (its join source) always did.
+@Test func allNightsMedianFWHMPixelsPopulatedWhenArcsecUnavailable() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+
+    // Rated, but with NO xpixsz/focallen on record -- `medianFWHMArcsec`
+    // can't be derived (no pixel scale to convert with), while the raw
+    // `ratings.fwhm` pixel value still can be.
+    let ratedID = try insertLight(db: db, target: "T1", date: "2026-01-01", name: "a", exptime: 60, instrume: "CamA")
+    try insertRating(db: db, fileID: ratedID, fwhm: 3.2)
+
+    let rows = try NightsQueries.allNights(db: db, config: config)
+    let row = try #require(rows.first { $0.date == "2026-01-01" })
+    #expect(row.medianFWHMArcsec == nil)
+    #expect(row.medianFWHMPixels == 3.2)
+}
+
 // MARK: - Duty cycle (join with SessionTimeline)
 
 @Test func allNightsDutyCyclePercentMatchesSessionTimelineOrNilWithoutDateObs() throws {

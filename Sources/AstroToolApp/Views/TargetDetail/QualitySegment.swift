@@ -21,6 +21,11 @@ struct QualitySegment: View {
     @State private var sortOrder = [KeyPathComparator(\Row.score, order: .reverse)]
     /// Drives the "Átnézés…" (blink review) sheet -- R10-B1.
     @State private var showingReview = false
+    /// R10 review (item 5): row-scoped selection for `frameTable`'s
+    /// `.contextMenu(forSelectionType:)` -- previously the context menu was
+    /// attached to just the "Fájl" cell's own `HStack`, so right-clicking or
+    /// double-clicking anywhere else in a row did nothing.
+    @State private var selectedFrame: Row.ID?
 
     /// Flattened, display-ready view of a `FrameScore` -- ported verbatim
     /// from the deleted `QualityView.Row`.
@@ -160,6 +165,8 @@ struct QualitySegment: View {
                 histogram
                 if showsFWHMOverNightCard {
                     fwhmOverNightCard
+                } else {
+                    fwhmOverNightPlaceholderCard
                 }
                 frameTable
             }
@@ -281,8 +288,8 @@ struct QualitySegment: View {
             explanation: "A kerekség, FWHM, csillagszám és háttér súlyozott kombinációja (Beállítások ▸ Pontozás & expozíció ▸ súlyok). Nagyobb = jobb. Mikor hazudik: kevés csillagnál (szűk mezős vagy felhős keret) a bemenő metrikák zajosak, a pontszám megbízhatatlan."
         ),
         .init(
-            title: "FWHM",
-            explanation: "Csillagok félértékszélessége -- a fókusz élességének mérőszáma, kisebb = élesebb. Mikor hazudik: \"Siril nélkül\" méréskor ez mindig „-”, natív statisztika nem ad FWHM-et."
+            title: "FWHM (px)",
+            explanation: "Csillagok félértékszélessége pixelben -- a fókusz élességének mérőszáma, kisebb = élesebb. Mikor hazudik: \"Siril nélkül\" méréskor ez mindig „-”, natív statisztika nem ad FWHM-et."
         ),
         .init(
             title: "Háttér",
@@ -380,6 +387,26 @@ struct QualitySegment: View {
 
     private var showsFWHMOverNightCard: Bool {
         selectedDate != nil && fwhmOverNightPoints.count >= Self.minFWHMPointsForTrend
+    }
+
+    /// R10 review (item 14): explains why `fwhmOverNightCard` isn't there
+    /// instead of silently showing nothing -- same "honest n/a" stance
+    /// `notAvailableReason` embodies elsewhere in this app. Two distinct
+    /// reasons map to `showsFWHMOverNightCard`'s two ways of being `false`:
+    /// "Minden session" pools frames across different nights, which has
+    /// nothing coherent to trend on one time-of-night axis (see
+    /// `fwhmOverNightPoints`'s own doc comment); a specific session just
+    /// hasn't got `minFWHMPointsForTrend` scored frames yet.
+    private var fwhmOverNightPlaceholderCard: some View {
+        let text = selectedDate == nil
+            ? "Válassz egy konkrét sessiont az éjszakán belüli FWHM-trendhez."
+            : "Túl kevés pontozott keret a trendhez ennél a sessionnél."
+        return Text(text)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
     }
 
     /// This session's `NightHealth` focus-drift report, if `AppState`
@@ -526,12 +553,13 @@ struct QualitySegment: View {
         return formatter
     }()
 
-    // MARK: - Frame table (unchanged from the deleted QualityView)
+    // MARK: - Frame table (ported from the deleted QualityView; row-scoped
+    // selection/context-menu added R10 review, item 5)
 
     private func tint(_ row: Row) -> Color { row.isOutlier ? .red : .primary }
 
     private var frameTable: some View {
-        Table(rows, sortOrder: $sortOrder) {
+        Table(rows, selection: $selectedFrame, sortOrder: $sortOrder) {
             // R9-T6/B7: the thumbnail rides along in the "Fájl" column
             // itself rather than as its own `TableColumn` -- `Table`'s
             // column-builder overloads top out at 10 top-level items.
@@ -550,7 +578,6 @@ struct QualitySegment: View {
                         .foregroundColor(tint(row))
                 }
                 .help(row.path)
-                .contextMenu { frameContextMenuItems(row) }
             }
             .width(min: 160, ideal: 240)
 
@@ -564,10 +591,10 @@ struct QualitySegment: View {
             }
             .width(80)
 
-            TableColumn("FWHM", value: \.fwhmSortKey) { row in
+            TableColumn("FWHM (px)", value: \.fwhmSortKey) { row in
                 Text(row.fwhm.map { String(format: "%.2f", $0) } ?? "-").monospacedDigit().foregroundColor(tint(row))
             }
-            .width(60)
+            .width(70)
 
             TableColumn("Kerekség", value: \.roundnessSortKey) { row in
                 Text(row.roundness.map { String(format: "%.2f", $0) } ?? "-").monospacedDigit().foregroundColor(tint(row))
@@ -623,7 +650,7 @@ struct QualitySegment: View {
 
             // R10-B7: visible row-actions -- mirrors `frameContextMenuItems`
             // exactly (same function, both call sites: this column's Menu
-            // AND the "Fájl" cell's own `.contextMenu` above), so the
+            // AND the table's own row-scoped `.contextMenu` below), so the
             // right-click menu and this borderless "⋯" button can never
             // drift apart.
             TableColumn("") { row in
@@ -637,6 +664,25 @@ struct QualitySegment: View {
             }
             .width(36)
         }
+        // R10 review (item 5): row-scoped context menu + double-click-to-
+        // open, same pattern `TonightPage.planTable`/`AllTargetsPage
+        // .statsTable`/`NightsPage.table`/`DiscoveryPage.table` all use --
+        // replaces the old per-cell `.contextMenu` that only fired over the
+        // "Fájl" cell's own `HStack`. The "⋯" column above stays as the
+        // always-visible affordance hinting these actions exist at all.
+        .contextMenu(forSelectionType: Row.ID.self) { ids in
+            if let id = ids.first, let row = row(withID: id) {
+                frameContextMenuItems(row)
+            }
+        } primaryAction: { ids in
+            if let id = ids.first, let row = row(withID: id) {
+                NSWorkspace.shared.open(fileURL(row))
+            }
+        }
+    }
+
+    private func row(withID id: Row.ID) -> Row? {
+        rows.first { $0.id == id }
     }
 
     private func outlierText(_ row: Row) -> String {
@@ -646,11 +692,19 @@ struct QualitySegment: View {
     @ViewBuilder
     private func frameContextMenuItems(_ row: Row) -> some View {
         Button("Megnyitás") { NSWorkspace.shared.open(fileURL(row)) }
-        Button("Finderben") { NSWorkspace.shared.activateFileViewerSelecting([fileURL(row)]) }
-        // R9-T6/B7: "Quick Look (Space)" per spec -- the Space key itself
+        // R10 review (item 8): "Megnyitás Finderben" everywhere a Finder-
+        // reveal action exists (`SearchResultsPage`/`AllTargetsPage`/
+        // `NightsPage` already use this exact wording) -- was a bare
+        // "Finderben", the only holdout.
+        Button("Megnyitás Finderben") { NSWorkspace.shared.activateFileViewerSelecting([fileURL(row)]) }
+        // R9-T6/B7: "Nagy előnézet (Space)" per spec -- the Space key itself
         // isn't wired (see `QuickLookController`'s doc comment for why),
-        // this context-menu item is the documented fallback.
-        Button("Quick Look") { QuickLookController.shared.preview(fileURL(row)) }
+        // this context-menu item is the documented fallback. R10 review
+        // (item 7): renamed from "Quick Look" to "Nagy előnézet" --
+        // `QuickLookController`'s own doc comment already documents that as
+        // the convention every OTHER call site (`StacksSegment`) already
+        // followed; this was the one holdout.
+        Button("Nagy előnézet") { QuickLookController.shared.preview(fileURL(row)) }
         Divider()
         // R10-B1: shown CONTEXTUALLY -- whichever action would just repeat
         // the frame's current verdict is hidden rather than shown-but-inert,

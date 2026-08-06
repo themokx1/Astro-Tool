@@ -839,7 +839,12 @@ final class AppState: @unchecked Sendable {
         guard let db else { return }
         let cfg = config
 
-        let opID = beginOperation(subpath.map { "Beolvasás: \($0)…" } ?? "Könyvtár beolvasása…")
+        // R10 review: the subpath (D23 "almappa"-scoped) variant now uses a
+        // static, listable title -- was interpolated with the subpath
+        // itself, which can never match a `successToastTitles` literal (a
+        // `Set<String>` of exact strings), so its "Kész — új: …" summary
+        // never toasted even though a full scan's did.
+        let opID = beginOperation(subpath == nil ? "Könyvtár beolvasása…" : "Almappa beolvasása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -1394,9 +1399,22 @@ final class AppState: @unchecked Sendable {
                 self.weatherError = nil
                 self.progressText = "Felhőzet-előrejelzés kész."
             } catch {
+                // R10 review (item 23): deliberately does NOT set
+                // `lastError` -- this fetch runs silently in the background
+                // on every dashboard load, and `lastError` drives 8 other
+                // pages' own inline error banners (plus, via
+                // `endOperation`'s `outcome`, the activity log's ok/error
+                // split); a flaky weather API shouldn't make an unrelated
+                // page suddenly show an error banner. `weatherError` (the
+                // "Felhőzet" tile's own caption) still gets set, and the
+                // failure still toasts -- pushed explicitly here since
+                // `endOperation`'s own error toast is driven by `lastError`,
+                // which stays `nil` on this path, matching the "silent,
+                // non-blocking" intent this function's own doc comment
+                // already describes.
                 let message = (error as? WeatherError)?.message ?? "\(error)"
                 self.weatherError = message
-                self.lastError = message
+                self.pushToast(.error, "\(Self.toastLabel(for: "Felhőzet-előrejelzés lekérése…")) — \(message)")
             }
             self.endOperation(opID)
         }
@@ -2628,13 +2646,22 @@ final class AppState: @unchecked Sendable {
                 }
                 // D12: drop the memo for every target just attempted.
                 for t in targets { self.coordinateInfoCache[t] = nil }
-                // N3 (R9 round 3): same bundling fix as `runPlateSolve` --
-                // see its comment.
-                self.loadDashboardData()
             } catch {
                 self.handle(error)
             }
+            // R10 review: `endOperation(opID)` moved to BEFORE
+            // `loadDashboardData()` -- same ordering `loadDashboardData`
+            // itself uses before its own fire-and-forget `loadWeather()`
+            // call. `loadDashboardData()` immediately reassigns
+            // `currentOperationID` via its own `beginOperation`, which would
+            // make THIS `endOperation(opID)` a silent no-op (see its
+            // `guard currentOperationID == id`) if called any later than
+            // this -- dropping both the activity-log entry and the
+            // "Plate-solve kész: …" success toast for every run.
             self.endOperation(opID)
+            // N3 (R9 round 3): same bundling fix as `runPlateSolve` --
+            // see its comment.
+            self.loadDashboardData()
         }
     }
 
@@ -3002,11 +3029,12 @@ final class AppState: @unchecked Sendable {
     /// (R10-A5) -- exports, reports, generated scripts, note saves,
     /// calibration link-apply, session creation, the two whole-library batch
     /// actions ("Batch actions (R9-T6/B14)" above: Minden célpont pontozása…/
-    /// Expozíció-tanácsadó…), and DSS ingest. Every string here must match a
-    /// `beginOperation(_:)` call site's argument EXACTLY -- all of them are
-    /// static literals, never interpolated, so this is safe. Deliberately
-    /// just this fixed set rather than a per-call-site flag, so the ~20
-    /// unrelated call sites (routine loads, scan, audit, tag/goal edits,
+    /// Expozíció-tanácsadó…), DSS ingest, scans (R10 review), and the
+    /// whole-library plate-solve batch (R10 review). Every string here must
+    /// match a `beginOperation(_:)` call site's argument EXACTLY -- all of
+    /// them are static literals, never interpolated, so this is safe.
+    /// Deliberately just this fixed set rather than a per-call-site flag, so
+    /// the ~20 unrelated call sites (routine loads, audit, tag/goal edits,
     /// single-target rate/plate-solve, …) don't all need touching; failure
     /// toasting is unconditional (see `endOperation` above) and doesn't
     /// consult this list at all.
@@ -3017,6 +3045,14 @@ final class AppState: @unchecked Sendable {
         "Célpont-riport készítése…",
         "Javaslat-script írása…",
         "Takarítási script írása…",
+        // R10 review (item 2): `runScan`'s two titles -- so its "Kész — új:
+        // N, frissült: …" summary reaches the user as a toast, not just the
+        // toolbar's own transient `progressText` caption.
+        "Könyvtár beolvasása…",
+        "Almappa beolvasása…",
+        // R10 review (item 3): `runPlateSolveAll`'s title -- so its
+        // "Plate-solve kész: …" summary toasts too.
+        "Plate-solve (minden célpont) indul…",
         "Jegyzet mentése…",
         "Kalibráció linkelése…",
         "Session létrehozása…",

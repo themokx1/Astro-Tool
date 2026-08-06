@@ -280,7 +280,9 @@ struct StacksSegment: View {
     @ViewBuilder
     private func rowContextMenuItems(_ row: StackGroupRow) -> some View {
         Button("Megnyitás") { NSWorkspace.shared.open(url(of: row)) }
-        Button("Finderben") { NSWorkspace.shared.activateFileViewerSelecting([url(of: row)]) }
+        // R10 review (item 8): "Megnyitás Finderben" everywhere a Finder-
+        // reveal action exists -- was a bare "Finderben".
+        Button("Megnyitás Finderben") { NSWorkspace.shared.activateFileViewerSelecting([url(of: row)]) }
         Button("Nagy előnézet") { QuickLookController.shared.preview(url(of: row)) }
     }
 

@@ -29,6 +29,19 @@ struct SolvingTarget: Identifiable {
 /// non-instantiable enum rather than free functions so call sites read as
 /// `TDFormat.hm(...)` instead of colliding with each file's own local
 /// `formatDuration`/`format...` helpers.
+///
+/// R10 review: this app's no-value glyph is CONTEXT-dependent, not one
+/// symbol everywhere -- table CELLS use "-" (a missing metric among many
+/// filled ones in a dense grid), TILES use "n/a" (a single missing summary
+/// value, where "-" reads as a dash/minus rather than "no data"). Enforcing
+/// that isn't this enum's job -- there's no `TDFormat.missing`, each call
+/// site's own `?? "-"`/`?? "n/a"` picks the one that fits its layout -- this
+/// comment just states the rule so the two don't drift into each other.
+/// Duration formatting: `hm` (h:mm, e.g. "10:00") is the CANONICAL format
+/// across this app -- a bare decimal-hours suffix ("3.2 ó") only appears
+/// where no total-seconds value exists to feed `hm` with (e.g.
+/// `DiscoveryPage`'s "Látható" column, sourced from `DiscoveryRow`, which
+/// only ever carries an already-rounded hour count, never raw seconds).
 enum TDFormat {
     static func hm(_ seconds: Double) -> String {
         let totalMinutes = Int((seconds / 60).rounded())
