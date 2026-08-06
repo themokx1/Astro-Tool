@@ -99,9 +99,6 @@ private struct DetailContainerView: View {
                         NotificationCenter.default.post(name: .measureSensorRequested, object: nil)
                     }
                     .disabled(appState.db == nil)
-                    Divider()
-                    Button("Minden célpont exportálása…") {}
-                        .disabled(true)
                 } label: {
                     Label("Műveletek", systemImage: "ellipsis.circle")
                 }
@@ -185,7 +182,7 @@ private struct DetailContainerView: View {
         // `.calendar` still lands somewhere sensible rather than being
         // unrepresentable.
         case .calendar: TonightPage()
-        case .allTargets: StatsView()
+        case .allTargets: AllTargetsPage()
         // R9-T3: `.id(name)` forces a fresh `TargetDetailPage` instance (and
         // thus a fresh `onAppear`/`@State`) whenever the sidebar switches
         // straight from one target to another -- `MainShellView` would

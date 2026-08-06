@@ -2,7 +2,7 @@ import AstroCore
 import SwiftUI
 
 /// Inline mosaic-panel table for the "Áttekintés" segment (R9-T3/A.3) --
-/// same content as `StatsView`'s old `PanelsPopoverButton` popover, just
+/// same content as `AllTargetsPage`'s old `PanelsPopoverButton` popover, just
 /// embedded directly on the page instead of behind a click. Only ever shown
 /// when `PanelReport.isMosaic` (the caller checks that before instantiating
 /// this view, same convention the old popover used).

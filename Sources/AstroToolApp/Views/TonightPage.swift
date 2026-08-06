@@ -20,6 +20,13 @@ struct TonightPage: View {
     @State private var sortOrder = [KeyPathComparator(\PlanRow.score, order: .reverse)]
     @State private var goalEditingTarget: GoalEditingTarget?
     @State private var solvingTarget: SolvingTarget?
+    /// R9-D11: row-scoped selection for `planTable`'s
+    /// `.contextMenu(forSelectionType:)` -- previously the context menu/
+    /// double-click were attached to just the "Célpont" cell's `Text`, so
+    /// right-clicking or double-clicking anywhere else in a row did nothing.
+    @State private var selectedPlanTarget: String?
+    /// Same idea for `calendarTable`.
+    @State private var selectedCalendarNight: String?
 
     var body: some View {
         @Bindable var appState = appState
@@ -44,8 +51,14 @@ struct TonightPage: View {
         }
         .padding()
         .onAppear {
-            if appState.stats.isEmpty { appState.loadStats() }
-            if appState.plan == nil { appState.loadPlan() }
+            // R9-D3: `loadStats()` and `loadPlan()` fired back-to-back here
+            // used to race (each `beginOperation` cancels the previous
+            // `currentTask`, so only the second call's result ever landed --
+            // `stats`/sidebar phase dots stayed empty). `loadDashboardData()`
+            // loads both (+ projects/cleanup) in one background operation.
+            if appState.stats.isEmpty || appState.plan == nil {
+                appState.loadDashboardData()
+            }
         }
         .sheet(item: $goalEditingTarget) { editing in
             GoalEditSheet(target: editing.target, initialHours: editing.currentHours)
@@ -272,7 +285,7 @@ struct TonightPage: View {
     }
 
     private var planTable: some View {
-        Table(planRows, sortOrder: $sortOrder) {
+        Table(planRows, selection: $selectedPlanTarget, sortOrder: $sortOrder) {
             TableColumn("Célpont", value: \.displayName) { row in targetCell(row) }
                 .width(min: 200, ideal: 240)
             TableColumn("Állapot", value: \.phaseRank) { row in phaseChip(row.phase) }
@@ -299,6 +312,19 @@ struct TonightPage: View {
                 .width(140)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
+        // R9-D11: row-scoped context menu + double-click-to-open, same
+        // pattern `SessionsSegment.table` uses -- replaces the old per-cell
+        // `.contextMenu`/`.onTapGesture` that only fired over the "Célpont"
+        // cell's own text.
+        .contextMenu(forSelectionType: String.self) { targets in
+            if let target = targets.first, let row = planRows.first(where: { $0.id == target }) {
+                planContextMenuItems(row)
+            }
+        } primaryAction: { targets in
+            if let target = targets.first {
+                appState.currentPage = .target(target)
+            }
+        }
     }
 
     // MARK: Cell content
@@ -310,9 +336,6 @@ struct TonightPage: View {
                 Text(row.plan.target).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { appState.currentPage = .target(row.plan.target) }
-        .contextMenu { planContextMenuItems(row) }
     }
 
     @ViewBuilder
@@ -475,7 +498,8 @@ struct TonightPage: View {
     }
 
     private func calendarTable(_ month: [NightSummary]) -> some View {
-        Table(month.map(CalendarRow.init)) {
+        let rows = month.map(CalendarRow.init)
+        return Table(rows, selection: $selectedCalendarNight) {
             TableColumn("Dátum") { row in dateCell(row.night) }
                 .width(130)
             TableColumn("Sötét") { row in darkCell(row.night) }
@@ -487,18 +511,33 @@ struct TonightPage: View {
                 .width(30)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
+        // R9-D11: same row-scoped context-menu/double-click pattern as
+        // `planTable` -- previously the context menu was attached only to
+        // the "Dátum" cell's `Text`, and there was no double-click action at
+        // all.
+        .contextMenu(forSelectionType: String.self) { ids in
+            if let date = ids.first, let row = rows.first(where: { $0.id == date }) {
+                planForNightMenuItem(row.night)
+            }
+        } primaryAction: { ids in
+            if let date = ids.first, let row = rows.first(where: { $0.id == date }) {
+                openPlanForNight(row.night)
+            }
+        }
     }
 
     private func dateCell(_ night: NightSummary) -> some View {
         Text(dateLabel(night))
-            .contentShape(Rectangle())
-            .contextMenu {
-                Button("Terv erre az éjszakára") {
-                    guard let date = Self.isoDateFormatter.date(from: night.date) else { return }
-                    appState.tonightSegment = .tonight
-                    appState.loadPlan(date: date)
-                }
-            }
+    }
+
+    private func planForNightMenuItem(_ night: NightSummary) -> some View {
+        Button("Terv erre az éjszakára") { openPlanForNight(night) }
+    }
+
+    private func openPlanForNight(_ night: NightSummary) {
+        guard let date = Self.isoDateFormatter.date(from: night.date) else { return }
+        appState.tonightSegment = .tonight
+        appState.loadPlan(date: date)
     }
 
     @ViewBuilder
@@ -577,14 +616,16 @@ struct TonightPage: View {
 /// header goal-tile uses) because this one is triggered from BOTH a `Table`
 /// cell's plain link AND a row context-menu item, and a popover needs a
 /// still-on-screen anchor view to attach to, which a context-menu item
-/// (which closes immediately on selection) can't provide.
-private struct GoalEditingTarget: Identifiable {
+/// (which closes immediately on selection) can't provide. Not `private`:
+/// `AllTargetsPage`'s target row context menu reuses this same sheet for
+/// its own "Cél beállítása…" item (R9-D8/e) rather than duplicating it.
+struct GoalEditingTarget: Identifiable {
     let target: String
     let currentHours: Double
     var id: String { target }
 }
 
-private struct GoalEditSheet: View {
+struct GoalEditSheet: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
 

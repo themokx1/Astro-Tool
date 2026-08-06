@@ -23,7 +23,15 @@ struct StatsRow: Identifiable {
     var children: [StatsRow]?
 }
 
-struct StatsView: View {
+/// R9-T3/A.2's "Minden célpont" page -- every target/session in one
+/// hierarchical table, PLUS (R9-D8, the re-review's completion pass) a
+/// headline tile row, a "Fázis" column mirroring the sidebar's phase dots,
+/// a "Stackek" column, read-only tag chips (mutation moved into the row
+/// context menus), and real `ContentUnavailableView` empty states. Renamed
+/// from `StatsView` -- it's the target/session browser now, not a bare
+/// stats dump (the name predates R9-T1's sidebar and dates back to when
+/// this was the only "list every target" surface in the app).
+struct AllTargetsPage: View {
     @Environment(AppState.self) private var appState
     @State private var searchText: String = ""
     /// The session currently shown in `CalibLinkSheet`, `nil` when the sheet
@@ -33,6 +41,11 @@ struct StatsView: View {
     /// Shared.swift` -- R9-T3 lifted these out of this file so
     /// `TargetDetailPage` could reuse the same sheets.)
     @State private var linkingSession: LinkingSession?
+    /// R9-D8/h: previously declared but never read anywhere -- wired into
+    /// `statsTable`'s `selection:`/`.contextMenu(forSelectionType:)` instead
+    /// of being deleted, the same row-scoped context-menu/double-click
+    /// pattern `SessionsSegment.table` (`Views/TargetDetail/
+    /// SessionsSegment.swift:125`) already established.
     @State private var selection: StatsRow.ID?
     /// The target currently shown in `PlateSolveSheet`, `nil` when closed --
     /// same row-scoped pattern as `linkingSession`.
@@ -45,6 +58,14 @@ struct StatsView: View {
     /// "Éjszaka-jegyzet szerkesztése…"), `nil` when closed -- same
     /// row-scoped pattern as `linkingSession`.
     @State private var noteEditingSession: LinkingSession?
+    /// The target whose goal is being edited via `TonightPage`'s
+    /// `GoalEditSheet` (R9-D8/e's "Cél beállítása…" context-menu item) --
+    /// reuses that sheet rather than duplicating it, same "row-scoped sheet
+    /// trigger" pattern as every other `@State` here.
+    @State private var goalEditingTarget: GoalEditingTarget?
+    /// The target (and, for a session row, its date) currently shown in
+    /// `AddTagSheet` (R9-D8/d) -- `date == nil` means a target-level tag.
+    @State private var addingTag: AddTagTarget?
 
     /// `true` once `AppState.plan` has loaded and reports no resolvable
     /// coordinate for `target` at all -- gates the "Plate-solve…" action so
@@ -89,46 +110,88 @@ struct StatsView: View {
         }
     }
 
+    private func row(withID id: StatsRow.ID) -> StatsRow? {
+        for row in rows {
+            if row.id == id { return row }
+            if let child = row.children?.first(where: { $0.id == id }) { return child }
+        }
+        return nil
+    }
+
     private var totalIntegrationSeconds: Double {
         appState.stats.reduce(0) { $0 + $1.totalIntegrationSeconds }
     }
 
+    // MARK: - Tile row (R9-D8/a)
+
+    private var sessionCount: Int {
+        appState.stats.reduce(0) { $0 + $1.sessionDates.count }
+    }
+
+    private var doneCount: Int {
+        appState.projectStates.count { $0.phase == .done }
+    }
+
+    private var inProgressCount: Int {
+        appState.projectStates.count { $0.phase != .done }
+    }
+
+    private var tilesRow: some View {
+        HStack(spacing: 12) {
+            AllTargetsStatTile(title: "Célpontok", value: "\(appState.stats.count)", color: .blue)
+            AllTargetsStatTile(title: "Sessionök", value: "\(sessionCount)", color: .blue)
+            AllTargetsStatTile(title: "Összes integráció", value: formatDuration(totalIntegrationSeconds), color: .green)
+            AllTargetsStatTile(title: "Kész / folyamatban", value: "\(doneCount) / \(inProgressCount)", color: .orange)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                TextField("Keresés célpont vagy címke szerint", text: $searchText)
-                    .frame(width: 280)
-                Button("Újraszámolás") { appState.loadStats() }
-                    .disabled(appState.isBusy || appState.db == nil)
-                Spacer()
-                if appState.isBusy {
-                    ProgressView().controlSize(.small)
-                    Text(appState.progressText).foregroundStyle(.secondary)
+            if appState.stats.isEmpty {
+                noTargetsState
+            } else {
+                HStack {
+                    TextField("Keresés célpont vagy címke szerint", text: $searchText)
+                        .frame(width: 280)
+                    Button("Újraszámolás") { appState.loadStats() }
+                        .disabled(appState.isBusy || appState.db == nil)
+                    Spacer()
+                    if appState.isBusy {
+                        ProgressView().controlSize(.small)
+                        Text(appState.progressText).foregroundStyle(.secondary)
+                    }
+                }
+
+                if let lastError = appState.lastError {
+                    Text(lastError).foregroundStyle(.red)
+                }
+
+                tilesRow
+
+                if rows.isEmpty {
+                    ContentUnavailableView.search(text: searchText)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    statsTable
+                }
+
+                HStack {
+                    Text("Összes integráció:").bold()
+                    Text(formatDuration(totalIntegrationSeconds))
+                    Spacer()
                 }
             }
-
-            if let lastError = appState.lastError {
-                Text(lastError).foregroundStyle(.red)
-            }
-
-            if rows.isEmpty {
-                Text(appState.stats.isEmpty ? "Nincs célpont." : "Nincs találat.")
-                    .foregroundStyle(.secondary)
-            } else {
-                statsTable
-            }
-
-            HStack {
-                Text("Összes integráció:").bold()
-                Text(formatDuration(totalIntegrationSeconds))
-                Spacer()
-            }
         }
+        .padding()
         .onAppear {
-            if appState.stats.isEmpty { appState.loadStats() }
-            // Needed for `targetLacksCoordinate` to gate the "Plate-solve…"
-            // action -- `plan` isn't otherwise loaded from this tab.
-            if appState.plan == nil { appState.loadPlan() }
+            // R9-D3: `loadStats()`/`loadPlan()` fired back-to-back here used
+            // to race each other's `currentTask` (see `loadDashboardData`'s
+            // doc comment) -- bundled into one background operation, which
+            // also fills `plan` (needed by `targetLacksCoordinate` to gate
+            // the "Plate-solve…" action).
+            if appState.stats.isEmpty || appState.plan == nil {
+                appState.loadDashboardData()
+            }
         }
         .sheet(item: $linkingSession) { session in
             CalibLinkSheet(target: session.target, date: session.date)
@@ -142,7 +205,29 @@ struct StatsView: View {
         .sheet(item: $noteEditingSession) { session in
             SessionNoteSheet(target: session.target, date: session.date)
         }
-        .padding()
+        .sheet(item: $goalEditingTarget) { editing in
+            GoalEditSheet(target: editing.target, initialHours: editing.currentHours)
+        }
+        .sheet(item: $addingTag) { info in
+            AddTagSheet(target: info.target, date: info.date)
+        }
+    }
+
+    // MARK: - Empty states (R9-D8/g)
+
+    private var noTargetsState: some View {
+        ContentUnavailableView {
+            Label("Nincs célpont a könyvtárban", systemImage: "moon.stars")
+        } description: {
+            Text("Válassz egy képkönyvtárat, vagy hozz létre egy új sessiont a kezdéshez.")
+        } actions: {
+            Button("Mappa választása…") { appState.chooseRoot() }
+            Button("Új session…") { NotificationCenter.default.post(name: .newSession, object: nil) }
+                .disabled(appState.db == nil)
+            Button("Mappastruktúra súgó") {
+                NotificationCenter.default.post(name: .showFolderStructureHelp, object: nil)
+            }
+        }
     }
 
     private var statsTable: some View {
@@ -150,7 +235,13 @@ struct StatsView: View {
             TableColumn("Célpont / Session") { row in
                 nameCell(row)
             }
-            .width(min: 260, ideal: 300)
+            .width(min: 220, ideal: 260)
+
+            // R9-D8/b: target rows only -- mirrors the sidebar's own phase
+            // dots/`TonightPage`'s "Állapot" column so a target's pipeline
+            // state is visible without opening its Célpont-részletek page.
+            TableColumn("Fázis") { row in phaseCell(row) }
+                .width(min: 90, ideal: 110)
 
             TableColumn("Integráció") { row in
                 Text(formatDuration(integrationSeconds(row)))
@@ -159,34 +250,40 @@ struct StatsView: View {
 
             // R9-T3/B11: goal-tag UI landed on the Célpont-részletek header
             // first -- this minimal read-only column (target rows only) is
-            // what makes a goal set there immediately visible here too,
-            // without pulling in the rest of A.2's not-yet-scheduled
-            // "Minden célpont" redesign (Fázis/Stackek columns, tile row).
+            // what makes a goal set there immediately visible here too.
             TableColumn("Cél") { row in
                 Text(goalText(row)).foregroundStyle(.secondary)
             }
             .width(min: 60, ideal: 70)
+
+            // R9-D8/c: target rows only -- "N csoport" from
+            // `AppState.stackGroupsByTarget` (R8-3's variant grouping), `-`
+            // for a target with no discovered stacks at all.
+            TableColumn("Stackek") { row in
+                Text(stacksText(row)).foregroundStyle(.secondary)
+            }
+            .width(min: 70, ideal: 90)
 
             TableColumn("Keretek") { row in
                 Text(framesText(row))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .width(min: 120, ideal: 160)
+            .width(min: 120, ideal: 150)
 
             TableColumn("Expozíciók / Utolsó dátum") { row in
                 Text(exposureOrLastDateText(row))
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            .width(min: 140, ideal: 200)
+            .width(min: 130, ideal: 180)
 
             TableColumn("Kamera") { row in
                 Text(cameraText(row))
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            .width(min: 100, ideal: 140)
+            .width(min: 90, ideal: 120)
 
             TableColumn("Részletek") { row in
                 Text(detailsText(row))
@@ -194,14 +291,80 @@ struct StatsView: View {
                     .truncationMode(.tail)
                     .foregroundStyle(.secondary)
             }
-            .width(min: 140, ideal: 220)
+            .width(min: 120, ideal: 180)
 
+            // R9-D8/d: read-only -- no +/× here anymore, a tag is added/
+            // removed from the row's own context menu instead.
             TableColumn("Címkék") { row in
                 tagsCell(row)
             }
-            .width(min: 140, ideal: 200)
+            .width(min: 120, ideal: 180)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
+        // R9-D8/h: row-scoped context menu + double-click-to-open, same
+        // pattern `SessionsSegment.table` uses -- replaces the old per-cell
+        // `.contextMenu`/`.onTapGesture` that only fired over the name
+        // cell's own text.
+        .contextMenu(forSelectionType: StatsRow.ID.self) { ids in
+            if let id = ids.first, let row = row(withID: id) {
+                switch row.kind {
+                case .target(let stats):
+                    targetContextMenuItems(stats)
+                case .session(let target, let detail):
+                    sessionContextMenuItems(target: target, detail: detail)
+                }
+            }
+        } primaryAction: { ids in
+            if let id = ids.first, let row = row(withID: id), case .target(let stats) = row.kind {
+                appState.currentPage = .target(stats.target)
+            }
+        }
+    }
+
+    // MARK: - Column: Fázis
+
+    @ViewBuilder
+    private func phaseCell(_ row: StatsRow) -> some View {
+        if case .target(let stats) = row.kind {
+            phaseChip(appState.projectStates.first { $0.target == stats.target }?.phase)
+        }
+    }
+
+    private func phaseChip(_ phase: ProjectPhase?) -> some View {
+        Text(phaseLabel(phase))
+            .font(.caption.bold())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(phaseColor(phase).opacity(0.15), in: Capsule())
+            .foregroundStyle(phaseColor(phase))
+    }
+
+    private func phaseLabel(_ phase: ProjectPhase?) -> String {
+        switch phase {
+        case .collecting: return "gyűjtés"
+        case .readyToStack: return "stackelhető"
+        case .stacked: return "feldolgozásra vár"
+        case .done: return "kész"
+        case nil: return "-"
+        }
+    }
+
+    private func phaseColor(_ phase: ProjectPhase?) -> Color {
+        switch phase {
+        case .collecting: return .blue
+        case .readyToStack: return .yellow
+        case .stacked: return .orange
+        case .done: return .green
+        case nil: return .gray
+        }
+    }
+
+    // MARK: - Column: Stackek
+
+    private func stacksText(_ row: StatsRow) -> String {
+        guard case .target(let stats) = row.kind else { return "" }
+        guard let groups = appState.stackGroupsByTarget[stats.target], !groups.isEmpty else { return "-" }
+        return "\(groups.count) csoport"
     }
 
     // MARK: - Column 1: Célpont / Session
@@ -235,15 +398,7 @@ struct StatsView: View {
                 }
             }
             .help(targetBreakdownTooltip(stats))
-            .contentShape(Rectangle())
-            // R9-T3/A.2: double-click opens Célpont-részletek -- the
-            // "Kész stackek…"/"Panelek…" buttons this row used to carry are
-            // gone (their content now lives on that page's Stackek/
-            // Áttekintés segments), so this is the row's one navigation
-            // affordance besides the context menu's own "Megnyitás".
-            .onTapGesture(count: 2) { appState.currentPage = .target(stats.target) }
-            .contextMenu { targetContextMenuItems(stats) }
-        case .session(let target, let detail):
+        case .session(_, let detail):
             HStack(spacing: 6) {
                 Text(detail.dateRaw)
                 if detail.hasReadme {
@@ -266,22 +421,39 @@ struct StatsView: View {
             }
             .lineLimit(1)
             .opacity(detail.isExcludedFromTotals ? 0.5 : 1.0)
-            .contentShape(Rectangle())
-            .contextMenu { sessionContextMenuItems(target: target, detail: detail) }
         }
     }
 
-    // MARK: - Context menus (R9-T3/A.2/B9 -- replaces the old Műveletek column)
+    // MARK: - Context menus (R9-T3/A.2/B9/D8 -- replaces the old Műveletek column)
 
     /// Target row's right-click menu -- everything the removed "Műveletek"
-    /// column used to offer for a target EXCEPT "Panelek…"/"Stackek…" (those
-    /// are dropped outright, not moved: both now live on the target's own
-    /// Célpont-részletek page, and duplicating an entry point to the exact
-    /// same page the "Megnyitás" item already opens would be redundant).
+    /// column used to offer for a target EXCEPT "Panelek…"/"Stackek…" table
+    /// buttons (dropped outright, not moved: both now live on the target's
+    /// own Célpont-részletek page). R9-D8/e adds "Cél beállítása…"/"Kész
+    /// stackek…"/"Mozaik-panelek…" (moved off the header/tooltip-only
+    /// treatment they had before), and R9-D8/d moves tag add/remove here
+    /// (the "Címkék" column itself is now read-only chips).
     @ViewBuilder
     private func targetContextMenuItems(_ stats: TargetStats) -> some View {
         Button("Megnyitás") { appState.currentPage = .target(stats.target) }
         Button("Megnyitás Finderben") { revealInFinder(relativePath: "sessions/\(stats.target)") }
+        Divider()
+        Button("Cél beállítása…") {
+            let current = appState.projectStates.first { $0.target == stats.target }?.goalSeconds
+            goalEditingTarget = GoalEditingTarget(target: stats.target, currentHours: (current ?? 36000) / 3600.0)
+        }
+        if let report = appState.stackReportsByTarget[stats.target], !report.stacks.isEmpty {
+            Button("Kész stackek…") {
+                appState.pendingTargetSegment = .stacks
+                appState.currentPage = .target(stats.target)
+            }
+        }
+        if let panels = appState.panelReportsByTarget[stats.target], panels.isMosaic {
+            // Per spec, this is "fine" landing on the default Áttekintés
+            // segment (which already has the inline mosaic table) -- no
+            // `pendingTargetSegment` preselect needed, same as "Megnyitás".
+            Button("Mozaik-panelek…") { appState.currentPage = .target(stats.target) }
+        }
         Divider()
         Menu("Exportálás") {
             Button("AstroBin CSV") { appState.exportAcquisition(target: stats.target, format: .astrobin) }
@@ -293,10 +465,24 @@ struct StatsView: View {
             Divider()
             Button("Plate-solve…") { solvingTarget = SolvingTarget(target: stats.target) }
         }
+        Divider()
+        Button("Címke hozzáadása…") { addingTag = AddTagTarget(target: stats.target, date: nil) }
+        if !stats.tags.isEmpty {
+            Menu("Címke eltávolítása") {
+                ForEach(stats.tags, id: \.self) { tag in
+                    Button(tag) { appState.removeTag(target: stats.target, date: nil, tag: tag) }
+                }
+            }
+        }
     }
 
-    /// Session row's right-click menu -- the same three actions the removed
-    /// "Műveletek" column offered per session, unchanged in behavior.
+    /// Session row's right-click menu -- the same actions the removed
+    /// "Műveletek" column offered per session, plus R9-D8/f's "Keretek
+    /// pontozása" (navigates to the target's Minőség segment with this
+    /// date preselected, rather than running a rate in place -- this page
+    /// has no frame table of its own to show the result in) and R9-D8/d's
+    /// tag add/remove (this page's only surface for editing a SESSION-level
+    /// tag -- `SessionsSegment` has none of its own).
     @ViewBuilder
     private func sessionContextMenuItems(target: String, detail: SessionDetail) -> some View {
         Button("Megnyitás Finderben") { revealInFinder(relativePath: "sessions/\(target)/\(detail.dateRaw)") }
@@ -304,8 +490,22 @@ struct StatsView: View {
         Button("Kalibráció linkelése…") { linkingSession = LinkingSession(target: target, date: detail.dateRaw) }
         Button("Stackelés előkészítése…") { stackListingSession = LinkingSession(target: target, date: detail.dateRaw) }
         Divider()
+        Button("Keretek pontozása") {
+            appState.pendingQualityDate = detail.dateRaw
+            appState.pendingTargetSegment = .quality
+            appState.currentPage = .target(target)
+        }
         Button("Éjszaka-riport készítése") { appState.exportNightReport(target: target, date: detail.dateRaw) }
         Button("Éjszaka-jegyzet szerkesztése…") { noteEditingSession = LinkingSession(target: target, date: detail.dateRaw) }
+        Divider()
+        Button("Címke hozzáadása…") { addingTag = AddTagTarget(target: target, date: detail.dateRaw) }
+        if !detail.tags.isEmpty {
+            Menu("Címke eltávolítása") {
+                ForEach(detail.tags, id: \.self) { tag in
+                    Button(tag) { appState.removeTag(target: target, date: detail.dateRaw, tag: tag) }
+                }
+            }
+        }
     }
 
     private func revealInFinder(relativePath: String) {
@@ -339,11 +539,11 @@ struct StatsView: View {
     }
 
     /// "3 stack, legjobb: 106×120 s (3:32)" (R8-1) -- the compact one-line
-    /// discovered-stacks summary shared by the target tooltip, the
-    /// "Stackek" child row, and the "Stackek…" popover's header. The "best"
-    /// stack is the first one in `report.stacks` that has a parsed
-    /// `totalSecondsFromName` -- the list is already sorted that way
-    /// (`StackDiscovery.discover`'s own convention).
+    /// discovered-stacks summary shared by the target tooltip and the
+    /// "Stackek…" popover's header. The "best" stack is the first one in
+    /// `report.stacks` that has a parsed `totalSecondsFromName` -- the list
+    /// is already sorted that way (`StackDiscovery.discover`'s own
+    /// convention).
     private func stacksSummaryLine(_ report: TargetStacks) -> String {
         var line = "\(report.stacks.count) stack"
         if let best = report.stacks.first(where: { $0.totalSecondsFromName != nil }) {
@@ -375,7 +575,7 @@ struct StatsView: View {
         return line
     }
 
-    // MARK: - Column 2: Integráció
+    // MARK: - Column: Integráció
 
     private func integrationSeconds(_ row: StatsRow) -> Double {
         switch row.kind {
@@ -384,7 +584,7 @@ struct StatsView: View {
         }
     }
 
-    /// "6:00" for a target with a `goal:6h` tag, "-" otherwise -- `nil` for
+    /// "6:00" for a target with a `goal:6h` tag, "-" otherwise -- `""` for
     /// session rows (a goal is target-scoped only). Reads
     /// `AppState.projectStates` (`ProjectState.goalSeconds`, already
     /// `GoalTag`-parsed) rather than re-parsing `TargetStats.tags` itself.
@@ -396,7 +596,7 @@ struct StatsView: View {
         return formatDuration(goalSeconds)
     }
 
-    // MARK: - Column 3: Keretek
+    // MARK: - Column: Keretek
 
     private func framesText(_ row: StatsRow) -> String {
         switch row.kind {
@@ -422,7 +622,7 @@ struct StatsView: View {
         }
     }
 
-    // MARK: - Column 4: Expozíciók / Utolsó dátum
+    // MARK: - Column: Expozíciók / Utolsó dátum
 
     private func exposureOrLastDateText(_ row: StatsRow) -> String {
         switch row.kind {
@@ -445,7 +645,7 @@ struct StatsView: View {
             .joined(separator: ", ")
     }
 
-    // MARK: - Column 5: Kamera
+    // MARK: - Column: Kamera
 
     private func cameraText(_ row: StatsRow) -> String {
         switch row.kind {
@@ -456,7 +656,7 @@ struct StatsView: View {
         }
     }
 
-    // MARK: - Column 6: Részletek (sessions only)
+    // MARK: - Column: Részletek (sessions only)
 
     private func detailsText(_ row: StatsRow) -> String {
         guard case .session(_, let detail) = row.kind else { return "" }
@@ -476,23 +676,15 @@ struct StatsView: View {
         return parts.isEmpty ? "-" : parts.joined(separator: " · ")
     }
 
-    // MARK: - Column 7: Címkék
+    // MARK: - Column: Címkék (read-only, R9-D8/d)
 
     @ViewBuilder
     private func tagsCell(_ row: StatsRow) -> some View {
         switch row.kind {
         case .target(let stats):
-            TagChipsRow(
-                tags: stats.tags,
-                onAdd: { tag in appState.addTag(target: stats.target, date: nil, tag: tag) },
-                onRemove: { tag in appState.removeTag(target: stats.target, date: nil, tag: tag) }
-            )
-        case .session(let target, let detail):
-            TagChipsRow(
-                tags: detail.tags,
-                onAdd: { tag in appState.addTag(target: target, date: detail.dateRaw, tag: tag) },
-                onRemove: { tag in appState.removeTag(target: target, date: detail.dateRaw, tag: tag) }
-            )
+            ReadOnlyTagChipsRow(tags: stats.tags)
+        case .session(_, let detail):
+            ReadOnlyTagChipsRow(tags: detail.tags)
         }
     }
 
@@ -506,80 +698,95 @@ struct StatsView: View {
     }
 }
 
-// MARK: - Tag chips
+// MARK: - Tile
 
-/// A wrapping row of tag capsules plus a trailing "+" chip that pops over a
-/// text field for adding a new one. Shared by target rows and session rows.
-private struct TagChipsRow: View {
-    let tags: [String]
-    let onAdd: (String) -> Void
-    let onRemove: (String) -> Void
+/// Small colored stat tile, same look/convention as `AuditPage`'s private
+/// `StatTile`/`CalibrationPage`'s private `CalibStatTile` -- kept as its own
+/// (differently-named) private type per those files' own convention of each
+/// page owning its tile view rather than sharing one globally.
+private struct AllTargetsStatTile: View {
+    let title: String
+    let value: String
+    let color: Color
 
     var body: some View {
-        FlowLayout(spacing: 6) {
-            ForEach(tags, id: \.self) { tag in
-                TagChip(text: tag, onRemove: { onRemove(tag) })
-            }
-            AddTagChip(onAdd: onAdd)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.title2.bold()).foregroundStyle(color)
         }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(color.opacity(0.12)))
     }
 }
 
-private struct TagChip: View {
-    let text: String
-    let onRemove: () -> Void
+// MARK: - Tag add sheet (R9-D8/d)
 
-    var body: some View {
-        HStack(spacing: 4) {
-            Text(text).font(.caption)
-            Button(action: onRemove) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-        .overlay(Capsule().stroke(Color.accentColor.opacity(0.35)))
-    }
+/// One target, optionally scoped to one of its session dates -- `Identifiable`
+/// so a `@State` of this type can drive `AddTagSheet`'s `.sheet(item:)`.
+/// `date == nil` means a target-level tag, same convention
+/// `Database.addTag`/`AppState.addTag` already use.
+struct AddTagTarget: Identifiable {
+    let target: String
+    let date: String?
+    var id: String { date.map { "\(target):\($0)" } ?? target }
 }
 
-private struct AddTagChip: View {
-    let onAdd: (String) -> Void
+/// Small prompt sheet for R9-D8/d's "Címke hozzáadása…" context-menu item --
+/// replaces the old inline `AddTagChip` popover now that tag mutation lives
+/// in the row context menu instead of the (now read-only) "Címkék" column.
+struct AddTagSheet: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
 
-    @State private var showPopover = false
-    @State private var text = ""
+    let target: String
+    let date: String?
+    @State private var text: String = ""
 
     var body: some View {
-        Button {
-            showPopover = true
-        } label: {
-            Image(systemName: "plus")
-                .font(.caption2)
-                .padding(6)
-                .background(Circle().fill(Color.secondary.opacity(0.15)))
-        }
-        .buttonStyle(.plain)
-        .popover(isPresented: $showPopover) {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Címke hozzáadása").font(.headline)
+            Text(date.map { "\(target) / \($0)" } ?? target).foregroundStyle(.secondary)
+            TextField("Címke", text: $text).onSubmit(submit)
             HStack {
-                TextField("Új címke", text: $text)
-                    .frame(width: 160)
-                    .onSubmit(submit)
-                Button("Hozzáad", action: submit)
+                Spacer()
+                Button("Mégse") { dismiss() }
+                Button("Hozzáadás", action: submit)
+                    .keyboardShortcut(.defaultAction)
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .padding()
         }
+        .padding(20)
+        .frame(width: 300)
     }
 
     private func submit() {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        onAdd(trimmed)
-        text = ""
-        showPopover = false
+        appState.addTag(target: target, date: date, tag: trimmed)
+        dismiss()
+    }
+}
+
+// MARK: - Read-only tag chips (R9-D8/d)
+
+/// A wrapping row of read-only tag capsules -- no add/remove affordance;
+/// that moved into the row's context menu (`AddTagSheet`/"Címke
+/// eltávolítása" submenu). Shared by target and session rows.
+private struct ReadOnlyTagChipsRow: View {
+    let tags: [String]
+
+    var body: some View {
+        FlowLayout(spacing: 6) {
+            ForEach(tags, id: \.self) { tag in
+                Text(tag)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                    .overlay(Capsule().stroke(Color.accentColor.opacity(0.35)))
+            }
+        }
     }
 }
 
@@ -627,4 +834,3 @@ private struct FlowLayout: Layout {
         }
     }
 }
-

@@ -946,6 +946,25 @@ public final class Database: @unchecked Sendable {
         }
     }
 
+    /// The `id` of the most recent `runs` row of the given `kind`
+    /// (e.g. `"scan"`, `"audit"`), or `nil` if none exist yet -- mirrors
+    /// `lastRunDate(kind:)` but returns the row id rather than its
+    /// timestamp, so a caller (`AppState.openRoot`, R9-D1) can restore
+    /// `findings(runID:)` for the last completed audit across launches,
+    /// without re-running the audit.
+    public func lastRunID(kind: String) throws -> Int64? {
+        try withLock {
+            var id: Int64?
+            try db.query(
+                "SELECT id FROM runs WHERE kind = ? ORDER BY started_at DESC LIMIT 1;",
+                bind: [.text(kind)]
+            ) { row in
+                id = row.int64(0)
+            }
+            return id
+        }
+    }
+
     public func insertFinding(runID: Int64, _ f: Finding) throws {
         let suggestionJSON: String?
         if let suggestion = f.suggestion {

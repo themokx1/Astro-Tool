@@ -39,13 +39,19 @@ struct OverviewSegment: View {
 
     private var coordinatesBlock: some View {
         section("Koordináták") {
-            if let info = appState.targetCoordinateInfo {
+            if let info = appState.targetCoordinateInfo, info.sourceLabel != "nincs" {
                 HStack(spacing: 20) {
                     labeledValue("RA", TDFormat.raHMS(info.raDeg))
                     labeledValue("Dec", TDFormat.decDMS(info.decDeg))
                     labeledValue("Forrás", info.sourceLabel)
                 }
             } else {
+                // R9-D19: `info.sourceLabel == "nincs"` still means "no
+                // usable coordinate" even though `targetCoordinateInfo`
+                // itself is non-`nil` in that case -- the plate-solve button
+                // used to only show for the `nil` case, so a target that
+                // resolved to the literal "nincs" label had no way to
+                // trigger a solve from here at all.
                 HStack(spacing: 10) {
                     Text("Nincs plate-solve/fejléc koordináta.")
                         .font(.callout)
@@ -128,7 +134,16 @@ struct OverviewSegment: View {
                 if let reason = advice.notAvailableReason {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(reason).font(.caption).foregroundStyle(.secondary)
-                        Button("Szenzor mérése…") { appState.currentPage = .sensor }
+                        // R9-D20: previously only navigated to the Szenzor
+                        // page without actually starting a measurement --
+                        // `MainShellView`'s own "Szenzor mérése…" button
+                        // (line 97) posts this same notification alongside
+                        // the navigation, which is what makes `SensorPage`
+                        // actually kick off the measurement sheet.
+                        Button("Szenzor mérése…") {
+                            appState.currentPage = .sensor
+                            NotificationCenter.default.post(name: .measureSensorRequested, object: nil)
+                        }
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 3) {

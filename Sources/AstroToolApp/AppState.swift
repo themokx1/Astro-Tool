@@ -204,19 +204,29 @@ final class AppState: @unchecked Sendable {
     /// navigating to `Page.target`, so the target page opens straight to
     /// the segment that actually shows the hit (Sessionök for a session
     /// hit, Jegyzetek for a note hit) instead of always defaulting to
-    /// Áttekintés. `TargetDetailPage.onAppear` consumes it once.
+    /// Áttekintés. `TargetDetailPage.onAppear` consumes it once. Also reused
+    /// by `AllTargetsPage`'s target row context menu (R9-D8/e: "Kész
+    /// stackek…" preselects `.stacks` before navigating) -- the mechanism is
+    /// generic ("preselect a segment, then navigate"), not search-specific.
     var pendingTargetSegment: TargetDetailPage.Segment?
+    /// `AllTargetsPage`'s session row context menu's "Keretek pontozása"
+    /// (R9-D8/f) sets this (alongside `pendingTargetSegment = .quality`)
+    /// right before navigating to `Page.target` -- that page has no frame
+    /// table of its own to show a rating run in, so this only preselects
+    /// the date filter on `QualitySegment`, which consumes it once (same
+    /// "set, navigate, consume on appear" pattern as `pendingSessionSelection`).
+    var pendingQualityDate: String?
 
     var stats: [TargetStats] = []
     /// Every target's session detail rows, keyed by target name -- populated
-    /// alongside `stats` in `loadStats()` so `StatsView`'s hierarchical
+    /// alongside `stats` in `loadStats()` so `AllTargetsPage`'s hierarchical
     /// `Table` has every row's children available up front (a `Table` can't
     /// lazily fetch a row's children on first expand).
     var sessionDetailsByTarget: [String: [SessionDetail]] = [:]
     /// Every target's mosaic-panel breakdown (`FieldGeometry.panels`, R6-3),
     /// keyed by target name -- populated alongside `stats`/
     /// `sessionDetailsByTarget` in `loadStats()`. Only targets with `>= 2`
-    /// panels (`isMosaic`) show anything in `StatsView`, but every target
+    /// panels (`isMosaic`) show anything in `AllTargetsPage`, but every target
     /// gets an entry so a re-render never has to guess "not loaded yet" vs.
     /// "genuinely a single field".
     var panelReportsByTarget: [String: PanelReport] = [:]
@@ -307,8 +317,8 @@ final class AppState: @unchecked Sendable {
 
     /// Every target's pipeline status (`ProjectStatusQueries.projects`),
     /// shown in the "Projektek" box on the Áttekintés tab. `[]` until
-    /// `loadProjects()` has run at least once this session (also refreshed
-    /// automatically after a scan, unlike `plan`).
+    /// `loadDashboardData()` has run at least once this session (also
+    /// refreshed automatically after a scan, unlike `plan`).
     var projectStates: [ProjectState] = []
 
     /// The currently selected target's per-session absolute quality summaries
@@ -349,7 +359,7 @@ final class AppState: @unchecked Sendable {
     /// `CalibNeed` only records which TARGETS need a combo, not which
     /// session -- `openCalibLinkSheet(forNeed:)` resolves this pragmatically
     /// (first target, most recent session date) and sets this, which drives
-    /// `CalibrationPage`'s `.sheet(item:)`. Separate from `StatsView`'s/
+    /// `CalibrationPage`'s `.sheet(item:)`. Separate from `AllTargetsPage`'s/
     /// `TargetDetailPage`'s own `linkingSession` `@State` so the three call
     /// sites never fight over one shared trigger.
     var calibNeedLinkSession: LinkingSession?
@@ -539,6 +549,20 @@ final class AppState: @unchecked Sendable {
             // the Audit page can honor them, and neither is guaranteed to
             // call into an explicit "load" method first.
             ackedKeys = (try? opened.ackedKeys()) ?? []
+            // R9-D1: restore the last completed audit's findings from disk
+            // so a fresh launch shows them (and the sidebar's error badge,
+            // via `auditErrorBadgeCount`) WITHOUT re-running the audit --
+            // previously `findings`/`lastRunID` only ever got set by
+            // `runAudit()` itself, so both silently reset to empty/`nil` on
+            // every relaunch even though the last run's rows were still
+            // sitting in the `runs`/`findings` tables.
+            lastRunID = try? opened.lastRunID(kind: "audit")
+            findings = lastRunID.flatMap { try? opened.findings(runID: $0) } ?? []
+            // R9-D2/D3: same idea for the dashboard data (stats/plan/
+            // projects/cleanup) every sidebar badge, phase dot, and the "Ma
+            // este" Állapot/Hiányzik column depend on -- see
+            // `loadDashboardData`'s doc comment.
+            loadDashboardData()
         } catch let error as AstroError {
             handle(error)
         } catch {
@@ -833,9 +857,13 @@ final class AppState: @unchecked Sendable {
     // MARK: - Cleanup
 
     /// Loads the size-ordered cleanup report (residue + duplicate-content
-    /// groups) for "Áttekintés"'s takarítás box. Safe to call any time the
-    /// DB has data -- unlike `runAudit`, this never runs duplicate-content
-    /// hashing itself, it only reads whatever's already cached.
+    /// groups) for the Audit page's "Takarítható" segment. Safe to call any
+    /// time the DB has data -- unlike `runAudit`, this never runs
+    /// duplicate-content hashing itself, it only reads whatever's already
+    /// cached. Called from `openRoot` (via `loadDashboardData`, R9-D2/D3)
+    /// and `AuditPage.onAppear` (when `cleanupSummary` is still `nil`, e.g.
+    /// the user opened the Audit page directly without visiting a page that
+    /// already triggered `loadDashboardData`).
     func loadCleanup() {
         guard let db else { return }
         let cfg = config
@@ -900,7 +928,7 @@ final class AppState: @unchecked Sendable {
     /// Loads `stats` plus every target's session detail rows in one go (one
     /// `SessionStatsQueries.sessions` call per target, on the same
     /// background operation) -- with the library's target count this is
-    /// cheap, and it's what lets `StatsView`'s hierarchical `Table` show
+    /// cheap, and it's what lets `AllTargetsPage`'s hierarchical `Table` show
     /// session sub-rows without a separate lazy-load-on-expand step.
     func loadStats() {
         guard let db else { return }
@@ -1012,23 +1040,88 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - Project pipeline status
 
-    /// Loads every target's pipeline status for the "Projektek" box. Safe to
-    /// call any time the DB has data -- read-only, same shape as
-    /// `loadCalib()`.
-    func loadProjects() {
+    /// Bundles every query `loadDashboardData()` needs so they can all
+    /// load inside ONE `Task`/`beginOperation` -- same shape as
+    /// `TargetDetailBundle` below.
+    private struct DashboardBundle {
+        var stats: [TargetStats]
+        var sessionsByTarget: [String: [SessionDetail]]
+        var panelsByTarget: [String: PanelReport]
+        var stacksByTarget: [String: TargetStacks]
+        var stackGroupsByTarget: [String: [StackGroup]]
+        var plan: [TargetPlan]
+        var site: SiteRule
+        var night: NightInfo
+        var projects: [ProjectState]
+        var cleanup: CleanupSummary
+    }
+
+    /// Loads `stats` (+ session/panel/stack details), `plan`/`resolvedSite`/
+    /// `nightInfo`, `projectStates`, AND `cleanupSummary` -- everything the
+    /// sidebar's badges/phase dots, "Ma este"'s Állapot/Hiányzik columns, and
+    /// "Minden célpont"'s tiles need -- all in ONE background operation
+    /// (R9-D3). Firing the equivalent standalone `loadStats()`/`loadPlan()`/
+    /// a since-removed `loadProjects()` back-to-back from an `onAppear`
+    /// would race: `beginOperation` cancels whatever `currentTask` is
+    /// already running, so each new call cancels the previous one's outer
+    /// `Task` before its own `guard !Task.isCancelled` line ever runs --
+    /// only the LAST call's result would actually land (see `currentTask`'s
+    /// doc comment). Bundling avoids that entirely; reused from
+    /// `TonightPage.onAppear`, `AllTargetsPage.onAppear`, AND `openRoot` (so
+    /// a fresh launch with an already-scanned root shows a fully populated
+    /// dashboard without re-running scan/audit).
+    func loadDashboardData(date: Date? = nil) {
         guard let db else { return }
         let cfg = config
 
-        let opID = beginOperation("Projekt-állapot számítása…")
+        let opID = beginOperation("Áttekintés adatok betöltése…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try ProjectStatusQueries.projects(db: db, config: cfg)
+                let bundle = try await Task.detached(priority: .userInitiated) {
+                    let stats = try StatsQueries.perTarget(db: db, config: cfg)
+                    var sessionsByTarget: [String: [SessionDetail]] = [:]
+                    var panelsByTarget: [String: PanelReport] = [:]
+                    var stackGroupsByTarget: [String: [StackGroup]] = [:]
+                    let discoveredStacks = try StackDiscovery.discover(db: db, config: cfg)
+                    let stacksByTarget = Dictionary(uniqueKeysWithValues: discoveredStacks.map { ($0.target, $0) })
+                    for stat in stats {
+                        sessionsByTarget[stat.target] = try SessionStatsQueries.sessions(
+                            target: stat.target, db: db, config: cfg
+                        )
+                        panelsByTarget[stat.target] = try FieldGeometry.panels(
+                            target: stat.target, db: db, config: cfg
+                        )
+                        if let report = stacksByTarget[stat.target], !report.stacks.isEmpty {
+                            stackGroupsByTarget[stat.target] = try StackDiscovery.groupedStacks(
+                                target: stat.target, db: db, config: cfg
+                            )
+                        }
+                    }
+                    let plans = try Planner.plan(date: date, db: db, config: cfg)
+                    let site = try Planner.resolveSite(db: db, config: cfg)
+                    let night = Planner.nightInfo(date: date, site: site)
+                    let projects = try ProjectStatusQueries.projects(db: db, config: cfg)
+                    let cleanup = try CleanupReport.build(db: db, config: cfg)
+                    return DashboardBundle(
+                        stats: stats, sessionsByTarget: sessionsByTarget, panelsByTarget: panelsByTarget,
+                        stacksByTarget: stacksByTarget, stackGroupsByTarget: stackGroupsByTarget,
+                        plan: plans, site: site, night: night, projects: projects, cleanup: cleanup
+                    )
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.projectStates = result
-                self.progressText = "Projekt-állapot kész: \(result.count) célpont"
+                self.stats = bundle.stats
+                self.sessionDetailsByTarget = bundle.sessionsByTarget
+                self.panelReportsByTarget = bundle.panelsByTarget
+                self.stackReportsByTarget = bundle.stacksByTarget
+                self.stackGroupsByTarget = bundle.stackGroupsByTarget
+                self.plan = bundle.plan
+                self.resolvedSite = bundle.site
+                self.nightInfo = bundle.night
+                self.planDate = date
+                self.projectStates = bundle.projects
+                self.cleanupSummary = bundle.cleanup
+                self.progressText = "Áttekintés kész: \(bundle.stats.count) célpont"
             } catch {
                 self.handle(error)
             }
@@ -1846,6 +1939,35 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.qualitySummaries = summaries
                 self.exposureAdvice = advice
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Loads `frameScores` from whatever's already persisted (`ratings`
+    /// table), WITHOUT running `Rater.rate` -- never touches the filesystem
+    /// or invokes Siril. R9-D6's fix: `QualitySegment` previously only ever
+    /// populated `frameScores` as a side effect of `runRate()`, so simply
+    /// opening a target's Minőség segment (without pressing "Keretek
+    /// pontozása" again) showed the false "Nincsenek pontozott keretek"
+    /// empty state even for a target rated in a PREVIOUS session. Called
+    /// from `QualitySegment.onAppear` when `frameScores.isEmpty`.
+    func loadFrameScores(target: String, date: String?) {
+        guard let db else { return }
+        let cfg = config
+
+        let opID = beginOperation("Pontszámok betöltése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let results = try await Task.detached(priority: .userInitiated) {
+                    try Rater.cachedScores(target: target, date: date, db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.frameScores = results
+                self.progressText = "Pontszámok betöltve: \(results.count) frame"
             } catch {
                 self.handle(error)
             }

@@ -1555,6 +1555,75 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(results[0].path == "sessions/M5/2026-01-01/lights/a.fit")
 }
 
+// MARK: - Rater.cachedScores (R9-D6, read-only)
+
+@Test func cachedScoresRebuildsPersistedScoresWithoutTouchingTheFilesystem() throws {
+    var fixture = try RateFixture.make()
+    fixture.config.rating.outlierZScore = 0.5
+    defer { fixture.cleanup() }
+
+    try fixture.addLightFrame(
+        relativePath: "sessions/T/2026-01-01/lights/A.fit",
+        target: "T", pixels: Array(repeating: 50, count: 4), width: 2, height: 2
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/T/2026-01-01/lights/B.fit",
+        target: "T", pixels: Array(repeating: 150, count: 4), width: 2, height: 2
+    )
+
+    let mock = ScriptedMockProvider(responses: [
+        "A.fit": StarMetrics(fwhm: 1, roundness: 0.9, starCount: 300),
+        "B.fit": StarMetrics(fwhm: 3, roundness: 0.7, starCount: 100),
+    ])
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: mock)
+    let rated = try rater.rate(target: "T")
+    #expect(rated.count == 2)
+
+    // Delete the underlying files (and even the whole library dir) --
+    // `cachedScores` must still reproduce the same result set purely from
+    // `ratings`/`fits_meta`, proving it never re-reads the filesystem the
+    // way `rate(...)` does.
+    try FileManager.default.removeItem(at: fixture.libraryDir)
+
+    let cached = try Rater.cachedScores(target: "T", db: fixture.db, config: fixture.config)
+
+    #expect(cached.count == 2)
+    #expect(cached.map(\.path) == rated.map(\.path))
+    #expect(cached.map(\.score) == rated.map(\.score))
+    #expect(cached.map(\.isOutlier) == rated.map(\.isOutlier))
+    #expect(cached[0].metrics?.fwhm == 1)
+    #expect(cached[1].isOutlier == true, "B's score is below -outlierZScore (0.5)")
+}
+
+@Test func cachedScoresSkipsFramesNeverRatedAndHonorsTheDateFilter() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    // Rated on 2026-01-01.
+    try fixture.addLightFrame(
+        relativePath: "sessions/M5/2026-01-01/lights/a.fit",
+        target: "M5", sessionDate: "2026-01-01", pixels: Array(repeating: 10, count: 4), width: 2, height: 2
+    )
+    // Registered but never rated (no `ratings` row at all) -- must be
+    // skipped, not crash or fabricate a score.
+    try fixture.addLightFrame(
+        relativePath: "sessions/M5/2026-01-02/lights/b.fit",
+        target: "M5", sessionDate: "2026-01-02", pixels: Array(repeating: 20, count: 4), width: 2, height: 2
+    )
+
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: nil)
+    _ = try rater.rate(target: "M5", date: "2026-01-01")
+
+    // No date filter: the unrated 2026-01-02 frame is silently skipped.
+    let all = try Rater.cachedScores(target: "M5", db: fixture.db, config: fixture.config)
+    #expect(all.count == 1)
+    #expect(all[0].path == "sessions/M5/2026-01-01/lights/a.fit")
+
+    // A target/date with no ratings at all comes back empty, not an error.
+    let none = try Rater.cachedScores(target: "M5", date: "2026-01-02", db: fixture.db, config: fixture.config)
+    #expect(none.isEmpty)
+}
+
 // MARK: - Real Siril smoke test (integration, guarded)
 
 @Test func realSirilCLISmokeTestBuildScriptAndVersion() throws {

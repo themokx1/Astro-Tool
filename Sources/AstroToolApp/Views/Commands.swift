@@ -76,8 +76,17 @@ struct AstroToolCommands: Commands {
                 .keyboardShortcut("4", modifiers: .command)
             Button("Audit") { AppState.shared?.currentPage = .audit }
                 .keyboardShortcut("5", modifiers: .command)
+            // R9-D9: same "preselect a segment, then navigate" pattern
+            // `SidebarView`'s "Takarítás" row already established for
+            // `AppState.auditSegment` -- previously only reachable via the
+            // sidebar, with no menu-bar/keyboard equivalent at all.
+            Button("Takarítás") {
+                AppState.shared?.auditSegment = .cleanable
+                AppState.shared?.currentPage = .audit
+            }
+            .keyboardShortcut("6", modifiers: .command)
             Button("Szenzor") { AppState.shared?.currentPage = .sensor }
-                .keyboardShortcut("6", modifiers: .command)
+                .keyboardShortcut("7", modifiers: .command)
 
             Divider()
 
@@ -85,6 +94,17 @@ struct AstroToolCommands: Commands {
                 NotificationCenter.default.post(name: .toggleSidebar, object: nil)
             }
             .keyboardShortcut("s", modifiers: [.command, .control])
+        }
+
+        CommandGroup(after: .pasteboard) {
+            Divider()
+            // R9-D4: `.focusSearchField` (`SidebarView`) previously had no
+            // poster at all -- the sidebar's search field could only ever
+            // be focused by clicking into it.
+            Button("Keresés") {
+                NotificationCenter.default.post(name: .focusSearchField, object: nil)
+            }
+            .keyboardShortcut("f", modifiers: .command)
         }
 
         CommandMenu("Műveletek") {
@@ -141,9 +161,6 @@ struct AstroToolCommands: Commands {
                 NotificationCenter.default.post(name: .adviseAllRequested, object: nil)
             }
             .disabled(AppState.shared?.db == nil)
-
-            Button("Minden célpont exportálása…") {}
-                .disabled(true)
         }
 
         CommandGroup(replacing: .help) {

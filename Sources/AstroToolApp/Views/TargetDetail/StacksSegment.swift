@@ -5,7 +5,7 @@ import SwiftUI
 /// One row of the embedded stack `Table`: either a stack-group roll-up
 /// (`base` + best-known exposure) or one of its variant files nested under
 /// it -- same `children`-keypath `Table` pattern `StatsRow` uses for the
-/// main stats table. Moved here (R9-T3/A.3) from `StatsView`'s old
+/// main stats table. Moved here (R9-T3/A.3) from `AllTargetsPage`'s old
 /// `StackGroupSheet`, which this segment replaces: the spec calls for the
 /// same hierarchical table EMBEDDED in the page rather than behind a sheet.
 private struct StackGroupRow: Identifiable {
@@ -29,8 +29,8 @@ private struct StackGroupRow: Identifiable {
 /// edited-vs-original classification, the best-known exposure (name-parsed,
 /// falling back to the FITS header), and Finder/open actions; its variants
 /// nest underneath with the same actions plus a colored kind badge. Formerly
-/// `StatsView`'s `StackGroupSheet` (R8-3) -- moved and embedded per spec
-/// rather than shown in a sheet; `StatsView`'s "Stackek…" row button is gone
+/// `AllTargetsPage`'s `StackGroupSheet` (R8-3) -- moved and embedded per spec
+/// rather than shown in a sheet; `AllTargetsPage`'s "Stackek…" row button is gone
 /// (double-clicking the target row now opens this page instead).
 struct StacksSegment: View {
     @Environment(AppState.self) private var appState

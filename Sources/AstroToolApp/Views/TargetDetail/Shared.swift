@@ -7,7 +7,7 @@ import SwiftUI
 /// One target+session-date pair, `Identifiable` so a `@State` of this type
 /// can drive a `.sheet(item:)` -- the "only one row's sheet-triggering button
 /// can be open at a time" pattern shared by `CalibLinkSheet`/`StackListSheet`
-/// call sites across `StatsView` and `TargetDetailPage`/`SessionsSegment`.
+/// call sites across `AllTargetsPage` and `TargetDetailPage`/`SessionsSegment`.
 struct LinkingSession: Identifiable {
     let target: String
     let date: String
@@ -25,7 +25,7 @@ struct SolvingTarget: Identifiable {
 // MARK: - Shared formatting
 
 /// Small formatting helpers shared by every `TargetDetail/*.swift` segment
-/// (and reused from `StatsView`) -- kept as static functions on a
+/// (and reused from `AllTargetsPage`) -- kept as static functions on a
 /// non-instantiable enum rather than free functions so call sites read as
 /// `TDFormat.hm(...)` instead of colliding with each file's own local
 /// `formatDuration`/`format...` helpers.
@@ -101,7 +101,7 @@ enum TDFormat {
 /// szerkesztett=kék, starless=lila, starmask=szürke, export=zöld (R8-3
 /// spec); `.original` gets a neutral gray -- it's the expected kind for a
 /// group's own `base` row and isn't otherwise called out. Shared by
-/// `StatsView`'s (former) `StackGroupSheet` and the new `StacksSegment`.
+/// `AllTargetsPage`'s (former) `StackGroupSheet` and the new `StacksSegment`.
 func stackKindColor(_ kind: StackVariantKind) -> Color {
     switch kind {
     case .original: return .gray
@@ -120,7 +120,7 @@ func stackKindColor(_ kind: StackVariantKind) -> Color {
 /// `darks`/`biases` folders. Loads `AppState.calibLinkPlan` on appear, shows
 /// it grouped by destination with each item's reason, and only ever writes
 /// when the user explicitly presses "Linkelés" -- never on open, never
-/// automatically. Shared by `StatsView`'s session-row context menu and
+/// automatically. Shared by `AllTargetsPage`'s session-row context menu and
 /// `TargetDetailPage`'s Áttekintés/Sessionök segments (R9-T3).
 struct CalibLinkSheet: View {
     @Environment(AppState.self) private var appState
@@ -224,7 +224,7 @@ struct CalibLinkSheet: View {
 /// `SolveSummary` -- same "progress until `AppState` sets a result" pattern
 /// as `CalibLinkSheet`, just with no plan/confirm step (the operation always
 /// runs immediately; there's nothing to review beforehand since Siril work
-/// never touches the library). Shared by `StatsView` and `TargetDetailPage`'s
+/// never touches the library). Shared by `AllTargetsPage` and `TargetDetailPage`'s
 /// Áttekintés segment (R9-T3).
 struct PlateSolveSheet: View {
     @Environment(AppState.self) private var appState
@@ -283,7 +283,7 @@ struct PlateSolveSheet: View {
 /// "load on appear, clear on disappear" pattern as `CalibLinkSheet`/
 /// `PlateSolveSheet`; unlike `CalibLinkSheet` there's no separate `--dry-run`
 /// state -- adjusting the slider just recomputes the (read-only) preview in
-/// place. Shared by `StatsView` and `TargetDetailPage`'s Sessionök/Stackek
+/// place. Shared by `AllTargetsPage` and `TargetDetailPage`'s Sessionök/Stackek
 /// segments (R9-T3).
 struct StackListSheet: View {
     @Environment(AppState.self) private var appState

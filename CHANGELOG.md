@@ -163,6 +163,46 @@ történik.
   tábla (32k+ sor 12 run-ból, korábban soha nem takarítva) ne nőjön
   korlátlanul.
 
+### Fixed
+
+- **R9 javítókör 1** (re-review D1-D20/D29): induláskor visszaáll az utolsó
+  audit `findings`/`lastRunID`-ja a DB-ből (`Database.lastRunID(kind:)`,
+  `AppState.openRoot`) újrafuttatás nélkül; `AppState.loadDashboardData(date:)`
+  egyesíti a stats/terv/projekt-állapot/takarítási-riport betöltést EGY
+  háttérműveletbe -- a különálló `loadStats()`/`loadPlan()`/egy sosem hívott
+  `loadProjects()` egymás után hívva versenyhelyzetet okozott
+  (`currentTask` cancel-el a korábbi hívást), ezért a sidebar
+  fázis-pontok/"Ma este" Állapot-Hiányzik oszlopok, illetve a Takarítható
+  szegmens gyakran üresen jelentek meg egy friss indításnál; hívva
+  `openRoot`/`TonightPage.onAppear`/`AllTargetsPage.onAppear`-ből (kisebb
+  `loadCleanup()` az `AuditPage.onAppear`-ből). ⌘F most a menüsorból is
+  fókuszálja a keresőmezőt (`.focusSearchField` végre posztolva). Minőség
+  szegmens dátum-menüjének "Minden session" gombja a szűrő visszaállítására.
+  ÚJ `Rater.cachedScores(target:date:db:config:)` a perzisztált pontszámok
+  visszaolvasására Siril/fájlrendszer nélkül (`AppState.loadFrameScores`) --
+  a Minőség szegmens megnyitáskor most a korábban mért pontszámokat mutatja,
+  nem a hamis "Nincsenek pontozott keretek" állapotot.
+  `CalibrationPage.CoverageRow.id` determinisztikus (a szükséglet mezőiből),
+  nem `UUID()` minden render-en -- helyreállítja a sor-kiválasztást/
+  jobbklikk-menüt. `StatsView` → `AllTargetsPage` (`Views/AllTargetsPage.
+  swift`): 4 fejléc-tile, "Fázis" és "Stackek" oszlop, a "Címkék" oszlop
+  read-only (a szerkesztés a sor jobbklikk-menüjébe került), célpont-/
+  session-menü kiegészítve ("Cél beállítása…", "Kész stackek…", "Mozaik-
+  panelek…", "Keretek pontozása" -- a Minőség szegmensre ugrik a session
+  dátumával előválasztva, ÚJ `AppState.pendingQualityDate`), valódi
+  `ContentUnavailableView` üres állapotok, a korábban holt `selection`
+  `@State` bekötve a táblázat `.contextMenu(forSelectionType:primaryAction:)`
+  -jébe. ⌘6 = Takarítás (a sidebar "Takarítás" sorával egyező preselect),
+  ⌘7 = Szenzor; a végig letiltott "Minden célpont exportálása…" placeholder
+  törölve mindkét menüből. "Ma este"/"Naptár" táblák sor-szintű
+  `.contextMenu(forSelectionType:primaryAction:)`-ot kapnak (korábban csak a
+  név-cella saját `.contextMenu`-je reagált). Elgépelés ("feleslegleges" →
+  "felesleges") a Fogalomtárban; duplikált Karantén-script toolbar-gomb
+  törölve (a "Script…" menüben marad). A Plate-solve… gomb megjelenik
+  `sourceLabel == "nincs"` esetén is, nem csak `nil` koordinátánál; az
+  Áttekintés "Szenzor mérése…" gombja a navigáció mellett a mérést is
+  elindítja. `docs/features.html` átírva a jelenlegi sidebar-IA szerint.
+
 ## [0.8.0] - 2026-08-05
 
 ### Added

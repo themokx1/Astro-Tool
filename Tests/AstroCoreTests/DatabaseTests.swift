@@ -532,6 +532,23 @@ private func sampleFile(path: String = "sessions/M31/2026-01-01/lights/f1.fits")
     #expect(try database.lastRunDate(kind: "scan") == later)
 }
 
+@Test func lastRunIDReturnsNilWhenNoRunsOfThatKindExist() throws {
+    let database = try Database(path: ":memory:")
+    #expect(try database.lastRunID(kind: "audit") == nil)
+
+    // A run of a DIFFERENT kind must not be picked up.
+    _ = try database.beginRun(kind: "scan", root: "/root", configJSON: nil)
+    #expect(try database.lastRunID(kind: "audit") == nil)
+}
+
+@Test func lastRunIDReturnsTheMostRecentRunIDForThatKind() throws {
+    let database = try Database(path: ":memory:")
+    _ = try database.beginRun(kind: "audit", root: "/root", configJSON: nil)
+    let latest = try database.beginRun(kind: "audit", root: "/root", configJSON: nil)
+
+    #expect(try database.lastRunID(kind: "audit") == latest)
+}
+
 // MARK: - Database: ratings
 
 private func sampleRating(fileID: Int64, inputSig: String = "sig-1") -> RatingRecord {

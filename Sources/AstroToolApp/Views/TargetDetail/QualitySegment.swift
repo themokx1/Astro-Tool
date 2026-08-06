@@ -99,6 +99,26 @@ struct QualitySegment: View {
             }
         }
         .padding()
+        .onAppear {
+            // R9-D8/f: `AllTargetsPage`'s session row "Keretek pontozása"
+            // preselects this segment's date filter before navigating here
+            // -- consumed once, same "set, navigate, consume on appear"
+            // pattern `SessionsSegment.consumePendingSelection` uses for
+            // `pendingSessionSelection`.
+            if let pendingDate = appState.pendingQualityDate {
+                selectedDate = pendingDate
+                appState.pendingQualityDate = nil
+            }
+            // R9-D6: `frameScores` previously only ever got populated as a
+            // side effect of pressing "Keretek pontozása" -- opening this
+            // segment for a target rated in a past session showed the false
+            // "Nincsenek pontozott keretek" empty state until the user
+            // re-rated. `loadFrameScores` rebuilds it from the persisted
+            // `ratings` rows instead, without touching Siril/the filesystem.
+            if appState.frameScores.isEmpty {
+                appState.loadFrameScores(target: target, date: selectedDate)
+            }
+        }
     }
 
     // MARK: - Control bar (rebuilt per A.3)
@@ -106,6 +126,12 @@ struct QualitySegment: View {
     private var controlBar: some View {
         HStack {
             Menu {
+                // R9-D5: previously the only way to get here was already
+                // being here -- once a specific date was picked, there was
+                // no menu item to get back to "Minden session" short of
+                // reopening the segment.
+                Button("Minden session") { selectedDate = nil }
+                Divider()
                 ForEach(sessionDates, id: \.self) { date in
                     Button(date) { selectedDate = date }
                 }

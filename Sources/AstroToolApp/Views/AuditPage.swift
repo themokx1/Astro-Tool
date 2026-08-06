@@ -145,6 +145,18 @@ struct AuditPage: View {
             }
         }
         .padding()
+        .onAppear {
+            // R9-D2: `cleanupSummary` used to only ever get filled in as a
+            // side effect of `runAudit()` -- a fresh launch (or a direct
+            // sidebar jump to Audit, never having visited a page that
+            // triggers `loadDashboardData()`) left the Takarítható segment
+            // showing "Nincs takarítható tétel." even on a library that
+            // genuinely has residue. Loading on-demand here restores it
+            // without re-running the audit itself.
+            if appState.cleanupSummary == nil {
+                appState.loadCleanup()
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if appState.isBusy {
@@ -176,10 +188,6 @@ struct AuditPage: View {
             if appState.auditSegment == .cleanable {
                 ToolbarItem {
                     Stepper("Limit: \(appState.cleanupLimit)", value: $appState.cleanupLimit, in: 1...200, step: 5)
-                }
-                ToolbarItem {
-                    Button("Karantén-script (takarítható)…") { appState.generateCleanupScript() }
-                        .disabled(appState.isBusy || (appState.cleanupSummary?.groups.isEmpty ?? true))
                 }
             }
 
@@ -417,7 +425,7 @@ struct AuditPage: View {
     /// its listed paths, plus a trailing "…további N" row when
     /// `AppState.cleanupLimit` or `CleanupGroup`'s own 50-path cap truncates
     /// the list) as children -- same `Table(rows, children:)` pattern
-    /// `StatsView`/`StackGroupSheet` already use.
+    /// `AllTargetsPage`/`StackGroupSheet` already use.
     private struct CleanupRow: Identifiable {
         enum Kind {
             case category(CleanupGroup)

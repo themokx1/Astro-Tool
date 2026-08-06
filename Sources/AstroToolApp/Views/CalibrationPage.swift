@@ -231,9 +231,20 @@ struct CalibrationPage: View {
 
 /// One coverage-table row -- view-layer wrapper giving each `CalibNeed` a
 /// stable `Identifiable` id for `Table`'s selection/context-menu machinery
-/// (the model type itself has no natural primary key).
+/// (the model type itself has no natural primary key). R9-D7: `id` used to
+/// be a fresh `UUID()` minted every time `coverageRows` recomputed (it's a
+/// plain `map` over `appState.calibNeeds`, re-evaluated on every render) --
+/// a `Table`'s selection/context-menu tracks rows by `id`, so a row's
+/// identity silently changed out from under any active selection or open
+/// context menu. Deriving `id` from the need's own fields instead makes it
+/// stable across re-renders of the SAME underlying combo.
 struct CoverageRow: Identifiable {
-    let id = UUID()
+    var id: String {
+        let temp = need.tempC.map { "\($0)" } ?? "-"
+        let gain = need.requiredGain.map { "\($0)" } ?? "-"
+        let camera = need.requiredCamera ?? "-"
+        return "\(need.kind.rawValue)|\(need.exposureSeconds)|\(temp)|\(gain)|\(camera)"
+    }
     let need: CalibNeed
 }
 

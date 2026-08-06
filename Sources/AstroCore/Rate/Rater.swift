@@ -245,6 +245,56 @@ public final class Rater {
         return try score(rated)
     }
 
+    // MARK: - Cached scores, read-only (R9-D6)
+
+    /// Rebuilds `[FrameScore]` for `target` (optionally scoped to `date`)
+    /// purely from what's already persisted in `ratings`/`fits_meta` --
+    /// never touches the filesystem or invokes Siril, unlike `rate(...)`.
+    /// A frame with no rating row yet (never scored) is simply skipped, same
+    /// as one whose stored row has a `nil` `score` (a self-heal in progress
+    /// that never got to the scoring step). `isOutlier` is recomputed from
+    /// the stored `score` using the same threshold `scoreGroup` applies when
+    /// it first computes it, so this never needs its own persisted flag.
+    /// Backs `AppState.loadFrameScores`, which lets the Minőség segment show
+    /// a target's last-rated scores on open without silently implying "never
+    /// rated" for a target that simply hasn't been re-rated THIS session.
+    public static func cachedScores(target: String, date: String? = nil, db: Database, config: AstroConfig) throws -> [FrameScore] {
+        let frames = try db.allFiles(includeMissing: false).filter { file in
+            file.area == .sessions && file.role == .light && file.target == target
+                && (date == nil || file.sessionDate == date)
+        }
+        guard !frames.isEmpty else { return [] }
+
+        var results: [FrameScore] = []
+        results.reserveCapacity(frames.count)
+        for file in frames {
+            guard let fileID = file.id,
+                  let record = try db.rating(fileID: fileID),
+                  let score = record.score
+            else { continue }
+
+            let exptime = try db.fitsMeta(fileID: fileID)?.exptime
+            let metrics: StarMetrics? = {
+                guard let fwhm = record.fwhm, let starCount = record.starCount else { return nil }
+                return StarMetrics(fwhm: fwhm, roundness: record.roundness, starCount: starCount)
+            }()
+
+            results.append(
+                FrameScore(
+                    path: file.path,
+                    score: score,
+                    isOutlier: score < -config.rating.outlierZScore,
+                    metrics: metrics,
+                    background: record.background,
+                    saturatedFraction: record.saturatedFraction,
+                    exptime: exptime,
+                    sessionSubdir: sessionSubdir(path: file.path)
+                )
+            )
+        }
+        return results.sorted { $0.score > $1.score }
+    }
+
     // MARK: - Cache self-heal (R7-B6, item 1)
 
     /// Which parts of an `inputSig`-matching cached row still need
