@@ -2440,7 +2440,11 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
 @Test func versionFlagPrintsVersion() throws {
     let result = try runCLI(["--version"])
     #expect(result.exitCode == 0)
-    #expect(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "astrotool 0.1.0")
+    // Format check rather than a pinned literal, so a release version bump
+    // in main.swift can't silently break the suite (which is exactly what
+    // happened at v0.10.0 with the old `== "astrotool 0.1.0"` expectation).
+    let output = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    #expect(output.wholeMatch(of: /astrotool \d+\.\d+\.\d+/) != nil, "unexpected --version output: \(output)")
 }
 
 } // CLISmokeTests
