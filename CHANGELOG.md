@@ -8,6 +8,8 @@ történik.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-05
+
 ### Added
 
 - **Teljes navigációs átépítés: `NavigationSplitView` sidebar + ablak-toolbar +
