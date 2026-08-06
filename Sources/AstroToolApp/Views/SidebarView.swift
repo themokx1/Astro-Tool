@@ -101,6 +101,16 @@ struct SidebarView: View {
         appState.calibNeeds.count { $0.matchedMasterPath == nil }
     }
 
+    /// R10-A5: `Page.searchResults` reachability -- total hit count for the
+    /// "Keresés" row's badge, `0` (no badge, see `navRowLabel`) before a
+    /// search's results have actually landed. Same four-bucket sum
+    /// `AppState.runSearch`'s own `progressText`/`SearchResultsPage`'s
+    /// header line use.
+    private var searchResultBadgeCount: Int {
+        guard let results = appState.searchResults else { return 0 }
+        return results.targets.count + results.sessions.count + results.files.count + results.notes.count
+    }
+
     var body: some View {
         @Bindable var appState = appState
 
@@ -115,6 +125,16 @@ struct SidebarView: View {
                 // correct highlight, and `MainShellView.page(for:)` is what
                 // preselects the calendar segment on that route.
                 navRow("Naptár", systemImage: "calendar", page: .calendar)
+                // R10-A5: `Page.searchResults` had no sidebar row at all --
+                // no highlight while it was on screen, no way back to it
+                // once you navigated elsewhere. Only shown once a search has
+                // actually run this session (`searchQuery` is set
+                // synchronously at the very start of `runSearch`, before its
+                // results even come back) -- never shown for a session that
+                // never searched at all.
+                if !appState.searchQuery.isEmpty {
+                    navRow("Keresés", systemImage: "magnifyingglass", page: .searchResults, badgeCount: searchResultBadgeCount)
+                }
             }
 
             Section("KÖNYVTÁR") {

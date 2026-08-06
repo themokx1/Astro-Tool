@@ -17,6 +17,12 @@ struct MainShellView: View {
         .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
             sidebarVisibility = sidebarVisibility == .detailOnly ? .all : .detailOnly
         }
+        // R10-A5: the global toast layer -- floats above the whole window
+        // (sidebar + detail), not just the routed detail pane, so it stays
+        // visible across a sidebar navigation while a toast is still up.
+        .overlay(alignment: .topTrailing) {
+            ToastOverlay()
+        }
     }
 }
 

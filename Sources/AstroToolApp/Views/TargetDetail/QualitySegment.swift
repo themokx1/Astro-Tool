@@ -56,14 +56,43 @@ struct QualitySegment: View {
     }
 
     private var sessionDates: [String] { appState.stats.first { $0.target == target }?.sessionDates ?? [] }
-    private var rows: [Row] { appState.frameScores.map(Row.init).sorted(using: sortOrder) }
+    private var rows: [Row] { filteredFrameScores.map(Row.init).sorted(using: sortOrder) }
     private var sirilAvailable: Bool { FileManager.default.isExecutableFile(atPath: appState.config.rating.sirilPath) }
 
+    /// R10-A5: `selectedDate` used to only ever affect the NEXT "Keretek
+    /// pontozása"/`loadFrameScores` call -- picking a date from the Menu
+    /// visibly did nothing until the user re-ran one of those. `nil`
+    /// ("Minden session") is a pass-through; otherwise every row whose
+    /// path's date component doesn't match is dropped, client-side, with no
+    /// extra DB round-trip -- `rows`/`histogram`/`summaryText` all read this
+    /// instead of `appState.frameScores` directly, so the whole segment
+    /// (table, histogram, and the "N frame · kiugró: …" line) reflects the
+    /// filtered set.
+    private var filteredFrameScores: [FrameScore] {
+        guard let selectedDate else { return appState.frameScores }
+        return appState.frameScores.filter { Self.sessionDate(ofPath: $0.path) == selectedDate }
+    }
+
+    /// The `<date>` component of a `sessions/<target>/<date>/…` path -- the
+    /// same positional convention `Rater.sessionSubdir(path:)` (AstroCore,
+    /// package-internal) reads ITS OWN result from, one component earlier.
+    /// `FrameScore` doesn't carry a `sessionDate` field the way `TrackedFile`
+    /// does, only the full `path`, so `filteredFrameScores` has to re-derive
+    /// it the same positional way. Every row this table ever shows is
+    /// `area == .sessions, role == .light` (`Rater.rate`'s own frame
+    /// filter), so the layout is always `sessions/<target>/<date>/…` --
+    /// never the differently-shaped `calibration_library/…`.
+    private static func sessionDate(ofPath path: String) -> String? {
+        let components = path.split(separator: "/", omittingEmptySubsequences: true)
+        guard components.count > 2 else { return nil }
+        return String(components[2])
+    }
+
     private var summaryText: String? {
-        guard !appState.frameScores.isEmpty else { return nil }
-        let total = appState.frameScores.count
-        let outliers = appState.frameScores.count { $0.isOutlier }
-        let withMetrics = appState.frameScores.count { $0.metrics != nil }
+        guard !filteredFrameScores.isEmpty else { return nil }
+        let total = filteredFrameScores.count
+        let outliers = filteredFrameScores.count { $0.isOutlier }
+        let withMetrics = filteredFrameScores.count { $0.metrics != nil }
         var text = "\(total) frame · kiugró: \(outliers) · Siril metrika: \(withMetrics)/\(total)"
         if withMetrics == 0 && sirilAvailable {
             text += " (a Siril nem adott metrikát — ellenőrizd a Siril útvonalat a Beállításokban)"
@@ -86,13 +115,26 @@ struct QualitySegment: View {
                 Text(lastError).foregroundStyle(.red)
             }
 
-            if appState.frameScores.isEmpty {
-                ContentUnavailableView(
-                    "Nincsenek pontozott keretek",
-                    systemImage: "star",
-                    description: Text("Futtass pontozást a FWHM / kerekség / csillagszám metrikákhoz.")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if filteredFrameScores.isEmpty {
+                if appState.frameScores.isEmpty {
+                    ContentUnavailableView(
+                        "Nincsenek pontozott keretek",
+                        systemImage: "star",
+                        description: Text("Futtass pontozást a FWHM / kerekség / csillagszám metrikákhoz.")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    // R10-A5: OTHER sessions have rated frames, just not the
+                    // one currently selected in the date Menu -- honest n/a
+                    // per the project's own convention, rather than the
+                    // blanket "nothing is rated at all" message above.
+                    ContentUnavailableView(
+                        "Nincs pontozott keret ehhez a sessionhöz",
+                        systemImage: "star",
+                        description: Text("Válassz másik sessiont a menüből, vagy futtasd a pontozást ehhez a sessionhöz.")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             } else {
                 histogram
                 frameTable
@@ -130,10 +172,30 @@ struct QualitySegment: View {
                 // being here -- once a specific date was picked, there was
                 // no menu item to get back to "Minden session" short of
                 // reopening the segment.
-                Button("Minden session") { selectedDate = nil }
+                //
+                // R10-A5: `filteredFrameScores` (read by `rows`/`histogram`/
+                // `summaryText`) client-side filters whatever's ALREADY in
+                // `appState.frameScores` -- normally enough on its own, with
+                // no extra DB round-trip. But if nothing's been loaded at
+                // all yet (`frameScores.isEmpty`, e.g. the same session-was-
+                // rated-in-a-past-run case `loadFrameScores`'s own doc
+                // comment/R9-D6 describes, just triggered from here instead
+                // of `onAppear`), there's nothing to filter -- so fall back
+                // to the same on-demand load `onAppear` already does.
+                Button("Minden session") {
+                    selectedDate = nil
+                    if appState.frameScores.isEmpty {
+                        appState.loadFrameScores(target: target, date: nil)
+                    }
+                }
                 Divider()
                 ForEach(sessionDates, id: \.self) { date in
-                    Button(date) { selectedDate = date }
+                    Button(date) {
+                        selectedDate = date
+                        if appState.frameScores.isEmpty {
+                            appState.loadFrameScores(target: target, date: date)
+                        }
+                    }
                 }
             } label: {
                 Text(selectedDate ?? "Minden session")
@@ -192,9 +254,9 @@ struct QualitySegment: View {
     /// 10 equal-width buckets spanning the currently loaded scores' own
     /// [min, max] range -- a quick "which frames are bad" visual without
     /// needing to sort the table by score first. Hidden (via the caller's
-    /// `if appState.frameScores.isEmpty` guard) rather than shown empty.
+    /// `if filteredFrameScores.isEmpty` guard) rather than shown empty.
     private var histogram: some View {
-        let scores = appState.frameScores.map(\.score)
+        let scores = filteredFrameScores.map(\.score)
         let minScore = scores.min() ?? 0
         let maxScore = scores.max() ?? 1
         let span = max(maxScore - minScore, 0.0001)

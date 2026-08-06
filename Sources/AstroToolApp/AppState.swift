@@ -101,6 +101,62 @@ final class AppState: @unchecked Sendable {
     @ObservationIgnored
     private var pendingActivityTitle: [UUID: String] = [:]
 
+    // MARK: - Toasts (R10-A5)
+
+    /// One transient bubble on the global toast layer (`ToastOverlay`,
+    /// rendered from `MainShellView` above every page, regardless of which
+    /// one is on screen) -- the fix for `lastError` only ever rendering
+    /// inline on 8 view surfaces (every other page silently swallowed an
+    /// error) AND for success feedback ("Exportálva: …", "Jegyzet
+    /// elmentve.") being nothing more than a `progressText` toolbar caption
+    /// that vanishes the moment the next operation starts. Pushed from
+    /// `endOperation` (see its doc comment); `ToastOverlay` renders them,
+    /// newest at the bottom of the stack.
+    struct Toast: Identifiable {
+        let id: UUID
+        let kind: Kind
+        let message: String
+        enum Kind {
+            case success
+            case error
+            case info
+        }
+    }
+    /// Currently visible toasts, oldest first -- capped at 3 by `pushToast`
+    /// so a burst of near-simultaneous background completions can't paper
+    /// over the whole screen.
+    var toasts: [Toast] = []
+
+    /// Appends a toast, dropping the oldest once more than 3 are visible,
+    /// then schedules its own removal -- ~4.5s, ~8s for errors (they matter
+    /// more, and deserve more time to actually be read). Removal is
+    /// main-actor (this whole class already is) and keyed on the fresh
+    /// `UUID` minted right here, so if the same MESSAGE gets pushed again
+    /// before the first one's timer fires, the two toasts are tracked
+    /// entirely independently -- neither's timer can kill the other's early.
+    func pushToast(_ kind: Toast.Kind, _ message: String) {
+        let toast = Toast(id: UUID(), kind: kind, message: message)
+        toasts.append(toast)
+        if toasts.count > 3 {
+            toasts.removeFirst(toasts.count - 3)
+        }
+        let seconds: Double
+        switch kind {
+        case .error: seconds = 8.0
+        case .success, .info: seconds = 4.5
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            self?.dismissToast(id: toast.id)
+        }
+    }
+
+    /// Removes one toast by id -- used by `pushToast`'s own auto-dismiss
+    /// timer above, AND by `ToastOverlay`'s "click to dismiss".
+    func dismissToast(id: UUID) {
+        toasts.removeAll { $0.id == id }
+    }
+
     /// One bookmark per recently-opened root (R9-T1 toolbar "Legutóbbi
     /// könyvtárak"), most-recent-first, capped at 5. Persisted as an array of
     /// security-scoped bookmark blobs under `recentRootsKey`; `path` is
@@ -155,11 +211,15 @@ final class AppState: @unchecked Sendable {
     /// all; this only limits what's shown from that.
     var cleanupLimit: Int = 10
 
-    /// R9-T2/A.5's three-segment Audit page picker.
+    /// R9-T2/A.5's Audit page picker segments. `intentional` (R10-A5) was
+    /// added later -- the header tile already counted
+    /// `probablyIntentional` findings, but there was no segment to actually
+    /// view them, a dead-end number.
     enum AuditSegment: Hashable {
         case errors
         case suspicious
         case cleanable
+        case intentional
     }
     /// Which segment `AuditPage` shows -- preselected to `.cleanable` by
     /// `MainShellView.page(for:)` when `currentPage == .cleanup` (the
@@ -984,6 +1044,55 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - Stats
 
+    /// Bundles the same five queries `loadStats()` needs so they can share
+    /// ONE background hop -- factored out (R10-A5) so `runIngestDSS()`'s own
+    /// best-effort post-ingest refresh can reuse the exact same query set
+    /// WITHOUT calling the public `loadStats()` itself, which would call
+    /// its OWN `beginOperation` and reassign `currentOperationID` out from
+    /// under the ingest operation's still-pending `endOperation(opID)` call
+    /// (same race `runRate`'s doc comment describes for
+    /// `loadQualitySummaries`/`loadExposureAdvice` -- see `runIngestDSS()`
+    /// for exactly where this bit).
+    private struct StatsBundle {
+        var stats: [TargetStats]
+        var sessionsByTarget: [String: [SessionDetail]]
+        var panelsByTarget: [String: PanelReport]
+        var stacksByTarget: [String: TargetStacks]
+        var stackGroupsByTarget: [String: [StackGroup]]
+    }
+
+    /// Plain (non-actor-isolated) function so it can run inside a
+    /// `Task.detached` closure -- same "no `self` capture needed" shape as
+    /// `resolveCoordinateInfo`/`loadCalibBundle`.
+    private static nonisolated func loadStatsBundle(db: Database, config: AstroConfig) throws -> StatsBundle {
+        let stats = try StatsQueries.perTarget(db: db, config: config)
+        var sessionsByTarget: [String: [SessionDetail]] = [:]
+        var panelsByTarget: [String: PanelReport] = [:]
+        var stackGroupsByTarget: [String: [StackGroup]] = [:]
+        let discoveredStacks = try StackDiscovery.discover(db: db, config: config)
+        let stacksByTarget = Dictionary(uniqueKeysWithValues: discoveredStacks.map { ($0.target, $0) })
+        for stat in stats {
+            sessionsByTarget[stat.target] = try SessionStatsQueries.sessions(
+                target: stat.target, db: db, config: config
+            )
+            panelsByTarget[stat.target] = try FieldGeometry.panels(
+                target: stat.target, db: db, config: config
+            )
+            // R8-3: only worth grouping targets that actually have
+            // discovered stacks -- same "don't do useless work" stance as
+            // skipping an empty `stacksByTarget` entry.
+            if let report = stacksByTarget[stat.target], !report.stacks.isEmpty {
+                stackGroupsByTarget[stat.target] = try StackDiscovery.groupedStacks(
+                    target: stat.target, db: db, config: config
+                )
+            }
+        }
+        return StatsBundle(
+            stats: stats, sessionsByTarget: sessionsByTarget, panelsByTarget: panelsByTarget,
+            stacksByTarget: stacksByTarget, stackGroupsByTarget: stackGroupsByTarget
+        )
+    }
+
     /// Loads `stats` plus every target's session detail rows in one go (one
     /// `SessionStatsQueries.sessions` call per target, on the same
     /// background operation) -- with the library's target count this is
@@ -997,38 +1106,16 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let (result, sessionsByTarget, panelsByTarget, stacksByTarget, stackGroupsByTarget) = try await Task.detached(priority: .userInitiated) {
-                    let stats = try StatsQueries.perTarget(db: db, config: cfg)
-                    var sessionsByTarget: [String: [SessionDetail]] = [:]
-                    var panelsByTarget: [String: PanelReport] = [:]
-                    var stackGroupsByTarget: [String: [StackGroup]] = [:]
-                    let discoveredStacks = try StackDiscovery.discover(db: db, config: cfg)
-                    let stacksByTarget = Dictionary(uniqueKeysWithValues: discoveredStacks.map { ($0.target, $0) })
-                    for stat in stats {
-                        sessionsByTarget[stat.target] = try SessionStatsQueries.sessions(
-                            target: stat.target, db: db, config: cfg
-                        )
-                        panelsByTarget[stat.target] = try FieldGeometry.panels(
-                            target: stat.target, db: db, config: cfg
-                        )
-                        // R8-3: only worth grouping targets that actually have
-                        // discovered stacks -- same "don't do useless work"
-                        // stance as skipping an empty `stacksByTarget` entry.
-                        if let report = stacksByTarget[stat.target], !report.stacks.isEmpty {
-                            stackGroupsByTarget[stat.target] = try StackDiscovery.groupedStacks(
-                                target: stat.target, db: db, config: cfg
-                            )
-                        }
-                    }
-                    return (stats, sessionsByTarget, panelsByTarget, stacksByTarget, stackGroupsByTarget)
+                let bundle = try await Task.detached(priority: .userInitiated) {
+                    try Self.loadStatsBundle(db: db, config: cfg)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.stats = result
-                self.sessionDetailsByTarget = sessionsByTarget
-                self.panelReportsByTarget = panelsByTarget
-                self.stackReportsByTarget = stacksByTarget
-                self.stackGroupsByTarget = stackGroupsByTarget
-                self.progressText = "Statisztika kész: \(result.count) célpont"
+                self.stats = bundle.stats
+                self.sessionDetailsByTarget = bundle.sessionsByTarget
+                self.panelReportsByTarget = bundle.panelsByTarget
+                self.stackReportsByTarget = bundle.stacksByTarget
+                self.stackGroupsByTarget = bundle.stackGroupsByTarget
+                self.progressText = "Statisztika kész: \(bundle.stats.count) célpont"
             } catch {
                 self.handle(error)
             }
@@ -1965,7 +2052,7 @@ final class AppState: @unchecked Sendable {
     /// tracked `<frame>.info.txt`'s star metrics and every tracked
     /// `.dssfilelist`'s accept/reject decisions already sitting in the
     /// library. Refreshes `stats`/`sessionDetailsByTarget` afterward (via
-    /// `loadStats()`) so a newly recorded DSS verdict count shows up on
+    /// `loadStatsBundle`) so a newly recorded DSS verdict count shows up on
     /// `AllTargetsPage` without a separate manual reload.
     func runIngestDSS() {
         guard let db else { return }
@@ -1989,7 +2076,32 @@ final class AppState: @unchecked Sendable {
                 self.progressText =
                     "DSS beolvasás kész: \(result.ratingsUpserted) rating, \(result.verdictsRecorded) döntés, " +
                     "\(result.skipped) kihagyva"
-                self.loadStats()
+                // R10-A5: was `self.loadStats()` -- that calls its OWN
+                // `beginOperation`, which reassigns `currentOperationID`
+                // away from THIS operation's `opID` before the
+                // `self.endOperation(opID)` below ever runs (same race
+                // `runRate`'s doc comment describes for
+                // `loadQualitySummaries`/`loadExposureAdvice`), so this
+                // operation's `endOperation` always hit the "superseded"
+                // guard and silently no-opped -- no activityLog entry, and
+                // (now) no success toast either, for an operation that had
+                // genuinely just succeeded. Reuses `loadStats()`'s own query
+                // bundle inline instead, under THIS operation's `opID`,
+                // `try?` best-effort (a refresh failure here shouldn't turn
+                // an otherwise-successful ingest into a reported error, and
+                // shouldn't stomp the "DSS beolvasás kész: …" message above
+                // -- same stance `runScan`'s own post-scan stats refresh
+                // takes).
+                let statsBundleTask = Task.detached(priority: .userInitiated) {
+                    try Self.loadStatsBundle(db: db, config: cfg)
+                }
+                if let bundle = try? await statsBundleTask.value {
+                    self.stats = bundle.stats
+                    self.sessionDetailsByTarget = bundle.sessionsByTarget
+                    self.panelReportsByTarget = bundle.panelsByTarget
+                    self.stackReportsByTarget = bundle.stacksByTarget
+                    self.stackGroupsByTarget = bundle.stackGroupsByTarget
+                }
             } catch {
                 self.handle(error)
             }
@@ -2532,6 +2644,15 @@ final class AppState: @unchecked Sendable {
     /// always resets to `nil` at the start and `handle(_:)` always sets
     /// before the matching `catch { self.handle(error) }` calls this, so by
     /// the time this runs it faithfully reflects "did THIS operation fail".
+    ///
+    /// R10-A5: also the one hook point for the toast layer, same reasoning.
+    /// Failures ALWAYS toast (this is what makes `lastError` visible even on
+    /// pages that never rendered it inline -- `lastError`'s own inline
+    /// displays and this activity log stay exactly as they were, belt and
+    /// suspenders). Successes only toast for `successToastTitles` --
+    /// routine background loads (Áttekintés/Célpont-részletek/Statisztika/
+    /// Terv/…) already show their result directly on the page that
+    /// triggered them, so a success toast on top would just be noise.
     private func endOperation(_ id: UUID) {
         let title = pendingActivityTitle.removeValue(forKey: id)
         guard currentOperationID == id else { return }
@@ -2542,7 +2663,49 @@ final class AppState: @unchecked Sendable {
             if activityLog.count > 50 {
                 activityLog.removeLast(activityLog.count - 50)
             }
+            switch outcome {
+            case .error(let message):
+                pushToast(.error, "\(Self.toastLabel(for: title)) — \(message)")
+            case .ok:
+                if Self.successToastTitles.contains(title) {
+                    pushToast(.success, progressText)
+                }
+            }
         }
+    }
+
+    /// `beginOperation` titles whose SUCCESSFUL completion is worth a toast
+    /// (R10-A5) -- exports, reports, generated scripts, note saves,
+    /// calibration link-apply, session creation, the two whole-library batch
+    /// actions ("Batch actions (R9-T6/B14)" above: Minden célpont pontozása…/
+    /// Expozíció-tanácsadó…), and DSS ingest. Every string here must match a
+    /// `beginOperation(_:)` call site's argument EXACTLY -- all of them are
+    /// static literals, never interpolated, so this is safe. Deliberately
+    /// just this fixed set rather than a per-call-site flag, so the ~20
+    /// unrelated call sites (routine loads, scan, audit, tag/goal edits,
+    /// single-target rate/plate-solve, …) don't all need touching; failure
+    /// toasting is unconditional (see `endOperation` above) and doesn't
+    /// consult this list at all.
+    private static let successToastTitles: Set<String> = [
+        "Exportálás…",
+        "Stack-lista exportálása…",
+        "Éjszaka-riport készítése…",
+        "Célpont-riport készítése…",
+        "Javaslat-script írása…",
+        "Takarítási script írása…",
+        "Jegyzet mentése…",
+        "Kalibráció linkelése…",
+        "Session létrehozása…",
+        "Minden célpont pontozása…",
+        "Expozíció-tanácsadó (minden célpont)…",
+        "DSS-adatok beolvasása…",
+    ]
+
+    /// Strips the trailing "…" every `beginOperation` title ends with, so an
+    /// error toast reads "Exportálás — <reason>" instead of "Exportálás… —
+    /// <reason>".
+    private static func toastLabel(for title: String) -> String {
+        title.hasSuffix("…") ? String(title.dropLast()) : title
     }
 
     // MARK: - Finder helpers (R9-T1 toolbar menu)
