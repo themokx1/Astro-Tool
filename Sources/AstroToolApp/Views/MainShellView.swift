@@ -190,6 +190,9 @@ private struct DetailContainerView: View {
             TonightPage()
                 .onAppear { appState.tonightSegment = .calendar }
         case .allTargets: AllTargetsPage()
+        // R10-B3: the cross-target session browser -- no segment to
+        // preselect (unlike `.calendar`/`.cleanup` below), its own page.
+        case .nights: NightsPage()
         // R9-T3: `.id(name)` forces a fresh `TargetDetailPage` instance (and
         // thus a fresh `onAppear`/`@State`) whenever the sidebar switches
         // straight from one target to another -- `MainShellView` would
@@ -214,6 +217,7 @@ private struct DetailContainerView: View {
         case .tonight: return "Ma este"
         case .calendar: return "Naptár"
         case .allTargets: return "Minden célpont"
+        case .nights: return "Éjszakák"
         case .target(let name): return appState.stats.first { $0.target == name }?.displayName ?? name
         case .calibration: return "Kalibráció"
         case .audit: return "Audit"
