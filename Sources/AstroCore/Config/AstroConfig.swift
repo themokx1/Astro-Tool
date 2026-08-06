@@ -308,6 +308,32 @@ public struct SiteRule: Codable, Equatable, Sendable {
     }
 }
 
+/// R10-B6: opt-in Open-Meteo cloud-cover forecast (Tonight page tile +
+/// calendar "Felhő" column). This struct is only the on/off switch and its
+/// persistence -- the actual HTTP fetch lives entirely in the app layer
+/// (`Sources/AstroToolApp/WeatherService.swift`); AstroCore itself never
+/// makes a network call (`WelcomeView`'s "minden lokálisan fut" promise).
+/// Off by default: enabling it is what makes the configured site's
+/// coordinates leave the machine at all, so silence-by-default matters here
+/// more than for any other rule in this file.
+public struct WeatherRule: Codable, Equatable, Sendable {
+    public var enabled: Bool
+
+    public init(enabled: Bool = false) {
+        self.enabled = enabled
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = WeatherRule()
+        self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
+    }
+}
+
 /// Top-level, user-editable configuration for Astro-Tool. Every field falls
 /// back to a sensible default when missing from the on-disk JSON, so old
 /// config files stay valid after new fields are added, and unknown keys in
@@ -335,6 +361,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var stats: StatsRule
     public var site: SiteRule
     public var expose: ExposeRule
+    public var weather: WeatherRule
 
     public init(
         rootPath: String = "/Volumes/images/Astro",
@@ -349,7 +376,8 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         rating: RatingRule = RatingRule(),
         stats: StatsRule = StatsRule(),
         site: SiteRule = SiteRule(),
-        expose: ExposeRule = ExposeRule()
+        expose: ExposeRule = ExposeRule(),
+        weather: WeatherRule = WeatherRule()
     ) {
         self.rootPath = rootPath
         self.excludedDirNames = excludedDirNames
@@ -364,11 +392,12 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.stats = stats
         self.site = site
         self.expose = expose
+        self.weather = weather
     }
 
     private enum CodingKeys: String, CodingKey {
         case rootPath, excludedDirNames, excludedPaths, residuePatterns, residueDirNames, toolOutputDirNames
-        case intentional, wideField, calib, rating, stats, site, expose
+        case intentional, wideField, calib, rating, stats, site, expose, weather
     }
 
     public init(from decoder: any Decoder) throws {
@@ -387,6 +416,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.stats = try container.decodeIfPresent(StatsRule.self, forKey: .stats) ?? defaults.stats
         self.site = try container.decodeIfPresent(SiteRule.self, forKey: .site) ?? defaults.site
         self.expose = try container.decodeIfPresent(ExposeRule.self, forKey: .expose) ?? defaults.expose
+        self.weather = try container.decodeIfPresent(WeatherRule.self, forKey: .weather) ?? defaults.weather
     }
 
     /// Loads and decodes the config from `url`. Throws on I/O failure

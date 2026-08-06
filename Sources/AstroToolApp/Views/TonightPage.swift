@@ -252,6 +252,7 @@ struct TonightPage: View {
                 tile(title: "Helyszín", value: locationValueText, caption: locationCaptionText)
             }
             .buttonStyle(.plain)
+            cloudTile
         }
     }
 
@@ -267,6 +268,88 @@ struct TonightPage: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
     }
+
+    // MARK: - Felhőzet tile (R10-B6)
+
+    /// Only wrapped in a `Button` (same "tappable tile opens Settings ▸
+    /// Helyszín" pattern the "Helyszín" tile above always uses) while the
+    /// feature is OFF -- once it's on, the tile just shows data/state, same
+    /// as "Sötét idő"/"Hold"/"Ajánlott".
+    @ViewBuilder
+    private var cloudTile: some View {
+        let info = cloudTileInfo
+        if appState.config.weather.enabled {
+            tile(title: "Felhőzet", value: info.value, caption: info.caption)
+        } else {
+            Button {
+                appState.settingsTab = .location
+                openSettings()
+            } label: {
+                tile(title: "Felhőzet", value: info.value, caption: info.caption)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// The tile's four states (R10-B6 spec): disabled / enabled-with-data /
+    /// enabled-but-still-loading / fetch-failed. `nightForecast` and
+    /// `weatherError` are mutually exclusive in practice -- `WeatherService`
+    /// only ever throws when there was NO cached forecast to fall back on,
+    /// so a non-`nil` `nightForecast` always wins when both happen to be
+    /// set (a stale forecast is still more informative than the error that
+    /// prompted the LATEST refetch attempt).
+    private var cloudTileInfo: (value: String, caption: String) {
+        guard appState.config.weather.enabled else {
+            return ("ki", "Bekapcsolás…")
+        }
+        if let forecast = appState.nightForecast {
+            if let (dusk, dawn) = cloudDuskDawn(forecast) {
+                let text = "\(TDFormat.percent(dusk)) → \(TDFormat.percent(dawn))"
+                return (text, "Open-Meteo · \(Self.hmFormatter.string(from: forecast.fetchedAt))")
+            }
+            return ("n/a", "a 7 napos előrejelzésen túl")
+        }
+        if let weatherError = appState.weatherError {
+            return ("n/a", weatherError)
+        }
+        return ("…", "betöltés")
+    }
+
+    /// Cloud cover at dusk/dawn for whichever night the tiles row currently
+    /// shows (`planDate`, or tonight) -- real astronomical dusk/dawn via
+    /// `SkyTrack.nightWindowMarkers` when the site is resolved (the same
+    /// source `selectedTargetChartSection`'s chart already uses), else a
+    /// fixed 22:00/04:00 local fallback (R10-B6 spec). `nil` when the night
+    /// falls outside `forecast`'s window -- `NightForecast.cloudPercent`'s
+    /// own 90-minute tolerance is what actually enforces that, e.g. for a
+    /// calendar night picked beyond Open-Meteo's 7-day horizon.
+    private func cloudDuskDawn(_ forecast: NightForecast) -> (dusk: Double, dawn: Double)? {
+        let night = appState.planDate ?? Date()
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: night)
+
+        var duskTarget = calendar.date(bySettingHour: 22, minute: 0, second: 0, of: dayStart) ?? night
+        var dawnTarget = calendar.date(byAdding: .day, value: 1, to: dayStart)
+            .flatMap { calendar.date(bySettingHour: 4, minute: 0, second: 0, of: $0) } ?? night
+
+        if let lat = appState.resolvedSite.latitudeDeg, let lon = appState.resolvedSite.longitudeDeg {
+            let markers = SkyTrack.nightWindowMarkers(nightOf: night, latDeg: lat, lonDeg: lon)
+            if let duskUTC = markers.astroDuskUTC { duskTarget = duskUTC }
+            if let dawnUTC = markers.astroDawnUTC { dawnTarget = dawnUTC }
+        }
+
+        guard let duskPercent = forecast.cloudPercent(nearestTo: duskTarget),
+              let dawnPercent = forecast.cloudPercent(nearestTo: dawnTarget) else { return nil }
+        return (duskPercent, dawnPercent)
+    }
+
+    private static let hmFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
 
     // MARK: - Plan table
 
@@ -580,7 +663,13 @@ struct TonightPage: View {
                     if month.isEmpty {
                         ContentUnavailableView("Nincs adat", systemImage: "moon.stars")
                     } else {
-                        calendarTable(month)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Spacer()
+                                MetricInfoButton(metrics: Self.calendarMetricInfo)
+                            }
+                            calendarTable(month)
+                        }
                     }
                 } else if appState.isBusy {
                     ProgressView("Havi terv számítása…")
@@ -594,6 +683,16 @@ struct TonightPage: View {
             if appState.monthPlan == nil { appState.loadMonthPlan() }
         }
     }
+
+    /// R10-B6: the calendar table's one computed-metric column not already
+    /// self-explanatory from its own cell content -- same "one button per
+    /// table" `MetricInfoButton` pattern `planMetricInfo` establishes above.
+    private static let calendarMetricInfo: [MetricInfoButton.Metric] = [
+        .init(
+            title: "Felhő",
+            explanation: "Az adott éjszaka 20:00-04:00 közti óránkénti Open-Meteo mintáinak átlagos felhőzete, százalékban. Mikor hazudik: a 7 napos előrejelzésen túl, vagy ha az előrejelzés ki van kapcsolva, „—”."
+        ),
+    ]
 
     /// `Table`'s non-`Identifiable`-data initializer (`id:` keypath) isn't
     /// available at this package's macOS 14 deployment target -- wrap
@@ -613,6 +712,8 @@ struct TonightPage: View {
                 .width(90)
             TableColumn("Hold") { row in moonCell(row.night) }
                 .width(100)
+            TableColumn("Felhő") { row in cloudCell(row.night) }
+                .width(60)
             TableColumn("Legjobb 3 célpont") { row in bestTargetsCell(row.night) }
             TableColumn("") { row in markerCell(row.night) }
                 .width(30)
@@ -667,6 +768,28 @@ struct TonightPage: View {
             MoonGlyph(percent: night.moonIlluminationPercent)
             Text(TDFormat.percent(night.moonIlluminationPercent))
         }
+    }
+
+    /// R10-B6: "—" whenever `night.date` has no entry in
+    /// `weatherDailySummaries` -- covers BOTH "feature disabled" (the
+    /// dictionary never gets populated at all, see `loadWeather`'s guard)
+    /// and "beyond Open-Meteo's 7-day horizon" (that date's bucket was never
+    /// produced) with the exact same honest-n/a code path, no extra branch
+    /// needed for either.
+    @ViewBuilder
+    private func cloudCell(_ night: NightSummary) -> some View {
+        if let summary = appState.weatherDailySummaries[night.date] {
+            Text(TDFormat.percent(summary.meanPercent))
+                .foregroundStyle(cloudColor(summary.meanPercent))
+        } else {
+            Text("—").foregroundStyle(.secondary)
+        }
+    }
+
+    private func cloudColor(_ meanPercent: Double) -> Color {
+        if meanPercent <= 30 { return .green }
+        if meanPercent <= 60 { return .orange }
+        return .red
     }
 
     /// R10-A5: each name is its own tappable link (was a single plain

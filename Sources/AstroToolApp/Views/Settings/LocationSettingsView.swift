@@ -23,6 +23,10 @@ struct LocationSettingsView: View {
     @State private var mode: UseMode = .automatic
     @State private var latitudeText: String = ""
     @State private var longitudeText: String = ""
+    /// R10-B6: bound to the "Időjárás-előrejelzés" section's toggle below;
+    /// loaded from/saved to `config.weather.enabled` the same way `mode`/
+    /// `latitudeText`/`longitudeText` round-trip through `config.site`.
+    @State private var weatherEnabled: Bool = false
 
     @State private var saveMessage: String?
     @State private var saveError: String?
@@ -56,6 +60,20 @@ struct LocationSettingsView: View {
                 Text(
                     "Ez határozza meg a kulminációt, a magasságot és a csillagászati "
                         + "szürkületet a Ma este oldalon."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            // R10-B6: opt-in, default OFF -- see `WeatherRule`'s doc comment
+            // for why this lives in `AstroConfig` at all (persisted, but
+            // AstroCore itself never makes the actual network call).
+            Section("Időjárás-előrejelzés") {
+                Toggle("Felhőzet-előrejelzés (Open-Meteo)", isOn: $weatherEnabled)
+                Text(
+                    "Bekapcsolva a beállított helyszín koordinátái (2 tizedesre kerekítve) "
+                        + "elküldésre kerülnek az Open-Meteo szolgáltatásnak. "
+                        + "Alapértelmezés: kikapcsolva."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -100,6 +118,7 @@ struct LocationSettingsView: View {
             latitudeText = appState.resolvedSite.latitudeDeg.map { String(format: "%.4f", $0) } ?? ""
             longitudeText = appState.resolvedSite.longitudeDeg.map { String(format: "%.4f", $0) } ?? ""
         }
+        weatherEnabled = appState.config.weather.enabled
     }
 
     /// Parses the "47.5000, 19.0400" clipboard convention (spec A.7) -- two
@@ -129,6 +148,7 @@ struct LocationSettingsView: View {
             }
             newConfig.site = SiteRule(latitudeDeg: lat, longitudeDeg: lon)
         }
+        newConfig.weather.enabled = weatherEnabled
 
         do {
             let writeGuard = WriteGuard(root: URL(fileURLWithPath: newConfig.rootPath, isDirectory: true))
@@ -154,6 +174,14 @@ struct LocationSettingsView: View {
                 // library median.
                 appState.resolvedSite = newConfig.site
             }
+            // R10-B6: covers "the toggle just turned on" (the task this
+            // exists for) AND "already on, coordinates changed" -- either
+            // way `loadWeather()`'s own guard makes this an instant no-op
+            // when the toggle ended up off, and `WeatherService`'s cache
+            // makes a redundant call (toggle was already on, nothing
+            // relevant changed) cheap rather than a wasted network round
+            // trip.
+            appState.loadWeather()
         } catch let error as AstroError {
             saveError = describeSettingsError(error)
         } catch {
