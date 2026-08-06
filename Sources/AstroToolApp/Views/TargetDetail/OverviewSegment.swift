@@ -8,6 +8,10 @@ import SwiftUI
 /// panel table when applicable, and the target's calibration status.
 struct OverviewSegment: View {
     @Environment(AppState.self) private var appState
+    // R10 review (item 15): needed for the "Ma esti ív" no-site hint's own
+    // "Beállítás…" deep link -- same `settingsTab = .location;
+    // openSettings()` pattern `TonightPage`/`DiscoveryPage` already use.
+    @Environment(\.openSettings) private var openSettings
     let target: String
     /// Shared with `TargetDetailPage` so the "Plate-solve…" button opens the
     /// same sheet the header/context menus use, rather than a second
@@ -106,7 +110,7 @@ struct OverviewSegment: View {
                     labeledValue("Max. mag.", plan.maxAltitudeDeg.map { String(format: "%.0f°", $0) } ?? "-")
                     labeledValue("Látható", visibleWindowText(plan))
                     labeledValue("Hold", moonText(plan))
-                    verdictChip(plan.verdict)
+                    VerdictChip(verdict: plan.verdict)
                 }
             } else {
                 Text("Nincs terv-adat.").font(.callout).foregroundStyle(.secondary)
@@ -125,14 +129,6 @@ struct OverviewSegment: View {
         var text = "\(Int(illum.rounded()))%"
         if let sep = plan.moonSeparationDeg { text += " · \(Int(sep.rounded()))°" }
         return text
-    }
-
-    private func verdictChip(_ verdict: String) -> some View {
-        Text(verdict)
-            .font(.caption)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill((verdict == "ma jó" ? Color.green : Color.secondary).opacity(0.2)))
     }
 
     // MARK: - Ma esti ív (R10-B2)
@@ -160,9 +156,22 @@ struct OverviewSegment: View {
                         moonIlluminationPercent: plan?.moonIlluminationPercent
                     )
                 } else {
-                    Text("Nincs megfigyelési helyszín beállítva — állítsd be itt: Beállítások ▸ Helyszín.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                    // R10 review (item 15): a real deep link (same
+                    // `settingsTab = .location; openSettings()` pattern
+                    // `TonightPage.noSiteChartHint`/the "Helyszín" tile
+                    // elsewhere already use), replacing a plain sentence
+                    // that just NAMED the settings location without a way
+                    // to jump there.
+                    HStack(spacing: 8) {
+                        Text("Nincs megfigyelési helyszín beállítva.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Button("Beállítás…") {
+                            appState.settingsTab = .location
+                            openSettings()
+                        }
+                        .buttonStyle(.link)
+                    }
                 }
             } else {
                 HStack(spacing: 10) {
@@ -240,7 +249,11 @@ struct OverviewSegment: View {
                     goalRule
                 }
                 .chartLegend(.hidden)
-                .chartYAxisLabel("óra")
+                // R10 review (item 21): "óra" alone reads as "current hour
+                // of day" at a glance -- this axis is a RUNNING TOTAL
+                // (`IntegrationPoint.cumulativeHours`), not a point-in-time
+                // value.
+                .chartYAxisLabel("óra (halmozott)")
                 .chartXAxis {
                     AxisMarks { _ in
                         AxisGridLine().foregroundStyle(.secondary)
@@ -304,7 +317,14 @@ struct OverviewSegment: View {
                 .foregroundStyle(.secondary)
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 2]))
                 .annotation(position: .top, alignment: .trailing) {
-                    Text("cél: \(Int(goalHours.rounded())) ó")
+                    // R10 review (item 21): h:mm (`TDFormat.hm`) is this
+                    // app's canonical duration format (see that type's own
+                    // doc comment) -- was a bare rounded-hours integer
+                    // ("cél: 10 ó"), inconsistent with every other duration
+                    // this app shows. `goalHours` is already in HOURS (the
+                    // chart's own Y unit, needed as-is for the `RuleMark`
+                    // above); `* 3600` recovers the seconds `hm` expects.
+                    Text("cél: \(TDFormat.hm(goalHours * 3600))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

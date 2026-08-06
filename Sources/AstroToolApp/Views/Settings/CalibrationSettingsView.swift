@@ -128,6 +128,19 @@ struct CalibrationSettingsView: View {
         }
         .formStyle(.grouped)
         .onAppear { loadFromConfig() }
+        // R10 review (item 17): clears stale save feedback the moment a
+        // fresh edit re-dirties the draft -- see `LocationSettingsView`'s
+        // identical modifier for the full "only false -> true" reasoning
+        // (a successful save's own "Mentve." must survive the very
+        // re-render that clears `isDirty` back to `false`; a failed
+        // save's error must survive too, since `isDirty` never changes
+        // across that failure at all).
+        .onChange(of: isDirty) { _, newValue in
+            if newValue {
+                saveMessage = nil
+                saveError = nil
+            }
+        }
         .confirmationDialog(
             "Biztosan alaphelyzetbe állítod a Kalibráció beállításokat?",
             isPresented: $showResetConfirm,

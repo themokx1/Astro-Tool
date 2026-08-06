@@ -90,7 +90,10 @@ struct NotesSegment: View {
                             Spacer()
                             Button("Megnyitás") { NSWorkspace.shared.open(url) }
                                 .buttonStyle(.link).font(.caption)
-                            Button("Finderben") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                            // R10 review (item 8): "Megnyitás Finderben"
+                            // everywhere a Finder-reveal action exists --
+                            // was a bare "Finderben".
+                            Button("Megnyitás Finderben") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                                 .buttonStyle(.link).font(.caption)
                             Button("Újragenerálás") { appState.regenerateReport(url, target: target) }
                                 .buttonStyle(.link).font(.caption)

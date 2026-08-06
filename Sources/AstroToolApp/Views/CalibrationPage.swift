@@ -67,7 +67,11 @@ struct CalibrationPage: View {
                     // `currentTask` -- `calibNeeds` (the coverage table AND
                     // Teendők action cards) never actually landed. One
                     // bundled `loadCalibrationData()` call avoids that.
-                    Button("Újraszámolás") {
+                    // R10 review (item 9): renamed "Újraszámolás" ->
+                    // "Frissítés", this app's standard label for a
+                    // re-run-the-load button (`NightsPage`/`DiscoveryPage`
+                    // already use it).
+                    Button("Frissítés") {
                         appState.loadCalibrationData()
                     }
                     .disabled(appState.db == nil)

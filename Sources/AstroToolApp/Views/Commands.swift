@@ -56,10 +56,19 @@ struct AstroToolCommands: Commands {
                 AppState.shared?.runScan()
             }
             .keyboardShortcut("r", modifiers: .command)
-            .disabled(AppState.shared?.db == nil)
+            // R10 review: also disabled mid-scan (matching `MainShellView`'s
+            // `staleScanBanner` "Beolvasás" button) -- without this, ⌘R
+            // could silently re-fire the scan while one is already running.
+            .disabled(AppState.shared?.db == nil || AppState.shared?.isBusy == true)
         }
 
         CommandGroup(after: .toolbar) {
+            // R10 review: renumbered ⌘1-⌘9 to match `SidebarView`'s actual
+            // top-to-bottom row order exactly (Ma este, Naptár, Felfedezés,
+            // then KÖNYVTÁR's Minden célpont/Éjszakák, then ÁLLAPOT's
+            // Kalibráció/Audit/Takarítás, then ESZKÖZÖK's Szenzor) -- the
+            // previous numbering had "Felfedezés" tacked on at the end
+            // (⌘9) even though the sidebar already placed it third.
             Button("Ma este") { AppState.shared?.currentPage = .tonight }
                 .keyboardShortcut("1", modifiers: .command)
             // D25: `Page.calendar` is its own case -- `MainShellView.page(for:)`
@@ -69,32 +78,40 @@ struct AstroToolCommands: Commands {
                 AppState.shared?.currentPage = .calendar
             }
             .keyboardShortcut("2", modifiers: .command)
-            Button("Minden célpont") { AppState.shared?.currentPage = .allTargets }
+            Button("Felfedezés") { AppState.shared?.currentPage = .discover }
                 .keyboardShortcut("3", modifiers: .command)
-            // R10-B3: the cross-target session browser -- inserted here
-            // (⌘4), pushing Kalibráció/Audit/Takarítás/Szenzor each one
-            // slot down.
-            Button("Éjszakák") { AppState.shared?.currentPage = .nights }
+            Button("Minden célpont") { AppState.shared?.currentPage = .allTargets }
                 .keyboardShortcut("4", modifiers: .command)
-            Button("Kalibráció") { AppState.shared?.currentPage = .calibration }
+            Button("Éjszakák") { AppState.shared?.currentPage = .nights }
                 .keyboardShortcut("5", modifiers: .command)
-            Button("Audit") { AppState.shared?.currentPage = .audit }
+            Button("Kalibráció") { AppState.shared?.currentPage = .calibration }
                 .keyboardShortcut("6", modifiers: .command)
+            Button("Audit") { AppState.shared?.currentPage = .audit }
+                .keyboardShortcut("7", modifiers: .command)
             // D25: `Page.cleanup` is its own case -- same
             // `MainShellView.page(for:)`-preselects-the-segment shape as
             // "Naptár"/`.calendar` above.
             Button("Takarítás") {
                 AppState.shared?.currentPage = .cleanup
             }
-            .keyboardShortcut("7", modifiers: .command)
+            .keyboardShortcut("8", modifiers: .command)
             Button("Szenzor") { AppState.shared?.currentPage = .sensor }
-                .keyboardShortcut("8", modifiers: .command)
-            // R10-B4: appended at ⌘9 rather than renumbering 1-8 again
-            // (B3 already renumbered everything once for "Éjszakák") --
-            // "Felfedezés" is reachable, just not in the 1-8 muscle-memory
-            // block.
-            Button("Felfedezés") { AppState.shared?.currentPage = .discover }
                 .keyboardShortcut("9", modifiers: .command)
+
+            Divider()
+
+            // R10 review: navigates to the search-results page itself,
+            // distinct from "Kereső fókuszálása" (⌘F, `CommandGroup(after:
+            // .pasteboard)` below) which only focuses the sidebar's search
+            // field. No shortcut of its own -- ⌘1-9 above are all taken and
+            // this is a rarely-needed extra route back to results already
+            // reachable via the sidebar's "Keresés" row. Disabled until a
+            // search has actually run this session, same gate
+            // `SidebarView`'s own "Keresés" row uses.
+            Button("Keresés") {
+                AppState.shared?.currentPage = .searchResults
+            }
+            .disabled(AppState.shared?.searchQuery.isEmpty ?? true)
 
             Divider()
 
@@ -108,8 +125,11 @@ struct AstroToolCommands: Commands {
             Divider()
             // R9-D4: `.focusSearchField` (`SidebarView`) previously had no
             // poster at all -- the sidebar's search field could only ever
-            // be focused by clicking into it.
-            Button("Keresés") {
+            // be focused by clicking into it. R10 review: renamed from
+            // "Keresés" to "Kereső fókuszálása" so it reads distinctly from
+            // the View-menu "Keresés" item above (that one navigates to
+            // `Page.searchResults`; this one just focuses the field).
+            Button("Kereső fókuszálása") {
                 NotificationCenter.default.post(name: .focusSearchField, object: nil)
             }
             .keyboardShortcut("f", modifiers: .command)
@@ -140,21 +160,26 @@ struct AstroToolCommands: Commands {
             // session…" above already uses); items that just run
             // (plate-solve-all, same as `TonightPage`'s own button) call
             // `AppState` directly.
+            // R10 review: `|| isBusy` added to this and the three buttons
+            // below -- matching their toolbar twins (`MainShellView`'s
+            // "Műveletek" menu / `TonightPage`'s plate-solve button) --
+            // so a running batch operation can't be silently re-triggered
+            // or canceled-and-replaced from the menu bar.
             Button("Minden célpont pontozása…") {
                 NotificationCenter.default.post(name: .runRateAllRequested, object: nil)
             }
-            .disabled(AppState.shared?.stats.isEmpty ?? true)
+            .disabled((AppState.shared?.stats.isEmpty ?? true) || AppState.shared?.isBusy == true)
 
             Button("Plate-solve minden koordináta nélküli célpontra…") {
                 AppState.shared?.runPlateSolveAll()
             }
-            .disabled(AppState.shared?.db == nil)
+            .disabled(AppState.shared?.db == nil || AppState.shared?.isBusy == true)
 
             Button("Szenzor mérése…") {
                 AppState.shared?.currentPage = .sensor
                 NotificationCenter.default.post(name: .measureSensorRequested, object: nil)
             }
-            .disabled(AppState.shared?.db == nil)
+            .disabled(AppState.shared?.db == nil || AppState.shared?.isBusy == true)
 
             if AppState.shared?.hasDSSFilelists == true {
                 Button("DSS-döntések importálása") {
@@ -168,7 +193,7 @@ struct AstroToolCommands: Commands {
             Button("Expozíció-tanácsadó minden célpontra…") {
                 NotificationCenter.default.post(name: .adviseAllRequested, object: nil)
             }
-            .disabled(AppState.shared?.db == nil)
+            .disabled(AppState.shared?.db == nil || AppState.shared?.isBusy == true)
         }
 
         CommandGroup(replacing: .help) {

@@ -227,7 +227,11 @@ private struct DetailContainerView: View {
         case .audit: return "Audit"
         case .cleanup: return "Takarítás"
         case .sensor: return "Szenzor-profilok"
-        case .searchResults: return "Kereső"
+        // R10 review: "Kereső" ("search engine"/noun) renamed to "Keresés"
+        // ("search"/action) -- "Kereső" is reserved for the ⌘F "Kereső
+        // fókuszálása" menu item (`Views/Commands.swift`) which focuses the
+        // sidebar's search field, distinct from this page's own identity.
+        case .searchResults: return "Keresés"
         }
     }
 

@@ -102,6 +102,10 @@ struct NightsPage: View {
         var exposureSummary: String { row.exposureSummary }
         var filtersText: String { row.filters.isEmpty ? "-" : row.filters.joined(separator: ", ") }
         var medianFWHMArcsec: Double? { row.medianFWHMArcsec }
+        /// R10 review (item 11): `fwhmText`'s pixel-only fallback (like
+        /// `SessionsSegment.fwhmText`) for a rated session with no
+        /// derivable arcsec value.
+        var medianFWHMPixels: Double? { row.medianFWHMPixels }
         var backgroundEPerSecPerArcsec2: Double? { row.backgroundEPerSecPerArcsec2 }
         var dutyCyclePercent: Double? { row.dutyCyclePercent }
         var hasNotes: Bool { row.hasNotes }
@@ -141,8 +145,13 @@ struct NightsPage: View {
         return String(format: "%.2f″", value)
     }
 
+    // R10 review (item 11): this tile stays arcsec-only (unlike the
+    // "FWHM″" column, it has no pixel-fallback -- comparing pixel FWHM
+    // across different targets/setups isn't meaningful the way comparing
+    // it within one session's own frames is), so the caption spells out
+    // the unit rather than leaving it to the "″" in the tile's own title.
     private var bestFWHMCaptionText: String? {
-        bestFWHMRow.map { "\($0.displayName) · \($0.date)" }
+        bestFWHMRow.map { "\($0.displayName) · \($0.date) (″-ben mérve)" }
     }
 
     private var totalIntegrationSeconds: Double {
@@ -189,7 +198,17 @@ struct NightsPage: View {
                         }
                     }
                 } else if appState.isBusy {
-                    ProgressView("Éjszakák betöltése…")
+                    // R10 review (item 18): `appState.progressText`, not a
+                    // hardcoded "Éjszakák betöltése…" -- `nights == nil`
+                    // alone doesn't mean THIS page's own load is what's
+                    // running; some unrelated busy operation (e.g. a scan
+                    // started from another page) can be true here just as
+                    // easily, before this page's own `loadNights()` ever
+                    // got a chance to run. `progressText` always reflects
+                    // whatever operation is ACTUALLY in flight -- it reads
+                    // "Éjszakák betöltése…" exactly when that's true, and
+                    // something else's own description otherwise.
+                    ProgressView(appState.progressText)
                 } else {
                     notLoadedState
                 }
@@ -198,7 +217,13 @@ struct NightsPage: View {
         }
         .padding()
         .onAppear {
-            if appState.nights == nil { appState.loadNights() }
+            // R10 review (item 18): `&& !appState.isBusy`, same guard
+            // `DiscoveryPage.onAppear` already uses -- without it, landing
+            // here while an unrelated operation is still running (e.g. a
+            // scan kicked off from another page) would fire `loadNights()`
+            // anyway, whose `beginOperation` cancels that OTHER operation's
+            // `currentTask` out from under it.
+            if appState.nights == nil && !appState.isBusy { appState.loadNights() }
         }
         .sheet(item: $noteEditingSession) { session in
             SessionNoteSheet(target: session.target, date: session.date)
@@ -270,7 +295,12 @@ struct NightsPage: View {
     private static let metricInfo: [MetricInfoButton.Metric] = [
         .init(
             title: "FWHM″",
-            explanation: "A session kerete(i) félértékszélessége ívmásodpercben. Mikor hazudik: pontozás nélkül „-”; „Siril nélkül” pontozásnál is mindig „-”."
+            // R10 review (item 11): restored the "vagy pixelben" fallback
+            // clause `SessionsSegment`'s own copy of this explanation
+            // already has -- this column falls back to a pixel value (see
+            // `fwhmText`) exactly when there's no pixel-scale metadata to
+            // convert with, i.e. "nincs pixelskála".
+            explanation: "A session kerete(i) félértékszélessége ívmásodpercben (pixelméret+fókusz ismeretében) vagy pixelben, ha nincs pixelskála a konverzióhoz. Mikor hazudik: pontozás nélkül „-”; „Siril nélkül” pontozásnál is mindig „-”."
         ),
         .init(
             title: "Háttér e⁻/s/″²",
@@ -312,7 +342,8 @@ struct NightsPage: View {
                 TableColumn("Szűrők", value: \.filtersText) { row in filtersCell(row) }
                     .width(min: 80, ideal: 110)
                 TableColumn("Jegyzet", value: \.noteSortKey) { row in
-                    Text(row.hasNotes ? "✓" : "—").foregroundStyle(.secondary)
+                    // R10 review (item 20): table CELLS use "-", not "—".
+                    Text(row.hasNotes ? "✓" : "-").foregroundStyle(.secondary)
                 }
                 .width(min: 50, ideal: 60)
             }
@@ -376,9 +407,15 @@ struct NightsPage: View {
         }
     }
 
+    // R10 review (item 11): falls back to the pixel-only value (like
+    // `SessionsSegment.fwhmText`) when there's no derivable arcsec value --
+    // was arcsec-or-"-" only, silently hiding a rated session's FWHM
+    // whenever its frames had no pixel-scale metadata (`xpixsz`/`focallen`)
+    // to convert with.
     private func fwhmText(_ row: NightTableRow) -> String {
-        guard let value = row.medianFWHMArcsec else { return "-" }
-        return String(format: "%.2f", value)
+        if let arcsec = row.medianFWHMArcsec { return String(format: "%.2f", arcsec) }
+        if let px = row.medianFWHMPixels { return String(format: "%.2f px", px) }
+        return "-"
     }
 
     private func backgroundText(_ row: NightTableRow) -> String {
@@ -404,9 +441,9 @@ struct NightsPage: View {
 
     // MARK: - Row interactions
 
-    /// Both the row's double-click AND its context menu's "Megnyitás" land
-    /// here -- preselects the Sessionök segment with this exact date, then
-    /// navigates, the identical `pendingTargetSegment`/
+    /// Both the row's double-click AND its context menu's "Célpont
+    /// megnyitása" land here -- preselects the Sessionök segment with this
+    /// exact date, then navigates, the identical `pendingTargetSegment`/
     /// `pendingSessionSelection` hand-off `SearchResultsPage.sessionRow`
     /// already uses for a search hit landing on the same target page.
     private func openInTargetDetail(_ row: NightTableRow) {
@@ -417,7 +454,10 @@ struct NightsPage: View {
 
     @ViewBuilder
     private func contextMenuItems(for row: NightTableRow) -> some View {
-        Button("Megnyitás") { openInTargetDetail(row) }
+        // R10 review (item 8): "Célpont megnyitása" everywhere a row's
+        // primary action navigates to the target page (`AllTargetsPage`
+        // already uses this exact wording) -- was a bare "Megnyitás".
+        Button("Célpont megnyitása") { openInTargetDetail(row) }
         Button("Megnyitás Finderben") { revealInFinder(target: row.target, date: row.date) }
         Divider()
         Button("Éjszaka-riport készítése") { appState.exportNightReport(target: row.target, date: row.date) }

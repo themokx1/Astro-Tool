@@ -28,8 +28,13 @@ struct SensorPage: View {
 
     private var profiles: [SensorProfileRecord] { appState.sensorProfiles }
     private var distinctCameraCount: Int { Set(profiles.map(\.camera)).count }
+    // R10 review (item 20): TILES use "n/a" for a missing value, not "-"
+    // -- see `TDFormat`'s doc comment for the full rule. This tile can
+    // only ever be reached with `profiles` non-empty (the `emptyState`
+    // branch below covers that case instead), so `-` was unreachable in
+    // practice, but the fallback should still say the right thing.
     private var latestMeasurementText: String {
-        guard let latest = profiles.map(\.measuredAt).max() else { return "-" }
+        guard let latest = profiles.map(\.measuredAt).max() else { return "n/a" }
         return Self.dateFormatter.string(from: Date(timeIntervalSince1970: latest))
     }
 
@@ -226,18 +231,21 @@ struct SensorProfileTable: View {
     /// "one button per table" `MetricInfoButton` pattern the target-detail
     /// segments already established. Explicitly covers the "mikor hazudik"
     /// caveats `SensorProfiler.measure`'s own doc comments call out.
+    // R10 review (item 20): quoted glyphs updated to match `cell(_:text:)`'s
+    // own -- table CELLS use "-", not "n/a" (see `TDFormat`'s doc comment
+    // for the full rule); this table's own columns used to mix both.
     private static let metricInfo: [MetricInfoButton.Metric] = [
         .init(
             title: "Leolvasási zaj (e⁻)",
-            explanation: "Két BIAS-keret különbségének szórásából számolt zaj, elektronra váltva az EGAIN-nel. Mikor hazudik: „n/a” ha kevesebb, mint 2 BIAS-keret van ehhez a kombóhoz, vagy nincs EGAIN; egyetlen rossz/kozmikus-sugár-foltos BIAS-pár is elronthatja."
+            explanation: "Két BIAS-keret különbségének szórásából számolt zaj, elektronra váltva az EGAIN-nel. Mikor hazudik: „-” ha kevesebb, mint 2 BIAS-keret van ehhez a kombóhoz, vagy nincs EGAIN; egyetlen rossz/kozmikus-sugár-foltos BIAS-pár is elronthatja."
         ),
         .init(
             title: "Dark (e⁻/s)",
-            explanation: "A DARK-keret és a BIAS-szint különbsége elektron/másodpercre normálva. Mikor hazudik: „n/a” EGAIN vagy DARK-keret nélkül; hőmérséklet-függő, egy másik szenzor-hőfokon mért dark-áram nem ugyanaz."
+            explanation: "A DARK-keret és a BIAS-szint különbsége elektron/másodpercre normálva. Mikor hazudik: „-” EGAIN vagy DARK-keret nélkül; hőmérséklet-függő, egy másik szenzor-hőfokon mért dark-áram nem ugyanaz."
         ),
         .init(
             title: "EGAIN",
-            explanation: "Elektron/ADU átváltási tényező, a FITS-fejlécből (EGAIN kulcs) vagy a BIAS-keretek szórásából becsülve. Mikor hazudik: „n/a” ha sem a fejléc, sem a becslés nem ad értéket; egy hibás gain-beállítás a kamerán ezt is elcsúsztatja."
+            explanation: "Elektron/ADU átváltási tényező, a FITS-fejlécből (EGAIN kulcs) vagy a BIAS-keretek szórásából becsülve. Mikor hazudik: „-” ha sem a fejléc, sem a becslés nem ad értéket; egy hibás gain-beállítás a kamerán ezt is elcsúsztatja."
         ),
     ]
 
@@ -254,15 +262,20 @@ struct SensorProfileTable: View {
                     .width(60)
                 TableColumn("Offset") { row in cell(row, text: row.profile.offset.map { String(format: "%g", $0) } ?? "-") }
                     .width(60)
-                TableColumn("Bias (ADU)") { row in cell(row, text: row.profile.biasLevelADU.map { String(format: "%.0f", $0) } ?? "n/a") }
+                // R10 review (item 20): every column below now falls back
+                // to "-" -- was a mix of "-" ("Gain"/"Offset"/"Dark hőm.")
+                // and "n/a" ("Bias"/"Leolvasási zaj"/"Dark"/"EGAIN") within
+                // the SAME table; table CELLS use "-" (see `TDFormat`'s doc
+                // comment for the full rule, TILES are the "n/a" case).
+                TableColumn("Bias (ADU)") { row in cell(row, text: row.profile.biasLevelADU.map { String(format: "%.0f", $0) } ?? "-") }
                     .width(90)
-                TableColumn("Leolvasási zaj (e⁻)") { row in cell(row, text: row.profile.readNoiseE.map { String(format: "%.2f", $0) } ?? "n/a") }
+                TableColumn("Leolvasási zaj (e⁻)") { row in cell(row, text: row.profile.readNoiseE.map { String(format: "%.2f", $0) } ?? "-") }
                     .width(130)
-                TableColumn("Dark (e⁻/s)") { row in cell(row, text: row.profile.darkRateEPerS.map { String(format: "%.4f", $0) } ?? "n/a") }
+                TableColumn("Dark (e⁻/s)") { row in cell(row, text: row.profile.darkRateEPerS.map { String(format: "%.4f", $0) } ?? "-") }
                     .width(100)
                 TableColumn("Dark hőm. (°C)") { row in cell(row, text: row.profile.darkTempC.map { String(format: "%.1f", $0) } ?? "-") }
                     .width(100)
-                TableColumn("EGAIN") { row in cell(row, text: row.profile.egain.map { String(format: "%.3f", $0) } ?? "n/a") }
+                TableColumn("EGAIN") { row in cell(row, text: row.profile.egain.map { String(format: "%.3f", $0) } ?? "-") }
                     .width(80)
                 TableColumn("Mért") { row in
                     cell(row, text: Self.dateFormatter.string(from: Date(timeIntervalSince1970: row.profile.measuredAt)))

@@ -57,7 +57,14 @@ struct DiscoveryPage: View {
                             }
                         }
                     } else if appState.isBusy {
-                        ProgressView("Felfedezés számítása…")
+                        // R10 review (item 18): `appState.progressText`, not
+                        // a hardcoded "Felfedezés számítása…" -- `discovery
+                        // == nil` alone doesn't mean THIS page's own load is
+                        // what's running; some unrelated busy operation can
+                        // be true here just as easily. `progressText`
+                        // always reflects whatever operation is ACTUALLY in
+                        // flight.
+                        ProgressView(appState.progressText)
                     } else {
                         notLoadedState
                     }
@@ -304,7 +311,7 @@ struct DiscoveryPage: View {
                 .width(min: 55, ideal: 65)
             TableColumn("FOV", value: \.fovFitSortKey) { row in fovCell(row) }
                 .width(min: 90, ideal: 140)
-            TableColumn("Döntés", value: \.verdictSortKey) { row in verdictChip(row.verdict) }
+            TableColumn("Döntés", value: \.verdictSortKey) { row in VerdictChip(verdict: row.verdict) }
                 .width(min: 120, ideal: 150)
             // R10-B7: visible row-actions -- mirrors `contextMenuItems(for:)`
             // exactly (same function, both call sites), so the right-click
@@ -407,25 +414,6 @@ struct DiscoveryPage: View {
         }
     }
 
-    // MARK: - Verdict chip (mirrors TonightPage.planTable's vocabulary)
-
-    private func verdictChip(_ verdict: String) -> some View {
-        Text(verdict)
-            .font(.caption.bold())
-            .lineLimit(1)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(verdictColor(verdict).opacity(0.15), in: Capsule())
-            .foregroundStyle(verdictColor(verdict))
-    }
-
-    private func verdictColor(_ verdict: String) -> Color {
-        if verdict == SkyVerdictText.good { return .green }
-        if verdict.hasPrefix("Hold zavar") { return .yellow }
-        if verdict.hasPrefix("alacsony") || verdict == SkyVerdictText.notVisibleTonight { return .orange }
-        return .gray // "nincs koordináta"
-    }
-
     // MARK: - Context menu
 
     @ViewBuilder
@@ -436,7 +424,11 @@ struct DiscoveryPage: View {
             Button("Új session létrehozása…") { newSessionPrefill = NewSessionPrefillItem(designation: row.designation) }
         }
         Divider()
-        Button("Ma esti ív") { skyArcItem = SkyArcItem(row: row.discoveryRow) }
+        // R10 review (item 22): trailing "…" -- this menu item opens a
+        // sheet (`SkyArcSheet`), same "action needs more input/opens
+        // something" convention every other sheet-opening item in this app
+        // already follows (e.g. "Plate-solve…", "Cél beállítása…").
+        Button("Ma esti ív…") { skyArcItem = SkyArcItem(row: row.discoveryRow) }
     }
 }
 
@@ -460,14 +452,16 @@ private func kindLabel(_ kind: CatalogTargetKind) -> String {
     }
 }
 
-/// A handful of `SkyVerdict`'s own string constants, duplicated here (they
-/// aren't `public` on the AstroCore side -- see that type's own doc) purely
-/// so `recommendedCount`/`verdictColor` can compare against the exact
-/// values `DiscoveryPlanner.discover` actually produces instead of a
-/// hand-typed literal drifting out of sync with them.
+/// One of `SkyVerdict`'s own string constants, duplicated here (it isn't
+/// `public` on the AstroCore side -- see that type's own doc) purely so
+/// `recommendedCount` can compare against the exact value
+/// `DiscoveryPlanner.discover` actually produces instead of a hand-typed
+/// literal drifting out of sync with it. R10 review: `notVisibleTonight`
+/// (the other constant this enum used to carry) dropped along with the
+/// local `verdictColor` it only fed -- that color mapping now lives once,
+/// shared, on `VerdictChip` (`SharedComponents.swift`).
 private enum SkyVerdictText {
     static let good = "ma jó"
-    static let notVisibleTonight = "nem látszik ma éjjel"
 }
 
 // MARK: - Type filter (control row's "Menu")

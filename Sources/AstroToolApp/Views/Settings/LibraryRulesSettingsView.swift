@@ -140,6 +140,15 @@ struct LibraryRulesSettingsView: View {
         }
         .formStyle(.grouped)
         .onAppear { loadFromConfig() }
+        // R10 review (item 17): clears stale save feedback the moment a
+        // fresh edit re-dirties the draft -- see `LocationSettingsView`'s
+        // identical modifier for the full "only false -> true" reasoning.
+        .onChange(of: isDirty) { _, newValue in
+            if newValue {
+                saveMessage = nil
+                saveError = nil
+            }
+        }
         .confirmationDialog(
             "Biztosan alaphelyzetbe állítod a Könyvtár-szabályok beállításokat?",
             isPresented: $showResetConfirm,

@@ -35,6 +35,15 @@ public struct NightRow: Codable, Sendable, Equatable {
     /// session has no rated frame with a derivable arcsec value (including
     /// "never rated at all").
     public var medianFWHMArcsec: Double?
+    /// From `SessionQualitySummary.medianFWHMPixels` (R10 review) -- the
+    /// pixel-only fallback for a rated session that has NO derivable
+    /// `medianFWHMArcsec` (missing `xpixsz`/`focallen` pixel-scale metadata,
+    /// not "never rated": a rated frame with neither still leaves this
+    /// `nil` too). `NightsPage.fwhmText` falls back to this, suffixed
+    /// " px", the same "arcsec when possible, else pixels" convention
+    /// `SessionsSegment.fwhmText` already establishes for the per-target
+    /// session table.
+    public var medianFWHMPixels: Double?
     /// From `SessionQualitySummary.backgroundEPerSecPerArcsec2` -- `nil`
     /// under the same "n/a, never a guessed number" rule that type documents
     /// (missing sensor profile, missing exposure/pixel-scale metadata, or no
@@ -65,6 +74,7 @@ public struct NightRow: Codable, Sendable, Equatable {
         cameras: [String],
         filters: [String],
         medianFWHMArcsec: Double? = nil,
+        medianFWHMPixels: Double? = nil,
         backgroundEPerSecPerArcsec2: Double? = nil,
         dutyCyclePercent: Double? = nil,
         hasNotes: Bool = false,
@@ -79,6 +89,7 @@ public struct NightRow: Codable, Sendable, Equatable {
         self.cameras = cameras
         self.filters = filters
         self.medianFWHMArcsec = medianFWHMArcsec
+        self.medianFWHMPixels = medianFWHMPixels
         self.backgroundEPerSecPerArcsec2 = backgroundEPerSecPerArcsec2
         self.dutyCyclePercent = dutyCyclePercent
         self.hasNotes = hasNotes
@@ -148,6 +159,7 @@ public enum NightsQueries {
                     cameras: session.cameras,
                     filters: session.filters,
                     medianFWHMArcsec: quality?.medianFWHMArcsec,
+                    medianFWHMPixels: quality?.medianFWHMPixels,
                     backgroundEPerSecPerArcsec2: quality?.backgroundEPerSecPerArcsec2,
                     dutyCyclePercent: timeline.dutyCycle.map { $0 * 100 },
                     hasNotes: !session.notes.isEmpty,
