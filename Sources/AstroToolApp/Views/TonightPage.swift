@@ -124,6 +124,14 @@ struct TonightPage: View {
                                 MetricInfoButton(metrics: Self.planMetricInfo)
                             }
                             planTable
+                            // R10-B2: the selected row's altitude-over-the-
+                            // night chart, below the table (resizes better
+                            // than a trailing side panel -- the table stays
+                            // full-width and the chart just takes a fixed
+                            // band at the bottom).
+                            if let selectedPlanTarget {
+                                selectedTargetChartSection(selectedPlanTarget)
+                            }
                         }
                     }
                 } else if appState.isBusy {
@@ -374,6 +382,56 @@ struct TonightPage: View {
                 appState.currentPage = .target(target)
             }
         }
+    }
+
+    // MARK: - Selected-row sky chart (R10-B2)
+
+    /// Below-table panel for `selectedPlanTarget`: the industry-standard
+    /// altitude-over-the-night chart when the row has a coordinate AND a
+    /// site is resolved, an explanatory one-liner otherwise. `appState`'s
+    /// `planDate`/`resolvedSite` are read directly (not cached), so this
+    /// naturally recomputes whenever "Terv erre az éjszakára" loads a
+    /// different night's plan.
+    @ViewBuilder
+    private func selectedTargetChartSection(_ targetID: String) -> some View {
+        if let row = planRows.first(where: { $0.id == targetID }) {
+            if let raDeg = row.plan.raDeg, let decDeg = row.plan.decDeg {
+                if let lat = appState.resolvedSite.latitudeDeg, let lon = appState.resolvedSite.longitudeDeg {
+                    let night = appState.planDate ?? Date()
+                    SkyChartView(
+                        targetName: row.displayName,
+                        targetTrack: SkyTrack.altitudeTrack(raDeg: raDeg, decDeg: decDeg, nightOf: night, latDeg: lat, lonDeg: lon),
+                        moonTrack: SkyTrack.moonAltitudeTrack(nightOf: night, latDeg: lat, lonDeg: lon),
+                        markers: SkyTrack.nightWindowMarkers(nightOf: night, latDeg: lat, lonDeg: lon),
+                        minAltitudeDeg: plannerDefaultMinAltitudeDeg,
+                        isTonight: appState.planDate == nil,
+                        nightOf: night,
+                        moonIlluminationPercent: row.plan.moonIlluminationPercent
+                    )
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+                    .padding(.top, 6)
+                } else {
+                    noSiteChartHint
+                }
+            } else {
+                noCoordinateChartHint
+            }
+        }
+    }
+
+    private var noCoordinateChartHint: some View {
+        Text("Nincs koordináta — plate-solve után lesz ív.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.top, 6)
+    }
+
+    private var noSiteChartHint: some View {
+        Text("Nincs megfigyelési helyszín beállítva — állítsd be itt: Beállítások ▸ Helyszín.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.top, 6)
     }
 
     // MARK: Cell content

@@ -24,6 +24,7 @@ struct OverviewSegment: View {
                 coordinatesBlock
                 setupFingerprintBlock
                 visibilityBlock
+                skyChartBlock
                 exposureAdviceBlock
                 if let panelReport, panelReport.isMosaic {
                     MosaicPanelTable(report: panelReport)
@@ -124,6 +125,46 @@ struct OverviewSegment: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(Capsule().fill((verdict == "ma jó" ? Color.green : Color.secondary).opacity(0.2)))
+    }
+
+    // MARK: - Ma esti ív (R10-B2)
+
+    /// Same industry-standard altitude-over-the-night chart as `TonightPage`'s
+    /// selected-row panel, here always for TONIGHT specifically (this segment
+    /// has no calendar-night concept) and using the target's resolved
+    /// coordinate the "Koordináták" card above already surfaces via
+    /// `targetCoordinateInfo` -- `sourceLabel == "nincs"` means the same "no
+    /// usable coordinate" case that card's own `Plate-solve…` button handles,
+    /// reused verbatim here.
+    private var skyChartBlock: some View {
+        section("Ma esti ív") {
+            if let info = appState.targetCoordinateInfo, info.sourceLabel != "nincs" {
+                if let lat = appState.resolvedSite.latitudeDeg, let lon = appState.resolvedSite.longitudeDeg {
+                    let now = Date()
+                    SkyChartView(
+                        targetName: plan?.displayName ?? target,
+                        targetTrack: SkyTrack.altitudeTrack(raDeg: info.raDeg, decDeg: info.decDeg, nightOf: now, latDeg: lat, lonDeg: lon),
+                        moonTrack: SkyTrack.moonAltitudeTrack(nightOf: now, latDeg: lat, lonDeg: lon),
+                        markers: SkyTrack.nightWindowMarkers(nightOf: now, latDeg: lat, lonDeg: lon),
+                        minAltitudeDeg: plannerDefaultMinAltitudeDeg,
+                        isTonight: true,
+                        nightOf: now,
+                        moonIlluminationPercent: plan?.moonIlluminationPercent
+                    )
+                } else {
+                    Text("Nincs megfigyelési helyszín beállítva — állítsd be itt: Beállítások ▸ Helyszín.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                HStack(spacing: 10) {
+                    Text("Nincs plate-solve/fejléc koordináta.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Button("Plate-solve…") { solvingTarget = SolvingTarget(target: target) }
+                }
+            }
+        }
     }
 
     // MARK: - Expozíció-tanácsadó (moved from QualityView)
