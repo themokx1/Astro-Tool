@@ -1903,51 +1903,6 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - Calibration coverage
 
-    func loadCalib() {
-        guard let db else { return }
-        let cfg = config
-
-        let opID = beginOperation("Kalibrációs lefedettség számítása…")
-        currentTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try CalibAnalyzer.coverage(db: db, config: cfg)
-                }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.calibNeeds = result
-                self.progressText = "Kalibráció kész: \(result.count) kombináció"
-            } catch {
-                self.handle(error)
-            }
-            self.endOperation(opID)
-        }
-    }
-
-    /// Loads the calibration-HEALTH report (flat discipline, bias inventory,
-    /// dark master health) -- shown below the coverage table on the
-    /// Kalibráció oldal (`CalibrationPage`).
-    func loadCalibHealth() {
-        guard let db else { return }
-        let cfg = config
-
-        let opID = beginOperation("Kalibráció-egészség számítása…")
-        currentTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try CalibHealth.report(db: db, config: cfg)
-                }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.calibHealth = result
-                self.progressText = "Kalibráció-egészség kész"
-            } catch {
-                self.handle(error)
-            }
-            self.endOperation(opID)
-        }
-    }
-
     // MARK: - Sensor profiles (R7-B1 item C)
 
     /// Loads whatever's already persisted in `sensor_profile` -- read-only,
@@ -2254,64 +2209,6 @@ final class AppState: @unchecked Sendable {
     }
 
     // MARK: - Session quality (absolute metrics + night timeline)
-
-    /// Loads `qualitySummaries` for `target` -- conceptually, whenever the
-    /// Célpont-részletek page's target changes (in practice `loadTargetDetail`
-    /// bundles this into its own single background hop instead of calling
-    /// this directly, per the doc comment on that bundling). Clears
-    /// `sessionTimeline` too, since a previously selected session's timeline
-    /// no longer applies once the target itself changes.
-    func loadQualitySummaries(target: String) {
-        guard let db else { return }
-        let cfg = config
-        sessionTimeline = nil
-        nightHealth = nil
-
-        let opID = beginOperation("Minőség-összegzés számítása…")
-        currentTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try SessionQuality.summaries(target: target, db: db, config: cfg)
-                }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.qualitySummaries = result
-                self.progressText = "Minőség-összegzés kész: \(result.count) session"
-            } catch {
-                self.handle(error)
-            }
-            self.endOperation(opID)
-        }
-    }
-
-    /// Loads `exposureAdvice` for `target` (R7-B3 `ExposureAdvisor`) --
-    /// conceptually, alongside `loadQualitySummaries` whenever the Minőség
-    /// segment's target changes (see that function's doc comment for why
-    /// neither is actually called directly outside `loadTargetDetail`'s own
-    /// bundling / `runRate`'s inline reload). Never surfaces a "no data"
-    /// condition as an app error -- that comes back as
-    /// `ExposureAdvice.notAvailableReason`, an ordinary (if unhelpful)
-    /// result, not a failure.
-    func loadExposureAdvice(target: String) {
-        guard let db else { return }
-        let cfg = config
-        exposureAdvice = nil
-
-        let opID = beginOperation("Expozíció-tanácsadó számítása…")
-        currentTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try ExposureAdvisor.advise(target: target, db: db, config: cfg)
-                }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.exposureAdvice = result
-            } catch {
-                self.handle(error)
-            }
-            self.endOperation(opID)
-        }
-    }
 
     /// Loads the night timeline AND the per-night hardware-health report
     /// (cooler stability + focus drift, R6-2) for one session -- called

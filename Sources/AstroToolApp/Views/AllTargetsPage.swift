@@ -169,7 +169,7 @@ struct AllTargetsPage: View {
                 HStack {
                     TextField("Keresés célpont vagy címke szerint", text: $searchText)
                         .frame(width: 280)
-                    Button("Újraszámolás") { appState.loadStats() }
+                    Button("Újraszámolás") { appState.loadDashboardData() }
                         .disabled(appState.isBusy || appState.db == nil)
                     Spacer()
                     if appState.isBusy {

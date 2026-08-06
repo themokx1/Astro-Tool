@@ -101,7 +101,7 @@ struct TonightPage: View {
                 if appState.isBusy {
                     ProgressView().controlSize(.small)
                 }
-                Button("Frissítés") { appState.loadPlan(date: appState.planDate) }
+                Button("Frissítés") { appState.loadDashboardData(date: appState.planDate) }
                     .disabled(appState.isBusy || appState.db == nil)
             }
 
