@@ -1,0 +1,331 @@
+import AstroCore
+import SwiftUI
+
+/// R9-T3/A.3 -- "the app's most valuable new surface": one target's fixed
+/// header (identity, five headline tiles, next-step sentence) above a
+/// segmented Áttekintés/Sessionök/Minőség/Stackek/Jegyzetek picker. Absorbs
+/// the deleted `QualityView` (its frame table + exposure advisor now live
+/// in `QualitySegment`/`OverviewSegment`) and supersedes the on-screen need
+/// for `TargetReport`'s HTML (this page shows everything that report
+/// composes, live and editable where relevant).
+struct TargetDetailPage: View {
+    enum Segment: String, CaseIterable, Hashable {
+        case overview = "Áttekintés"
+        case sessions = "Sessionök"
+        case quality = "Minőség"
+        case stacks = "Stackek"
+        case notes = "Jegyzetek"
+    }
+
+    @Environment(AppState.self) private var appState
+    let target: String
+
+    @State private var segment: Segment = .overview
+    @State private var goalPopoverPresented = false
+    @State private var goalHours: Double = 0
+    @State private var todosExpanded = false
+
+    // Row-scoped sheet triggers, shared with every segment/context menu that
+    // can open the same underlying sheet (`Views/TargetDetail/Shared.swift`).
+    @State private var linkingSession: LinkingSession?
+    @State private var solvingTarget: SolvingTarget?
+    @State private var stackListingSession: LinkingSession?
+
+    private var stat: TargetStats? { appState.stats.first { $0.target == target } }
+    private var projectState: ProjectState? { appState.projectStates.first { $0.target == target } }
+    private var sessions: [SessionDetail] { appState.sessionDetailsByTarget[target] ?? [] }
+    private var bestSession: SessionQualitySummary? { appState.qualitySummaries.first { $0.rankAmongSessions == 1 } }
+    private var latestSessionDate: String? { sessions.map(\.dateRaw).max() ?? stat?.lastSessionDate }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+                .padding(16)
+            Divider()
+
+            Picker("", selection: $segment) {
+                ForEach(Segment.allCases, id: \.self) { seg in
+                    Text(seg.rawValue).tag(seg)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            segmentContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .onAppear { appState.loadTargetDetail(target: target) }
+        .sheet(item: $linkingSession) { session in CalibLinkSheet(target: session.target, date: session.date) }
+        .sheet(item: $solvingTarget) { solving in PlateSolveSheet(target: solving.target) }
+        .sheet(item: $stackListingSession) { session in StackListSheet(target: session.target, date: session.date) }
+    }
+
+    @ViewBuilder
+    private var segmentContent: some View {
+        switch segment {
+        case .overview:
+            OverviewSegment(target: target, solvingTarget: $solvingTarget)
+        case .sessions:
+            SessionsSegment(target: target, linkingSession: $linkingSession, stackListingSession: $stackListingSession)
+        case .quality:
+            QualitySegment(target: target)
+        case .stacks:
+            StacksSegment(target: target)
+        case .notes:
+            NotesSegment(target: target)
+        }
+    }
+
+    // MARK: - Fixed header
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            headerRow1
+            headerRow2
+            headerRow3
+        }
+    }
+
+    // MARK: Row 1 -- identity + report/export menus
+
+    private var headerRow1: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Text(stat?.displayName ?? target).font(.title2).bold()
+                    if stat?.isWideField == true {
+                        Text("wide-field")
+                            .font(.caption2)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Capsule().fill(Color.orange.opacity(0.2)))
+                    }
+                    if let phase = projectState?.phase {
+                        phaseChip(phase)
+                    }
+                }
+                if let stat, stat.displayName != stat.target {
+                    Text(stat.target).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Menu("Riport…") {
+                Button("Célpont-riport készítése") { appState.exportTargetReport(target: target) }
+                if let latestSessionDate {
+                    Button("Éjszaka-riport a legutóbbi sessionről") {
+                        appState.exportNightReport(target: target, date: latestSessionDate)
+                    }
+                }
+            }
+            Menu("Exportálás…") {
+                Button("AstroBin CSV") { appState.exportAcquisition(target: target, format: .astrobin) }
+                Button("CSV") { appState.exportAcquisition(target: target, format: .csv) }
+                Button("Markdown") { appState.exportAcquisition(target: target, format: .md) }
+            }
+        }
+    }
+
+    private func phaseChip(_ phase: ProjectPhase) -> some View {
+        Text(phaseLabel(phase))
+            .font(.caption)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Capsule().fill(phaseColor(phase).opacity(0.2)))
+            .foregroundStyle(phaseColor(phase))
+    }
+
+    private func phaseColor(_ phase: ProjectPhase) -> Color {
+        switch phase {
+        case .collecting: return .blue
+        case .readyToStack: return .yellow
+        case .stacked: return .orange
+        case .done: return .green
+        }
+    }
+
+    private func phaseLabel(_ phase: ProjectPhase) -> String {
+        switch phase {
+        case .collecting: return "gyűjtés"
+        case .readyToStack: return "stackelhető"
+        case .stacked: return "feldolgozásra vár"
+        case .done: return "kész"
+        }
+    }
+
+    // MARK: Row 2 -- 5 headline tiles
+
+    private var headerRow2: some View {
+        HStack(spacing: 12) {
+            tile(
+                title: "Valós integráció",
+                value: stat.map { TDFormat.hm($0.usableIntegrationSeconds) } ?? "-",
+                caption: stat.map { "bruttó \(TDFormat.hm($0.grossIntegrationSeconds))" }
+            )
+            goalTile
+            tile(
+                title: "Hiányzik",
+                value: missingValueText,
+                valueColor: (projectState?.missingSeconds ?? 0) > 0 ? .orange : .primary
+            )
+            tile(
+                title: "Sessionök",
+                value: "\(stat?.sessionDates.count ?? 0)",
+                caption: sessionSpanCaption
+            )
+            tile(
+                title: "Legjobb session",
+                value: bestSession?.date ?? "-",
+                caption: bestSession.flatMap { summary in
+                    summary.medianFWHMArcsec.map { String(format: "FWHM %.2f\"", $0) }
+                }
+            )
+        }
+    }
+
+    private var missingValueText: String {
+        guard let missing = projectState?.missingSeconds else { return "-" }
+        return TDFormat.hm(missing)
+    }
+
+    private var sessionSpanCaption: String? {
+        guard let stat, let first = stat.sessionDates.first, let last = stat.sessionDates.last else { return nil }
+        return first == last ? first : "\(first) → \(last)"
+    }
+
+    private var goalTile: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Cél").font(.caption).foregroundStyle(.secondary)
+            if let goalSeconds = projectState?.goalSeconds {
+                HStack(spacing: 4) {
+                    Text(TDFormat.hm(goalSeconds)).font(.title3).bold()
+                    Button {
+                        goalHours = goalSeconds / 3600.0
+                        goalPopoverPresented = true
+                    } label: {
+                        Image(systemName: "pencil.circle").font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .popover(isPresented: $goalPopoverPresented) { goalEditor }
+                }
+            } else {
+                Button {
+                    goalHours = 10
+                    goalPopoverPresented = true
+                } label: {
+                    Text("Nincs cél · Beállítás").font(.callout)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .popover(isPresented: $goalPopoverPresented) { goalEditor }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+    }
+
+    private var goalEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Cél (óra)").font(.headline)
+            Stepper(value: $goalHours, in: 0...300, step: 0.5) {
+                Text(String(format: "%.1f óra", goalHours))
+            }
+            HStack {
+                Button("Cél törlése") {
+                    appState.setGoal(target: target, hours: nil)
+                    goalPopoverPresented = false
+                }
+                Spacer()
+                Button("Mentés") {
+                    appState.setGoal(target: target, hours: goalHours)
+                    goalPopoverPresented = false
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding()
+        .frame(width: 240)
+    }
+
+    private func tile(title: String, value: String, caption: String? = nil, valueColor: Color = .primary) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.title3).bold().foregroundStyle(valueColor)
+            if let caption {
+                Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+    }
+
+    // MARK: Row 3 -- next step
+
+    private struct NextStep {
+        let text: String
+        let actionLabel: String?
+        let action: (() -> Void)?
+    }
+
+    private var nextStep: NextStep? {
+        guard let projectState, let first = projectState.todos.first else { return nil }
+
+        if first.hasPrefix("készíts stacket:"), let date = first.split(separator: "/").last.map(String.init) {
+            return NextStep(text: first, actionLabel: "Stackelés előkészítése…") {
+                stackListingSession = LinkingSession(target: target, date: date)
+            }
+        }
+        if first.hasPrefix("dolgozd fel:") {
+            return NextStep(text: first, actionLabel: "Stackek megnyitása") { segment = .stacks }
+        }
+        // The spec's own example ("flat-hiány → Kalibráció linkelése…") isn't
+        // literally one of `ProjectStatusQueries`' todo sentences -- derive
+        // it instead from the latest session's actual calibration status
+        // (missing flats, or no matched dark at all) whenever THAT'S the
+        // most actionable gap, regardless of which todo sentence is first.
+        if let latest = sessions.max(by: { $0.dateRaw < $1.dateRaw }),
+           let calib = appState.targetSessionCalibrations.first(where: { $0.date == latest.dateRaw }),
+           calib.flats.isEmpty || (calib.darks.isEmpty && calib.libraryDark == nil)
+        {
+            return NextStep(text: first, actionLabel: "Kalibráció linkelése…") {
+                linkingSession = LinkingSession(target: target, date: latest.dateRaw)
+            }
+        }
+        return NextStep(text: first, actionLabel: nil, action: nil)
+    }
+
+    private var remainingTodosCount: Int {
+        max(0, (projectState?.todos.count ?? 0) - 1)
+    }
+
+    private var headerRow3: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let nextStep {
+                HStack {
+                    Text("Következő lépés:").bold()
+                    Text(nextStep.text)
+                    if let actionLabel = nextStep.actionLabel, let action = nextStep.action {
+                        Button(actionLabel, action: action)
+                            .buttonStyle(.link)
+                    }
+                    Spacer()
+                }
+                .font(.callout)
+            } else {
+                Text("Következő lépés: nincs teendő.").font(.callout).foregroundStyle(.secondary)
+            }
+
+            if remainingTodosCount > 0 {
+                DisclosureGroup("További \(remainingTodosCount) teendő", isExpanded: $todosExpanded) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array((projectState?.todos.dropFirst() ?? []).enumerated()), id: \.offset) { _, todo in
+                            Text("•  \(todo)").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .font(.caption)
+            }
+        }
+    }
+}

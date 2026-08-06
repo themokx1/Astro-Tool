@@ -101,7 +101,12 @@ private struct DetailContainerView: View {
         case .tonight: OverviewView()
         case .calendar: CalendarPage()
         case .allTargets: StatsView()
-        case .target(let name): QualityView(initialTarget: name)
+        // R9-T3: `.id(name)` forces a fresh `TargetDetailPage` instance (and
+        // thus a fresh `onAppear`/`@State`) whenever the sidebar switches
+        // straight from one target to another -- `MainShellView` would
+        // otherwise just hand the SAME view struct a new `target` value in
+        // place, which triggers neither `onAppear` nor any `@State` reset.
+        case .target(let name): TargetDetailPage(target: name).id(name)
         case .calibration: CalibrationView()
         case .audit: AuditPage()
         case .sensor: SensorPage()

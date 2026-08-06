@@ -10,12 +10,6 @@ struct StatsRow: Identifiable {
     enum Kind {
         case target(TargetStats)
         case session(target: String, detail: SessionDetail)
-        /// A target's discovered-stacks summary (R8-1) -- always the LAST
-        /// child row under a target, after every session row. Only present
-        /// when `TargetStacks.stacks` is non-empty (a target with none
-        /// gets no row at all, same "don't show an empty summary" stance
-        /// as the mosaic-panel button only appearing for `isMosaic`).
-        case stacksSummary(target: String, report: TargetStacks)
     }
 
     /// "t:<target>" for a target row, "s:<target>:<dateRaw>" for a session
@@ -34,30 +28,19 @@ struct StatsView: View {
     @State private var searchText: String = ""
     /// The session currently shown in `CalibLinkSheet`, `nil` when the sheet
     /// is closed. Row-scoped by construction: only one "Kalibráció
-    /// linkelése…" button can be pressed at a time.
+    /// linkelése…" context-menu item can be triggered at a time. (Shared
+    /// `LinkingSession`/`SolvingTarget` types, `Views/TargetDetail/
+    /// Shared.swift` -- R9-T3 lifted these out of this file so
+    /// `TargetDetailPage` could reuse the same sheets.)
     @State private var linkingSession: LinkingSession?
     @State private var selection: StatsRow.ID?
     /// The target currently shown in `PlateSolveSheet`, `nil` when closed --
-    /// same row-scoped-button pattern as `linkingSession`.
+    /// same row-scoped pattern as `linkingSession`.
     @State private var solvingTarget: SolvingTarget?
-    /// The session currently shown in `StackListSheet` (R7-B4), `nil` when
-    /// closed -- same row-scoped-button pattern as `linkingSession`.
+    /// The session currently shown in `StackListSheet` (R7-B4/A.10
+    /// "Stackelés előkészítése…"), `nil` when closed -- same row-scoped
+    /// pattern as `linkingSession`.
     @State private var stackListingSession: LinkingSession?
-    /// The target currently shown in `StackGroupSheet` (R8-3's grouped stack
-    /// browser, replacing the old `StacksPopoverButton` popover), `nil` when
-    /// closed -- same row-scoped-button pattern as `linkingSession`.
-    @State private var stackGroupTarget: SolvingTarget?
-
-    private struct LinkingSession: Identifiable {
-        let target: String
-        let date: String
-        var id: String { "\(target):\(date)" }
-    }
-
-    private struct SolvingTarget: Identifiable {
-        let target: String
-        var id: String { target }
-    }
 
     /// `true` once `AppState.plan` has loaded and reports no resolvable
     /// coordinate for `target` at all -- gates the "Plate-solve…" action so
@@ -82,23 +65,16 @@ struct StatsView: View {
 
     private var rows: [StatsRow] {
         filteredTargets.map { stats in
-            let sessions = appState.sessionDetailsByTarget[stats.target] ?? []
-            var childRows: [StatsRow] = sessions.map { detail in
+            // R9-T3: the discovered-stacks summary child row is gone --
+            // "Stackek" now live on the target's own Célpont-részletek page
+            // (Stackek szegmens), so duplicating a summary of them here (on
+            // top of the tooltip's own `stacksSummaryLine`) would just be
+            // noise.
+            let childRows: [StatsRow] = (appState.sessionDetailsByTarget[stats.target] ?? []).map { detail in
                 StatsRow(
                     id: "s:\(stats.target):\(detail.dateRaw)",
                     kind: .session(target: stats.target, detail: detail),
                     children: nil
-                )
-            }
-            // R8-1: the target's discovered-stacks summary, always LAST
-            // among the children (after every session row).
-            if let report = appState.stackReportsByTarget[stats.target], !report.stacks.isEmpty {
-                childRows.append(
-                    StatsRow(
-                        id: "k:\(stats.target)",
-                        kind: .stacksSummary(target: stats.target, report: report),
-                        children: nil
-                    )
                 )
             }
             return StatsRow(
@@ -159,9 +135,6 @@ struct StatsView: View {
         .sheet(item: $stackListingSession) { session in
             StackListSheet(target: session.target, date: session.date)
         }
-        .sheet(item: $stackGroupTarget) { info in
-            StackGroupSheet(target: info.target)
-        }
         .padding()
     }
 
@@ -176,6 +149,16 @@ struct StatsView: View {
                 Text(formatDuration(integrationSeconds(row)))
             }
             .width(min: 80, ideal: 90)
+
+            // R9-T3/B11: goal-tag UI landed on the Célpont-részletek header
+            // first -- this minimal read-only column (target rows only) is
+            // what makes a goal set there immediately visible here too,
+            // without pulling in the rest of A.2's not-yet-scheduled
+            // "Minden célpont" redesign (Fázis/Stackek columns, tile row).
+            TableColumn("Cél") { row in
+                Text(goalText(row)).foregroundStyle(.secondary)
+            }
+            .width(min: 60, ideal: 70)
 
             TableColumn("Keretek") { row in
                 Text(framesText(row))
@@ -210,11 +193,6 @@ struct StatsView: View {
                 tagsCell(row)
             }
             .width(min: 140, ideal: 200)
-
-            TableColumn("Műveletek") { row in
-                actionsCell(row)
-            }
-            .width(min: 80, ideal: 240)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
     }
@@ -250,7 +228,15 @@ struct StatsView: View {
                 }
             }
             .help(targetBreakdownTooltip(stats))
-        case .session(_, let detail):
+            .contentShape(Rectangle())
+            // R9-T3/A.2: double-click opens Célpont-részletek -- the
+            // "Kész stackek…"/"Panelek…" buttons this row used to carry are
+            // gone (their content now lives on that page's Stackek/
+            // Áttekintés segments), so this is the row's one navigation
+            // affordance besides the context menu's own "Megnyitás".
+            .onTapGesture(count: 2) { appState.currentPage = .target(stats.target) }
+            .contextMenu { targetContextMenuItems(stats) }
+        case .session(let target, let detail):
             HStack(spacing: 6) {
                 Text(detail.dateRaw)
                 if detail.hasReadme {
@@ -273,11 +259,50 @@ struct StatsView: View {
             }
             .lineLimit(1)
             .opacity(detail.isExcludedFromTotals ? 0.5 : 1.0)
-        case .stacksSummary(_, let report):
-            Text(stacksSummaryLine(report))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+            .contextMenu { sessionContextMenuItems(target: target, detail: detail) }
         }
+    }
+
+    // MARK: - Context menus (R9-T3/A.2/B9 -- replaces the old Műveletek column)
+
+    /// Target row's right-click menu -- everything the removed "Műveletek"
+    /// column used to offer for a target EXCEPT "Panelek…"/"Stackek…" (those
+    /// are dropped outright, not moved: both now live on the target's own
+    /// Célpont-részletek page, and duplicating an entry point to the exact
+    /// same page the "Megnyitás" item already opens would be redundant).
+    @ViewBuilder
+    private func targetContextMenuItems(_ stats: TargetStats) -> some View {
+        Button("Megnyitás") { appState.currentPage = .target(stats.target) }
+        Button("Megnyitás Finderben") { revealInFinder(relativePath: "sessions/\(stats.target)") }
+        Divider()
+        Menu("Exportálás") {
+            Button("AstroBin CSV") { appState.exportAcquisition(target: stats.target, format: .astrobin) }
+            Button("CSV") { appState.exportAcquisition(target: stats.target, format: .csv) }
+            Button("Markdown") { appState.exportAcquisition(target: stats.target, format: .md) }
+        }
+        Button("Célpont-riport készítése") { appState.exportTargetReport(target: stats.target) }
+        if targetLacksCoordinate(stats.target) {
+            Divider()
+            Button("Plate-solve…") { solvingTarget = SolvingTarget(target: stats.target) }
+        }
+    }
+
+    /// Session row's right-click menu -- the same three actions the removed
+    /// "Műveletek" column offered per session, unchanged in behavior.
+    @ViewBuilder
+    private func sessionContextMenuItems(target: String, detail: SessionDetail) -> some View {
+        Button("Megnyitás Finderben") { revealInFinder(relativePath: "sessions/\(target)/\(detail.dateRaw)") }
+        Divider()
+        Button("Kalibráció linkelése…") { linkingSession = LinkingSession(target: target, date: detail.dateRaw) }
+        Button("Stackelés előkészítése…") { stackListingSession = LinkingSession(target: target, date: detail.dateRaw) }
+        Divider()
+        Button("Éjszaka-riport készítése") { appState.exportNightReport(target: target, date: detail.dateRaw) }
+    }
+
+    private func revealInFinder(relativePath: String) {
+        let url = URL(fileURLWithPath: appState.config.rootPath, isDirectory: true).appendingPathComponent(relativePath)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     /// Hover tooltip on a target row's name cell: the usable-vs-gross
@@ -348,8 +373,19 @@ struct StatsView: View {
         switch row.kind {
         case .target(let stats): return stats.totalIntegrationSeconds
         case .session(_, let detail): return detail.integrationSeconds
-        case .stacksSummary: return 0
         }
+    }
+
+    /// "6:00" for a target with a `goal:6h` tag, "-" otherwise -- `nil` for
+    /// session rows (a goal is target-scoped only). Reads
+    /// `AppState.projectStates` (`ProjectState.goalSeconds`, already
+    /// `GoalTag`-parsed) rather than re-parsing `TargetStats.tags` itself.
+    private func goalText(_ row: StatsRow) -> String {
+        guard case .target(let stats) = row.kind else { return "" }
+        guard let goalSeconds = appState.projectStates.first(where: { $0.target == stats.target })?.goalSeconds else {
+            return "-"
+        }
+        return formatDuration(goalSeconds)
     }
 
     // MARK: - Column 3: Keretek
@@ -375,8 +411,6 @@ struct StatsView: View {
                 text += " · DSS: \(accepted)✓/\(rejected)✗"
             }
             return text
-        case .stacksSummary(_, let report):
-            return "\(report.stacks.count) stack"
         }
     }
 
@@ -388,8 +422,6 @@ struct StatsView: View {
             return stats.lastSessionDate ?? "-"
         case .session(_, let detail):
             return exposureSummary(detail.exposureBreakdown)
-        case .stacksSummary:
-            return "-"
         }
     }
 
@@ -413,8 +445,6 @@ struct StatsView: View {
             return stats.cameras.isEmpty ? "-" : stats.cameras.joined(separator: ", ")
         case .session(_, let detail):
             return detail.cameras.isEmpty ? "-" : detail.cameras.joined(separator: ", ")
-        case .stacksSummary:
-            return "-"
         }
     }
 
@@ -455,71 +485,6 @@ struct StatsView: View {
                 onAdd: { tag in appState.addTag(target: target, date: detail.dateRaw, tag: tag) },
                 onRemove: { tag in appState.removeTag(target: target, date: detail.dateRaw, tag: tag) }
             )
-        case .stacksSummary:
-            EmptyView()
-        }
-    }
-
-    // MARK: - Column 8: Műveletek
-
-    @ViewBuilder
-    private func actionsCell(_ row: StatsRow) -> some View {
-        switch row.kind {
-        case .target(let stats):
-            HStack(spacing: 8) {
-                Menu("Exportálás…") {
-                    Button("AstroBin CSV") { appState.exportAcquisition(target: stats.target, format: .astrobin) }
-                    Button("CSV") { appState.exportAcquisition(target: stats.target, format: .csv) }
-                    Button("Markdown") { appState.exportAcquisition(target: stats.target, format: .md) }
-                    Divider()
-                    Button("Célpont-riport") { appState.exportTargetReport(target: stats.target) }
-                }
-                .menuStyle(.borderlessButton)
-                .font(.caption)
-                .fixedSize()
-
-                if let panels = appState.panelReportsByTarget[stats.target], panels.isMosaic {
-                    PanelsPopoverButton(report: panels)
-                }
-
-                if let report = appState.stackReportsByTarget[stats.target], !report.stacks.isEmpty {
-                    Button("Stackek…") { stackGroupTarget = SolvingTarget(target: stats.target) }
-                        .buttonStyle(.link)
-                        .font(.caption)
-                }
-
-                if targetLacksCoordinate(stats.target) {
-                    Button("Plate-solve…") {
-                        solvingTarget = SolvingTarget(target: stats.target)
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
-                }
-            }
-        case .session(let target, let detail):
-            HStack(spacing: 8) {
-                Button("Kalibráció linkelése…") {
-                    linkingSession = LinkingSession(target: target, date: detail.dateRaw)
-                }
-                .buttonStyle(.link)
-                .font(.caption)
-
-                Button("Stack-lista…") {
-                    stackListingSession = LinkingSession(target: target, date: detail.dateRaw)
-                }
-                .buttonStyle(.link)
-                .font(.caption)
-
-                Button("Éjszaka-riport") {
-                    appState.exportNightReport(target: target, date: detail.dateRaw)
-                }
-                .buttonStyle(.link)
-                .font(.caption)
-            }
-        case .stacksSummary(let target, _):
-            Button("Megnyitás…") { stackGroupTarget = SolvingTarget(target: target) }
-                .buttonStyle(.link)
-                .font(.caption)
         }
     }
 
@@ -610,365 +575,6 @@ private struct AddTagChip: View {
     }
 }
 
-// MARK: - Panels popover
-
-/// "Panelek…" button on a mosaic target's row -- pops over the full panel
-/// table (label, center RA/Dec, frame count, integration, rotation, pixel
-/// scale) plus the same unbalanced-mosaic warning line the tooltip shows.
-/// Only ever shown when `PanelReport.isMosaic` (the caller checks that
-/// before instantiating this view).
-private struct PanelsPopoverButton: View {
-    let report: PanelReport
-
-    @State private var showPopover = false
-
-    var body: some View {
-        Button("Panelek…") { showPopover = true }
-            .buttonStyle(.link)
-            .font(.caption)
-            .popover(isPresented: $showPopover) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("\(report.target) — \(report.panels.count) panel").font(.headline)
-
-                    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
-                        GridRow {
-                            Text("Panel").bold()
-                            Text("Közép RA/Dec").bold()
-                            Text("Keret").bold()
-                            Text("Integráció").bold()
-                            Text("Rot.").bold()
-                            Text("Skála").bold()
-                        }
-                        .font(.caption)
-                        ForEach(report.panels, id: \.label) { panel in
-                            GridRow {
-                                Text(panel.label)
-                                Text(String(format: "%.4f / %+.4f", panel.centerRaDeg, panel.centerDecDeg))
-                                Text("\(panel.frameCount)")
-                                Text(formatDuration(panel.integrationSeconds))
-                                Text(panel.rotationDeg.map { String(format: "%.1f°", $0) } ?? "-")
-                                Text(panel.pixelScaleArcsec.map { String(format: "%.2f\"/px", $0) } ?? "-")
-                            }
-                            .font(.caption)
-                        }
-                    }
-
-                    if report.isUnbalanced {
-                        Text("⚠️ kiegyenlítetlen mozaik")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
-                }
-                .padding()
-            }
-    }
-
-    private func formatDuration(_ seconds: Double) -> String {
-        let totalMinutes = Int((seconds / 60).rounded())
-        return String(format: "%d:%02d", totalMinutes / 60, totalMinutes % 60)
-    }
-}
-
-// MARK: - Stack group sheet (R8-3)
-
-/// One row of `StackGroupSheet`'s hierarchical `Table`: either a stack-group
-/// roll-up (`base` + best-known exposure) or one of its variant files nested
-/// under it -- same `children`-keypath `Table` pattern `StatsRow` uses for
-/// the main stats table.
-private struct StackGroupRow: Identifiable {
-    enum Kind {
-        case group(StackGroup)
-        /// The variant file, plus its parent group's `stem` -- carried along
-        /// so `markerHighlightedName(for:stem:)` doesn't need to re-derive it
-        /// (`StackDiscovery.stem(for:)` is internal to `AstroCore`, not
-        /// reachable from this app-layer view at all).
-        case variant(StackFile, stem: String)
-    }
-
-    let id: String
-    let kind: Kind
-    var children: [StackGroupRow]?
-}
-
-/// R8-3: replaces the old "Stackek…" popover with a resizable sheet listing
-/// every discovered stack for one target, grouped into variant families
-/// (`StackDiscovery.groupedStacks`) instead of dumping dozens of flat,
-/// unrelated-looking rows -- the real complaint: one NGC2237 capture had its
-/// `_og`/`starless_`/`starmask_`/`_work_graxpert_result_HOO_Improved`/
-/// `_seti_strech.jpg` variants all listed as separate rows with no visible
-/// relationship. A group's row shows the edited-vs-original classification,
-/// the best-known exposure (name-parsed, falling back to the FITS header),
-/// and Finder/open actions; its variants nest underneath with the same
-/// actions plus a colored kind badge.
-private struct StackGroupSheet: View {
-    @Environment(AppState.self) private var appState
-    @Environment(\.dismiss) private var dismiss
-
-    let target: String
-
-    private var groups: [StackGroup] { appState.stackGroupsByTarget[target] ?? [] }
-    private var displayName: String { appState.stackReportsByTarget[target]?.displayName ?? target }
-
-    private var rows: [StackGroupRow] {
-        groups.map { group in
-            let children = group.variants.map { variant in
-                StackGroupRow(id: "v:\(variant.path)", kind: .variant(variant, stem: group.stem), children: nil)
-            }
-            return StackGroupRow(id: "g:\(group.stem)", kind: .group(group), children: children.isEmpty ? nil : children)
-        }
-    }
-
-    private var totalFileCount: Int {
-        groups.reduce(0) { $0 + 1 + $1.variants.count }
-    }
-
-    /// "N stack-csoport · legjobb: 145×120 s (3:25) · összesen M fájl" -- the
-    /// sheet's summary header line. "Legjobb" is the first group's exposure
-    /// since `groups` follows `stacks(target:...)`'s own
-    /// best-integration-first sort.
-    private var summaryLine: String {
-        var line = "\(groups.count) stack-csoport"
-        if let best = groups.first, let exposure = exposureText(best) {
-            line += " · legjobb: \(exposure)"
-        }
-        line += " · összesen \(totalFileCount) fájl"
-        return line
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("\(displayName) — Stackek").font(.headline)
-                Spacer()
-                Button("Bezárás") { dismiss() }
-            }
-            Text(summaryLine)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if rows.isEmpty {
-                Spacer()
-                Text("Nincs felfedezett stack.").foregroundStyle(.secondary)
-                Spacer()
-            } else {
-                table
-            }
-        }
-        .padding()
-        .frame(minWidth: 800, minHeight: 500)
-    }
-
-    private var table: some View {
-        Table(rows, children: \.children) {
-            TableColumn("Név") { row in nameCell(row) }
-                .width(min: 220, ideal: 340)
-            TableColumn("Típus") { row in typeCell(row) }
-                .width(min: 80, ideal: 100)
-            TableColumn("Expo") { row in exposureCell(row) }
-                .width(min: 120, ideal: 170)
-            TableColumn("Hely") { row in Text(locationLabel(for: path(of: row))) }
-                .width(min: 70, ideal: 80)
-            TableColumn("Méret") { row in Text(formatBytes(size(of: row))) }
-                .width(min: 70, ideal: 90)
-            TableColumn("Dátum") { row in Text(date(of: row) ?? "-") }
-                .width(min: 90, ideal: 100)
-            TableColumn("Műveletek") { row in actionsCell(row) }
-                .width(min: 90, ideal: 110)
-        }
-        .tableStyle(.inset(alternatesRowBackgrounds: true))
-    }
-
-    // MARK: - Column: Név
-
-    @ViewBuilder
-    private func nameCell(_ row: StackGroupRow) -> some View {
-        switch row.kind {
-        case .group(let group):
-            Text(group.stem.replacingOccurrences(of: "_", with: " "))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help((group.base.path as NSString).lastPathComponent)
-        case .variant(let file, let stem):
-            markerHighlightedName(for: file, stem: stem)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help(file.path)
-        }
-    }
-
-    /// Highlights the part of a variant's filename beyond the shared `stem`
-    /// (its parent group's `StackGroup.stem`) -- its own "edit chain"
-    /// (`_work_graxpert_result_HOO_Improved`) or a `starless_`/`starmask_`
-    /// prefix -- in orange, so the marker that makes THIS file different
-    /// from the group's base is visible at a glance instead of buried inside
-    /// a long flat filename.
-    private func markerHighlightedName(for file: StackFile, stem: String) -> Text {
-        let full = (file.path as NSString).lastPathComponent
-        let ext = (full as NSString).pathExtension
-        let nameNoExt = ext.isEmpty ? full : String(full.dropLast(ext.count + 1))
-
-        var remaining = Substring(nameNoExt)
-        var prefix = ""
-        for marker in ["starless_", "starmask_"] where remaining.lowercased().hasPrefix(marker) {
-            prefix = String(remaining.prefix(marker.count))
-            remaining = remaining.dropFirst(marker.count)
-            break
-        }
-
-        let coreLen = min(stem.count, remaining.count)
-        let core = String(remaining.prefix(coreLen))
-        let suffix = String(remaining.dropFirst(coreLen)) + (ext.isEmpty ? "" : ".\(ext)")
-
-        var text = Text(prefix).foregroundColor(.secondary)
-        text = text + Text(core)
-        if !suffix.isEmpty { text = text + Text(suffix).foregroundColor(.orange) }
-        return text
-    }
-
-    // MARK: - Column: Típus
-
-    @ViewBuilder
-    private func typeCell(_ row: StackGroupRow) -> some View {
-        switch row.kind {
-        case .group(let group): kindBadge(group.base.variantKind)
-        case .variant(let file, _): kindBadge(file.variantKind)
-        }
-    }
-
-    /// szerkesztett=kék, starless=lila, starmask=szürke, export=zöld (R8-3
-    /// spec); `.original` gets a neutral gray -- it's the expected kind for
-    /// a group's own `base` row and isn't otherwise called out.
-    private func kindBadge(_ kind: StackVariantKind) -> some View {
-        Text(kind.rawValue)
-            .font(.caption2)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .foregroundStyle(.white)
-            .background(Capsule().fill(kindColor(kind)))
-    }
-
-    private func kindColor(_ kind: StackVariantKind) -> Color {
-        switch kind {
-        case .original: return .gray
-        case .edited: return .blue
-        case .starless: return .purple
-        case .starmask: return .gray.opacity(0.7)
-        case .export_: return .green
-        }
-    }
-
-    // MARK: - Column: Expo
-
-    @ViewBuilder
-    private func exposureCell(_ row: StackGroupRow) -> some View {
-        switch row.kind {
-        case .group(let group):
-            VStack(alignment: .leading, spacing: 1) {
-                Text(exposureText(group) ?? "-").bold()
-                if group.fromHeader {
-                    Text("headerből").font(.caption2).foregroundStyle(.secondary)
-                }
-            }
-        case .variant(let file, _):
-            Text(variantExposureText(file) ?? "-").foregroundStyle(.secondary)
-        }
-    }
-
-    /// "145×120 s · 3:25" -- a group's best-known exposure, from
-    /// `framesBest`/`subSecondsBest`/`totalSecondsBest` (name-parsed or
-    /// header-fallback, see `StackDiscovery.groupedStacks`). `nil` only when
-    /// neither the name nor the header carried a frame count at all.
-    private func exposureText(_ group: StackGroup) -> String? {
-        guard let frames = group.framesBest else { return nil }
-        let sub = group.subSecondsBest.map { String(format: "%.0f", $0) } ?? "?"
-        var text = "\(frames)×\(sub) s"
-        if let total = group.totalSecondsBest { text += " · \(formatDuration(total))" }
-        return text
-    }
-
-    private func variantExposureText(_ file: StackFile) -> String? {
-        guard let frames = file.framesFromName else { return nil }
-        let sub = file.subSecondsFromName.map { String(format: "%.0f", $0) } ?? "?"
-        return "\(frames)×\(sub) s"
-    }
-
-    // MARK: - Column: Műveletek
-
-    @ViewBuilder
-    private func actionsCell(_ row: StackGroupRow) -> some View {
-        HStack(spacing: 6) {
-            Button {
-                NSWorkspace.shared.open(url(of: row))
-            } label: {
-                Image(systemName: "arrow.up.forward.app")
-            }
-            .buttonStyle(.borderless)
-            .help("Megnyitás")
-
-            Button {
-                NSWorkspace.shared.activateFileViewerSelecting([url(of: row)])
-            } label: {
-                Image(systemName: "folder")
-            }
-            .buttonStyle(.borderless)
-            .help("Finderben")
-        }
-    }
-
-    // MARK: - Row field accessors
-
-    private func path(of row: StackGroupRow) -> String {
-        switch row.kind {
-        case .group(let group): return group.base.path
-        case .variant(let file, _): return file.path
-        }
-    }
-
-    private func size(of row: StackGroupRow) -> Int64 {
-        switch row.kind {
-        case .group(let group): return group.base.sizeBytes
-        case .variant(let file, _): return file.sizeBytes
-        }
-    }
-
-    private func date(of row: StackGroupRow) -> String? {
-        switch row.kind {
-        case .group(let group): return group.base.sessionDate
-        case .variant(let file, _): return file.sessionDate
-        }
-    }
-
-    /// `config.rootPath` + the tracked relative path -- the on-disk location
-    /// every `Open`/`Finderben` action operates on.
-    private func url(of row: StackGroupRow) -> URL {
-        URL(fileURLWithPath: appState.config.rootPath).appendingPathComponent(path(of: row))
-    }
-
-    /// Same top-level-path-component labeling the CLI's `locationLabel`
-    /// uses -- kept as its own tiny copy here since the CLI target and this
-    /// app target don't share a module.
-    private func locationLabel(for path: String) -> String {
-        let top = path.split(separator: "/", maxSplits: 1).first.map(String.init) ?? path
-        switch top {
-        case "stacks": return "stacks"
-        case "processed": return "processed"
-        case "sessions": return "sessions"
-        default: return "gyökér"
-        }
-    }
-
-    private func formatBytes(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
-    }
-
-    private func formatDuration(_ seconds: Double) -> String {
-        let totalMinutes = Int((seconds / 60).rounded())
-        return String(format: "%d:%02d", totalMinutes / 60, totalMinutes % 60)
-    }
-}
-
 /// Minimal wrapping horizontal-then-vertical layout for tag chips -- SwiftUI
 /// has no built-in "flow" container. Lays subviews left-to-right, wrapping
 /// to a new line once the proposed width would be exceeded.
@@ -1014,264 +620,3 @@ private struct FlowLayout: Layout {
     }
 }
 
-// MARK: - Calibration hard-linking
-
-/// Confirmation sheet for the one new write operation this tool performs
-/// against the user's existing library: hard-linking matching calibration
-/// masters (`calibration_library/darks|flats|biases`) into this session's own
-/// `darks`/`biases` folders. Loads `AppState.calibLinkPlan` on appear, shows
-/// it grouped by destination with each item's reason, and only ever writes
-/// when the user explicitly presses "Linkelés" -- never on open, never
-/// automatically.
-private struct CalibLinkSheet: View {
-    @Environment(AppState.self) private var appState
-    @Environment(\.dismiss) private var dismiss
-
-    let target: String
-    let date: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Kalibráció linkelése").font(.headline)
-            Text("\(target) / \(date)").foregroundStyle(.secondary)
-
-            if let result = appState.calibLinkResult {
-                resultView(result)
-            } else if let plan = appState.calibLinkPlan {
-                planView(plan)
-            } else {
-                ProgressView().controlSize(.small)
-            }
-
-            if let lastError = appState.lastError {
-                Text(lastError).foregroundStyle(.red)
-            }
-        }
-        .padding(20)
-        .frame(minWidth: 480, minHeight: 220)
-        .onAppear {
-            appState.loadCalibLinkPlan(target: target, date: date)
-        }
-        .onDisappear {
-            appState.clearCalibLinkPlan()
-        }
-    }
-
-    @ViewBuilder
-    private func planView(_ plan: CalibLinkPlan) -> some View {
-        if plan.items.isEmpty {
-            if !plan.mismatchReasons.isEmpty {
-                Text("Nem linkelhető: \(plan.mismatchReasons.joined(separator: ", "))")
-                    .foregroundStyle(.orange)
-            } else {
-                Text("Nincs linkelhető kalibráció ehhez a session-höz.")
-                    .foregroundStyle(.secondary)
-            }
-        } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(groupedDestDirs(plan), id: \.self) { destDir in
-                        Text(destDir).font(.subheadline).bold()
-                        ForEach(plan.items.filter { $0.destDir == destDir }, id: \.sourcePath) { item in
-                            Text("•  \(item.sourcePath)  —  \(item.reason)")
-                                .font(.caption)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
-                }
-            }
-            .frame(maxHeight: 260)
-        }
-
-        HStack {
-            Spacer()
-            if appState.isBusy {
-                ProgressView().controlSize(.small)
-            }
-            Button("Mégse") { dismiss() }
-            Button("Linkelés") { appState.applyCalibLinkPlan() }
-                .keyboardShortcut(.defaultAction)
-                .disabled(plan.items.isEmpty || appState.isBusy)
-                .help(plan.items.isEmpty ? "Nincs linkelhető kalibráció" : "")
-        }
-    }
-
-    private func resultView(_ result: LinkResult) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Linkelve: \(result.linked.count), kihagyva: \(result.skipped.count)")
-                .font(.callout)
-            if !result.skipped.isEmpty {
-                Text("Kihagyva (már létezett a célban): \(result.skipped.joined(separator: ", "))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            HStack {
-                Spacer()
-                Button("Bezárás") { dismiss() }
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-    }
-
-    private func groupedDestDirs(_ plan: CalibLinkPlan) -> [String] {
-        Set(plan.items.map(\.destDir)).sorted()
-    }
-}
-
-// MARK: - Plate-solve sheet (R7-1)
-
-/// Runs `AppState.runPlateSolve(target:)` on appear and shows the resulting
-/// `SolveSummary` -- same "progress until `AppState` sets a result" pattern
-/// as `CalibLinkSheet`, just with no plan/confirm step (the operation always
-/// runs immediately; there's nothing to review beforehand since Siril work
-/// never touches the library).
-private struct PlateSolveSheet: View {
-    @Environment(AppState.self) private var appState
-    @Environment(\.dismiss) private var dismiss
-
-    let target: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Plate-solve").font(.headline)
-            Text(target).foregroundStyle(.secondary)
-
-            if let summary = appState.plateSolveSummary {
-                resultView(summary)
-            } else {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(appState.progressText).foregroundStyle(.secondary)
-                }
-            }
-
-            if let lastError = appState.lastError {
-                Text(lastError).foregroundStyle(.red)
-            }
-        }
-        .padding(20)
-        .frame(minWidth: 420, minHeight: 160)
-        .onAppear {
-            appState.runPlateSolve(target: target)
-        }
-        .onDisappear {
-            appState.plateSolveSummary = nil
-        }
-    }
-
-    private func resultView(_ summary: SolveSummary) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Megoldva: \(summary.solved) / \(summary.attempted) (sikertelen: \(summary.failed), kihagyva: \(summary.skipped))")
-                .font(.callout)
-            HStack {
-                Spacer()
-                Button("Bezárás") { dismiss() }
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-    }
-}
-
-// MARK: - Stack-list export (R7-B4)
-
-/// "Stack-lista…" sheet: a keep-fraction slider (50-100%) drives a live
-/// `StackList.select` preview (criteria + selected/total counts), and
-/// "Exportálás" runs `StackList.export` -- the additive hard-link + `.
-/// dssfilelist`/`.ssf` write this whole feature bridges frame scoring to
-/// actual stacking with. Same "load on appear, clear on disappear" pattern
-/// as `CalibLinkSheet`/`PlateSolveSheet`; unlike `CalibLinkSheet` there's no
-/// separate `--dry-run` state -- adjusting the slider just recomputes the
-/// (read-only) preview in place.
-private struct StackListSheet: View {
-    @Environment(AppState.self) private var appState
-    @Environment(\.dismiss) private var dismiss
-
-    let target: String
-    let date: String
-
-    @State private var keepFraction: Double = 0.8
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Stack-lista").font(.headline)
-            Text("\(target) / \(date)").foregroundStyle(.secondary)
-
-            HStack {
-                Text("Megtartás:")
-                Slider(value: $keepFraction, in: 0.5...1.0, step: 0.05)
-                Text("\(Int((keepFraction * 100).rounded()))%")
-                    .monospacedDigit()
-                    .frame(width: 44, alignment: .trailing)
-            }
-            .disabled(appState.stackListExportDir != nil)
-            .onChange(of: keepFraction) { _, newValue in
-                appState.loadStackListSelection(target: target, date: date, keepFraction: newValue)
-            }
-
-            if let exportDir = appState.stackListExportDir {
-                resultView(exportDir)
-            } else if let selection = appState.stackListSelection {
-                selectionView(selection)
-            } else {
-                ProgressView().controlSize(.small)
-            }
-
-            if let lastError = appState.lastError {
-                Text(lastError).foregroundStyle(.red)
-            }
-        }
-        .padding(20)
-        .frame(minWidth: 480, minHeight: 320)
-        .onAppear {
-            appState.loadStackListSelection(target: target, date: date, keepFraction: keepFraction)
-        }
-        .onDisappear {
-            appState.clearStackListSelection()
-        }
-    }
-
-    @ViewBuilder
-    private func selectionView(_ selection: StackSelection) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Kiválasztva: \(selection.selectedFrames) / \(selection.totalFrames)").font(.callout)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(selection.criteria, id: \.self) { line in
-                        Text("•  \(line)").font(.caption)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: 160)
-        }
-
-        HStack {
-            Spacer()
-            if appState.isBusy {
-                ProgressView().controlSize(.small)
-            }
-            Button("Mégse") { dismiss() }
-            Button("Exportálás") { appState.exportStackList() }
-                .keyboardShortcut(.defaultAction)
-                .disabled(selection.selectedFrames == 0 || appState.isBusy)
-                .help(selection.selectedFrames == 0 ? "Nincs kiválasztható keret" : "")
-        }
-    }
-
-    private func resultView(_ dir: URL) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Exportálva: \(dir.lastPathComponent)").font(.callout)
-            Text(dir.path)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            HStack {
-                Spacer()
-                Button("Bezárás") { dismiss() }
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-    }
-}

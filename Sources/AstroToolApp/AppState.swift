@@ -1006,6 +1006,299 @@ final class AppState: @unchecked Sendable {
         }
     }
 
+    // MARK: - Goal (B11)
+
+    /// Writes/replaces a target's `goal:Xh` tag (R9-T3/B11's inline
+    /// hour-stepper popover): removes every existing `goal:*` tag first
+    /// (there should only ever be at most one, but this is defensive against
+    /// a manually-edited DB with more), then adds the new one -- unless
+    /// `hours` is `nil`/`0`, which just clears the goal entirely ("Nincs
+    /// cél"). Refreshes `stats` (+ this target's `sessionDetailsByTarget`
+    /// entry, via the same helper a plain tag edit uses), `projectStates`
+    /// (so `missingSeconds`/phase reflect the new goal), and `plan` (if
+    /// already loaded -- so "Ma este"'s Cél/Hiányzik columns don't need a
+    /// separate manual refresh) -- the three places acceptance ⓓ checks.
+    func setGoal(target: String, hours: Double?) {
+        guard let db else { return }
+        let cfg = config
+        let existingGoalTags = (stats.first { $0.target == target }?.tags ?? []).filter {
+            $0.lowercased().hasPrefix("goal:")
+        }
+
+        let opID = beginOperation("Cél mentése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    for tag in existingGoalTags {
+                        try db.removeTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: tag))
+                    }
+                    if let hours, hours > 0 {
+                        let tag = Self.formatGoalTag(hours: hours)
+                        try db.addTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: tag))
+                    }
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                await self.reloadStatsAfterTagChange(db: db, config: cfg, target: target)
+                if let projectsResult = try? await Task.detached(priority: .userInitiated, operation: {
+                    try ProjectStatusQueries.projects(db: db, config: cfg)
+                }).value {
+                    self.projectStates = projectsResult
+                }
+                if self.plan != nil, let planResult = try? await Task.detached(priority: .userInitiated, operation: {
+                    try Planner.plan(db: db, config: cfg)
+                }).value {
+                    self.plan = planResult
+                }
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Same integral-hours-print-without-decimal convention
+    /// `ProjectStatusQueries.formatGoalHours` uses for the todo sentence, so
+    /// a `6`-hour goal round-trips as `"goal:6h"`, not `"goal:6.0h"`.
+    private static nonisolated func formatGoalTag(hours: Double) -> String {
+        if hours.rounded() == hours { return "goal:\(Int(hours))h" }
+        return "goal:\(String(format: "%.1f", hours))h"
+    }
+
+    // MARK: - Target detail overview extras (R9-T3/A.3)
+
+    /// The Célpont-részletek "Áttekintés" segment's coordinate box: the
+    /// median resolved (RA, Dec) across the target's usable session lights,
+    /// plus which source actually contributed it. Deliberately only three
+    /// labels (unlike `TargetReport`'s more granular four) -- the spec's own
+    /// wording ("WCS fejléc"/"plate-solve"/"nincs").
+    struct TargetCoordinateInfo: Equatable {
+        var raDeg: Double
+        var decDeg: Double
+        var sourceLabel: String
+    }
+
+    /// `nil` until `loadTargetDetail(target:)` has run for the current
+    /// target; ALSO `nil` (rather than some default) when the target
+    /// genuinely has no resolvable coordinate at all -- the Overview segment
+    /// treats that the same as `sourceLabel == "nincs"` (shows the
+    /// "Plate-solve…" button either way).
+    var targetCoordinateInfo: TargetCoordinateInfo?
+    /// One entry per distinct `SessionDetail.setupDescriptor` among the
+    /// target's sessions (camera/gyújtótáv/gain/szűrő fingerprint, R6-3) --
+    /// the Overview segment pairs each with its session count.
+    var targetSetupDescriptors: [String] = []
+    /// The target's calibration status, one `SessionMatcher.match` per
+    /// session -- the Overview segment's "calibration status filtered to
+    /// this target" line.
+    var targetSessionCalibrations: [SessionCalibration] = []
+    /// One `NightHealth.report` per session date, keyed by `dateRaw` -- the
+    /// Sessionök table's "Hűtés"/"Fókusz" columns need every row's verdict
+    /// up front (unlike the inline detail band below the table, which only
+    /// ever needs the SELECTED row's, via the existing `nightHealth`/
+    /// `loadSessionTimeline`).
+    var targetNightHealthByDate: [String: NightHealthReport] = [:]
+
+    /// Bundles every query `TargetDetailPage.onAppear` needs so they can all
+    /// load inside ONE `Task`/`beginOperation` -- see the doc on `runRate`'s
+    /// inline summaries+advice reload for why: `beginOperation` cancels
+    /// whatever `currentTask` is currently running, so firing several public
+    /// `loadXxx()` methods back-to-back with no `await` between them (as a
+    /// naive `onAppear` calling `loadStats()`, `loadPlan()`,
+    /// `loadCalibHealth()`, ... one after another would) lets each new call
+    /// cancel the previous one's outer `Task` before its own `guard
+    /// !Task.isCancelled` line ever runs -- so only the LAST call's result
+    /// would actually land. Bundling avoids that race entirely for the one
+    /// page that needs this many queries at once.
+    private struct TargetDetailBundle {
+        var stats: [TargetStats]
+        var sessions: [SessionDetail]
+        var panels: PanelReport
+        var stacksByTarget: [String: TargetStacks]
+        var stackGroups: [StackGroup]
+        var projects: [ProjectState]
+        var plan: [TargetPlan]
+        var site: SiteRule
+        var calibHealth: CalibHealthReport
+        var coordInfo: TargetCoordinateInfo?
+        var setupDescriptors: [String]
+        var calibs: [SessionCalibration]
+        var nightHealthByDate: [String: NightHealthReport]
+        var qualitySummaries: [SessionQualitySummary]
+        var advice: ExposureAdvice
+    }
+
+    /// Loads everything the Célpont-részletek page's header + Áttekintés/
+    /// Minőség segments need for `target`, in one background hop -- called
+    /// from `TargetDetailPage.onAppear` (and again whenever the page is
+    /// re-created for a different target, via its `.id(target)`). Refreshes
+    /// the SAME published properties `loadStats()`/`loadPlan()`/
+    /// `loadCalibHealth()`/`loadQualitySummaries()`/`loadExposureAdvice()`
+    /// each own, so a target opened straight from the sidebar (never having
+    /// visited "Minden célpont"/"Ma este") still gets a fully populated page,
+    /// AND the effect is the same "refresh everything" a manual reload on
+    /// any of those other pages would give.
+    func loadTargetDetail(target: String) {
+        guard let db else { return }
+        let cfg = config
+        targetCoordinateInfo = nil
+        targetSetupDescriptors = []
+        targetSessionCalibrations = []
+        targetNightHealthByDate = [:]
+        qualitySummaries = []
+        exposureAdvice = nil
+        sessionTimeline = nil
+        nightHealth = nil
+
+        let opID = beginOperation("Célpont-részletek betöltése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let bundle = try await Task.detached(priority: .userInitiated) {
+                    let stats = try StatsQueries.perTarget(db: db, config: cfg)
+                    let sessions = try SessionStatsQueries.sessions(target: target, db: db, config: cfg)
+                    let panels = try FieldGeometry.panels(target: target, db: db, config: cfg)
+                    let discovered = try StackDiscovery.discover(db: db, config: cfg)
+                    let stacksByTarget = Dictionary(uniqueKeysWithValues: discovered.map { ($0.target, $0) })
+                    let stackGroups: [StackGroup]
+                    if let report = stacksByTarget[target], !report.stacks.isEmpty {
+                        stackGroups = try StackDiscovery.groupedStacks(target: target, db: db, config: cfg)
+                    } else {
+                        stackGroups = []
+                    }
+                    let projects = try ProjectStatusQueries.projects(db: db, config: cfg)
+                    let plan = try Planner.plan(db: db, config: cfg)
+                    let site = try Planner.resolveSite(db: db, config: cfg)
+                    let calibHealth = try CalibHealth.report(db: db, config: cfg)
+                    let coordInfo = try Self.resolveCoordinateInfo(target: target, db: db)
+                    let setupDescriptors = Array(Set(sessions.compactMap(\.setupDescriptor))).sorted()
+                    var calibs: [SessionCalibration] = []
+                    var nightHealthByDate: [String: NightHealthReport] = [:]
+                    for session in sessions {
+                        calibs.append(try SessionMatcher.match(target: target, date: session.dateRaw, db: db, config: cfg))
+                        nightHealthByDate[session.dateRaw] = try NightHealth.report(target: target, date: session.dateRaw, db: db, config: cfg)
+                    }
+                    let qualitySummaries = try SessionQuality.summaries(target: target, db: db, config: cfg)
+                    let advice = try ExposureAdvisor.advise(target: target, db: db, config: cfg)
+                    return TargetDetailBundle(
+                        stats: stats, sessions: sessions, panels: panels, stacksByTarget: stacksByTarget,
+                        stackGroups: stackGroups, projects: projects, plan: plan, site: site,
+                        calibHealth: calibHealth, coordInfo: coordInfo, setupDescriptors: setupDescriptors,
+                        calibs: calibs, nightHealthByDate: nightHealthByDate,
+                        qualitySummaries: qualitySummaries, advice: advice
+                    )
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.stats = bundle.stats
+                self.sessionDetailsByTarget[target] = bundle.sessions
+                self.panelReportsByTarget[target] = bundle.panels
+                self.stackReportsByTarget = bundle.stacksByTarget
+                self.stackGroupsByTarget[target] = bundle.stackGroups
+                self.projectStates = bundle.projects
+                self.plan = bundle.plan
+                self.config.site = bundle.site
+                self.calibHealth = bundle.calibHealth
+                self.targetCoordinateInfo = bundle.coordInfo
+                self.targetSetupDescriptors = bundle.setupDescriptors
+                self.targetSessionCalibrations = bundle.calibs
+                self.targetNightHealthByDate = bundle.nightHealthByDate
+                self.qualitySummaries = bundle.qualitySummaries
+                self.exposureAdvice = bundle.advice
+                self.progressText = "Célpont-részletek kész: \(target)"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// App-layer copy of `TargetReport.resolveCoordinateInfo`'s query (that
+    /// one is `private` inside `AstroCore/Export/TargetReport.swift`, and
+    /// deriving a *label* rather than a full `CoordinateInfo` isn't worth a
+    /// new AstroCore API for one call site) -- same `TargetCoordinates.
+    /// medianCoordinates` query, collapsed to the spec's three labels.
+    private static nonisolated func resolveCoordinateInfo(target: String, db: Database) throws -> TargetCoordinateInfo? {
+        let allFiles = try db.allFiles(includeMissing: false)
+        let targetLights = allFiles.filter { $0.target == target && $0.area == .sessions && $0.role == .light }
+
+        var metaByFileID: [Int64: FITSMetaRecord] = [:]
+        for file in targetLights {
+            guard let id = file.id else { continue }
+            if let meta = try db.fitsMeta(fileID: id) { metaByFileID[id] = meta }
+        }
+
+        guard let coord = TargetCoordinates.medianCoordinates(files: targetLights, meta: metaByFileID) else {
+            return nil
+        }
+
+        var hasWCS = false
+        var hasOther = false
+        for file in targetLights {
+            guard let id = file.id, let meta = metaByFileID[id] else { continue }
+            if let headerJSON = meta.headerJSON,
+               let data = headerJSON.data(using: .utf8),
+               let cards = try? JSONDecoder().decode([String: String].self, from: data)
+            {
+                if Double(cards["CRVAL1"] ?? "") != nil, Double(cards["CRVAL2"] ?? "") != nil {
+                    hasWCS = true
+                } else if cards["RA"] != nil {
+                    hasOther = true
+                }
+            }
+            if meta.solvedRA != nil, meta.solvedDec != nil { hasOther = true }
+        }
+
+        let sourceLabel: String
+        if hasWCS {
+            sourceLabel = "WCS fejléc"
+        } else if hasOther {
+            sourceLabel = "plate-solve"
+        } else {
+            sourceLabel = "nincs"
+        }
+        return TargetCoordinateInfo(raDeg: coord.raDeg, decDeg: coord.decDeg, sourceLabel: sourceLabel)
+    }
+
+    // MARK: - Report files (R9-T3/A.3 "Riportok")
+
+    /// Every generated report HTML for `target` under `.astro_tool/reports/`
+    /// -- the whole-target report (`target-<sanitized>.html`,
+    /// `TargetReport`) plus any per-night reports
+    /// (`<sanitized>-<date>.html`, `NightReport`). Read-only `FileManager`
+    /// listing, safe to call from a view's computed property (no DB, no
+    /// background hop needed -- the Vasszabály only restricts WRITES to the
+    /// library, and this doesn't even touch the library, only this tool's
+    /// own `.astro_tool/reports/`).
+    func reportFiles(for target: String) -> [URL] {
+        guard !config.rootPath.isEmpty else { return [] }
+        let reportsDir = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+            .appendingPathComponent(".astro_tool", isDirectory: true)
+            .appendingPathComponent("reports", isDirectory: true)
+        guard let entries = try? FileManager.default.contentsOfDirectory(at: reportsDir, includingPropertiesForKeys: nil) else {
+            return []
+        }
+        let sanitized = Sanitizer.sanitize(target)
+        return entries.filter { url in
+            let name = url.lastPathComponent
+            guard name.hasSuffix(".html") else { return false }
+            return name == "target-\(sanitized).html" || name.hasPrefix("\(sanitized)-")
+        }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    /// "Újragenerálás" on one Riportok row: re-derives whether `url` is the
+    /// whole-target report or one night's report from its filename
+    /// convention, and re-runs the matching export.
+    func regenerateReport(_ url: URL, target: String) {
+        let sanitized = Sanitizer.sanitize(target)
+        let stem = url.deletingPathExtension().lastPathComponent
+        if stem == "target-\(sanitized)" {
+            exportTargetReport(target: target)
+        } else if stem.hasPrefix("\(sanitized)-") {
+            let date = String(stem.dropFirst(sanitized.count + 1))
+            exportNightReport(target: target, date: date)
+        }
+    }
+
     // MARK: - Calibration hard-linking
 
     /// Computes the `CalibLinkPlan` for one session -- read-only, safe to
@@ -1347,18 +1640,19 @@ final class AppState: @unchecked Sendable {
 
     /// `force`, when `true`, passes through to `Rater.rate` -- a deliberate
     /// full re-measure of every frame regardless of cache state, driven by
-    /// QualityView's "Újrapontozás" checkbox (the manual escape hatch next
-    /// to the self-heal `Rater` already does automatically for stale rows).
+    /// `QualitySegment`'s "Újra minden keret mérése (lassú)" menu item (the
+    /// manual escape hatch next to the self-heal `Rater` already does
+    /// automatically for stale rows).
     ///
-    /// On success, also refreshes the Minőség fül's "Session-minőség"
-    /// (`qualitySummaries`) and "Expozíció-tanácsadó" (`exposureAdvice`)
-    /// panels for the same target -- both key off frame-score/quality data
-    /// this very call just changed, and QualityView only otherwise
-    /// refreshes them on a target-PICKER change (`.onChange(of:
-    /// selectedTarget)`), never on a re-rate of the already-selected
-    /// target. Without this, the two panels are left showing whatever
-    /// stale ("nincs adat"/"n/a") state they had before rating, even
-    /// though the frame table below updates fine from `frameScores`.
+    /// On success, also refreshes the Minőség segment's "Session-minőség"
+    /// (`qualitySummaries`) and Áttekintés segment's "Expozíció-tanácsadó"
+    /// (`exposureAdvice`) panels for the same target -- both key off
+    /// frame-score/quality data this very call just changed, and neither
+    /// segment otherwise reloads them on a re-rate of the already-open
+    /// target (only `TargetDetailPage.onAppear`'s `loadTargetDetail` does).
+    /// Without this, the two panels are left showing whatever stale ("nincs
+    /// adat"/"n/a") state they had before rating, even though the frame
+    /// table below updates fine from `frameScores`.
     ///
     /// Deliberately done INLINE, inside this same `Task`/`opID`, rather
     /// than by calling the public `loadQualitySummaries(target:)`/
@@ -1372,7 +1666,13 @@ final class AppState: @unchecked Sendable {
     /// would ever actually land. (The same latent race already exists in
     /// `runPlateSolve`'s `loadStats(); loadPlan()` chain; left alone here
     /// since it's a separate, pre-existing issue outside this fix's scope.)
-    func runRate(target: String, date: String?, force: Bool = false) {
+    /// `noSiril` (R9-T3/A.3's "Siril nélkül (csak natív)" menu item): forces
+    /// `provider` to `nil` regardless of whether a working Siril install is
+    /// configured, so `Rater.rate` falls back to native-only metrics (star
+    /// count/FWHM/roundness columns come back `nil`, background/exptime
+    /// still compute) -- the GUI's first way to reach what the CLI's
+    /// `--no-siril` flag already offered.
+    func runRate(target: String, date: String?, force: Bool = false, noSiril: Bool = false) {
         guard let db else { return }
         let cfg = config
 
@@ -1382,7 +1682,7 @@ final class AppState: @unchecked Sendable {
             do {
                 let results = try await Task.detached(priority: .userInitiated) { [weak self] in
                     var provider: StarMetricsProvider?
-                    if FileManager.default.isExecutableFile(atPath: cfg.rating.sirilPath) {
+                    if !noSiril, FileManager.default.isExecutableFile(atPath: cfg.rating.sirilPath) {
                         provider = try? SirilCLI(path: cfg.rating.sirilPath)
                     }
                     let rater = Rater(db: db, config: cfg, provider: provider)

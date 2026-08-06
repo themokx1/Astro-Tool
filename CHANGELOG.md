@@ -10,6 +10,29 @@ történik.
 
 ### Added
 
+- **Célpont-részletek oldal** (R9-T3), a review szerint "a legértékesebb új
+  felület": beolvasztja a teljes Minőség fület. `Views/TargetDetailPage.swift`
+  fix fejléccel (identitás + fázis-chip, 5 tile — Valós integráció/Cél/
+  Hiányzik/Sessionök/Legjobb session —, "Következő lépés" mondat +
+  akció-gomb + "További N teendő" disclosure) és `Views/TargetDetail/*.swift`
+  öt szegmenssel (Áttekintés/Sessionök/Minőség/Stackek/Jegyzetek). Cél-UI
+  (B11): inline ✏️ popover óra-`Stepper`rel, `AppState.setGoal(target:hours:)`
+  írja/törli a `goal:Xh` cél-tag-et — először 0 cél-tag volt a DB-ben, ez adja
+  az első GUI-utat hozzá. Minőség szegmens: session-dátum `Menu` a
+  szabadszöveges mező helyett, `Menu`-primary-action "Keretek pontozása" +
+  "Újra minden keret mérése (lassú)"/"Siril nélkül (csak natív)" (új
+  `AppState.runRate(noSiril:)` paraméter), 10-bucket pontszám-hisztogram.
+  Sessionök szegmens: sor-kiválasztásra inline idővonal-BAR (a
+  `NightReport`-riport CSS-bar-koncepciójának SwiftUI-portja) + hardver-
+  egészség sor. Stackek szegmens: a törölt `StackGroupSheet` hierarchikus
+  táblája beágyazva (nem sheet). `Views/QualityView.swift` törölve;
+  `StatsView`-ból a `Műveletek` kolonna teljesen megszűnt (jobb-klikk
+  context-menükbe került, ez az első `Table`-context-menü ebben a
+  kódbázisban), a `.stacksSummary` gyerek-sor + "Kész stackek…"/"Panelek…"
+  gombok törölve (a detail oldal veszi át), célpont-sor dupla-kattintásra a
+  detail oldalra navigál. 817 teszt zöld (app-layer réteg, `AstroCore`
+  változatlan).
+
 - **Audit-oldal átépítése: Hibák/Gyanús/Takarítható háromszegmenses reframing +
   találat-elfogadás (ack) + findings-retenció** (R9-T2): a régi egyetlen
   "Gyanús" vödör (a valós könyvtáron 3 545, 88%-ban takarítható maradék) helyett
