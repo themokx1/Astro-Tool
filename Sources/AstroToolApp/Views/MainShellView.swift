@@ -189,6 +189,9 @@ private struct DetailContainerView: View {
         case .calendar:
             TonightPage()
                 .onAppear { appState.tonightSegment = .calendar }
+        // R10-B4: the catalog discovery sweep -- its own page, no segment
+        // to preselect (same shape as `.nights` below).
+        case .discover: DiscoveryPage()
         case .allTargets: AllTargetsPage()
         // R10-B3: the cross-target session browser -- no segment to
         // preselect (unlike `.calendar`/`.cleanup` below), its own page.
@@ -216,6 +219,7 @@ private struct DetailContainerView: View {
         switch page {
         case .tonight: return "Ma este"
         case .calendar: return "Naptár"
+        case .discover: return "Felfedezés"
         case .allTargets: return "Minden célpont"
         case .nights: return "Éjszakák"
         case .target(let name): return appState.stats.first { $0.target == name }?.displayName ?? name

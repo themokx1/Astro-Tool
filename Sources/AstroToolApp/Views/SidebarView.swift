@@ -134,6 +134,11 @@ struct SidebarView: View {
                 // correct highlight, and `MainShellView.page(for:)` is what
                 // preselects the calendar segment on that route.
                 navRow("Naptár", systemImage: "calendar", page: .calendar)
+                // R10-B4: the catalog discovery sweep -- a night-planning
+                // tool like "Ma este"/"Naptár" above it (suggests targets
+                // for TONIGHT), not a library-browsing one, hence living
+                // here rather than next to "Éjszakák" under KÖNYVTÁR below.
+                navRow("Felfedezés", systemImage: "sparkles", page: .discover)
                 // R10-A5: `Page.searchResults` had no sidebar row at all --
                 // no highlight while it was on screen, no way back to it
                 // once you navigated elsewhere. Only shown once a search has

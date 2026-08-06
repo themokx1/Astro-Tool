@@ -5,9 +5,56 @@ struct NewSessionSheet: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
 
-    @State private var catalog: String = ""
-    @State private var name: String = ""
+    @State private var catalog: String
+    @State private var name: String
     @State private var dateText: String = NewSessionSheet.today()
+
+    /// `prefillDesignation` (R10-B4): "Felfedezés"'s row-scoped "Új session
+    /// létrehozása…" action opens this sheet already primed with the
+    /// catalog target's OWN designation split apart (`splitDesignation`
+    /// below) -- re-typing e.g. "NGC" + "7000" by hand for a target the
+    /// catalog already fully identifies would be needless friction. `nil`
+    /// (the default) keeps every other call site (the toolbar "+", ⌘N, the
+    /// "Új session…" empty-state buttons) behaving exactly as before --
+    /// blank fields.
+    init(prefillDesignation: String? = nil) {
+        if let prefillDesignation, let split = Self.splitDesignation(prefillDesignation) {
+            _catalog = State(initialValue: split.catalog)
+            _name = State(initialValue: split.name)
+        } else {
+            _catalog = State(initialValue: "")
+            _name = State(initialValue: "")
+        }
+    }
+
+    /// Splits a `CatalogTarget.designation` into `(catalog, name)` the way
+    /// `Sanitizer.makeTarget(catalog:name:)` expects to reassemble it --
+    /// `"M 42"` -> `("M", "42")`, `"NGC 7000"` -> `("NGC", "7000")`,
+    /// `"Sh2-101"` -> `("Sh2", "101")`. The dash check MUST come first: a
+    /// digit-split alone would mis-split `"Sh2-101"` at the "2" already
+    /// inside "Sh2" (-> `("Sh", "2-101")`), since "Sh2" itself ends in a
+    /// digit -- the SAME reason `TargetCatalog`'s own doc comment gives for
+    /// why Sh2 designations use a dash at all. Deliberately keeps
+    /// `commonNameHU` OUT of `name` -- the numeric/dash part alone is
+    /// simpler and more predictable than guessing whether a user wants the
+    /// Hungarian common name prepended, appended, or not used at all; they
+    /// can always type their own. `nil` for anything that doesn't match one
+    /// of `TargetCatalog`'s three designation shapes at all (defensive
+    /// only -- every caller today only ever passes a real
+    /// `CatalogTarget.designation`).
+    static func splitDesignation(_ designation: String) -> (catalog: String, name: String)? {
+        if let dashIndex = designation.firstIndex(of: "-") {
+            let catalog = String(designation[designation.startIndex..<dashIndex])
+            let name = String(designation[designation.index(after: dashIndex)...])
+            guard !catalog.isEmpty, !name.isEmpty else { return nil }
+            return (catalog, name)
+        }
+        guard let digitIndex = designation.firstIndex(where: \.isNumber) else { return nil }
+        let catalog = String(designation[designation.startIndex..<digitIndex]).trimmingCharacters(in: .whitespaces)
+        let name = String(designation[digitIndex...]).trimmingCharacters(in: .whitespaces)
+        guard !catalog.isEmpty, !name.isEmpty else { return nil }
+        return (catalog, name)
+    }
 
     private var previewTarget: String {
         Sanitizer.makeTarget(catalog: catalog, name: name)
