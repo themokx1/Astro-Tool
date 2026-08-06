@@ -174,14 +174,15 @@ private struct DetailContainerView: View {
     private func page(for page: Page) -> some View {
         switch page {
         case .tonight: TonightPage()
-        // R9-T4: the standalone `CalendarPage` is gone -- its content is now
-        // `TonightPage`'s "Következő 30 éjszaka" segment. The sidebar/⌘2
-        // route to `.tonight` with `AppState.tonightSegment = .calendar`
-        // preselected instead of ever constructing this case; it's kept
-        // (not deleted from `Page`) only so any future direct navigation to
-        // `.calendar` still lands somewhere sensible rather than being
-        // unrepresentable.
-        case .calendar: TonightPage()
+        // D25: `.calendar` is its own `Page` case now (so the sidebar's
+        // "Naptár" row / ⌘2 highlight correctly, distinct from "Ma este"),
+        // but there's still no standalone calendar view -- it renders the
+        // exact same `TonightPage`, just forcing its "Következő 30 éjszaka"
+        // segment via `.onAppear` before the page's own segmented picker
+        // gets a chance to show whatever it last had selected.
+        case .calendar:
+            TonightPage()
+                .onAppear { appState.tonightSegment = .calendar }
         case .allTargets: AllTargetsPage()
         // R9-T3: `.id(name)` forces a fresh `TargetDetailPage` instance (and
         // thus a fresh `onAppear`/`@State`) whenever the sidebar switches
@@ -191,6 +192,12 @@ private struct DetailContainerView: View {
         case .target(let name): TargetDetailPage(target: name).id(name)
         case .calibration: CalibrationPage()
         case .audit: AuditPage()
+        // D25: same "own `Page` case, same underlying view, segment forced
+        // on appear" shape as `.calendar` above -- the sidebar's "Takarítás"
+        // row / ⌘6.
+        case .cleanup:
+            AuditPage()
+                .onAppear { appState.auditSegment = .cleanable }
         case .sensor: SensorPage()
         case .searchResults: SearchResultsPage()
         }
@@ -204,6 +211,7 @@ private struct DetailContainerView: View {
         case .target(let name): return appState.stats.first { $0.target == name }?.displayName ?? name
         case .calibration: return "Kalibráció"
         case .audit: return "Audit"
+        case .cleanup: return "Takarítás"
         case .sensor: return "Szenzor-profilok"
         case .searchResults: return "Kereső"
         }

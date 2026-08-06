@@ -12,16 +12,16 @@ struct FirstScanView: View {
     @State private var runAuditAfter = true
     @State private var didStartScan = false
     @State private var scanFinished = false
+    /// D27: was a computed property re-running `FileManager.contentsOfDirectory`
+    /// (synchronous disk I/O) on every render of `checklist` -- computed once
+    /// into this instead, on `.onAppear`. The root doesn't change while this
+    /// screen is on screen, so re-reading it per-render bought nothing.
+    @State private var topLevelEntries: Set<String> = []
 
     /// The expected top-level areas (spec: "sessions/calibration_library/
     /// stacks/processed present?") -- a cheap, read-only
     /// `contentsOfDirectory` on the root, never anything recursive.
     private static let expectedDirs = ["sessions", "calibration_library", "stacks", "processed"]
-
-    private var topLevelEntries: Set<String> {
-        let entries = try? FileManager.default.contentsOfDirectory(atPath: appState.config.rootPath)
-        return Set(entries ?? [])
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -47,6 +47,10 @@ struct FirstScanView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .sheet(isPresented: $showStructureHelp) {
             FolderStructureHelpSheet()
+        }
+        .onAppear {
+            let entries = try? FileManager.default.contentsOfDirectory(atPath: appState.config.rootPath)
+            topLevelEntries = Set(entries ?? [])
         }
         .onChange(of: appState.isBusy) { wasBusy, isBusyNow in
             guard didStartScan, wasBusy, !isBusyNow, !scanFinished else { return }

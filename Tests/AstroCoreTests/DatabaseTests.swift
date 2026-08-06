@@ -456,6 +456,52 @@ private func sampleFile(path: String = "sessions/M31/2026-01-01/lights/f1.fits")
     #expect(fetched?.filter == "OIII")
 }
 
+/// D12: `resolveCoordinateInfo`/`runPlateSolveAll` used to call `fitsMeta`
+/// once per file -- thousands of round trips for a big target. This batch
+/// form must return the same data keyed by file id, chunked internally at
+/// 500 ids/query so it also works past SQLite's default bound-parameter
+/// limit.
+@Test func fitsMetaBatchReturnsRecordsKeyedByFileID() throws {
+    let database = try Database(path: ":memory:")
+    let id1 = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/a.fits"))
+    let id2 = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/b.fits"))
+    let id3 = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/c.fits"))
+
+    try database.upsertFITSMeta(FITSMetaRecord(fileID: id1, exptime: 120))
+    try database.upsertFITSMeta(FITSMetaRecord(fileID: id2, exptime: 240, filter: "OIII"))
+    // id3 intentionally left without a fits_meta row.
+
+    let batch = try database.fitsMetaBatch(fileIDs: [id1, id2, id3])
+
+    #expect(batch.count == 2)
+    #expect(batch[id1]?.exptime == 120)
+    #expect(batch[id2]?.exptime == 240)
+    #expect(batch[id2]?.filter == "OIII")
+    #expect(batch[id3] == nil)
+}
+
+@Test func fitsMetaBatchReturnsEmptyForEmptyInput() throws {
+    let database = try Database(path: ":memory:")
+    let batch = try database.fitsMetaBatch(fileIDs: [])
+    #expect(batch.isEmpty)
+}
+
+@Test func fitsMetaBatchChunksPastFiveHundredIDs() throws {
+    let database = try Database(path: ":memory:")
+    var ids: [Int64] = []
+    for i in 0..<1200 {
+        let id = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/f\(i).fits"))
+        try database.upsertFITSMeta(FITSMetaRecord(fileID: id, exptime: Double(i)))
+        ids.append(id)
+    }
+
+    let batch = try database.fitsMetaBatch(fileIDs: ids)
+
+    #expect(batch.count == 1200)
+    #expect(batch[ids[0]]?.exptime == 0)
+    #expect(batch[ids[1199]]?.exptime == 1199)
+}
+
 // MARK: - Database: runs & findings
 
 @Test func beginRunFinishRunAndInsertFindingRoundTrip() throws {

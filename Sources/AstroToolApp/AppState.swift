@@ -4,8 +4,9 @@ import Foundation
 import Observation
 
 /// What we currently know about the configured library root: whether it's
-/// reachable, and if not, why -- drives whether the app shows the tab UI or
-/// a full-screen guidance view (`AccessDeniedView`).
+/// reachable, and if not, why -- drives whether the app shows the normal
+/// sidebar shell (`MainShellView`) or a full-screen guidance view
+/// (`AccessDeniedView`).
 enum RootStatus: Equatable {
     case ok
     case accessDenied
@@ -18,6 +19,16 @@ enum RootStatus: Equatable {
 /// from the sidebar, the menu bar, or a "jump to target" action. Detail
 /// pages for this task reuse existing view bodies; later R9 tasks replace
 /// individual cases' content without touching this enum's shape.
+///
+/// `.calendar` and `.cleanup` (D25/R9 round 2) don't get their own view --
+/// `MainShellView.page(for:)` renders `TonightPage()`/`AuditPage()` for them
+/// respectively, preselecting the right segment first. They exist as their
+/// OWN `Page` cases (rather than routing straight to `.tonight`/`.audit`
+/// with a segment set as a side effect of the tap, as the sidebar's
+/// "Naptár"/"Takarítás" rows used to) purely so `List(selection:)`'s
+/// tag-matching highlights the right sidebar row: `.tonight`/`.audit`'s own
+/// rows must NOT light up while the "calendar segment of tonight" or
+/// "cleanable segment of audit" is what's actually on screen.
 enum Page: Hashable {
     case tonight
     case calendar
@@ -25,6 +36,7 @@ enum Page: Hashable {
     case target(String)
     case calibration
     case audit
+    case cleanup
     case sensor
     case searchResults
 }
@@ -119,6 +131,15 @@ final class AppState: @unchecked Sendable {
     /// registered once per process.
     @ObservationIgnored
     private var mountObserver: NSObjectProtocol?
+    /// D31: the stale-scan banner's `scanIsStale` used to only ever
+    /// re-evaluate when `lastScanDate` itself changed -- fine right after a
+    /// scan, but the 24h threshold can also become true purely because time
+    /// passed while the app sat open (or backgrounded) with no scan at all,
+    /// and nothing was mutating any tracked property to tell `@Observable`
+    /// a dependent view needed to redraw. Registered once per process,
+    /// alongside `mountObserver`.
+    @ObservationIgnored
+    private var activationObserver: NSObjectProtocol?
 
     var scanSummary: ScanSummary?
     var findings: [Finding] = []
@@ -140,9 +161,10 @@ final class AppState: @unchecked Sendable {
         case suspicious
         case cleanable
     }
-    /// Which segment `AuditPage` shows -- settable by the sidebar's
-    /// "Takarítás" row (which preselects `.cleanable` before navigating to
-    /// `.audit`) as well as the page's own segmented picker.
+    /// Which segment `AuditPage` shows -- preselected to `.cleanable` by
+    /// `MainShellView.page(for:)` when `currentPage == .cleanup` (the
+    /// sidebar's "Takarítás" row / ⌘6, D25), as well as settable from the
+    /// page's own segmented picker directly.
     var auditSegment: AuditSegment = .errors
     /// R9-T2/A.5's toolbar toggle: when `false` (the default), any group
     /// whose ack key is in `ackedKeys` is hidden entirely from the Hibák/
@@ -156,13 +178,10 @@ final class AppState: @unchecked Sendable {
     /// view never has to re-query the DB just to check one group's state.
     var ackedKeys: Set<String> = []
 
-    /// R9-T4/A.1's segmented picker on `TonightPage` -- settable by the
-    /// sidebar's "Naptár" row (which preselects `.calendar` before
-    /// navigating to `.tonight`, since the old standalone `Page.calendar`
-    /// route is no longer how either the sidebar or the menu bar reach the
-    /// calendar content) as well as the page's own segmented picker. Same
-    /// "preselect a segment, then navigate" pattern `auditSegment`/
-    /// "Takarítás" already established.
+    /// R9-T4/A.1's segmented picker on `TonightPage` -- preselected to
+    /// `.calendar` by `MainShellView.page(for:)` when
+    /// `currentPage == .calendar` (the sidebar's "Naptár" row / ⌘2, D25), as
+    /// well as settable from the page's own segmented picker directly.
     enum TonightSegment: Hashable {
         case tonight
         case calendar
@@ -240,33 +259,36 @@ final class AppState: @unchecked Sendable {
     /// Every target's discovered stacks, grouped into variant families
     /// (`StackDiscovery.groupedStacks`, R8-3) -- keyed by target name,
     /// populated alongside `stackReportsByTarget` in `loadStats()`. Powers
-    /// `StackGroupSheet`'s hierarchical table; a target with no discovered
-    /// stacks still gets an entry (`[]`), same convention as
-    /// `stackReportsByTarget`.
+    /// `StacksSegment`'s hierarchical table (R9-T3: the old `StackGroupSheet`
+    /// this replaced is gone); a target with no discovered stacks still gets
+    /// an entry (`[]`), same convention as `stackReportsByTarget`.
     var stackGroupsByTarget: [String: [StackGroup]] = [:]
     var calibNeeds: [CalibNeed] = []
     /// `CalibHealth.report`'s result -- flat discipline, bias inventory, dark
     /// master health -- shown below the coverage table on the Kalibráció
-    /// fül. `nil` until `loadCalibHealth()` has run at least once this
-    /// session.
+    /// oldal (`CalibrationPage`). `nil` until `loadCalibHealth()` has run at
+    /// least once this session.
     var calibHealth: CalibHealthReport?
     /// Measured sensor characterization per `(camera, gain, offset)` combo
-    /// (R7-B1 item C) -- read-only "Szenzor-profilok" list on the
-    /// Kalibráció fül, `[]` until `loadSensorProfiles()`/
-    /// `measureSensorProfiles()` has run at least once this session.
+    /// (R7-B1 item C) -- read-only "Szenzor-profilok" list on its own
+    /// Szenzor-profilok oldal (`SensorPage`, `Page.sensor` -- a dedicated
+    /// page since R9-T5, not part of `CalibrationPage`), `[]` until
+    /// `loadSensorProfiles()`/`measureSensorProfiles()` has run at least once
+    /// this session.
     var sensorProfiles: [SensorProfileRecord] = []
     var frameScores: [FrameScore] = []
 
     /// Whether any `.dssfilelist` is currently tracked -- gates the
-    /// Áttekintés "DSS-adatok beolvasása" quick button (R7-B2), so it's
-    /// never shown for a library with no DeepSkyStacker byproducts at all.
-    /// Refreshed after `openRoot`/`runScan` via the cheap, targeted
+    /// toolbar's "Műveletek" menu's "DSS-döntések importálása" item (R7-B2;
+    /// R9-T4 moved it there from the old `OverviewView`'s quick button), so
+    /// it's never shown for a library with no DeepSkyStacker byproducts at
+    /// all. Refreshed after `openRoot`/`runScan` via the cheap, targeted
     /// `Database.hasTrackedFileWithSuffix` query -- never a full `allFiles`
     /// scan just to answer this one yes/no question.
     var hasDSSFilelists: Bool = false
-    /// The result of the last `runIngestDSS()` run, shown as the Áttekintés
-    /// result alert. `nil` before the button has ever been used this
-    /// session.
+    /// The result of the last `runIngestDSS()` run, shown as
+    /// `MainShellView`'s "DSS-adatok beolvasva" alert. `nil` before the menu
+    /// item has ever been used this session.
     var dssIngestSummary: DSSIngestSummary?
 
     /// R7-1: the plate-solve backfill result shown in `PlateSolveSheet`
@@ -276,9 +298,9 @@ final class AppState: @unchecked Sendable {
     /// next open's finishes.
     var plateSolveSummary: SolveSummary?
 
-    /// Tonight's observation plan (`Planner.plan`), shown in the
-    /// "Ma este" box on the Áttekintés tab. `nil` until `loadPlan()` has
-    /// run at least once this session.
+    /// Tonight's observation plan (`Planner.plan`), backing `TonightPage`'s
+    /// plan table (`Page.tonight`, the "Ma este" segment). `nil` until
+    /// `loadPlan()` has run at least once this session.
     var plan: [TargetPlan]?
 
     /// R9-T4/B10's fix: `Planner.resolveSite`'s result, cached here (in
@@ -309,26 +331,29 @@ final class AppState: @unchecked Sendable {
     var planDate: Date?
 
     /// The month-at-a-glance planning calendar (`Planner.month`, R7-B5),
-    /// shown in the "Hónap" sheet off the Áttekintés tab. `nil` until
-    /// `loadMonthPlan()` has run at least once this session -- never loaded
-    /// automatically (same "time-of-day-sensitive, don't auto-refresh"
-    /// stance as `plan`).
+    /// shown in `TonightPage`'s "Következő 30 éjszaka" segment (R9-T4: the
+    /// old standalone `CalendarPage`/"Hónap" sheet is gone, this is now
+    /// `AppState.TonightSegment.calendar`). `nil` until `loadMonthPlan()` has
+    /// run at least once this session -- never loaded automatically (same
+    /// "time-of-day-sensitive, don't auto-refresh" stance as `plan`).
     var monthPlan: [NightSummary]?
 
-    /// Every target's pipeline status (`ProjectStatusQueries.projects`),
-    /// shown in the "Projektek" box on the Áttekintés tab. `[]` until
-    /// `loadDashboardData()` has run at least once this session (also
-    /// refreshed automatically after a scan, unlike `plan`).
+    /// Every target's pipeline status (`ProjectStatusQueries.projects`) --
+    /// backs the sidebar's phase dots, `AllTargetsPage`'s "Fázis" column and
+    /// "Kész / folyamatban" tile, and `TonightPage`'s plan table "Állapot"
+    /// column. `[]` until `loadDashboardData()` has run at least once this
+    /// session (also refreshed automatically after a scan, unlike `plan`).
     var projectStates: [ProjectState] = []
 
     /// The currently selected target's per-session absolute quality summaries
     /// (`SessionQuality.summaries`) -- shown above the frame table in the
-    /// Minőség fül. Cleared whenever a different target is selected so a
-    /// stale previous target's rows never flash before the new ones load.
+    /// Célpont-részletek page's Minőség segment (`QualitySegment`). Cleared
+    /// whenever a different target is selected so a stale previous target's
+    /// rows never flash before the new ones load.
     var qualitySummaries: [SessionQualitySummary] = []
     /// The currently selected target's sub-exposure/relative-SNR advice
     /// (R7-B3 `ExposureAdvisor`) -- shown just above `qualitySummaries` in
-    /// the Minőség fül. `nil` until `loadExposureAdvice(target:)` has run
+    /// the Minőség segment. `nil` until `loadExposureAdvice(target:)` has run
     /// for the current target (cleared on target change, same as
     /// `qualitySummaries`).
     var exposureAdvice: ExposureAdvice?
@@ -409,6 +434,7 @@ final class AppState: @unchecked Sendable {
     /// configuration on disk.
     func resolveRootOnLaunch() {
         startVolumeMountObserverIfNeeded()
+        startActivationObserverIfNeeded()
         if ProcessInfo.processInfo.arguments.contains("-ResetOnboarding") {
             UserDefaults.standard.removeObject(forKey: Self.bookmarkKey)
         }
@@ -507,8 +533,26 @@ final class AppState: @unchecked Sendable {
             forName: NSWorkspace.didMountNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.rootStatus == .notMounted else { return }
+                guard let self else { return }
+                self.staleCheckTick += 1
+                guard self.rootStatus == .notMounted else { return }
                 self.retryRootAccess()
+            }
+        }
+    }
+
+    /// D31: the other half of the stale-scan-banner fix -- bringing the app
+    /// to the foreground (after sitting backgrounded, possibly well past
+    /// the 24h threshold) is exactly the moment a stale-scan warning is
+    /// most useful, and exactly the moment nothing else would have
+    /// otherwise told `scanIsStale`'s observers to re-evaluate it.
+    private func startActivationObserverIfNeeded() {
+        guard activationObserver == nil else { return }
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.staleCheckTick += 1
             }
         }
     }
@@ -635,11 +679,15 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - Scan
 
-    func runScan() {
+    /// `subpath`, when given, scopes the scan to that root-relative subtree
+    /// (D23: `AllTargetsPage`'s folder-drop scoped rescan) -- otherwise the
+    /// same full-root scan every other caller (toolbar "Beolvasás", ⌘R,
+    /// first-run) has always run.
+    func runScan(subpath: String? = nil) {
         guard let db else { return }
         let cfg = config
 
-        let opID = beginOperation("Könyvtár beolvasása…")
+        let opID = beginOperation(subpath.map { "Beolvasás: \($0)…" } ?? "Könyvtár beolvasása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -651,7 +699,7 @@ final class AppState: @unchecked Sendable {
                     // here shouldn't block the scan itself.
                     let runID = try? db.beginRun(kind: "scan", root: cfg.rootPath, configJSON: nil)
                     let scanner = LibraryScanner(config: cfg, db: db)
-                    let result = try scanner.scan(subpath: nil) { count in
+                    let result = try scanner.scan(subpath: subpath) { count in
                         Task { @MainActor in
                             self?.progressText = "Beolvasva: \(count) fájl…"
                         }
@@ -663,6 +711,11 @@ final class AppState: @unchecked Sendable {
                 self.scanSummary = summary
                 self.rootStatus = .ok
                 self.lastScanDate = Date()
+                // D12: any target's frames may have changed (new files,
+                // moved files, re-solved headers) -- drop the whole
+                // per-target coordinate-info memo rather than try to guess
+                // which targets are still valid.
+                self.coordinateInfoCache = [:]
                 self.progressText =
                     "Kész — új: \(summary.added), frissült: \(summary.updated), " +
                     "változatlan: \(summary.unchanged), hiányzó: \(summary.missing)"
@@ -827,8 +880,8 @@ final class AppState: @unchecked Sendable {
     }
 
     /// Renders and writes one target's acquisition export (`astrobin`/`csv`/
-    /// `md`) under `.astro_tool/exports/` and reveals it in Finder -- the
-    /// Statisztika tab's per-target "Exportálás…" menu.
+    /// `md`) under `.astro_tool/exports/` and reveals it in Finder --
+    /// `AllTargetsPage`'s per-target row context menu's "Exportálás" submenu.
     func exportAcquisition(target: String, format: ExportFormat) {
         guard let db else { return }
         let cfg = config
@@ -1015,8 +1068,9 @@ final class AppState: @unchecked Sendable {
     }
 
     /// Loads the month-at-a-glance planning calendar (`Planner.month`,
-    /// R7-B5) for the "Hónap" sheet. Never triggered automatically, same
-    /// "time-of-day-sensitive" reasoning as `loadPlan()`.
+    /// R7-B5) for `TonightPage`'s "Következő 30 éjszaka" segment (R9-T4:
+    /// the old standalone "Hónap" sheet is gone). Never triggered
+    /// automatically, same "time-of-day-sensitive" reasoning as `loadPlan()`.
     func loadMonthPlan() {
         guard let db else { return }
         let cfg = config
@@ -1279,6 +1333,17 @@ final class AppState: @unchecked Sendable {
     /// treats that the same as `sourceLabel == "nincs"` (shows the
     /// "Plate-solve…" button either way).
     var targetCoordinateInfo: TargetCoordinateInfo?
+    /// D12: per-target memo of `resolveCoordinateInfo`'s result, so
+    /// re-opening a target already visited this session skips its whole-
+    /// library-files-plus-batched-`fitsMeta` query entirely. Keyed by
+    /// target name; the dictionary's own optional-on-lookup means "not
+    /// computed yet", while the STORED `TargetCoordinateInfo?` is the
+    /// legitimate "resolved, but this target has no coordinate" case --
+    /// hence the double optional. Invalidated wholesale on `runScan()`
+    /// (any target's frames may have changed) and per-target on
+    /// `runPlateSolve(target:)`/`runPlateSolveAll()` (a fresh solve can only
+    /// ever change what would be resolved for the target(s) just solved).
+    private var coordinateInfoCache: [String: TargetCoordinateInfo?] = [:]
     /// One entry per distinct `SessionDetail.setupDescriptor` among the
     /// target's sessions (camera/gyújtótáv/gain/szűrő fingerprint, R6-3) --
     /// the Overview segment pairs each with its session count.
@@ -1345,6 +1410,13 @@ final class AppState: @unchecked Sendable {
         sessionTimeline = nil
         nightHealth = nil
 
+        // D12: looked up on the main actor BEFORE the background hop, so the
+        // detached closure below can stay a plain (non-isolated) function of
+        // its captures -- `nil` here means "never computed for this target",
+        // vs. a present-but-`nil` INNER value meaning "computed, no
+        // coordinate found".
+        let cachedCoordInfo = coordinateInfoCache[target]
+
         let opID = beginOperation("Célpont-részletek betöltése…")
         currentTask = Task { [weak self] in
             guard let self else { return }
@@ -1365,7 +1437,12 @@ final class AppState: @unchecked Sendable {
                     let plan = try Planner.plan(db: db, config: cfg)
                     let site = try Planner.resolveSite(db: db, config: cfg)
                     let calibHealth = try CalibHealth.report(db: db, config: cfg)
-                    let coordInfo = try Self.resolveCoordinateInfo(target: target, db: db)
+                    let coordInfo: TargetCoordinateInfo?
+                    if let cachedCoordInfo {
+                        coordInfo = cachedCoordInfo
+                    } else {
+                        coordInfo = try Self.resolveCoordinateInfo(target: target, db: db)
+                    }
                     let setupDescriptors = Array(Set(sessions.compactMap(\.setupDescriptor))).sorted()
                     var calibs: [SessionCalibration] = []
                     var nightHealthByDate: [String: NightHealthReport] = [:]
@@ -1400,6 +1477,9 @@ final class AppState: @unchecked Sendable {
                 self.resolvedSite = bundle.site
                 self.calibHealth = bundle.calibHealth
                 self.targetCoordinateInfo = bundle.coordInfo
+                if cachedCoordInfo == nil {
+                    self.coordinateInfoCache[target] = bundle.coordInfo
+                }
                 self.targetSetupDescriptors = bundle.setupDescriptors
                 self.targetSessionCalibrations = bundle.calibs
                 self.targetNightHealthByDate = bundle.nightHealthByDate
@@ -1422,11 +1502,10 @@ final class AppState: @unchecked Sendable {
         let allFiles = try db.allFiles(includeMissing: false)
         let targetLights = allFiles.filter { $0.target == target && $0.area == .sessions && $0.role == .light }
 
-        var metaByFileID: [Int64: FITSMetaRecord] = [:]
-        for file in targetLights {
-            guard let id = file.id else { continue }
-            if let meta = try db.fitsMeta(fileID: id) { metaByFileID[id] = meta }
-        }
+        // D12: was one `fitsMeta` query per light frame (thousands for a big
+        // target, on EVERY page open) -- batched into chunked `IN (...)`
+        // queries instead.
+        let metaByFileID = try db.fitsMetaBatch(fileIDs: targetLights.compactMap(\.id))
 
         guard let coord = TargetCoordinates.medianCoordinates(files: targetLights, meta: metaByFileID) else {
             return nil
@@ -1675,8 +1754,9 @@ final class AppState: @unchecked Sendable {
 
     /// Renders and writes one session's HTML night-report card
     /// (`NightReport.write`) under `.astro_tool/reports/`, then opens it in
-    /// the user's default browser -- the Statisztika tab's per-session
-    /// "Éjszaka-riport…" button.
+    /// the user's default browser -- `AllTargetsPage`'s and
+    /// `SessionsSegment`'s per-session row context menu's "Éjszaka-riport
+    /// készítése" item.
     func exportNightReport(target: String, date: String) {
         guard let db else { return }
         let cfg = config
@@ -1704,9 +1784,9 @@ final class AppState: @unchecked Sendable {
 
     /// Renders and writes the full "everything about one target" HTML
     /// report (`TargetReport.write`) under `.astro_tool/reports/`, then
-    /// opens it in the user's default browser -- the Statisztika tab's
-    /// per-target "Célpont-riport" menu item, same open-in-browser
-    /// convention as `exportNightReport`.
+    /// opens it in the user's default browser -- `AllTargetsPage`'s and
+    /// `TargetDetailPage`'s "Célpont-riport készítése" context-menu item,
+    /// same open-in-browser convention as `exportNightReport`.
     func exportTargetReport(target: String) {
         guard let db else { return }
         let cfg = config
@@ -1755,7 +1835,7 @@ final class AppState: @unchecked Sendable {
 
     /// Loads the calibration-HEALTH report (flat discipline, bias inventory,
     /// dark master health) -- shown below the coverage table on the
-    /// Kalibráció fül.
+    /// Kalibráció oldal (`CalibrationPage`).
     func loadCalibHealth() {
         guard let db else { return }
         let cfg = config
@@ -1781,7 +1861,7 @@ final class AppState: @unchecked Sendable {
 
     /// Loads whatever's already persisted in `sensor_profile` -- read-only,
     /// never runs a measurement itself. Shown as the "Szenzor-profilok" list
-    /// on the Kalibráció fül.
+    /// on its own Szenzor-profilok oldal (`SensorPage`, `Page.sensor`).
     func loadSensorProfiles() {
         guard let db else { return }
 
@@ -1834,13 +1914,13 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - DSS ingest (R7-B2)
 
-    /// Runs `DSSIngest.ingest` in the background (Áttekintés
-    /// "DSS-adatok beolvasása" quick button): harvests every tracked
-    /// `<frame>.info.txt`'s star metrics and every tracked `.dssfilelist`'s
-    /// accept/reject decisions already sitting in the library. Refreshes
-    /// `stats`/`sessionDetailsByTarget` afterward (via `loadStats()`) so a
-    /// newly recorded DSS verdict count shows up on the Statisztika fül
-    /// without a separate manual "Frissítés".
+    /// Runs `DSSIngest.ingest` in the background (the toolbar's
+    /// "Műveletek" ▸ "DSS-döntések importálása" menu item): harvests every
+    /// tracked `<frame>.info.txt`'s star metrics and every tracked
+    /// `.dssfilelist`'s accept/reject decisions already sitting in the
+    /// library. Refreshes `stats`/`sessionDetailsByTarget` afterward (via
+    /// `loadStats()`) so a newly recorded DSS verdict count shows up on
+    /// `AllTargetsPage` without a separate manual reload.
     func runIngestDSS() {
         guard let db else { return }
         let cfg = config
@@ -2004,6 +2084,9 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.plateSolveSummary = summary
                 self.progressText = "Plate-solve kész: \(summary.solved)/\(summary.attempted) megoldva"
+                // D12: this target's coordinate may have just been resolved
+                // for the first time (or changed) -- drop its memo entry.
+                self.coordinateInfoCache[target] = nil
                 self.loadStats()
                 self.loadPlan()
             } catch {
@@ -2032,11 +2115,9 @@ final class AppState: @unchecked Sendable {
                 let (summaries, targets) = try await Task.detached(priority: .userInitiated) { [weak self] in
                     let allFiles = try db.allFiles(includeMissing: false)
                     let lights = allFiles.filter { $0.area == .sessions && $0.role == .light }
-                    var metaByFileID: [Int64: FITSMetaRecord] = [:]
-                    for file in lights {
-                        guard let id = file.id else { continue }
-                        if let meta = try db.fitsMeta(fileID: id) { metaByFileID[id] = meta }
-                    }
+                    // D12: batched instead of one `fitsMeta` query per light
+                    // frame across the whole library.
+                    let metaByFileID = try db.fitsMetaBatch(fileIDs: lights.compactMap(\.id))
                     let targetsWithFrames = Set(lights.compactMap(\.target)).sorted()
                     let targets = targetsWithFrames.filter { t in
                         let targetLights = lights.filter { $0.target == t }
@@ -2063,6 +2144,8 @@ final class AppState: @unchecked Sendable {
                     let attempted = summaries.values.reduce(0) { $0 + $1.attempted }
                     self.progressText = "Plate-solve kész: \(solved)/\(attempted) megoldva (\(targets.count) célpont)"
                 }
+                // D12: drop the memo for every target just attempted.
+                for t in targets { self.coordinateInfoCache[t] = nil }
                 self.loadStats()
                 self.loadPlan()
             } catch {
@@ -2074,10 +2157,12 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - Session quality (absolute metrics + night timeline)
 
-    /// Loads `qualitySummaries` for `target` -- called whenever the Minőség
-    /// fül's target picker changes. Clears `sessionTimeline` too, since a
-    /// previously selected session's timeline no longer applies once the
-    /// target itself changes.
+    /// Loads `qualitySummaries` for `target` -- conceptually, whenever the
+    /// Célpont-részletek page's target changes (in practice `loadTargetDetail`
+    /// bundles this into its own single background hop instead of calling
+    /// this directly, per the doc comment on that bundling). Clears
+    /// `sessionTimeline` too, since a previously selected session's timeline
+    /// no longer applies once the target itself changes.
     func loadQualitySummaries(target: String) {
         guard let db else { return }
         let cfg = config
@@ -2102,10 +2187,13 @@ final class AppState: @unchecked Sendable {
     }
 
     /// Loads `exposureAdvice` for `target` (R7-B3 `ExposureAdvisor`) --
-    /// called alongside `loadQualitySummaries` whenever the Minőség fül's
-    /// target picker changes. Never surfaces a "no data" condition as an
-    /// app error -- that comes back as `ExposureAdvice.notAvailableReason`,
-    /// an ordinary (if unhelpful) result, not a failure.
+    /// conceptually, alongside `loadQualitySummaries` whenever the Minőség
+    /// segment's target changes (see that function's doc comment for why
+    /// neither is actually called directly outside `loadTargetDetail`'s own
+    /// bundling / `runRate`'s inline reload). Never surfaces a "no data"
+    /// condition as an app error -- that comes back as
+    /// `ExposureAdvice.notAvailableReason`, an ordinary (if unhelpful)
+    /// result, not a failure.
     func loadExposureAdvice(target: String) {
         guard let db else { return }
         let cfg = config
@@ -2191,6 +2279,17 @@ final class AppState: @unchecked Sendable {
                 self.searchResults = result
                 self.progressText =
                     "Keresés kész: \(result.targets.count + result.sessions.count + result.files.count + result.notes.count) találat"
+                // D22: Enter should open the obvious single answer instead of
+                // making the user click through a results page that only
+                // has one row worth clicking. Simplest honest reading of
+                // "exactly one hit" -- a single target match with no
+                // session/file hits alongside it -- skips the results page
+                // entirely; anything less unambiguous (multiple targets,
+                // or a target plus session/file hits) still lands on
+                // `Page.searchResults` as before.
+                if result.targets.count == 1, result.sessions.isEmpty, result.files.isEmpty {
+                    self.currentPage = .target(result.targets[0].target)
+                }
             } catch {
                 self.handle(error)
             }
@@ -2304,6 +2403,37 @@ final class AppState: @unchecked Sendable {
                     }
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
+
+                // D33: rating every target used to leave `stats` (and, for
+                // whichever target page happens to be open, `frameScores`/
+                // `qualitySummaries`) showing whatever they held BEFORE the
+                // run -- even though rating just changed the numbers behind
+                // all three. Reloaded here, INLINE in this same Task/opID
+                // (not via the public `loadStats()`/`loadFrameScores()`/
+                // `loadQualitySummaries()`, each of which cancels
+                // `currentTask` on its own -- see `runRate`'s doc comment
+                // above for why chaining those back-to-back would race and
+                // silently drop all but the last one).
+                let openTarget: String? = {
+                    if case .target(let name) = self.currentPage { return name }
+                    return nil
+                }()
+                let (newStats, targetReload) = try await Task.detached(priority: .userInitiated) {
+                    let newStats = try StatsQueries.perTarget(db: db, config: cfg)
+                    var targetReload: ([FrameScore], [SessionQualitySummary])?
+                    if let openTarget {
+                        let scores = try Rater.cachedScores(target: openTarget, date: nil, db: db, config: cfg)
+                        let summaries = try SessionQuality.summaries(target: openTarget, db: db, config: cfg)
+                        targetReload = (scores, summaries)
+                    }
+                    return (newStats, targetReload)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.stats = newStats
+                if let targetReload {
+                    self.frameScores = targetReload.0
+                    self.qualitySummaries = targetReload.1
+                }
                 self.progressText = "Pontozás kész: \(targets.count) célpont"
             } catch {
                 self.handle(error)
@@ -2448,11 +2578,20 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - First-run / staleness
 
+    /// D31: bumped by `mountObserver`/`activationObserver` -- has no meaning
+    /// of its own, its only job is to be a stored, `@Observable`-tracked
+    /// property that `scanIsStale` reads, so that bumping it marks every
+    /// view that read `scanIsStale` as needing to re-evaluate it, even
+    /// though `lastScanDate` (the value the 24h check actually depends on)
+    /// didn't itself change.
+    var staleCheckTick: Int = 0
+
     /// `true` once more than 24h have passed since `lastScanDate` -- drives
     /// the shell's dismissible "Új fájlok lehetnek. [Beolvasás]" banner
     /// (B6). `false` (no banner) before any scan has ever completed for
     /// this root, same "don't guess" stance used elsewhere in this file.
     var scanIsStale: Bool {
+        _ = staleCheckTick
         guard let lastScanDate else { return false }
         return Date().timeIntervalSince(lastScanDate) > 24 * 3600
     }

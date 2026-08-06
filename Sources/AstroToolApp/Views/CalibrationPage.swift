@@ -110,11 +110,29 @@ struct CalibrationPage: View {
                     }
                 }
 
-                Text("Lefedettség").font(.headline)
+                HStack {
+                    Text("Lefedettség").font(.headline)
+                    Spacer()
+                    MetricInfoButton(metrics: Self.coverageMetricInfo)
+                }
                 coverageTable
             }
         }
     }
+
+    /// D32: this table's computed-metric columns, explained -- same
+    /// "one button per table" `MetricInfoButton` pattern the target-detail
+    /// segments already established.
+    private static let coverageMetricInfo: [MetricInfoButton.Metric] = [
+        .init(
+            title: "Kor (nap)",
+            explanation: "A hozzárendelt master-kalibrációs fájl kora napokban, a light-keretek dátumához mérve. Mikor hazudik: hiányzó masternél „-”, és a kor önmagában nem jelent elavultságot -- azt a küszöb (napok) dönti el, ami a „Állapot” oszlopba fut bele."
+        ),
+        .init(
+            title: "Állapot",
+            explanation: "„friss” = van illő master és nem elavult; „⚠️ elavult” = a kora meghaladja a beállított küszöböt; „hiányzik” = nincs illő master-kalibráció. Mikor hazudik: a küszöb (Beállítások ▸ Kalibráció) évszaktól/szenzor öregedésétől függetlenül fix napszám -- egy technikailag még jó master is elavultnak jelölhető, ha a küszöb szigorúbb, mint amire tényleg szükség van."
+        ),
+    ]
 
     private func actionCard(_ need: CalibNeed) -> some View {
         HStack(alignment: .top, spacing: 12) {

@@ -22,11 +22,21 @@ struct ThumbnailCell: View {
         Group {
             if let image {
                 Image(nsImage: image).resizable().scaledToFit()
-            } else {
+            } else if attempted {
+                // D26: generation finished and came up empty (e.g. a FITS
+                // file with no QuickLook plugin installed) -- the generic
+                // placeholder icon, distinct from still-loading below.
                 Image(systemName: "photo")
                     .font(.system(size: size * 0.5))
                     .foregroundStyle(.secondary)
                     .opacity(0.35)
+            } else {
+                // D26: `attempted` used to be set but never read -- a
+                // loading row looked identical to a row that will never
+                // have a thumbnail. `ProgressView` here, the icon above,
+                // once `load()`'s callback actually reports back.
+                ProgressView()
+                    .controlSize(.small)
             }
         }
         .frame(width: size, height: size)

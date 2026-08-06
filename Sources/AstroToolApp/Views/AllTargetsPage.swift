@@ -1,6 +1,7 @@
 import AppKit
 import AstroCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// One row of the hierarchical stats `Table`: either a target roll-up (with
 /// its sessions as children) or a single session detail nested under one.
@@ -66,6 +67,13 @@ struct AllTargetsPage: View {
     /// The target (and, for a session row, its date) currently shown in
     /// `AddTagSheet` (R9-D8/d) -- `date == nil` means a target-level tag.
     @State private var addingTag: AddTagTarget?
+    /// D23: a root-relative subpath just dropped onto this page, awaiting
+    /// the confirmation dialog before `appState.runScan(subpath:)` actually
+    /// runs -- `nil` means no dialog is up.
+    @State private var pendingScanSubpath: String?
+    /// Drop-highlight state for the folder-drop-to-scope-a-scan affordance,
+    /// same visual language `WelcomeView`'s root-folder drop target uses.
+    @State private var isDropTargeted = false
 
     /// `true` once `AppState.plan` has loaded and reports no resolvable
     /// coordinate for `target` at all -- gates the "Plate-solve…" action so
@@ -183,6 +191,34 @@ struct AllTargetsPage: View {
             }
         }
         .padding()
+        .background(isDropTargeted ? Color.accentColor.opacity(0.08) : Color.clear)
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.accentColor, lineWidth: 3, antialiased: true)
+                    .padding(8)
+            }
+        }
+        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+            handleFolderDrop(providers)
+        }
+        .confirmationDialog(
+            "Almappa beolvasása",
+            isPresented: Binding(
+                get: { pendingScanSubpath != nil },
+                set: { if !$0 { pendingScanSubpath = nil } }
+            )
+        ) {
+            Button("Beolvasás") {
+                if let subpath = pendingScanSubpath {
+                    appState.runScan(subpath: subpath)
+                }
+                pendingScanSubpath = nil
+            }
+            Button("Mégse", role: .cancel) { pendingScanSubpath = nil }
+        } message: {
+            Text("Csak ezt az almappát olvassam be? \(pendingScanSubpath ?? "")")
+        }
         .onAppear {
             // R9-D3: `loadStats()`/`loadPlan()` fired back-to-back here used
             // to race each other's `currentTask` (see `loadDashboardData`'s
@@ -513,6 +549,44 @@ struct AllTargetsPage: View {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
+    // MARK: - Folder drop -> scoped scan (D23/B13)
+
+    /// Same `NSItemProvider`/`.fileURL` drop-handling shape `WelcomeView` uses
+    /// for "drop a folder to pick the root" -- here a dropped folder scopes a
+    /// rescan instead of choosing a new root.
+    private func handleFolderDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+        guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else { return false }
+
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            guard let url else { return }
+            Task { @MainActor in
+                handleDroppedFolder(url)
+            }
+        }
+        return true
+    }
+
+    /// Maps a dropped folder to a root-relative subpath and opens the
+    /// confirmation dialog -- rejects (via `appState.lastError`) anything
+    /// that isn't actually under the configured root, since a scan can only
+    /// ever touch the library, never some unrelated folder the user happened
+    /// to drag in.
+    private func handleDroppedFolder(_ url: URL) {
+        let rootPath = URL(fileURLWithPath: appState.config.rootPath, isDirectory: true).standardizedFileURL.path
+        let droppedPath = url.standardizedFileURL.path
+
+        guard droppedPath != rootPath else {
+            appState.lastError = "Ez a könyvtár gyökere -- ehhez a \u{201E}Beolvasás\u{201D} gomb való."
+            return
+        }
+        guard droppedPath.hasPrefix(rootPath + "/") else {
+            appState.lastError = "A mappa nincs a könyvtár gyökere alatt: \(droppedPath)"
+            return
+        }
+        pendingScanSubpath = String(droppedPath.dropFirst(rootPath.count + 1))
+    }
+
     /// Hover tooltip on a target row's name cell: the usable-vs-gross
     /// breakdown behind the headline integration number, so a user who sees
     /// "42.55h" shrink to "29.77h" after upgrading can see WHY without
@@ -539,10 +613,12 @@ struct AllTargetsPage: View {
     }
 
     /// "3 stack, legjobb: 106×120 s (3:32)" (R8-1) -- the compact one-line
-    /// discovered-stacks summary shared by the target tooltip and the
-    /// "Stackek…" popover's header. The "best" stack is the first one in
-    /// `report.stacks` that has a parsed `totalSecondsFromName` -- the list
-    /// is already sorted that way (`StackDiscovery.discover`'s own
+    /// discovered-stacks summary in the target row's hover tooltip
+    /// (`targetBreakdownTooltip`; R9-T3 removed the old "Stackek…" popover
+    /// this used to feed -- "Kész stackek…" now just navigates straight to
+    /// `TargetDetailPage`'s Stackek segment). The "best" stack is the first
+    /// one in `report.stacks` that has a parsed `totalSecondsFromName` --
+    /// the list is already sorted that way (`StackDiscovery.discover`'s own
     /// convention).
     private func stacksSummaryLine(_ report: TargetStacks) -> String {
         var line = "\(report.stacks.count) stack"
@@ -566,8 +642,10 @@ struct AllTargetsPage: View {
     }
 
     /// "3 panel: A 2:10 · B 1:50 · C 0:35 ⚠️ kiegyenlítetlen" -- the compact
-    /// one-line mosaic summary shared by the target tooltip and the
-    /// "Panelek…" popover's header.
+    /// one-line mosaic summary in the target row's hover tooltip
+    /// (`targetBreakdownTooltip`; same "old popover replaced by straight
+    /// navigation" history as `stacksSummaryLine` above -- "Mozaik-panelek…"
+    /// now just opens `TargetDetailPage`).
     private func panelsSummaryLine(_ report: PanelReport) -> String {
         let perPanel = report.panels.map { "\($0.label) \(formatDuration($0.integrationSeconds))" }.joined(separator: " · ")
         var line = "\(report.panels.count) panel: \(perPanel)"

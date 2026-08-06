@@ -203,6 +203,41 @@ történik.
   Áttekintés "Szenzor mérése…" gombja a navigáció mellett a mérést is
   elindítja. `docs/features.html` átírva a jelenlegi sidebar-IA szerint.
 
+- **R9 javítókör 2** (re-review D12-D33): ÚJ `Database.fitsMetaBatch(fileIDs:)`
+  (500-as chunkolt `WHERE file_id IN (...)`) a célpont-oldal megnyitásakor és
+  a "Plate-solve mindenre" futáskor korábban file-onként lefutó `fitsMeta`
+  hívás-sorozat (a legnagyobb célpontnál ~9000 lekérdezés) helyett, plusz
+  per-target koordináta-memo (`AppState.coordinateInfoCache`) -- egy már
+  megnyitott célpont újranyitása most azonnali. Helyszín mentése a
+  Beállításokban most újraszámolja a betöltött tervet (vagy a
+  `resolvedSite`-ot, ha még nem volt terv-betöltés) -- korábban a terv
+  változatlan maradt mentés után. A duplikált `describeSettingsError` törölve
+  a `LocationSettingsView`-ból. "Kulmináló" → "Kulminál" a "Ma este"
+  terv-táblában. "Mappastruktúra súgó" gomb a hozzáférés-megtagadva/kötet-
+  hiányzik képernyő mindkét változatán. A kereső fájl-találatai mutatják a
+  fájl `kind`-ját (capsule a méret mellett). Enter a keresőben egyenesen a
+  célpont-oldalra navigál, ha a keresés pontosan egy célpontot talál (és
+  session/fájl-találat nincs mellette). ÚJ `AppState.runScan(subpath:)` +
+  "Minden célpont" oldal mappa-drop -- egy Finderből húzott almappa
+  megerősítés után szűkített (nem teljes-könyvtár) beolvasást indít. A
+  Stackek szegmens "Műveletek" oszlopa törölve, a három művelet
+  (Megnyitás/Finderben/Nagy előnézet) sor-jobbklikk-menübe került. A sidebar
+  "Naptár"/"Takarítás" sora (és ⌘2/⌘6) ismét kiválasztás-highlightol --
+  `Page` ÚJ `.calendar`/`.cleanup` esetei valódi routolt oldalak, nem csak
+  egy `Button`-oldalhatás. `ThumbnailCell` betöltés közben `ProgressView`-t
+  mutat, csak a generálás befejezése után vált a "nincs kép" ikonra.
+  `FirstScanView` mappaszerkezet-ellenőrzése kikerült a view body-ból egy
+  `.onAppear`-be. 22 elavult doc-comment retargetelve a törölt fülek/
+  popoverek/oldalak helyett a jelenlegiekre (`AppState.swift`,
+  `AllTargetsPage.swift`). Az app most figyeli a `didBecomeActive`
+  eseményt is (a kötet-csatlakozás mellett) -- a 24 órás "Új fájlok
+  lehetnek" banner ezután akkor is megjelenik, ha az app nyitva maradt
+  éjszakán át. 4 további táblán ⓘ metrika-magyarázat gomb ("Ma este"
+  terv-tábla, Kalibráció lefedettség-tábla, Szenzor-profilok tábla, Audit
+  Takarítható tábla). "Minden célpont pontozása…" a futás végén újratölti a
+  statisztikákat (és a nyitva lévő célpont-oldal pontszámait/minőség-
+  összegzését, ha van ilyen) -- korábban semmit sem frissített.
+
 ## [0.8.0] - 2026-08-05
 
 ### Added

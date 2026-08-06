@@ -133,6 +133,15 @@ struct SearchResultsPage: View {
                 Text(hit.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
             }
             Spacer()
+            // D21: `hit.kind` (fits/xisf/jpg/...) used to be fetched by the
+            // search and then silently dropped -- a capsule next to the size,
+            // same visual language `AllTargetsPage`'s session-row badges use.
+            Text(hit.kind)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Color.secondary.opacity(0.15)))
             Text(TDFormat.bytes(hit.sizeBytes)).font(.caption).foregroundStyle(.secondary)
             if let parentTarget {
                 Button("Célpont") { appState.currentPage = .target(parentTarget) }

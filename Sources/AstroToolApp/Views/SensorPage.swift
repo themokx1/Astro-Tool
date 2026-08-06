@@ -237,8 +237,31 @@ struct SensorProfileTable: View {
             .background(isStale(row.profile) ? Color.yellow.opacity(0.25) : Color.clear)
     }
 
+    /// D32: this table's computed-metric columns, explained -- same
+    /// "one button per table" `MetricInfoButton` pattern the target-detail
+    /// segments already established. Explicitly covers the "mikor hazudik"
+    /// caveats `SensorProfiler.measure`'s own doc comments call out.
+    private static let metricInfo: [MetricInfoButton.Metric] = [
+        .init(
+            title: "Leolvasási zaj (e⁻)",
+            explanation: "Két BIAS-keret különbségének szórásából számolt zaj, elektronra váltva az EGAIN-nel. Mikor hazudik: „n/a” ha kevesebb, mint 2 BIAS-keret van ehhez a kombóhoz, vagy nincs EGAIN; egyetlen rossz/kozmikus-sugár-foltos BIAS-pár is elronthatja."
+        ),
+        .init(
+            title: "Dark (e⁻/s)",
+            explanation: "A DARK-keret és a BIAS-szint különbsége elektron/másodpercre normálva. Mikor hazudik: „n/a” EGAIN vagy DARK-keret nélkül; hőmérséklet-függő, egy másik szenzor-hőfokon mért dark-áram nem ugyanaz."
+        ),
+        .init(
+            title: "EGAIN",
+            explanation: "Elektron/ADU átváltási tényező, a FITS-fejlécből (EGAIN kulcs) vagy a BIAS-keretek szórásából becsülve. Mikor hazudik: „n/a” ha sem a fejléc, sem a becslés nem ad értéket; egy hibás gain-beállítás a kamerán ezt is elcsúsztatja."
+        ),
+    ]
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Spacer()
+                MetricInfoButton(metrics: Self.metricInfo)
+            }
             Table(rows) {
                 TableColumn("Kamera") { row in cell(row, text: row.profile.camera) }
                     .width(min: 100, ideal: 140)

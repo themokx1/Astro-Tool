@@ -71,6 +71,10 @@ struct AccessDeniedView: View {
                 }
                 Button("Újrapróbálás") { onRetry() }
                 Button("Másik mappa választása…") { appState.chooseRoot() }
+                Button("Mappastruktúra súgó") {
+                    NotificationCenter.default.post(name: .showFolderStructureHelp, object: nil)
+                }
+                .buttonStyle(.link)
             }
         }
         .padding(48)

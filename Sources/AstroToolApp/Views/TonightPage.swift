@@ -97,7 +97,13 @@ struct TonightPage: View {
                     } else if plan.allSatisfy({ $0.raDeg == nil }) {
                         noCoordinatesState
                     } else {
-                        planTable
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Spacer()
+                                MetricInfoButton(metrics: Self.planMetricInfo)
+                            }
+                            planTable
+                        }
                     }
                 } else if appState.isBusy {
                     ProgressView("Terv számítása…")
@@ -284,6 +290,28 @@ struct TonightPage: View {
         }.sorted(using: sortOrder)
     }
 
+    /// D32: this table's computed-metric columns, explained -- same
+    /// "one button per table" `MetricInfoButton` pattern
+    /// `SessionsSegment`/`QualitySegment` already established.
+    private static let planMetricInfo: [MetricInfoButton.Metric] = [
+        .init(
+            title: "Max. mag.",
+            explanation: "A célpont legnagyobb magassága fokban a ma esti látszó ívén (nem fényesség!). Mikor hazudik: helyszín nélkül a FITS-fejlécekből becsült, pontatlanabb koordinátát használ."
+        ),
+        .init(
+            title: "Látható",
+            explanation: "A célpont horizont feletti (vagy egyéb minimum-magasság feletti) ideje a mai éjszaka sötét szakaszában, óra:perc formátumban. Mikor hazudik: koordináta vagy helyszín nélkül „-”."
+        ),
+        .init(
+            title: "Hold",
+            explanation: "A Hold megvilágítottsága százalékban, plusz a célponttól mért szögtávolsága fokban. Mikor hazudik: nagy szögtávolságnál a megvilágítottság önmagában túlbecsülheti a valós zavarást."
+        ),
+        .init(
+            title: "Döntés",
+            explanation: "Összesítő ajánlás („ma jó”/„Hold zavar”/„nem látható ma éjjel”/„túl alacsony”/…) a magasság, a láthatósági ablak és a Hold-közelség alapján. Mikor hazudik: csak MA éjjelre szól, egy korábban jó célpont holnap már más döntést kaphat."
+        ),
+    ]
+
     private var planTable: some View {
         Table(planRows, selection: $selectedPlanTarget, sortOrder: $sortOrder) {
             TableColumn("Célpont", value: \.displayName) { row in targetCell(row) }
@@ -298,7 +326,7 @@ struct TonightPage: View {
                 .width(110)
             TableColumn("Hiányzik", value: \.missingSortKey) { row in missingCell(row) }
                 .width(90)
-            TableColumn("Kulmináló", value: \.culminationSortKey) { row in
+            TableColumn("Kulminál", value: \.culminationSortKey) { row in
                 Text(row.plan.culminationLocal ?? "-")
             }
             .width(80)

@@ -107,17 +107,14 @@ struct SidebarView: View {
         List(selection: $appState.currentPage) {
             Section {
                 navRow("Ma este", systemImage: "moon.stars.fill", page: .tonight, badgeCount: tonightBadgeCount)
-                // R9-T4: the calendar is now `TonightPage`'s own segment,
-                // not a separate page -- same "plain `Button` that sets a
-                // segment before navigating" pattern the "Takarítás" row
-                // below already uses for `AppState.auditSegment`.
-                Button {
-                    appState.tonightSegment = .calendar
-                    appState.currentPage = .tonight
-                } label: {
-                    navRowLabel("Naptár", systemImage: "calendar")
-                }
-                .buttonStyle(.plain)
+                // D25: a normal tag-selectable row again (was a plain
+                // `Button` that set `tonightSegment` as a tap side effect
+                // and navigated to `.tonight`, which meant this row never
+                // highlighted as selected) -- `Page.calendar` is now its own
+                // case, so `List(selection:)`'s tag-matching alone gives the
+                // correct highlight, and `MainShellView.page(for:)` is what
+                // preselects the calendar segment on that route.
+                navRow("Naptár", systemImage: "calendar", page: .calendar)
             }
 
             Section("KÖNYVTÁR") {
@@ -136,21 +133,14 @@ struct SidebarView: View {
                     "Audit", systemImage: "checkmark.shield", page: .audit,
                     badgeCount: appState.auditErrorBadgeCount, badgeRed: appState.auditErrorBadgeCount > 0
                 )
-                // R9-T2: routes to the Audit page's "Takarítható" segment
-                // (rather than a standalone page) -- `CleanupSummary` groups
-                // ARE the Audit page's third segment now, per A.5. A plain
-                // `Button` (not a `navRow`/`.tag`) because this row's tap
-                // needs a side effect (preselecting the segment) beyond
-                // what `List(selection:)`'s tag-based routing alone gives;
-                // the "Audit" row above still highlights whenever
-                // `currentPage == .audit`, tag-matched as usual.
-                Button {
-                    appState.auditSegment = .cleanable
-                    appState.currentPage = .audit
-                } label: {
-                    navRowLabel("Takarítás", systemImage: "trash", badgeText: cleanupBadgeText)
-                }
-                .buttonStyle(.plain)
+                // D25: same fix as "Naptár" above -- `Page.cleanup` is its
+                // own case now, so this is a normal tag-selectable row
+                // (was a plain `Button` that never highlighted as selected)
+                // routing the Audit page's "Takarítható" segment;
+                // `MainShellView.page(for:)` preselects it. The "Audit" row
+                // above still highlights whenever `currentPage == .audit`
+                // specifically, unaffected by this.
+                navRow("Takarítás", systemImage: "trash", page: .cleanup, badgeText: cleanupBadgeText)
             }
 
             Section("ESZKÖZÖK") {

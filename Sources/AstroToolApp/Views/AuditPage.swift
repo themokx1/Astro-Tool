@@ -452,6 +452,16 @@ struct AuditPage: View {
         }
     }
 
+    /// D32: this table's one computed-metric column, explained -- same
+    /// "one button per table" `MetricInfoButton` pattern the target-detail
+    /// segments already established.
+    private static let cleanableMetricInfo: [MetricInfoButton.Metric] = [
+        .init(
+            title: "Méret",
+            explanation: "A kategória alá eső fájlok összesített, karanténba mozgatással felszabadítható helye. Mikor hazudik: a limit (Limit lépegető) csak a MEGJELENÍTETT útvonalak számát korlátozza, a méret mindig a teljes kategóriáé -- ez sosem alábecsült."
+        ),
+    ]
+
     private var cleanableSegment: some View {
         VStack(alignment: .leading, spacing: 8) {
             quarantineBanner
@@ -459,6 +469,10 @@ struct AuditPage: View {
             if cleanupRows.isEmpty {
                 Text("Nincs takarítható tétel.").foregroundStyle(.secondary)
             } else {
+                HStack {
+                    Spacer()
+                    MetricInfoButton(metrics: Self.cleanableMetricInfo)
+                }
                 Table(cleanupRows, children: \.children) {
                     TableColumn("Kategória") { row in cleanupCategoryCell(row) }
                         .width(min: 220, ideal: 300)

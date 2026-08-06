@@ -135,31 +135,29 @@ struct LocationSettingsView: View {
             try newConfig.save(using: writeGuard)
             appState.config = newConfig
             saveMessage = "Mentve."
+            // D13: the Ma este/Naptár plan (kulminál/magasság/szürkület) is
+            // computed from the site at load time -- a save here used to
+            // leave whatever was already on screen stale until the next
+            // unrelated reload. Recompute it (respecting a date-scoped
+            // "Ma este" view via `planDate`) if a plan's ever been loaded
+            // this session; otherwise just refresh the "Automatikus"
+            // resolved-site display for THIS tab.
+            if appState.plan != nil {
+                appState.loadPlan(date: appState.planDate)
+            } else {
+                // No plan loaded yet this session (Ma este never opened) --
+                // no `Planner.resolveSite` DB round trip needed, `newConfig
+                // .site` already IS the answer either way: the manually
+                // entered value, or (automatic) the empty `SiteRule()` that
+                // makes `resolvedLatitudeText`/`resolvedLongitudeText` show
+                // "-" honestly until a real plan load resolves it from the
+                // library median.
+                appState.resolvedSite = newConfig.site
+            }
         } catch let error as AstroError {
-            saveError = describe(error)
+            saveError = describeSettingsError(error)
         } catch {
             saveError = "\(error)"
-        }
-    }
-
-    private func describe(_ error: AstroError) -> String {
-        switch error {
-        case .accessDenied(let path):
-            return "Hozzáférés megtagadva: \(path)"
-        case .volumeNotMounted(let path):
-            return "A kötet nincs csatlakoztatva: \(path)"
-        case .pathNotFound(let path):
-            return "Az útvonal nem található: \(path)"
-        case .writeForbidden(let path):
-            return "Írás nem engedélyezett: \(path)"
-        case .corruptFITS(let path, let reason):
-            return "Sérült FITS fájl (\(path)): \(reason)"
-        case .databaseError(let message):
-            return "Adatbázis hiba: \(message)"
-        case .sirilNotFound(let path):
-            return "Siril nem található itt: \(path)"
-        case .invalidInput(let reason):
-            return "Érvénytelen bemenet: \(reason)"
         }
     }
 }

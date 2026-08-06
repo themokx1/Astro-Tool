@@ -62,12 +62,11 @@ struct AstroToolCommands: Commands {
         CommandGroup(after: .toolbar) {
             Button("Ma este") { AppState.shared?.currentPage = .tonight }
                 .keyboardShortcut("1", modifiers: .command)
-            // R9-T4: the calendar is `TonightPage`'s own segment now, not a
-            // separate page -- preselect it before navigating, same pattern
-            // `SidebarView`'s "Naptár" row uses.
+            // D25: `Page.calendar` is its own case -- `MainShellView.page(for:)`
+            // is what preselects `tonightSegment`, same pattern `SidebarView`'s
+            // "Naptár" row now uses too.
             Button("Naptár") {
-                AppState.shared?.tonightSegment = .calendar
-                AppState.shared?.currentPage = .tonight
+                AppState.shared?.currentPage = .calendar
             }
             .keyboardShortcut("2", modifiers: .command)
             Button("Minden célpont") { AppState.shared?.currentPage = .allTargets }
@@ -76,13 +75,11 @@ struct AstroToolCommands: Commands {
                 .keyboardShortcut("4", modifiers: .command)
             Button("Audit") { AppState.shared?.currentPage = .audit }
                 .keyboardShortcut("5", modifiers: .command)
-            // R9-D9: same "preselect a segment, then navigate" pattern
-            // `SidebarView`'s "Takarítás" row already established for
-            // `AppState.auditSegment` -- previously only reachable via the
-            // sidebar, with no menu-bar/keyboard equivalent at all.
+            // D25: `Page.cleanup` is its own case -- same
+            // `MainShellView.page(for:)`-preselects-the-segment shape as
+            // "Naptár"/`.calendar` above.
             Button("Takarítás") {
-                AppState.shared?.auditSegment = .cleanable
-                AppState.shared?.currentPage = .audit
+                AppState.shared?.currentPage = .cleanup
             }
             .keyboardShortcut("6", modifiers: .command)
             Button("Szenzor") { AppState.shared?.currentPage = .sensor }

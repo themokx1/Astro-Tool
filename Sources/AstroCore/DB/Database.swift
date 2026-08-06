@@ -1,5 +1,17 @@
 import Foundation
 
+extension Array {
+    /// Splits into consecutive slices of at most `size` elements each --
+    /// used to keep `WHERE x IN (...)` queries under SQLite's bound-parameter
+    /// limit (default 999) for batch lookups like `fitsMetaBatch`.
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else { return [self] }
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0 ..< Swift.min($0 + size, count)])
+        }
+    }
+}
+
 // MARK: - Record types
 
 /// A scanned filesystem entry, root-relative to the library. One row per
@@ -870,40 +882,68 @@ public final class Database: @unchecked Sendable {
         }
     }
 
+    private static let fitsMetaColumns = """
+    file_id, exptime, gain, "offset", set_temp, ccd_temp, instrume, focallen, filter, date_obs, imagetyp, naxis1, naxis2, xpixsz, egain, header_json, solved_ra, solved_dec, solved_scale_arcsec, solved_rotation_deg
+    """
+
+    private static func fitsMetaRecord(from row: SQLiteRow) -> FITSMetaRecord {
+        FITSMetaRecord(
+            fileID: row.int64(0) ?? 0,
+            exptime: row.double(1),
+            gain: row.double(2),
+            offset: row.double(3),
+            setTemp: row.double(4),
+            ccdTemp: row.double(5),
+            instrume: row.string(6),
+            focallen: row.double(7),
+            filter: row.string(8),
+            dateObs: row.string(9),
+            imagetyp: row.string(10),
+            naxis1: row.int64(11).map(Int.init),
+            naxis2: row.int64(12).map(Int.init),
+            xpixsz: row.double(13),
+            egain: row.double(14),
+            headerJSON: row.string(15),
+            solvedRA: row.double(16),
+            solvedDec: row.double(17),
+            solvedScaleArcsec: row.double(18),
+            solvedRotationDeg: row.double(19)
+        )
+    }
+
     public func fitsMeta(fileID: Int64) throws -> FITSMetaRecord? {
         try withLock {
             var record: FITSMetaRecord?
             try db.query(
-                """
-                SELECT file_id, exptime, gain, "offset", set_temp, ccd_temp, instrume, focallen, filter, date_obs, imagetyp, naxis1, naxis2, xpixsz, egain, header_json, solved_ra, solved_dec, solved_scale_arcsec, solved_rotation_deg
-                FROM fits_meta WHERE file_id = ?;
-                """,
+                "SELECT \(Self.fitsMetaColumns) FROM fits_meta WHERE file_id = ?;",
                 bind: [.int(fileID)]
             ) { row in
-                record = FITSMetaRecord(
-                    fileID: row.int64(0) ?? 0,
-                    exptime: row.double(1),
-                    gain: row.double(2),
-                    offset: row.double(3),
-                    setTemp: row.double(4),
-                    ccdTemp: row.double(5),
-                    instrume: row.string(6),
-                    focallen: row.double(7),
-                    filter: row.string(8),
-                    dateObs: row.string(9),
-                    imagetyp: row.string(10),
-                    naxis1: row.int64(11).map(Int.init),
-                    naxis2: row.int64(12).map(Int.init),
-                    xpixsz: row.double(13),
-                    egain: row.double(14),
-                    headerJSON: row.string(15),
-                    solvedRA: row.double(16),
-                    solvedDec: row.double(17),
-                    solvedScaleArcsec: row.double(18),
-                    solvedRotationDeg: row.double(19)
-                )
+                record = Self.fitsMetaRecord(from: row)
             }
             return record
+        }
+    }
+
+    /// D12: batch form of `fitsMeta`, used by call sites that used to fetch
+    /// per-file in a loop (target-page open, plate-solve-all) -- one query
+    /// per 500 ids instead of one query per file. Missing ids are simply
+    /// absent from the returned dictionary (same "no row" semantics as the
+    /// single-file form returning `nil`).
+    public func fitsMetaBatch(fileIDs: [Int64]) throws -> [Int64: FITSMetaRecord] {
+        guard !fileIDs.isEmpty else { return [:] }
+        return try withLock {
+            var result: [Int64: FITSMetaRecord] = [:]
+            for chunk in fileIDs.chunked(into: 500) {
+                let placeholders = chunk.map { _ in "?" }.joined(separator: ", ")
+                try db.query(
+                    "SELECT \(Self.fitsMetaColumns) FROM fits_meta WHERE file_id IN (\(placeholders));",
+                    bind: chunk.map(SQLiteValue.int)
+                ) { row in
+                    let record = Self.fitsMetaRecord(from: row)
+                    result[record.fileID] = record
+                }
+            }
+            return result
         }
     }
 

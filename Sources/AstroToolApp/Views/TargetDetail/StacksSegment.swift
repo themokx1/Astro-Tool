@@ -41,6 +41,12 @@ struct StacksSegment: View {
     /// toolbar button always resolves to a concrete session first (directly
     /// when there's only one, via a picker menu otherwise).
     @State private var stackListingSession: LinkingSession?
+    /// D24: wired into `table`'s `selection:`/`.contextMenu(forSelectionType:)`
+    /// -- same row-scoped context-menu pattern `AllTargetsPage.statsTable`/
+    /// `SessionsSegment.table` already use, replacing the old always-visible
+    /// "Műveletek" column (which only ever had room for icon buttons, and
+    /// duplicated its own one-item `.contextMenu`).
+    @State private var selection: StackGroupRow.ID?
 
     private var groups: [StackGroup] { appState.stackGroupsByTarget[target] ?? [] }
     private var sessionDates: [String] { appState.stats.first { $0.target == target }?.sessionDates ?? [] }
@@ -116,7 +122,7 @@ struct StacksSegment: View {
     }
 
     private var table: some View {
-        Table(rows, children: \.children) {
+        Table(rows, children: \.children, selection: $selection) {
             TableColumn("Kép") { row in ThumbnailCell(url: url(of: row)) }
                 .width(36)
             TableColumn("Név") { row in nameCell(row) }
@@ -131,10 +137,25 @@ struct StacksSegment: View {
                 .width(min: 70, ideal: 90)
             TableColumn("Dátum") { row in Text(date(of: row) ?? "-") }
                 .width(min: 90, ideal: 100)
-            TableColumn("Műveletek") { row in actionsCell(row) }
-                .width(min: 90, ideal: 110)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
+        // D24: every action a row can do (open/reveal/preview) now lives
+        // here instead of a dedicated "Műveletek" column of icon buttons --
+        // same row-scoped context-menu pattern `AllTargetsPage.statsTable`
+        // uses.
+        .contextMenu(forSelectionType: StackGroupRow.ID.self) { ids in
+            if let id = ids.first, let row = row(withID: id) {
+                rowContextMenuItems(row)
+            }
+        }
+    }
+
+    private func row(withID id: StackGroupRow.ID) -> StackGroupRow? {
+        for row in rows {
+            if row.id == id { return row }
+            if let child = row.children?.first(where: { $0.id == id }) { return child }
+        }
+        return nil
     }
 
     // MARK: - Column: Név
@@ -238,38 +259,13 @@ struct StacksSegment: View {
         return "\(frames)×\(sub) s"
     }
 
-    // MARK: - Column: Műveletek
+    // MARK: - Row context menu (D24, replaces the old "Műveletek" column)
 
     @ViewBuilder
-    private func actionsCell(_ row: StackGroupRow) -> some View {
-        HStack(spacing: 6) {
-            Button {
-                NSWorkspace.shared.open(url(of: row))
-            } label: {
-                Image(systemName: "arrow.up.forward.app")
-            }
-            .buttonStyle(.borderless)
-            .help("Megnyitás")
-
-            Button {
-                NSWorkspace.shared.activateFileViewerSelecting([url(of: row)])
-            } label: {
-                Image(systemName: "folder")
-            }
-            .buttonStyle(.borderless)
-            .help("Finderben")
-
-            Button {
-                QuickLookController.shared.preview(url(of: row))
-            } label: {
-                Image(systemName: "eye")
-            }
-            .buttonStyle(.borderless)
-            .help("Nagy előnézet")
-        }
-        .contextMenu {
-            Button("Nagy előnézet") { QuickLookController.shared.preview(url(of: row)) }
-        }
+    private func rowContextMenuItems(_ row: StackGroupRow) -> some View {
+        Button("Megnyitás") { NSWorkspace.shared.open(url(of: row)) }
+        Button("Finderben") { NSWorkspace.shared.activateFileViewerSelecting([url(of: row)]) }
+        Button("Nagy előnézet") { QuickLookController.shared.preview(url(of: row)) }
     }
 
     // MARK: - Row field accessors
