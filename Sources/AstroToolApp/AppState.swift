@@ -423,6 +423,30 @@ final class AppState: @unchecked Sendable {
     /// `onAppear`" stance `monthPlan` takes.
     var nights: [NightRow]?
 
+    // MARK: - Weather (R10-B6)
+
+    /// Opt-in Open-Meteo cloud-cover forecast for `resolvedSite`'s
+    /// coordinate -- `nil` until `loadWeather()` has ever fetched
+    /// successfully (or forever, when the feature is off or no site is
+    /// resolved). The fetch itself lives entirely in `WeatherService` (app
+    /// layer only, see its doc comment) -- AstroCore never makes a network
+    /// call.
+    var nightForecast: NightForecast?
+    /// `nightForecast`'s hours bucketed into one min/max/mean summary per
+    /// local night, keyed by "yyyy-MM-dd" -- backs the calendar segment's
+    /// "Felhő" column. Empty under the same conditions as `nightForecast`
+    /// being `nil` (a date simply missing from this dictionary means "no
+    /// forecast for that night", which the calendar renders as "—").
+    var weatherDailySummaries: [String: DailyCloudSummary] = [:]
+    /// Set when `loadWeather()`'s fetch fails AND there was no cached
+    /// forecast to fall back on (the only case `WeatherService.fetch`
+    /// actually throws) -- the "Felhőzet" tile shows this as its own
+    /// caption instead of the generic `lastError` banner, since an optional,
+    /// opt-in side feature failing shouldn't compete for the same inline
+    /// error real estate the planner itself uses. Cleared on the next
+    /// successful fetch.
+    var weatherError: String?
+
     /// Every target's pipeline status (`ProjectStatusQueries.projects`) --
     /// backs the sidebar's phase dots, `AllTargetsPage`'s "Fázis" column and
     /// "Kész / folyamatban" tile, and `TonightPage`'s plan table "Állapot"
@@ -1247,6 +1271,49 @@ final class AppState: @unchecked Sendable {
         }
     }
 
+    /// R10-B6: fetches the opt-in Open-Meteo cloud-cover forecast for
+    /// `resolvedSite`'s coordinate. The "never network unless opted in"
+    /// guard is deliberately the first two lines -- nothing above them, so
+    /// it can't be bypassed by an early return added later without also
+    /// touching this exact spot: a no-op, instantly, with no
+    /// `beginOperation` at all (so it never even flips `isBusy`) whenever
+    /// `config.weather.enabled == false` or `resolvedSite` has no
+    /// coordinate.
+    ///
+    /// Otherwise a completely ordinary `beginOperation`/`endOperation`
+    /// background op like every other loader in this class -- a failure
+    /// toasts the same way any other operation's does (`lastError` is set
+    /// directly rather than via `handle(_:)`, since `WeatherError` isn't an
+    /// `AstroError`). `weatherError` is set ADDITIONALLY, purely so the
+    /// "Felhőzet" tile has something to show even after the toast that
+    /// reported the SAME failure has already faded.
+    ///
+    /// Called fire-and-forget from `loadDashboardData`'s completion (never
+    /// awaited -- a slow or failed weather fetch must never delay or fail
+    /// the planner) and from `LocationSettingsView`'s save path.
+    func loadWeather() {
+        guard config.weather.enabled else { return }
+        guard let lat = resolvedSite.latitudeDeg, let lon = resolvedSite.longitudeDeg else { return }
+
+        let opID = beginOperation("Felhőzet-előrejelzés lekérése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let (forecast, summaries) = try await WeatherService.shared.fetch(latitude: lat, longitude: lon)
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.nightForecast = forecast
+                self.weatherDailySummaries = summaries
+                self.weatherError = nil
+                self.progressText = "Felhőzet-előrejelzés kész."
+            } catch {
+                let message = (error as? WeatherError)?.message ?? "\(error)"
+                self.weatherError = message
+                self.lastError = message
+            }
+            self.endOperation(opID)
+        }
+    }
+
     // MARK: - Project pipeline status
 
     /// Bundles every query `loadDashboardData()` needs so they can all
@@ -1372,6 +1439,16 @@ final class AppState: @unchecked Sendable {
                 self.handle(error)
             }
             self.endOperation(opID)
+            // R10-B6: fire-and-forget, deliberately AFTER this operation's
+            // OWN `endOperation(opID)` above -- `loadWeather()` calls
+            // `beginOperation` too, which reassigns `currentOperationID`,
+            // so calling it any earlier would make THIS operation's own
+            // `endOperation` (still pending at that point) a silent no-op
+            // (see `endOperation`'s `guard currentOperationID == id`).
+            // Weather is opt-in and must never delay or fail the planner --
+            // this doesn't `await` anything, it only kicks off `loadWeather`'s
+            // own independent background `Task` and returns immediately.
+            self.loadWeather()
         }
     }
 

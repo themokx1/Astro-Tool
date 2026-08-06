@@ -42,12 +42,45 @@ import Testing
 
     #expect(config.site.latitudeDeg == nil)
     #expect(config.site.longitudeDeg == nil)
+
+    #expect(config.weather.enabled == false)
 }
 
 @Test func defaultSiteRuleHasNilCoordinates() {
     let rule = SiteRule()
     #expect(rule.latitudeDeg == nil)
     #expect(rule.longitudeDeg == nil)
+}
+
+@Test func defaultWeatherRuleIsDisabled() {
+    let rule = WeatherRule()
+    #expect(rule.enabled == false)
+}
+
+@Test func decodingPartialWeatherRuleFillsMissingKeyWithDefault() throws {
+    let json = """
+    { "weather": { "enabled": true } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.weather.enabled == true)
+}
+
+@Test func decodingConfigWithoutWeatherKeyStillDecodes() throws {
+    // R10-B6: an old config.json written before this task landed has no
+    // "weather" key at all -- must still decode cleanly, defaulting to
+    // disabled (never silently opt a pre-existing config INTO a network
+    // call it never asked for).
+    let json = """
+    { "rootPath": "/Volumes/images/OldConfig", "site": { "latitudeDeg": 47.5, "longitudeDeg": 19.0 } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.weather == WeatherRule())
+    #expect(config.weather.enabled == false)
+    #expect(config.rootPath == "/Volumes/images/OldConfig")
 }
 
 @Test func decodingPartialSiteRuleFillsMissingKeyWithDefault() throws {
@@ -119,11 +152,13 @@ import Testing
     config.excludedDirNames = ["tools", "junk"]
     config.wideField.overrides = ["M31": true]
     config.rating.weights["fwhm"] = 0.6
+    config.weather.enabled = true
 
     let data = try JSONEncoder().encode(config)
     let decoded = try JSONDecoder().decode(AstroConfig.self, from: data)
 
     #expect(decoded == config)
+    #expect(decoded.weather.enabled == true)
 }
 
 @Test func decodingPartialJSONFillsMissingKeysWithDefaults() throws {
@@ -147,6 +182,7 @@ import Testing
     #expect(config.calib == CalibRule())
     #expect(config.stats == StatsRule())
     #expect(config.site == SiteRule())
+    #expect(config.weather == WeatherRule())
 
     #expect(config.rating.workers == 8)
     #expect(config.rating.outlierZScore == 2.0)
