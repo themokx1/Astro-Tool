@@ -33,6 +33,10 @@ enum Page: Hashable {
     case tonight
     case calendar
     case allTargets
+    /// R10-B3: the "Éjszakák" cross-target session browser -- every session
+    /// across every target in one sortable table (`NightsPage`), the flat
+    /// counterpart to `AllTargetsPage`'s per-target session sub-rows.
+    case nights
     case target(String)
     case calibration
     case audit
@@ -397,6 +401,17 @@ final class AppState: @unchecked Sendable {
     /// run at least once this session -- never loaded automatically (same
     /// "time-of-day-sensitive, don't auto-refresh" stance as `plan`).
     var monthPlan: [NightSummary]?
+
+    /// Every session across every target (`NightsQueries.allNights`, R10-A3),
+    /// backing the "Éjszakák" page (`NightsPage`, R10-B3) -- loaded
+    /// UNFILTERED (`loadNights()` never passes `year`/`month`), since that
+    /// page derives its year/month Picker options and applies the filter
+    /// client-side, the same "load once, filter locally" split
+    /// `AllTargetsPage`'s search field already uses over `stats`. `nil`
+    /// until `loadNights()` has run at least once this session -- never
+    /// loaded automatically, same "lazily loaded on the page's own
+    /// `onAppear`" stance `monthPlan` takes.
+    var nights: [NightRow]?
 
     /// Every target's pipeline status (`ProjectStatusQueries.projects`) --
     /// backs the sidebar's phase dots, `AllTargetsPage`'s "Fázis" column and
@@ -1116,6 +1131,43 @@ final class AppState: @unchecked Sendable {
                 self.stackReportsByTarget = bundle.stacksByTarget
                 self.stackGroupsByTarget = bundle.stackGroupsByTarget
                 self.progressText = "Statisztika kész: \(bundle.stats.count) célpont"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    // MARK: - Nights (R10-B3)
+
+    /// Loads every session across every target (`NightsQueries.allNights`)
+    /// for the "Éjszakák" page -- always UNFILTERED (`year`/`month` stay at
+    /// their `nil` default) since `NightsPage` derives its own year/month
+    /// Picker options from this full list and filters client-side rather
+    /// than re-querying per Picker change. The query's own `year`/`month`
+    /// parameters are exercised by the CLI (`astrotool nights --year/
+    /// --month`) and its tests instead -- left unused here rather than
+    /// removed, per the plan's "keep the core API's params unused rather
+    /// than stripping them" call.
+    ///
+    /// Never triggered by `loadDashboardData()` -- lazily loaded from
+    /// `NightsPage.onAppear` only, same "time/data-volume-sensitive, don't
+    /// auto-refresh" stance `loadMonthPlan()` already takes for its own
+    /// on-demand dataset.
+    func loadNights() {
+        guard let db else { return }
+        let cfg = config
+
+        let opID = beginOperation("Éjszakák betöltése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try NightsQueries.allNights(db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.nights = result
+                self.progressText = "Éjszakák betöltve: \(result.count) session"
             } catch {
                 self.handle(error)
             }

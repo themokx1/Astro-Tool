@@ -101,6 +101,15 @@ struct SidebarView: View {
         appState.calibNeeds.count { $0.matchedMasterPath == nil }
     }
 
+    /// R10-B3: total session count across every target -- same sum
+    /// `AllTargetsPage.sessionCount` computes over `appState.stats`
+    /// (duplicated rather than shared, same per-file small-helper
+    /// convention `formatDuration`/`formatNumber` already follow across
+    /// this app target).
+    private var nightsBadgeCount: Int {
+        appState.stats.reduce(0) { $0 + $1.sessionDates.count }
+    }
+
     /// R10-A5: `Page.searchResults` reachability -- total hit count for the
     /// "Keresés" row's badge, `0` (no badge, see `navRowLabel`) before a
     /// search's results have actually landed. Same four-bucket sum
@@ -139,6 +148,13 @@ struct SidebarView: View {
 
             Section("KÖNYVTÁR") {
                 navRow("Minden célpont", systemImage: "square.grid.2x2", page: .allTargets, badgeCount: appState.stats.count)
+                // R10-B3: the cross-target session browser -- badge mirrors
+                // `AllTargetsPage`'s own `sessionCount` tile (sum over every
+                // target's `sessionDates`, already loaded via `stats`/
+                // `loadDashboardData()`) rather than `appState.nights?.count`,
+                // so the badge shows a real number immediately without
+                // forcing an eager `loadNights()` just to populate it.
+                navRow("Éjszakák", systemImage: "moon.zzz", page: .nights, badgeCount: nightsBadgeCount)
                 ForEach(targetRows) { row in
                     targetRow(row)
                 }

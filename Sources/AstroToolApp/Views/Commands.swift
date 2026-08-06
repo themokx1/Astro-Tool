@@ -71,19 +71,24 @@ struct AstroToolCommands: Commands {
             .keyboardShortcut("2", modifiers: .command)
             Button("Minden célpont") { AppState.shared?.currentPage = .allTargets }
                 .keyboardShortcut("3", modifiers: .command)
-            Button("Kalibráció") { AppState.shared?.currentPage = .calibration }
+            // R10-B3: the cross-target session browser -- inserted here
+            // (⌘4), pushing Kalibráció/Audit/Takarítás/Szenzor each one
+            // slot down.
+            Button("Éjszakák") { AppState.shared?.currentPage = .nights }
                 .keyboardShortcut("4", modifiers: .command)
-            Button("Audit") { AppState.shared?.currentPage = .audit }
+            Button("Kalibráció") { AppState.shared?.currentPage = .calibration }
                 .keyboardShortcut("5", modifiers: .command)
+            Button("Audit") { AppState.shared?.currentPage = .audit }
+                .keyboardShortcut("6", modifiers: .command)
             // D25: `Page.cleanup` is its own case -- same
             // `MainShellView.page(for:)`-preselects-the-segment shape as
             // "Naptár"/`.calendar` above.
             Button("Takarítás") {
                 AppState.shared?.currentPage = .cleanup
             }
-            .keyboardShortcut("6", modifiers: .command)
+            .keyboardShortcut("7", modifiers: .command)
             Button("Szenzor") { AppState.shared?.currentPage = .sensor }
-                .keyboardShortcut("7", modifiers: .command)
+                .keyboardShortcut("8", modifiers: .command)
 
             Divider()
 
