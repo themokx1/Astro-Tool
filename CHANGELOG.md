@@ -8,6 +8,84 @@ történik.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-06
+
+Az R10-es kör ("a vizuális kör") első kiadása — a teljes terv a repó
+`PLAN-R10.md` fájljában; a hátralévő két tétel (Felfedezés-oldal,
+kézreállóság-csomag) a következő kiadásban érkezik.
+
+### Added
+
+- **FITS-előnézetek + Keret-átnéző kézi döntésekkel** (R10-A1/B1): új
+  `Sources/AstroCore/FITS/FITSImageRenderer.swift` (FITS → CGImage —
+  BZERO-tudatos 8/16-bites kiolvasás, szuperpixel-debayer RGGB/BGGR/GRBG/
+  GBRG-re, Siril-stílusú MTF-autostretch; `.fz`-re őszinte `nil`). A
+  Minőség/Stackek táblák thumbnail-oszlopa mostantól FITS-re is él
+  (`ThumbnailCell` fallback), és új `Views/FrameReviewSheet.swift` —
+  "Átnézés…" blink-lapozó nagy előnézettel (←/→, A=elfogad, X=elvet,
+  U=visszavon), a döntés a `user_verdicts` táblába íródik (`source="app"`),
+  amit a `stacklist` kiválasztása már eddig is tiszteletben tartott. Új
+  "Saját döntés" oszlop + kontextmenü-műveletek a Minőség szegmensben.
+- **Magasság-görbe (éjszakai ív) chart** (R10-A2/B2): új
+  `Sources/AstroCore/Sky/SkyTrack.swift` (`altitudeTrack`/`moonAltitudeTrack`/
+  `nightWindowMarkers`, tisztán számolt, DB-mentes API-k; `SunMoon.dualTwilight`
+  egy sweepből adja a −18°/−12° határokat) + új `Views/SkyChartView.swift`
+  (Swift Charts: célpont-ív, szaggatott Hold-ív, asztro/nautikus
+  szürkület-sávok, min-magasság vonal, "most" jelölő). Megjelenik a Ma este
+  terv-tábla sor-kijelölésére és a Célpont-részletek Áttekintés "Ma esti ív"
+  kártyáján.
+- **Éjszakák oldal + `astrotool nights`** (R10-A3/B3): új
+  `Sources/AstroCore/Stats/NightsQueries.swift` — minden session egy
+  cross-target listában (FWHM″, háttér e⁻/s/″², hatékonyság%, jegyzet-jelzés),
+  CLI `nights [--year N --month M] [--json]` alparanccsal. Az appban új
+  "Éjszakák" sidebar-oldal (⌘4; a Kalibráció/Audit/Takarítás/Szenzor ⌘5–8-ra
+  csúszott) év/hónap szűrővel, session-megnyitással, éjszaka-riport/jegyzet
+  műveletekkel.
+- **Beágyazott célpont-katalógus + Felfedezés-tervező API** (R10-A4): új
+  `Sources/AstroCore/Sky/TargetCatalog.swift` — 217 ellenőrzött mélyég-objektum
+  (a teljes Messier 110 + 85 NGC + 15 IC + 7 Sh2, J2000 koordináták, típus,
+  méret, magnitúdó, magyar nevek a `CatalogNames`-szel összhangban) — és
+  `DiscoveryPlanner.discover(...)` ("mit fotózzak ma este, ami még nincs meg?"
+  + FOV-illesztés), a `Planner`-ből kiemelt közös `NightSweep` sweep-motorra
+  építve. Az app-oldali "Felfedezés" felület a következő kiadásban jön.
+- **Toast-visszajelzés + IA-javítások** (R10-A5): új `Views/ToastOverlay.swift`
+  — minden háttérművelet hibája (és a fájlt termelő műveletek sikere) jobb
+  felső értesítés-kapszulaként jelenik meg, az eddigi inline `lastError` és a
+  tevékenység-napló mellett. Az Audit oldal 4. "Szándékos" szegmenst kapott
+  (eddig zsákutca-szám volt); a Kereső saját sidebar-sort kap aktív keresésnél;
+  a Naptár "Legjobb 3 célpont" nevei kattinthatók; a Minőség szegmens
+  dátum-szűrője ténylegesen szűri a táblát/hisztogramot; a Takarítás oldal
+  audit-futtatás nélkül is mutatja a betöltött takarítási adatot. Javítva
+  emellett egy valós race a `runIngestDSS` és a statisztika-újratöltés között.
+- **Trend-grafikonok** (R10-B5): "Integráció-halmozódás" kártya az Áttekintésen
+  (kumulatív órák session-enként, cél-vonallal) és "FWHM az éjszaka folyamán"
+  pont-chart a Minőség szegmensben (kiugrók pirossal, a `NightHealth`
+  fókusz-regressziós egyenesével, kizárólag egységhelyes px/h esetben). A
+  `FrameScore` új `dateObs` mezőt kapott (mindkét pontozási útvonalon).
+- **Opt-in felhőzet-előrejelzés** (R10-B6): új app-rétegbeli
+  `WeatherService.swift` (Open-Meteo, kulcs nélkül, 2 tizedesre kerekített
+  koordináta, 60 perces cache, 10 s timeout) — alapból KIKAPCSOLVA, a
+  Settings ▸ Helyszín fülön kapcsolható, adatvédelmi magyarázattal. Ma este
+  oldal: 5. "Felhőzet" tile (szürkület→hajnal), Naptár: színkódolt "Felhő"
+  oszlop a 7 napos horizonton belül. Új `weather` config-kulcs (a régi
+  configok változatlanul érvényesek); az AstroCore-ba továbbra sem került
+  hálózati kód.
+- **Per-szűrő integráció + CLI-paritás** (R10-B8): új
+  `Sources/AstroCore/Stats/FilterBreakdown.swift` + `stats --target X
+  --filters [--date D]` (LRGB/SHO bontás a dedupolt usable keretekből). Új
+  alparancsok az eddig app-only képességekhez: `ack list|add|remove`
+  (rendben-jelölés), `note show|set` (éjszaka-jegyzet — a README-t sosem
+  írja), `goal set|clear` (cél-tag, az app-pal bájtra azonos formátum),
+  `search <q> --all` (globális kereső: célpont/session/fájl/jegyzet),
+  `night-info` (sötét órák + Hold). A `docs/cli.html` referencia bővült
+  mindezekkel (+ a `nights` bejegyzéssel).
+
+### Changed
+
+- A CLI `--version` és az app `Info.plist` verziója mostantól követi a
+  kiadást (eddig 0.1.0-n ragadt).
+- Tesztszvit: 847 → 945 teszt (98 új), mind zöld.
+
 ## [0.9.0] - 2026-08-05
 
 ### Added
