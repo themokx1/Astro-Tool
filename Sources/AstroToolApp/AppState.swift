@@ -2581,18 +2581,20 @@ final class AppState: @unchecked Sendable {
                 // D12: this target's coordinate may have just been resolved
                 // for the first time (or changed) -- drop its memo entry.
                 self.coordinateInfoCache[target] = nil
-                // N3 (R9 round 3): `loadStats()` immediately followed by
-                // `loadPlan()` raced each other's `currentTask` the same way
-                // `loadDashboardData`'s own doc comment describes -- the
-                // second call's `beginOperation` cancelled the first's outer
-                // `Task` before it ever reached its `guard !Task.isCancelled`
-                // line, so `stats` never actually refreshed after a solve.
-                // One bundled call avoids that.
-                self.loadDashboardData()
             } catch {
                 self.handle(error)
             }
+            // R10 review: same ordering fix as `runPlateSolveAll` --
+            // `endOperation(opID)` must run BEFORE `loadDashboardData()`,
+            // whose own `beginOperation` reassigns `currentOperationID` and
+            // would turn this `endOperation` into a silent no-op (no
+            // activity-log entry, no completion toast).
             self.endOperation(opID)
+            // N3 (R9 round 3): `loadStats()` immediately followed by
+            // `loadPlan()` raced each other's `currentTask` the same way
+            // `loadDashboardData`'s own doc comment describes -- one bundled
+            // call avoids that.
+            self.loadDashboardData()
         }
     }
 
