@@ -64,6 +64,7 @@ struct AuditPage: View {
         case .errors: return errorFindings
         case .suspicious: return suspiciousFindings
         case .cleanable: return []
+        case .intentional: return intentionalFindings
         }
     }
 
@@ -128,7 +129,22 @@ struct AuditPage: View {
             // real audit comes back all-clear (0 findings is a valid,
             // celebrated result, not "never ran").
             if appState.lastRunID == nil {
-                noAuditYetState
+                // R10-A5: an audit has never run for this root, but
+                // `cleanupSummary` (residue + duplicate-content) loads
+                // independently (`AppState.loadCleanup()`/
+                // `loadDashboardData()`, R9-D2/D3) -- the sidebar's
+                // "Takarítás" row/badge promises real data (it reads
+                // `cleanupSummary` directly, never `lastRunID`), so landing
+                // here via that row shouldn't show the "run an audit" empty
+                // state when there's genuinely something loaded to show.
+                // Every OTHER segment still needs a real audit run (they
+                // have no independent data source), so they keep the empty
+                // state.
+                if appState.auditSegment == .cleanable, appState.cleanupSummary != nil {
+                    cleanableSegment
+                } else {
+                    noAuditYetState
+                }
             } else if isEverythingClean {
                 allClearState
             } else {
@@ -138,6 +154,7 @@ struct AuditPage: View {
                     Text("Hibák (\(errorFindings.count))").tag(AppState.AuditSegment.errors)
                     Text("Gyanús (\(suspiciousFindings.count))").tag(AppState.AuditSegment.suspicious)
                     Text("Takarítható (\(cleanupFileCount) fájl · \(cleanupBytesText))").tag(AppState.AuditSegment.cleanable)
+                    Text("Szándékos (\(intentionalFindings.count))").tag(AppState.AuditSegment.intentional)
                 }
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 620)
@@ -152,7 +169,7 @@ struct AuditPage: View {
                 }
 
                 switch appState.auditSegment {
-                case .errors, .suspicious:
+                case .errors, .suspicious, .intentional:
                     findingsSegment
                 case .cleanable:
                     cleanableSegment
@@ -383,13 +400,20 @@ struct AuditPage: View {
 
     private func groupMenu(_ group: FindingGrouper.Group, acked: Bool) -> some View {
         Menu {
-            if acked {
-                Button("Rendben-jelölés visszavonása") {
-                    appState.unackFindingGroup(category: group.key.category, groupKey: group.key.groupKey)
-                }
-            } else {
-                Button("Csoport megjelölése rendben lévőként") {
-                    appState.ackFindingGroup(category: group.key.category, groupKey: group.key.groupKey)
+            // R10-A5: the "Szándékos" segment shows `probablyIntentional`
+            // findings -- expected, not something to review away, so there's
+            // nothing to acknowledge here. "Első fájl megnyitása Finderben"/
+            // "Összes útvonal másolása" below are still useful regardless of
+            // segment, so only THIS pair of items is segment-conditional.
+            if appState.auditSegment != .intentional {
+                if acked {
+                    Button("Rendben-jelölés visszavonása") {
+                        appState.unackFindingGroup(category: group.key.category, groupKey: group.key.groupKey)
+                    }
+                } else {
+                    Button("Csoport megjelölése rendben lévőként") {
+                        appState.ackFindingGroup(category: group.key.category, groupKey: group.key.groupKey)
+                    }
                 }
             }
             Button("Első fájl megnyitása Finderben") {

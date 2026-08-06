@@ -611,11 +611,35 @@ struct TonightPage: View {
         }
     }
 
+    /// R10-A5: each name is its own tappable link (was a single plain
+    /// `Text`, joined -- a dead end, since a target visible only in the
+    /// calendar's "best 3" list had no way to open it without first finding
+    /// it elsewhere). The links are small `Button(.link)`s inside the row,
+    /// same "interactive control living inside a `Table` row that ALSO has
+    /// its own `.contextMenu(forSelectionType:primaryAction:)`" shape
+    /// `goalCell`'s "Cél beállítása…" link already establishes below --
+    /// clicking a name consumes just that click (only that Button's own
+    /// hit-area), while the rest of the row (including the empty space
+    /// after a short list) still selects/opens via the row's own primary
+    /// action.
+    @ViewBuilder
     private func bestTargetsCell(_ night: NightSummary) -> some View {
-        Text(night.bestTargets.isEmpty ? "—" : night.bestTargets.map { displayName(for: $0.target) }.joined(separator: ", "))
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .foregroundStyle(night.bestTargets.isEmpty ? Color.secondary : Color.primary)
+        if night.bestTargets.isEmpty {
+            Text("—").foregroundStyle(.secondary)
+        } else {
+            HStack(spacing: 4) {
+                ForEach(Array(night.bestTargets.enumerated()), id: \.offset) { index, best in
+                    if index > 0 {
+                        Text("·").foregroundStyle(.secondary)
+                    }
+                    Button(displayName(for: best.target)) {
+                        appState.currentPage = .target(best.target)
+                    }
+                    .lineLimit(1)
+                }
+            }
+            .buttonStyle(.link)
+        }
     }
 
     private func displayName(for target: String) -> String {
