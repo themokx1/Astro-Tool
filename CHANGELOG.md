@@ -238,6 +238,42 @@ történik.
   statisztikákat (és a nyitva lévő célpont-oldal pontszámait/minőség-
   összegzését, ha van ilyen) -- korábban semmit sem frissített.
 
+- **R9 javítókör 3** (re-review N1-N13): `AppState.loadTargetDetail` reset
+  blokkja mostantól `frameScores`-t is nullázza -- célpont-váltásnál a
+  Minőség szegmens korábban a KORÁBBI célpont frame-tábláját mutatta, amíg
+  az új célpontnak nem volt saját pontozott adata. ÚJ
+  `AppState.loadCalibrationData()` (a `CalibAnalyzer.coverage`/
+  `CalibHealth.report`/`db.allSensorProfiles()` hármas EGY háttérműveletben,
+  megosztva `loadDashboardData()`-val is) -- a Kalibráció oldal
+  `onAppear`/"Újraszámolás" korábban a `loadCalib()`+`loadCalibHealth()`
+  páros egymást törölte (`currentTask` verseny), a Teendők/lefedettség-tábla
+  gyakran üresen maradt; a sidebar Kalibráció/Szenzor-profilok badge-ei
+  most induláskor is helyesek, nem csak a Kalibráció oldal megnyitása után.
+  `runPlateSolve`/`runPlateSolveAll` a záró `loadStats()`+`loadPlan()` páros
+  helyett egy bundled `loadDashboardData()`-t hív (ugyanaz a verseny-fix).
+  `AppState.coordinateInfoCache`-be írás `updateValue(_:forKey:)`-jal (a
+  korábbi subscript-írás egy `nil` ÉRTÉKKEL törölte a kulcsot, így a "nincs
+  koordináta" eset sosem cache-elődött); `openRoot` mostantól ezt a cache-t
+  is teljesen törli gyökérváltásnál (korábban átszivárgott egy azonos nevű
+  célpont az előző könyvtárból). ÚJ `Database.ratingsBatch(fileIDs:)`
+  (500-as chunkolt `WHERE file_id IN (...)`, mirror `fitsMetaBatch`) --
+  `Rater.cachedScores` a korábbi per-frame `rating`/`fitsMeta` páros (egy
+  nagyobb célponton ~18k lekérdezés) helyett ezt + a meglévő
+  `fitsMetaBatch`-et hívja. A "Ma este"/Audit szegmens-picker mostantól egy
+  számított `Binding`en megy, ami `currentPage`-et is írja a szegmenssel
+  együtt -- kézi szegmens-váltás korábban elcsúsztatta a sidebar
+  kiválasztás-highlightját a tényleges tartalomtól. `TonightPage`/
+  `AllTargetsPage.onAppear` `!appState.isBusy`-t is megkövetel a
+  `loadDashboardData()` induláshoz -- induláskor ez korábban duplán futott
+  le (`openRoot` már elindította). "Minden célpont" oldal: launch-load
+  közben középre igazított `ProgressView` az "Nincs célpont a könyvtárban"
+  üres állapot helyett; a duplikált "Összes integráció:" lábsor törölve (a
+  tile-sor már mutatja); a célpont-kontextmenü "Mozaik-panelek…" tétele
+  törölve (szó szerint ugyanazt csinálta, mint "Megnyitás"). A kereső
+  egy-találatos auto-navigációja most a jegyzet-találatokat is figyeli --
+  korábban egy célpont-találat mellett érkező jegyzet-találatot némán
+  elnyelt.
+
 ## [0.8.0] - 2026-08-05
 
 ### Added

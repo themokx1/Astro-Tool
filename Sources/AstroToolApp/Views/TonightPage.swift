@@ -28,11 +28,27 @@ struct TonightPage: View {
     /// Same idea for `calendarTable`.
     @State private var selectedCalendarNight: String?
 
+    /// N8 (R9 round 3): writes `currentPage` (`.tonight`/`.calendar`)
+    /// alongside `tonightSegment` -- without this, flipping the segmented
+    /// picker by hand (rather than via the sidebar's "Naptár" row) left
+    /// `currentPage` pointing at whichever page got here first, so the
+    /// sidebar's selection highlight drifted from what was actually on
+    /// screen.
+    private var segmentBinding: Binding<AppState.TonightSegment> {
+        Binding(
+            get: { appState.tonightSegment },
+            set: { newValue in
+                appState.tonightSegment = newValue
+                appState.currentPage = newValue == .calendar ? .calendar : .tonight
+            }
+        )
+    }
+
     var body: some View {
         @Bindable var appState = appState
 
         VStack(alignment: .leading, spacing: 12) {
-            Picker("", selection: $appState.tonightSegment) {
+            Picker("", selection: segmentBinding) {
                 Text("Ma este").tag(AppState.TonightSegment.tonight)
                 Text("Következő 30 éjszaka").tag(AppState.TonightSegment.calendar)
             }
@@ -56,7 +72,12 @@ struct TonightPage: View {
             // `currentTask`, so only the second call's result ever landed --
             // `stats`/sidebar phase dots stayed empty). `loadDashboardData()`
             // loads both (+ projects/cleanup) in one background operation.
-            if appState.stats.isEmpty || appState.plan == nil {
+            // N9 (R9 round 3): `!appState.isBusy` stops this from firing a
+            // SECOND redundant `loadDashboardData()` right behind the one
+            // `openRoot` already kicked off at launch -- without it, a
+            // fresh launch landing on "Ma este" (its default page) ran the
+            // whole dashboard query set twice back-to-back.
+            if !appState.isBusy && (appState.stats.isEmpty || appState.plan == nil) {
                 appState.loadDashboardData()
             }
         }
@@ -565,6 +586,12 @@ struct TonightPage: View {
     private func openPlanForNight(_ night: NightSummary) {
         guard let date = Self.isoDateFormatter.date(from: night.date) else { return }
         appState.tonightSegment = .tonight
+        // N8 (R9 round 3): this jumps from the calendar segment (reached
+        // via `currentPage == .calendar`) back to the tonight segment --
+        // without also resetting `currentPage`, the sidebar kept
+        // highlighting "Naptár" while "Ma este"'s own plan table was on
+        // screen.
+        appState.currentPage = .tonight
         appState.loadPlan(date: date)
     }
 

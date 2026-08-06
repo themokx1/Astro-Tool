@@ -574,6 +574,12 @@ final class AppState: @unchecked Sendable {
         lastError = nil
         lastScanDate = nil
         didDismissFirstRun = false
+        // N5 (R9 round 3): switching roots without this left the PREVIOUS
+        // root's per-target coordinate memo in place -- a target name that
+        // happens to recur across two different libraries would silently
+        // reuse the old root's (wrong) cached coordinate/`nil` instead of
+        // ever resolving it for the newly opened one.
+        coordinateInfoCache = [:]
 
         guard FileManager.default.fileExists(atPath: path) else {
             rootStatus = Self.classifyMissingRoot(path: path)
@@ -1108,6 +1114,35 @@ final class AppState: @unchecked Sendable {
         var night: NightInfo
         var projects: [ProjectState]
         var cleanup: CleanupSummary
+        // N7 (R9 round 3): the sidebar's Kalibráció/Szenzor-profilok badges
+        // read `calibNeeds`/`sensorProfiles` directly -- without these in
+        // the SAME bundle, a fresh launch showed both badges stuck at 0
+        // until the user separately visited the Kalibráció page (the only
+        // other place anything populated them).
+        var calib: CalibBundle
+    }
+
+    /// The three Kalibráció-oldal queries (`CalibAnalyzer.coverage`,
+    /// `CalibHealth.report`, `db.allSensorProfiles()`) bundled together --
+    /// shared by `loadDashboardData` (N7: sidebar badges need them on every
+    /// launch, not just when the Kalibráció page has been visited) AND
+    /// `loadCalibrationData` (N2: `CalibrationPage`'s own onAppear/
+    /// "Újraszámolás", so the two never duplicate the query trio).
+    private struct CalibBundle {
+        var needs: [CalibNeed]
+        var health: CalibHealthReport
+        var sensorProfiles: [SensorProfileRecord]
+    }
+
+    /// Plain (non-actor-isolated) function so it can run inside a
+    /// `Task.detached` closure -- same "no `self` capture needed" shape as
+    /// `resolveCoordinateInfo`.
+    private static nonisolated func loadCalibBundle(db: Database, config: AstroConfig) throws -> CalibBundle {
+        CalibBundle(
+            needs: try CalibAnalyzer.coverage(db: db, config: config),
+            health: try CalibHealth.report(db: db, config: config),
+            sensorProfiles: try db.allSensorProfiles()
+        )
     }
 
     /// Loads `stats` (+ session/panel/stack details), `plan`/`resolvedSite`/
@@ -1157,10 +1192,12 @@ final class AppState: @unchecked Sendable {
                     let night = Planner.nightInfo(date: date, site: site)
                     let projects = try ProjectStatusQueries.projects(db: db, config: cfg)
                     let cleanup = try CleanupReport.build(db: db, config: cfg)
+                    let calib = try Self.loadCalibBundle(db: db, config: cfg)
                     return DashboardBundle(
                         stats: stats, sessionsByTarget: sessionsByTarget, panelsByTarget: panelsByTarget,
                         stacksByTarget: stacksByTarget, stackGroupsByTarget: stackGroupsByTarget,
-                        plan: plans, site: site, night: night, projects: projects, cleanup: cleanup
+                        plan: plans, site: site, night: night, projects: projects, cleanup: cleanup,
+                        calib: calib
                     )
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
@@ -1175,7 +1212,45 @@ final class AppState: @unchecked Sendable {
                 self.planDate = date
                 self.projectStates = bundle.projects
                 self.cleanupSummary = bundle.cleanup
+                // N7 (R9 round 3): see `DashboardBundle.calib`'s doc comment
+                // -- this is what makes the sidebar's Kalibráció/Szenzor-
+                // profilok badges non-zero on a fresh launch.
+                self.calibNeeds = bundle.calib.needs
+                self.calibHealth = bundle.calib.health
+                self.sensorProfiles = bundle.calib.sensorProfiles
                 self.progressText = "Áttekintés kész: \(bundle.stats.count) célpont"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Loads `calibNeeds`/`calibHealth`/`sensorProfiles` together in ONE
+    /// background operation -- `CalibrationPage`'s `onAppear` and
+    /// "Újraszámolás" both used to fire `loadCalib()`/`loadCalibHealth()`
+    /// back-to-back, which raced the same way `loadDashboardData`'s doc
+    /// comment describes: the second call's `beginOperation` cancelled the
+    /// first's outer `Task`, so `calibNeeds` (the coverage table AND the
+    /// Teendők action cards) never actually landed. Shares
+    /// `loadCalibBundle` with `loadDashboardData` (N7) rather than
+    /// duplicating the three-query trio.
+    func loadCalibrationData() {
+        guard let db else { return }
+        let cfg = config
+
+        let opID = beginOperation("Kalibráció adatok betöltése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let calib = try await Task.detached(priority: .userInitiated) {
+                    try Self.loadCalibBundle(db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.calibNeeds = calib.needs
+                self.calibHealth = calib.health
+                self.sensorProfiles = calib.sensorProfiles
+                self.progressText = "Kalibráció kész: \(calib.needs.count) kombináció"
             } catch {
                 self.handle(error)
             }
@@ -1409,6 +1484,12 @@ final class AppState: @unchecked Sendable {
         exposureAdvice = nil
         sessionTimeline = nil
         nightHealth = nil
+        // N1 (R9 round 3): without this, switching from target A (whose
+        // Minőség segment had frame scores loaded) straight to target B
+        // left A's `frameScores` on screen until B's own quality data (if
+        // any) happened to load -- a target with no rated frames at all
+        // would show A's table forever.
+        frameScores = []
 
         // D12: looked up on the main actor BEFORE the background hop, so the
         // detached closure below can stay a plain (non-isolated) function of
@@ -1478,7 +1559,17 @@ final class AppState: @unchecked Sendable {
                 self.calibHealth = bundle.calibHealth
                 self.targetCoordinateInfo = bundle.coordInfo
                 if cachedCoordInfo == nil {
-                    self.coordinateInfoCache[target] = bundle.coordInfo
+                    // N4 (R9 round 3): `coordinateInfoCache` is
+                    // `[String: TargetCoordinateInfo?]` -- subscript
+                    // assignment with an Optional VALUE (`bundle.coordInfo`
+                    // being `nil`, i.e. "resolved, no coordinate found") is
+                    // indistinguishable from removing the key entirely, so
+                    // the memo never actually cached the "no coordinate"
+                    // case: every future open re-ran `resolveCoordinateInfo`
+                    // as if this target had never been looked up.
+                    // `updateValue(_:forKey:)` sets the key's value (even
+                    // when that value is `nil`) instead of deleting it.
+                    self.coordinateInfoCache.updateValue(bundle.coordInfo, forKey: target)
                 }
                 self.targetSetupDescriptors = bundle.setupDescriptors
                 self.targetSessionCalibrations = bundle.calibs
@@ -2087,8 +2178,14 @@ final class AppState: @unchecked Sendable {
                 // D12: this target's coordinate may have just been resolved
                 // for the first time (or changed) -- drop its memo entry.
                 self.coordinateInfoCache[target] = nil
-                self.loadStats()
-                self.loadPlan()
+                // N3 (R9 round 3): `loadStats()` immediately followed by
+                // `loadPlan()` raced each other's `currentTask` the same way
+                // `loadDashboardData`'s own doc comment describes -- the
+                // second call's `beginOperation` cancelled the first's outer
+                // `Task` before it ever reached its `guard !Task.isCancelled`
+                // line, so `stats` never actually refreshed after a solve.
+                // One bundled call avoids that.
+                self.loadDashboardData()
             } catch {
                 self.handle(error)
             }
@@ -2146,8 +2243,9 @@ final class AppState: @unchecked Sendable {
                 }
                 // D12: drop the memo for every target just attempted.
                 for t in targets { self.coordinateInfoCache[t] = nil }
-                self.loadStats()
-                self.loadPlan()
+                // N3 (R9 round 3): same bundling fix as `runPlateSolve` --
+                // see its comment.
+                self.loadDashboardData()
             } catch {
                 self.handle(error)
             }
@@ -2283,11 +2381,14 @@ final class AppState: @unchecked Sendable {
                 // making the user click through a results page that only
                 // has one row worth clicking. Simplest honest reading of
                 // "exactly one hit" -- a single target match with no
-                // session/file hits alongside it -- skips the results page
-                // entirely; anything less unambiguous (multiple targets,
-                // or a target plus session/file hits) still lands on
-                // `Page.searchResults` as before.
-                if result.targets.count == 1, result.sessions.isEmpty, result.files.isEmpty {
+                // session/file/note hits alongside it -- skips the results
+                // page entirely; anything less unambiguous (multiple
+                // targets, or a target plus session/file/note hits) still
+                // lands on `Page.searchResults` as before. N13 (R9 round 3):
+                // `result.notes` was missing from this check -- a target
+                // match alongside note hits used to auto-navigate and
+                // silently discard the note hits the user never got to see.
+                if result.targets.count == 1, result.sessions.isEmpty, result.files.isEmpty, result.notes.isEmpty {
                     self.currentPage = .target(result.targets[0].target)
                 }
             } catch {

@@ -155,7 +155,15 @@ struct AllTargetsPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if appState.stats.isEmpty {
+            // N10 (R9 round 3): without the `isBusy` check, the launch-time
+            // `loadDashboardData()` kicked off by `openRoot` left this page
+            // flashing "Nincs célpont a könyvtárban" for however long that
+            // load took, on a library that plainly has targets -- `stats`
+            // just hadn't landed yet.
+            if appState.isBusy && appState.stats.isEmpty {
+                ProgressView("Célpontok betöltése…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if appState.stats.isEmpty {
                 noTargetsState
             } else {
                 HStack {
@@ -181,12 +189,6 @@ struct AllTargetsPage: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     statsTable
-                }
-
-                HStack {
-                    Text("Összes integráció:").bold()
-                    Text(formatDuration(totalIntegrationSeconds))
-                    Spacer()
                 }
             }
         }
@@ -225,7 +227,10 @@ struct AllTargetsPage: View {
             // doc comment) -- bundled into one background operation, which
             // also fills `plan` (needed by `targetLacksCoordinate` to gate
             // the "Plate-solve…" action).
-            if appState.stats.isEmpty || appState.plan == nil {
+            // N9 (R9 round 3): `!appState.isBusy` stops this from firing a
+            // SECOND redundant `loadDashboardData()` right behind the one
+            // `openRoot` already kicked off at launch.
+            if !appState.isBusy && (appState.stats.isEmpty || appState.plan == nil) {
                 appState.loadDashboardData()
             }
         }
@@ -466,9 +471,11 @@ struct AllTargetsPage: View {
     /// column used to offer for a target EXCEPT "Panelek…"/"Stackek…" table
     /// buttons (dropped outright, not moved: both now live on the target's
     /// own Célpont-részletek page). R9-D8/e adds "Cél beállítása…"/"Kész
-    /// stackek…"/"Mozaik-panelek…" (moved off the header/tooltip-only
-    /// treatment they had before), and R9-D8/d moves tag add/remove here
-    /// (the "Címkék" column itself is now read-only chips).
+    /// stackek…" (moved off the header/tooltip-only treatment they had
+    /// before; a "Mozaik-panelek…" item that briefly lived alongside them
+    /// was removed in N12/R9 round 3 -- it just duplicated "Megnyitás"),
+    /// and R9-D8/d moves tag add/remove here (the "Címkék" column itself is
+    /// now read-only chips).
     @ViewBuilder
     private func targetContextMenuItems(_ stats: TargetStats) -> some View {
         Button("Megnyitás") { appState.currentPage = .target(stats.target) }
@@ -484,12 +491,10 @@ struct AllTargetsPage: View {
                 appState.currentPage = .target(stats.target)
             }
         }
-        if let panels = appState.panelReportsByTarget[stats.target], panels.isMosaic {
-            // Per spec, this is "fine" landing on the default Áttekintés
-            // segment (which already has the inline mosaic table) -- no
-            // `pendingTargetSegment` preselect needed, same as "Megnyitás".
-            Button("Mozaik-panelek…") { appState.currentPage = .target(stats.target) }
-        }
+        // N12 (R9 round 3): "Mozaik-panelek…" used to do EXACTLY what
+        // "Megnyitás" already does (jump to the target's default
+        // Áttekintés segment, which already has the inline mosaic table) --
+        // dropped as a pure duplicate rather than given its own preselect.
         Divider()
         Menu("Exportálás") {
             Button("AstroBin CSV") { appState.exportAcquisition(target: stats.target, format: .astrobin) }

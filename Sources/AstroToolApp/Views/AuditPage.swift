@@ -102,6 +102,21 @@ struct AuditPage: View {
         appState.showAckedFindings ? groups : groups.filter { !isAcked($0) }
     }
 
+    /// N8 (R9 round 3): writes `currentPage` (`.cleanup`/`.audit`) alongside
+    /// `auditSegment` -- without this, flipping the segmented picker by hand
+    /// (rather than via the sidebar's "Takarítás" row) left `currentPage`
+    /// pointing at whichever page got here first, so the sidebar's selection
+    /// highlight drifted from what was actually on screen.
+    private var segmentBinding: Binding<AppState.AuditSegment> {
+        Binding(
+            get: { appState.auditSegment },
+            set: { newValue in
+                appState.auditSegment = newValue
+                appState.currentPage = newValue == .cleanable ? .cleanup : .audit
+            }
+        )
+    }
+
     var body: some View {
         @Bindable var appState = appState
 
@@ -119,7 +134,7 @@ struct AuditPage: View {
             } else {
                 tiles
 
-                Picker("Szegmens", selection: $appState.auditSegment) {
+                Picker("Szegmens", selection: segmentBinding) {
                     Text("Hibák (\(errorFindings.count))").tag(AppState.AuditSegment.errors)
                     Text("Gyanús (\(suspiciousFindings.count))").tag(AppState.AuditSegment.suspicious)
                     Text("Takarítható (\(cleanupFileCount) fájl · \(cleanupBytesText))").tag(AppState.AuditSegment.cleanable)

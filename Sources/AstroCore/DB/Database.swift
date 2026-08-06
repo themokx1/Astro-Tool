@@ -1087,35 +1087,64 @@ public final class Database: @unchecked Sendable {
         }
     }
 
+    private static let ratingColumns =
+        "file_id, fwhm, roundness, star_count, background, saturated_fraction, score, rated_at, siril_version, input_sig, bg_00, bg_01, bg_10, bg_11, source"
+
+    private static func ratingRecord(from row: SQLiteRow) -> RatingRecord {
+        RatingRecord(
+            fileID: row.int64(0) ?? 0,
+            fwhm: row.double(1),
+            roundness: row.double(2),
+            starCount: row.int64(3).map(Int.init),
+            background: row.double(4),
+            saturatedFraction: row.double(5),
+            score: row.double(6),
+            ratedAt: row.double(7) ?? 0,
+            sirilVersion: row.string(8),
+            inputSig: row.string(9) ?? "",
+            bg00: row.double(10),
+            bg01: row.double(11),
+            bg10: row.double(12),
+            bg11: row.double(13),
+            source: row.string(14)
+        )
+    }
+
     public func rating(fileID: Int64) throws -> RatingRecord? {
         try withLock {
             var record: RatingRecord?
             try db.query(
-                """
-                SELECT file_id, fwhm, roundness, star_count, background, saturated_fraction, score, rated_at, siril_version, input_sig, bg_00, bg_01, bg_10, bg_11, source
-                FROM ratings WHERE file_id = ?;
-                """,
+                "SELECT \(Self.ratingColumns) FROM ratings WHERE file_id = ?;",
                 bind: [.int(fileID)]
             ) { row in
-                record = RatingRecord(
-                    fileID: row.int64(0) ?? 0,
-                    fwhm: row.double(1),
-                    roundness: row.double(2),
-                    starCount: row.int64(3).map(Int.init),
-                    background: row.double(4),
-                    saturatedFraction: row.double(5),
-                    score: row.double(6),
-                    ratedAt: row.double(7) ?? 0,
-                    sirilVersion: row.string(8),
-                    inputSig: row.string(9) ?? "",
-                    bg00: row.double(10),
-                    bg01: row.double(11),
-                    bg10: row.double(12),
-                    bg11: row.double(13),
-                    source: row.string(14)
-                )
+                record = Self.ratingRecord(from: row)
             }
             return record
+        }
+    }
+
+    /// N6 (R9 round 3): batch form of `rating(fileID:)`, used by
+    /// `Rater.cachedScores` (which used to fetch one `rating` + one
+    /// `fitsMeta` row PER FRAME in a loop -- ~18k queries on a real
+    /// library's target). One query per 500 ids instead, same chunking
+    /// convention as `fitsMetaBatch`. Missing ids are simply absent from the
+    /// returned dictionary (same "no row" semantics as the single-file form
+    /// returning `nil`).
+    public func ratingsBatch(fileIDs: [Int64]) throws -> [Int64: RatingRecord] {
+        guard !fileIDs.isEmpty else { return [:] }
+        return try withLock {
+            var result: [Int64: RatingRecord] = [:]
+            for chunk in fileIDs.chunked(into: 500) {
+                let placeholders = chunk.map { _ in "?" }.joined(separator: ", ")
+                try db.query(
+                    "SELECT \(Self.ratingColumns) FROM ratings WHERE file_id IN (\(placeholders));",
+                    bind: chunk.map(SQLiteValue.int)
+                ) { row in
+                    let record = Self.ratingRecord(from: row)
+                    result[record.fileID] = record
+                }
+            }
+            return result
         }
     }
 

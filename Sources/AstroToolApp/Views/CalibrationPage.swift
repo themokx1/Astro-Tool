@@ -62,17 +62,23 @@ struct CalibrationPage: View {
                         Button("Mégse") { appState.cancelCurrentOperation() }
                     }
                 } else {
+                    // N2 (R9 round 3): `loadCalib()`/`loadCalibHealth()`
+                    // fired back-to-back here used to race each other's
+                    // `currentTask` -- `calibNeeds` (the coverage table AND
+                    // Teendők action cards) never actually landed. One
+                    // bundled `loadCalibrationData()` call avoids that.
                     Button("Újraszámolás") {
-                        appState.loadCalib()
-                        appState.loadCalibHealth()
+                        appState.loadCalibrationData()
                     }
                     .disabled(appState.db == nil)
                 }
             }
         }
         .onAppear {
-            if appState.calibNeeds.isEmpty { appState.loadCalib() }
-            if appState.calibHealth == nil { appState.loadCalibHealth() }
+            // N2 (R9 round 3): same race, same fix -- see the button above.
+            if appState.calibNeeds.isEmpty || appState.calibHealth == nil {
+                appState.loadCalibrationData()
+            }
         }
         .sheet(item: $appState.calibNeedLinkSession) { session in
             CalibLinkSheet(target: session.target, date: session.date)

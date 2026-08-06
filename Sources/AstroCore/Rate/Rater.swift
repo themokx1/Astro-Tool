@@ -265,15 +265,25 @@ public final class Rater {
         }
         guard !frames.isEmpty else { return [] }
 
+        // N6 (R9 round 3): this used to run one `db.rating(fileID:)` +
+        // one `db.fitsMeta(fileID:)` query PER FRAME in the loop below --
+        // ~18k round trips on a real library's biggest target. Batched via
+        // `ratingsBatch`/`fitsMetaBatch` (both chunked 500 ids/query)
+        // instead, same "one query per 500 ids" shape `AppState`'s D12
+        // fixes already established for `fitsMetaBatch`'s other call sites.
+        let fileIDs = frames.compactMap(\.id)
+        let ratingsByFileID = try db.ratingsBatch(fileIDs: fileIDs)
+        let metaByFileID = try db.fitsMetaBatch(fileIDs: fileIDs)
+
         var results: [FrameScore] = []
         results.reserveCapacity(frames.count)
         for file in frames {
             guard let fileID = file.id,
-                  let record = try db.rating(fileID: fileID),
+                  let record = ratingsByFileID[fileID],
                   let score = record.score
             else { continue }
 
-            let exptime = try db.fitsMeta(fileID: fileID)?.exptime
+            let exptime = metaByFileID[fileID]?.exptime
             let metrics: StarMetrics? = {
                 guard let fwhm = record.fwhm, let starCount = record.starCount else { return nil }
                 return StarMetrics(fwhm: fwhm, roundness: record.roundness, starCount: starCount)

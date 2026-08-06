@@ -649,6 +649,52 @@ private func sampleRating(fileID: Int64, inputSig: String = "sig-1") -> RatingRe
     #expect(try database.rating(fileID: fileID) == nil)
 }
 
+// MARK: - Database: ratingsBatch (N6, R9 round 3)
+
+@Test func ratingsBatchReturnsRecordsKeyedByFileID() throws {
+    let database = try Database(path: ":memory:")
+    let id1 = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/a.fits"))
+    let id2 = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/b.fits"))
+    let id3 = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/c.fits"))
+
+    try database.upsertRating(sampleRating(fileID: id1))
+    var second = sampleRating(fileID: id2)
+    second.score = 0.42
+    try database.upsertRating(second)
+    // id3 intentionally left without a ratings row.
+
+    let batch = try database.ratingsBatch(fileIDs: [id1, id2, id3])
+
+    #expect(batch.count == 2)
+    #expect(batch[id1]?.score == 0.87)
+    #expect(batch[id2]?.score == 0.42)
+    #expect(batch[id3] == nil)
+}
+
+@Test func ratingsBatchReturnsEmptyForEmptyInput() throws {
+    let database = try Database(path: ":memory:")
+    let batch = try database.ratingsBatch(fileIDs: [])
+    #expect(batch.isEmpty)
+}
+
+@Test func ratingsBatchChunksPastFiveHundredIDs() throws {
+    let database = try Database(path: ":memory:")
+    var ids: [Int64] = []
+    for i in 0..<1200 {
+        let id = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/f\(i).fits"))
+        var rating = sampleRating(fileID: id)
+        rating.score = Double(i)
+        try database.upsertRating(rating)
+        ids.append(id)
+    }
+
+    let batch = try database.ratingsBatch(fileIDs: ids)
+
+    #expect(batch.count == 1200)
+    #expect(batch[ids[0]]?.score == 0)
+    #expect(batch[ids[1199]]?.score == 1199)
+}
+
 @Test func upsertRatingRoundTripsPerBayerBackgroundColumns() throws {
     let database = try Database(path: ":memory:")
     let fileID = try database.upsertFile(sampleFile())
