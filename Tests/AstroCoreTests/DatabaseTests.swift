@@ -1193,6 +1193,103 @@ private func sampleSensorProfile(
     #expect(counts.rejected == 0)
 }
 
+// MARK: - Database: userVerdicts(forFileIDs:) / setUserVerdict / clearUserVerdict (R10-B1)
+
+@Test func userVerdictsForFileIDsReturnsAcceptedFlagsKeyedByFileID() throws {
+    let database = try Database(path: ":memory:")
+    let id1 = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/a.fits"))
+    let id2 = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/b.fits"))
+    let id3 = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/c.fits"))
+
+    try database.upsertUserVerdict(UserVerdictRecord(fileID: id1, accepted: true, source: "app", recordedAt: 1))
+    try database.upsertUserVerdict(UserVerdictRecord(fileID: id2, accepted: false, source: "app", recordedAt: 1))
+    // id3 intentionally left without a verdict.
+
+    let verdicts = try database.userVerdicts(forFileIDs: [id1, id2, id3])
+
+    #expect(verdicts.count == 2)
+    #expect(verdicts[id1] == true)
+    #expect(verdicts[id2] == false)
+    #expect(verdicts[id3] == nil)
+}
+
+@Test func userVerdictsForFileIDsReturnsEmptyForEmptyInput() throws {
+    let database = try Database(path: ":memory:")
+    let verdicts = try database.userVerdicts(forFileIDs: [])
+    #expect(verdicts.isEmpty)
+}
+
+@Test func userVerdictsForFileIDsChunksPastFiveHundredIDs() throws {
+    let database = try Database(path: ":memory:")
+    var ids: [Int64] = []
+    for i in 0..<1200 {
+        let id = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/f\(i).fits"))
+        try database.upsertUserVerdict(UserVerdictRecord(fileID: id, accepted: i % 2 == 0, source: "app", recordedAt: 1))
+        ids.append(id)
+    }
+
+    let verdicts = try database.userVerdicts(forFileIDs: ids)
+
+    #expect(verdicts.count == 1200)
+    #expect(verdicts[ids[0]] == true)
+    #expect(verdicts[ids[1]] == false)
+    #expect(verdicts[ids[1199]] == false)
+}
+
+@Test func setUserVerdictInsertsWithGivenSourceAndIsReadableViaUserVerdict() throws {
+    let database = try Database(path: ":memory:")
+    let fileID = try database.upsertFile(sampleFile())
+
+    try database.setUserVerdict(fileID: fileID, accepted: true, source: "app")
+
+    let fetched = try database.userVerdict(fileID: fileID)
+    #expect(fetched?.accepted == true)
+    #expect(fetched?.source == "app")
+}
+
+@Test func setUserVerdictOverwritesAPriorVerdictInPlace() throws {
+    let database = try Database(path: ":memory:")
+    let fileID = try database.upsertFile(sampleFile())
+
+    try database.setUserVerdict(fileID: fileID, accepted: true, source: "app")
+    try database.setUserVerdict(fileID: fileID, accepted: false, source: "app")
+
+    #expect(try database.userVerdict(fileID: fileID)?.accepted == false)
+
+    var count = 0
+    try database.db.query("SELECT file_id FROM user_verdicts WHERE file_id = ?;", bind: [.int(fileID)]) { _ in count += 1 }
+    #expect(count == 1)
+}
+
+@Test func setUserVerdictCanOverwriteADSSImportedVerdictWithAnAppOne() throws {
+    let database = try Database(path: ":memory:")
+    let fileID = try database.upsertFile(sampleFile())
+    try database.upsertUserVerdict(UserVerdictRecord(fileID: fileID, accepted: false, source: "dssfilelist", recordedAt: 1))
+
+    try database.setUserVerdict(fileID: fileID, accepted: true, source: "app")
+
+    let fetched = try database.userVerdict(fileID: fileID)
+    #expect(fetched?.accepted == true)
+    #expect(fetched?.source == "app")
+}
+
+@Test func clearUserVerdictRemovesTheRow() throws {
+    let database = try Database(path: ":memory:")
+    let fileID = try database.upsertFile(sampleFile())
+    try database.setUserVerdict(fileID: fileID, accepted: true, source: "app")
+
+    try database.clearUserVerdict(fileID: fileID)
+
+    #expect(try database.userVerdict(fileID: fileID) == nil)
+}
+
+@Test func clearUserVerdictOnAFileWithNoVerdictIsANoOp() throws {
+    let database = try Database(path: ":memory:")
+    let fileID = try database.upsertFile(sampleFile())
+    try database.clearUserVerdict(fileID: fileID)
+    #expect(try database.userVerdict(fileID: fileID) == nil)
+}
+
 @Test func hasTrackedFileWithSuffixFindsAMatchingNonMissingFileOnly() throws {
     let database = try Database(path: ":memory:")
     #expect(try database.hasTrackedFileWithSuffix(".dssfilelist") == false)

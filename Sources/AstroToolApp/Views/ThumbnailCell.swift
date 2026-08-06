@@ -1,16 +1,36 @@
 import AppKit
+import AstroCore
 import QuickLookThumbnailing
 import SwiftUI
+
+/// The file extensions QuickLook has no stock macOS plugin for, and which
+/// `FITSImageRenderer` knows how to turn into a preview instead -- shared by
+/// `ThumbnailCell`'s thumbnail fallback (R10-B1) and `FrameReviewSheet`'s
+/// large-preview loader, so the two decide "is this a FITS frame" the exact
+/// same way. `.fz` (Rice-compressed) is included here even though the
+/// renderer itself always returns `nil` for it -- that's a deliberate "we
+/// tried, this layout isn't supported" `nil`, not a reason to skip the
+/// attempt, and it still needs to fall through to the ordinary placeholder
+/// afterward exactly like every other unsupported case.
+let fitsFallbackExtensions: Set<String> = ["fits", "fit", "fz"]
 
 /// R9-T6/B7: a small thumbnail view for one file on disk, via
 /// `QLThumbnailGenerator` (64×64 generation size, downscaled to fit a
 /// 28pt-tall table row). Cached in-memory keyed by `path + mtime` (an
 /// `NSCache`, process-lifetime, no disk persistence) so re-scrolling a
-/// table never re-generates the same thumbnail twice in one session. A FITS
-/// file usually fails to thumbnail -- stock macOS has no FITS QuickLook
-/// plugin -- that's expected and falls back to a generic placeholder icon
-/// rather than showing an error; a DSS-exported `.tif`/`.jpg`/`.png` stack
-/// DOES thumbnail.
+/// table never re-generates the same thumbnail twice in one session.
+///
+/// R10-B1: stock macOS has no FITS QuickLook plugin, so QuickLook alone
+/// used to fail for the vast majority of frames this app manages -- that
+/// case now falls back to `FITSImageRenderer` (debayer + MTF autostretch)
+/// run off the main thread, so a light/dark/flat/bias frame gets a REAL
+/// preview instead of a generic icon. `.fz` (Rice-compressed) and any other
+/// layout the renderer doesn't support still come back `nil` from it, same
+/// as a genuinely corrupt file -- both fall through to the plain
+/// placeholder rather than showing an error. A DSS-exported
+/// `.tif`/`.jpg`/`.png` stack, or a Canon `.cr3`, never reaches the FITS
+/// fallback at all -- QuickLook already thumbnails those on its own, same
+/// as before this change.
 struct ThumbnailCell: View {
     let url: URL
     var size: CGFloat = 28
@@ -51,31 +71,75 @@ struct ThumbnailCell: View {
         let cacheKey = Self.cacheKey(for: url)
         if let cached = ThumbnailCache.shared.image(for: cacheKey) {
             image = cached
+            attempted = true
             return
         }
 
+        if let qlImage = await Self.generateQuickLookThumbnail(url: url, size: size) {
+            attempted = true
+            ThumbnailCache.shared.set(qlImage, for: cacheKey)
+            image = qlImage
+            return
+        }
+
+        // R10-B1: QuickLook came up empty -- for a FITS/FIT/.fz file (never
+        // any other extension), try `FITSImageRenderer` before giving up.
+        // `size` is the cell's POINT size; the retina request above already
+        // asked QuickLook for `size * scale(2)` pixels, so the renderer is
+        // asked for the same pixel budget for a visually consistent result.
+        if fitsFallbackExtensions.contains(url.pathExtension.lowercased()) {
+            let pixelDimension = Int((size * 2).rounded())
+            if let fitsImage = await Self.renderFITSThumbnail(url: url, maxDimension: pixelDimension) {
+                attempted = true
+                ThumbnailCache.shared.set(fitsImage, for: cacheKey)
+                image = fitsImage
+                return
+            }
+        }
+
+        // D26: generation finished and came up empty either way (no
+        // QuickLook plugin AND either not a FITS file or the renderer
+        // itself declined this layout/.fz) -- `attempted` alone drives the
+        // generic placeholder icon below, same as before this fallback
+        // existed.
+        attempted = true
+    }
+
+    /// Runs one `QLThumbnailGenerator` request, returning `nil` on any
+    /// failure/no-representation outcome (never throws) -- the sole
+    /// QuickLook call site, unchanged in BEHAVIOR from before R10-B1's FITS
+    /// fallback was added, just extracted so `load()` can fall through to
+    /// the FITS path in between the two of its steps.
+    private static func generateQuickLookThumbnail(url: URL, size: CGFloat) async -> NSImage? {
         let request = QLThumbnailGenerator.Request(
             fileAt: url, size: CGSize(width: size, height: size), scale: 2,
             representationTypes: .thumbnail
         )
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        return await withCheckedContinuation { (continuation: CheckedContinuation<NSImage?, Never>) in
             QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { thumbnail, _ in
-                // Extracted immediately, outside the actor-hop below: the
-                // callback itself runs on an arbitrary queue, and
+                // Extracted immediately, outside the actor-hop the caller
+                // does: the callback itself runs on an arbitrary queue, and
                 // `QLThumbnailRepresentation` isn't `Sendable` -- only the
-                // plain `NSImage` it hands out crosses into the `@MainActor`
-                // closure.
-                let nsImage = thumbnail?.nsImage
-                Task { @MainActor in
-                    self.attempted = true
-                    if let nsImage {
-                        ThumbnailCache.shared.set(nsImage, for: cacheKey)
-                        self.image = nsImage
-                    }
-                    continuation.resume()
-                }
+                // plain `NSImage` it hands out crosses the continuation.
+                continuation.resume(returning: thumbnail?.nsImage)
             }
         }
+    }
+
+    /// Renders a FITS/FIT/.fz frame's primary HDU into a small `NSImage` via
+    /// `FITSImageRenderer`, off the main thread (that renderer is
+    /// documented thread-safe/safe-to-call-there). `nil` for anything it
+    /// declines to render (`.fz`, unsupported `BITPIX`/`NAXIS`) or a
+    /// genuinely corrupt file (`try?` swallows `FITSImageRenderer`'s thrown
+    /// `AstroError.corruptFITS` the same "never surface an error, just show
+    /// the placeholder" way a QuickLook failure already didn't either).
+    private static func renderFITSThumbnail(url: URL, maxDimension: Int) async -> NSImage? {
+        await Task.detached(priority: .utility) {
+            guard let cgImage = try? FITSImageRenderer.render(url: url, maxDimension: maxDimension) else {
+                return nil
+            }
+            return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        }.value
     }
 
     /// `"<path>|<mtime>"` -- the mtime component means a file that's been
