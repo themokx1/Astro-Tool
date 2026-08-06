@@ -6,6 +6,15 @@ struct QualityView: View {
     @Environment(AppState.self) private var appState
     @State private var selectedTarget: String?
     @State private var dateText: String = ""
+
+    /// `initialTarget`, when given (the sidebar's `Page.target(name)`
+    /// placeholder page -- T3 replaces this with a real target-details
+    /// page), preselects the target picker so the page opens straight into
+    /// that target's frame table instead of the "Válassz célpontot…"
+    /// empty state.
+    init(initialTarget: String? = nil) {
+        _selectedTarget = State(initialValue: initialTarget)
+    }
     /// Drives `Rater.rate`'s `force` parameter -- a manual full re-measure
     /// of every frame, independent of `Rater`'s own automatic cache
     /// self-heal (which only recomputes a row's actually-missing half).
@@ -241,6 +250,16 @@ struct QualityView: View {
         }
         .onAppear {
             if appState.stats.isEmpty { appState.loadStats() }
+            // `.onChange(of: selectedTarget)` below never fires for the
+            // value a preselected `init(initialTarget:)` starts with (only
+            // for CHANGES after the view already exists) -- load it once
+            // here so navigating straight to `Page.target(name)` doesn't
+            // show an empty quality/exposure section until the user
+            // re-picks the same target from the dropdown.
+            if let selectedTarget, appState.qualitySummaries.isEmpty, appState.exposureAdvice == nil {
+                appState.loadQualitySummaries(target: selectedTarget)
+                appState.loadExposureAdvice(target: selectedTarget)
+            }
         }
         .onChange(of: selectedTarget) { _, newTarget in
             selectedSessionDate = nil

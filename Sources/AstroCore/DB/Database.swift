@@ -872,6 +872,24 @@ public final class Database: @unchecked Sendable {
         }
     }
 
+    /// The `started_at` of the most recent `runs` row of the given `kind`
+    /// (e.g. `"scan"`, `"audit"`), or `nil` if none exist yet -- the app
+    /// layer's "has this root ever been scanned" signal (R9-T1's first-run
+    /// flow) and its toolbar "Utolsó: <relatív idő>" caption, both spanning
+    /// launches since it's read from disk rather than in-memory state.
+    public func lastRunDate(kind: String) throws -> Date? {
+        try withLock {
+            var timestamp: Double?
+            try db.query(
+                "SELECT started_at FROM runs WHERE kind = ? ORDER BY started_at DESC LIMIT 1;",
+                bind: [.text(kind)]
+            ) { row in
+                timestamp = row.double(0)
+            }
+            return timestamp.map(Date.init(timeIntervalSince1970:))
+        }
+    }
+
     public func insertFinding(runID: Int64, _ f: Finding) throws {
         let suggestionJSON: String?
         if let suggestion = f.suggestion {

@@ -14,6 +14,21 @@ enum RootStatus: Equatable {
     case noRoot
 }
 
+/// The navigation shell's routing target (R9-T1) -- every page reachable
+/// from the sidebar, the menu bar, or a "jump to target" action. Detail
+/// pages for this task reuse existing view bodies; later R9 tasks replace
+/// individual cases' content without touching this enum's shape.
+enum Page: Hashable {
+    case tonight
+    case calendar
+    case allTargets
+    case target(String)
+    case calibration
+    case audit
+    case sensor
+    case searchResults
+}
+
 /// The app's single source of truth. Thin by design: every real operation
 /// (scan/audit/rate/stats/calib/new-session) is a direct call into AstroCore,
 /// run off the main thread; this class only tracks UI-observable state and
@@ -29,10 +44,81 @@ enum RootStatus: Equatable {
 @Observable
 final class AppState: @unchecked Sendable {
     private static let bookmarkKey = "rootBookmark"
+    private static let recentRootsKey = "recentRootBookmarks"
+
+    /// App-lifetime singleton reference, set from `init()`. The menu bar
+    /// (`Views/Commands.swift`) needs to call into `AppState` from `.commands`
+    /// closures, which don't get SwiftUI's `@Environment` injection the way
+    /// view bodies do -- a `@FocusedObject` would need every scene's root
+    /// view to publish one, which is more machinery than this app (a single
+    /// window + a Settings scene) needs. Since there is only ever one
+    /// `AppState` for the process's lifetime (the `@State` in
+    /// `AstroToolApp`), a plain singleton is a pragmatic, documented
+    /// exception to "no globals" here.
+    @ObservationIgnored
+    static var shared: AppState!
 
     var config: AstroConfig = AstroConfig()
     var db: Database?
     var rootStatus: RootStatus = .noRoot
+
+    /// The navigation shell's current page (R9-T1) -- drives both the
+    /// sidebar's selection highlight and which detail view is shown.
+    var currentPage: Page = .tonight
+
+    /// One entry per completed background operation (B15 activity log),
+    /// newest first, capped at 50 -- appended from `endOperation` (see its
+    /// doc comment for why that's the one hook point instead of editing
+    /// every `beginOperation`/`endOperation` call site). Shown from the
+    /// toolbar's clock-icon popover.
+    struct ActivityEntry: Identifiable {
+        enum Outcome: Equatable {
+            case ok
+            case error(String)
+        }
+        let id = UUID()
+        let date: Date
+        let title: String
+        let outcome: Outcome
+    }
+    var activityLog: [ActivityEntry] = []
+    /// Titles of not-yet-finished operations, keyed by `beginOperation`'s
+    /// UUID -- `endOperation` consumes its entry to build the `ActivityEntry`
+    /// it appends. `@ObservationIgnored`: purely an implementation detail of
+    /// the begin/end bookkeeping, never read by a view.
+    @ObservationIgnored
+    private var pendingActivityTitle: [UUID: String] = [:]
+
+    /// One bookmark per recently-opened root (R9-T1 toolbar "Legutóbbi
+    /// könyvtárak"), most-recent-first, capped at 5. Persisted as an array of
+    /// security-scoped bookmark blobs under `recentRootsKey`; `path` is
+    /// re-derived by resolving each bookmark so the menu can show a
+    /// human-readable label without re-prompting the user.
+    struct RecentRoot: Identifiable {
+        let path: String
+        let bookmark: Data
+        var id: String { path }
+    }
+    var recentRoots: [RecentRoot] = []
+
+    /// The most recent `runs.kind == "scan"` timestamp for the current root,
+    /// `nil` until a scan has ever completed for it (across launches, not
+    /// just this session) -- drives the toolbar's "Utolsó: <relatív idő>"
+    /// caption AND (together with `didDismissFirstRun`) whether the
+    /// first-run `FirstScanView` or the normal shell is shown.
+    var lastScanDate: Date?
+    /// Set once the user explicitly moves past the first-run flow (either
+    /// "Beolvasás indítása" finishes and they hit "Tovább", or they hit
+    /// "Kihagyom, később") -- session-only, deliberately not persisted, so a
+    /// skipped first scan doesn't silently disable the flow forever if the
+    /// user relaunches still not having scanned.
+    var didDismissFirstRun: Bool = false
+
+    /// B6: a non-mounted volume that reappears (`NSWorkspace.didMountNotification`)
+    /// auto-retries root access; kept so the observer is only ever
+    /// registered once per process.
+    @ObservationIgnored
+    private var mountObserver: NSObjectProtocol?
 
     var scanSummary: ScanSummary?
     var findings: [Finding] = []
@@ -174,11 +260,26 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - Root selection
 
+    init() {
+        loadRecentRoots()
+        AppState.shared = self
+    }
+
     /// Called once from `.onAppear`: resolves a previously-saved
     /// security-scoped bookmark if there is one, otherwise falls back to
     /// `AstroConfig()`'s default root path. Never scans automatically --
     /// a large external volume should only be walked on explicit request.
+    ///
+    /// `-ResetOnboarding` (acceptance ⓑ): a debug-only launch argument that
+    /// clears the saved bookmark before resolving, so the first-run flow
+    /// (`WelcomeView`/`FirstScanView`) can be exercised on a machine that
+    /// already has a real library configured, without touching that
+    /// configuration on disk.
     func resolveRootOnLaunch() {
+        startVolumeMountObserverIfNeeded()
+        if ProcessInfo.processInfo.arguments.contains("-ResetOnboarding") {
+            UserDefaults.standard.removeObject(forKey: Self.bookmarkKey)
+        }
         if let data = UserDefaults.standard.data(forKey: Self.bookmarkKey),
            let url = Self.resolveBookmark(data)
         {
@@ -195,8 +296,8 @@ final class AppState: @unchecked Sendable {
         openRoot(at: URL(fileURLWithPath: config.rootPath, isDirectory: true))
     }
 
-    /// "Mappa választása…": prompts via `NSOpenPanel`, persists a
-    /// security-scoped bookmark for next launch, then opens the chosen root.
+    /// "Mappa választása…": prompts via `NSOpenPanel`, then hands the chosen
+    /// URL to `selectRoot(at:)`.
     func chooseRoot() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -209,22 +310,50 @@ final class AppState: @unchecked Sendable {
         }
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        persistBookmark(for: url)
+        selectRoot(at: url)
+    }
+
+    /// The one place that actually switches roots from a freshly-chosen
+    /// `URL` (folder picker, `WelcomeView`'s drop target, or the toolbar's
+    /// "Legutóbbi könyvtárak" list resolving its bookmark first): persists a
+    /// security-scoped bookmark as BOTH the "current root" bookmark and a
+    /// "Legutóbbi könyvtárak" entry, then opens it.
+    func selectRoot(at url: URL) {
+        if let bookmark = makeBookmark(for: url) {
+            UserDefaults.standard.set(bookmark, forKey: Self.bookmarkKey)
+            rememberRecentRoot(url: url, bookmark: bookmark)
+        }
         openRoot(at: url)
     }
 
-    private func persistBookmark(for url: URL) {
-        do {
-            let data = try url.bookmarkData(
-                options: .withSecurityScope,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-            UserDefaults.standard.set(data, forKey: Self.bookmarkKey)
-        } catch {
-            // Non-fatal: the root is still usable for this run, only
-            // persistence across launches is lost.
+    /// "Legutóbbi könyvtárak ▸" menu selection: resolves the stored bookmark
+    /// back into an accessible `URL` first (it's a different security scope
+    /// than whatever's currently active), then switches to it same as any
+    /// other `selectRoot(at:)` call.
+    func selectRecentRoot(_ recent: RecentRoot) {
+        guard let url = Self.resolveBookmark(recent.bookmark) else { return }
+        _ = url.startAccessingSecurityScopedResource()
+        selectRoot(at: url)
+    }
+
+    private func makeBookmark(for url: URL) -> Data? {
+        try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+    }
+
+    private func loadRecentRoots() {
+        guard let datas = UserDefaults.standard.array(forKey: Self.recentRootsKey) as? [Data] else { return }
+        recentRoots = datas.compactMap { data in
+            Self.resolveBookmark(data).map { RecentRoot(path: $0.path, bookmark: data) }
         }
+    }
+
+    private func rememberRecentRoot(url: URL, bookmark: Data) {
+        recentRoots.removeAll { $0.path == url.path }
+        recentRoots.insert(RecentRoot(path: url.path, bookmark: bookmark), at: 0)
+        if recentRoots.count > 5 {
+            recentRoots.removeLast(recentRoots.count - 5)
+        }
+        UserDefaults.standard.set(recentRoots.map(\.bookmark), forKey: Self.recentRootsKey)
     }
 
     private static func resolveBookmark(_ data: Data) -> URL? {
@@ -235,6 +364,21 @@ final class AppState: @unchecked Sendable {
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         )
+    }
+
+    /// B6: a volume that was missing at launch (`.notMounted`) but then gets
+    /// mounted should retry access on its own, not only when the user
+    /// happens to press "Újrapróbálás" -- registered once per process.
+    private func startVolumeMountObserverIfNeeded() {
+        guard mountObserver == nil else { return }
+        mountObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didMountNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.rootStatus == .notMounted else { return }
+                self.retryRootAccess()
+            }
+        }
     }
 
     /// Loads `<url>/.astro_tool/config.json` if present (else defaults),
@@ -252,6 +396,8 @@ final class AppState: @unchecked Sendable {
         config = loadedConfig
         db = nil
         lastError = nil
+        lastScanDate = nil
+        didDismissFirstRun = false
 
         guard FileManager.default.fileExists(atPath: path) else {
             rootStatus = Self.classifyMissingRoot(path: path)
@@ -266,6 +412,7 @@ final class AppState: @unchecked Sendable {
             db = opened
             rootStatus = .notScanned
             hasDSSFilelists = (try? opened.hasTrackedFileWithSuffix(".dssfilelist")) ?? false
+            lastScanDate = try? opened.lastRunDate(kind: "scan")
         } catch let error as AstroError {
             handle(error)
         } catch {
@@ -347,16 +494,25 @@ final class AppState: @unchecked Sendable {
             guard let self else { return }
             do {
                 let summary = try await Task.detached(priority: .userInitiated) { [weak self] in
+                    // Recorded in `runs` (kind "scan") so `lastRunDate(kind:)`
+                    // can answer "has this root ever been scanned" and drive
+                    // the toolbar's "Utolsó: <relatív idő>" caption across
+                    // launches -- best-effort (`try?`), a bookkeeping failure
+                    // here shouldn't block the scan itself.
+                    let runID = try? db.beginRun(kind: "scan", root: cfg.rootPath, configJSON: nil)
                     let scanner = LibraryScanner(config: cfg, db: db)
-                    return try scanner.scan(subpath: nil) { count in
+                    let result = try scanner.scan(subpath: nil) { count in
                         Task { @MainActor in
                             self?.progressText = "Beolvasva: \(count) fájl…"
                         }
                     }
+                    if let runID { try? db.finishRun(id: runID) }
+                    return result
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.scanSummary = summary
                 self.rootStatus = .ok
+                self.lastScanDate = Date()
                 self.progressText =
                     "Kész — új: \(summary.added), frissült: \(summary.updated), " +
                     "változatlan: \(summary.unchanged), hiányzó: \(summary.missing)"
@@ -1358,11 +1514,65 @@ final class AppState: @unchecked Sendable {
         progressText = text
         let id = UUID()
         currentOperationID = id
+        pendingActivityTitle[id] = text
         return id
     }
 
+    /// B15: every operation started via `beginOperation` gets exactly one
+    /// `ActivityEntry` here, regardless of which of the ~20 call sites
+    /// started it -- outcome is read off `lastError`, which `beginOperation`
+    /// always resets to `nil` at the start and `handle(_:)` always sets
+    /// before the matching `catch { self.handle(error) }` calls this, so by
+    /// the time this runs it faithfully reflects "did THIS operation fail".
     private func endOperation(_ id: UUID) {
+        let title = pendingActivityTitle.removeValue(forKey: id)
         guard currentOperationID == id else { return }
         isBusy = false
+        if let title {
+            let outcome: ActivityEntry.Outcome = lastError.map { .error($0) } ?? .ok
+            activityLog.insert(ActivityEntry(date: Date(), title: title, outcome: outcome), at: 0)
+            if activityLog.count > 50 {
+                activityLog.removeLast(activityLog.count - 50)
+            }
+        }
+    }
+
+    // MARK: - Finder helpers (R9-T1 toolbar menu)
+
+    func revealRootInFinder() {
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: config.rootPath, isDirectory: true)])
+    }
+
+    func revealConfigInFinder() {
+        let configURL = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+            .appendingPathComponent(".astro_tool", isDirectory: true)
+            .appendingPathComponent("config.json", isDirectory: false)
+        NSWorkspace.shared.activateFileViewerSelecting([configURL])
+    }
+
+    // MARK: - First-run / staleness
+
+    /// `true` once more than 24h have passed since `lastScanDate` -- drives
+    /// the shell's dismissible "Új fájlok lehetnek. [Beolvasás]" banner
+    /// (B6). `false` (no banner) before any scan has ever completed for
+    /// this root, same "don't guess" stance used elsewhere in this file.
+    var scanIsStale: Bool {
+        guard let lastScanDate else { return false }
+        return Date().timeIntervalSince(lastScanDate) > 24 * 3600
+    }
+
+    /// "5 perce" / "3 órája" / "2 napja" -- deliberately hand-rolled rather
+    /// than `RelativeDateTimeFormatter` so the wording stays the same
+    /// hand-picked Hungarian style as the rest of this hand-translated UI
+    /// regardless of the user's system locale.
+    static func relativeTimeText(since date: Date) -> String {
+        let seconds = max(0, Int(-date.timeIntervalSinceNow))
+        if seconds < 60 { return "most" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes) perce" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours) órája" }
+        let days = hours / 24
+        return "\(days) napja"
     }
 }

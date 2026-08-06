@@ -118,7 +118,7 @@ struct StatsView: View {
             HStack {
                 TextField("Keresés célpont vagy címke szerint", text: $searchText)
                     .frame(width: 280)
-                Button("Frissítés") { appState.loadStats() }
+                Button("Újraszámolás") { appState.loadStats() }
                     .disabled(appState.isBusy || appState.db == nil)
                 Spacer()
                 if appState.isBusy {

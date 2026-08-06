@@ -8,53 +8,53 @@ struct AstroToolApp: App {
         WindowGroup {
             RootView()
                 .environment(appState)
-                .frame(minWidth: 900, minHeight: 600)
+                .frame(minWidth: 1100, minHeight: 700)
                 .onAppear {
                     appState.resolveRootOnLaunch()
                 }
         }
+        .commands {
+            AstroToolCommands()
+        }
+
+        Settings {
+            SettingsWindow()
+                .environment(appState)
+        }
     }
 }
 
-/// Switches between the guidance screen (`AccessDeniedView`, for a TCC
-/// problem or an unmounted volume) and the normal six-tab UI, based on
-/// `AppState.rootStatus`.
+/// Switches between the first-run flow (`WelcomeView`/`FirstScanView`), the
+/// guidance screen (`AccessDeniedView`, for a TCC problem or an unmounted
+/// volume), and the normal navigation shell (`MainShellView`), based on
+/// `AppState.rootStatus` (R9-T1 -- replaces the old always-on six-tab
+/// `TabView`).
 struct RootView: View {
     @Environment(AppState.self) private var appState
-    @State private var selectedTab: AppTab = .overview
+    @State private var showFolderStructureHelp = false
 
     var body: some View {
-        switch appState.rootStatus {
-        case .accessDenied, .notMounted:
-            AccessDeniedView(status: appState.rootStatus) {
-                appState.retryRootAccess()
+        Group {
+            switch appState.rootStatus {
+            case .accessDenied, .notMounted:
+                AccessDeniedView(status: appState.rootStatus) {
+                    appState.retryRootAccess()
+                }
+            case .noRoot:
+                WelcomeView()
+            case .notScanned, .ok:
+                if appState.lastScanDate == nil, !appState.didDismissFirstRun {
+                    FirstScanView()
+                } else {
+                    MainShellView()
+                }
             }
-        case .noRoot, .notScanned, .ok:
-            TabView(selection: $selectedTab) {
-                OverviewView(selectedTab: $selectedTab)
-                    .tabItem { Label("Áttekintés", systemImage: "house") }
-                    .tag(AppTab.overview)
-
-                AuditView()
-                    .tabItem { Label("Audit", systemImage: "checkmark.shield") }
-                    .tag(AppTab.audit)
-
-                QualityView()
-                    .tabItem { Label("Minőség", systemImage: "star") }
-                    .tag(AppTab.quality)
-
-                CalibrationView()
-                    .tabItem { Label("Kalibráció", systemImage: "thermometer") }
-                    .tag(AppTab.calibration)
-
-                StatsView()
-                    .tabItem { Label("Statisztika", systemImage: "chart.bar") }
-                    .tag(AppTab.stats)
-
-                SettingsView()
-                    .tabItem { Label("Beállítások", systemImage: "gearshape") }
-                    .tag(AppTab.settings)
-            }
+        }
+        .sheet(isPresented: $showFolderStructureHelp) {
+            FolderStructureHelpSheet()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showFolderStructureHelp)) { _ in
+            showFolderStructureHelp = true
         }
     }
 }

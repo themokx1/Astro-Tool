@@ -10,6 +10,30 @@ történik.
 
 ### Added
 
+- **Teljes navigációs átépítés: `NavigationSplitView` sidebar + ablak-toolbar +
+  menüsor + first-run flow** (R9-T1): a régi hat-fülű `TabView`-t egy oldalsávos
+  navigáció váltja fel (`AppState.Page`: Ma este/Naptár/Minden célpont/
+  célpont-részletek/Kalibráció/Audit/Szenzor-profilok/Kereső), valódi
+  fázis-színes ponttal minden célpontra és valódi számlálós badge-ekkel
+  (Audit-badge kizárólag biztos hibát számol). Az ablak-toolbar egy Menüt ad a
+  gyökér nevével (Mappa választása…/Legutóbbi könyvtárak/Megnyitás Finderben/
+  config.json megjelenítése), egy "Beolvasás" gombot a legutóbbi beolvasás
+  relatív idejével, egy "+" menüt (Új session…) és egy "Műveletek" menüt.
+  Teljes menüsor (Fájl/Nézet/Műveletek/Súgó): ⌘1-⌘6 oldal-navigáció, ⌘R
+  beolvasás, ⌘N új session, ⌘⌥A audit, ⌃⌘S oldalsáv, "Mappastruktúra súgó"
+  sheet + Tutorial/CLI-referencia külső linkek. `Settings { }` scene váltja a
+  Beállítások fület (⌘,). Új first-run élmény: bookmark nélkül `WelcomeView`
+  (app-ikon, 3 pont, egész ablak drop-target a mappaválasztáshoz), kiválasztott
+  de sosem beolvasott gyökérnél `FirstScanView` (mappaszerkezet-checklist,
+  "Beolvasás indítása"/"Kihagyom, később", opcionális azonnali audit, eredmény-
+  kártya). A "sosem beolvasva" állapot most a `runs` táblából (új
+  `Database.lastRunDate(kind:)`, additív AstroCore-változás) derül ki, nem csak
+  in-memory state-ből, így túléli az újraindítást — ugyanez adja a toolbar
+  "Utolsó: X perce/órája/napja" feliratát is. `AccessDeniedView` mindkét
+  hibaképe kapott "Másik mappa választása…" gombot; a kötet-hiány képernyő
+  automatikusan újrapróbál (5s `Timer` + `NSWorkspace.didMountNotification`
+  observer), amint a kötet megjelenik. Toolbar óra-ikon: az utolsó 50
+  háttérművelet naplója (cím, relatív idő, piros hibaszöveg hiba esetén).
 - **Csoportosított stack-nézet variánsokkal, szerkesztett/eredeti jelzéssel,
   expozícióval és Finder-gombokkal** (R8-3): valós screenshot alapú
   visszajelzésre válaszul — egy NGC2237-stack tucatnyi variánsa (`_og`,
@@ -30,6 +54,15 @@ történik.
   "(+9 szerkesztett · 2 starless)"), `--verbose` a variánsokat is kilistázza;
   `--json --grouped` az új `[StackGroup]` alakot adja vissza (az alapértelmezett
   `--json` változatlan marad).
+
+### Changed
+
+- **Átnevezések és mozgatások a navigációs átépítés részeként** (R9-T1):
+  Statisztika "Frissítés" → "Újraszámolás"; Áttekintés "Könyvtár beolvasása"
+  gomb törölve (a toolbar "Beolvasás" gombja veszi át) és "DSS-adatok
+  beolvasása" → "DSS-döntések importálása"; Kalibráció "Mérés" → "Szenzor
+  mérése…", a Szenzor-profilok szekcióval együtt önálló oldalra mozgatva;
+  Áttekintés "Ugrás" doboza törölve (a sidebar veszi át a szerepét).
 
 ### Fixed
 

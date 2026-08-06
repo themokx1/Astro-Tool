@@ -501,6 +501,34 @@ private func sampleFile(path: String = "sessions/M31/2026-01-01/lights/f1.fits")
     #expect(fetched.first?.suggestion == nil)
 }
 
+@Test func lastRunDateReturnsNilWhenNoRunsOfThatKindExist() throws {
+    let database = try Database(path: ":memory:")
+    #expect(try database.lastRunDate(kind: "scan") == nil)
+
+    // A run of a DIFFERENT kind must not be picked up.
+    _ = try database.beginRun(kind: "audit", root: "/root", configJSON: nil)
+    #expect(try database.lastRunDate(kind: "scan") == nil)
+}
+
+@Test func lastRunDateReturnsTheMostRecentStartedAtForThatKind() throws {
+    let database = try Database(path: ":memory:")
+    let earlier = Date(timeIntervalSince1970: 1_000)
+    let later = Date(timeIntervalSince1970: 2_000)
+
+    // `beginRun` always stamps "now" -- insert the two rows directly so this
+    // test controls `started_at` instead of racing the clock.
+    try database.db.run(
+        "INSERT INTO runs(kind, started_at, root) VALUES ('scan', ?, '/root');",
+        bind: [.real(earlier.timeIntervalSince1970)]
+    )
+    try database.db.run(
+        "INSERT INTO runs(kind, started_at, root) VALUES ('scan', ?, '/root');",
+        bind: [.real(later.timeIntervalSince1970)]
+    )
+
+    #expect(try database.lastRunDate(kind: "scan") == later)
+}
+
 // MARK: - Database: ratings
 
 private func sampleRating(fileID: Int64, inputSig: String = "sig-1") -> RatingRecord {

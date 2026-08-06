@@ -132,6 +132,11 @@
       <pre class="example">astrotool cleanup --suggest --limit 50</pre>
     </div>
     <div class="cmd">
+      <div class="name">stats</div>
+      <div class="desc">Célpontonkénti integráció/keret-összegzés; <code>--target</code>-tel session-bontás, <code>--tag</code>-gel szűrés.</div>
+      <pre class="example">astrotool stats --target M31 --sessions</pre>
+    </div>
+    <div class="cmd">
       <div class="name">new-session</div>
       <div class="desc">Új session könyvtár létrehozása (<code>YYYY-MM-DD</code>) README-sablonnal egy célponthoz.</div>
       <pre class="example">astrotool new-session --catalog M --name 31 --date 2026-03-15</pre>
@@ -238,9 +243,19 @@
       <pre class="example">astrotool stacklist --target M31 --date 2026-03-15 --keep 0.8</pre>
     </div>
     <div class="cmd">
+      <div class="name">stacks</div>
+      <div class="desc">Célponthoz felderített kész stack-fájlok, variáns-csoportokba rendezve (eredeti/szerkesztett/starless/starmask/export); <code>--verbose</code> a variánsokat is kilistázza.</div>
+      <pre class="example">astrotool stacks --target M31 --grouped</pre>
+    </div>
+    <div class="cmd">
       <div class="name">report</div>
       <div class="desc">Önmagában megnyitható HTML éjszaka-riport: idővonal, minőség, magasság &amp; Hold, kalibráció, teendők.</div>
       <pre class="example">astrotool report --target M31 --date 2026-03-15</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">target-report</div>
+      <div class="desc">Önmagában megnyitható HTML célpont-riport: minden session, stack, kalibráció-lefedettség és minőség-adat egy célponthoz, egy oldalon.</div>
+      <pre class="example">astrotool target-report --target M31</pre>
     </div>
   </div>
 
