@@ -1,5 +1,6 @@
 import AppKit
 import AstroCore
+import Charts
 import SwiftUI
 
 /// R9-T3/A.3's "Minőség" segment: the same frame `Table` `QualityView` used
@@ -157,6 +158,9 @@ struct QualitySegment: View {
                 }
             } else {
                 histogram
+                if showsFWHMOverNightCard {
+                    fwhmOverNightCard
+                }
                 frameTable
             }
         }
@@ -332,6 +336,195 @@ struct QualitySegment: View {
         .frame(height: 44)
         .padding(.vertical, 4)
     }
+
+    // MARK: - FWHM over the night (R10-B5)
+
+    /// One rated frame's capture instant + FWHM, for the "when did the
+    /// night go bad" trend card -- `Identifiable` so `ForEach` inside the
+    /// `Chart` doesn't need `frame.path` (a `FrameScore` field this struct
+    /// deliberately doesn't carry, keeping it a minimal plot-only value).
+    private struct FWHMPoint: Identifiable {
+        let id = UUID()
+        let time: Date
+        let fwhm: Double
+        let isOutlier: Bool
+    }
+
+    /// `[]` whenever `selectedDate` is "Minden session" (`nil`) -- pooling
+    /// frames from different nights on one time-of-night axis has nothing
+    /// coherent to say, per the card's own gating rule. Otherwise, every
+    /// frame in `filteredFrameScores` (already scoped to `selectedDate`)
+    /// that has BOTH a Siril-measured FWHM and a parseable `DATE-OBS`,
+    /// sorted ascending by capture time. `SessionTimeline.parseDateObs` is
+    /// the exact same shared FITS/EXIF timestamp parser `NightHealth`'s own
+    /// focus-drift regression parses `DATE-OBS` with -- promoted `public`
+    /// (R10-B5) for this cross-module reuse rather than duplicated here.
+    private var fwhmOverNightPoints: [FWHMPoint] {
+        guard selectedDate != nil else { return [] }
+        return filteredFrameScores
+            .compactMap { score -> FWHMPoint? in
+                guard let fwhm = score.metrics?.fwhm,
+                      let rawDateObs = score.dateObs,
+                      let time = SessionTimeline.parseDateObs(rawDateObs)
+                else { return nil }
+                return FWHMPoint(time: time, fwhm: fwhm, isOutlier: score.isOutlier)
+            }
+            .sorted { $0.time < $1.time }
+    }
+
+    /// Same "don't trust a handful of points" floor `NightHealth`'s own
+    /// `minRatedFramesForFocus` uses for its regression (`NightHealth.swift`)
+    /// -- reused here as the card's own show/hide gate rather than showing a
+    /// noisy 2-3 point scatter with nothing to say.
+    private static let minFWHMPointsForTrend = 5
+
+    private var showsFWHMOverNightCard: Bool {
+        selectedDate != nil && fwhmOverNightPoints.count >= Self.minFWHMPointsForTrend
+    }
+
+    /// This session's `NightHealth` focus-drift report, if `AppState`
+    /// loaded one for it (`AppState.loadTargetDetail` populates
+    /// `targetNightHealthByDate` for every session date up front).
+    private var focusHealth: FocusHealth? {
+        guard let selectedDate else { return nil }
+        return appState.targetNightHealthByDate[selectedDate]?.focus
+    }
+
+    /// The regression's slope, ONLY when its unit is already pixels.
+    ///
+    /// `FrameScore.metrics.fwhm` (this chart's Y axis) is always in pixels
+    /// -- `SessionQuality` is what converts FWHM to arcseconds elsewhere in
+    /// this app, using each frame's own pixel scale, and this chart
+    /// deliberately doesn't: the point of "FWHM over the night" is
+    /// consistency WITHIN one session's own frames, which pixels already
+    /// give for free. `NightHealth.FocusHealth.slopeUnit` is `"arcsec/h"`
+    /// whenever the session's frames carry a derivable pixel scale
+    /// (`xpixsz`+`focallen` both present) and `"px/h"` otherwise -- drawing
+    /// an arcsec/h slope against a pixel Y-axis would silently mix units,
+    /// so the regression line is simply OMITTED in that case rather than
+    /// drawn wrong. `FocusHealth` has no "always give me the px/h slope
+    /// too" escape hatch (once converted, the pre-conversion pixel slope
+    /// isn't retained), and re-deriving the session's own pixel scale here
+    /// just to convert back would duplicate `NightHealth`'s internal logic
+    /// for one trend line -- out of scope for this chart.
+    private var focusSlopePxPerHour: Double? {
+        guard let focusHealth, focusHealth.slopeUnit == "px/h" else { return nil }
+        return focusHealth.slopePerHour
+    }
+
+    /// The regression line's two plot endpoints, `(time, fwhm-px)` each --
+    /// `nil` whenever there's no unit-matching slope (`focusSlopePxPerHour`)
+    /// or fewer than 2 plotted points to anchor a line between.
+    ///
+    /// `FocusHealth` stores the regression's SLOPE and total drift, but not
+    /// its y-intercept. An ordinary-least-squares line always passes
+    /// through its own sample's mean point `(t̄, ȳ)`, so `ȳ - slope·t̄`
+    /// reconstructs that same line's intercept -- computed here from THIS
+    /// card's own `fwhmOverNightPoints` (hours elapsed since the first
+    /// plotted frame), which is the same "rated frame with both FWHM and a
+    /// parseable DATE-OBS" universe `NightHealth.focusHealth` regresses
+    /// over for this session, modulo that function's own dedup pass (a
+    /// user's hand-triaged duplicate/derivative frame under a `Reject/`-like
+    /// subfolder) -- close enough for a visual trend line, not claimed to
+    /// be bit-exact. Keeping the SLOPE itself sourced from `FocusHealth`
+    /// (rather than refitting it too from this card's possibly slightly
+    /// different point set) is what keeps this line's rate-of-change
+    /// consistent with the actual "fókuszcsúszás gyanú" verdict text shown
+    /// elsewhere for this same session.
+    private var focusRegressionEndpoints: (start: (time: Date, fwhm: Double), end: (time: Date, fwhm: Double))? {
+        guard let slope = focusSlopePxPerHour,
+              fwhmOverNightPoints.count >= 2,
+              let t0 = fwhmOverNightPoints.first?.time,
+              let tN = fwhmOverNightPoints.last?.time
+        else { return nil }
+
+        let hoursSinceStart = fwhmOverNightPoints.map { $0.time.timeIntervalSince(t0) / 3600.0 }
+        let meanHours = hoursSinceStart.reduce(0, +) / Double(hoursSinceStart.count)
+        let meanFWHM = fwhmOverNightPoints.reduce(0.0) { $0 + $1.fwhm } / Double(fwhmOverNightPoints.count)
+        let intercept = meanFWHM - slope * meanHours
+
+        let totalHours = tN.timeIntervalSince(t0) / 3600.0
+        return ((t0, intercept), (tN, intercept + slope * totalHours))
+    }
+
+    private var fwhmOverNightCard: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("FWHM az éjszaka folyamán").font(.subheadline.bold())
+
+            Chart {
+                fwhmPointMarks
+                focusRegressionLine
+            }
+            .chartLegend(.hidden)
+            .chartYAxisLabel("FWHM (px)")
+            .chartXAxis {
+                AxisMarks { value in
+                    AxisGridLine().foregroundStyle(.secondary)
+                    AxisTick()
+                    if let date = value.as(Date.self) {
+                        AxisValueLabel(Self.timeOfNightFormatter.string(from: date))
+                    }
+                }
+            }
+            .chartYAxis {
+                AxisMarks { _ in
+                    AxisGridLine().foregroundStyle(.secondary)
+                    AxisTick()
+                    AxisValueLabel()
+                }
+            }
+            .frame(height: 190)
+
+            // Pixels, not arcsec (see `focusSlopePxPerHour`'s doc comment)
+            // -- spelled out here since "FWHM (px)" alone on the axis is
+            // easy to skim past.
+            Text("Pixelben -- csak ezen a sessionön belül összevethető (nincs arcsec-konverzió).")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+    }
+
+    @ChartContentBuilder
+    private var fwhmPointMarks: some ChartContent {
+        ForEach(fwhmOverNightPoints) { point in
+            PointMark(
+                x: .value("Idő", point.time),
+                y: .value("FWHM (px)", point.fwhm)
+            )
+            .foregroundStyle(point.isOutlier ? Color.red : Color.accentColor)
+        }
+    }
+
+    @ChartContentBuilder
+    private var focusRegressionLine: some ChartContent {
+        if let endpoints = focusRegressionEndpoints {
+            LineMark(
+                x: .value("Idő", endpoints.start.time),
+                y: .value("FWHM (px)", endpoints.start.fwhm)
+            )
+            .foregroundStyle(.orange)
+            .lineStyle(StrokeStyle(lineWidth: 2, dash: [6, 3]))
+
+            LineMark(
+                x: .value("Idő", endpoints.end.time),
+                y: .value("FWHM (px)", endpoints.end.fwhm)
+            )
+            .foregroundStyle(.orange)
+            .lineStyle(StrokeStyle(lineWidth: 2, dash: [6, 3]))
+        }
+    }
+
+    /// `"20:15"` -- local time, same `en_US_POSIX`/`.current` convention as
+    /// `SkyChartView.hourFormatter` (that one is `private` to that file).
+    private static let timeOfNightFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
 
     // MARK: - Frame table (unchanged from the deleted QualityView)
 

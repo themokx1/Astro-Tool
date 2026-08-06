@@ -153,7 +153,12 @@ public struct SessionTimeline: Codable, Sendable, Equatable {
     /// All three formatters assume UTC -- consistent within one session's
     /// frames (same instrument/software), which is all gap/window math
     /// needs; no timezone offset is ever present in either source format.
-    static func parseDateObs(_ raw: String) -> Date? {
+    ///
+    /// `public` (R10-B5) so the app layer's Minőség segment can parse
+    /// `FrameScore.dateObs` for its FWHM-over-night trend chart with the
+    /// same shared parser every in-package DATE-OBS consumer already uses,
+    /// rather than duplicating this format list in `AstroToolApp`.
+    public static func parseDateObs(_ raw: String) -> Date? {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
         if let date = fitsFormatterWithFraction.date(from: trimmed) { return date }
         if let date = fitsFormatterNoFraction.date(from: trimmed) { return date }
