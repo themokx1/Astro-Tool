@@ -197,20 +197,11 @@ public enum Planner {
     /// 3. up for less than half an hour,
     /// 4. Moon within 40 deg and more than 60% illuminated,
     /// 5. otherwise fine.
-    private enum Verdict {
-        static let noCoordinate = "nincs koordináta"
-        static func tooLow(_ maxAlt: Double) -> String { String(format: "alacsony (max %.0f°)", maxAlt) }
-        static let notVisibleTonight = "nem látszik ma éjjel"
-        static func moonInterferes(separationDeg: Double, illuminationPercent: Double) -> String {
-            String(format: "Hold zavar (%.0f°, %.0f%%)", separationDeg, illuminationPercent)
-        }
-        static let good = "ma jó"
-        /// Comets move degrees per day -- a session-derived coordinate
-        /// (from whenever those frames were actually shot, possibly months
-        /// ago) says nothing about where the comet is TONIGHT, so `plan`
-        /// never computes a real "ma jó"/altitude/Moon verdict for one.
-        static let cometStaleCoordinate = "üstökös — a tárolt koordináta a felvétel idejéből való, ma már nem érvényes"
-    }
+    ///
+    /// The actual wording lives in `SkyVerdict` (R10-A4) -- shared with
+    /// `DiscoveryPlanner.discover`, which surfaces the same judgment over
+    /// the embedded catalog instead of the library.
+    private typealias Verdict = SkyVerdict
 
     /// Resolves the effective observing site: `config.site`'s explicit
     /// values win; any `nil` component falls back to the median
@@ -614,22 +605,17 @@ public enum Planner {
             )
         }
 
-        let sweep = sweepNight(
+        let sweep = NightSweep.sweep(
             raDeg: coord.raDeg, decDeg: coord.decDeg, latDeg: siteLat, lonDeg: siteLon,
             duskUTC: duskUTC, dawnUTC: dawnUTC, minAltitudeDeg: minAltitudeDeg
         )
-        let midNight = duskUTC.addingTimeInterval(dawnUTC.timeIntervalSince(duskUTC) / 2)
-        let midJD = JulianDate.julianDay(midNight)
-        let moon = SunMoon.moonPosition(julianDay: midJD)
-        let moonIllum = SunMoon.moonIlluminationPercent(julianDay: midJD)
+        let moon = NightSweep.midnightMoon(duskUTC: duskUTC, dawnUTC: dawnUTC)
+        let moonIllum = moon.illuminationPercent
         let moonSeparation = SunMoon.angularSeparationDeg(ra1: coord.raDeg, dec1: coord.decDeg, ra2: moon.raDeg, dec2: moon.decDeg)
 
         let visibleHours = sweep.visibleSeconds / 3600.0
         let culminationLocal = sweep.culminationUTC.map { formatLocalTime($0, timeZone: timeZone) }
-        let visibleWindowLocal = sweep.visibleStart.flatMap { start -> String? in
-            guard let end = sweep.visibleEnd else { return nil }
-            return "\(formatLocalTime(start, timeZone: timeZone))–\(formatLocalTime(end, timeZone: timeZone))"
-        }
+        let visibleWindowLocal = NightSweep.visibleWindowLocal(sweep, timeZone: timeZone)
 
         let moonInterferes = moonIllum > 60 && moonSeparation < 40
         let verdict: String
@@ -692,71 +678,9 @@ public enum Planner {
         } else {
             missingNeed = 1.0
         }
-        let visibilityFactor = min(max(visibleHours, 0) / 4.0, 1.0)
-        let moonPenalty = moonInterferes ? 0.2 : 1.0
-        return missingNeed * visibilityFactor * moonPenalty
-    }
-
-    // MARK: - Night sweep (culmination, max altitude, visibility window)
-
-    private struct NightSweep {
-        var maxAltitudeDeg: Double
-        var culminationUTC: Date?
-        var visibleSeconds: Double
-        var visibleStart: Date?
-        var visibleEnd: Date?
-    }
-
-    /// Samples the target's altitude every `stepMinutes` from dusk to dawn,
-    /// tracking the maximum (culmination) and the extent of the
-    /// above-`minAltitudeDeg` span. A brute-force scan rather than solving
-    /// the transit time in closed form -- simpler to get right, and this
-    /// tool only ever needs night-window granularity, not observatory
-    /// pointing precision.
-    private static func sweepNight(
-        raDeg: Double,
-        decDeg: Double,
-        latDeg: Double,
-        lonDeg: Double,
-        duskUTC: Date,
-        dawnUTC: Date,
-        minAltitudeDeg: Double,
-        stepMinutes: Double = 2
-    ) -> NightSweep {
-        var maxAlt = -Double.infinity
-        var maxAltDate: Date?
-        var visibleSampleCount = 0
-        var visibleStart: Date?
-        var visibleEnd: Date?
-
-        let stepSeconds = stepMinutes * 60
-        var t = duskUTC
-        while t <= dawnUTC {
-            let jd = JulianDate.julianDay(t)
-            let lst = SiderealTime.lstHours(julianDay: jd, longitudeDeg: lonDeg)
-            let (alt, _) = AltAz.position(raDeg: raDeg, decDeg: decDeg, lstHours: lst, latDeg: latDeg)
-
-            if alt > maxAlt {
-                maxAlt = alt
-                maxAltDate = t
-            }
-
-            if alt >= minAltitudeDeg {
-                visibleSampleCount += 1
-                if visibleStart == nil { visibleStart = t }
-                visibleEnd = t
-            }
-
-            t = t.addingTimeInterval(stepSeconds)
-        }
-
-        return NightSweep(
-            maxAltitudeDeg: maxAlt.isFinite ? maxAlt : -90,
-            culminationUTC: maxAltDate,
-            visibleSeconds: Double(visibleSampleCount) * stepSeconds,
-            visibleStart: visibleStart,
-            visibleEnd: visibleEnd
-        )
+        return missingNeed
+            * SkyScore.visibilityFactor(visibleHours: visibleHours)
+            * SkyScore.moonPenalty(moonInterferes: moonInterferes)
     }
 
     // MARK: - Helpers
@@ -772,19 +696,14 @@ public enum Planner {
         return result
     }
 
+    /// Thin forwarders to `NightSweep`'s formatting (R10-A4 extraction) --
+    /// kept as same-named private members so every existing call site above
+    /// (`moonEventLabel`, `buildPlan`) needed no changes at all.
     private static func formatLocalTime(_ date: Date, timeZone: TimeZone) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = timeZone
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
+        NightSweep.formatLocalTime(date, timeZone: timeZone)
     }
 
     private static func isoString(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
-        return formatter.string(from: date)
+        NightSweep.isoString(date)
     }
 }
