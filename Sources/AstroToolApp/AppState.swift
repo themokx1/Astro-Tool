@@ -156,6 +156,29 @@ final class AppState: @unchecked Sendable {
     /// view never has to re-query the DB just to check one group's state.
     var ackedKeys: Set<String> = []
 
+    /// R9-T4/A.1's segmented picker on `TonightPage` -- settable by the
+    /// sidebar's "Naptár" row (which preselects `.calendar` before
+    /// navigating to `.tonight`, since the old standalone `Page.calendar`
+    /// route is no longer how either the sidebar or the menu bar reach the
+    /// calendar content) as well as the page's own segmented picker. Same
+    /// "preselect a segment, then navigate" pattern `auditSegment`/
+    /// "Takarítás" already established.
+    enum TonightSegment: Hashable {
+        case tonight
+        case calendar
+    }
+    var tonightSegment: TonightSegment = .tonight
+
+    /// R9-T4/B10's `Settings` scene tab picker -- settable by the "Ma este"
+    /// page's "Helyszín" tile (which preselects `.location` before opening
+    /// the Settings window) so that click actually lands on the tab it
+    /// promises, not just Settings in general.
+    enum SettingsTab: Hashable {
+        case library
+        case location
+    }
+    var settingsTab: SettingsTab = .library
+
     var stats: [TargetStats] = []
     /// Every target's session detail rows, keyed by target name -- populated
     /// alongside `stats` in `loadStats()` so `StatsView`'s hierarchical
@@ -219,6 +242,33 @@ final class AppState: @unchecked Sendable {
     /// "Ma este" box on the Áttekintés tab. `nil` until `loadPlan()` has
     /// run at least once this session.
     var plan: [TargetPlan]?
+
+    /// R9-T4/B10's fix: `Planner.resolveSite`'s result, cached here (in
+    /// memory only, never persisted) so `TonightPage`'s "Helyszín" tile can
+    /// show the RESOLVED coordinate even in Automatikus mode, where
+    /// `config.site` itself stays `nil`. Previously `loadPlan()`/
+    /// `loadTargetDetail()` mutated `config.site` directly with this same
+    /// value -- which meant a plain Settings "Mentés" (in Automatikus mode,
+    /// touching none of the Helyszín fields at all) silently persisted
+    /// whatever had been derived from FITS headers as if the user had typed
+    /// it in manually. `config.site` now only ever holds what a user
+    /// actually saved from the Helyszín tab (or `SiteRule()`, i.e. "derive
+    /// it"); this property holds today's actually-in-effect coordinate.
+    var resolvedSite: SiteRule = SiteRule()
+
+    /// Tonight's (or `planDate`'s) dark-time/Moon summary
+    /// (`Planner.nightInfo`), backing `TonightPage`'s "Sötét idő"/"Hold"
+    /// tiles. `nil` until `loadPlan()` has run at least once this session,
+    /// refreshed alongside `plan`/`resolvedSite`.
+    var nightInfo: NightInfo?
+
+    /// The date `plan`/`resolvedSite`/`nightInfo` were last computed for --
+    /// `nil` means "tonight" (today, at whatever instant `loadPlan()` ran).
+    /// Set by `loadPlan(date:)`; drives `TonightPage`'s "<dátum> éjszakájára"
+    /// caption + "Vissza a mai estéhez" button once a calendar row's "Terv
+    /// erre az éjszakára" context menu recomputes the plan for a different
+    /// night.
+    var planDate: Date?
 
     /// The month-at-a-glance planning calendar (`Planner.month`, R7-B5),
     /// shown in the "Hónap" sheet off the Áttekintés tab. `nil` until
@@ -858,14 +908,15 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - Planner
 
-    /// Loads tonight's plan for every target. Also resolves the effective
-    /// observing site (config's explicit `site`, else the median
-    /// SITELAT/SITELONG across the library) and caches it back into
-    /// `config.site` in memory ONLY -- never written to disk -- so a
-    /// second "Frissítés" this session, or any other tab reading
-    /// `appState.config`, sees the resolved coordinates without
-    /// recomputing them from scratch every time.
-    func loadPlan() {
+    /// Loads the plan for `date` (`nil` means tonight) for every target.
+    /// Also resolves the effective observing site (config's explicit
+    /// `site`, else the median SITELAT/SITELONG across the library) and
+    /// tonight's dark-time/Moon summary -- cached into `resolvedSite`/
+    /// `nightInfo`, in memory ONLY, never written to `config.site` on disk
+    /// (see `resolvedSite`'s own doc for why that used to be a bug).
+    /// `date` is remembered as `planDate` so `TonightPage` can show which
+    /// night is currently on screen (R9-T4/A.1's "Terv erre az éjszakára").
+    func loadPlan(date: Date? = nil) {
         guard let db else { return }
         let cfg = config
 
@@ -873,14 +924,17 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let (result, resolvedSite) = try await Task.detached(priority: .userInitiated) {
-                    let plans = try Planner.plan(db: db, config: cfg)
+                let (result, resolvedSite, night) = try await Task.detached(priority: .userInitiated) {
+                    let plans = try Planner.plan(date: date, db: db, config: cfg)
                     let site = try Planner.resolveSite(db: db, config: cfg)
-                    return (plans, site)
+                    let night = Planner.nightInfo(date: date, site: site)
+                    return (plans, site, night)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.plan = result
-                self.config.site = resolvedSite
+                self.resolvedSite = resolvedSite
+                self.nightInfo = night
+                self.planDate = date
                 self.progressText = "Terv kész: \(result.count) célpont"
             } catch {
                 self.handle(error)
@@ -1045,8 +1099,13 @@ final class AppState: @unchecked Sendable {
                 }).value {
                     self.projectStates = projectsResult
                 }
+                // `self.planDate` (not always `nil`): if the currently
+                // shown plan is date-scoped (a calendar row's "Terv erre az
+                // éjszakára"), a goal edit must refresh THAT night's plan,
+                // not silently snap the view back to tonight's.
+                let planDate = self.planDate
                 if self.plan != nil, let planResult = try? await Task.detached(priority: .userInitiated, operation: {
-                    try Planner.plan(db: db, config: cfg)
+                    try Planner.plan(date: planDate, db: db, config: cfg)
                 }).value {
                     self.plan = planResult
                 }
@@ -1196,7 +1255,13 @@ final class AppState: @unchecked Sendable {
                 self.stackGroupsByTarget[target] = bundle.stackGroups
                 self.projectStates = bundle.projects
                 self.plan = bundle.plan
-                self.config.site = bundle.site
+                // `bundle.plan` is always TODAY's plan (`Planner.plan` with
+                // no `date:`) -- reset `planDate` too, so a previously
+                // date-scoped "Ma este" view (via a calendar row's "Terv
+                // erre az éjszakára") doesn't keep showing a stale caption
+                // for a night this reload didn't actually recompute.
+                self.planDate = nil
+                self.resolvedSite = bundle.site
                 self.calibHealth = bundle.calibHealth
                 self.targetCoordinateInfo = bundle.coordInfo
                 self.targetSetupDescriptors = bundle.setupDescriptors
@@ -1740,6 +1805,65 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.plateSolveSummary = summary
                 self.progressText = "Plate-solve kész: \(summary.solved)/\(summary.attempted) megoldva"
+                self.loadStats()
+                self.loadPlan()
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// R9-T4/A.1's "0 koordináta" empty state's "Plate-solve mindenre…"
+    /// action -- solves every target that has at least one session light on
+    /// record but no resolvable coordinate at all yet, one after another
+    /// (same target selection `astrotool solve --all` uses), then refreshes
+    /// `stats`/`plan` once every target's been attempted. Unlike
+    /// `runPlateSolve`, there's no per-target sheet to show progress in --
+    /// `progressText` carries the running "target N/M" caption instead.
+    func runPlateSolveAll() {
+        guard let db else { return }
+        let cfg = config
+        plateSolveSummary = nil
+
+        let opID = beginOperation("Plate-solve (minden célpont) indul…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let (summaries, targets) = try await Task.detached(priority: .userInitiated) { [weak self] in
+                    let allFiles = try db.allFiles(includeMissing: false)
+                    let lights = allFiles.filter { $0.area == .sessions && $0.role == .light }
+                    var metaByFileID: [Int64: FITSMetaRecord] = [:]
+                    for file in lights {
+                        guard let id = file.id else { continue }
+                        if let meta = try db.fitsMeta(fileID: id) { metaByFileID[id] = meta }
+                    }
+                    let targetsWithFrames = Set(lights.compactMap(\.target)).sorted()
+                    let targets = targetsWithFrames.filter { t in
+                        let targetLights = lights.filter { $0.target == t }
+                        return TargetCoordinates.medianCoordinates(files: targetLights, meta: metaByFileID) == nil
+                    }
+                    guard !targets.isEmpty else { return ([String: SolveSummary](), [String]()) }
+
+                    let solver = try PlateSolver(sirilPath: cfg.rating.sirilPath)
+                    var summaries: [String: SolveSummary] = [:]
+                    for t in targets {
+                        summaries[t] = try solver.solveTarget(t, db: db, config: cfg) { done, total in
+                            Task { @MainActor in
+                                self?.progressText = "Plate-solve: \(t) (\(done)/\(total))"
+                            }
+                        }
+                    }
+                    return (summaries, targets)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                if targets.isEmpty {
+                    self.progressText = "Nincs koordináta nélküli célpont."
+                } else {
+                    let solved = summaries.values.reduce(0) { $0 + $1.solved }
+                    let attempted = summaries.values.reduce(0) { $0 + $1.attempted }
+                    self.progressText = "Plate-solve kész: \(solved)/\(attempted) megoldva (\(targets.count) célpont)"
+                }
                 self.loadStats()
                 self.loadPlan()
             } catch {

@@ -10,6 +10,45 @@ történik.
 
 ### Added
 
+- **Ma este + Naptár oldal, helyszín-beállítás** (R9-T4): új `Views/TonightPage.swift`
+  egy `Picker(.segmented)`-tel ("Ma este" | "Következő 30 éjszaka") felváltja
+  a törölt `OverviewView`-t ÉS a törölt `CalendarPage`-et (a havi terv most
+  `AppState.tonightSegment == .calendar`, nem önálló oldal — a sidebar
+  "Naptár" sora/⌘2 a "Takarítás"/`auditSegment` mintáját követve
+  szegmenst preszelektál, nem külön `Page`-re navigál). 4 tile: **Sötét idő**
+  (ÚJ `Planner.nightInfo(date:site:)` — `SunMoon.astronomicalTwilight` +
+  Hold-magasság-sweep, `darkHours` nil-safe fehér-éjszaka/nautikus fallback
+  esetén), **Hold** (illumináció % + "felkel HH:mm"/"nyugszik HH:mm"/"egész
+  éjjel fent"/"egész éjjel lent"), **Ajánlott** (`verdict == "ma jó"`
+  darabszám), **Helyszín** (`AppState.resolvedSite` formázva + "FITS-
+  fejlécekből"/"kézzel beállítva" caption, kattintásra a Settings ▸ Helyszín
+  fület nyitja meg). Terv-tábla: sortolható `Table` 10 kolonnával
+  (Célpont/Állapot/Integráció/Cél/Hiányzik/Kulmináló/Max. mag./Látható/Hold/
+  Döntés), sor context-menü (Célpont megnyitása/Cél beállítása…/Plate-
+  solve…/Éjszaka-riport/Célpont-riport/Mappa Finderben), a "Cél beállítása…"
+  ÚJ `GoalEditSheet`-et nyit (sheet, mert a context-menü tétel bezáródik
+  mielőtt egy popovernek horgonya lehetne). Empty state-ek (0 célpont, 0
+  koordináta -- ÚJ `AppState.runPlateSolveAll()`, az `astrotool solve --all`
+  logikáját tükrözve) + sárga banner teljesen feloldhatatlan helyszínnél.
+  Naptár szegmens: `List` helyett `Table` (Ma/Holnap + hu_HU hétköznap,
+  arány-proporcionális Hold-glif, `displayName`-es "Legjobb 3 célpont"), sor
+  context-menü "Terv erre az éjszakára" → `AppState.loadPlan(date:)` egy
+  másik éjszakára (a "Ma este" szegmens ekkor "‹dátum› éjszakájára" caption +
+  "Vissza a mai estéhez" gombot mutat).
+  **B10 helyszín-fix**: `AppState.loadPlan()`/`loadTargetDetail()` korábban
+  `config.site`-ot MUTÁLTA a FITS-fejléc-medián feloldott értékkel, amit egy
+  utólagos Settings-mentés csendben perzisztált (mintha a felhasználó kézzel
+  írta volna be). Új `AppState.resolvedSite` a feloldott értéket KIZÁRÓLAG
+  memóriában tartja; `config.site` csak azt tartalmazza, amit a felhasználó
+  tényleg elmentett. `Views/SettingsWindow.swift` mostantól `TabView`
+  ("Könyvtár" + ÚJ "Helyszín" fül, `Views/LocationSettingsView.swift` --
+  Automatikus/Kézi picker, "Beillesztés a vágólapról", Automatikus mentés
+  `site: {}`-t ír). `MainShellView`'s Műveletek toolbar-menü kapott egy
+  működő "DSS-döntések importálása" tételt (a törölt `OverviewView` gombja
+  áthelyezve, bekapcsolva). **AstroCore (TDD, additív)**: `Planner.NightInfo`
+  + `Planner.nightInfo(date:site:)`, 3 új teszt (`PlannerTests.swift`). 820
+  teszt zöld (817 + 3 új).
+
 - **Célpont-részletek oldal** (R9-T3), a review szerint "a legértékesebb új
   felület": beolvasztja a teljes Minőség fület. `Views/TargetDetailPage.swift`
   fix fejléccel (identitás + fázis-chip, 5 tile — Valós integráció/Cél/

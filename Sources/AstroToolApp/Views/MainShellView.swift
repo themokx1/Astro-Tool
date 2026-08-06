@@ -31,6 +31,10 @@ private struct DetailContainerView: View {
     @State private var showNewSessionSheet = false
     @State private var showActivityPopover = false
     @State private var bannerDismissed = false
+    /// R9-T4: `OverviewView`'s DSS-ingest result alert, relocated here now
+    /// that "DSS-döntések importálása" itself moved from that deleted page's
+    /// button into this toolbar's "Műveletek" menu.
+    @State private var showDSSIngestAlert = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,11 +58,21 @@ private struct DetailContainerView: View {
                     Image(systemName: "plus")
                 }
                 Menu {
-                    // T6 wires these up against the real batch operations;
-                    // kept here (disabled) so the menu's final shape/position
-                    // already exists. The one WORKING "Műveletek" action
-                    // (Audit futtatása) lives in the menu bar's "Műveletek"
-                    // menu (`Views/Commands.swift`, ⌘⌥A), not duplicated here.
+                    // R9-T4: the first WORKING item in this menu -- moved
+                    // (and enabled) from `OverviewView`'s "DSS-döntések
+                    // importálása" quick button, gated the same way that
+                    // button was (`hasDSSFilelists`, true only when the
+                    // library actually has DeepSkyStacker byproducts on
+                    // record). T6 wires the two placeholders below against
+                    // the real batch operations; the one other WORKING
+                    // "Műveletek" action (Audit futtatása) lives in the menu
+                    // bar's "Műveletek" menu (`Views/Commands.swift`,
+                    // ⌘⌥A), not duplicated here.
+                    if appState.hasDSSFilelists {
+                        Button("DSS-döntések importálása") { appState.runIngestDSS() }
+                            .disabled(appState.isBusy || appState.db == nil)
+                        Divider()
+                    }
                     Button("Minden célpont pontozása…") {}
                         .disabled(true)
                     Button("Minden célpont exportálása…") {}
@@ -73,6 +87,18 @@ private struct DetailContainerView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .newSession)) { _ in
             showNewSessionSheet = true
+        }
+        .onChange(of: appState.dssIngestSummary) { _, newValue in
+            showDSSIngestAlert = newValue != nil
+        }
+        .alert("DSS-adatok beolvasva", isPresented: $showDSSIngestAlert, presenting: appState.dssIngestSummary) { _ in
+            Button("OK") {}
+        } message: { summary in
+            Text(
+                "info.txt: \(summary.infoFilesParsed), rating: \(summary.ratingsUpserted), "
+                    + ".dssfilelist: \(summary.filelistsParsed), döntés: \(summary.verdictsRecorded), "
+                    + "kihagyva: \(summary.skipped)"
+            )
         }
     }
 
@@ -98,8 +124,15 @@ private struct DetailContainerView: View {
     @ViewBuilder
     private func page(for page: Page) -> some View {
         switch page {
-        case .tonight: OverviewView()
-        case .calendar: CalendarPage()
+        case .tonight: TonightPage()
+        // R9-T4: the standalone `CalendarPage` is gone -- its content is now
+        // `TonightPage`'s "Következő 30 éjszaka" segment. The sidebar/⌘2
+        // route to `.tonight` with `AppState.tonightSegment = .calendar`
+        // preselected instead of ever constructing this case; it's kept
+        // (not deleted from `Page`) only so any future direct navigation to
+        // `.calendar` still lands somewhere sensible rather than being
+        // unrepresentable.
+        case .calendar: TonightPage()
         case .allTargets: StatsView()
         // R9-T3: `.id(name)` forces a fresh `TargetDetailPage` instance (and
         // thus a fresh `onAppear`/`@State`) whenever the sidebar switches

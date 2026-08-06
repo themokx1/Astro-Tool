@@ -152,6 +152,42 @@ public struct NightSummary: Codable, Sendable, Equatable {
     }
 }
 
+/// Tonight's dark-time/Moon summary for the "Ma este" tile row (R9-T4/A.1) --
+/// coarser than `TargetPlan` (no target coordinate involved at all), and
+/// unlike `NightSummary.moonIlluminationPercent` (evaluated at the window's
+/// midpoint or civil midnight) this also reports whether/when the Moon
+/// crosses the horizon during the night, for the "Hold" tile's "felkel
+/// 23:41" wording. See `Planner.nightInfo(date:site:)`.
+public struct NightInfo: Sendable, Equatable {
+    /// Hours of true astronomical night (`SunMoon.astronomicalTwilight`
+    /// without its nautical fallback) -- `nil` under the same conditions
+    /// `NightSummary.astroDarkHours` is: no resolvable site, no dark window
+    /// at all ("fehér éjszaka"), or the window only reached nautical (-12°)
+    /// twilight. `note` explains why whenever this is `nil`.
+    public var darkHours: Double?
+    /// Set exactly when `darkHours` is `nil` -- same convention as
+    /// `NightSummary.note`.
+    public var note: String?
+    /// Moon illumination at the dark window's midpoint (site resolvable and
+    /// a window exists) or otherwise at the reference date's local instant --
+    /// always computed, same "illumination never needs site/altitude math"
+    /// stance as `NightSummary.moonIlluminationPercent`.
+    public var moonIlluminationPercent: Double
+    /// One of `"felkel HH:mm"` / `"nyugszik HH:mm"` (the Moon crosses the
+    /// horizon once during the dusk...dawn window) / `"egész éjjel fent"` /
+    /// `"egész éjjel lent"` (it doesn't cross at all) -- `nil` only when
+    /// there's no site/no dark window to evaluate the Moon's altitude
+    /// against at all.
+    public var moonEventLabel: String?
+
+    public init(darkHours: Double?, note: String? = nil, moonIlluminationPercent: Double, moonEventLabel: String?) {
+        self.darkHours = darkHours
+        self.note = note
+        self.moonIlluminationPercent = moonIlluminationPercent
+        self.moonEventLabel = moonEventLabel
+    }
+}
+
 /// Builds tonight's `TargetPlan` for every target the library knows about
 /// (same target universe as `StatsQueries.perTarget`).
 public enum Planner {
@@ -187,6 +223,88 @@ public enum Planner {
         let lights = files.filter { $0.area == .sessions && $0.role == .light }
         let meta = try metaByFileID(for: lights, db: db)
         return TargetCoordinates.resolveSite(files: lights, meta: meta, config: config.site)
+    }
+
+    /// Tonight's (or `date`'s) dark-time/Moon summary for the "Ma este" tile
+    /// row (R9-T4/A.1) -- see `NightInfo`'s own doc for exactly what each
+    /// field means. Unlike `plan(...)`, this never needs a target coordinate
+    /// at all, only the resolved site -- callers already have that from
+    /// `resolveSite(db:config:)` (cheap to call alongside `plan`, since both
+    /// draw on the same already-resolved site).
+    public static func nightInfo(date: Date? = nil, site: SiteRule) -> NightInfo {
+        let referenceDate = date ?? Date()
+        let timeZone = TimeZone.current
+
+        guard let lat = site.latitudeDeg, let lon = site.longitudeDeg else {
+            let illum = SunMoon.moonIlluminationPercent(julianDay: JulianDate.julianDay(referenceDate))
+            return NightInfo(darkHours: nil, note: "nincs site-koordináta", moonIlluminationPercent: illum, moonEventLabel: nil)
+        }
+
+        let night = SunMoon.astronomicalTwilight(nightOf: referenceDate, latDeg: lat, lonDeg: lon, timeZone: timeZone)
+        guard let duskUTC = night.duskUTC, let dawnUTC = night.dawnUTC else {
+            let illum = SunMoon.moonIlluminationPercent(julianDay: JulianDate.julianDay(referenceDate))
+            return NightInfo(darkHours: nil, note: "nincs sötét ablak (fehér éjszaka)", moonIlluminationPercent: illum, moonEventLabel: nil)
+        }
+
+        let windowSeconds = dawnUTC.timeIntervalSince(duskUTC)
+        let darkHours: Double? = night.usedNauticalFallback ? nil : windowSeconds / 3600.0
+        let note: String? = night.usedNauticalFallback
+            ? "nincs csillagászati éjszaka -- nautikus szürkület alapján számolva"
+            : nil
+
+        let midNight = duskUTC.addingTimeInterval(windowSeconds / 2)
+        let midJD = JulianDate.julianDay(midNight)
+        let moonIllum = SunMoon.moonIlluminationPercent(julianDay: midJD)
+        let eventLabel = moonEventLabel(latDeg: lat, lonDeg: lon, duskUTC: duskUTC, dawnUTC: dawnUTC, timeZone: timeZone)
+
+        return NightInfo(darkHours: darkHours, note: note, moonIlluminationPercent: moonIllum, moonEventLabel: eventLabel)
+    }
+
+    /// Samples the Moon's altitude every `stepMinutes` from dusk to dawn and
+    /// reports whether/when it crosses the horizon -- the "felkel 23:41"/
+    /// "nyugszik 02:15"/"egész éjjel fent"/"egész éjjel lent" wording for the
+    /// "Hold" tile. A brute-force scan, same simplicity tradeoff as
+    /// `sweepNight`'s altitude sweep.
+    private static func moonEventLabel(
+        latDeg: Double, lonDeg: Double, duskUTC: Date, dawnUTC: Date, timeZone: TimeZone, stepMinutes: Double = 5
+    ) -> String {
+        func moonAltitude(at date: Date) -> Double {
+            let jd = JulianDate.julianDay(date)
+            let moon = SunMoon.moonPosition(julianDay: jd)
+            let lst = SiderealTime.lstHours(julianDay: jd, longitudeDeg: lonDeg)
+            return AltAz.position(raDeg: moon.raDeg, decDeg: moon.decDeg, lstHours: lst, latDeg: latDeg).altitudeDeg
+        }
+
+        let stepSeconds = stepMinutes * 60
+        var samples: [(date: Date, alt: Double)] = []
+        var t = duskUTC
+        while t <= dawnUTC {
+            samples.append((t, moonAltitude(at: t)))
+            t = t.addingTimeInterval(stepSeconds)
+        }
+        guard let first = samples.first else { return "egész éjjel lent" }
+
+        for i in 1..<samples.count {
+            let a = samples[i - 1], b = samples[i]
+            if a.alt < 0, b.alt >= 0 {
+                return "felkel \(formatLocalTime(interpolatedZeroCrossing(a, b), timeZone: timeZone))"
+            }
+            if a.alt >= 0, b.alt < 0 {
+                return "nyugszik \(formatLocalTime(interpolatedZeroCrossing(a, b), timeZone: timeZone))"
+            }
+        }
+        return first.alt >= 0 ? "egész éjjel fent" : "egész éjjel lent"
+    }
+
+    /// Linear interpolation of the instant altitude crosses zero between two
+    /// consecutive samples -- same technique as `SunMoon`'s own (private,
+    /// unreachable from here) `interpolatedCrossing`, specialized to a
+    /// `threshold` of `0`.
+    private static func interpolatedZeroCrossing(_ a: (date: Date, alt: Double), _ b: (date: Date, alt: Double)) -> Date {
+        let span = b.alt - a.alt
+        guard span != 0 else { return a.date }
+        let fraction = -a.alt / span
+        return a.date.addingTimeInterval(b.date.timeIntervalSince(a.date) * fraction)
     }
 
     /// Builds a month-at-a-glance planning calendar (R7-B5, `astrotool plan

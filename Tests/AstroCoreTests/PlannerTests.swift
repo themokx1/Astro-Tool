@@ -316,3 +316,41 @@ private struct PlannerFixture {
         #expect(plans[i - 1].score >= plans[i].score)
     }
 }
+
+// MARK: - R9-T4: nightInfo (dark hours / Moon rise-set for the "Ma este" tiles)
+
+@Test func nightInfoReportsNilDarkHoursAndNoMoonEventWithoutASite() throws {
+    let info = Planner.nightInfo(date: utc(2026, 8, 10), site: SiteRule())
+    #expect(info.darkHours == nil)
+    #expect(info.note != nil)
+    #expect(info.moonEventLabel == nil)
+    #expect(info.moonIlluminationPercent >= 0 && info.moonIlluminationPercent <= 100)
+}
+
+@Test func nightInfoComputesPlausibleDarkHoursAndAMoonEventLabelForAResolvedSite() throws {
+    let site = SiteRule(latitudeDeg: 47.5, longitudeDeg: 19.0)
+    let info = Planner.nightInfo(date: utc(2026, 8, 10), site: site)
+
+    // Mid-August at 47.5N reaches real astronomical twilight -- a plausible
+    // multi-hour dark window, not the nautical-fallback/white-night `nil`.
+    let darkHours = try #require(info.darkHours)
+    #expect(darkHours > 0 && darkHours < 12)
+    #expect(info.note == nil)
+
+    // Exactly one of the four documented shapes, regardless of the exact
+    // rise/set time (which depends on the Moon's phase on this date).
+    let label = try #require(info.moonEventLabel)
+    let isRiseOrSet = label.hasPrefix("felkel ") || label.hasPrefix("nyugszik ")
+    let isAllNight = label == "egész éjjel fent" || label == "egész éjjel lent"
+    #expect(isRiseOrSet || isAllNight, "unexpected moonEventLabel: \(label)")
+}
+
+@Test func nightInfoFallsBackToNilDarkHoursInHighSummerWhiteNights() throws {
+    // 65N in mid-June: the Sun never reaches -18° (often not even -12°) --
+    // `astroDarkHours` must come back `nil` with an explanatory note, same
+    // "fehér éjszaka" fallback `NightSummary`/`plan` already document.
+    let site = SiteRule(latitudeDeg: 65.0, longitudeDeg: 19.0)
+    let info = Planner.nightInfo(date: utc(2026, 6, 21), site: site)
+    #expect(info.darkHours == nil)
+    #expect(info.note != nil)
+}

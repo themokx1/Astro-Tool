@@ -107,7 +107,17 @@ struct SidebarView: View {
         List(selection: $appState.currentPage) {
             Section {
                 navRow("Ma este", systemImage: "moon.stars.fill", page: .tonight, badgeCount: tonightBadgeCount)
-                navRow("Naptár", systemImage: "calendar", page: .calendar)
+                // R9-T4: the calendar is now `TonightPage`'s own segment,
+                // not a separate page -- same "plain `Button` that sets a
+                // segment before navigating" pattern the "Takarítás" row
+                // below already uses for `AppState.auditSegment`.
+                Button {
+                    appState.tonightSegment = .calendar
+                    appState.currentPage = .tonight
+                } label: {
+                    navRowLabel("Naptár", systemImage: "calendar")
+                }
+                .buttonStyle(.plain)
             }
 
             Section("KÖNYVTÁR") {

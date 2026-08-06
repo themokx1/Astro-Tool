@@ -58,8 +58,14 @@ struct AstroToolCommands: Commands {
         CommandGroup(after: .toolbar) {
             Button("Ma este") { AppState.shared?.currentPage = .tonight }
                 .keyboardShortcut("1", modifiers: .command)
-            Button("Naptár") { AppState.shared?.currentPage = .calendar }
-                .keyboardShortcut("2", modifiers: .command)
+            // R9-T4: the calendar is `TonightPage`'s own segment now, not a
+            // separate page -- preselect it before navigating, same pattern
+            // `SidebarView`'s "Naptár" row uses.
+            Button("Naptár") {
+                AppState.shared?.tonightSegment = .calendar
+                AppState.shared?.currentPage = .tonight
+            }
+            .keyboardShortcut("2", modifiers: .command)
             Button("Minden célpont") { AppState.shared?.currentPage = .allTargets }
                 .keyboardShortcut("3", modifiers: .command)
             Button("Kalibráció") { AppState.shared?.currentPage = .calibration }
