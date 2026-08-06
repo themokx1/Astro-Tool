@@ -253,21 +253,9 @@ public enum SunMoon {
         timeZone: TimeZone,
         stepMinutes: Double = 2
     ) -> TwilightResult {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        let startOfDay = calendar.startOfDay(for: localDate)
-        guard let noon = calendar.date(byAdding: .hour, value: 12, to: startOfDay),
-              let windowEnd = calendar.date(byAdding: .hour, value: 24, to: noon)
-        else {
+        let samples = sunAltitudeSamples(nightOf: localDate, latDeg: latDeg, lonDeg: lonDeg, timeZone: timeZone, stepMinutes: stepMinutes)
+        guard !samples.isEmpty else {
             return TwilightResult(duskUTC: nil, dawnUTC: nil, usedNauticalFallback: false)
-        }
-
-        let stepSeconds = stepMinutes * 60
-        var samples: [(date: Date, alt: Double)] = []
-        var t = noon
-        while t <= windowEnd {
-            samples.append((t, sunAltitude(date: t, latDeg: latDeg, lonDeg: lonDeg)))
-            t = t.addingTimeInterval(stepSeconds)
         }
 
         if let result = crossings(samples: samples, threshold: -18) {
@@ -277,6 +265,64 @@ public enum SunMoon {
             return TwilightResult(duskUTC: result.dusk, dawnUTC: result.dawn, usedNauticalFallback: true)
         }
         return TwilightResult(duskUTC: nil, dawnUTC: nil, usedNauticalFallback: true)
+    }
+
+    /// Both the -18 deg (astronomical) and -12 deg (nautical) twilight
+    /// crossings for the same night, from a single altitude sweep. Returns
+    /// a plain tuple rather than `TwilightResult` -- that type's
+    /// `usedNauticalFallback` flag is specific to `astronomicalTwilight`'s
+    /// single-answer fallback contract and doesn't mean anything here.
+    /// Unlike `astronomicalTwilight` -- which only computes the -12 deg
+    /// pair when -18 deg is never reached, since it only ever needs ONE
+    /// "the dark window" answer -- this always reports both pairs, even on
+    /// a night astronomical darkness also occurs. Callers that need an
+    /// outer bound for a sampling range regardless of whether the night
+    /// gets fully dark (e.g. `SkyTrack`'s altitude-track window, sized to
+    /// the wider nautical bound on every night) need the nautical pair
+    /// unconditionally, not just as a fallback.
+    public static func dualTwilight(
+        nightOf localDate: Date,
+        latDeg: Double,
+        lonDeg: Double,
+        timeZone: TimeZone,
+        stepMinutes: Double = 2
+    ) -> (astroDuskUTC: Date?, astroDawnUTC: Date?, nauticalDuskUTC: Date?, nauticalDawnUTC: Date?) {
+        let samples = sunAltitudeSamples(nightOf: localDate, latDeg: latDeg, lonDeg: lonDeg, timeZone: timeZone, stepMinutes: stepMinutes)
+        let astro = crossings(samples: samples, threshold: -18)
+        let nautical = crossings(samples: samples, threshold: -12)
+        return (astro?.dusk, astro?.dawn, nautical?.dusk, nautical?.dawn)
+    }
+
+    /// Sun altitude sampled every `stepMinutes` from local noon of
+    /// `localDate` to local noon of the following day (a full night,
+    /// regardless of DST shifts) -- the shared sweep both
+    /// `astronomicalTwilight` and `dualTwilight` scan for threshold
+    /// crossings, so the Sun-position math itself (`sunAltitude`) runs from
+    /// exactly one call site. `[]` only on a pathological `Calendar`
+    /// failure (unresolvable start-of-day/noon; essentially never in
+    /// practice).
+    private static func sunAltitudeSamples(
+        nightOf localDate: Date,
+        latDeg: Double,
+        lonDeg: Double,
+        timeZone: TimeZone,
+        stepMinutes: Double
+    ) -> [(date: Date, alt: Double)] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let startOfDay = calendar.startOfDay(for: localDate)
+        guard let noon = calendar.date(byAdding: .hour, value: 12, to: startOfDay),
+              let windowEnd = calendar.date(byAdding: .hour, value: 24, to: noon)
+        else { return [] }
+
+        let stepSeconds = stepMinutes * 60
+        var samples: [(date: Date, alt: Double)] = []
+        var t = noon
+        while t <= windowEnd {
+            samples.append((t, sunAltitude(date: t, latDeg: latDeg, lonDeg: lonDeg)))
+            t = t.addingTimeInterval(stepSeconds)
+        }
+        return samples
     }
 
     /// Finds the first descending crossing of `threshold` (dusk) and the
