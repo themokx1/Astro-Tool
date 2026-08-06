@@ -55,6 +55,26 @@ public struct NativeFrameStats: Codable, Equatable, Sendable {
 /// averaged into a single `g` value -- both are the same color, just
 /// differently-neighbored samples of it.
 public enum BayerMap {
+    /// Maps a `BAYERPAT` header string (case-insensitive) to the 4 channel
+    /// labels for a 2x2 CFA tile, in `(row%2,col%2) ==
+    /// (0,0),(0,1),(1,0),(1,1)` order -- shared by `channelMedians` (whole-
+    /// frame parity medians, below) and `FITSImageRenderer` (per-cell
+    /// superpixel debayer), so the two agree on which physical sensor
+    /// position is which color; disagreeing between them would silently
+    /// mislabel a channel in one consumer but not the other. `nil` for an
+    /// unset or unrecognized pattern -- callers should fall back to
+    /// grayscale/unknown rather than guess.
+    public static func labels(for bayerPattern: String?) -> [Character]? {
+        guard let pattern = bayerPattern?.uppercased() else { return nil }
+        switch pattern {
+        case "RGGB": return ["R", "G", "G", "B"]
+        case "BGGR": return ["B", "G", "G", "R"]
+        case "GRBG": return ["G", "R", "B", "G"]
+        case "GBRG": return ["G", "B", "R", "G"]
+        default: return nil
+        }
+    }
+
     /// `bayerPattern` is matched case-insensitively against the four
     /// standard CFA layouts; anything else (unset header, an unrecognized
     /// string) yields `(nil, nil, nil)` rather than guessing -- silently
@@ -63,16 +83,7 @@ public enum BayerMap {
         stats: NativeFrameStats,
         bayerPattern: String?
     ) -> (r: Double?, g: Double?, b: Double?) {
-        guard let pattern = bayerPattern?.uppercased() else { return (nil, nil, nil) }
-
-        let labels: [Character]
-        switch pattern {
-        case "RGGB": labels = ["R", "G", "G", "B"]
-        case "BGGR": labels = ["B", "G", "G", "R"]
-        case "GRBG": labels = ["G", "R", "B", "G"]
-        case "GBRG": labels = ["G", "B", "R", "G"]
-        default: return (nil, nil, nil)
-        }
+        guard let labels = labels(for: bayerPattern) else { return (nil, nil, nil) }
 
         // Position order matches `NativeFrameStats`'s own 00/01/10/11 fields.
         let values = [stats.backgroundMedian00, stats.backgroundMedian01, stats.backgroundMedian10, stats.backgroundMedian11]
@@ -456,7 +467,13 @@ public enum NativeStats {
     /// the raw primary `NAXIS` here, independently, is exactly what lets
     /// `compute(data:)` detect a `.fz` primary (`NAXIS=0`) even after that
     /// merge has papered over it.
-    private static func primaryHeaderInfo(data: Data) throws -> (dataOffset: Int, naxis: Int?) {
+    ///
+    /// Not `private`: `FITSImageRenderer` reuses this exact scan (plus the
+    /// same `hasCompressionKeywords` signal check used below) to detect and
+    /// reject `.fz` layouts identically to `NativeStats` -- the two must
+    /// agree on what's compressed, or the renderer could read Rice-encoded
+    /// heap bytes as if they were flat pixels.
+    static func primaryHeaderInfo(data: Data) throws -> (dataOffset: Int, naxis: Int?) {
         var offset = 0
         var naxis: Int?
 
