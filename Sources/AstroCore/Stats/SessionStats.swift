@@ -241,7 +241,20 @@ public enum SessionStatsQueries {
         let setupDescriptor = EquipmentProfile.dominant(fingerprintCounts)?.descriptor
 
         let tags = try db.tags(target: target, sessionDate: date)
-        let notes = try db.sessionNotes(target: target, date: date)
+        // T6/B4: merge the README-parsed notes (`Database.sessionNotes`,
+        // scanner-owned) with whatever the user typed into the note editor
+        // (`SessionNoteStore`, `.astro_tool/notes/`) -- the README wins any
+        // key collision (spec: "README nyer"), the store only ever fills in
+        // a key the README doesn't already have. Done here, at query time,
+        // rather than by writing the store's notes into the DB, so a
+        // rescan (which unconditionally replaces `session_notes` from the
+        // README) can never wipe out a note the store holds -- see
+        // `SessionNoteStore`'s own doc comment.
+        let readmeNotes = try db.sessionNotes(target: target, date: date)
+        let storeNotes = SessionNoteStore.load(
+            target: target, date: date, root: URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        )
+        let notes = storeNotes.merging(readmeNotes) { _, readmeValue in readmeValue }
 
         // `nil` together (not `0`) when the session has no recorded
         // verdicts at all, so a session never DSS-ingested doesn't show a

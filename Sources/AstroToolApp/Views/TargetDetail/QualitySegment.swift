@@ -129,6 +129,8 @@ struct QualitySegment: View {
             .disabled(appState.isBusy)
             .fixedSize()
 
+            MetricInfoButton(metrics: Self.frameMetricInfo)
+
             Spacer()
 
             if appState.isBusy {
@@ -138,6 +140,26 @@ struct QualitySegment: View {
             }
         }
     }
+
+    /// R9-T6/B16(a): the frame table's computed-metric columns, explained.
+    private static let frameMetricInfo: [MetricInfoButton.Metric] = [
+        .init(
+            title: "Pontszám",
+            explanation: "A kerekség, FWHM, csillagszám és háttér súlyozott kombinációja (Beállítások ▸ Pontozás & expozíció ▸ súlyok). Nagyobb = jobb. Mikor hazudik: kevés csillagnál (szűk mezős vagy felhős keret) a bemenő metrikák zajosak, a pontszám megbízhatatlan."
+        ),
+        .init(
+            title: "FWHM",
+            explanation: "Csillagok félértékszélessége -- a fókusz élességének mérőszáma, kisebb = élesebb. Mikor hazudik: \"Siril nélkül\" méréskor ez mindig „-”, natív statisztika nem ad FWHM-et."
+        ),
+        .init(
+            title: "Háttér",
+            explanation: "Az égi háttér nyers ADU-szintje a keret medián pixelértékéből. Mikor hazudik: mért szenzor-profil nélkül (Szenzor-profilok oldal) ez csak nyers ADU, nem valódi e⁻/s/″² -- két különböző gain/setup között nem összehasonlítható."
+        ),
+        .init(
+            title: "Szat. %",
+            explanation: "A keret pixeleinek hány százaléka éri el a szenzor telítési szintjét (túlexponált csillagmagok, fényszennyezés). Mikor hazudik: a telítési küszöb becsült, nem a szenzor tényleges bit-mélységéből mért."
+        ),
+    ]
 
     // MARK: - Score histogram
 
@@ -184,14 +206,21 @@ struct QualitySegment: View {
 
     private var frameTable: some View {
         Table(rows, sortOrder: $sortOrder) {
+            // R9-T6/B7: the thumbnail rides along in the "Fájl" column
+            // itself rather than as its own `TableColumn` -- `Table`'s
+            // column-builder overloads top out at 10, and this table
+            // already has exactly 10 without one more.
             TableColumn("Fájl", value: \.fileName) { row in
-                Text(row.fileName)
-                    .lineLimit(1).truncationMode(.middle)
-                    .foregroundColor(tint(row))
-                    .help(row.path)
-                    .contextMenu { frameContextMenuItems(row) }
+                HStack(spacing: 6) {
+                    ThumbnailCell(url: fileURL(row), size: 22)
+                    Text(row.fileName)
+                        .lineLimit(1).truncationMode(.middle)
+                        .foregroundColor(tint(row))
+                }
+                .help(row.path)
+                .contextMenu { frameContextMenuItems(row) }
             }
-            .width(min: 140, ideal: 220)
+            .width(min: 160, ideal: 240)
 
             TableColumn("Mappa", value: \.sessionSubdirSortKey) { row in
                 Text(row.sessionSubdir ?? "-").lineLimit(1).foregroundColor(tint(row))
@@ -242,6 +271,10 @@ struct QualitySegment: View {
     private func frameContextMenuItems(_ row: Row) -> some View {
         Button("Megnyitás") { NSWorkspace.shared.open(fileURL(row)) }
         Button("Finderben") { NSWorkspace.shared.activateFileViewerSelecting([fileURL(row)]) }
+        // R9-T6/B7: "Quick Look (Space)" per spec -- the Space key itself
+        // isn't wired (see `QuickLookController`'s doc comment for why),
+        // this context-menu item is the documented fallback.
+        Button("Quick Look") { QuickLookController.shared.preview(fileURL(row)) }
     }
 
     private func fileURL(_ row: Row) -> URL {

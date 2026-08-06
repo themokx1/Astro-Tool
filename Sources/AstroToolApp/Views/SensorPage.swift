@@ -71,6 +71,13 @@ struct SensorPage: View {
         .sheet(isPresented: $showMeasureSheet) {
             SensorMeasureConfirmSheet()
         }
+        // R9-T6/B14: the Műveletek menu's (toolbar AND menu bar) "Szenzor
+        // mérése…" navigates here and posts this so the confirm sheet opens
+        // automatically, rather than landing on a page with nothing
+        // pre-selected.
+        .onReceive(NotificationCenter.default.publisher(for: .measureSensorRequested)) { _ in
+            showMeasureSheet = true
+        }
     }
 
     private var tiles: some View {

@@ -10,6 +10,10 @@ extension Notification.Name {
     /// `RootView` (the one place still on screen in every `RootStatus`),
     /// not `AppState`.
     static let showFolderStructureHelp = Notification.Name("AstroTool.showFolderStructureHelp")
+    /// "Súgó ▸ Fogalomtár" (R9-T6/B16(b)) -- same reasoning as
+    /// `showFolderStructureHelp`: the sheet is presented from `RootView`,
+    /// not `AppState`.
+    static let showGlossary = Notification.Name("AstroTool.showGlossary")
 }
 
 private let tutorialURL = URL(string: "https://themokx1.github.io/Astro-Tool/tutorial.html")!
@@ -101,10 +105,43 @@ struct AstroToolCommands: Commands {
 
             Divider()
 
-            // T6 wires these against the real batch operations; kept here
-            // (disabled) so the menu's final shape already exists.
-            Button("Minden célpont pontozása…") {}
-                .disabled(true)
+            // R9-T6/B14: real batch operations. This menu has no local view
+            // state to hold a confirm sheet or a results sheet itself, so
+            // items that need one post a `Notification`
+            // `MainShellView`/`SensorPage` observe (same pattern "Új
+            // session…" above already uses); items that just run
+            // (plate-solve-all, same as `TonightPage`'s own button) call
+            // `AppState` directly.
+            Button("Minden célpont pontozása…") {
+                NotificationCenter.default.post(name: .runRateAllRequested, object: nil)
+            }
+            .disabled(AppState.shared?.stats.isEmpty ?? true)
+
+            Button("Plate-solve minden koordináta nélküli célpontra…") {
+                AppState.shared?.runPlateSolveAll()
+            }
+            .disabled(AppState.shared?.db == nil)
+
+            Button("Szenzor mérése…") {
+                AppState.shared?.currentPage = .sensor
+                NotificationCenter.default.post(name: .measureSensorRequested, object: nil)
+            }
+            .disabled(AppState.shared?.db == nil)
+
+            if AppState.shared?.hasDSSFilelists == true {
+                Button("DSS-döntések importálása") {
+                    AppState.shared?.runIngestDSS()
+                }
+                .disabled(AppState.shared?.isBusy ?? true)
+            }
+
+            Divider()
+
+            Button("Expozíció-tanácsadó minden célpontra…") {
+                NotificationCenter.default.post(name: .adviseAllRequested, object: nil)
+            }
+            .disabled(AppState.shared?.db == nil)
+
             Button("Minden célpont exportálása…") {}
                 .disabled(true)
         }
@@ -112,6 +149,9 @@ struct AstroToolCommands: Commands {
         CommandGroup(replacing: .help) {
             Button("Mappastruktúra súgó") {
                 NotificationCenter.default.post(name: .showFolderStructureHelp, object: nil)
+            }
+            Button("Fogalomtár") {
+                NotificationCenter.default.post(name: .showGlossary, object: nil)
             }
             Button("Tutorial") { NSWorkspace.shared.open(tutorialURL) }
             Button("CLI-referencia") { NSWorkspace.shared.open(cliReferenceURL) }

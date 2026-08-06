@@ -9,11 +9,17 @@ struct NotesSegment: View {
     @Environment(AppState.self) private var appState
     let target: String
 
-    private var sessionsWithNotes: [SessionDetail] {
-        (appState.sessionDetailsByTarget[target] ?? [])
-            .filter { !$0.notes.isEmpty }
-            .sorted { $0.dateRaw < $1.dateRaw }
+    /// R9-T6/B4: every session now shown here, not just the ones with a
+    /// note -- `SessionDetail.notes` merges README + the note-editor store
+    /// (see `SessionStatsQueries.computeSessionDetail`), so a session with
+    /// no notes YET is exactly where "Szerkesztés…" should be offered, not
+    /// hidden until it already has something to show.
+    private var allSessions: [SessionDetail] {
+        (appState.sessionDetailsByTarget[target] ?? []).sorted { $0.dateRaw < $1.dateRaw }
     }
+
+    /// The session currently shown in `SessionNoteSheet`, `nil` when closed.
+    @State private var noteEditingSession: LinkingSession?
 
     var body: some View {
         ScrollView {
@@ -24,26 +30,41 @@ struct NotesSegment: View {
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .sheet(item: $noteEditingSession) { session in
+            SessionNoteSheet(target: session.target, date: session.date)
+        }
     }
 
     private var notesBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Session-jegyzetek").font(.headline)
-            if sessionsWithNotes.isEmpty {
-                Text("Nincs README-jegyzet ehhez a célponthoz.")
+            if allSessions.isEmpty {
+                Text("Nincs session ehhez a célponthoz.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(sessionsWithNotes, id: \.dateRaw) { session in
+                ForEach(allSessions, id: \.dateRaw) { session in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(session.dateRaw).font(.subheadline).bold()
-                        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
-                            ForEach(session.notes.keys.sorted(), id: \.self) { key in
-                                GridRow {
-                                    Text(key).foregroundStyle(.secondary)
-                                    Text(session.notes[key] ?? "")
+                        HStack {
+                            Text(session.dateRaw).font(.subheadline).bold()
+                            Spacer()
+                            Button("Szerkesztés…") {
+                                noteEditingSession = LinkingSession(target: target, date: session.dateRaw)
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                        }
+                        if session.notes.isEmpty {
+                            Text("Nincs jegyzet.").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
+                                ForEach(session.notes.keys.sorted(), id: \.self) { key in
+                                    GridRow {
+                                        Text(key).foregroundStyle(.secondary)
+                                        Text(session.notes[key] ?? "")
+                                    }
+                                    .font(.caption)
                                 }
-                                .font(.caption)
                             }
                         }
                     }

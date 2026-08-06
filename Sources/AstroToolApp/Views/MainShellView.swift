@@ -22,6 +22,13 @@ struct MainShellView: View {
 
 extension Notification.Name {
     static let toggleSidebar = Notification.Name("AstroTool.toggleSidebar")
+    /// R9-T6/B14: the menu bar's "Műveletek" (`Views/Commands.swift`) posts
+    /// these -- it has no local view state of its own to hold a confirm
+    /// sheet, so it hands off to whichever view actually owns one.
+    static let runRateAllRequested = Notification.Name("AstroTool.runRateAllRequested")
+    static let adviseAllRequested = Notification.Name("AstroTool.adviseAllRequested")
+    static let plateSolveAllRequested = Notification.Name("AstroTool.plateSolveAllRequested")
+    static let measureSensorRequested = Notification.Name("AstroTool.measureSensorRequested")
 }
 
 /// The routed detail pane + its window toolbar (spec A.8/A.9's "Beolvasás",
@@ -31,6 +38,11 @@ private struct DetailContainerView: View {
     @State private var showNewSessionSheet = false
     @State private var showActivityPopover = false
     @State private var bannerDismissed = false
+    /// R9-T6/B14 batch action sheets -- the toolbar's "Műveletek" menu AND
+    /// the menu bar's own copy (`Views/Commands.swift`, which has no local
+    /// view state of its own) both trigger these via the notifications
+    /// below.
+    @State private var showRateAllConfirm = false
     /// R9-T4: `OverviewView`'s DSS-ingest result alert, relocated here now
     /// that "DSS-döntések importálása" itself moved from that deleted page's
     /// button into this toolbar's "Műveletek" menu.
@@ -73,8 +85,21 @@ private struct DetailContainerView: View {
                             .disabled(appState.isBusy || appState.db == nil)
                         Divider()
                     }
-                    Button("Minden célpont pontozása…") {}
-                        .disabled(true)
+                    // R9-T6/B14: the batch operations menu -- same set as
+                    // the menu bar's own "Műveletek" (`Views/Commands.swift`,
+                    // A.8), duplicated here for toolbar-only convenience.
+                    Button("Minden célpont pontozása…") { showRateAllConfirm = true }
+                        .disabled(appState.stats.isEmpty || appState.db == nil)
+                    Button("Plate-solve minden koordináta nélküli célpontra…") { appState.runPlateSolveAll() }
+                        .disabled(appState.isBusy || appState.db == nil)
+                    Button("Expozíció-tanácsadó minden célpontra…") { appState.adviseAll() }
+                        .disabled(appState.isBusy || appState.db == nil)
+                    Button("Szenzor mérése…") {
+                        appState.currentPage = .sensor
+                        NotificationCenter.default.post(name: .measureSensorRequested, object: nil)
+                    }
+                    .disabled(appState.db == nil)
+                    Divider()
                     Button("Minden célpont exportálása…") {}
                         .disabled(true)
                 } label: {
@@ -85,8 +110,23 @@ private struct DetailContainerView: View {
         .sheet(isPresented: $showNewSessionSheet) {
             NewSessionSheet()
         }
+        .sheet(isPresented: $showRateAllConfirm) {
+            RateAllConfirmSheet()
+        }
+        .sheet(isPresented: exposureAdviceAllSheetBinding) {
+            ExposureAdviceAllSheet()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .newSession)) { _ in
             showNewSessionSheet = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .runRateAllRequested)) { _ in
+            showRateAllConfirm = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .adviseAllRequested)) { _ in
+            appState.adviseAll()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .plateSolveAllRequested)) { _ in
+            appState.runPlateSolveAll()
         }
         .onChange(of: appState.dssIngestSummary) { _, newValue in
             showDSSIngestAlert = newValue != nil
@@ -100,6 +140,18 @@ private struct DetailContainerView: View {
                     + "kihagyva: \(summary.skipped)"
             )
         }
+    }
+
+    /// Gates `ExposureAdviceAllSheet`'s presentation on
+    /// `AppState.exposureAdviceAll` being non-`nil` (set by `adviseAll()`)
+    /// -- dismissing the sheet clears it back to `nil` so a stale previous
+    /// run's rows never flash before the next `adviseAll()` call replaces
+    /// them.
+    private var exposureAdviceAllSheetBinding: Binding<Bool> {
+        Binding(
+            get: { appState.exposureAdviceAll != nil },
+            set: { isPresented in if !isPresented { appState.exposureAdviceAll = nil } }
+        )
     }
 
     private var staleScanBanner: some View {

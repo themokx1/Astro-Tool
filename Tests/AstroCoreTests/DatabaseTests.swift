@@ -1185,6 +1185,128 @@ private func sampleSensorProfile(
     #expect(try database.searchNotes(query: "nonexistent-term").isEmpty)
 }
 
+// MARK: - searchAll (R9-T6/B3 global search)
+
+private func sessionFile(
+    path: String, target: String?, sessionDate: String?, area: LibraryArea = .sessions
+) -> FileRecord {
+    FileRecord(
+        path: path, size: 1024, mtime: 1_700_000_000, ext: "fits", kind: "fits",
+        area: area, target: target, sessionDate: sessionDate, role: .light, scannedAt: 1_700_000_100
+    )
+}
+
+@Test func searchAllMatchesTargetsByFolderNameOrResolvedDisplayNameOrTag() throws {
+    let database = try Database(path: ":memory:")
+    _ = try database.upsertFile(sessionFile(
+        path: "sessions/NGC_2237/2026-01-01/lights/f1.fits", target: "NGC_2237", sessionDate: "2026-01-01"
+    ))
+    _ = try database.upsertFile(sessionFile(
+        path: "sessions/M31/2026-01-01/lights/f1.fits", target: "M31", sessionDate: "2026-01-01"
+    ))
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "widefield"))
+
+    // Bare folder-name match.
+    let byTarget = try database.searchAll(query: "2237")
+    #expect(byTarget.targets.map(\.target) == ["NGC_2237"])
+    #expect(byTarget.targets.first?.displayName.contains("2237") == true)
+
+    // Resolved catalog display-name match (NGC 2237 -> "Rozetta-köd" in
+    // `CatalogNames`) -- the folder name itself has no "rozetta" substring.
+    let byDisplayName = try database.searchAll(query: "rozetta")
+    #expect(byDisplayName.targets.map(\.target) == ["NGC_2237"])
+
+    // Target-level tag match.
+    let byTag = try database.searchAll(query: "widefield")
+    #expect(byTag.targets.map(\.target) == ["M31"])
+}
+
+@Test func searchAllMatchesSessionsByTargetOrDate() throws {
+    let database = try Database(path: ":memory:")
+    _ = try database.upsertFile(sessionFile(
+        path: "sessions/M31/2026-03-15/lights/f1.fits", target: "M31", sessionDate: "2026-03-15"
+    ))
+    _ = try database.upsertFile(sessionFile(
+        path: "calibration_library/darks/d1.fits", target: nil, sessionDate: nil, area: .calibration
+    ))
+
+    let byDate = try database.searchAll(query: "2026-03-15")
+    #expect(byDate.sessions.map(\.target) == ["M31"])
+    #expect(byDate.sessions.map(\.date) == ["2026-03-15"])
+
+    // Calibration-library files (no session_date) must never surface as a
+    // session hit even though their target/date columns are both NULL.
+    #expect(try database.searchAll(query: "calibration_library").sessions.isEmpty)
+}
+
+@Test func searchAllCapsFileHitsButReportsTheHonestTotal() throws {
+    let database = try Database(path: ":memory:")
+    for i in 0..<(Database.searchFileCap + 7) {
+        _ = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/frame\(i).fits"))
+    }
+
+    let results = try database.searchAll(query: "frame")
+    #expect(results.files.count == Database.searchFileCap)
+    #expect(results.totalFileMatches == Database.searchFileCap + 7)
+    #expect(results.files.allSatisfy { $0.kind == "fits" })
+}
+
+@Test func searchAllNotesSectionReusesSearchNotes() throws {
+    let database = try Database(path: ":memory:")
+    try database.upsertSessionNotes(target: "M31", date: "2026-01-01", notes: ["Bortle": "5"])
+
+    let results = try database.searchAll(query: "bortle")
+    #expect(results.notes.count == 1)
+    #expect(results.notes.first?.target == "M31")
+    #expect(results.notes.first?.value == "5")
+}
+
+@Test func searchAllReturnsEmptyResultsForBlankQuery() throws {
+    let database = try Database(path: ":memory:")
+    _ = try database.upsertFile(sampleFile())
+    try database.upsertSessionNotes(target: "M31", date: "2026-01-01", notes: ["Bortle": "5"])
+
+    let results = try database.searchAll(query: "   ")
+    #expect(results.targets.isEmpty)
+    #expect(results.sessions.isEmpty)
+    #expect(results.files.isEmpty)
+    #expect(results.notes.isEmpty)
+    #expect(results.totalFileMatches == 0)
+}
+
+/// A literal `%`/`_` typed by the user must search for that literal
+/// character, not act as a SQL `LIKE` wildcard -- otherwise a query like
+/// `"50%"` would match every path in the library instead of only ones that
+/// actually contain the text `"50%"`.
+@Test func allSessionPairsReturnsDistinctTargetDatePairsExcludingCalibration() throws {
+    let database = try Database(path: ":memory:")
+    _ = try database.upsertFile(sessionFile(
+        path: "sessions/M31/2026-01-01/lights/f1.fits", target: "M31", sessionDate: "2026-01-01"
+    ))
+    _ = try database.upsertFile(sessionFile(
+        path: "sessions/M31/2026-01-01/lights/f2.fits", target: "M31", sessionDate: "2026-01-01"
+    ))
+    _ = try database.upsertFile(sessionFile(
+        path: "sessions/M42/2026-02-02/lights/f1.fits", target: "M42", sessionDate: "2026-02-02"
+    ))
+    _ = try database.upsertFile(sessionFile(
+        path: "calibration_library/darks/d1.fits", target: nil, sessionDate: nil, area: .calibration
+    ))
+
+    let pairs = try database.allSessionPairs()
+    #expect(Set(pairs.map { "\($0.target)|\($0.date)" }) == ["M31|2026-01-01", "M42|2026-02-02"])
+}
+
+@Test func searchAllTreatsPercentAndUnderscoreInQueryLiterally() throws {
+    let database = try Database(path: ":memory:")
+    _ = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/gain50%.fits"))
+    _ = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/other.fits"))
+
+    let results = try database.searchAll(query: "50%")
+    #expect(results.files.map(\.path) == ["sessions/M31/2026-01-01/lights/gain50%.fits"])
+    #expect(results.totalFileMatches == 1)
+}
+
 // MARK: - finding_acks (schema v9, R9-T2/B5)
 
 /// Simulates a real, already-deployed v8 database (every earlier schema step

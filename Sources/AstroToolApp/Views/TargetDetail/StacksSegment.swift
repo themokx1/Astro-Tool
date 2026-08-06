@@ -117,6 +117,8 @@ struct StacksSegment: View {
 
     private var table: some View {
         Table(rows, children: \.children) {
+            TableColumn("Kép") { row in ThumbnailCell(url: url(of: row)) }
+                .width(36)
             TableColumn("Név") { row in nameCell(row) }
                 .width(min: 220, ideal: 340)
             TableColumn("Típus") { row in typeCell(row) }
@@ -256,6 +258,17 @@ struct StacksSegment: View {
             }
             .buttonStyle(.borderless)
             .help("Finderben")
+
+            Button {
+                QuickLookController.shared.preview(url(of: row))
+            } label: {
+                Image(systemName: "eye")
+            }
+            .buttonStyle(.borderless)
+            .help("Nagy előnézet")
+        }
+        .contextMenu {
+            Button("Nagy előnézet") { QuickLookController.shared.preview(url(of: row)) }
         }
     }
 

@@ -56,7 +56,17 @@ struct TargetDetailPage: View {
             segmentContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .onAppear { appState.loadTargetDetail(target: target) }
+        .onAppear {
+            appState.loadTargetDetail(target: target)
+            // R9-T6/B3: a search-result row (session or note hit) requests
+            // a specific segment before navigating here -- consumed once so
+            // a later plain sidebar click into this same target doesn't
+            // keep jumping back to it.
+            if let pendingSegment = appState.pendingTargetSegment {
+                segment = pendingSegment
+                appState.pendingTargetSegment = nil
+            }
+        }
         .sheet(item: $linkingSession) { session in CalibLinkSheet(target: session.target, date: session.date) }
         .sheet(item: $solvingTarget) { solving in PlateSolveSheet(target: solving.target) }
         .sheet(item: $stackListingSession) { session in StackListSheet(target: session.target, date: session.date) }

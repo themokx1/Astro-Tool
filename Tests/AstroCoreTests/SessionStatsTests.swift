@@ -174,6 +174,52 @@ private struct SessionStatsFixture {
     #expect(withoutReadme.notes == [:])
 }
 
+/// T6/B4: `SessionDetail.notes` merges the README-parsed dictionary with
+/// whatever the user saved via the note editor (`SessionNoteStore`) under
+/// `.astro_tool/notes/` -- the README wins a key collision (`"Camera"`
+/// here), the store-only key (`"Bortle"`) still comes through, and a
+/// session with NO README at all still surfaces its store notes on their
+/// own.
+@Test func sessionDetailNotesMergeReadmeAndStoreWithReadmeWinningConflicts() throws {
+    let fixture = try SessionStatsFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 1...2 {
+        try fixture.writeFITS("sessions/T1/2026-01-10/lights/l\(i).fit", exptime: 300.0)
+    }
+    let readmeURL = fixture.libraryDir.appendingPathComponent("sessions/T1/2026-01-10/README.txt")
+    try FileManager.default.createDirectory(at: readmeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let readmeContent = "Camera: ASI2600MC (readme)\n"
+    try readmeContent.write(to: readmeURL, atomically: true, encoding: .utf8)
+
+    for i in 1...2 {
+        try fixture.writeFITS("sessions/T1/2026-02-05/lights/l\(i).fit", exptime: 300.0)
+    }
+
+    try fixture.scan()
+
+    let writeGuard = WriteGuard(root: fixture.libraryDir)
+    try SessionNoteStore.save(
+        target: "T1", date: "2026-01-10",
+        notes: [("Camera", "store value that must lose"), ("Bortle", "5")],
+        using: writeGuard
+    )
+    try SessionNoteStore.save(target: "T1", date: "2026-02-05", notes: [("SQM", "20.8")], using: writeGuard)
+
+    let sessions = try SessionStatsQueries.sessions(target: "T1", db: fixture.db, config: fixture.config)
+
+    let withReadme = try #require(sessions.first { $0.dateRaw == "2026-01-10" })
+    #expect(withReadme.notes["Camera"] == "ASI2600MC (readme)", "README must win a key collision with the note store")
+    #expect(withReadme.notes["Bortle"] == "5", "a store-only key must still surface")
+
+    let withoutReadme = try #require(sessions.first { $0.dateRaw == "2026-02-05" })
+    #expect(withoutReadme.notes == ["SQM": "20.8"], "a session with no README at all still gets its store notes")
+
+    // The iron rule, once more, end to end through the query layer: the
+    // README on disk must remain untouched by this whole flow.
+    #expect(try String(contentsOf: readmeURL, encoding: .utf8) == readmeContent)
+}
+
 @Test func sessionDetailsCountsDarksAndBiasesSeparately() throws {
     let fixture = try SessionStatsFixture.make()
     defer { fixture.cleanup() }

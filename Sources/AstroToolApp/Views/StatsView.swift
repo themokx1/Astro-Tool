@@ -41,6 +41,10 @@ struct StatsView: View {
     /// "Stackelés előkészítése…"), `nil` when closed -- same row-scoped
     /// pattern as `linkingSession`.
     @State private var stackListingSession: LinkingSession?
+    /// The session currently shown in `SessionNoteSheet` (R9-T6/B4's
+    /// "Éjszaka-jegyzet szerkesztése…"), `nil` when closed -- same
+    /// row-scoped pattern as `linkingSession`.
+    @State private var noteEditingSession: LinkingSession?
 
     /// `true` once `AppState.plan` has loaded and reports no resolvable
     /// coordinate for `target` at all -- gates the "Plate-solve…" action so
@@ -134,6 +138,9 @@ struct StatsView: View {
         }
         .sheet(item: $stackListingSession) { session in
             StackListSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $noteEditingSession) { session in
+            SessionNoteSheet(target: session.target, date: session.date)
         }
         .padding()
     }
@@ -298,6 +305,7 @@ struct StatsView: View {
         Button("Stackelés előkészítése…") { stackListingSession = LinkingSession(target: target, date: detail.dateRaw) }
         Divider()
         Button("Éjszaka-riport készítése") { appState.exportNightReport(target: target, date: detail.dateRaw) }
+        Button("Éjszaka-jegyzet szerkesztése…") { noteEditingSession = LinkingSession(target: target, date: detail.dateRaw) }
     }
 
     private func revealInFinder(relativePath: String) {

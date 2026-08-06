@@ -32,6 +32,10 @@ struct AstroToolApp: App {
 struct RootView: View {
     @Environment(AppState.self) private var appState
     @State private var showFolderStructureHelp = false
+    /// R9-T6/B16(b): "Súgó ▸ Fogalomtár" -- same "the menu bar has no view
+    /// state, so it posts a `Notification` this always-on-screen view
+    /// observes" pattern `showFolderStructureHelp` already uses.
+    @State private var showGlossary = false
 
     var body: some View {
         Group {
@@ -53,8 +57,14 @@ struct RootView: View {
         .sheet(isPresented: $showFolderStructureHelp) {
             FolderStructureHelpSheet()
         }
+        .sheet(isPresented: $showGlossary) {
+            GlossarySheet()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .showFolderStructureHelp)) { _ in
             showFolderStructureHelp = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showGlossary)) { _ in
+            showGlossary = true
         }
     }
 }

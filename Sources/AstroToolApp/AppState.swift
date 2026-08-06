@@ -182,6 +182,31 @@ final class AppState: @unchecked Sendable {
     }
     var settingsTab: SettingsTab = .library
 
+    // MARK: - Global search (R9-T6/B3)
+
+    /// The query behind the currently shown `Page.searchResults` -- set by
+    /// `runSearch`, read by `SearchResultsPage`'s "N találat erre: ..."
+    /// header.
+    var searchQuery: String = ""
+    /// `nil` before the first search this session; `SearchResults()`
+    /// (`.isEmpty == true`) after a search that matched nothing. Both route
+    /// `SearchResultsPage` to the same `ContentUnavailableView.search`, so
+    /// the distinction only matters to avoid flashing a stale previous
+    /// query's results while a new search is still running.
+    var searchResults: SearchResults?
+    /// A search result's session/note row sets this (alongside
+    /// `pendingTargetSegment`) right before navigating to `Page.target` --
+    /// `TargetDetailPage`'s `SessionsSegment` consumes it once (selecting
+    /// that row and clearing this back to `nil`) as soon as its session
+    /// list has loaded.
+    var pendingSessionSelection: String?
+    /// A search result's session/note row sets this right before
+    /// navigating to `Page.target`, so the target page opens straight to
+    /// the segment that actually shows the hit (Sessionök for a session
+    /// hit, Jegyzetek for a note hit) instead of always defaulting to
+    /// Áttekintés. `TargetDetailPage.onAppear` consumes it once.
+    var pendingTargetSegment: TargetDetailPage.Segment?
+
     var stats: [TargetStats] = []
     /// Every target's session detail rows, keyed by target name -- populated
     /// alongside `stats` in `loadStats()` so `StatsView`'s hierarchical
@@ -297,6 +322,11 @@ final class AppState: @unchecked Sendable {
     /// for the current target (cleared on target change, same as
     /// `qualitySummaries`).
     var exposureAdvice: ExposureAdvice?
+    /// R9-T6/B14 batch action result: every target's `ExposureAdvisor.advise`
+    /// output from "Expozíció-tanácsadó minden célpontra…" -- `nil` before
+    /// `adviseAll()` has run this session; non-`nil` is what
+    /// `ExposureAdviceAllSheet` gates its presentation on.
+    var exposureAdviceAll: [ExposureAdvice]?
     /// The night-timeline for whichever session row is currently selected in
     /// the quality summary section, `nil` until one is selected/loaded.
     var sessionTimeline: SessionTimeline?
@@ -1996,6 +2026,187 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.sessionTimeline = result.0
                 self.nightHealth = result.1
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    // MARK: - Global search (R9-T6/B3)
+
+    /// Runs the sidebar's ⌘F/Enter global search and navigates to
+    /// `Page.searchResults`. `Database.searchAll`'s notes section only ever
+    /// sees README-sourced notes; this unions in whatever the T6 note
+    /// editor additionally holds (`SessionNoteStore`, `.astro_tool/notes/`)
+    /// the same way the CLI's `search` command does, with the README
+    /// winning any `(target, date, key)` collision.
+    func runSearch(query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        searchQuery = trimmed
+        currentPage = .searchResults
+        guard let db, !trimmed.isEmpty else {
+            searchResults = trimmed.isEmpty ? nil : SearchResults()
+            return
+        }
+        let cfg = config
+
+        let opID = beginOperation("Keresés…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    var results = try db.searchAll(query: trimmed)
+                    let sessionCandidates = try db.allSessionPairs()
+                    let storeHits = SessionNoteStore.search(
+                        query: trimmed, root: URL(fileURLWithPath: cfg.rootPath, isDirectory: true),
+                        sessions: sessionCandidates
+                    )
+                    results.notes = Self.mergeNoteHits(readme: results.notes, store: storeHits)
+                    return results
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.searchResults = result
+                self.progressText =
+                    "Keresés kész: \(result.targets.count + result.sessions.count + result.files.count + result.notes.count) találat"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// De-dupes by `(target, date, key)`, README-sourced rows winning a
+    /// collision -- the exact precedence `SessionStatsQueries` applies when
+    /// building `SessionDetail.notes`, and the CLI's `search` command
+    /// applies the same way (its own private copy, since the CLI and app
+    /// targets don't share a module).
+    private nonisolated static func mergeNoteHits(
+        readme: [(target: String, date: String, key: String, value: String)],
+        store: [(target: String, date: String, key: String, value: String)]
+    ) -> [(target: String, date: String, key: String, value: String)] {
+        struct Key: Hashable { let target: String; let date: String; let key: String }
+        var seen = Set<Key>()
+        var result = readme
+        for row in readme { seen.insert(Key(target: row.target, date: row.date, key: row.key)) }
+        for row in store where !seen.contains(Key(target: row.target, date: row.date, key: row.key)) {
+            result.append(row)
+        }
+        return result.sorted { ($0.target, $0.date, $0.key) < ($1.target, $1.date, $1.key) }
+    }
+
+    // MARK: - Session notes (R9-T6/B4)
+
+    /// This session's README-parsed notes ONLY (not merged with the note
+    /// editor's own store) -- backs `SessionNoteSheet`'s read-only,
+    /// lock-icon rows, which must show exactly what the README says.
+    /// Read-only, synchronous: a single keyed `session_notes` lookup, cheap
+    /// enough to call straight from a view (same stance `reportFiles(for:)`
+    /// takes on synchronous reads).
+    func readmeNotes(target: String, date: String) -> [String: String] {
+        guard let db else { return [:] }
+        return (try? db.sessionNotes(target: target, date: date)) ?? [:]
+    }
+
+    /// This session's note-editor-only notes (`SessionNoteStore`, under
+    /// `.astro_tool/notes/`) -- backs `SessionNoteSheet`'s editable rows'
+    /// initial values. Read-only, synchronous, safe to call speculatively
+    /// for a session that was never edited (returns `[:]`).
+    func storeNotes(target: String, date: String) -> [String: String] {
+        guard !config.rootPath.isEmpty else { return [:] }
+        return SessionNoteStore.load(target: target, date: date, root: URL(fileURLWithPath: config.rootPath, isDirectory: true))
+    }
+
+    /// Saves `SessionNoteSheet`'s editable rows for one session (B4) --
+    /// writes via `SessionNoteStore.save` under `.astro_tool/notes/`, NEVER
+    /// touching that session's `README.txt` (the iron rule). Refreshes
+    /// `sessionDetailsByTarget[target]` afterwards so every reader of
+    /// `SessionDetail.notes` already on screen (the Jegyzetek segment, the
+    /// Sessionök table's README tooltip) reflects the save immediately,
+    /// with no rescan needed.
+    func saveSessionNotes(target: String, date: String, notes: [(String, String)]) {
+        guard !config.rootPath.isEmpty else { return }
+        guard let db else { return }
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        let writeGuard = WriteGuard(root: root)
+        let cfg = config
+
+        let opID = beginOperation("Jegyzet mentése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let refreshed = try await Task.detached(priority: .userInitiated) {
+                    try SessionNoteStore.save(target: target, date: date, notes: notes, using: writeGuard)
+                    return try SessionStatsQueries.sessions(target: target, db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.sessionDetailsByTarget[target] = refreshed
+                self.progressText = "Jegyzet elmentve."
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    // MARK: - Batch actions (R9-T6/B14)
+
+    /// "Minden célpont pontozása…" -- serially rates every target on
+    /// record (the same `Rater.rate` call `runRate` makes for one target,
+    /// looped, one `Rater`/Siril-provider instance reused across all of
+    /// them), aggregating progress as "target i/N — done/total frame". The
+    /// caller (the Műveletek menu) shows a confirm sheet with the target
+    /// count/estimate BEFORE calling this -- this method itself never asks.
+    func runRateAll() {
+        guard let db else { return }
+        let cfg = config
+        let targets = stats.map(\.target)
+        guard !targets.isEmpty else { return }
+
+        let opID = beginOperation("Minden célpont pontozása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.detached(priority: .userInitiated) { [weak self] in
+                    var provider: StarMetricsProvider?
+                    if FileManager.default.isExecutableFile(atPath: cfg.rating.sirilPath) {
+                        provider = try? SirilCLI(path: cfg.rating.sirilPath)
+                    }
+                    let rater = Rater(db: db, config: cfg, provider: provider)
+                    for (index, target) in targets.enumerated() {
+                        _ = try rater.rate(target: target, date: nil, force: false) { done, total in
+                            Task { @MainActor in
+                                self?.progressText = "Pontozás: \(target) (\(index + 1)/\(targets.count)) — \(done)/\(total)"
+                            }
+                        }
+                    }
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.progressText = "Pontozás kész: \(targets.count) célpont"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// "Expozíció-tanácsadó minden célpontra…" -- populates
+    /// `exposureAdviceAll`, which `ExposureAdviceAllSheet`'s presentation is
+    /// gated on (non-`nil` -> shown).
+    func adviseAll() {
+        guard let db else { return }
+        let cfg = config
+
+        let opID = beginOperation("Expozíció-tanácsadó (minden célpont)…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try ExposureAdvisor.adviseAll(db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.exposureAdviceAll = result
+                self.progressText = "Expozíció-tanácsadó kész: \(result.count) célpont"
             } catch {
                 self.handle(error)
             }

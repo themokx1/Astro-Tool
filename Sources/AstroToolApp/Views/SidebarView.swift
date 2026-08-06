@@ -159,6 +159,15 @@ struct SidebarView: View {
         }
         .searchable(text: $searchText, placement: .sidebar, prompt: "Célpont, session, fájl, jegyzet")
         .modifier(SearchFocusModifier(isFocused: $searchFieldFocused))
+        // R9-T6/B3: Enter/submit on the sidebar search field runs the real
+        // global search (targets/sessions/files/notes) and navigates to
+        // `Page.searchResults` -- the live-as-you-type filtering above (via
+        // `targetRows`) still narrows the sidebar's own target list, this
+        // is purely additive.
+        .onSubmit(of: .search) {
+            guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            appState.runSearch(query: searchText)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .focusSearchField)) { _ in
             searchFieldFocused = true
         }

@@ -10,6 +10,32 @@ történik.
 
 ### Added
 
+- **Globális keresés + éjszaka-jegyzet-szerkesztő + thumbnailek/Quick Look +
+  batch műveletek + in-app súgó** (R9-T6/B3/B4/B7/B14/B16): `Database.
+  searchAll(query:limit:)` négy szekcióval (célpontok/sessionök/fájlok/
+  jegyzetek), `Views/SearchResultsPage.swift` valódi tartalommal, a sidebar
+  ⌘F/Enter mostantól a teljes könyvtárban keres, nem csak a célpont-listát
+  szűri. `Sources/AstroCore/Scan/SessionNoteStore.swift`: session-enkénti
+  éjszaka-jegyzetek (Bortle/SQM/Seeing/…) `.astro_tool/notes/`-ba írva --
+  a README.txt SOSEM íródik, a két forrás olvasáskor merge-ölődik (README
+  nyer) `SessionStatsQueries`-ben, ezért az AstroBin-export és a `search`
+  parancs is látja az itt mentett jegyzeteket. `Views/SessionNoteSheet.swift`
+  a szerkesztő UI, elérhető a session context-menükből és a Jegyzetek
+  szegmensből. `Views/ThumbnailCell.swift` (`QLThumbnailGenerator`) + `Views/
+  QuickLookController.swift` (`QLPreviewPanel`) -- thumbnail-oszlop a
+  Stackek/Minőség táblákban, "Nagy előnézet"/"Quick Look" a Space-billentyű
+  dokumentált fallbackja. A Műveletek menü (toolbar + menüsor) mostantól
+  éles: "Minden célpont pontozása…" (confirm-sheet + soros futás,
+  `Views/BatchActionSheets.swift`), "Expozíció-tanácsadó minden célpontra…"
+  (eredmény-tábla), "Plate-solve minden koordináta nélküli célpontra…",
+  "Szenzor mérése…", "DSS-döntések importálása". `Views/InfoHeader.swift`
+  (`MetricInfoButton`) egy ⓘ-gomb táblánként a számított metrikák
+  magyarázatával ("mikor hazudik" jegyzettel) -- a `TableColumn`-nak nincs
+  custom-header-view inicializere ezen az SDK-n, ez a dokumentált,
+  leverifikált alternatíva. `Views/GlossarySheet.swift` -- `Súgó ▸
+  Fogalomtár` (FWHM, kerekség, z-score, e⁻/s/″², airmass, karantén,
+  hardlink, bias/dark/flat).
+
 - **Kalibráció-oldal polírozása + Szenzor-oldal + teljes Settings-szerkesztő**
   (R9-T5/B12): `Views/CalibrationPage.swift` (a régi `CalibrationView`
   felváltása) `Picker(.segmented)`-tel (Lefedettség/Egészség) + 4 tile

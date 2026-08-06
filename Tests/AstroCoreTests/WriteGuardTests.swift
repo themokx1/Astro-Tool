@@ -112,6 +112,24 @@ private func makeTempRoot() throws -> URL {
     #expect(try Data(contentsOf: url) == Data("second".utf8))
 }
 
+/// T6/B4's `SessionNoteStore` writes under `.astro_tool/notes/` -- no
+/// `WriteGuard` change was needed for it, since `writeToolFile` already
+/// allows any relative path under `toolDir`; this test pins that down
+/// explicitly for the new landing spot, the same way `writeToolFileWritesUnderAstroToolDir`
+/// pins it down for `reports/`.
+@Test func writeToolFileAllowsSessionNotesPath() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+
+    let data = Data("Bortle: 5\n".utf8)
+    let url = try guardian.writeToolFile(relativePath: "notes/M31-2026-01-01.txt", data: data)
+
+    let expected = root.appendingPathComponent(".astro_tool/notes/M31-2026-01-01.txt")
+    #expect(url.standardizedFileURL.path == expected.standardizedFileURL.path)
+    #expect(try Data(contentsOf: url) == data)
+}
+
 @Test func writeToolFileRejectsPathTraversal() throws {
     let root = try makeTempRoot()
     defer { try? FileManager.default.removeItem(at: root) }

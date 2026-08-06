@@ -347,6 +347,40 @@ public struct SensorProfileRecord: Codable, Equatable, Sendable {
     }
 }
 
+/// The sidebar's ⌘F -> `SearchResultsPage` result set (R9-T6/B3):
+/// `Database.searchAll`'s four sections. See that method's doc comment for
+/// exactly what does and doesn't match, and why `notes` never sees notes
+/// written via the T6 note editor (`SessionNoteStore`) on its own.
+public struct SearchResults: Sendable {
+    public var targets: [(target: String, displayName: String)]
+    public var sessions: [(target: String, date: String)]
+    public var files: [(path: String, kind: String, sizeBytes: Int64)]
+    /// True count of `files` `LIKE`-matches before the cap `searchAll`
+    /// applies to the `files` array itself.
+    public var totalFileMatches: Int
+    public var notes: [(target: String, date: String, key: String, value: String)]
+
+    public init(
+        targets: [(target: String, displayName: String)] = [],
+        sessions: [(target: String, date: String)] = [],
+        files: [(path: String, kind: String, sizeBytes: Int64)] = [],
+        totalFileMatches: Int = 0,
+        notes: [(target: String, date: String, key: String, value: String)] = []
+    ) {
+        self.targets = targets
+        self.sessions = sessions
+        self.files = files
+        self.totalFileMatches = totalFileMatches
+        self.notes = notes
+    }
+
+    /// `true` when every section is empty -- `SearchResultsPage`'s
+    /// `ContentUnavailableView.search` gate.
+    public var isEmpty: Bool {
+        targets.isEmpty && sessions.isEmpty && files.isEmpty && notes.isEmpty
+    }
+}
+
 // MARK: - Database
 
 /// The single source of truth for a scanned library: schema owner and DAO
@@ -1380,6 +1414,159 @@ public final class Database: @unchecked Sendable {
                       let key = row.string(2), let value = row.string(3)
                 else { return }
                 result.append((target, date, key, value))
+            }
+            return result
+        }
+    }
+
+    // MARK: - Global search (R9-T6/B3)
+
+    /// Cap on how many `files` rows `searchAll` returns in one call --
+    /// `totalFileMatches` still reports the true (uncapped) count, the same
+    /// "cap the list, keep the honest total" shape the Audit page's cleanup
+    /// summaries already use. A library like the real one this app was
+    /// built against (14 675 files) could otherwise hand the UI thousands of
+    /// rows for a common substring.
+    public static let searchFileCap = 50
+
+    /// Escapes `%`/`_`/`\` in a raw user query so it can be embedded in a
+    /// `LIKE ? ESCAPE '\'` pattern without those characters acting as SQL
+    /// wildcards -- a literal `%` the user actually typed (e.g. searching
+    /// for a gain readout like `"50%"`) must search for that literal
+    /// substring, not silently become "match anything".
+    private static func likeEscape(_ raw: String) -> String {
+        var result = ""
+        result.reserveCapacity(raw.count)
+        for ch in raw {
+            if ch == "\\" || ch == "%" || ch == "_" { result.append("\\") }
+            result.append(ch)
+        }
+        return result
+    }
+
+    private static func likePattern(_ raw: String) -> String {
+        "%" + likeEscape(raw) + "%"
+    }
+
+    /// The sidebar's ⌘F -> `SearchResultsPage` query (spec B3): one pass
+    /// each over targets (folder name, `TargetNameResolver`-computed
+    /// display name, and target-level tags), session date-dirs (target or
+    /// date substring), tracked (non-missing) files (`path`), and
+    /// README-sourced session notes (exactly `searchNotes`, unchanged).
+    ///
+    /// `displayName` is never persisted anywhere (`TargetNameResolver` is a
+    /// pure function of the folder name) so the targets section is matched
+    /// in Swift, not SQL, after fetching every distinct target once; the
+    /// other three sections stay plain parameterized `LIKE` queries, same
+    /// convention `searchNotes`/`hasTrackedFileWithSuffix` already use.
+    ///
+    /// A blank (all-whitespace) `query` returns every section empty rather
+    /// than matching the whole library. This method has NO knowledge of
+    /// user-entered session notes written by the T6 note editor under
+    /// `.astro_tool/notes/` (`SessionNoteStore`) -- that store lives outside
+    /// the database entirely, on purpose (see `SessionNoteStore`'s own doc
+    /// comment); a caller that wants those unioned into a search too (the
+    /// CLI's `search` command, the app's global search) has the library
+    /// root on hand and calls `SessionNoteStore.search` itself, then merges.
+    public func searchAll(query: String, limit: Int = Database.searchFileCap) throws -> SearchResults {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return SearchResults() }
+
+        let (targets, sessions, files, totalFileMatches) = try withLock {
+            () -> (
+                [(target: String, displayName: String)],
+                [(target: String, date: String)],
+                [(path: String, kind: String, sizeBytes: Int64)],
+                Int
+            ) in
+            let pattern = Self.likePattern(trimmed)
+
+            // Targets: folder name / computed display name / target-level tags.
+            var tagsByTarget: [String: [String]] = [:]
+            try db.query("SELECT target, tag FROM tags WHERE kind = 'target';") { row in
+                guard let target = row.string(0), let tag = row.string(1) else { return }
+                tagsByTarget[target, default: []].append(tag)
+            }
+            var allTargets: [String] = []
+            try db.query("SELECT DISTINCT target FROM files WHERE target IS NOT NULL ORDER BY target;") { row in
+                if let target = row.string(0) { allTargets.append(target) }
+            }
+            var targetHits: [(target: String, displayName: String)] = []
+            for target in allTargets {
+                let displayName = TargetNameResolver.resolve(folderName: target).displayName
+                let tagMatch = (tagsByTarget[target] ?? []).contains {
+                    $0.range(of: trimmed, options: .caseInsensitive) != nil
+                }
+                if target.range(of: trimmed, options: .caseInsensitive) != nil
+                    || displayName.range(of: trimmed, options: .caseInsensitive) != nil
+                    || tagMatch
+                {
+                    targetHits.append((target, displayName))
+                }
+            }
+
+            // Sessions: distinct (target, session_date) under sessions/ --
+            // `area = 'sessions'` excludes calibration-library files, which
+            // never carry a session_date but would otherwise NULL-match
+            // nothing usefully anyway.
+            var sessionHits: [(target: String, date: String)] = []
+            try db.query(
+                """
+                SELECT DISTINCT target, session_date FROM files
+                WHERE area = 'sessions' AND target IS NOT NULL AND session_date IS NOT NULL
+                  AND (target LIKE ? ESCAPE '\\' OR session_date LIKE ? ESCAPE '\\')
+                ORDER BY target, session_date;
+                """,
+                bind: [.text(pattern), .text(pattern)]
+            ) { row in
+                guard let target = row.string(0), let date = row.string(1) else { return }
+                sessionHits.append((target, date))
+            }
+
+            // Files: path LIKE, capped at `limit`, with the honest total.
+            var totalFileMatches = 0
+            try db.query(
+                "SELECT COUNT(*) FROM files WHERE missing = 0 AND path LIKE ? ESCAPE '\\';",
+                bind: [.text(pattern)]
+            ) { row in totalFileMatches = Int(row.int64(0) ?? 0) }
+
+            var fileHits: [(path: String, kind: String, sizeBytes: Int64)] = []
+            try db.query(
+                "SELECT path, kind, size FROM files WHERE missing = 0 AND path LIKE ? ESCAPE '\\' ORDER BY path LIMIT ?;",
+                bind: [.text(pattern), .int(Int64(limit))]
+            ) { row in
+                guard let path = row.string(0), let kind = row.string(1) else { return }
+                fileHits.append((path, kind, row.int64(2) ?? 0))
+            }
+
+            return (targetHits, sessionHits, fileHits, totalFileMatches)
+        }
+
+        // `searchNotes` takes its own lock -- called outside `withLock`
+        // above so this method never nests a non-reentrant `NSLock`.
+        let notes = try searchNotes(query: trimmed)
+
+        return SearchResults(targets: targets, sessions: sessions, files: files, totalFileMatches: totalFileMatches, notes: notes)
+    }
+
+    /// Every distinct `(target, session_date)` pair on record under
+    /// `sessions/` -- the candidate list a caller checks
+    /// `SessionNoteStore.search` against, since that store only ever probes
+    /// a filename it can predict from an already-known pair, never
+    /// enumerates `.astro_tool/notes/` itself. Shared by the CLI's `search`
+    /// command and the app's global search, so both union in store-written
+    /// notes the exact same way.
+    public func allSessionPairs() throws -> [(target: String, date: String)] {
+        try withLock {
+            var result: [(target: String, date: String)] = []
+            try db.query(
+                """
+                SELECT DISTINCT target, session_date FROM files
+                WHERE area = 'sessions' AND target IS NOT NULL AND session_date IS NOT NULL;
+                """
+            ) { row in
+                guard let target = row.string(0), let date = row.string(1) else { return }
+                result.append((target, date))
             }
             return result
         }

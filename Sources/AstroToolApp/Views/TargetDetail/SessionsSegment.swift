@@ -12,6 +12,11 @@ struct SessionsSegment: View {
     @Binding var stackListingSession: LinkingSession?
 
     @State private var selectedDate: String?
+    /// The session currently shown in `SessionNoteSheet` (R9-T6/B4), `nil`
+    /// when closed -- kept local (not a `@Binding` like the other two sheet
+    /// triggers) since no other segment/context menu on this page needs to
+    /// open the same sheet.
+    @State private var noteEditingSession: LinkingSession?
 
     private struct Row: Identifiable {
         let id: String
@@ -28,6 +33,24 @@ struct SessionsSegment: View {
         Dictionary(uniqueKeysWithValues: appState.qualitySummaries.map { ($0.date, $0) })
     }
 
+    /// R9-T6/B16(a): this table's own computed-metric columns, explained --
+    /// see `MetricInfoButton`'s doc comment for why this is one button per
+    /// table rather than one popover per column header.
+    private static let sessionMetricInfo: [MetricInfoButton.Metric] = [
+        .init(
+            title: "FWHM″",
+            explanation: "A session kerete(i) félértékszélessége ívmásodpercben (pixelméret+fókusz ismeretében) vagy pixelben. Mikor hazudik: pontozás nélkül „-”; \"Siril nélkül\" pontozásnál is mindig „-”."
+        ),
+        .init(
+            title: "Háttér e⁻/s/″²",
+            explanation: "A session égi hátterének valódi elektron/másodperc/ívmásodperc² rátája. Mikor hazudik: mért szenzor-profil nélkül (Szenzor-profilok oldal) ez nem számolható, „-” marad."
+        ),
+        .init(
+            title: "Rang",
+            explanation: "A session sorrendje a célpont összes sessionje között, a pontszám-medián szerint (1 = legjobb). Mikor hazudik: kevés pontozott kerettel a rangsor néhány zajos mérésen alapul."
+        ),
+    ]
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if rows.isEmpty {
@@ -37,12 +60,21 @@ struct SessionsSegment: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                HStack {
+                    Spacer()
+                    MetricInfoButton(metrics: Self.sessionMetricInfo)
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
                 table
                 if let selectedDate, let row = rows.first(where: { $0.id == selectedDate }) {
                     Divider()
                     detailBand(for: row.detail)
                 }
             }
+        }
+        .sheet(item: $noteEditingSession) { session in
+            SessionNoteSheet(target: session.target, date: session.date)
         }
     }
 
@@ -100,6 +132,20 @@ struct SessionsSegment: View {
                 appState.loadSessionTimeline(target: target, date: newDate)
             }
         }
+        .onAppear { consumePendingSelection() }
+        .onChange(of: appState.sessionDetailsByTarget[target]) { _, _ in consumePendingSelection() }
+    }
+
+    /// R9-T6/B3: a search-result session/note hit sets
+    /// `AppState.pendingSessionSelection` before navigating here -- select
+    /// that row (and load its timeline, same as a normal click) as soon as
+    /// it actually appears in `rows`, then clear the pending value so it's
+    /// only ever consumed once.
+    private func consumePendingSelection() {
+        guard let pending = appState.pendingSessionSelection, rows.contains(where: { $0.id == pending }) else { return }
+        selectedDate = pending
+        appState.pendingSessionSelection = nil
+        appState.loadSessionTimeline(target: target, date: pending)
     }
 
     @ViewBuilder
@@ -111,6 +157,7 @@ struct SessionsSegment: View {
         Divider()
         Button("Keretek pontozása") { appState.runRate(target: target, date: detail.dateRaw) }
         Button("Éjszaka-riport készítése") { appState.exportNightReport(target: target, date: detail.dateRaw) }
+        Button("Éjszaka-jegyzet szerkesztése…") { noteEditingSession = LinkingSession(target: target, date: detail.dateRaw) }
     }
 
     private func revealInFinder(date: String) {

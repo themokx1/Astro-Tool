@@ -1317,7 +1317,20 @@ func cmdSearch(_ args: [String]) throws -> Int32 {
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
 
-    let results = try db.searchNotes(query: query)
+    // T6/B4: `db.searchNotes` only ever sees README-parsed notes -- union in
+    // whatever the note editor (`SessionNoteStore`, `.astro_tool/notes/`)
+    // holds too, so a note a user typed through the GUI's session-note
+    // sheet (never touching `README.txt`) is just as findable here as one
+    // that came from the file the scanner reads. Candidate sessions are
+    // every distinct (target, session_date) actually on record -- the same
+    // set `SessionStatsQueries` would enumerate, computed directly off
+    // `files` here since the CLI has no per-target loop already running.
+    let readmeResults = try db.searchNotes(query: query)
+    let sessionCandidates = try db.allSessionPairs()
+    let storeResults = SessionNoteStore.search(
+        query: query, root: URL(fileURLWithPath: config.rootPath, isDirectory: true), sessions: sessionCandidates
+    )
+    let results = mergeNoteSearchResults(readme: readmeResults, store: storeResults)
 
     if parsed.has("--json") {
         try printJSON(results.map {
@@ -1329,6 +1342,29 @@ func cmdSearch(_ args: [String]) throws -> Int32 {
         printSearchResultsGrouped(results)
     }
     return 0
+}
+
+/// Unions `readme` (`db.searchNotes`) with `store` (`SessionNoteStore.search`)
+/// into one result list, de-duplicated by `(target, date, key)` with the
+/// README-sourced row winning a collision -- the same "README nyer"
+/// precedence `SessionStatsQueries.computeSessionDetail` applies when
+/// building `SessionDetail.notes`.
+private func mergeNoteSearchResults(
+    readme: [(target: String, date: String, key: String, value: String)],
+    store: [(target: String, date: String, key: String, value: String)]
+) -> [(target: String, date: String, key: String, value: String)] {
+    struct Key: Hashable { let target: String; let date: String; let key: String }
+
+    var seen = Set<Key>()
+    var result: [(target: String, date: String, key: String, value: String)] = []
+    for row in readme {
+        seen.insert(Key(target: row.target, date: row.date, key: row.key))
+        result.append(row)
+    }
+    for row in store where !seen.contains(Key(target: row.target, date: row.date, key: row.key)) {
+        result.append(row)
+    }
+    return result.sorted { ($0.target, $0.date, $0.key) < ($1.target, $1.date, $1.key) }
 }
 
 /// `db.searchNotes` returns plain tuples (not `Encodable`) -- this thin
