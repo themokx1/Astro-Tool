@@ -1,4 +1,3 @@
-import AppKit
 import AstroCore
 import SwiftUI
 
@@ -17,6 +16,11 @@ struct SessionsSegment: View {
     /// triggers) since no other segment/context menu on this page needs to
     /// open the same sheet.
     @State private var noteEditingSession: LinkingSession?
+    /// R11-T2: this segment's session rows now route through the shared
+    /// `SessionActionMenu`, which needs an `AddTagSheet` trigger -- this
+    /// segment had no tag add/remove of its own before (only
+    /// `AllTargetsPage`'s session rows did).
+    @State private var addingTag: AddTagTarget?
 
     private struct Row: Identifiable {
         let id: String
@@ -75,6 +79,9 @@ struct SessionsSegment: View {
         }
         .sheet(item: $noteEditingSession) { session in
             SessionNoteSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $addingTag) { info in
+            AddTagSheet(target: info.target, date: info.date)
         }
     }
 
@@ -175,22 +182,25 @@ struct SessionsSegment: View {
         appState.loadSessionTimeline(target: target, date: pending)
     }
 
-    @ViewBuilder
+    /// R11-T2: now the shared `SessionActionMenu` -- `showOpenTarget: false`
+    /// since this segment IS the target's own page already ("Célpont
+    /// megnyitása" would be a no-op here), and `onRateFrames` keeps this
+    /// segment's one deliberate difference: running the rate right in
+    /// place (there's a Minőség segment one tab over to see the result in),
+    /// rather than `AllTargetsPage`/`NightsPage`'s "navigate to Minőség
+    /// with this date preselected" (they have no frame table of their own).
     private func contextMenuItems(for detail: SessionDetail) -> some View {
-        Button("Megnyitás Finderben") { revealInFinder(date: detail.dateRaw) }
-        Divider()
-        Button("Kalibráció linkelése…") { linkingSession = LinkingSession(target: target, date: detail.dateRaw) }
-        Button("Stackelés előkészítése…") { stackListingSession = LinkingSession(target: target, date: detail.dateRaw) }
-        Divider()
-        Button("Keretek pontozása") { appState.runRate(target: target, date: detail.dateRaw) }
-        Button("Éjszaka-riport készítése") { appState.exportNightReport(target: target, date: detail.dateRaw) }
-        Button("Éjszaka-jegyzet szerkesztése…") { noteEditingSession = LinkingSession(target: target, date: detail.dateRaw) }
-    }
-
-    private func revealInFinder(date: String) {
-        let url = URL(fileURLWithPath: appState.config.rootPath, isDirectory: true)
-            .appendingPathComponent("sessions/\(target)/\(date)")
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        SessionActionMenu(
+            target: target,
+            date: detail.dateRaw,
+            tags: detail.tags,
+            showOpenTarget: false,
+            onRateFrames: { appState.runRate(target: target, date: detail.dateRaw) },
+            linkingSession: $linkingSession,
+            stackListingSession: $stackListingSession,
+            noteEditingSession: $noteEditingSession,
+            addingTag: $addingTag
+        )
     }
 
     // MARK: - Cell text

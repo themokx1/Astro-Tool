@@ -141,6 +141,12 @@ struct AuditPage: View {
                 // have no independent data source), so they keep the empty
                 // state.
                 if appState.auditSegment == .cleanable, appState.cleanupSummary != nil {
+                    // R11-T2: the tiles row now shows too (with the three
+                    // audit-only counts reading "nincs audit" instead of a
+                    // misleadingly clean "0") so this segment doesn't drop
+                    // the cross-segment counts entirely just because no
+                    // audit has run yet.
+                    tiles
                     cleanableSegment
                 } else {
                     noAuditYetState
@@ -263,12 +269,30 @@ struct AuditPage: View {
 
     // MARK: - Header tiles
 
+    /// R11-T2: while `lastRunID == nil` (no audit has run this session),
+    /// `errorFindings`/`suspiciousFindings`/`intentionalFindings` all read
+    /// as empty arrays -- rendering "0" there would read as "audited and
+    /// clean", which is a different (and false) claim from "never
+    /// audited". Those three tiles fall back to `TDFormat.missingTile`
+    /// ("n/a", this app's own tile-scale missing-value glyph -- see
+    /// `TDFormat`'s doc comment for why not the literal "—" this ticket's
+    /// own wording used: T1 just finished stamping out that exact
+    /// undocumented third glyph) with a "nincs audit" caption. "Takarítható"
+    /// is untouched -- `cleanupSummary` loads independently of any audit
+    /// run (`AppState.loadCleanup()`), so its own count is always real.
     private var tiles: some View {
         HStack(spacing: 12) {
-            StatTile(title: "Biztos hiba", value: "\(errorFindings.count)", color: .red)
-            StatTile(title: "Gyanús", value: "\(suspiciousFindings.count)", color: .yellow)
-            StatTile(title: "Takarítható", value: cleanupBytesText, color: .blue)
-            StatTile(title: "Szándékos", value: "\(intentionalFindings.count)", color: .gray)
+            if appState.lastRunID == nil {
+                StatTile(title: "Biztos hiba", value: TDFormat.missingTile, color: .gray, caption: "nincs audit")
+                StatTile(title: "Gyanús", value: TDFormat.missingTile, color: .gray, caption: "nincs audit")
+                StatTile(title: "Takarítható", value: cleanupBytesText, color: .blue)
+                StatTile(title: "Szándékos", value: TDFormat.missingTile, color: .gray, caption: "nincs audit")
+            } else {
+                StatTile(title: "Biztos hiba", value: "\(errorFindings.count)", color: .red)
+                StatTile(title: "Gyanús", value: "\(suspiciousFindings.count)", color: .yellow)
+                StatTile(title: "Takarítható", value: cleanupBytesText, color: .blue)
+                StatTile(title: "Szándékos", value: "\(intentionalFindings.count)", color: .gray)
+            }
         }
     }
 
@@ -503,6 +527,9 @@ struct AuditPage: View {
 
     private var cleanableSegment: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if appState.lastRunID == nil {
+                noAuditReminderBanner
+            }
             quarantineBanner
 
             if cleanupRows.isEmpty {
@@ -523,6 +550,28 @@ struct AuditPage: View {
                 .tableStyle(.inset(alternatesRowBackgrounds: true))
             }
         }
+    }
+
+    /// R11-T2: a thin, dismissal-free reminder atop the Takarítható segment
+    /// while no audit has run this session yet -- `cleanupSummary` loads
+    /// independently (see `tiles`' own doc comment), so a user can land
+    /// here via the sidebar's "Takarítás" row without ever having run an
+    /// audit, and previously had no hint at all that the Hibák/Gyanús
+    /// buckets exist but are simply unpopulated.
+    private var noAuditReminderBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "info.circle").foregroundStyle(.secondary)
+            Text("Az audit még nem futott — a Hibák/Gyanús listához futtasd le.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Audit futtatása") {
+                appState.runAudit(includeSuspicious: appState.includeSuspiciousInScript)
+            }
+            .disabled(appState.isBusy || appState.db == nil)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
     }
 
     /// The Vasszabály, spelled out where a user actually looks before

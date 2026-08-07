@@ -63,6 +63,11 @@ public struct NightRow: Codable, Sendable, Equatable {
     /// not a stats roll-up), just flagged as excluded from its TARGET's own
     /// usable totals (e.g. the user's own `_hibas` "bad night" marker).
     public var isExcludedFromTotals: Bool
+    /// Mirrors `SessionDetail.tags` -- this session's own tags (the `tags`
+    /// table, `session_date == date`), never the target-level set. R11-T2:
+    /// backs `NightsPage`'s "Címke eltávolítása" submenu, the one piece of
+    /// the shared `SessionActionMenu` action set this row didn't carry yet.
+    public var tags: [String]
 
     public init(
         target: String,
@@ -78,7 +83,8 @@ public struct NightRow: Codable, Sendable, Equatable {
         backgroundEPerSecPerArcsec2: Double? = nil,
         dutyCyclePercent: Double? = nil,
         hasNotes: Bool = false,
-        isExcludedFromTotals: Bool = false
+        isExcludedFromTotals: Bool = false,
+        tags: [String] = []
     ) {
         self.target = target
         self.displayName = displayName
@@ -94,6 +100,7 @@ public struct NightRow: Codable, Sendable, Equatable {
         self.dutyCyclePercent = dutyCyclePercent
         self.hasNotes = hasNotes
         self.isExcludedFromTotals = isExcludedFromTotals
+        self.tags = tags
     }
 }
 
@@ -163,7 +170,8 @@ public enum NightsQueries {
                     backgroundEPerSecPerArcsec2: quality?.backgroundEPerSecPerArcsec2,
                     dutyCyclePercent: timeline.dutyCycle.map { $0 * 100 },
                     hasNotes: !session.notes.isEmpty,
-                    isExcludedFromTotals: session.isExcludedFromTotals
+                    isExcludedFromTotals: session.isExcludedFromTotals,
+                    tags: session.tags
                 )
                 // Falls back to the raw text itself when it doesn't parse as
                 // a date at all, so the sort below still has SOME stable key

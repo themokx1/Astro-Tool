@@ -264,6 +264,13 @@ struct TargetDetailPage: View {
         max(0, (projectState?.todos.count ?? 0) - 1)
     }
 
+    /// R11-T2: card-style background (a faint tint of the header's own
+    /// `PhaseChip` color) so this row reads as the page's action-driving
+    /// focus instead of blending into the plain header background the way
+    /// every other row here does -- it was the one row on this page whose
+    /// content (a next-step sentence + action button) is genuinely more
+    /// important than a tile or a phase chip, yet visually weighed the
+    /// least.
     private var headerRow3: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let nextStep {
@@ -292,5 +299,8 @@ struct TargetDetailPage: View {
                 .font(.caption)
             }
         }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(phaseColor(projectState?.phase).opacity(0.1)))
     }
 }

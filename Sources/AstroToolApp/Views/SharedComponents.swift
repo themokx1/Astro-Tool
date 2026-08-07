@@ -146,6 +146,90 @@ struct PhaseChip: View {
     }
 }
 
+// MARK: - Session action menu (R11-T2)
+
+/// The full session-row action set -- ONE builder shared by `NightsPage`,
+/// `AllTargetsPage`'s session rows, and `SessionsSegment`, so the three
+/// surfaces' action sets can never quietly drift apart again. Before this,
+/// each page hand-rolled its own subset: `NightsPage` had no "Kalibráció
+/// linkelése…"/"Stackelés előkészítése…"/"Keretek pontozása"/tag items at
+/// all, `AllTargetsPage`'s session rows had no "Célpont megnyitása", and
+/// `SessionsSegment`'s session rows had no tag add/remove. Used identically
+/// by both a table's visible "⋯" `Menu` column and its row's
+/// `.contextMenu(forSelectionType:)` -- exactly the "same content, two call
+/// sites" shape those tables' target/plan-row menus already establish.
+///
+/// `showOpenTarget` gates "Célpont megnyitása" -- shown everywhere EXCEPT
+/// `SessionsSegment` (that segment IS the target's own page already); when
+/// shown, it preselects the Sessionök segment with this exact date before
+/// navigating, the same `pendingTargetSegment`/`pendingSessionSelection`
+/// hand-off `NightsPage`'s row primary-action already established.
+///
+/// `onRateFrames` is the one deliberate behavioral difference this action
+/// still carries rather than being forced uniform: `SessionsSegment` runs
+/// `AppState.runRate` right in place (there's a Minőség segment one tab
+/// over to see the result in), while `NightsPage`/`AllTargetsPage` have no
+/// frame table of their own -- their default (`nil`) navigates to the
+/// target's Minőség segment with this date preselected instead.
+struct SessionActionMenu: View {
+    @Environment(AppState.self) private var appState
+
+    let target: String
+    let date: String
+    let tags: [String]
+    var showOpenTarget: Bool = true
+    var onRateFrames: (() -> Void)?
+
+    @Binding var linkingSession: LinkingSession?
+    @Binding var stackListingSession: LinkingSession?
+    @Binding var noteEditingSession: LinkingSession?
+    @Binding var addingTag: AddTagTarget?
+
+    var body: some View {
+        // Split into two `Group`s -- a plain `@ViewBuilder` block (unlike
+        // `TableColumnBuilder`, which the R10-B7 comments elsewhere in this
+        // file call out by name) still only has `buildBlock` overloads up
+        // to 10 children; this menu's full action set is 12 statements, so
+        // one `Group` alone won't type-check.
+        Group {
+            if showOpenTarget {
+                Button("Célpont megnyitása") {
+                    appState.pendingTargetSegment = .sessions
+                    appState.pendingSessionSelection = date
+                    appState.currentPage = .target(target)
+                }
+            }
+            Button("Megnyitás Finderben") { appState.revealPathInFinder("sessions/\(target)/\(date)") }
+            Divider()
+            Button("Kalibráció linkelése…") { linkingSession = LinkingSession(target: target, date: date) }
+            Button("Stackelés előkészítése…") { stackListingSession = LinkingSession(target: target, date: date) }
+            Divider()
+            Button("Keretek pontozása") {
+                if let onRateFrames {
+                    onRateFrames()
+                } else {
+                    appState.pendingQualityDate = date
+                    appState.pendingTargetSegment = .quality
+                    appState.currentPage = .target(target)
+                }
+            }
+            Button("Éjszaka-riport készítése") { appState.exportNightReport(target: target, date: date) }
+            Button("Éjszaka-jegyzet szerkesztése…") { noteEditingSession = LinkingSession(target: target, date: date) }
+        }
+        Group {
+            Divider()
+            Button("Címke hozzáadása…") { addingTag = AddTagTarget(target: target, date: date) }
+            if !tags.isEmpty {
+                Menu("Címke eltávolítása") {
+                    ForEach(tags, id: \.self) { tag in
+                        Button(tag) { appState.removeTag(target: target, date: date, tag: tag) }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Verdict chip (R10 review)
 
 /// Shared "tonight verdict" chip -- unifies three near-identical copies

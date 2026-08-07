@@ -353,7 +353,7 @@ struct AllTargetsPage: View {
             .width(min: 120, ideal: 180)
 
             // R10-B7: visible row-actions -- mirrors the exact same
-            // `targetContextMenuItems`/`sessionContextMenuItems` switch the
+            // `targetContextMenuItems`/`sessionActionMenu` switch the
             // row-scoped `.contextMenu(forSelectionType:)` below uses, so
             // the right-click menu and this borderless "⋯" button can never
             // drift apart.
@@ -363,7 +363,7 @@ struct AllTargetsPage: View {
                     case .target(let stats):
                         targetContextMenuItems(stats)
                     case .session(let target, let detail):
-                        sessionContextMenuItems(target: target, detail: detail)
+                        sessionActionMenu(target: target, detail: detail)
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -384,7 +384,7 @@ struct AllTargetsPage: View {
                 case .target(let stats):
                     targetContextMenuItems(stats)
                 case .session(let target, let detail):
-                    sessionContextMenuItems(target: target, detail: detail)
+                    sessionActionMenu(target: target, detail: detail)
                 }
             }
         } primaryAction: { ids in
@@ -525,36 +525,23 @@ struct AllTargetsPage: View {
         }
     }
 
-    /// Session row's right-click menu -- the same actions the removed
-    /// "Műveletek" column offered per session, plus R9-D8/f's "Keretek
-    /// pontozása" (navigates to the target's Minőség segment with this
-    /// date preselected, rather than running a rate in place -- this page
-    /// has no frame table of its own to show the result in) and R9-D8/d's
-    /// tag add/remove (this page's only surface for editing a SESSION-level
-    /// tag -- `SessionsSegment` has none of its own).
-    @ViewBuilder
-    private func sessionContextMenuItems(target: String, detail: SessionDetail) -> some View {
-        Button("Megnyitás Finderben") { revealInFinder(relativePath: "sessions/\(target)/\(detail.dateRaw)") }
-        Divider()
-        Button("Kalibráció linkelése…") { linkingSession = LinkingSession(target: target, date: detail.dateRaw) }
-        Button("Stackelés előkészítése…") { stackListingSession = LinkingSession(target: target, date: detail.dateRaw) }
-        Divider()
-        Button("Keretek pontozása") {
-            appState.pendingQualityDate = detail.dateRaw
-            appState.pendingTargetSegment = .quality
-            appState.currentPage = .target(target)
-        }
-        Button("Éjszaka-riport készítése") { appState.exportNightReport(target: target, date: detail.dateRaw) }
-        Button("Éjszaka-jegyzet szerkesztése…") { noteEditingSession = LinkingSession(target: target, date: detail.dateRaw) }
-        Divider()
-        Button("Címke hozzáadása…") { addingTag = AddTagTarget(target: target, date: detail.dateRaw) }
-        if !detail.tags.isEmpty {
-            Menu("Címke eltávolítása") {
-                ForEach(detail.tags, id: \.self) { tag in
-                    Button(tag) { appState.removeTag(target: target, date: detail.dateRaw, tag: tag) }
-                }
-            }
-        }
+    /// Session row's right-click menu / visible "⋯" menu -- R11-T2: now a
+    /// thin wrapper around the shared `SessionActionMenu` (SharedComponents
+    /// .swift), the same builder `NightsPage`/`SessionsSegment` route their
+    /// own session rows through, so this page's action set can never drift
+    /// from theirs again. `showOpenTarget` defaults to `true` (this page
+    /// isn't the target's own detail page), adding "Célpont megnyitása"
+    /// here for the first time.
+    private func sessionActionMenu(target: String, detail: SessionDetail) -> some View {
+        SessionActionMenu(
+            target: target,
+            date: detail.dateRaw,
+            tags: detail.tags,
+            linkingSession: $linkingSession,
+            stackListingSession: $stackListingSession,
+            noteEditingSession: $noteEditingSession,
+            addingTag: $addingTag
+        )
     }
 
     private func revealInFinder(relativePath: String) {

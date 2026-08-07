@@ -35,12 +35,19 @@ struct OverviewSegment: View {
                 coordinatesBlock
                 setupFingerprintBlock
                 visibilityBlock
-                skyChartBlock
-                integrationTrendBlock
-                exposureAdviceBlock
+                // R11-T2: moved up from just before `calibrationBlock` -- for
+                // a mosaic target, panel coverage IS the project-status
+                // headline (PLAN-R11's own UI-terv order: Láthatóság →
+                // [mozaiknál ITT] → Ma esti ív → Integráció-halmozódás →
+                // Expozíció-tanácsadó → Kalibráció), so it belongs right
+                // after "Láthatóság ma este", ahead of both the sky chart
+                // and the integration/calibration blocks it used to trail.
                 if let panelReport, panelReport.isMosaic {
                     MosaicPanelTable(report: panelReport)
                 }
+                skyChartBlock
+                integrationTrendBlock
+                exposureAdviceBlock
                 calibrationBlock
             }
             .padding()

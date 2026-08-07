@@ -119,6 +119,9 @@ struct TonightPage: View {
                         noCoordinatesState
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
+                            if showsCloudContextBanner {
+                                cloudContextBanner
+                            }
                             HStack {
                                 Spacer()
                                 MetricInfoButton(metrics: Self.planMetricInfo)
@@ -342,6 +345,55 @@ struct TonightPage: View {
         formatter.dateFormat = "HH:mm"
         return formatter
     }()
+
+    // MARK: - Cloud-context banner (R11-T2)
+
+    /// `true` when weather is on AND tonight's mean cloud cover (Open-Meteo's
+    /// own daily summary, the same `weatherDailySummaries` dictionary
+    /// `calendarSegmentView`'s "Felhő" column already reads) is above 70% --
+    /// gates `cloudContextBanner`, a one-line nudge above `planTable` toward
+    /// a clearer night on the calendar. Keyed on TODAY's date specifically
+    /// (not `appState.planDate`, which can point at a different night after
+    /// "Terv erre az éjszakára") -- this is about TONIGHT regardless of
+    /// which night's plan happens to be on screen.
+    private var showsCloudContextBanner: Bool {
+        guard appState.config.weather.enabled, !appState.cloudBannerDismissed else { return false }
+        guard let summary = appState.weatherDailySummaries[Self.todayString] else { return false }
+        return summary.meanPercent > 70
+    }
+
+    private var cloudContextBannerText: String {
+        let percent = Int((appState.weatherDailySummaries[Self.todayString]?.meanPercent ?? 0).rounded())
+        return "Ma este ~\(percent)% felhő várható —"
+    }
+
+    /// One-line, dismissible (session-scoped -- `AppState.cloudBannerDismissed`,
+    /// see its own doc comment for why not a plain `@State` here) nudge
+    /// toward a clearer night: "a következő derült éjszakát" is itself the
+    /// link, switching to the Naptár segment (simple segment-switch, not a
+    /// specific night highlight -- the spec allows either).
+    private var cloudContextBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "cloud.fill").foregroundStyle(.orange)
+            Text(cloudContextBannerText).font(.callout)
+            Button("nézd meg a következő derült éjszakát") {
+                appState.tonightSegment = .calendar
+                appState.currentPage = .calendar
+            }
+            .buttonStyle(.link)
+            .font(.callout)
+            Spacer()
+            Button {
+                appState.cloudBannerDismissed = true
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.12)))
+    }
 
     // MARK: - Plan table
 

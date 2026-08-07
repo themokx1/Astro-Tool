@@ -1,4 +1,3 @@
-import AppKit
 import AstroCore
 import SwiftUI
 
@@ -29,6 +28,14 @@ struct NightsPage: View {
     /// row-scoped sheet-trigger pattern `AllTargetsPage`/`SessionsSegment`
     /// already use.
     @State private var noteEditingSession: LinkingSession?
+    /// R11-T2: this page's session rows now route through the shared
+    /// `SessionActionMenu` (SharedComponents.swift), which needs a
+    /// `CalibLinkSheet`/`StackListSheet`/`AddTagSheet` trigger of its own --
+    /// this page had none before (its action set used to be a narrower
+    /// subset than `AllTargetsPage`/`SessionsSegment`'s).
+    @State private var linkingSession: LinkingSession?
+    @State private var stackListingSession: LinkingSession?
+    @State private var addingTag: AddTagTarget?
 
     private static let monthNames = [
         "Január", "Február", "Március", "Április", "Május", "Június",
@@ -110,6 +117,9 @@ struct NightsPage: View {
         var dutyCyclePercent: Double? { row.dutyCyclePercent }
         var hasNotes: Bool { row.hasNotes }
         var isExcludedFromTotals: Bool { row.isExcludedFromTotals }
+        /// R11-T2: this session's own tags, backing `SessionActionMenu`'s
+        /// "Címke eltávolítása" submenu.
+        var tags: [String] { row.tags }
 
         // Sentinel sort keys for the nullable metric columns -- missing
         // sorts first on an ascending sort, same "-1 sentinel" convention
@@ -227,6 +237,15 @@ struct NightsPage: View {
         }
         .sheet(item: $noteEditingSession) { session in
             SessionNoteSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $linkingSession) { session in
+            CalibLinkSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $stackListingSession) { session in
+            StackListSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $addingTag) { info in
+            AddTagSheet(target: info.target, date: info.date)
         }
     }
 
@@ -452,21 +471,23 @@ struct NightsPage: View {
         appState.currentPage = .target(row.target)
     }
 
-    @ViewBuilder
+    /// R11-T2: now the shared `SessionActionMenu` (SharedComponents.swift) --
+    /// same builder `AllTargetsPage`/`SessionsSegment` route their own
+    /// session rows through, adding "Kalibráció linkelése…"/"Stackelés
+    /// előkészítése…"/"Keretek pontozása"/tag add-remove to this page's
+    /// action set for the first time (previously the narrowest of the
+    /// three). `onRateFrames` is left `nil` (the default): this page has no
+    /// frame table of its own, so it navigates to the target's Minőség
+    /// segment with this date preselected, same as `AllTargetsPage`.
     private func contextMenuItems(for row: NightTableRow) -> some View {
-        // R10 review (item 8): "Célpont megnyitása" everywhere a row's
-        // primary action navigates to the target page (`AllTargetsPage`
-        // already uses this exact wording) -- was a bare "Megnyitás".
-        Button("Célpont megnyitása") { openInTargetDetail(row) }
-        Button("Megnyitás Finderben") { revealInFinder(target: row.target, date: row.date) }
-        Divider()
-        Button("Éjszaka-riport készítése") { appState.exportNightReport(target: row.target, date: row.date) }
-        Button("Éjszaka-jegyzet szerkesztése…") { noteEditingSession = LinkingSession(target: row.target, date: row.date) }
-    }
-
-    private func revealInFinder(target: String, date: String) {
-        let url = URL(fileURLWithPath: appState.config.rootPath, isDirectory: true)
-            .appendingPathComponent("sessions/\(target)/\(date)")
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        SessionActionMenu(
+            target: row.target,
+            date: row.date,
+            tags: row.tags,
+            linkingSession: $linkingSession,
+            stackListingSession: $stackListingSession,
+            noteEditingSession: $noteEditingSession,
+            addingTag: $addingTag
+        )
     }
 }

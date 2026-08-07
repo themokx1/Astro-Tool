@@ -273,6 +273,15 @@ final class AppState: @unchecked Sendable {
         case calendar
     }
     var tonightSegment: TonightSegment = .tonight
+    /// R11-T2: `TonightPage`'s cloud-context banner ("Ma este ~N% felhő
+    /// várható…"), dismissed for the rest of THIS app run once the user
+    /// closes it -- kept here (not a plain `@State` on `TonightPage` itself)
+    /// since that page's view identity doesn't survive navigating away and
+    /// back (`MainShellView`'s page switch recreates it), and a plain
+    /// `@State` would silently re-show the banner on every visit. Not
+    /// `@AppStorage`: the spec explicitly wants this to reset on the next
+    /// launch, not stay dismissed forever.
+    var cloudBannerDismissed: Bool = false
 
     /// R9-T4/B10's `Settings` scene tab picker -- settable by the "Ma este"
     /// page's "Helyszín" tile (which preselects `.location` before opening

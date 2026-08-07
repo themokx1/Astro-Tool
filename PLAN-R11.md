@@ -21,7 +21,7 @@
 - [x] 1. Feltérképezés (7 agent) — kész
 - [x] 2. Persona-review (4 agent) — kész
 - [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
-- [ ] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [ ] T3 [ ] T4 [ ]
+- [ ] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [ ] T4 [ ]
 - [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [ ] T6 [ ] T7 [ ] T8 [ ] T9 [ ] T10 [ ] T11 [ ] T12 [ ] T13 [ ]
 - [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [ ] T15 [ ] T16 [ ] T17 [ ]
 - [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások

@@ -8,9 +8,44 @@ történik.
 
 ## [Unreleased]
 
-Az R11-es kör A-hullámának első tétele (T1 — UI-konzisztencia csomag).
+Az R11-es kör A-hullámának második tétele (T2 — Akció-paritás + apró UX),
+az első (T1 — UI-konzisztencia csomag) után.
+
+### Added
+
+- **Közös session-akció menü-builder**: `SessionActionMenu`
+  (SharedComponents.swift) adja mostantól a teljes session-sor akciókészletet
+  (Célpont megnyitása / Megnyitás Finderben / Kalibráció linkelése… /
+  Stackelés előkészítése… / Keretek pontozása / Éjszaka-riport /
+  Éjszaka-jegyzet szerkesztése… / Címke hozzáadása…/eltávolítása) — a
+  NightsPage, az AllTargetsPage session-sorai és a SessionsSegment egyaránt
+  ebből építi mind a látható "⋯" menüt, mind a jobbklikk-menüt, így a három
+  felület akciókészlete nem tud többé széthúzni. A NightsPage-nek eddig se
+  Kalibráció-linkelése, se Stackelés-előkészítése, se Keretek pontozása, se
+  címke-akciója nem volt (a `NightRow`/`NightTableRow` új `tags` mezőt
+  kapott ehhez); az AllTargetsPage session-sorainak eddig nem volt "Célpont
+  megnyitása"; a SessionsSegmentnek eddig nem volt címke hozzáadás/eltávolítás.
+- **Audit kereszt-szegmens állapot-jelzés**: ha még sosem futott audit ebben
+  a munkamenetben, a Hibák/Gyanús/Szándékos fejléc-csempék "0" helyett "n/a"
+  értéket mutatnak "nincs audit" caption-nel (a Takarítható csempe
+  változatlan — az független forrásból töltődik); a Takarítható szegmens
+  tetején egy diszkrét info-sor jelenik meg ("Az audit még nem futott — a
+  Hibák/Gyanús listához futtasd le.") inline "Audit futtatása" gombbal.
+- **TonightPage felhő-kontextus sáv**: ha az időjárás be van kapcsolva és a
+  ma esti (Open-Meteo napi átlag) felhőzet 70% fölött van, a terv-tábla
+  fölött egy elutasítható sáv jelenik meg ("Ma este ~N% felhő várható —
+  nézd meg a következő derült éjszakát"), ami a Naptár szegmensre vált; az
+  elutasítás munkamenet-szintű (`AppState.cloudBannerDismissed`, app-újraindításig).
+- **"Következő lépés" kártya-kiemelés**: a TargetDetailPage fejlécének 3.
+  sora mostantól halvány, a célpont fázis-színével tintelt kártya-hátteret
+  kap, hogy az oldal cselekvésre hívó fókuszaként olvasható legyen.
 
 ### Changed
+
+- **Mozaik-tábla előbbre**: a TargetDetail Áttekintés kártya-sorrendjében
+  mozaik-célpontnál a MosaicPanelTable most a "Láthatóság ma este" kártya
+  UTÁN következik (a "Ma esti ív", az Integráció-halmozódás és a Kalibráció
+  elé kerülve) — mozaiknál a panel-lefedettség a projekt-státusz lényege.
 
 - **Közös hiányzó-érték helper**: `TDFormat.missingCell`/`missingTile`
   konstansok + `TDFormat.cell(_:)`/`tile(_:)` segédfüggvények (Shared.swift)
