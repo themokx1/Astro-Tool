@@ -106,8 +106,8 @@ struct OverviewSegment: View {
         section("Láthatóság ma este") {
             if let plan {
                 HStack(spacing: 20) {
-                    labeledValue("Kulminál", plan.culminationLocal ?? "-")
-                    labeledValue("Max. mag.", plan.maxAltitudeDeg.map { String(format: "%.0f°", $0) } ?? "-")
+                    labeledValue("Kulminál", TDFormat.tile(plan.culminationLocal))
+                    labeledValue("Max. mag.", TDFormat.tile(plan.maxAltitudeDeg.map { String(format: "%.0f°", $0) }))
                     labeledValue("Látható", visibleWindowText(plan))
                     labeledValue("Hold", moonText(plan))
                     VerdictChip(verdict: plan.verdict)
@@ -119,13 +119,13 @@ struct OverviewSegment: View {
     }
 
     private func visibleWindowText(_ plan: TargetPlan) -> String {
-        guard let window = plan.visibleWindowLocal else { return "-" }
+        guard let window = plan.visibleWindowLocal else { return TDFormat.missingTile }
         guard let hours = plan.visibleHours else { return window }
         return "\(window) (\(String(format: "%.1f", hours)) ó)"
     }
 
     private func moonText(_ plan: TargetPlan) -> String {
-        guard let illum = plan.moonIlluminationPercent else { return "-" }
+        guard let illum = plan.moonIlluminationPercent else { return TDFormat.missingTile }
         var text = "\(Int(illum.rounded()))%"
         if let sep = plan.moonSeparationDeg { text += " · \(Int(sep.rounded()))°" }
         return text

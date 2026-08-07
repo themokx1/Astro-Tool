@@ -215,12 +215,12 @@ struct TonightPage: View {
     // `moonTileText`/`locationValueText` feed `StatTile`s below; `cloudTile`
     // already used "n/a" correctly (R10-B6).
     private var darkHoursText: String {
-        guard let hours = appState.nightInfo?.darkHours else { return "n/a" }
+        guard let hours = appState.nightInfo?.darkHours else { return TDFormat.missingTile }
         return String(format: "%.1f óra", hours)
     }
 
     private var moonTileText: String {
-        guard let info = appState.nightInfo else { return "n/a" }
+        guard let info = appState.nightInfo else { return TDFormat.missingTile }
         var text = TDFormat.percent(info.moonIlluminationPercent)
         if let label = info.moonEventLabel { text += " · \(label)" }
         return text
@@ -232,7 +232,7 @@ struct TonightPage: View {
 
     private var locationValueText: String {
         guard hasResolvedSite, let lat = appState.resolvedSite.latitudeDeg, let lon = appState.resolvedSite.longitudeDeg else {
-            return "n/a"
+            return TDFormat.missingTile
         }
         let latDir = lat >= 0 ? "N" : "S"
         let lonDir = lon >= 0 ? "E" : "W"
@@ -299,10 +299,10 @@ struct TonightPage: View {
                 let text = "\(TDFormat.percent(dusk)) → \(TDFormat.percent(dawn))"
                 return (text, "Open-Meteo · \(Self.hmFormatter.string(from: forecast.fetchedAt))")
             }
-            return ("n/a", "a 7 napos előrejelzésen túl")
+            return (TDFormat.missingTile, "a 7 napos előrejelzésen túl")
         }
         if let weatherError = appState.weatherError {
-            return ("n/a", weatherError)
+            return (TDFormat.missingTile, weatherError)
         }
         return ("…", "betöltés")
     }
@@ -466,7 +466,7 @@ struct TonightPage: View {
                 .menuStyle(.borderlessButton)
                 .frame(width: 24)
             }
-            .width(36)
+            .width(actionColumnWidth)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         // R9-D11: row-scoped context menu + double-click-to-open, same
@@ -576,7 +576,7 @@ struct TonightPage: View {
         } else {
             // R10 review (item 20): table CELLS use "-", not "—" -- see
             // `TDFormat`'s own doc comment for the full rule.
-            Text("-").foregroundStyle(.secondary)
+            Text(TDFormat.missingCell).foregroundStyle(.secondary)
         }
     }
 
@@ -587,21 +587,21 @@ struct TonightPage: View {
     /// plain helper (same convention `maxAltText` right below already
     /// follows) gives it a concrete return type to anchor on instead.
     private func culminationText(_ row: PlanRow) -> String {
-        row.plan.culminationLocal ?? "-"
+        TDFormat.cell(row.plan.culminationLocal)
     }
 
     private func maxAltText(_ row: PlanRow) -> String {
-        guard let alt = row.plan.maxAltitudeDeg else { return "-" }
+        guard let alt = row.plan.maxAltitudeDeg else { return TDFormat.missingCell }
         return "\(Int(alt.rounded()))°"
     }
 
     private func visibleText(_ row: PlanRow) -> String {
-        guard let window = row.plan.visibleWindowLocal, let hours = row.plan.visibleHours else { return "-" }
+        guard let window = row.plan.visibleWindowLocal, let hours = row.plan.visibleHours else { return TDFormat.missingCell }
         return "\(window)  (\(String(format: "%.1f", hours)) ó)"
     }
 
     private func moonRowText(_ row: PlanRow) -> String {
-        guard let illum = row.plan.moonIlluminationPercent else { return "-" }
+        guard let illum = row.plan.moonIlluminationPercent else { return TDFormat.missingCell }
         var text = TDFormat.percent(illum)
         if let sep = row.plan.moonSeparationDeg {
             text += " · \(Int(sep.rounded()))°"
@@ -724,7 +724,7 @@ struct TonightPage: View {
                 .menuStyle(.borderlessButton)
                 .frame(width: 24)
             }
-            .width(36)
+            .width(actionColumnWidth)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         // R9-D11: same row-scoped context-menu/double-click pattern as
@@ -767,7 +767,7 @@ struct TonightPage: View {
         if let hours = night.astroDarkHours {
             Text(String(format: "%.1f ó", hours))
         } else {
-            Text(night.note ?? "n/a").font(.caption2).foregroundStyle(.orange)
+            Text(TDFormat.cell(night.note)).font(.caption2).foregroundStyle(.orange)
         }
     }
 
@@ -801,7 +801,7 @@ struct TonightPage: View {
             .font(.callout)
             .foregroundStyle(.secondary)
         } else {
-            Text("-").foregroundStyle(.secondary)
+            Text(TDFormat.missingCell).foregroundStyle(.secondary)
         }
     }
 
@@ -826,7 +826,7 @@ struct TonightPage: View {
     private func bestTargetsCell(_ night: NightSummary) -> some View {
         if night.bestTargets.isEmpty {
             // R10 review (item 20): table CELLS use "-", not "—".
-            Text("-").foregroundStyle(.secondary)
+            Text(TDFormat.missingCell).foregroundStyle(.secondary)
         } else {
             HStack(spacing: 4) {
                 ForEach(Array(night.bestTargets.enumerated()), id: \.offset) { index, best in

@@ -29,8 +29,8 @@ struct MosaicPanelTable: View {
                         Text(String(format: "%.4f / %+.4f", panel.centerRaDeg, panel.centerDecDeg))
                         Text("\(panel.frameCount)")
                         Text(TDFormat.hm(panel.integrationSeconds))
-                        Text(panel.rotationDeg.map { String(format: "%.1f°", $0) } ?? "-")
-                        Text(panel.pixelScaleArcsec.map { String(format: "%.2f\"/px", $0) } ?? "-")
+                        Text(TDFormat.cell(panel.rotationDeg.map { String(format: "%.1f°", $0) }))
+                        Text(TDFormat.cell(panel.pixelScaleArcsec.map { String(format: "%.2f\"/px", $0) }))
                     }
                     .font(.caption)
                 }

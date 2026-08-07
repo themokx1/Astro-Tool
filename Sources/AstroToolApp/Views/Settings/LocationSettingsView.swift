@@ -117,11 +117,11 @@ struct LocationSettingsView: View {
     }
 
     private var resolvedLatitudeText: String {
-        appState.resolvedSite.latitudeDeg.map { String(format: "%.4f", $0) } ?? "-"
+        TDFormat.cell(appState.resolvedSite.latitudeDeg.map { String(format: "%.4f", $0) })
     }
 
     private var resolvedLongitudeText: String {
-        appState.resolvedSite.longitudeDeg.map { String(format: "%.4f", $0) } ?? "-"
+        TDFormat.cell(appState.resolvedSite.longitudeDeg.map { String(format: "%.4f", $0) })
     }
 
     /// "Kézi" whenever `config.site` already carries an explicit value (a

@@ -100,7 +100,7 @@ struct NightsPage: View {
         var usableLightCount: Int { row.usableLightCount }
         var integrationSeconds: Double { row.integrationSeconds }
         var exposureSummary: String { row.exposureSummary }
-        var filtersText: String { row.filters.isEmpty ? "-" : row.filters.joined(separator: ", ") }
+        var filtersText: String { row.filters.isEmpty ? TDFormat.missingCell : row.filters.joined(separator: ", ") }
         var medianFWHMArcsec: Double? { row.medianFWHMArcsec }
         /// R10 review (item 11): `fwhmText`'s pixel-only fallback (like
         /// `SessionsSegment.fwhmText`) for a rated session with no
@@ -141,7 +141,7 @@ struct NightsPage: View {
     }
 
     private var bestFWHMValueText: String {
-        guard let value = bestFWHMRow?.medianFWHMArcsec else { return "-" }
+        guard let value = bestFWHMRow?.medianFWHMArcsec else { return TDFormat.missingTile }
         return String(format: "%.2f″", value)
     }
 
@@ -343,7 +343,7 @@ struct NightsPage: View {
                     .width(min: 80, ideal: 110)
                 TableColumn("Jegyzet", value: \.noteSortKey) { row in
                     // R10 review (item 20): table CELLS use "-", not "—".
-                    Text(row.hasNotes ? "✓" : "-").foregroundStyle(.secondary)
+                    Text(row.hasNotes ? "✓" : TDFormat.missingCell).foregroundStyle(.secondary)
                 }
                 .width(min: 50, ideal: 60)
             }
@@ -359,7 +359,7 @@ struct NightsPage: View {
                 .menuStyle(.borderlessButton)
                 .frame(width: 24)
             }
-            .width(36)
+            .width(actionColumnWidth)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         // Row-scoped context menu + double-click-to-open, same pattern
@@ -415,16 +415,16 @@ struct NightsPage: View {
     private func fwhmText(_ row: NightTableRow) -> String {
         if let arcsec = row.medianFWHMArcsec { return String(format: "%.2f", arcsec) }
         if let px = row.medianFWHMPixels { return String(format: "%.2f px", px) }
-        return "-"
+        return TDFormat.missingCell
     }
 
     private func backgroundText(_ row: NightTableRow) -> String {
-        guard let value = row.backgroundEPerSecPerArcsec2 else { return "-" }
+        guard let value = row.backgroundEPerSecPerArcsec2 else { return TDFormat.missingCell }
         return String(format: "%.3f", value)
     }
 
     private func dutyText(_ row: NightTableRow) -> String {
-        guard let value = row.dutyCyclePercent else { return "-" }
+        guard let value = row.dutyCyclePercent else { return TDFormat.missingCell }
         return String(format: "%.0f%%", value)
     }
 

@@ -8,6 +8,44 @@ történik.
 
 ## [Unreleased]
 
+Az R11-es kör A-hullámának első tétele (T1 — UI-konzisztencia csomag).
+
+### Changed
+
+- **Közös hiányzó-érték helper**: `TDFormat.missingCell`/`missingTile`
+  konstansok + `TDFormat.cell(_:)`/`tile(_:)` segédfüggvények (Shared.swift)
+  — minden app-view-beli literál `"-"`/`"n/a"` hiányzó-érték-előfordulás
+  ezeken keresztül fut mostantól, egy helyen módosítható. A Minőség-tábla
+  "Saját döntés" oszlopa eddig em dash-t ("—") mutatott döntetlen keretnél —
+  ez is a táblacella-konvenció szerinti "-" lett.
+- **Hűtés/Fókusz oszlop → VerdictChip**: a SessionsSegment Sessionök
+  táblájában a Hűtés/Fókusz eddig csak színezett szöveg volt — mostantól a
+  közös `VerdictChip` komponens jeleníti meg őket, egységes vizuális nyelvvel
+  a többi verdikt-oszloppal (Ma este, Felfedezés). A `VerdictChip` szótára
+  bővült a `NightHealth` hűtés/fókusz verdikt-szövegeivel ("stabil"/"stabil
+  fókusz" → zöld, "nem tartja"/"gyanú" → narancs).
+- **"⋯" akció-oszlop egységesen 28pt**: minden táblában (Ma este, Naptár,
+  Minden célpont, Kalibráció, Felfedezés, Éjszakák, Sessionök, Minőség,
+  Stackek) egy közös `actionColumnWidth` konstansra (SharedComponents.swift)
+  áll a korábbi, mindenhol külön beírt 36pt helyett.
+- **Minőség-tábla oszlop-választó + szűkített alapkészlet**: alapból csak
+  Fájl, Pontszám, FWHM, Kiugró, Saját döntés (+ "⋯") látszik; Mappa,
+  Kerekség, Csillagok, Háttér, Szat. %, Exp. elrejthető/visszakapcsolható
+  a kontroll-sáv "Oszlopok" menüjéből (toggle-ök). A natív
+  `.tableColumnCustomization(_:)` macOS 14.4+-ra van gátolva a SDK-ban, ez a
+  csomag viszont macOS 14.0-t céloz (`Package.swift`) — a tábla ezért
+  `if #available(macOS 14.4, *)` szerint vált a feltételes oszlopokat használó
+  változat és egy fix, mindent-mutató (a korábbival pixel-egyező) változat
+  között; a gyakorlatban ez a 14.0–14.3-as, mára elenyésző ablakot érinti
+  csak, a beállítás `@AppStorage`-ban perzisztálódik.
+- **Hibaszövegek "Mit tehetsz:" tanáccsal**: közös `errorAdvice(for:)`
+  fordító (SharedComponents.swift) a gyakori `AstroError` esetekhez (Siril
+  nem található, hozzáférés megtagadva, kötet nincs csatlakoztatva, írás
+  tiltott, útvonal nem található, sérült FITS, adatbázis-hiba). Az
+  `AppState` aktivitás-napló popoverjében a hibaüzenet alatt megjelenik a
+  tanács is; a toast változatlanul csak az alap üzenetet mutatja, hogy ne
+  duzzadjon.
+
 ## [0.12.0] - 2026-08-06
 
 Az R10-es kör felülvizsgálati menete: egy teljes kód-review (nem talált

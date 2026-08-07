@@ -150,7 +150,7 @@ struct TargetDetailPage: View {
         HStack(spacing: 12) {
             StatTile(
                 title: "Valós integráció",
-                value: stat.map { TDFormat.hm($0.usableIntegrationSeconds) } ?? "-",
+                value: TDFormat.tile(stat.map { TDFormat.hm($0.usableIntegrationSeconds) }),
                 caption: stat.map { "bruttó \(TDFormat.hm($0.grossIntegrationSeconds))" },
                 compact: true,
                 tintsBackground: false
@@ -172,7 +172,7 @@ struct TargetDetailPage: View {
             )
             StatTile(
                 title: "Legjobb session",
-                value: bestSession?.date ?? "-",
+                value: TDFormat.tile(bestSession?.date),
                 caption: bestSession.flatMap { summary in
                     summary.medianFWHMArcsec.map { String(format: "FWHM %.2f\"", $0) }
                 },
@@ -183,7 +183,7 @@ struct TargetDetailPage: View {
     }
 
     private var missingValueText: String {
-        guard let missing = projectState?.missingSeconds else { return "-" }
+        guard let missing = projectState?.missingSeconds else { return TDFormat.missingTile }
         return TDFormat.hm(missing)
     }
 

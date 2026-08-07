@@ -108,7 +108,11 @@ final class AppState: @unchecked Sendable {
     struct ActivityEntry: Identifiable {
         enum Outcome: Equatable {
             case ok
-            case error(String)
+            /// R11-T1: `advice` is the "Mit tehetsz: …" follow-up
+            /// (`errorAdvice(for:)`), shown ONLY here in the popover --
+            /// `message` alone (no advice) is still what the matching toast
+            /// gets, see `endOperation`.
+            case error(String, advice: String?)
         }
         let id = UUID()
         let date: Date
@@ -548,6 +552,13 @@ final class AppState: @unchecked Sendable {
     var isBusy: Bool = false
     var progressText: String = ""
     var lastError: String?
+    /// R11-T1: the `AstroError` case behind `lastError`'s CURRENT message,
+    /// when there is one -- `handle(_:)` sets it alongside `lastError`,
+    /// `beginOperation` resets it same as `lastError`. Purely
+    /// `endOperation`'s own lookup key for `errorAdvice(for:)`; no view
+    /// reads this directly. `@ObservationIgnored`: never rendered.
+    @ObservationIgnored
+    private var lastAstroError: AstroError?
 
     /// Set on a successful `createSession(...)` so `NewSessionSheet` can
     /// observe it and dismiss itself.
@@ -794,6 +805,12 @@ final class AppState: @unchecked Sendable {
                 rootStatus = .notMounted
             default:
                 lastError = Self.describe(astroError)
+                // R11-T1: kept alongside `lastError` so `endOperation` can
+                // look up this operation's "Mit tehetsz: …" advice for the
+                // activity-log popover -- `lastError` itself stays the short
+                // message every OTHER display already reads (toasts, this
+                // app's ~8 inline `lastError` texts), see `errorAdvice(for:)`.
+                lastAstroError = astroError
             }
         } else {
             lastError = "\(error)"
@@ -2983,6 +3000,7 @@ final class AppState: @unchecked Sendable {
     private func beginOperation(_ text: String) -> UUID {
         currentTask?.cancel()
         lastError = nil
+        lastAstroError = nil
         isBusy = true
         progressText = text
         let id = UUID()
@@ -3011,13 +3029,18 @@ final class AppState: @unchecked Sendable {
         guard currentOperationID == id else { return }
         isBusy = false
         if let title {
-            let outcome: ActivityEntry.Outcome = lastError.map { .error($0) } ?? .ok
+            // R11-T1: `advice` (the "Mit tehetsz: …" follow-up) rides along
+            // ONLY for the activity-log popover -- the toast built right
+            // below still uses just `message`, unchanged, so it stays short.
+            let outcome: ActivityEntry.Outcome = lastError.map { message in
+                .error(message, advice: lastAstroError.flatMap(errorAdvice(for:)))
+            } ?? .ok
             activityLog.insert(ActivityEntry(date: Date(), title: title, outcome: outcome), at: 0)
             if activityLog.count > 50 {
                 activityLog.removeLast(activityLog.count - 50)
             }
             switch outcome {
-            case .error(let message):
+            case .error(let message, _):
                 pushToast(.error, "\(Self.toastLabel(for: title)) — \(message)")
             case .ok:
                 if Self.successToastTitles.contains(title) {

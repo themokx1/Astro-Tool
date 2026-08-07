@@ -27,6 +27,48 @@ struct QualitySegment: View {
     /// double-clicking anywhere else in a row did nothing.
     @State private var selectedFrame: Row.ID?
 
+    /// R11-T1: Minőség-tábla oszlop-választó + szűkített alapkészlet. This
+    /// app's deployment target (macOS 14) predates
+    /// `.tableColumnCustomization(_:)`/`TableColumnCustomization` (macOS
+    /// 15+), so this is the documented fallback: a plain `@AppStorage`-backed
+    /// hidden-column `Set` (persisted as a comma-joined `String`, since
+    /// `@AppStorage` has no direct `Set<String>` support) plus conditionally
+    /// included `TableColumn`s below, with a control-bar "Oszlopok" `Menu`
+    /// (toggle switches, see `columnsMenu`) as the ONE discoverability path
+    /// -- there's no native right-click-header customization sheet to also
+    /// offer here. Defaults to all six secondary columns hidden (spec:
+    /// "alapból ennyi látszódjon: Fájl, Pontszám, FWHM, Kiugró, Saját
+    /// döntés").
+    private enum QualityColumn: String, CaseIterable {
+        case folder, roundness, starCount, background, saturatedFraction, exptime
+
+        var title: String {
+            switch self {
+            case .folder: return "Mappa"
+            case .roundness: return "Kerekség"
+            case .starCount: return "Csillagok"
+            case .background: return "Háttér"
+            case .saturatedFraction: return "Szat. %"
+            case .exptime: return "Exp."
+            }
+        }
+    }
+
+    @AppStorage("qualityTable.hiddenColumns") private var hiddenColumnsRaw: String =
+        QualityColumn.allCases.map(\.rawValue).joined(separator: ",")
+
+    private var hiddenColumns: Set<String> {
+        Set(hiddenColumnsRaw.split(separator: ",").map(String.init))
+    }
+
+    private func isVisible(_ column: QualityColumn) -> Bool { !hiddenColumns.contains(column.rawValue) }
+
+    private func setVisible(_ column: QualityColumn, _ visible: Bool) {
+        var set = hiddenColumns
+        if visible { set.remove(column.rawValue) } else { set.insert(column.rawValue) }
+        hiddenColumnsRaw = QualityColumn.allCases.map(\.rawValue).filter(set.contains).joined(separator: ",")
+    }
+
     /// Flattened, display-ready view of a `FrameScore` -- ported verbatim
     /// from the deleted `QualityView.Row`.
     private struct Row: Identifiable {
@@ -271,12 +313,29 @@ struct QualitySegment: View {
 
             MetricInfoButton(metrics: Self.frameMetricInfo)
 
+            columnsMenu
+
             Spacer()
 
             if appState.isBusy {
                 ProgressView().controlSize(.small)
                 Text(appState.progressText).foregroundStyle(.secondary)
                 Button("Mégse") { appState.cancelCurrentOperation() }
+            }
+        }
+    }
+
+    /// R11-T1: the ONE discoverability path for `frameTable`'s hidden
+    /// secondary columns -- see `QualityColumn`'s own doc comment for why
+    /// this exists instead of (or alongside) a header right-click, given
+    /// this app's deployment target.
+    private var columnsMenu: some View {
+        Menu("Oszlopok") {
+            ForEach(QualityColumn.allCases, id: \.self) { column in
+                Toggle(column.title, isOn: Binding(
+                    get: { isVisible(column) },
+                    set: { setVisible(column, $0) }
+                ))
             }
         }
     }
@@ -558,18 +617,69 @@ struct QualitySegment: View {
 
     private func tint(_ row: Row) -> Color { row.isOutlier ? .red : .primary }
 
+    // MARK: - Secondary (hideable) column cells (R11-T1)
+
+    @ViewBuilder
+    private func folderCell(_ row: Row) -> some View {
+        Text(TDFormat.cell(row.sessionSubdir)).lineLimit(1).foregroundColor(tint(row))
+    }
+
+    @ViewBuilder
+    private func roundnessCell(_ row: Row) -> some View {
+        Text(TDFormat.cell(row.roundness.map { String(format: "%.2f", $0) })).monospacedDigit().foregroundColor(tint(row))
+    }
+
+    @ViewBuilder
+    private func starCountCell(_ row: Row) -> some View {
+        Text(TDFormat.cell(row.starCount.map(String.init))).monospacedDigit().foregroundColor(tint(row))
+    }
+
+    @ViewBuilder
+    private func backgroundCell(_ row: Row) -> some View {
+        Text(TDFormat.cell(row.background.map { String(format: "%.0f", $0) })).monospacedDigit().foregroundColor(tint(row))
+    }
+
+    @ViewBuilder
+    private func saturatedFractionCell(_ row: Row) -> some View {
+        Text(TDFormat.cell(row.saturatedFraction.map { String(format: "%.2f", $0 * 100) })).monospacedDigit().foregroundColor(tint(row))
+    }
+
+    @ViewBuilder
+    private func exptimeCell(_ row: Row) -> some View {
+        Text(TDFormat.cell(row.exptime.map(Self.formatExptime))).monospacedDigit().foregroundColor(tint(row))
+    }
+
+    /// R11-T1: `TableColumnBuilder`'s conditional support (`buildIf`/
+    /// `buildEither`, what `modernFrameTable`'s per-column `if isVisible(…)`
+    /// below needs) is gated `@available(macOS 14.4, *)` in the SDK even
+    /// though this package's own deployment target is macOS 14.0
+    /// (`Package.swift`) -- routes to the column-picker-capable table when
+    /// actually running 14.4+, else `legacyFrameTable`'s fixed, always-every-
+    /// column layout (identical to this table before R11-T1) for the (by
+    /// now vanishingly rare, macOS 14.4 shipped 2024-03) 14.0-14.3 window.
+    @ViewBuilder
     private var frameTable: some View {
+        if #available(macOS 14.4, *) {
+            modernFrameTable
+        } else {
+            legacyFrameTable
+        }
+    }
+
+    @available(macOS 14.4, *)
+    private var modernFrameTable: some View {
         Table(rows, selection: $selectedFrame, sortOrder: $sortOrder) {
             // R9-T6/B7: the thumbnail rides along in the "Fájl" column
             // itself rather than as its own `TableColumn` -- `Table`'s
             // column-builder overloads top out at 10 top-level items.
             // R10-B1 added an 11th VISIBLE column ("Saját döntés") on top of
-            // the 10 already here -- rather than embedding it into an
-            // existing cell the way the thumbnail was, "Szat. %"/"Exp."
-            // below are grouped into one `Group { }` (a `TableColumnContent`
-            // conformance meant exactly for this): that's still 2 real
-            // columns, it just costs the builder only 1 top-level slot, and
-            // frees the slot "Saját döntés" needs.
+            // the 10 already here, and R11-T1 made "Mappa"/"Kerekség"/
+            // "Csillagok"/"Háttér"/"Szat. %"/"Exp." individually hideable --
+            // rather than costing one builder slot PER secondary column, all
+            // six live inside ONE `Group { }` (a `TableColumnContent`
+            // conformance meant exactly for this) with a per-column `if
+            // isVisible(...)`, so the whole bundle costs the builder just 1
+            // top-level slot no matter how many of the six are shown.
             TableColumn("Fájl", value: \.fileName) { row in
                 HStack(spacing: 6) {
                     ThumbnailCell(url: fileURL(row), size: 22)
@@ -581,89 +691,63 @@ struct QualitySegment: View {
             }
             .width(min: 160, ideal: 240)
 
-            TableColumn("Mappa", value: \.sessionSubdirSortKey) { row in
-                Text(row.sessionSubdir ?? "-").lineLimit(1).foregroundColor(tint(row))
-            }
-            .width(min: 90, ideal: 140)
-
             TableColumn("Pontszám", value: \.score) { row in
                 Text(String(format: "%.2f", row.score)).monospacedDigit().foregroundColor(tint(row))
             }
             .width(80)
 
             TableColumn("FWHM (px)", value: \.fwhmSortKey) { row in
-                Text(row.fwhm.map { String(format: "%.2f", $0) } ?? "-").monospacedDigit().foregroundColor(tint(row))
+                Text(TDFormat.cell(row.fwhm.map { String(format: "%.2f", $0) })).monospacedDigit().foregroundColor(tint(row))
             }
             .width(70)
 
-            TableColumn("Kerekség", value: \.roundnessSortKey) { row in
-                Text(row.roundness.map { String(format: "%.2f", $0) } ?? "-").monospacedDigit().foregroundColor(tint(row))
-            }
-            .width(70)
-
-            TableColumn("Csillagok", value: \.starCountSortKey) { row in
-                Text(row.starCount.map(String.init) ?? "-").monospacedDigit().foregroundColor(tint(row))
-            }
-            .width(70)
-
-            TableColumn("Háttér", value: \.backgroundSortKey) { row in
-                Text(row.background.map { String(format: "%.0f", $0) } ?? "-").monospacedDigit().foregroundColor(tint(row))
-            }
-            .width(70)
-
+            // R11-T1: the six secondary/hideable columns -- see
+            // `QualityColumn`'s own doc comment for the column-picker this
+            // bundle is driven by. Default-hidden (spec: only Fájl/Pontszám/
+            // FWHM/Kiugró/Saját döntés show out of the box). Each cell
+            // routes through its own helper (`folderCell`/`roundnessCell`/…)
+            // rather than inlining the `Text(...).modifier(...)` chain
+            // directly in the column closure -- inlined, the type-checker
+            // couldn't resolve six conditional columns in one `Group { }` in
+            // reasonable time (same class of issue this table's other
+            // `Group { }`s already worked around, per their own doc
+            // comments); a plain function call is a cheap anchor either way.
             Group {
-                TableColumn("Szat. %", value: \.saturatedFractionSortKey) { row in
-                    Text(row.saturatedFraction.map { String(format: "%.2f", $0 * 100) } ?? "-").monospacedDigit().foregroundColor(tint(row))
+                if isVisible(.folder) {
+                    TableColumn("Mappa", value: \Row.sessionSubdirSortKey) { row in folderCell(row) }
+                        .width(min: 90, ideal: 140)
                 }
-                .width(70)
 
-                TableColumn("Exp.", value: \.exptimeSortKey) { row in
-                    Text(row.exptime.map(Self.formatExptime) ?? "-").monospacedDigit().foregroundColor(tint(row))
+                if isVisible(.roundness) {
+                    TableColumn("Kerekség", value: \Row.roundnessSortKey) { row in roundnessCell(row) }
+                        .width(70)
                 }
-                .width(60)
+
+                if isVisible(.starCount) {
+                    TableColumn("Csillagok", value: \Row.starCountSortKey) { row in starCountCell(row) }
+                        .width(70)
+                }
+
+                if isVisible(.background) {
+                    TableColumn("Háttér", value: \Row.backgroundSortKey) { row in backgroundCell(row) }
+                        .width(70)
+                }
+
+                if isVisible(.saturatedFraction) {
+                    TableColumn("Szat. %", value: \Row.saturatedFractionSortKey) { row in saturatedFractionCell(row) }
+                        .width(70)
+                }
+
+                if isVisible(.exptime) {
+                    TableColumn("Exp.", value: \Row.exptimeSortKey) { row in exptimeCell(row) }
+                        .width(60)
+                }
             }
 
-            // R10-B7: grouped so the table stays AT (not over) `Table`'s
-            // 10-top-level-column cap once the trailing "⋯" actions column
-            // below needs its own slot -- same `Group { }` workaround
-            // this table's own "Szat. %"/"Exp." pair above already
-            // established (R10-B1's own doc comment on this table's
-            // header). `outlierText(_:)` routes through a helper rather
-            // than inlining `row.isOutlier ? "⚠️" : ""` directly here --
-            // learned from `CalibrationPage`/`TonightPage`/`NightsPage`'s
-            // own R10-B7 fixes, where an inline ternary/optional-coalesce
-            // directly inside a `Group { }` cell closure made the type-
-            // checker either fail to infer the closure parameter's type or
-            // time out outright; a plain function call is a cheap anchor
-            // either way.
-            Group {
-                TableColumn("Kiugró") { row in Text(outlierText(row)) }
-                    .width(50)
-
-                // R10-B1: ✓/✗/— for the user's own manual verdict -- see
-                // `verdictCell(_:)` below. Not sortable (no `value:`
-                // binding), same convention "Kiugró" right above already
-                // uses for a glance-only signal column.
-                TableColumn("Saját döntés") { row in verdictCell(row.verdict) }
-                    .width(90)
-            }
-
-            // R10-B7: visible row-actions -- mirrors `frameContextMenuItems`
-            // exactly (same function, both call sites: this column's Menu
-            // AND the table's own row-scoped `.contextMenu` below), so the
-            // right-click menu and this borderless "⋯" button can never
-            // drift apart.
-            TableColumn("") { row in
-                Menu {
-                    frameContextMenuItems(row)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .menuStyle(.borderlessButton)
-                .frame(width: 24)
-            }
-            .width(36)
+            outlierAndVerdictColumns
+            actionColumn
         }
+        .tableStyle(.inset(alternatesRowBackgrounds: true))
         // R10 review (item 5): row-scoped context menu + double-click-to-
         // open, same pattern `TonightPage.planTable`/`AllTargetsPage
         // .statsTable`/`NightsPage.table`/`DiscoveryPage.table` all use --
@@ -679,6 +763,120 @@ struct QualitySegment: View {
                 NSWorkspace.shared.open(fileURL(row))
             }
         }
+    }
+
+    /// R11-T1: pre-column-picker layout, unchanged from before it -- every
+    /// column always shown, no toggle, `legacyFrameTable`'s own doc comment
+    /// on `frameTable` explains why this still exists at all.
+    private var legacyFrameTable: some View {
+        Table(rows, selection: $selectedFrame, sortOrder: $sortOrder) {
+            TableColumn("Fájl", value: \.fileName) { row in
+                HStack(spacing: 6) {
+                    ThumbnailCell(url: fileURL(row), size: 22)
+                    Text(row.fileName)
+                        .lineLimit(1).truncationMode(.middle)
+                        .foregroundColor(tint(row))
+                }
+                .help(row.path)
+            }
+            .width(min: 160, ideal: 240)
+
+            TableColumn("Mappa", value: \.sessionSubdirSortKey) { row in folderCell(row) }
+                .width(min: 90, ideal: 140)
+
+            TableColumn("Pontszám", value: \.score) { row in
+                Text(String(format: "%.2f", row.score)).monospacedDigit().foregroundColor(tint(row))
+            }
+            .width(80)
+
+            TableColumn("FWHM (px)", value: \.fwhmSortKey) { row in
+                Text(TDFormat.cell(row.fwhm.map { String(format: "%.2f", $0) })).monospacedDigit().foregroundColor(tint(row))
+            }
+            .width(70)
+
+            TableColumn("Kerekség", value: \.roundnessSortKey) { row in roundnessCell(row) }
+                .width(70)
+
+            TableColumn("Csillagok", value: \.starCountSortKey) { row in starCountCell(row) }
+                .width(70)
+
+            TableColumn("Háttér", value: \.backgroundSortKey) { row in backgroundCell(row) }
+                .width(70)
+
+            Group {
+                TableColumn("Szat. %", value: \.saturatedFractionSortKey) { row in saturatedFractionCell(row) }
+                    .width(70)
+
+                TableColumn("Exp.", value: \.exptimeSortKey) { row in exptimeCell(row) }
+                    .width(60)
+            }
+
+            outlierAndVerdictColumns
+            actionColumn
+        }
+        .tableStyle(.inset(alternatesRowBackgrounds: true))
+        // R10 review (item 5): row-scoped context menu + double-click-to-
+        // open, same pattern `TonightPage.planTable`/`AllTargetsPage
+        // .statsTable`/`NightsPage.table`/`DiscoveryPage.table` all use --
+        // replaces the old per-cell `.contextMenu` that only fired over the
+        // "Fájl" cell's own `HStack`. The "⋯" column above stays as the
+        // always-visible affordance hinting these actions exist at all.
+        .contextMenu(forSelectionType: Row.ID.self) { ids in
+            if let id = ids.first, let row = row(withID: id) {
+                frameContextMenuItems(row)
+            }
+        } primaryAction: { ids in
+            if let id = ids.first, let row = row(withID: id) {
+                NSWorkspace.shared.open(fileURL(row))
+            }
+        }
+    }
+
+    /// R10-B7: grouped so the table stays AT (not over) `Table`'s
+    /// 10-top-level-column cap once the trailing "⋯" actions column below
+    /// needs its own slot -- same `Group { }` workaround this table's own
+    /// "Szat. %"/"Exp." pair above already established (R10-B1's own doc
+    /// comment on this table's header). `outlierText(_:)` routes through a
+    /// helper rather than inlining `row.isOutlier ? "⚠️" : ""` directly here
+    /// -- learned from `CalibrationPage`/`TonightPage`/`NightsPage`'s own
+    /// R10-B7 fixes, where an inline ternary/optional-coalesce directly
+    /// inside a `Group { }` cell closure made the type-checker either fail
+    /// to infer the closure parameter's type or time out outright; a plain
+    /// function call is a cheap anchor either way. Shared by both
+    /// `modernFrameTable`/`legacyFrameTable` (R11-T1) so the two variants'
+    /// last two data columns can never drift apart.
+    @TableColumnBuilder<Row, Never>
+    private var outlierAndVerdictColumns: some TableColumnContent<Row, Never> {
+        Group {
+            TableColumn("Kiugró") { (row: Row) in Text(outlierText(row)) }
+                .width(50)
+
+            // R10-B1: ✓/✗/— for the user's own manual verdict -- see
+            // `verdictCell(_:)` below. Not sortable (no `value:` binding),
+            // same convention "Kiugró" right above already uses for a
+            // glance-only signal column.
+            TableColumn("Saját döntés") { (row: Row) in verdictCell(row.verdict) }
+                .width(90)
+        }
+    }
+
+    /// R10-B7: visible row-actions -- mirrors `frameContextMenuItems` exactly
+    /// (same function, both call sites: this column's Menu AND the table's
+    /// own row-scoped `.contextMenu`), so the right-click menu and this
+    /// borderless "⋯" button can never drift apart. Shared by both
+    /// `modernFrameTable`/`legacyFrameTable` (R11-T1).
+    @TableColumnBuilder<Row, Never>
+    private var actionColumn: some TableColumnContent<Row, Never> {
+        TableColumn("") { (row: Row) in
+            Menu {
+                frameContextMenuItems(row)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 24)
+        }
+        .width(actionColumnWidth)
     }
 
     private func row(withID id: Row.ID) -> Row? {
@@ -721,9 +919,11 @@ struct QualitySegment: View {
         }
     }
 
-    /// ✓ (green, accepted) / ✗ (red, rejected) / — (no verdict recorded) --
-    /// the "Saját döntés" column's cell, and the same three states
-    /// `FrameReviewSheet`'s verdict chip shows in its header (R10-B1).
+    /// ✓ (green, accepted) / ✗ (red, rejected) / "-" (no verdict recorded,
+    /// R11-T1: was the one em-dash holdout in a table cell -- see
+    /// `TDFormat`'s own doc comment) -- the "Saját döntés" column's cell,
+    /// and the same three states `FrameReviewSheet`'s verdict chip shows in
+    /// its header (R10-B1).
     @ViewBuilder
     private func verdictCell(_ verdict: Bool?) -> some View {
         switch verdict {
@@ -732,7 +932,7 @@ struct QualitySegment: View {
         case .some(false):
             Text("✗").bold().foregroundStyle(.red)
         case .none:
-            Text("—").foregroundStyle(.secondary)
+            Text(TDFormat.missingCell).foregroundStyle(.secondary)
         }
     }
 

@@ -108,8 +108,8 @@ struct FrameReviewSheet: View {
                 // try to resolve `.map` against a plain `Double` mid-chain
                 // (a compile error) -- the parens force the `metrics?.fwhm`
                 // optional chain to resolve to a concrete `Double?` FIRST.
-                statTile("FWHM", (frame.metrics?.fwhm).map { String(format: "%.2f", $0) } ?? "-")
-                statTile("Csillagok", (frame.metrics?.starCount).map(String.init) ?? "-")
+                statTile("FWHM", TDFormat.tile((frame.metrics?.fwhm).map { String(format: "%.2f", $0) }))
+                statTile("Csillagok", TDFormat.tile((frame.metrics?.starCount).map(String.init)))
 
                 if frame.isOutlier {
                     Text("⚠️ Kiugró").font(.callout).foregroundStyle(.red)

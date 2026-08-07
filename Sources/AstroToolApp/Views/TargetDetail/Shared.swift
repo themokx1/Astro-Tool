@@ -25,7 +25,7 @@ struct SolvingTarget: Identifiable {
 // MARK: - Shared formatting
 
 /// Small formatting helpers shared by every `TargetDetail/*.swift` segment
-/// (and reused from `AllTargetsPage`) -- kept as static functions on a
+/// (and reused across the whole app) -- kept as static functions on a
 /// non-instantiable enum rather than free functions so call sites read as
 /// `TDFormat.hm(...)` instead of colliding with each file's own local
 /// `formatDuration`/`format...` helpers.
@@ -33,16 +33,36 @@ struct SolvingTarget: Identifiable {
 /// R10 review: this app's no-value glyph is CONTEXT-dependent, not one
 /// symbol everywhere -- table CELLS use "-" (a missing metric among many
 /// filled ones in a dense grid), TILES use "n/a" (a single missing summary
-/// value, where "-" reads as a dash/minus rather than "no data"). Enforcing
-/// that isn't this enum's job -- there's no `TDFormat.missing`, each call
-/// site's own `?? "-"`/`?? "n/a"` picks the one that fits its layout -- this
-/// comment just states the rule so the two don't drift into each other.
+/// value, where "-" reads as a dash/minus rather than "no data"). R11-T1
+/// centralized both glyphs here (`missingCell`/`missingTile`) plus a
+/// convenience wrapper each (`cell(_:)`/`tile(_:)`) so a call site reads its
+/// fallback off ONE source of truth instead of its own repeated
+/// `?? "-"`/`?? "n/a"` literal -- a third, undocumented glyph ("—" em dash)
+/// had crept into the "Saját döntés" column's no-verdict state; that's now
+/// `missingCell` too, since it's a table cell like any other. Which of the
+/// two glyphs a given call site reaches for is still its own choice (there's
+/// no single `TDFormat.missing` merging them) -- this comment just states
+/// the rule so the two don't drift into each other again.
 /// Duration formatting: `hm` (h:mm, e.g. "10:00") is the CANONICAL format
 /// across this app -- a bare decimal-hours suffix ("3.2 ó") only appears
 /// where no total-seconds value exists to feed `hm` with (e.g.
 /// `DiscoveryPage`'s "Látható" column, sourced from `DiscoveryRow`, which
 /// only ever carries an already-rounded hour count, never raw seconds).
 enum TDFormat {
+    /// Table-cell missing-value glyph -- see this enum's own doc comment.
+    static let missingCell = "-"
+    /// Tile (single summary value) missing-value glyph -- see this enum's
+    /// own doc comment.
+    static let missingTile = "n/a"
+
+    /// `value ?? missingCell`, spelled out once so table cells share a
+    /// single call instead of each repeating its own `?? "-"` literal.
+    static func cell(_ value: String?) -> String { value ?? missingCell }
+
+    /// `value ?? missingTile` -- same idea as `cell(_:)`, for a `StatTile`'s
+    /// `value`/`caption` text.
+    static func tile(_ value: String?) -> String { value ?? missingTile }
+
     static func hm(_ seconds: Double) -> String {
         let totalMinutes = Int((seconds / 60).rounded())
         return String(format: "%d:%02d", totalMinutes / 60, totalMinutes % 60)

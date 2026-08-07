@@ -1,6 +1,48 @@
 import AstroCore
 import SwiftUI
 
+// MARK: - Action column width (R11-T1)
+
+/// Every table's trailing "⋯" row-actions column (`TonightPage`'s `planTable`
+/// and `calendarTable`, `AllTargetsPage`, `CalibrationPage`, `DiscoveryPage`,
+/// `NightsPage`, `SessionsSegment`, `QualitySegment`, `StacksSegment`) used to
+/// each hardcode their own `.width(36)` -- one shared constant so the width
+/// can never quietly drift apart table-to-table again.
+let actionColumnWidth: CGFloat = 28
+
+// MARK: - Error advice (R11-T1)
+
+/// A one-sentence Hungarian "Mit tehetsz: …" follow-up for the common
+/// `AstroError` cases -- separate from `describeSettingsError` (which just
+/// translates the error itself into Hungarian for the Settings tabs'
+/// inline error text): this is the actionable NEXT STEP, shown only in
+/// `AppState`'s activity-log popover entries (`MainShellView
+/// .ActivityLogPopover`) alongside that short message, never in the toast
+/// (kept short on purpose, see `AppState.endOperation`) nor in any of this
+/// app's other plain `lastError`/`describeSettingsError` displays. `nil`
+/// for cases whose message already says what to fix (`invalidInput`'s
+/// associated reason IS the actionable text).
+func errorAdvice(for error: AstroError) -> String? {
+    switch error {
+    case .sirilNotFound:
+        return "Ellenőrizd a Siril útvonalát a Beállítások ▸ Pontozás fülön."
+    case .accessDenied:
+        return "Rendszerbeállítások ▸ Adatvédelem és biztonság ▸ Teljes lemezhozzáférés alatt engedélyezd az alkalmazást, majd indítsd újra."
+    case .volumeNotMounted:
+        return "Csatlakoztasd a kötetet a Finderben -- az app automatikusan folytatja, mihelyt megjelenik."
+    case .writeForbidden:
+        return "Ellenőrizd a célmappa írási jogosultságát (Finder ▸ Adatok megjelenítése ▸ Megosztás és engedélyek)."
+    case .pathNotFound:
+        return "Ellenőrizd, hogy az útvonal létezik-e, és nem mozgatták/törölték-e időközben."
+    case .corruptFITS:
+        return "A fájl a könyvtárban marad, az app nem törli -- nyisd meg egy másik eszközzel a sérülés ellenőrzéséhez."
+    case .databaseError:
+        return "Indítsd újra az alkalmazást; ha a hiba ismétlődik, futtass egy új beolvasást a helyi adatbázis frissítéséhez."
+    case .invalidInput:
+        return nil
+    }
+}
+
 // MARK: - Stat tile (R10-B7)
 
 /// Shared headline stat tile -- unifies what were eight near-identical
@@ -75,7 +117,7 @@ func phaseColor(_ phase: ProjectPhase?) -> Color {
 /// `AllTargetsPage`'s compact table-chip wording) by default; pass
 /// `unknown: "ismeretlen állapot"` for a fuller-sentence context like
 /// `SidebarView`'s row tooltip.
-func phaseLabel(_ phase: ProjectPhase?, unknown: String = "-") -> String {
+func phaseLabel(_ phase: ProjectPhase?, unknown: String = TDFormat.missingCell) -> String {
     switch phase {
     case .collecting: return "gyűjtés"
     case .readyToStack: return "stackelhető"
@@ -118,6 +160,12 @@ struct PhaseChip: View {
 /// "nincs koordináta" -- matched by prefix rather than full equality for the
 /// two that carry a parenthetical, so a changed number inside it still
 /// colors correctly.
+///
+/// R11-T1: also the "SessionsSegment Hűtés/Fókusz columns" now route through
+/// this same chip, rather than a bespoke colored-text-only cell -- so the
+/// dictionary below also covers `NightHealth`'s cooler/focus vocabulary
+/// ("stabil" / "stabil fókusz", "hűtő nem tartja a célhőmérsékletet (…)",
+/// "fókuszcsúszás gyanú (…)", "javuló FWHM (lehűlés/seeing) (…)", "n/a — …").
 struct VerdictChip: View {
     let verdict: String
 
@@ -135,6 +183,11 @@ struct VerdictChip: View {
         if verdict == "ma jó" { return .green }
         if verdict.hasPrefix("Hold zavar") { return .yellow }
         if verdict.hasPrefix("alacsony") || verdict == "nem látszik ma éjjel" { return .orange }
-        return .gray // "nincs koordináta" / üstökös
+        // R11-T1: `NightHealth` cooler/focus verdicts (`SessionsSegment`'s
+        // Hűtés/Fókusz columns) -- "stabil" also matches "stabil fókusz"'s
+        // prefix, so one check covers both.
+        if verdict.hasPrefix("stabil") { return .green }
+        if verdict.contains("nem tartja") || verdict.contains("gyanú") { return .orange }
+        return .gray // "nincs koordináta" / üstökös / "n/a — …" / "javuló FWHM …"
     }
 }

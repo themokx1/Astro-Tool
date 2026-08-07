@@ -103,16 +103,16 @@ struct ExposureAdviceAllSheet: View {
                 Table(rows) {
                     TableColumn("Célpont") { row in Text(row.advice.target) }
                         .width(min: 140, ideal: 200)
-                    TableColumn("Jelenlegi sub") { row in Text(row.advice.currentSubSeconds.map { "\(Int($0)) s" } ?? "-") }
+                    TableColumn("Jelenlegi sub") { row in Text(TDFormat.cell(row.advice.currentSubSeconds.map { "\(Int($0)) s" })) }
                         .width(90)
-                    TableColumn("Javasolt sub") { row in Text(row.advice.recommendedSubSeconds.map { "\(Int($0)) s" } ?? "-") }
+                    TableColumn("Javasolt sub") { row in Text(TDFormat.cell(row.advice.recommendedSubSeconds.map { "\(Int($0)) s" })) }
                         .width(90)
                     TableColumn("Olvasási zaj-részesedés") { row in
-                        Text(row.advice.currentReadNoiseSharePercent.map { String(format: "%.0f%%", $0) } ?? "-")
+                        Text(TDFormat.cell(row.advice.currentReadNoiseSharePercent.map { String(format: "%.0f%%", $0) }))
                     }
                     .width(140)
                     TableColumn("Tanács") { row in
-                        Text(row.advice.advice.first ?? row.advice.notAvailableReason ?? "-")
+                        Text(TDFormat.cell(row.advice.advice.first ?? row.advice.notAvailableReason))
                             .lineLimit(1)
                             .truncationMode(.tail)
                             .foregroundStyle(row.advice.advice.isEmpty ? .secondary : .primary)

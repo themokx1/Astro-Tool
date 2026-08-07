@@ -236,7 +236,7 @@ struct DiscoveryPage: View {
     }
 
     private var fovTileValueText: String {
-        guard let fov = appState.discoveryFOV else { return "n/a" }
+        guard let fov = appState.discoveryFOV else { return TDFormat.missingTile }
         return String(format: "%.1f° × %.1f°", fov.widthDeg, fov.heightDeg)
     }
 
@@ -301,7 +301,7 @@ struct DiscoveryPage: View {
                 TableColumn("Magn.", value: \.magnitudeSortKey) { row in Text(magnitudeText(row)) }
                     .width(min: 50, ideal: 60)
             }
-            TableColumn("Kulminál", value: \.culminationSortKey) { row in Text(row.culminationLocal ?? "-") }
+            TableColumn("Kulminál", value: \.culminationSortKey) { row in Text(TDFormat.cell(row.culminationLocal)) }
                 .width(min: 70, ideal: 80)
             TableColumn("Max. mag.", value: \.maxAltSortKey) { row in Text(maxAltText(row)) }
                 .width(min: 70, ideal: 80)
@@ -325,7 +325,7 @@ struct DiscoveryPage: View {
                 .menuStyle(.borderlessButton)
                 .frame(width: 24)
             }
-            .width(36)
+            .width(actionColumnWidth)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         // Row-scoped context menu + double-click-to-open, same pattern
@@ -367,27 +367,27 @@ struct DiscoveryPage: View {
     }
 
     private func sizeText(_ row: DiscoveryTableRow) -> String {
-        guard let size = row.sizeArcmin else { return "-" }
+        guard let size = row.sizeArcmin else { return TDFormat.missingCell }
         return String(format: "%.1f′", size)
     }
 
     private func magnitudeText(_ row: DiscoveryTableRow) -> String {
-        guard let magnitude = row.magnitude else { return "-" }
+        guard let magnitude = row.magnitude else { return TDFormat.missingCell }
         return String(format: "%.1f", magnitude)
     }
 
     private func maxAltText(_ row: DiscoveryTableRow) -> String {
-        guard let alt = row.maxAltitudeDeg else { return "-" }
+        guard let alt = row.maxAltitudeDeg else { return TDFormat.missingCell }
         return "\(Int(alt.rounded()))°"
     }
 
     private func visibleText(_ row: DiscoveryTableRow) -> String {
-        guard let hours = row.visibleHours else { return "-" }
+        guard let hours = row.visibleHours else { return TDFormat.missingCell }
         return String(format: "%.1f ó", hours)
     }
 
     private func moonText(_ row: DiscoveryTableRow) -> String {
-        guard let sep = row.moonSeparationDeg else { return "-" }
+        guard let sep = row.moonSeparationDeg else { return TDFormat.missingCell }
         return "\(Int(sep.rounded()))°"
     }
 
@@ -396,7 +396,7 @@ struct DiscoveryPage: View {
         if let label = row.fovFitLabel {
             Text(label).foregroundStyle(fovFitColor(label))
         } else {
-            Text("-").foregroundStyle(.secondary)
+            Text(TDFormat.missingCell).foregroundStyle(.secondary)
         }
     }
 

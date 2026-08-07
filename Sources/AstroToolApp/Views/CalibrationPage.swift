@@ -26,7 +26,7 @@ struct CalibrationPage: View {
     private var staleCount: Int { needs.filter { $0.isStale }.count }
     private var freshCount: Int { needs.filter { $0.matchedMasterPath != nil && !$0.isStale }.count }
     private var masterDarkCountText: String {
-        appState.calibHealth.map { "\($0.darkMasters.count)" } ?? "-"
+        TDFormat.tile(appState.calibHealth.map { "\($0.darkMasters.count)" })
     }
 
     var body: some View {
@@ -179,12 +179,12 @@ struct CalibrationPage: View {
                 TableColumn("Exp. (s)") { row in Text(formattedExposure(row.need.exposureSeconds)) }
                     .width(60)
             }
-            TableColumn("Hőm. (°C)") { row in Text(row.need.tempC.map { String(format: "%.1f", $0) } ?? "-") }
+            TableColumn("Hőm. (°C)") { row in Text(TDFormat.cell(row.need.tempC.map { String(format: "%.1f", $0) })) }
                 .width(70)
-            TableColumn("Gain") { row in Text(row.need.requiredGain.map { String(format: "%g", $0) } ?? "-") }
+            TableColumn("Gain") { row in Text(TDFormat.cell(row.need.requiredGain.map { String(format: "%g", $0) })) }
                 .width(60)
             TableColumn("Kamera") { row in
-                Text(row.need.requiredCamera ?? "-")
+                Text(TDFormat.cell(row.need.requiredCamera))
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -198,7 +198,7 @@ struct CalibrationPage: View {
                     .help(row.need.matchedMasterPath ?? "hiányzik")
             }
             .width(min: 160, ideal: 240)
-            TableColumn("Kor (nap)") { row in Text(row.need.masterAgeDays.map(String.init) ?? "-") }
+            TableColumn("Kor (nap)") { row in Text(TDFormat.cell(row.need.masterAgeDays.map(String.init))) }
                 .width(70)
             TableColumn("Állapot") { row in statusView(row.need) }
                 .width(80)
@@ -224,7 +224,7 @@ struct CalibrationPage: View {
                 .menuStyle(.borderlessButton)
                 .frame(width: 24)
             }
-            .width(36)
+            .width(actionColumnWidth)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         .contextMenu(forSelectionType: CoverageRow.ID.self) { ids in
@@ -297,9 +297,9 @@ struct CalibrationPage: View {
 /// stable across re-renders of the SAME underlying combo.
 struct CoverageRow: Identifiable {
     var id: String {
-        let temp = need.tempC.map { "\($0)" } ?? "-"
-        let gain = need.requiredGain.map { "\($0)" } ?? "-"
-        let camera = need.requiredCamera ?? "-"
+        let temp = TDFormat.cell(need.tempC.map { "\($0)" })
+        let gain = TDFormat.cell(need.requiredGain.map { "\($0)" })
+        let camera = TDFormat.cell(need.requiredCamera)
         return "\(need.kind.rawValue)|\(need.exposureSeconds)|\(temp)|\(gain)|\(camera)"
     }
     let need: CalibNeed
@@ -424,7 +424,7 @@ private struct CalibHealthSections: View {
         let row = HStack(alignment: .top, spacing: 6) {
             statusDot(darkColor(master))
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(master.path) — \(master.frameCount) frame, \(master.ageDays.map(String.init) ?? "-") napos")
+                Text("\(master.path) — \(master.frameCount) frame, \(TDFormat.cell(master.ageDays.map(String.init))) napos")
                 if !master.warnings.isEmpty {
                     Text(master.warnings.joined(separator: ", "))
                         .font(.caption)

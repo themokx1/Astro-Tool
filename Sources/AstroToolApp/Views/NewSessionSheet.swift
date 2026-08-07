@@ -80,7 +80,7 @@ struct NewSessionSheet: View {
             TextField("Katalógus (pl. M45, NGC2237)", text: $catalog)
             TextField("Név (pl. Pleiades)", text: $name)
 
-            Text("Célpont: \(previewTarget.isEmpty ? "-" : previewTarget)")
+            Text("Célpont: \(previewTarget.isEmpty ? TDFormat.missingCell : previewTarget)")
                 .foregroundStyle(.secondary)
 
             TextField("Dátum (YYYY-MM-DD)", text: $dateText)

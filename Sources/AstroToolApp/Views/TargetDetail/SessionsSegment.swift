@@ -131,7 +131,7 @@ struct SessionsSegment: View {
                     .width(min: 80, ideal: 100)
             }
 
-            TableColumn("README") { row in Text(row.detail.hasReadme ? "✓" : "-").foregroundStyle(.secondary) }
+            TableColumn("README") { row in Text(row.detail.hasReadme ? "✓" : TDFormat.missingCell).foregroundStyle(.secondary) }
                 .width(min: 50, ideal: 60)
 
             // R10-B7: visible row-actions -- mirrors `contextMenuItems(for:)`
@@ -146,7 +146,7 @@ struct SessionsSegment: View {
                 .menuStyle(.borderlessButton)
                 .frame(width: 24)
             }
-            .width(36)
+            .width(actionColumnWidth)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         .contextMenu(forSelectionType: String.self) { ids in
@@ -196,7 +196,7 @@ struct SessionsSegment: View {
     // MARK: - Cell text
 
     private func exposureSummary(_ breakdown: [String: Int]) -> String {
-        guard !breakdown.isEmpty else { return "-" }
+        guard !breakdown.isEmpty else { return TDFormat.missingCell }
         return breakdown
             .sorted { $0.key < $1.key }
             .map { key, count in
@@ -207,14 +207,14 @@ struct SessionsSegment: View {
     }
 
     private func fwhmText(for date: String) -> String {
-        guard let summary = qualityByDate[date] else { return "-" }
+        guard let summary = qualityByDate[date] else { return TDFormat.missingCell }
         if let arcsec = summary.medianFWHMArcsec { return String(format: "%.2f", arcsec) }
         if let px = summary.medianFWHMPixels { return String(format: "%.2f px", px) }
-        return "-"
+        return TDFormat.missingCell
     }
 
     private func backgroundText(for date: String) -> String {
-        guard let value = qualityByDate[date]?.backgroundEPerSecPerArcsec2 else { return "-" }
+        guard let value = qualityByDate[date]?.backgroundEPerSecPerArcsec2 else { return TDFormat.missingCell }
         return String(format: "%.4f", value)
     }
 
@@ -227,29 +227,30 @@ struct SessionsSegment: View {
                 .padding(.vertical, 2)
                 .background(Capsule().fill((rank == 1 ? Color.green : Color.secondary).opacity(0.2)))
         } else {
-            Text("-").foregroundStyle(.secondary)
+            Text(TDFormat.missingCell).foregroundStyle(.secondary)
         }
     }
 
-    private func coolerVerdict(for date: String) -> String { appState.targetNightHealthByDate[date]?.cooler.verdict ?? "n/a" }
-    private func focusVerdict(for date: String) -> String { appState.targetNightHealthByDate[date]?.focus.verdict ?? "n/a" }
-    private func coolerText(for date: String) -> String { coolerVerdict(for: date) }
-    private func focusText(for date: String) -> String { focusVerdict(for: date) }
+    /// R11-T1: table-cell fallback -- "no `NightHealth` loaded yet for this
+    /// date" is a missing VALUE in a dense grid, same convention every other
+    /// column here already follows (was the one "n/a" holdout in a table
+    /// cell). Not to be confused with `NightHealthReport` itself reporting
+    /// "n/a — nincs hűtési adat" as an actual verdict once loaded -- that
+    /// string flows through unchanged, `VerdictChip` colors it via its own
+    /// fallback either way.
+    private func coolerVerdict(for date: String) -> String { appState.targetNightHealthByDate[date]?.cooler.verdict ?? TDFormat.missingCell }
+    private func focusVerdict(for date: String) -> String { appState.targetNightHealthByDate[date]?.focus.verdict ?? TDFormat.missingCell }
 
+    /// R11-T1: Hűtés/Fókusz now render as the same `VerdictChip` every other
+    /// state-verdict column in the app uses, instead of plain colored text.
     @ViewBuilder
     private func coolerCell(_ row: Row) -> some View {
-        Text(coolerText(for: row.detail.dateRaw)).foregroundStyle(verdictColor(coolerVerdict(for: row.detail.dateRaw)))
+        VerdictChip(verdict: coolerVerdict(for: row.detail.dateRaw))
     }
 
     @ViewBuilder
     private func focusCell(_ row: Row) -> some View {
-        Text(focusText(for: row.detail.dateRaw)).foregroundStyle(verdictColor(focusVerdict(for: row.detail.dateRaw)))
-    }
-
-    private func verdictColor(_ verdict: String) -> Color {
-        if verdict == "stabil" || verdict == "stabil fókusz" { return .green }
-        if verdict.contains("gyanú") || verdict.contains("nem tartja") { return .orange }
-        return .secondary
+        VerdictChip(verdict: focusVerdict(for: row.detail.dateRaw))
     }
 
     // MARK: - Inline detail band
@@ -283,7 +284,7 @@ struct SessionsSegment: View {
     /// "Ablak 3:42 · integráció 2:11 · hatékonyság 59% · 2 kiesés (37m, 12m)"
     private func timelineSentence(_ timeline: SessionTimeline) -> String {
         var parts: [String] = []
-        parts.append("Ablak \(timeline.windowSeconds.map(TDFormat.hm) ?? "-")")
+        parts.append("Ablak \(TDFormat.cell(timeline.windowSeconds.map(TDFormat.hm)))")
         parts.append("integráció \(TDFormat.hm(timeline.integrationSeconds))")
         if let dutyCycle = timeline.dutyCycle {
             parts.append("hatékonyság \(TDFormat.percent(dutyCycle * 100))")
@@ -299,9 +300,9 @@ struct SessionsSegment: View {
 
     private func hardwareHealthLine(_ health: NightHealthReport) -> some View {
         HStack(spacing: 4) {
-            Text("Hűtés: \(health.cooler.verdict)").foregroundStyle(verdictColor(health.cooler.verdict))
+            Text("Hűtés: \(health.cooler.verdict)").foregroundStyle(VerdictChip.color(for: health.cooler.verdict))
             Text("·").foregroundStyle(.secondary)
-            Text("Fókusz: \(health.focus.verdict)").foregroundStyle(verdictColor(health.focus.verdict))
+            Text("Fókusz: \(health.focus.verdict)").foregroundStyle(VerdictChip.color(for: health.focus.verdict))
         }
         .font(.caption)
     }

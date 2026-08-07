@@ -34,7 +34,7 @@ struct SensorPage: View {
     // branch below covers that case instead), so `-` was unreachable in
     // practice, but the fallback should still say the right thing.
     private var latestMeasurementText: String {
-        guard let latest = profiles.map(\.measuredAt).max() else { return "n/a" }
+        guard let latest = profiles.map(\.measuredAt).max() else { return TDFormat.missingTile }
         return Self.dateFormatter.string(from: Date(timeIntervalSince1970: latest))
     }
 
@@ -207,8 +207,8 @@ struct SensorProfileTable: View {
     }
 
     private func rowID(for profile: SensorProfileRecord) -> String {
-        let gainText = profile.gain.map { String($0) } ?? "-"
-        let offsetText = profile.offset.map { String($0) } ?? "-"
+        let gainText = TDFormat.cell(profile.gain.map { String($0) })
+        let offsetText = TDFormat.cell(profile.offset.map { String($0) })
         return "\(profile.camera)|\(gainText)|\(offsetText)"
     }
 
@@ -258,24 +258,24 @@ struct SensorProfileTable: View {
             Table(rows) {
                 TableColumn("Kamera") { row in cell(row, text: row.profile.camera) }
                     .width(min: 100, ideal: 140)
-                TableColumn("Gain") { row in cell(row, text: row.profile.gain.map { String(format: "%g", $0) } ?? "-") }
+                TableColumn("Gain") { row in cell(row, text: TDFormat.cell(row.profile.gain.map { String(format: "%g", $0) })) }
                     .width(60)
-                TableColumn("Offset") { row in cell(row, text: row.profile.offset.map { String(format: "%g", $0) } ?? "-") }
+                TableColumn("Offset") { row in cell(row, text: TDFormat.cell(row.profile.offset.map { String(format: "%g", $0) })) }
                     .width(60)
                 // R10 review (item 20): every column below now falls back
                 // to "-" -- was a mix of "-" ("Gain"/"Offset"/"Dark hőm.")
                 // and "n/a" ("Bias"/"Leolvasási zaj"/"Dark"/"EGAIN") within
                 // the SAME table; table CELLS use "-" (see `TDFormat`'s doc
                 // comment for the full rule, TILES are the "n/a" case).
-                TableColumn("Bias (ADU)") { row in cell(row, text: row.profile.biasLevelADU.map { String(format: "%.0f", $0) } ?? "-") }
+                TableColumn("Bias (ADU)") { row in cell(row, text: TDFormat.cell(row.profile.biasLevelADU.map { String(format: "%.0f", $0) })) }
                     .width(90)
-                TableColumn("Leolvasási zaj (e⁻)") { row in cell(row, text: row.profile.readNoiseE.map { String(format: "%.2f", $0) } ?? "-") }
+                TableColumn("Leolvasási zaj (e⁻)") { row in cell(row, text: TDFormat.cell(row.profile.readNoiseE.map { String(format: "%.2f", $0) })) }
                     .width(130)
-                TableColumn("Dark (e⁻/s)") { row in cell(row, text: row.profile.darkRateEPerS.map { String(format: "%.4f", $0) } ?? "-") }
+                TableColumn("Dark (e⁻/s)") { row in cell(row, text: TDFormat.cell(row.profile.darkRateEPerS.map { String(format: "%.4f", $0) })) }
                     .width(100)
-                TableColumn("Dark hőm. (°C)") { row in cell(row, text: row.profile.darkTempC.map { String(format: "%.1f", $0) } ?? "-") }
+                TableColumn("Dark hőm. (°C)") { row in cell(row, text: TDFormat.cell(row.profile.darkTempC.map { String(format: "%.1f", $0) })) }
                     .width(100)
-                TableColumn("EGAIN") { row in cell(row, text: row.profile.egain.map { String(format: "%.3f", $0) } ?? "-") }
+                TableColumn("EGAIN") { row in cell(row, text: TDFormat.cell(row.profile.egain.map { String(format: "%.3f", $0) })) }
                     .width(80)
                 TableColumn("Mért") { row in
                     cell(row, text: Self.dateFormatter.string(from: Date(timeIntervalSince1970: row.profile.measuredAt)))

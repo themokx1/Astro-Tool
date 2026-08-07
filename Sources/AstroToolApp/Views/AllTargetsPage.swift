@@ -371,7 +371,7 @@ struct AllTargetsPage: View {
                 .menuStyle(.borderlessButton)
                 .frame(width: 24)
             }
-            .width(36)
+            .width(actionColumnWidth)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         // R9-D8/h: row-scoped context menu + double-click-to-open, same
@@ -407,7 +407,7 @@ struct AllTargetsPage: View {
 
     private func stacksText(_ row: StatsRow) -> String {
         guard case .target(let stats) = row.kind else { return "" }
-        guard let groups = appState.stackGroupsByTarget[stats.target], !groups.isEmpty else { return "-" }
+        guard let groups = appState.stackGroupsByTarget[stats.target], !groups.isEmpty else { return TDFormat.missingCell }
         return "\(groups.count) csoport"
     }
 
@@ -682,7 +682,7 @@ struct AllTargetsPage: View {
     private func goalText(_ row: StatsRow) -> String {
         guard case .target(let stats) = row.kind else { return "" }
         guard let goalSeconds = appState.projectStates.first(where: { $0.target == stats.target })?.goalSeconds else {
-            return "-"
+            return TDFormat.missingCell
         }
         return formatDuration(goalSeconds)
     }
@@ -699,7 +699,7 @@ struct AllTargetsPage: View {
             if detail.flatCount > 0 { parts.append("\(detail.flatCount) flat") }
             if detail.darkCount > 0 { parts.append("\(detail.darkCount) dark") }
             if detail.biasCount > 0 { parts.append("\(detail.biasCount) bias") }
-            var text = parts.isEmpty ? "-" : parts.joined(separator: " · ")
+            var text = parts.isEmpty ? TDFormat.missingCell : parts.joined(separator: " · ")
             var extras: [String] = []
             if detail.rejectedCount > 0 { extras.append("\(detail.rejectedCount) elvetett") }
             if detail.duplicateLinkCount > 0 { extras.append("\(detail.duplicateLinkCount) link") }
@@ -718,14 +718,14 @@ struct AllTargetsPage: View {
     private func exposureOrLastDateText(_ row: StatsRow) -> String {
         switch row.kind {
         case .target(let stats):
-            return stats.lastSessionDate ?? "-"
+            return TDFormat.cell(stats.lastSessionDate)
         case .session(_, let detail):
             return exposureSummary(detail.exposureBreakdown)
         }
     }
 
     private func exposureSummary(_ breakdown: [String: Int]) -> String {
-        guard !breakdown.isEmpty else { return "-" }
+        guard !breakdown.isEmpty else { return TDFormat.missingCell }
         return breakdown
             .sorted { $0.key < $1.key }
             .map { key, count in
@@ -741,9 +741,9 @@ struct AllTargetsPage: View {
     private func cameraText(_ row: StatsRow) -> String {
         switch row.kind {
         case .target(let stats):
-            return stats.cameras.isEmpty ? "-" : stats.cameras.joined(separator: ", ")
+            return stats.cameras.isEmpty ? TDFormat.missingCell : stats.cameras.joined(separator: ", ")
         case .session(_, let detail):
-            return detail.cameras.isEmpty ? "-" : detail.cameras.joined(separator: ", ")
+            return detail.cameras.isEmpty ? TDFormat.missingCell : detail.cameras.joined(separator: ", ")
         }
     }
 
@@ -764,7 +764,7 @@ struct AllTargetsPage: View {
         if !detail.filters.isEmpty {
             parts.append(detail.filters.joined(separator: "/"))
         }
-        return parts.isEmpty ? "-" : parts.joined(separator: " · ")
+        return parts.isEmpty ? TDFormat.missingCell : parts.joined(separator: " · ")
     }
 
     // MARK: - Column: Címkék (read-only, R9-D8/d)

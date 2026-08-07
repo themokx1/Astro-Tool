@@ -135,7 +135,7 @@ struct StacksSegment: View {
                 .width(min: 70, ideal: 80)
             TableColumn("Méret") { row in Text(TDFormat.bytes(size(of: row))) }
                 .width(min: 70, ideal: 90)
-            TableColumn("Dátum") { row in Text(date(of: row) ?? "-") }
+            TableColumn("Dátum") { row in Text(TDFormat.cell(date(of: row))) }
                 .width(min: 90, ideal: 100)
 
             // R10-B7: visible row-actions -- mirrors `rowContextMenuItems`
@@ -152,7 +152,7 @@ struct StacksSegment: View {
                 .menuStyle(.borderlessButton)
                 .frame(width: 24)
             }
-            .width(36)
+            .width(actionColumnWidth)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         // D24: every action a row can do (open/reveal/preview) now lives
@@ -247,13 +247,13 @@ struct StacksSegment: View {
         switch row.kind {
         case .group(let group):
             VStack(alignment: .leading, spacing: 1) {
-                Text(exposureText(group) ?? "-").bold()
+                Text(TDFormat.cell(exposureText(group))).bold()
                 if group.fromHeader {
                     Text("headerből").font(.caption2).foregroundStyle(.secondary)
                 }
             }
         case .variant(let file, _):
-            Text(variantExposureText(file) ?? "-").foregroundStyle(.secondary)
+            Text(TDFormat.cell(variantExposureText(file))).foregroundStyle(.secondary)
         }
     }
 

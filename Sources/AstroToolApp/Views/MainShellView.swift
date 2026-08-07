@@ -333,10 +333,18 @@ private struct ActivityLogPopover: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if case .error(let message) = entry.outcome {
+            // R11-T1: `advice` (the "Mit tehetsz: …" follow-up) shows ONLY
+            // here -- the matching toast (`AppState.endOperation`) stays
+            // just `message`, kept short on purpose.
+            if case .error(let message, let advice) = entry.outcome {
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.red)
+                if let advice {
+                    Text("Mit tehetsz: \(advice)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .font(.callout)
