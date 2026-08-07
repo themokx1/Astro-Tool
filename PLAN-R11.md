@@ -1,0 +1,332 @@
+# PLAN-R11 — Teljes szakértői átnézés + funkcióbővítés + UI-átalakítás
+
+> Élő terv-fájl: a tervezés ÉS a végrehajtás állapota is itt van, hogy bármely
+> új sessionből folytatható legyen. Mérvadó előzmény: CHANGELOG.md (v0.12.0).
+> A kör módszere: 7 feltérképező agent + 4 persona-review (kezdő / haladó /
+> profi / UX-designer) → szintézis → ticket-szerű végrehajtás Sonnet
+> agentekkel → záró review-kör → release.
+
+## Vasszabályok (változatlanok)
+
+- A képkönyvtárban SEMMIT nem törlünk/mozgatunk; a tool csak jelöl és
+  jóváhagyandó scriptet ír. Írás csak additívan (.astro_tool/, hardlink).
+- A README.txt-t csak olvassuk. Az AstroCore hálózat-mentes marad.
+- Release-recept: verzió 2 helyen (`Sources/astrotool/main.swift` +
+  `build.sh`), CHANGELOG, `swift test` PIPEFAIL-lel, commit, push, tag,
+  `./build.sh`, `gh release create`.
+
+## Állapot
+
+- [x] 0. Terv-fájl létrehozva (2026-08-07)
+- [x] 1. Feltérképezés (7 agent) — kész
+- [x] 2. Persona-review (4 agent) — kész
+- [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
+- [ ] 4. Végrehajtás — A-hullám (konzisztencia): T1 [ ] T2 [ ] T3 [ ] T4 [ ]
+- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [ ] T6 [ ] T7 [ ] T8 [ ] T9 [ ] T10 [ ] T11 [ ] T12 [ ] T13 [ ]
+- [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [ ] T15 [ ] T16 [ ] T17 [ ]
+- [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
+- [ ] 8. Release v0.13.0
+
+---
+
+## 1. Szakértői vélemény (szintézis)
+
+### Ami kiemelkedően jó — ehhez nem nyúlunk
+
+- **A bizalom-filozófia**: "soha nem töröl/mozgat, csak jelöl" + karantén-script
+  + hardlink-export. Ez az eszköz legfontosabb terméke, minden felületen jól
+  kommunikált (Welcome, kék banner, script-fejlécek).
+- **Őszinte mérés**: usable vs bruttó integráció (FrameSet dedup), per-Bayer
+  háttér, bias-pedestal-lal korrigált e⁻/s/″², "sosem becsül, notAvailableReason"
+  (ExposureAdvisor). Publikálás-minőségű mérési réteg.
+- **CLI-paritás ~100%** közös determinisztikus JSON-encoderrel — scriptelhetőség
+  szempontjából a kereskedelmi eszközök fölött van.
+- **Információs architektúra alapja jó**: a sidebar (tervezés → KÖNYVTÁR →
+  ÁLLAPOT → ESZKÖZÖK) követi az asztrofotós mentális modelljét. A 9 oldalt NEM
+  kell se összevonni, se szétszedni.
+- Súgó-infrastruktúra (ⓘ "mikor hazudik" szekcióval, Fogalomtár, üres állapotok
+  akciógombbal), "Következő lépés" sor, blink-review A/X/U.
+
+### A fő hiányok (mind a 4 persona egybehangzóan)
+
+1. **A szűrő-dimenzió hiányzik a teljes döntési láncból.** A core-ban kész a
+   FilterBreakdown, de a UI-ban sehol: a cél egyetlen összóraszám, a "Hiányzik"
+   aggregátum, a tervező nem tudja, hogy Holdas égen Ha/SII-t, sötét égen
+   OIII/LRGB-t érdemes lőni. Mono+szűrőkerekes (haladó/profi) felhasználónak ez
+   A projekt-állapot alapegysége.
+2. **A gépi "Kiugró" és a "Saját döntés" két néma, össze nem kötött rendszer**
+   — pont a review-hurok közepén nincs híd (miért kiugró? vessem el? mind
+   egyszerre?).
+3. **Az éjszaka utáni reggeli rutin szét van szórva** 4-5 oldalra; minden
+   építőelem kész (rate, NightHealth, SessionQuality, riport), csak nincs egy
+   "Előző éjszaka" lapra fűzve.
+4. **A kezdő a legelső lépésnél magára marad**: nem kanonikus (ASIAIR-szerkezetű)
+   könyvtárnál a FirstScan piros X-eket mutat segítség nélkül; a Fogalomtárból
+   pont azok a fogalmak hiányoznak, amiket az app maga kérdez (Bortle, SQM,
+   seeing); a számoknak (FWHM 2.8″) nincs viszonyítási alapja.
+5. **Skálázási rések a pro szinten**: egy helyszín, felülíródó szenzor-profil
+   (öregedés nem követhető), nincs hosszú távú trend-nézet, nincs
+   fixity/bitrot-ellenőrzés (pedig a content_hash megvan), durva exit-kódok,
+   verziózatlan JSON-séma.
+6. **Konzisztencia-adósságok**, amik együtt a megbízhatatlanság érzetét keltik:
+   háromféle hiányzó-érték jel ("-", "n/a", "—" akár egy táblán belül), verdikt
+   hol chip hol csak szín, két hamis sidebar-route (Naptár, Takarítás
+   szegmens-preselect), NightsPage/AllTargets akció-aszimmetria, elavult
+   docs/features.html.
+
+---
+
+## 2. Hiányzó funkciók — pontos specifikáció
+
+### F1. Per-szűrő integráció a UI-ban (FilterBreakdown bekötése)
+- **Kinek/mire**: mono+szűrőkerekes és dual-band OSC felhasználó projekt-állapota.
+- **Működés**: TargetDetail Áttekintésbe új "Szűrők" kártya (Szűrő | Usable
+  keret | Integráció | Cél | Hiányzik, mini progress-sávval; "(nincs
+  szűrő-adat)" külön sor). Fejléc "Valós integráció" tile caption: top
+  szűrő-bontás ("Ha 8,2h · OIII 3,1h"). Integráció-halmozódás grafikon
+  szűrőnként színezve. NightsPage "Szűrők" oszlop: felsorolás helyett óraszám
+  ("Ha 1,5h · OIII 0,8h"), tooltip keretszámmal.
+### F2. Szűrőnkénti célok
+- **Működés**: tag-konvenció bővítés `goal:Ha=12h` (a meglévő `goal:30h`
+  összcélként megmarad, visszafele kompatibilis). GoalEditSheet "Szűrőnként"
+  lenyitás: a célpontnál ténylegesen előforduló szűrők + óra-stepper.
+  "Hiányzik" tile caption: legnagyobb deficit ("legtöbb hiány: SII 6,5h");
+  TonightPage "Hiányzik" cella popoverben bont. CLI: `goal set --target T
+  --filter Ha --hours 12`, `goal list --json` per-filter missing mezőkkel.
+### F3. Hold-tudatos szűrő-ajánlás a tervezőben
+- **Működés**: küszöb-szabály (Hold-illum > 40% VAGY szeparáció < 60° →
+  keskenysáv-ajánlás); NB/BB besorolás config-listából (default: Ha, OIII, SII,
+  L-eXtreme, L-Ultimate = NB). TonightPage planTable új "Szűrő ma" oszlop
+  chippel ("Ha/SII — Hold 82%"), tooltip indoklással; Naptár éjszaka-soraiban
+  "NB" / "sötét ég" címke. Csak ajánlás, sosem hard szabály. Szűrő-deficittel
+  (F2) kombinálva: "ma jó — Ha-ra".
+### F4. Kiugró↔Saját döntés híd
+- **Működés**: (a) ⚠️ kattintható → popover metrikánkénti z-score bontással
+  ("FWHM 4.2 px, session-medián 2.9, z=−2.4") + "Átnézés" és "Elvetés" gomb;
+  (b) QualitySegment kontroll-sávba "Kiugrók átnézése (N)" gomb → FrameReviewSheet
+  csak a kiugrókkal; (c) "Összes kiugró elvetésre jelölése… (N)" menüpont
+  megerősítő sheettel ("csak jelölés, fájlt nem érint"); (d) döntetlen kiugró
+  sorban halvány "javasolt: elvetés" felirat a Saját döntés cellában.
+### F5. "Előző éjszaka" triage oldal
+- **Működés**: scan után, ha új session-fájl érkezett → feltételes sidebar-sor
+  "Előző éjszaka" badge-dzsel a Ma este alatt (ha nincs friss anyag, nem
+  látszik). Lap: session-kártyák (célpont, keret, integráció, szűrő-bontás,
+  FWHM″, hűtés/fókusz verdikt, kiugró-arány) + kártyánként "Pontozás",
+  "Átnézés…", "Éjszaka-riport" gomb; felül "Új sessionök pontozása" (csak az
+  újakra). Opt-in beállítás: "Automatikus beolvasás kötet csatlakozásakor"
+  (mount-observer már létezik).
+### F6. Audit-diff
+- **Működés**: audit futás után összevetés az előző run findings-ével
+  (groupKey-egyezés). AuditPage tetején "+3 új · 5 megoldódott · 12 változatlan"
+  összegző sor, "ÚJ" badge az új csoportokon, "Csak az újak" toggle.
+  `audit --json` diff blokkal.
+### F7. Trendek oldal
+- **Működés**: új sidebar-sor az ÁLLAPOT szekcióban. Időtartomány-picker
+  (6 hó/1 év/3 év/mind) + setup-fingerprint szűrő; 3 Swift Charts idősor
+  (medián FWHM″/session, háttér e⁻/s/″², hatékonyság%) pont + mozgóátlag;
+  pontra kattintás → session. CLI: `trends --metric fwhm --json`.
+### F8. Szenzor-profil történet
+- **Működés**: új `sensor_profile_history` tábla (append-only,
+  `measured_at` + `estimator_version`); a `sensor_profile` marad "legfrissebb"
+  nézet. Staleness a hardcode-olt dátum helyett estimator_version-ből.
+  SensorPage sor lenyitható: mérés-lista + sparkline (read noise, dark rate).
+  CLI: `sensor --history --json`. Sheet-szöveg: "új mérés kerül a történetbe".
+### F9. Fixity / bitrot-ellenőrzés
+- **Működés**: `astrotool verify [--target T] [--path P] [--sample N] --json` —
+  tárolt content_hash újraellenőrzése; eltérés = sure_error "content-changed"
+  finding (régi/új hash, mtime-változott-e). Exit 5 = eltérés. App: Audit
+  toolbar split-menüben "Integritás-ellenőrzés…" megerősítő sheettel (időbecslés),
+  eredmény a Hibák szegmensben saját kategóriával. Read-only, sosem javít.
+### F10. Automatizálási csomag (CLI)
+- **Működés**: (a) exit-kód szerződés: 0 siker, 1 usage/általános, 2 TCC/kötet,
+  3 nem található target/session, 4 külső eszköz (Siril), 5 verify-eltérés —
+  dokumentálva a cli.html-ben; (b) minden `--json` gyökerébe `schema_version`;
+  (c) `--out PATH|-` az audit --suggest / cleanup --suggest / stacklist
+  parancsokon is; (d) `scan --json` kimenetben `changed_targets` lista;
+  (e) `config show` tartsa tiszteletben a `--json`-t (ember-olvasható alap).
+### F11. Kezdő-csomag
+- **Működés**: (a) Fogalomtár-bővítés ~15 szócikkel (Bortle, SQM, seeing,
+  átlátszóság, plate-solve, master, gain/offset, ADU, EGAIN, kulmináció, sub,
+  integráció bruttó/valós, dither…) + keresőmező + horgony-paraméter (adott
+  szócikkre nyitás); (b) SessionNoteSheet sablonmezői mellé ⓘ (1-2 mondat +
+  értékskála + példa-placeholder); (c) Siril-segéd sheet (mi ez, letöltés-link,
+  mi megy nélküle — táblázattal) a Siril-hiány figyelmeztetésből, a Settings
+  piros státusza mellől és a Súgó menüből; (d) VerdictChip kattintható →
+  popover számokkal ("Hold zavar: 87% illum, 23° szeparáció"); (e) minőség-
+  percentilis színsáv: FWHM″/hatékonyság cellák halvány zöld/sárga/narancs
+  pöttye a KÖNYVTÁR SAJÁT eloszlásához mérve + tooltip ("könyvtár-medián 3.1″
+  — ez a jobbik 25%").
+### F12. Első lépések élő checklist
+- **Működés**: 5-7 soros, DB-állapotból számolt lista (scan? audit? helyszín?
+  Siril? pontozás? szenzor-profil? első stack-lista?) — soronként pipa/teendő,
+  1 mondat "miért", 1 gomb (indít vagy odanavigál). FirstScan eredmény-kártya
+  után automatikusan; később Súgó menü "Első lépések…" + elutasítható kártya a
+  Ma este tetején, amíg <4 pipa.
+### F13. Sidebar hamis route-ok megszüntetése
+- **Működés**: "Naptár" a "Ma este" alá indentált valódi al-elemként (saját
+  Page-érték, a TonightPage a szegmenst a route-ból kapja); "Takarítás" az
+  "Audit" alá ugyanígy. A sidebar-kijelölés mindig a tényleges helyet mutatja.
+### F14. Session-akció paritás
+- **Működés**: közös session-akció menü-builder (egyetlen komponens), amit
+  NightsPage, AllTargetsPage, SessionsSegment egyaránt használ: Megnyitás
+  Finderben, Kalibráció linkelése…, Stackelés előkészítése…, Keretek pontozása,
+  Éjszaka-riport, Éjszaka-jegyzet…, Címke hozzáadása/eltávolítása.
+### F15. Szűrő-tudatos stack-lista + WBPP-barát export
+- **Működés**: StackList.select() szűrőnkénti csoportosítással; hardlink-fa
+  `lights/<FILTER>/` almappákkal; szűrőnként külön .dssfilelist; `manifest.csv`
+  (fájl, szűrő, pontszám, session); .ssf szűrőnként, opcionális. Sheet:
+  alapnézetben egy közös Megtartás% + szűrőnkénti élő darabszám-preview
+  ("Ha 45/52 · OIII 28/40"); "Szűrőnkénti finomhangolás" DisclosureGroup mögött
+  külön csúszkák; az export-cél útvonal kiírva.
+### F16. Több helyszín (site-profilok)
+- **Működés**: config `sites: [{name, latitudeDeg, longitudeDeg, default}]`
+  (a régi `site` egyelemű listaként migrál). Session→site: legjobb
+  SITELAT/SITELONG-egyezés, felülbírálás `site:<név>` taggel. Settings Helyszín
+  fül: lista-szerkesztő; TonightPage: site-Picker (CSAK ha >1 helyszín);
+  NightsPage opcionális Site oszlop. CLI: `plan --site <név>`.
+### F17. Flat-lefedettség szűrőnként (CalibAnalyzer v2)
+- **Működés**: session lightok FILTER (+FOCALLEN) kombói vs session flats/ és
+  calibration_library/flats/ (kor: flatMaxAgeDays). Coverage-tábla új "Szűrő"
+  oszlop; Teendők közé "Hiányzó flat: OIII — 3 session érintett" kártya;
+  TargetDetail kalibráció-kártyán flat szűrőnként ("flat: Ha ✓, OIII —").
+  CLI: `calib --flats`.
+### F18. Terv-export + kalibrációs bevásárlólista
+- **Működés**: (a) TonightPage toolbar "Terv exportálása…": vágólap
+  (név + RA/Dec + ablak soronként), CSV; kijelölt sorok, különben a "ma jó"
+  verdiktűek; CLI: `plan --out`. (b) Ma este lap alján lenyitható "Kalibrációs
+  teendők ma estére" (CalibNeed × ma esti célpontok kombói): "☐ 30×120 s dark
+  @ −10 °C, gain 100 — M31, M42 használná", Markdown-másolás gombbal; üres
+  állapot: "Minden kalibráció friss."
+### F19. Tárhely-nézet
+- **Működés**: Takarítás szegmensben "Tárhely" kártya-blokk: célpontonként
+  méret area-bontással (sessions/stacks/processed), top 10 azonnal + "összes"
+  lenyitás; soronként Finder + célpont-link. Csak térkép, semmi akció.
+### F20. Apró hidak
+- README↔jegyzet ütközés-jelzés (sárga "eltér a README-től: <érték>" +
+  "README-érték átvétele" gomb; NightsPage Jegyzet oszlop ⚠️ ütközésnél).
+- wideField.overrides UI (AllTargets/TargetDetail context-menü "Besorolás":
+  Automatikus/Wide-field/Deep-sky; Settings Könyvtár-szabályok fülön lista).
+- AstroBin filter-ID leképezés (config `astrobin.filterIds`; export ID-t ír,
+  le nem képezett névnél warning + név marad; Settings szerkesztő + toast).
+- Korrupt FITS audit-szabály (fits-kind fájl fits_meta nélkül → sure_error).
+- docs/features.html frissítés (Felfedezés, Éjszakák, ⌘-számozás, R11 újdonságok).
+
+**Backlog (R12-re, ha az R11 lezárult)**: PHD2 guiding-log ingest + Vezetés
+oszlop; befejezés-előrejelzés ("várható kész: ~2026. nov."); rendezés-segéd
+nem kanonikus ASIAIR/NINA könyvtárhoz (mv-javaslat script, vasszabály-konform).
+A rendezés-segéd NAGY tétel — külön kört érdemel, first-class tervvel.
+
+---
+
+## 3. UI-terv (oldalanként: mi látszik azonnal, mi kerül lenyitás mögé)
+
+**Sidebar**: (tervezés) Ma este [⌘1] → alatta indentálva Naptár [⌘2] ·
+Felfedezés [⌘3] · [feltételes] Előző éjszaka · [feltételes] Keresés —
+KÖNYVTÁR: Minden célpont [⌘4], Éjszakák [⌘5], célpont-sorok, fázis-jelmagyarázat —
+ÁLLAPOT: Kalibráció [⌘6], Audit [⌘7] → alatta indentálva Takarítás [⌘8],
+Trendek — ESZKÖZÖK: Szenzor [⌘9]. (A Trendek shortcut nélkül indul; a ⌘-séma
+többi része változatlan.)
+
+- **Ma este**: azonnal: 5 csempe + planTable (+ új "Szűrő ma" oszlop) + kijelölt
+  sor alatti SkyChart; felhő>70% esetén egysoros elutasítható jelzés a tábla
+  fölött ("nézd meg a következő derült éjszakát" linkkel). Lenyitásra: lap alján
+  "Kalibrációs teendők ma estére" (badge ha van tétel); "Hiányzik" szűrő-bontás
+  popoverben; VerdictChip-indoklás popoverben. Gombra: Terv exportálása…
+  (toolbar), Hónap = Naptár al-elem.
+- **Naptár**: változatlan tartalom, saját route-tal; éjszaka-sorokban új NB/sötét
+  címke a Hold mellett.
+- **Előző éjszaka** (új): azonnal: session-kártyák kulcsszámokkal; gombra:
+  Pontozás/Átnézés/Riport, felül "Új sessionök pontozása".
+- **Felfedezés**: változatlan; nincs-helyszín üres állapota magyarázatot + két
+  gombot kap ("Helyszín beállítása…", "Felismerés a képeim fejlécéből").
+- **Minden célpont**: változatlan szerkezet; session-akciók a közös builderből.
+- **Éjszakák**: Szűrők oszlop óraszámmal; session-akció paritás; opcionális Site
+  oszlop (csak több helyszínnél).
+- **Célpont-részletek**: fejléc: "Következő lépés" kártya-szerű kiemeléssel
+  (fázis-színnel) — ez az oldal cselekvésre hívó fókusza; "Valós integráció" és
+  "Hiányzik" tile-ok szűrő-captionnel. Áttekintés: Koordináták → Setup →
+  **Szűrők kártya (új)** → Láthatóság → [mozaiknál ITT a MosaicPanelTable] →
+  Ma esti ív → Integráció-halmozódás (szűrő-színes) → Expozíció-tanácsadó →
+  Kalibráció (flat szűrőnként). Sessionök: Hűtés/Fókusz szín-pötty → VerdictChip.
+  Minőség: kontroll-sávban szűrő chip-sor (csak előforduló szűrők) + "Kiugrók
+  átnézése (N)"; tábla alapból 6 oszlop (Fájl, Szűrő, Pontszám, FWHM, Kiugró,
+  Saját döntés), a többi (Kerekség/Csillagok/Háttér/Szat.%/Exp./Mappa)
+  oszlop-választó menü mögött; ⚠️ kattintható (miért-popover). Stackek/Jegyzetek:
+  változatlan (+ jegyzet-ütközés jelzés).
+- **Kalibráció**: Teendők kártyák közérthető cselekvés-mondattal ("Hiányzik:
+  30×120 s dark −10 °C, gain 100 — 3 session használná") + flat-hiány kártyák
+  szűrő-névvel; kártyák felül, kombinációs tábla alattuk (új Szűrő oszloppal).
+- **Audit**: tetején diff-összegző sor (audit után); Takarítható fülön
+  emlékeztető-sor ha sosem futott audit + a másik 3 csempe "—" "nincs audit"
+  captionnel; Takarítható szegmensben új Tárhely-blokk; toolbar split-menüben
+  "Integritás-ellenőrzés…".
+- **Trendek** (új): azonnal: időtartomány-picker + 3 idősor-chart; toolbar Menu
+  mögött setup/site/típus szűrő.
+- **Szenzor**: sorok lenyithatók (mérés-történet + sparkline); staleness
+  estimator-verzióból.
+- **Beállítások**: Helyszín fül → helyszín-lista szerkesztő + fülszintű reset
+  (eddig hiányzott); Könyvtár-szabályok → wideField.overrides lista; Könyvtár →
+  AstroBin filter-ID szerkesztő; tolerancia-mezők magyarázó captionök
+  ("0 = kikapcsolva…", gainTolerance skála).
+- **Globális konvenciók**: hiányzó érték = közös formázó-helper (cella "-",
+  tile "n/a", SOSEM "—"); állapot-verdikt mindig VerdictChip; "⋯" oszlop
+  egységesen 28pt; hibapolitika kétszintű (toast + aktivitás-napló; inline sáv
+  csak ott, ahol enélkül üres lenne az oldal); minden hibaszöveg "Mit tehetsz:"
+  záró mondattal (közös AstroError→tanács fordító).
+
+---
+
+## 4. Task-lista (ticket-szerű commitok, Sonnet agentek, push tickenként)
+
+Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
+[Unreleased] bejegyzés + commit (`feat(app|cli|core): R11-Tx …`) + push.
+
+### A-hullám — konzisztencia (kis kockázat, egymás után gyorsan)
+- **T1 — UI-konzisztencia csomag**: közös missing-value helper (cella "-",
+  tile "n/a") + minden előfordulás cseréje; Saját döntés "—"→"-"; Hűtés/Fókusz
+  → VerdictChip; "⋯" oszlop 28pt egységesen; Minőség-tábla oszlop-választó +
+  szűkített alapkészlet; hibaszövegek "Mit tehetsz:" fordítója.
+- **T2 — Akció-paritás + apró UX**: közös session-akció builder (NightsPage/
+  AllTargets/SessionsSegment); Audit kereszt-szegmens emlékeztető + "—" csempék;
+  TonightPage felhő-kontextus sáv; mozaik-tábla előbbre; "Következő lépés"
+  kártya-kiemelés.
+- **T3 — Settings csomag**: Helyszín fülszintű reset; tolerancia/gain captionök;
+  wideField.overrides szerkesztő + "Besorolás" context-menü; Siril-segéd sheet
+  (3 belépési pont).
+- **T4 — CLI/automatizálás + docs**: F10 teljes (exit-kódok, schema_version,
+  --out, changed_targets, config show fix); korrupt-FITS audit-szabály;
+  docs/features.html + cli.html frissítés.
+
+### B-hullám — fő funkciók
+- **T5 — Szűrő-dimenzió alapok**: F1 + F2 (FilterBreakdown UI + goal:Ha=12h +
+  GoalEditSheet + CLI goal --filter).
+- **T6 — Tervező-bővítés**: F3 (Szűrő ma oszlop + NB/sötét címkék) + F18
+  (terv-export + kalibrációs bevásárlólista).
+- **T7 — Kiugró-híd**: F4 teljes (miért-popover, kiugrók átnézése, batch
+  elvetés-jelölés, "javasolt: elvetés").
+- **T8 — Audit-diff + Tárhely**: F6 + F19.
+- **T9 — Előző éjszaka**: F5 (oldal + feltételes sidebar-sor + auto-scan opt-in).
+- **T10 — Trendek + szenzor-történet**: F7 + F8.
+- **T11 — Stack-lista v2**: F15 (szűrő-bontott hardlink-fa, manifest.csv,
+  sheet-finomhangolás).
+- **T12 — Kezdő-csomag**: F11 + F12 (Fogalomtár, ⓘ-k, Siril-segéd linkek,
+  VerdictChip-popover, percentilis-sávok, Első lépések checklist).
+- **T13 — Navigáció + jegyzet-híd**: F13 (Naptár/Takarítás valódi al-elem) +
+  F20 README↔jegyzet ütközés.
+### C-hullám — pro funkciók
+- **T14 — Verify**: F9.
+- **T15 — Több helyszín**: F16.
+- **T16 — Kalibráció v2 + AstroBin ID**: F17 + F20 AstroBin filter-ID.
+- **T17 — (tartalék/összefésülő)**: az előzőekből kimaradt apróságok, review-találatok.
+
+### Záró kör
+- Kód-review agent (funkcionális hibák) + UX-sweep agent (konzisztencia) +
+  persona-újranézés ugyanazzal a 4 szemmel; találatok javítása; amíg van
+  érdemi találat, újabb javító-ticket.
+- Release v0.13.0 a bevált recepttel.
+
+## 5. Iterációs napló
+
+- 2026-08-07 reggel: kör indítva; feltérképezés (7 agent) + persona-review
+  (4 agent) lezárva; szintézis + teljes spec + UI-terv beírva; task-lista kész.
+  Következő: T1–T4 (A-hullám) kiosztása.
