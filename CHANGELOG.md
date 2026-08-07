@@ -8,11 +8,54 @@ történik.
 
 ## [Unreleased]
 
-Az R11-es kör A-hullámának harmadik tétele (T3 — Settings csomag), a T1 —
-UI-konzisztencia csomag és a T2 — Akció-paritás + apró UX után.
+Az R11-es kör A-hullámának negyedik (utolsó) tétele (T4 — CLI/automatizálás +
+docs), a T1 — UI-konzisztencia csomag, a T2 — Akció-paritás + apró UX és a
+T3 — Settings csomag után.
 
 ### Added
 
+- **Exit-kód szerződés bővítve** (F10-a): a korábbi 0 (siker) / 1 (általános
+  hiba) / 2 (TCC/kötet) mellé **3** = nem található target/session (a
+  `stats`, `solve`, `match`, `link-calib`, `report`, `target-report`
+  parancsok target/date-lookupja, ahol korábban ez is a generikus 1-es
+  kódba esett) és **4** = külső eszköz hiba (`AstroError.sirilNotFound` —
+  `solve` Siril-init-hibája) — a meglévő 0/1/2 szemantika változatlan. **5**
+  fenntartva egy jövőbeli `verify` parancsnak, ma nem használt. A pontos
+  táblázat a `docs/cli.html`-ben.
+- **`schema_version` minden `--json` kimenetben** (F10-b): a közös
+  `printJSON` encoder (Commands.swift) mostantól minden gyökér-objektumba
+  beszúrja a `"schema_version": "1"` mezőt.
+- **`--out PATH|-`** az `audit --suggest`, `cleanup --suggest` és
+  `stacklist` parancsokon is (F10-c) — eddig csak `export`/`report`/
+  `target-report` támogatta. `--out PATH` a könyvtáron kívülre is írhat
+  (ugyanaz a "nem írhat a gyökérbe, csak a `.astro_tool/`-alapértelmezésen
+  kívül" védelem, mint `export`-nál); `--out -` stdoutra írja a tartalmat
+  fájl nélkül `audit`/`cleanup`-nál. `stacklist`-nél `--out -` NEM
+  támogatott (egész könyvtárfát exportál, nem egy fájlt) — világos hibával
+  leáll; `--out PATH` a stacklist-könyvtárat közvetlenül PATH-ra teszi (a
+  szokásos `.astro_tool/stacklists/<cél>-<dátum>/` slug-almappa nélkül).
+  Új `StackList.exportToDirectory` (AstroCore) végzi az exportot közvetlen
+  `FileManager` hívásokkal, `WriteGuard` megkerülésével (ugyanaz a minta,
+  mint `export --out PATH`-nál).
+- **`scan --json` → `changed_targets`** (F10-d): a `ScanSummary` új
+  `changed_targets` mezőt kapott — azon célpontok rendezett, deduplikált
+  listája, ahol a futás során added/updated/missing fájl volt (bármely
+  területről: sessions/stacks/processed). Pipeline-oknak szól ("mely
+  célpontra fusson rate/audit ez után").
+- **`config show` tiszteletben tartja a `--json`-t** (F10-e): eddig
+  mindig JSON-t nyomtatott a `--json` kapcsolótól függetlenül. Mostantól
+  alapból ember-olvasható, szekciónkénti kulcs-érték kimenetet ad
+  (Gyökér/Kizárások/Szándékos minták/Wide-field/Kalibráció/Pontozás/
+  Statisztika/Helyszín/Expozíció/Időjárás); `--json`-nal a korábbi teljes
+  struktúra. A `config path` viselkedése változatlan.
+- **Korrupt-FITS audit-szabály** (F20): új `CorruptFITSRule` — egy
+  fits-kind fájl (`.fit`/`.fits`/`.fz` kiterjesztés, light/flat/dark/bias/
+  master szerep), aminek nincs `fits_meta` sora, `sure_error` "corrupt-fits"
+  találatot kap ("nem olvasható FITS-fejléc — sérült vagy csonka fájl
+  lehet"). A Scanner eddig csendben elnyelte ezt az esetet (a fájl bekerült
+  a `files`-be, de `fits_meta` sor nélkül) — ez a rés eddig nem volt
+  sehol jelezve. Nem-FITS kiterjesztésű (CR3/TIF wide-field) lightokra nem
+  szól, elkerülve a hamis pozitívokat.
 - **Helyszín fül fülszintű reset**: a Beállítások ▸ Helyszín fül eddig volt
   az egyetlen az öt fül közül "Alaphelyzetbe állítás…" gomb nélkül — most
   a másik négy fül mintáját követi (megerősítő dialógus, majd a draft
@@ -112,6 +155,37 @@ UI-konzisztencia csomag és a T2 — Akció-paritás + apró UX után.
   tolerancia (exposureToleranceFraction) él"; a `gainTolerance` caption-je
   skála-magyarázatot kapott ("a FITS GAIN fejléc egységében; 0 = pontos
   egyezés kell").
+
+### Breaking (JSON-séma, `--json` kimenetek — T4)
+
+`schema_version` bevezetése önmagában nem törő (a legtöbb parancsnál csak
+egy új mező kerül a meglévő gyökér-objektumba). Ami **törő**: minden
+parancs, aminek a `--json` gyökere eddig egy sima JSON TÖMB volt, mostantól
+`{"schema_version": "1", "items": [...]}` objektumba van csomagolva — a
+korábbi tömböt feldolgozó szkript mostantól a `.items` alatt találja a
+listát. Érintett parancsok/módok:
+
+- `audit --json` (a találat-lista)
+- `rate --json`
+- `stats --json` (célpont nélkül), `stats --target T --sessions --json`,
+  `stats --target T --timeline --json`, `stats --target T --filters --json`
+  — a `stats --target T` (bontás nélküli, egy célpontra szűkített) mód
+  gyökere továbbra is objektum, ÉRINTETLEN
+- `quality --json`
+- `nights --json`
+- `calib --json` (lefedettségi mód — a `calib --health --json` gyökere
+  objektum, ÉRINTETLEN)
+- `tag list --json` (mindkét mód: `--target`-tel szűkítve és listázva is)
+- `ack list --json`
+- `search <query> --json` (a `--all` NÉLKÜLI mód — `search <query> --all
+  --json` gyökere objektum, ÉRINTETLEN)
+- `plan --json` és `plan --month --json`
+- `health --json`
+- `projects --json`
+- `sensor --json`
+- `expose --json` (célpont nélkül — `expose --target T --json` gyökere
+  objektum, ÉRINTETLEN)
+- `stacks --json` és `stacks --json --grouped`
 
 ## [0.12.0] - 2026-08-06
 

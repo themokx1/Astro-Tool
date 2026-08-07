@@ -59,10 +59,24 @@ do {
     }
     exit(exitCode)
 } catch let error as AstroError {
+    // Exit-code contract (R11-T4, documented in full in docs/cli.html):
+    //   0 success · 1 usage/general error · 2 TCC/volume · 3 no such
+    //   target/session · 4 external tool (Siril) · 5 reserved for a future
+    //   `verify` command. Cases 3 aren't decided here -- they're specific
+    //   target/session lookups (`stats`, `solve`, `match`, `link-calib`,
+    //   `report`, `target-report`) that already know they're about a
+    //   target/session and return 3 directly from their own command
+    //   function, rather than throwing an `AstroError` this generic handler
+    //   would have no way to tell apart from an unrelated `.pathNotFound`
+    //   (e.g. a missing `--root`, or `scan --path` naming a subpath that
+    //   doesn't exist -- neither of those is "no such target/session").
     switch error {
     case .accessDenied, .volumeNotMounted:
         eprint(tccGuidance)
         exit(2)
+    case .sirilNotFound:
+        eprint("error: \(describeAstroError(error))")
+        exit(4)
     default:
         eprint("error: \(describeAstroError(error))")
         eprint(usageText)

@@ -91,6 +91,34 @@ private func makeTempRoot(_ label: String) throws -> URL {
     return dir
 }
 
+// MARK: - R11-T4 JSON envelope helpers
+//
+// Every `--json` root now carries a `schema_version` field (see
+// `printJSON`'s doc comment in Commands.swift); a command whose root used
+// to be a bare JSON array wraps it into `{"schema_version": ..., "items":
+// [...]}` instead, since an array has no key namespace of its own to add
+// `schema_version` to. These helpers unwrap that envelope so the rest of
+// this file can keep asserting on the actual payload shape.
+
+/// The parsed `--json` root as a keyed object -- every command's root is
+/// one now, either its own natural shape or the `{schema_version, items}`
+/// envelope.
+private func jsonObject(_ stdout: String) throws -> [String: Any]? {
+    try JSONSerialization.jsonObject(with: Data(stdout.utf8)) as? [String: Any]
+}
+
+/// `root.items` as `[[String: Any]]` -- for commands whose payload used to
+/// be a bare `[{...}, ...]` array.
+private func jsonItems(_ stdout: String) throws -> [[String: Any]]? {
+    try jsonObject(stdout)?["items"] as? [[String: Any]]
+}
+
+/// `root.items` as `[String]` -- for commands whose payload used to be a
+/// bare `["a", "b", ...]` array (e.g. `tag list`).
+private func jsonStringItems(_ stdout: String) throws -> [String]? {
+    try jsonObject(stdout)?["items"] as? [String]
+}
+
 // MARK: - Tests
 //
 // Grouped in one `.serialized` suite: each test shells out to a real
@@ -182,7 +210,7 @@ struct CLISmokeTests {
     let audit = try runCLI(["audit", "--root", root.path, "--json"])
     #expect(audit.exitCode == 0, "stderr: \(audit.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(audit.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(audit.stdout)
     let findings = try #require(json)
     let categories = Set(findings.compactMap { $0["category"] as? String })
     #expect(categories.contains("placeholder-name"))
@@ -220,6 +248,72 @@ struct CLISmokeTests {
     // Decoding from the FULL stdout data must succeed -- any stray
     // non-JSON line anywhere in stdout would break this.
     _ = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8))
+}
+
+// MARK: - audit --suggest --out (R11-T4)
+
+@Test func auditSuggestOutWritesScriptToCustomPathOutsideRoot() throws {
+    let root = try makeTempRoot("audit-suggest-out")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let outDir = try makeTempRoot("audit-suggest-out-dest")
+    defer { try? FileManager.default.removeItem(at: outDir) }
+    let outPath = outDir.appendingPathComponent("suggest.sh").path
+
+    let result = try runCLI(["audit", "--root", root.path, "--suggest", "--out", outPath])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(FileManager.default.fileExists(atPath: outPath))
+
+    // Must NOT also write the default `.astro_tool/suggestions/` location.
+    let defaultDir = root.appendingPathComponent(".astro_tool/suggestions")
+    #expect(!FileManager.default.fileExists(atPath: defaultDir.path))
+}
+
+@Test func auditSuggestOutDashPrintsScriptToStdoutInsteadOfWritingAFile() throws {
+    let root = try makeTempRoot("audit-suggest-out-dash")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["audit", "--root", root.path, "--suggest", "--out", "-"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("#!/bin/bash"))
+
+    let defaultDir = root.appendingPathComponent(".astro_tool/suggestions")
+    #expect(!FileManager.default.fileExists(atPath: defaultDir.path))
+}
+
+@Test func auditOutWithoutSuggestExitsWithUsageError() throws {
+    let root = try makeTempRoot("audit-out-no-suggest")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["audit", "--root", root.path, "--out", "-"])
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("--out requires --suggest"))
+}
+
+@Test func auditSuggestOutInsideLibraryRootIsRejected() throws {
+    let root = try makeTempRoot("audit-suggest-out-inside")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let insidePath = root.appendingPathComponent("sneaky.sh").path
+    let result = try runCLI(["audit", "--root", root.path, "--suggest", "--out", insidePath])
+    #expect(result.exitCode == 1)
+    #expect(!FileManager.default.fileExists(atPath: insidePath))
 }
 
 // MARK: - cleanup
@@ -297,6 +391,41 @@ struct CLISmokeTests {
     #expect(!script.contains("# (suspicious — uncomment only after review)"))
 }
 
+// MARK: - cleanup --suggest --out (R11-T4)
+
+@Test func cleanupSuggestOutWritesScriptToCustomPath() throws {
+    let root = try makeTempRoot("cleanup-suggest-out")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let outDir = try makeTempRoot("cleanup-suggest-out-dest")
+    defer { try? FileManager.default.removeItem(at: outDir) }
+    let outPath = outDir.appendingPathComponent("cleanup.sh").path
+
+    let result = try runCLI(["cleanup", "--root", root.path, "--suggest", "--out", outPath])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(FileManager.default.fileExists(atPath: outPath))
+
+    let defaultDir = root.appendingPathComponent(".astro_tool/suggestions")
+    #expect(!FileManager.default.fileExists(atPath: defaultDir.path))
+}
+
+@Test func cleanupOutWithoutSuggestExitsWithUsageError() throws {
+    let root = try makeTempRoot("cleanup-out-no-suggest")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["cleanup", "--root", root.path, "--out", "-"])
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("--out requires --suggest"))
+}
+
 // MARK: - stats
 
 @Test func statsJSONContainsFixtureTarget() throws {
@@ -310,7 +439,7 @@ struct CLISmokeTests {
     let result = try runCLI(["stats", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let stats = try #require(json)
     let targets = Set(stats.compactMap { $0["target"] as? String })
     #expect(targets.contains("M45_Pleiades"))
@@ -325,7 +454,9 @@ struct CLISmokeTests {
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     let result = try runCLI(["stats", "--root", root.path, "--target", "NONEXISTENT_TARGET"])
-    #expect(result.exitCode == 1)
+    // R11-T4: target/session-lookup failures get their own exit code (3),
+    // carved out of the generic usage/error bucket (1).
+    #expect(result.exitCode == 3)
 }
 
 @Test func statsSessionsJSONDecodesForFixtureTarget() throws {
@@ -339,7 +470,7 @@ struct CLISmokeTests {
     let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--sessions", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let sessions = try #require(json)
     #expect(!sessions.isEmpty)
     #expect(sessions.allSatisfy { $0["target"] as? String == "M45_Pleiades" })
@@ -403,7 +534,7 @@ struct CLISmokeTests {
     let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--timeline", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let timelines = try #require(json)
     #expect(!timelines.isEmpty)
     #expect(timelines.allSatisfy { $0["target"] as? String == "M45_Pleiades" })
@@ -474,7 +605,7 @@ struct CLISmokeTests {
 
     let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--filters", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let rows = try #require(json)
     let totalFrames = rows.compactMap { $0["usable_frame_count"] as? Int }.reduce(0, +)
     // The per-filter rows must add up to the exact same usable-frame total
@@ -514,7 +645,7 @@ struct CLISmokeTests {
         "stats", "--root", root.path, "--target", "M45_Pleiades", "--filters", "--date", "2026-03-15_hibas", "--json",
     ])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let rows = try #require(json)
     let totalFrames = rows.compactMap { $0["usable_frame_count"] as? Int }.reduce(0, +)
     #expect(totalFrames == 1)
@@ -548,7 +679,7 @@ struct CLISmokeTests {
     let result = try runCLI(["quality", "--root", root.path, "--target", "M45_Pleiades", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let summaries = try #require(json)
     #expect(!summaries.isEmpty)
     #expect(summaries.allSatisfy { $0["target"] as? String == "M45_Pleiades" })
@@ -597,7 +728,7 @@ struct CLISmokeTests {
     let result = try runCLI(["nights", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let rows = try #require(json)
     let targets = Set(rows.compactMap { $0["target"] as? String })
     #expect(targets.contains("M45_Pleiades"))
@@ -669,7 +800,7 @@ struct CLISmokeTests {
     // whose canonical start date falls in April 2026.
     let result = try runCLI(["nights", "--root", root.path, "--year", "2026", "--month", "4", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let rows = try #require(json)
     #expect(!rows.isEmpty)
     #expect(rows.allSatisfy { ($0["date"] as? String)?.hasPrefix("2026-04") == true })
@@ -700,7 +831,7 @@ struct CLISmokeTests {
     let result = try runCLI(["health", "--root", root.path, "--target", "M45_Pleiades", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let reports = try #require(json)
     #expect(!reports.isEmpty)
     #expect(reports.allSatisfy { $0["target"] as? String == "M45_Pleiades" })
@@ -744,7 +875,7 @@ struct CLISmokeTests {
     let result = try runCLI(["health", "--root", root.path, "--target", "M45_Pleiades", "--date", "2026-01-10", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let reports = try #require(json)
     #expect(reports.count == 1)
     #expect(reports.first?["date"] as? String == "2026-01-10")
@@ -811,7 +942,7 @@ struct CLISmokeTests {
     let result = try runCLI(["stacks", "--root", root.path, "--target", "M42_Orion", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let reports = try #require(json)
     let report = try #require(reports.first { $0["target"] as? String == "M42_Orion" })
     let stacks = try #require(report["stacks"] as? [[String: Any]])
@@ -848,7 +979,7 @@ struct CLISmokeTests {
     let result = try runCLI(["stacks", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let reports = try #require(json)
     #expect(reports.contains { $0["target"] as? String == "M42_Orion" })
 }
@@ -866,7 +997,7 @@ struct CLISmokeTests {
     let result = try runCLI(["stacks", "--root", root.path, "--target", "M42_Orion", "--json", "--grouped"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let groups = try #require(json)
     let group = try #require(groups.first)
     // `StackGroup`'s own shape -- "stem"/"base"/"variants" -- not
@@ -924,7 +1055,7 @@ struct CLISmokeTests {
     let result = try runCLI(["search", "ZWO", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let rows = try #require(json)
     #expect(rows.contains { ($0["target"] as? String) == "M45_Pleiades" && ($0["date"] as? String) == "2026-01-10" })
 }
@@ -1035,7 +1166,7 @@ struct CLISmokeTests {
 
     let list = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(list.exitCode == 0, "stderr: \(list.stderr)")
-    let tags = try JSONSerialization.jsonObject(with: Data(list.stdout.utf8)) as? [String]
+    let tags = try jsonStringItems(list.stdout)
     #expect(tags == ["favorite"])
 }
 
@@ -1054,7 +1185,7 @@ struct CLISmokeTests {
 
     let list = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(list.exitCode == 0, "stderr: \(list.stderr)")
-    let tags = try JSONSerialization.jsonObject(with: Data(list.stdout.utf8)) as? [String]
+    let tags = try jsonStringItems(list.stdout)
     #expect(tags == ["favorite"])
 }
 
@@ -1073,7 +1204,7 @@ struct CLISmokeTests {
 
     let list = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(list.exitCode == 0, "stderr: \(list.stderr)")
-    let tags = try JSONSerialization.jsonObject(with: Data(list.stdout.utf8)) as? [String]
+    let tags = try jsonStringItems(list.stdout)
     #expect(tags == [])
 }
 
@@ -1087,7 +1218,7 @@ struct CLISmokeTests {
 
     let sessionsResult = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--sessions", "--json"])
     #expect(sessionsResult.exitCode == 0, "stderr: \(sessionsResult.stderr)")
-    let sessions = try #require(try JSONSerialization.jsonObject(with: Data(sessionsResult.stdout.utf8)) as? [[String: Any]])
+    let sessions = try #require(try jsonItems(sessionsResult.stdout))
     let date = try #require(sessions.first?["date_raw"] as? String)
 
     let add = try runCLI(["tag", "add", "--target", "M45_Pleiades", "--date", date, "clouds", "--root", root.path])
@@ -1095,12 +1226,12 @@ struct CLISmokeTests {
 
     let sessionList = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--date", date, "--root", root.path, "--json"])
     #expect(sessionList.exitCode == 0, "stderr: \(sessionList.stderr)")
-    let sessionTags = try JSONSerialization.jsonObject(with: Data(sessionList.stdout.utf8)) as? [String]
+    let sessionTags = try jsonStringItems(sessionList.stdout)
     #expect(sessionTags == ["clouds"])
 
     let targetList = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(targetList.exitCode == 0, "stderr: \(targetList.stderr)")
-    let targetTags = try JSONSerialization.jsonObject(with: Data(targetList.stdout.utf8)) as? [String]
+    let targetTags = try jsonStringItems(targetList.stdout)
     #expect(targetTags == [])
 }
 
@@ -1117,14 +1248,14 @@ struct CLISmokeTests {
 
     let filtered = try runCLI(["stats", "--root", root.path, "--tag", "favorite", "--json"])
     #expect(filtered.exitCode == 0, "stderr: \(filtered.stderr)")
-    let json = try JSONSerialization.jsonObject(with: Data(filtered.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(filtered.stdout)
     let stats = try #require(json)
     #expect(!stats.isEmpty)
     #expect(stats.allSatisfy { ($0["target"] as? String) == "M45_Pleiades" })
 
     let filteredOut = try runCLI(["stats", "--root", root.path, "--tag", "nonexistent-tag", "--json"])
     #expect(filteredOut.exitCode == 0, "stderr: \(filteredOut.stderr)")
-    let jsonOut = try JSONSerialization.jsonObject(with: Data(filteredOut.stdout.utf8)) as? [[String: Any]]
+    let jsonOut = try jsonItems(filteredOut.stdout)
     #expect(try #require(jsonOut).isEmpty)
 }
 
@@ -1164,7 +1295,7 @@ struct CLISmokeTests {
 
     let list = try runCLI(["ack", "list", "--root", root.path, "--json"])
     #expect(list.exitCode == 0, "stderr: \(list.stderr)")
-    let json = try JSONSerialization.jsonObject(with: Data(list.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(list.stdout)
     let acks = try #require(json)
     #expect(acks.count == 1)
     #expect(acks[0]["category"] as? String == "residue")
@@ -1185,7 +1316,7 @@ struct CLISmokeTests {
 
     let list = try runCLI(["ack", "list", "--root", root.path, "--json"])
     #expect(list.exitCode == 0, "stderr: \(list.stderr)")
-    let json = try JSONSerialization.jsonObject(with: Data(list.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(list.stdout)
     #expect(try #require(json).isEmpty)
 }
 
@@ -1350,7 +1481,7 @@ struct CLISmokeTests {
 
     let tagList = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(tagList.exitCode == 0, "stderr: \(tagList.stderr)")
-    let tags = try JSONSerialization.jsonObject(with: Data(tagList.stdout.utf8)) as? [String]
+    let tags = try jsonStringItems(tagList.stdout)
     #expect(tags == ["goal:6h"])
 
     let clear = try runCLI(["goal", "clear", "--target", "M45_Pleiades", "--root", root.path, "--json"])
@@ -1360,7 +1491,7 @@ struct CLISmokeTests {
 
     let tagListAfterClear = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(tagListAfterClear.exitCode == 0, "stderr: \(tagListAfterClear.stderr)")
-    let tagsAfterClear = try JSONSerialization.jsonObject(with: Data(tagListAfterClear.stdout.utf8)) as? [String]
+    let tagsAfterClear = try jsonStringItems(tagListAfterClear.stdout)
     #expect(tagsAfterClear == [])
 }
 
@@ -1398,7 +1529,7 @@ struct CLISmokeTests {
 
     let tagList = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(tagList.exitCode == 0, "stderr: \(tagList.stderr)")
-    let tags = try JSONSerialization.jsonObject(with: Data(tagList.stdout.utf8)) as? [String]
+    let tags = try jsonStringItems(tagList.stdout)
     #expect(tags == ["goal:8h"])
 }
 
@@ -1424,6 +1555,47 @@ struct CLISmokeTests {
 
     let result = try runCLI(["goal", "set", "--hours", "6", "--root", root.path])
     #expect(result.exitCode == 1)
+}
+
+// MARK: - config (R11-T4)
+
+@Test func configShowHumanReadableByDefaultPrintsSectionsAndRootPath() throws {
+    let root = try makeTempRoot("config-show-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI(["config", "show", "--root", root.path])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("rootPath: \(root.path)"))
+    #expect(result.stdout.contains("Kalibráció"))
+    // Must not look like JSON any more -- no schema_version noise, no braces.
+    #expect(!result.stdout.contains("schema_version"))
+    #expect(!result.stdout.contains("{"))
+}
+
+@Test func configShowJSONFlagStillPrintsFullStructure() throws {
+    let root = try makeTempRoot("config-show-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI(["config", "show", "--root", root.path, "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try jsonObject(result.stdout)
+    #expect(json?["root_path"] as? String == root.path)
+    #expect(json?["schema_version"] as? String == "1")
+    #expect(json?["calib"] != nil)
+}
+
+@Test func configPathHumanReadableUnaffectedByJSONFix() throws {
+    let root = try makeTempRoot("config-path")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI(["config", "path", "--root", root.path])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        == root.appendingPathComponent(".astro_tool/config.json").path)
 }
 
 // MARK: - new-session
@@ -1520,7 +1692,7 @@ struct CLISmokeTests {
     let result = try runCLI(["calib", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let needs = try #require(json)
     #expect(needs.contains { $0["exposure_seconds"] as? Double == 300 })
 }
@@ -1644,6 +1816,54 @@ private func writeLinkCalibDummy(_ relativePath: String, root: URL) throws {
     #expect(!FileManager.default.fileExists(atPath: destURL.path))
 }
 
+@Test func linkCalibWithUnknownSessionExitsWithTargetNotFoundError() throws {
+    let root = try makeTempRoot("link-calib-unknown-session")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI([
+        "link-calib", "--root", root.path, "--target", "T1", "--date", "1999-01-01", "--dry-run",
+    ])
+    // R11-T4: target/session-lookup failure gets its own exit code (3).
+    #expect(result.exitCode == 3)
+}
+
+// MARK: - match (R11-T4)
+
+@Test func matchJSONAfterScanReportsCalibrationForFixtureSession() throws {
+    let root = try makeTempRoot("match-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["match", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try jsonObject(result.stdout)
+    #expect(json?["target"] as? String == "T1")
+    #expect(json?["date"] as? String == "2026-01-10")
+    #expect(json?["lights"] as? Int == 1)
+}
+
+@Test func matchWithUnknownSessionExitsWithTargetNotFoundError() throws {
+    let root = try makeTempRoot("match-unknown-session")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["match", "--root", root.path, "--target", "T1", "--date", "1999-01-01"])
+    // R11-T4: target/session-lookup failure gets its own exit code (3).
+    #expect(result.exitCode == 3)
+    #expect(result.stderr.contains("no such session"))
+}
+
 // MARK: - plan
 
 /// Writes a light frame carrying plate-solved WCS (`CRVAL1`/`CRVAL2`) plus
@@ -1673,7 +1893,7 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
     let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let plans = try #require(json)
     let plan = try #require(plans.first { $0["target"] as? String == "M31_Andromeda" })
     #expect(plan["verdict"] as? String != nil)
@@ -1715,7 +1935,7 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
 
     let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--min-alt", "30", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let plans = try #require(json)
     let plan = try #require(plans.first { $0["target"] as? String == "T_Low" })
     #expect((plan["verdict"] as? String)?.hasPrefix("alacsony") == true)
@@ -1826,7 +2046,7 @@ private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Doubl
     let result = try runCLI(["projects", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let projects = try #require(json)
     let project = try #require(projects.first { $0["target"] as? String == "M31_Andromeda" })
     #expect(project["phase"] as? String == "stackelheto")
@@ -1943,7 +2163,8 @@ private func writeBogusSirilPathConfig(root: URL) throws {
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     let result = try runCLI(["solve", "--root", root.path, "--target", "NoSuchTarget12345"])
-    #expect(result.exitCode == 1)
+    // R11-T4: target-lookup failure gets its own exit code (3).
+    #expect(result.exitCode == 3)
     #expect(result.stderr.contains("target not found"))
 }
 
@@ -1960,7 +2181,9 @@ private func writeBogusSirilPathConfig(root: URL) throws {
     // M45_Pleiades), so this fails specifically on the missing Siril binary
     // rather than on an unknown-target check.
     let result = try runCLI(["solve", "--root", root.path, "--target", "M45_Pleiades"])
-    #expect(result.exitCode == 1)
+    // R11-T4: an external-tool failure (Siril missing) gets its own exit
+    // code (4), carved out of the generic usage/error bucket (1).
+    #expect(result.exitCode == 4)
     #expect(result.stderr.contains("siril not found"))
 }
 
@@ -2018,7 +2241,7 @@ private func writeSensorFITS(
     // silently running a measurement itself.
     let result = try runCLI(["sensor", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     #expect(json?.isEmpty == true)
 }
 
@@ -2035,7 +2258,7 @@ private func writeSensorFITS(
     let result = try runCLI(["sensor", "--root", root.path, "--measure", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     let profiles = try #require(json)
     let profile = try #require(profiles.first { $0["camera"] as? String == "ASI2600MC" })
     #expect(profile["bias_level_adu"] as? Double == 500)
@@ -2045,7 +2268,7 @@ private func writeSensorFITS(
     // A second, non-measuring call must still see the persisted profile.
     let rerun = try runCLI(["sensor", "--root", root.path, "--json"])
     #expect(rerun.exitCode == 0, "stderr: \(rerun.stderr)")
-    let rerunJSON = try JSONSerialization.jsonObject(with: Data(rerun.stdout.utf8)) as? [[String: Any]]
+    let rerunJSON = try jsonItems(rerun.stdout)
     #expect(rerunJSON?.count == 1)
 }
 
@@ -2220,7 +2443,7 @@ private func writeBayerLightFITS(
 
     let jsonResult = try runCLI(["expose", "--root", root.path, "--json"])
     #expect(jsonResult.exitCode == 0, "stderr: \(jsonResult.stderr)")
-    let json = try JSONSerialization.jsonObject(with: Data(jsonResult.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(jsonResult.stdout)
     let rows = try #require(json)
     #expect(rows.count == 1)
     #expect(rows.first?["target"] as? String == "M31")
@@ -2319,6 +2542,66 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
     #expect(Set(contents) == Set(["l1.fit", "l2.fit", "l3.fit"]))
 }
 
+// MARK: - stacklist --out (R11-T4)
+
+@Test func stackListOutWritesDirectlyIntoGivenDirectory() throws {
+    let root = try makeTempRoot("stacklist-out")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l2.fit", root: root)
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l3.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let outDir = try makeTempRoot("stacklist-out-dest")
+    defer { try? FileManager.default.removeItem(at: outDir) }
+
+    let result = try runCLI([
+        "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--out", outDir.path,
+    ])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    #expect(FileManager.default.fileExists(atPath: outDir.appendingPathComponent("lights/l1.fit").path))
+    #expect(FileManager.default.fileExists(atPath: outDir.appendingPathComponent("stack.dssfilelist").path))
+    #expect(FileManager.default.fileExists(atPath: outDir.appendingPathComponent("stack.ssf").path))
+
+    // Must NOT also write the default `.astro_tool/stacklists/` location.
+    let defaultDir = root.appendingPathComponent(".astro_tool/stacklists")
+    #expect(!FileManager.default.fileExists(atPath: defaultDir.path))
+}
+
+@Test func stackListOutDashIsRejectedWithClearError() throws {
+    let root = try makeTempRoot("stacklist-out-dash")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI([
+        "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--out", "-",
+    ])
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("--out -"))
+}
+
+@Test func stackListOutInsideLibraryRootIsRejected() throws {
+    let root = try makeTempRoot("stacklist-out-inside")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let insideDir = root.appendingPathComponent("sneaky-stacklist-dir").path
+    let result = try runCLI([
+        "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--out", insideDir,
+    ])
+    #expect(result.exitCode == 1)
+    #expect(!FileManager.default.fileExists(atPath: insideDir))
+}
+
 // MARK: - report (R7-B5)
 
 @Test func reportOutDashPrintsHTMLToStdoutWithoutWritingAFile() throws {
@@ -2365,6 +2648,19 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
     let result = try runCLI(["report", "--root", root.path, "--target", "T1"])
     #expect(result.exitCode == 1)
     #expect(result.stderr.contains("--target and --date are required"))
+}
+
+@Test func reportWithUnknownSessionExitsWithTargetNotFoundError() throws {
+    let root = try makeTempRoot("report-unknown-session")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["report", "--root", root.path, "--target", "T1", "--date", "1999-01-01"])
+    // R11-T4: target/session-lookup failure gets its own exit code (3).
+    #expect(result.exitCode == 3)
 }
 
 // MARK: - target-report (R8-2)
@@ -2416,7 +2712,8 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     let result = try runCLI(["target-report", "--root", root.path, "--target", "Nope"])
-    #expect(result.exitCode == 1)
+    // R11-T4: target-lookup failure gets its own exit code (3).
+    #expect(result.exitCode == 3)
 }
 
 // MARK: - plan --month (R7-B5)
@@ -2433,7 +2730,7 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
     let result = try runCLI(["plan", "--root", root.path, "--month", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
-    let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [[String: Any]]
+    let json = try jsonItems(result.stdout)
     #expect(json?.count == 30)
 }
 
@@ -2450,6 +2747,44 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("DÁTUM"))
     #expect(result.stdout.contains("SÖTÉT ÓRA"))
+}
+
+// MARK: - schema_version (R11-T4)
+
+@Test func jsonObjectRootCommandsCarrySchemaVersion() throws {
+    let root = try makeTempRoot("schema-version-object")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path, "--json"])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let json = try jsonObject(scan.stdout)
+    #expect(json?["schema_version"] as? String == "1")
+    // scan --json's own object fields are still there, unwrapped.
+    #expect(json?["added"] != nil)
+}
+
+/// The breaking-shape half of R11-T4's schema_version change: any command
+/// whose `--json` root used to be a bare array now wraps it into
+/// `{"schema_version": "1", "items": [...]}` instead -- documented in
+/// CHANGELOG.md as the tool's first JSON-schema-breaking change.
+@Test func jsonArrayRootCommandsWrapIntoSchemaVersionAndItemsEnvelope() throws {
+    let root = try makeTempRoot("schema-version-array")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["nights", "--root", root.path, "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let root2 = try #require(try jsonObject(result.stdout))
+    #expect(root2["schema_version"] as? String == "1")
+    #expect(root2["items"] is [Any])
+    // The old shape (a bare top-level array) no longer parses as one.
+    #expect((try JSONSerialization.jsonObject(with: Data(result.stdout.utf8))) as? [[String: Any]] == nil)
 }
 
 // MARK: - misc

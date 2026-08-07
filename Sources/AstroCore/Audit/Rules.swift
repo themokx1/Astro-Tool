@@ -986,3 +986,47 @@ public struct MixedSetupInTargetRule: AuditRule {
         return findings
     }
 }
+
+// MARK: - 19. corrupt-fits
+
+/// A fits-kind file (`.fit`/`.fits`/`.fz` extension, light/flat/dark/bias/
+/// master role) that the scanner successfully recorded in `files` but has NO
+/// `fits_meta` row at all -- `LibraryScanner.captureMeta` silently drops a
+/// file whose FITS header it can't parse (`guard let header = try?
+/// FITSReader.readHeader(url: url) else { return }`), so a missing row here
+/// means the header read genuinely failed, not merely that this particular
+/// frame lacks some optional keyword `fits_meta` happens to store. That
+/// parse failure isn't surfaced anywhere else today -- this rule is the only
+/// thing that turns it into something the user can act on.
+///
+/// Deliberately scoped to FITS-kind extensions only: a wide-field DSLR
+/// light (CR3/TIF) never gets a `fits_meta` row either -- it isn't FITS at
+/// all, and its metadata comes from `ImageIO`/EXIF instead -- so gating on
+/// extension keeps every legitimate wide-field frame from false-positiving
+/// as "corrupt". Likewise scoped to actual frame roles (not `.stack`/
+/// `.processed`/`.other`): a finished stack or a loose top-level FITS file
+/// was never expected to carry `fits_meta` in the first place.
+public struct CorruptFITSRule: AuditRule {
+    public let id = "corrupt-fits"
+
+    private static let checkedExtensions: Set<String> = ["fit", "fits", "fz"]
+    private static let checkedRoles: Set<FrameRole> = [.light, .flat, .dark, .bias, .master]
+
+    public init() {}
+
+    public func evaluate(_ ctx: AuditContext) -> [Finding] {
+        ctx.files.compactMap { file -> Finding? in
+            guard Self.checkedExtensions.contains(file.ext.lowercased()) else { return nil }
+            guard Self.checkedRoles.contains(file.role) else { return nil }
+            guard let fileID = file.id, ctx.fitsMetaByFileID[fileID] == nil else { return nil }
+
+            return Finding(
+                severity: .sureError,
+                category: id,
+                path: file.path,
+                message: "nem olvasható FITS-fejléc — sérült vagy csonka fájl lehet",
+                suggestion: nil
+            )
+        }
+    }
+}

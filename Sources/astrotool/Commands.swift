@@ -12,22 +12,60 @@ func eprint(_ message: String) {
 /// alphabetically sorted, pretty-printed, written to stdout only. Nothing
 /// else may touch stdout when `--json` is in effect -- progress/hints/
 /// side-effect messages all go through `eprint` instead.
+///
+/// R11-T4 (F10-b): every root gets a `schema_version` field, bumped only on
+/// a future breaking change to that command's own JSON shape (there's a
+/// single tool-wide counter, currently `"1"` -- this first bump IS that
+/// breaking change, see CHANGELOG). Encoding a Swift value straight to JSON
+/// can't add a sibling key to an already-fixed root, so this re-parses the
+/// encoded bytes into a loosely-typed `JSONSerialization` tree first:
+/// - Root is already a JSON OBJECT (a `struct`/keyed `Dictionary`) ->
+///   `schema_version` is merged in as a sibling key.
+/// - Root is a JSON ARRAY (every command that used to print a bare `[...]`)
+///   -> wrapped into `{"schema_version": "1", "items": [...]}` instead,
+///   since an array has no key namespace of its own to merge into. This is
+///   the breaking shape change: any script piping a plain JSON array out of
+///   one of those commands now needs to read `.items`.
 func printJSON<T: Encodable>(_ value: T) throws {
     let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    encoder.outputFormatting = [.sortedKeys]
     encoder.keyEncodingStrategy = .convertToSnakeCase
     let data = try encoder.encode(value)
-    FileHandle.standardOutput.write(data)
+
+    let root = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+    let enveloped: Any
+    if var object = root as? [String: Any] {
+        object["schema_version"] = schemaVersion
+        enveloped = object
+    } else {
+        enveloped = ["schema_version": schemaVersion, "items": root]
+    }
+
+    let outData = try JSONSerialization.data(withJSONObject: enveloped, options: [.prettyPrinted, .sortedKeys])
+    FileHandle.standardOutput.write(outData)
     FileHandle.standardOutput.write(Data("\n".utf8))
 }
+
+/// The single JSON-schema version counter for every `--json` output this
+/// tool produces (see `printJSON`'s doc comment). Bump this -- and add a
+/// CHANGELOG entry -- the next time any command's `--json` shape changes in
+/// a way an existing script/consumer would need to react to.
+private let schemaVersion = "1"
 
 let usageText = """
 Usage: astrotool <command> [options]
 
 Commands:
   scan          [--root R] [--path SUB] [--json]
+                --json's changed_targets lists every target with an added/
+                updated/missing file this run -- what a pipeline should
+                re-rate/re-audit next.
   audit         [--root R] [--json] [--suggest] [--include-suspicious] [--no-duplicates]
-  cleanup       [--root R] [--json] [--suggest] [--limit N]
+                [--out PATH|-] (requires --suggest; PATH may be outside the
+                library root, - prints the script to stdout instead of
+                writing it)
+  cleanup       [--root R] [--json] [--suggest] [--limit N] [--out PATH|-]
+                (requires --suggest; same --out convention as audit)
   rate          [--root R] --target T [--date D] [--json] [--no-siril] [--force]
   stats         [--root R] [--target T] [--json] [--gross] [--sessions (requires --target)] [--tag TAG]
                 [--timeline (requires --target) [--date D]]
@@ -95,12 +133,15 @@ Commands:
                 from measured sensor-profile + per-Bayer background data.
                 Without --target: one row per target. With --target: full
                 advice for that target.
-  stacklist     --target T --date D [--keep 0.8] [--json] [--root R]
+  stacklist     --target T --date D [--keep 0.8] [--json] [--root R] [--out PATH]
                 Best-frame stack-list export: hardlinks the selected lights
                 into .astro_tool/stacklists/<target>-<date>/lights/ and
                 writes a .dssfilelist (DeepSkyStacker/Sirilic) and a .ssf
                 Siril script alongside it. Additive and idempotent -- never
-                touches your original files.
+                touches your original files. --out PATH exports straight
+                into PATH instead (PATH becomes the stacklist dir itself,
+                may be outside the library root); --out - is rejected (this
+                exports a directory tree, not a single file).
   stacks        [--target T] [--json] [--grouped] [--verbose] [--root R]
                 Stack-file felderítés: minden már létrejött stack/feldolgozott
                 kimenet célpontonként, bárhol is legyen a lemezen -- nem csak
@@ -316,8 +357,14 @@ func cmdAudit(_ args: [String]) throws -> Int32 {
         FlagSpec("--suggest", takesValue: false),
         FlagSpec("--include-suspicious", takesValue: false),
         FlagSpec("--no-duplicates", takesValue: false),
+        FlagSpec("--out", takesValue: true),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
+
+    guard parsed.value("--out") == nil || parsed.has("--suggest") else {
+        eprint("error: --out requires --suggest")
+        return 1
+    }
 
     let config = try resolveConfig(rootFlag: parsed.value("--root"))
     let db = try makeDatabase(config: config)
@@ -328,15 +375,48 @@ func cmdAudit(_ args: [String]) throws -> Int32 {
 
     var suggestMessage: String?
     if parsed.has("--suggest") {
-        let writeGuard = makeWriteGuard(config: config)
-        let url = try SuggestionScript.write(
-            findings: findings,
-            root: writeGuard.root,
-            includeSuspicious: parsed.has("--include-suspicious"),
-            timestamp: Date(),
-            using: writeGuard
-        )
-        suggestMessage = url.map { "suggestion script written to \($0.path)" } ?? "no actionable findings"
+        let includeSuspicious = parsed.has("--include-suspicious")
+
+        if let out = parsed.value("--out") {
+            // R11-T4 (F10-c): `--out -` prints the script itself (same
+            // convention as `export --out -`/`report --out -`) -- that has
+            // to take over stdout entirely and return immediately, since
+            // printing the findings afterward (JSON or human) on the SAME
+            // stream would corrupt whichever one a script parses. `--out
+            // PATH` instead just redirects where the file lands, so the
+            // normal findings output below still runs, `suggestMessage`
+            // reporting where it went, same as the default (no `--out`) path.
+            let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+            let content = SuggestionScript.generate(findings: findings, root: root, includeSuspicious: includeSuspicious)
+            if out == "-" {
+                if let content {
+                    print(content, terminator: "")
+                } else {
+                    eprint("no actionable findings")
+                }
+                return 0
+            }
+            guard let resolvedOut = resolveOutPathOutsideRoot(out, rootPath: config.rootPath) else {
+                return 1
+            }
+            if let content {
+                try FileManager.default.createDirectory(at: resolvedOut.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(content.utf8).write(to: resolvedOut)
+                suggestMessage = "suggestion script written to \(resolvedOut.path)"
+            } else {
+                suggestMessage = "no actionable findings"
+            }
+        } else {
+            let writeGuard = makeWriteGuard(config: config)
+            let url = try SuggestionScript.write(
+                findings: findings,
+                root: writeGuard.root,
+                includeSuspicious: includeSuspicious,
+                timestamp: Date(),
+                using: writeGuard
+            )
+            suggestMessage = url.map { "suggestion script written to \($0.path)" } ?? "no actionable findings"
+        }
     }
 
     if parsed.has("--json") {
@@ -397,8 +477,14 @@ func cmdCleanup(_ args: [String]) throws -> Int32 {
         FlagSpec("--json", takesValue: false),
         FlagSpec("--suggest", takesValue: false),
         FlagSpec("--limit", takesValue: true),
+        FlagSpec("--out", takesValue: true),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
+
+    guard parsed.value("--out") == nil || parsed.has("--suggest") else {
+        eprint("error: --out requires --suggest")
+        return 1
+    }
 
     let config = try resolveConfig(rootFlag: parsed.value("--root"))
     let db = try makeDatabase(config: config)
@@ -408,18 +494,45 @@ func cmdCleanup(_ args: [String]) throws -> Int32 {
 
     var suggestMessage: String?
     if parsed.has("--suggest") {
-        let writeGuard = makeWriteGuard(config: config)
         let timestamp = Date()
         let findings = CleanupReport.quarantineFindings(for: summary, timestamp: timestamp)
-        let url = try SuggestionScript.write(
-            findings: findings,
-            root: writeGuard.root,
-            includeSuspicious: true,
-            timestamp: timestamp,
-            using: writeGuard,
-            commentSuspicious: false
-        )
-        suggestMessage = url.map { "cleanup script written to \($0.path)" } ?? "no cleanup candidates"
+
+        if let out = parsed.value("--out") {
+            // R11-T4 (F10-c): same `--out -`/`--out PATH` split as `audit
+            // --suggest --out` -- see its comment for why `-` returns early
+            // instead of falling through to the summary output below.
+            let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+            let content = SuggestionScript.generate(findings: findings, root: root, includeSuspicious: true, commentSuspicious: false)
+            if out == "-" {
+                if let content {
+                    print(content, terminator: "")
+                } else {
+                    eprint("no cleanup candidates")
+                }
+                return 0
+            }
+            guard let resolvedOut = resolveOutPathOutsideRoot(out, rootPath: config.rootPath) else {
+                return 1
+            }
+            if let content {
+                try FileManager.default.createDirectory(at: resolvedOut.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(content.utf8).write(to: resolvedOut)
+                suggestMessage = "cleanup script written to \(resolvedOut.path)"
+            } else {
+                suggestMessage = "no cleanup candidates"
+            }
+        } else {
+            let writeGuard = makeWriteGuard(config: config)
+            let url = try SuggestionScript.write(
+                findings: findings,
+                root: writeGuard.root,
+                includeSuspicious: true,
+                timestamp: timestamp,
+                using: writeGuard,
+                commentSuspicious: false
+            )
+            suggestMessage = url.map { "cleanup script written to \($0.path)" } ?? "no cleanup candidates"
+        }
     }
 
     if parsed.has("--json") {
@@ -638,7 +751,7 @@ func cmdStats(_ args: [String]) throws -> Int32 {
 
     guard let stats = try StatsQueries.target(target, db: db, config: config) else {
         eprint("error: target not found: \(target)")
-        return 1
+        return 3
     }
     if parsed.has("--json") {
         try printJSON(stats)
@@ -1079,7 +1192,17 @@ func cmdMatch(_ args: [String]) throws -> Int32 {
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
 
-    let result = try SessionMatcher.match(target: target, date: date, db: db, config: config)
+    // R11-T4: `SessionMatcher.match` throws `.pathNotFound` when `target`/
+    // `date` name no session on record at all -- caught here (rather than
+    // main.swift's generic AstroError handler) since only THIS call site
+    // knows it's specifically a target/session lookup, exit 3.
+    let result: SessionCalibration
+    do {
+        result = try SessionMatcher.match(target: target, date: date, db: db, config: config)
+    } catch AstroError.pathNotFound {
+        eprint("error: no such session: \(target) / \(date)")
+        return 3
+    }
     if parsed.has("--json") {
         try printJSON(result)
     } else {
@@ -1137,7 +1260,16 @@ func cmdLinkCalib(_ args: [String]) throws -> Int32 {
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
 
-    let plan = try CalibLinker.plan(target: target, date: date, db: db, config: config)
+    // R11-T4: same target/session-not-found -> exit 3 translation `match`
+    // does -- `CalibLinker.plan` calls `SessionMatcher.match` internally and
+    // inherits its `.pathNotFound` for an unknown (target, date).
+    let plan: CalibLinkPlan
+    do {
+        plan = try CalibLinker.plan(target: target, date: date, db: db, config: config)
+    } catch AstroError.pathNotFound {
+        eprint("error: no such session: \(target) / \(date)")
+        return 3
+    }
     let isJSON = parsed.has("--json")
 
     if parsed.has("--dry-run") {
@@ -1270,7 +1402,14 @@ func cmdConfig(_ args: [String]) throws -> Int32 {
 
     switch sub {
     case "show":
-        try printJSON(config)
+        // R11-T4 (F10-e): used to print JSON unconditionally, ignoring
+        // `--json` entirely -- now it respects it like every other command:
+        // human-readable by default, full JSON only when asked.
+        if parsed.has("--json") {
+            try printJSON(config)
+        } else {
+            printConfigHumanReadable(config)
+        }
         return 0
     case "path":
         let path = configPath(for: config)
@@ -1285,6 +1424,94 @@ func cmdConfig(_ args: [String]) throws -> Int32 {
         eprint(usageText)
         return 1
     }
+}
+
+/// `config show`'s default (non-`--json`) output: grouped, human-readable
+/// key/value lines, one section per `AstroConfig` sub-rule, in the same
+/// order the struct declares them -- the same information `--json` prints,
+/// just not requiring a JSON parser to skim. PRIVACY: `site.latitudeDeg`/
+/// `longitudeDeg` are printed in the clear here -- this is the one place
+/// that's allowed (same exception `printPlanHeader`'s own doc comment
+/// notes); every other command only ever derives times/altitudes from them.
+private func printConfigHumanReadable(_ config: AstroConfig) {
+    print("Gyökér")
+    print("  rootPath: \(config.rootPath)")
+
+    print("")
+    print("Kizárások")
+    print("  excludedDirNames: \(joinedOrDash(config.excludedDirNames))")
+    print("  excludedPaths: \(joinedOrDash(config.excludedPaths))")
+    print("  residuePatterns: \(joinedOrDash(config.residuePatterns))")
+    print("  residueDirNames: \(joinedOrDash(config.residueDirNames))")
+    print("  toolOutputDirNames: \(joinedOrDash(config.toolOutputDirNames))")
+
+    print("")
+    print("Szándékos dátum-minták (intentional)")
+    print("  runSuffix: \(config.intentional.runSuffix)")
+    print("  dateRange: \(config.intentional.dateRange)")
+    print("  labels: \(joinedOrDash(config.intentional.labels))")
+
+    print("")
+    print("Wide-field szabály")
+    print("  extensions: \(joinedOrDash(config.wideField.extensions))")
+    print("  maxFocalLengthMM: \(formatted(config.wideField.maxFocalLengthMM))")
+    print("  nameMarkers: \(joinedOrDash(config.wideField.nameMarkers))")
+    if config.wideField.overrides.isEmpty {
+        print("  overrides: -")
+    } else {
+        print("  overrides:")
+        for key in config.wideField.overrides.keys.sorted() {
+            let label = (config.wideField.overrides[key] ?? false) ? "wide-field" : "deep-sky"
+            print("    \(key): \(label)")
+        }
+    }
+
+    print("")
+    print("Kalibráció (calib)")
+    print("  tempToleranceC: \(formatted(config.calib.tempToleranceC))")
+    print("  exposureToleranceS: \(formatted(config.calib.exposureToleranceS))")
+    print("  exposureToleranceFraction: \(formatted(config.calib.exposureToleranceFraction))")
+    print("  darkMaxAgeMonths: \(config.calib.darkMaxAgeMonths)")
+    print("  flatMaxAgeDays: \(config.calib.flatMaxAgeDays)")
+    print("  rotatorToleranceDeg: \(formatted(config.calib.rotatorToleranceDeg))")
+    print("  coolerToleranceC: \(formatted(config.calib.coolerToleranceC))")
+    print("  matchGain: \(config.calib.matchGain)  (gainTolerance: \(formatted(config.calib.gainTolerance)))")
+    print("  matchOffset: \(config.calib.matchOffset)")
+    print("  matchBinning: \(config.calib.matchBinning)")
+    print("  matchCamera: \(config.calib.matchCamera)")
+
+    print("")
+    print("Pontozás (rating)")
+    print("  workers: \(config.rating.workers)")
+    print("  outlierZScore: \(formatted(config.rating.outlierZScore))")
+    print("  sirilPath: \(config.rating.sirilPath)")
+    let weights = config.rating.weights.keys.sorted().map { "\($0)=\(formatted(config.rating.weights[$0] ?? 0))" }
+    print("  weights: \(weights.isEmpty ? "-" : weights.joined(separator: ", "))")
+
+    print("")
+    print("Statisztika (stats)")
+    print("  excludeLabels: \(joinedOrDash(config.stats.excludeLabels))")
+    print("  gapThresholdSeconds: \(formatted(config.stats.gapThresholdSeconds))")
+    print("  collectingThresholdSeconds: \(formatted(config.stats.collectingThresholdSeconds))")
+
+    print("")
+    print("Helyszín (site)")
+    let siteFallback = "n/a (FITS SITELAT/SITELONG-ból származtatva scan-eléskor)"
+    print("  latitudeDeg: \(config.site.latitudeDeg.map { formatted($0) } ?? siteFallback)")
+    print("  longitudeDeg: \(config.site.longitudeDeg.map { formatted($0) } ?? siteFallback)")
+
+    print("")
+    print("Expozíció-tanácsadó (expose)")
+    print("  maxSubSeconds: \(formatted(config.expose.maxSubSeconds))")
+    print("  noiseContributionC: \(formatted(config.expose.noiseContributionC))")
+
+    print("")
+    print("Időjárás (weather)")
+    print("  enabled: \(config.weather.enabled)")
+}
+
+private func joinedOrDash(_ values: [String]) -> String {
+    values.isEmpty ? "-" : values.joined(separator: ", ")
 }
 
 // MARK: - tag
@@ -2268,10 +2495,7 @@ func cmdExport(_ args: [String]) throws -> Int32 {
             return 0
         }
 
-        let rootURL = URL(fileURLWithPath: config.rootPath, isDirectory: true).standardizedFileURL
-        let resolvedOut = URL(fileURLWithPath: out).standardizedFileURL
-        guard resolvedOut.path != rootURL.path, !resolvedOut.path.hasPrefix(rootURL.path + "/") else {
-            eprint("error: --out path is inside the library root; only .astro_tool/exports (the default, omit --out) may be written there")
+        guard let resolvedOut = resolveOutPathOutsideRoot(out, rootPath: config.rootPath) else {
             return 1
         }
 
@@ -2286,6 +2510,25 @@ func cmdExport(_ args: [String]) throws -> Int32 {
     let url = try AcquisitionExport.write(target: target, format: format, timestamp: Date(), db: db, config: config, using: writeGuard)
     print(url.path)
     return 0
+}
+
+/// R11-T4 (F10-c): the shared "outside the library root" guard `export
+/// --out PATH` introduced, now also used by `audit --suggest --out`,
+/// `cleanup --suggest --out`, and `stacklist --out`. An explicit `--out`
+/// bypasses `WriteGuard` entirely (it writes wherever the caller points it),
+/// so this is the one thing standing between that and silently smuggling a
+/// write back inside the user's actual image library -- only the DEFAULT,
+/// no-`--out` path may write there, and only ever under `.astro_tool/`.
+/// Returns the standardized absolute destination URL, or `nil` (having
+/// already `eprint`ed the reason) when `out` resolves inside `rootPath`.
+private func resolveOutPathOutsideRoot(_ out: String, rootPath: String) -> URL? {
+    let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true).standardizedFileURL
+    let resolvedOut = URL(fileURLWithPath: out).standardizedFileURL
+    guard resolvedOut.path != rootURL.path, !resolvedOut.path.hasPrefix(rootURL.path + "/") else {
+        eprint("error: --out path is inside the library root; only the tool's own default location (omit --out) may be written there")
+        return nil
+    }
+    return resolvedOut
 }
 
 // MARK: - health
@@ -2410,8 +2653,10 @@ private func printPanelReport(_ report: PanelReport) {
 /// that currently has no resolvable coordinate at all (median over
 /// `TargetCoordinates`), instead of a single `--target`. Always exits `0`
 /// once solving actually runs, even with per-frame failures or zero frames
-/// solved -- only a missing Siril binary or bad input (`--target` not on
-/// record, invalid `--frames`) is an error (exit 1).
+/// solved. Otherwise: invalid `--frames`/missing `--target`/`--all` is a
+/// usage error (exit 1); `--target` naming nothing on record is a
+/// target-not-found error (exit 3, R11-T4); a missing Siril binary is an
+/// external-tool error (exit 4, R11-T4).
 func cmdSolve(_ args: [String]) throws -> Int32 {
     let specs = [
         FlagSpec("--root", takesValue: true),
@@ -2464,7 +2709,7 @@ func cmdSolve(_ args: [String]) throws -> Int32 {
     } else {
         guard let target = targetFlag, lights.contains(where: { $0.target == target }) else {
             eprint("error: target not found: \(targetFlag ?? "")")
-            return 1
+            return 3
         }
         targets = [target]
     }
@@ -2483,7 +2728,7 @@ func cmdSolve(_ args: [String]) throws -> Int32 {
         solver = try PlateSolver(sirilPath: config.rating.sirilPath)
     } catch {
         eprint("siril not found at \(config.rating.sirilPath)")
-        return 1
+        return 4
     }
 
     var summaries: [String: SolveSummary] = [:]
@@ -2753,6 +2998,7 @@ func cmdStackList(_ args: [String]) throws -> Int32 {
         FlagSpec("--date", takesValue: true),
         FlagSpec("--keep", takesValue: true),
         FlagSpec("--json", takesValue: false),
+        FlagSpec("--out", takesValue: true),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
 
@@ -2771,14 +3017,33 @@ func cmdStackList(_ args: [String]) throws -> Int32 {
         keepFraction = parsedKeep
     }
 
+    // R11-T4 (F10-c): unlike `audit --suggest --out -`/`export --out -`,
+    // `--out -` makes no sense here -- this exports a whole hardlink TREE
+    // (a `lights/` folder plus two sibling files), not one piece of text
+    // that could be printed to stdout. Fail clearly instead of silently
+    // ignoring the `-` or misinterpreting it as a literal directory name.
+    if parsed.value("--out") == "-" {
+        eprint("error: --out - is not supported for stacklist (it exports a directory tree, not a single file); pass a directory path instead")
+        return 1
+    }
+
     let config = try resolveConfig(rootFlag: parsed.value("--root"))
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
 
     let selection = try StackList.select(target: target, date: date, keepFraction: keepFraction, db: db, config: config)
     let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
-    let writeGuard = makeWriteGuard(config: config)
-    let stacklistDir = try StackList.export(selection, root: root, using: writeGuard)
+
+    let stacklistDir: URL
+    if let out = parsed.value("--out") {
+        guard let resolvedOut = resolveOutPathOutsideRoot(out, rootPath: config.rootPath) else {
+            return 1
+        }
+        stacklistDir = try StackList.exportToDirectory(selection, destDir: resolvedOut, sourceRoot: root)
+    } else {
+        let writeGuard = makeWriteGuard(config: config)
+        stacklistDir = try StackList.export(selection, root: root, using: writeGuard)
+    }
 
     if parsed.has("--json") {
         struct Output: Encodable {
@@ -2963,16 +3228,25 @@ func cmdReport(_ args: [String]) throws -> Int32 {
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
 
-    if parsed.value("--out") == "-" {
-        let html = try NightReport.render(target: target, date: date, db: db, config: config)
-        print(html, terminator: "")
-        return 0
-    }
+    // R11-T4: both branches below eventually call `NightReport.render`,
+    // which throws `.pathNotFound` for an unknown (target, date) -- caught
+    // here so this specific target/session lookup exits 3, not the generic
+    // 1 `main.swift`'s catch-all AstroError handler would give it.
+    do {
+        if parsed.value("--out") == "-" {
+            let html = try NightReport.render(target: target, date: date, db: db, config: config)
+            print(html, terminator: "")
+            return 0
+        }
 
-    let writeGuard = makeWriteGuard(config: config)
-    let url = try NightReport.write(target: target, date: date, timestamp: Date(), db: db, config: config, using: writeGuard)
-    print(url.path)
-    return 0
+        let writeGuard = makeWriteGuard(config: config)
+        let url = try NightReport.write(target: target, date: date, timestamp: Date(), db: db, config: config, using: writeGuard)
+        print(url.path)
+        return 0
+    } catch AstroError.pathNotFound {
+        eprint("error: no such session: \(target) / \(date)")
+        return 3
+    }
 }
 
 // MARK: - target-report (R8-2)
@@ -2982,9 +3256,9 @@ func cmdReport(_ args: [String]) throws -> Int32 {
 /// `TargetReport`). Default behavior writes under `.astro_tool/reports/`
 /// via `WriteGuard` and prints the resulting path; `--out -` prints the
 /// rendered HTML to stdout instead (same convention as `report --out -`/
-/// `export --out -`). An unknown target surfaces as `AstroError.pathNotFound`,
-/// caught by `main.swift`'s generic handler (exit code 1), same as every
-/// other command that resolves a target this way.
+/// `export --out -`). An unknown target surfaces as `AstroError.pathNotFound`
+/// from `TargetReport.render`/`.write`, caught below and turned into the
+/// target/session-not-found exit code (3, R11-T4).
 func cmdTargetReport(_ args: [String]) throws -> Int32 {
     let specs = [
         FlagSpec("--root", takesValue: true),
@@ -3003,14 +3277,19 @@ func cmdTargetReport(_ args: [String]) throws -> Int32 {
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
 
-    if parsed.value("--out") == "-" {
-        let html = try TargetReport.render(target: target, db: db, config: config)
-        print(html, terminator: "")
-        return 0
-    }
+    do {
+        if parsed.value("--out") == "-" {
+            let html = try TargetReport.render(target: target, db: db, config: config)
+            print(html, terminator: "")
+            return 0
+        }
 
-    let writeGuard = makeWriteGuard(config: config)
-    let url = try TargetReport.write(target: target, db: db, config: config, using: writeGuard)
-    print(url.path)
-    return 0
+        let writeGuard = makeWriteGuard(config: config)
+        let url = try TargetReport.write(target: target, db: db, config: config, using: writeGuard)
+        print(url.path)
+        return 0
+    } catch AstroError.pathNotFound {
+        eprint("error: target not found: \(target)")
+        return 3
+    }
 }

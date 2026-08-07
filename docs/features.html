@@ -111,7 +111,8 @@
     <h2>🌙 Ma este</h2>
     <p class="tabname">Sidebar · ⌘1</p>
     <ul class="flist">
-      <li><strong>4 fejléc-tile</strong> — Sötét idő, Hold (megvilágítottság % + esemény), Ajánlott (hány célpont verdiktje "ma jó"), Helyszín (feloldott koordináta, kattintva a Beállítások Helyszín fülére ugrik).</li>
+      <li><strong>4-5 fejléc-tile</strong> — Sötét idő, Hold (megvilágítottság % + esemény), Ajánlott (hány célpont verdiktje "ma jó"), Helyszín (feloldott koordináta, kattintva a Beállítások Helyszín fülére ugrik), opcionális Felhőzet-tile (csak ha az Open-Meteo felhőzet-előrejelzés be van kapcsolva a Beállításokban).</li>
+      <li><strong>Felhő-kontextus sáv</strong> — ha ma este a várható felhőzet 70% fölött van, egysoros, elutasítható figyelmeztetés a terv-táblázat fölött, link a következő derült éjszakára.</li>
       <li><strong>Terv-táblázat</strong> — célpontonként Állapot (pipeline-fázis chip), Integráció, Cél, Hiányzik, Kulmináció, Max. magasság, Látható ablak, Hold-zavarás, Döntés — pontszám szerint rendezve, minden oszlop kereshető.</li>
       <li><strong>Sor-műveletek</strong> — jobb klikk vagy dupla katt a sorban: célpont megnyitása, Cél beállítása…, Plate-solve… (csak koordináta nélküli célponton), Éjszaka-riport, Célpont-riport, Mappa megnyitása Finderben.</li>
       <li><strong>"Terv erre az éjszakára"</strong> — a Naptár egy másik éjszakájáról visszahozható ide a terv, "Vissza a mai estéhez" gombbal.</li>
@@ -120,22 +121,45 @@
 
   <div class="card">
     <h2>📅 Naptár</h2>
-    <p class="tabname">Sidebar · ⌘2 (Ma este szegmens)</p>
+    <p class="tabname">Sidebar · ⌘2 (Ma este alá indentálva, saját oldal)</p>
     <ul class="flist">
-      <li><strong>30 éjszakás tervező-naptár</strong> — minden éjszakához sötét óraszám, Hold%, az adott éjszaka legjobb 3 célpontja.</li>
-      <li><strong>Sor-műveletek</strong> — jobb klikk vagy dupla katt egy éjszakán: "Terv erre az éjszakára" — átugrik a Ma este szegmensre, ARRA az éjszakára számolt tervvel.</li>
+      <li><strong>30 éjszakás tervező-naptár</strong> — minden éjszakához sötét óraszám, Hold%, opcionális Felhő oszlop (időjárás bekapcsolva), az adott éjszaka legjobb 3 célpontja.</li>
+      <li><strong>Sor-műveletek</strong> — jobb klikk vagy dupla katt egy éjszakán: "Terv erre az éjszakára" — átugrik a Ma este oldalra, ARRA az éjszakára számolt tervvel.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>🔍 Felfedezés</h2>
+    <p class="tabname">Sidebar · ⌘3</p>
+    <ul class="flist">
+      <li><strong>Katalógus-alapú ajánló</strong> — mit érdemes ma este lefotózni a beépített katalógusból (217 Messier + fényes NGC/IC/Sharpless célpont), amit még nem gyűjtesz; ugyanaz az magasság/Hold/verdikt/pontszám-számítás, mint a saját könyvtárad tervezőjében, csak a statikus katalógusra vetítve.</li>
+      <li><strong>3 fejléc-tile</strong> — Ma ajánlott (db), Katalógus (látható / teljes), Setup látómező (a beállított felszerelés FOV-jának domináns értéke).</li>
+      <li><strong>Szűrhető, kereshető táblázat</strong> — oszlopok: Objektum, Típus, Méret, Magn., Kulminál, Max. mag., Látható, Hold, FOV (látómező-illeszkedés jelvénnyel), Döntés (VerdictChip); "már gyűjtöd" jelölés + alapból elrejthető, ha már van rá session; típus-szűrő menü (Galaxis/Emissziós köd/Planetáris köd/Szupernóva-maradvány/Nyílthalmaz/Gömbhalmaz/Reflexiós köd/egyéb).</li>
+      <li><strong>Sor-műveletek</strong> — "Ma esti ív…" (a célpont mai magasság-görbéje kis sheetben, ugyanazzal a komponenssel, mint a Ma este oldal), "Új session létrehozása…" (a célpont nevével előtöltve).</li>
+      <li><strong>Üres állapot helyszín nélkül</strong> — magyarázat + két gomb ("Helyszín beállítása…", "Felismerés a képeim fejlécéből").</li>
     </ul>
   </div>
 
   <div class="card">
     <h2>🎯 Minden célpont</h2>
-    <p class="tabname">Sidebar · ⌘3</p>
+    <p class="tabname">Sidebar · ⌘4 (KÖNYVTÁR szakasz)</p>
     <ul class="flist">
       <li><strong>4 fejléc-tile</strong> — Célpontok, Sessionök, Összes integráció, Kész/folyamatban célpontok száma.</li>
       <li><strong>Hierarchikus táblázat</strong> — célpont-sorok (Fázis-chip, Cél, Stackek csoportszám, kamera, olvasható-only Címkék) lenyitva session-sorokra (keretszám, expozíciók, kamera, setup-részletek, README-jelvény).</li>
       <li><strong>Célpont sor-menü</strong> — Megnyitás, Megnyitás Finderben, Cél beállítása…, Kész stackek… (Stackek szegmensre ugrik), Mozaik-panelek… (csak mozaik-célponton), Exportálás… (AstroBin/CSV/Markdown), Célpont-riport, Plate-solve… (csak koordináta nélkül), Címke hozzáadása…/eltávolítása.</li>
-      <li><strong>Session sor-menü</strong> — Megnyitás Finderben, Kalibráció linkelése…, Stackelés előkészítése…, Keretek pontozása (a célpont Minőség szegmensére ugrik, az adott session-nel előválasztva), Éjszaka-riport, Éjszaka-jegyzet szerkesztése…, Címke hozzáadása…/eltávolítása.</li>
+      <li><strong>Session sor-menü</strong> — közös akció-builder (ugyanaz, mint az Éjszakák oldalon): Megnyitás Finderben, Kalibráció linkelése…, Stackelés előkészítése…, Keretek pontozása (a célpont Minőség szegmensére ugrik, az adott session-nel előválasztva), Éjszaka-riport, Éjszaka-jegyzet szerkesztése…, Címke hozzáadása…/eltávolítása.</li>
       <li><strong>Keresés</strong> — célpontnév, feloldott katalógusnév vagy címke szerint; nincs találat esetén rendes "nincs találat" nézet.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>🌌 Éjszakák</h2>
+    <p class="tabname">Sidebar · ⌘5 (KÖNYVTÁR szakasz)</p>
+    <ul class="flist">
+      <li><strong>Minden session egy táblázatban</strong> — a "Minden célpont" célpontonként-csoportosított nézetének kereszt-célpontos megfelelője: minden éjszaka minden célponthoz, egy lapos, rendezhető, szűrhető táblázatban.</li>
+      <li><strong>3 fejléc-tile</strong> — Éjszakák (db), Összes integráció, Legjobb FWHM.</li>
+      <li><strong>Táblázat</strong> — Dátum, Célpont, Keretek, Integráció, Expozíciók, FWHM″, Háttér e⁻/s/″², Hatékonyság, Szűrők (felsorolva), Jegyzet (✓, ha van hozzá jegyzet) oszlopokkal; Év/Hónap választó a lista kliens-oldali szűkítéséhez.</li>
+      <li><strong>Sor-műveletek</strong> — ugyanaz a közös session-akció menü, mint a "Minden célpont" oldalon (megnyitás, kalibráció linkelése, stackelés előkészítése, keretek pontozása, riport, jegyzet, címke).</li>
     </ul>
   </div>
 
@@ -143,10 +167,11 @@
     <h2>🔭 Célpont-részletek</h2>
     <p class="tabname">Sidebar-ból vagy "Minden célpont"-ból megnyitva</p>
     <ul class="flist">
-      <li><strong>Fejléc</strong> — azonosítás (feloldott katalógusnév + mappanév), fázis-chip, 5 tile (valós/bruttó integráció, Cél-szerkesztő, Hiányzik, Sessionök, Legjobb session), "Következő lépés" mondat + akció-gomb.</li>
-      <li><strong>Áttekintés szegmens</strong> — koordináták (WCS fejléc/plate-solve/nincs forrás-jelöléssel, Plate-solve… gombbal ha kell), setup-ujjlenyomat (kamera/gyújtótáv/gain/szűrő), mai láthatóság, Expozíció-tanácsadó, mozaik-panel táblázat (csak mozaik-célponton), kalibráció-státusz.</li>
+      <li><strong>Fejléc</strong> — azonosítás (feloldott katalógusnév + mappanév), fázis-chip, 5 tile (valós/bruttó integráció, Cél-szerkesztő, Hiányzik, Sessionök, Legjobb session), kártya-szerűen kiemelt "Következő lépés" mondat + akció-gomb.</li>
+      <li><strong>Áttekintés szegmens</strong> — koordináták (WCS fejléc/plate-solve/nincs forrás-jelöléssel, Plate-solve… gombbal ha kell), setup-ujjlenyomat (kamera/gyújtótáv/gain/szűrő), mai láthatóság + magasság-görbe, mozaik-panel táblázat (csak mozaik-célponton, közvetlenül a láthatóság alatt), Integráció-halmozódás grafikon (halmozott óraszám cél-vonallal, ha van kitűzött cél), Expozíció-tanácsadó, kalibráció-státusz.</li>
       <li><strong>Sessionök szegmens</strong> — 10 oszlopos táblázat (keretszám, integráció, expozíciók, FWHM″, háttér e⁻/s/″², rang, hűtés-/fókusz-verdikt, README) + kiválasztott sor alatt idővonal-sáv és hardver-egészség.</li>
-      <li><strong>Minőség szegmens</strong> — pontozás-vezérlő (session-szűrő "Minden session"-nel visszaállítható), 10-vödrös pontszám-hisztogram, 10 oszlopos keret-táblázat (FWHM, kerekség, csillagszám, háttér, szat.%, kiugró-jelölés); megnyitáskor a már mért pontszámokat a gyorsítótárból tölti be, Siril nélkül.</li>
+      <li><strong>Minőség szegmens</strong> — pontozás-vezérlő (session-szűrő "Minden session"-nel visszaállítható), 10-vödrös pontszám-hisztogram, tábla alapból 5 oszlop (Fájl, Pontszám, FWHM, Kiugró, Saját döntés), a többi (Mappa/Kerekség/Csillagok/Háttér/Szat.%/Exp.) az "Oszlopok" menü mögött, egyénileg be-/kikapcsolható (macOS 14.4+).</li>
+      <li><strong>Keret-átnéző ("Átnézés")</strong> — R10-es "blink"-sheet: léptet a táblázat aktuális sorrendjében/szűrőjében a kereteken, billentyűkkel (<code>←</code>/<code>→</code> lépés, <code>A</code> elfogad, <code>X</code> elutasít, <code>U</code> töröl) — a gépi kiugró-jelzés nem lát műholdcsíkot, repülőt, vékony felhőt; ez az emberi visszaellenőrzés. Minden döntés azonnal hat a következő stackelésnél.</li>
       <li><strong>Stackek szegmens</strong> — a felfedezett kész stackek variáns-családokba csoportosítva (eredeti/szerkesztett/starless/starmask/export), Finder-/megnyitás-gombokkal.</li>
       <li><strong>Jegyzetek szegmens</strong> — session-önkénti README-jegyzetek (szerkeszthető) + a célponthoz generált riport-HTML-ek listája.</li>
     </ul>
@@ -154,7 +179,7 @@
 
   <div class="card">
     <h2>🌡️ Kalibráció</h2>
-    <p class="tabname">Sidebar · ⌘4</p>
+    <p class="tabname">Sidebar · ⌘6 (ÁLLAPOT szakasz)</p>
     <ul class="flist">
       <li><strong>Lefedettség szegmens</strong> — mely expozíció/hőmérséklet/kamera/gain kombinációhoz van dark/flat/bias, és mihez kell még; stabil sor-azonosítókkal (kombináció-alapú, nem véletlen), így a jobb-klikk menü és a kiválasztás megbízható.</li>
       <li><strong>Egészség szegmens</strong> — flat-fegyelem (rotátor-állás egyezés), bias-készlet és dark-master frissesség egy átfogó jelentésben.</li>
@@ -164,9 +189,10 @@
 
   <div class="card">
     <h2>🛡️ Audit</h2>
-    <p class="tabname">Sidebar · ⌘5 (Hibák/Gyanús) · ⌘6 (Takarítás)</p>
+    <p class="tabname">Sidebar · ⌘7 (Hibák/Gyanús) · ⌘8 Takarítás (Audit alá indentálva, saját oldal)</p>
     <ul class="flist">
       <li><strong>Három szegmens</strong> — <em>Hibák</em> (biztos hiba: sérült/hiányos FITS fejléc, üres fájl), <em>Gyanús</em> (szokatlan méret/metaadat, reziduum és duplikátum nélkül), <em>Takarítható</em> (reziduum + duplikált tartalom mérete/fájlszáma).</li>
+      <li><strong>"Nincs audit" jelzés</strong> — amíg ebben a munkamenetben még nem futott auditálás, a Biztos hiba/Gyanús/Szándékos csempe "n/a"-t mutat "nincs audit" felirattal ahelyett, hogy hamisan "0"-t (vagyis "auditálva, tiszta") állítana; a Takarítható csempe független az audittól, mindig valós értéket mutat.</li>
       <li><strong>Rendben-jelölés</strong> — egy csoport (kategória + csoportkulcs alapján) elrejthető újraauditálás után is; a toolbar váltóval visszakapcsolható a megjelenítésük.</li>
       <li><strong>Duplikátum-keresés</strong> — kikapcsolható ("Duplikátum-keresés nélkül auditálás"), ha csak a strukturális hibákra koncentrálnál.</li>
       <li><strong>Script-menü</strong> — Javító script (hibák) és Karantén-script (takarítható) egy átnézhető <code>.sh</code>-ba a <code>.astro_tool/</code> alá; az eszköz sosem futtatja le magától, csak <code>mv</code>-vel karanténba mozgat.</li>
@@ -175,10 +201,19 @@
 
   <div class="card">
     <h2>📟 Szenzor-profilok</h2>
-    <p class="tabname">Sidebar · ⌘7</p>
+    <p class="tabname">Sidebar · ⌘9 (ESZKÖZÖK szakasz)</p>
     <ul class="flist">
-      <li><strong>Read-only táblázat</strong> — mért bias-szint, leolvasási zaj, dark-ráta és EGAIN kamera/gain/offset kombónként, frissesség-jelzéssel a régebbi (elavult becslő) mérésekhez.</li>
+      <li><strong>Read-only táblázat</strong> — mért bias-szint, leolvasási zaj, dark-ráta és EGAIN kamera/gain/offset kombónként, frissesség-jelzéssel a régebbi (elavult becslő) mérésekhez; soronként lenyitható mérés-történet + sparkline.</li>
       <li><strong>"Szenzor mérése…"</strong> — megerősítés-sheet, ami előre elmondja, mit olvas be, mennyi ideig tart, és hogy pontosan egy adatbázis-sort ír; a Célpont-részletek Áttekintés szegmenséből is elindítható, ha az Expozíció-tanácsadónak nincs profilja.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>🔔 Globális visszajelzés</h2>
+    <p class="tabname">Minden oldalon, a Toolbar óra-ikonja mellett</p>
+    <ul class="flist">
+      <li><strong>Toast-réteg</strong> — a legutóbbi néhány művelet kimenetele (siker/hiba) lebegő, jobb felül egymásra halmozódó buborékokban, oldaltól függetlenül; kattintásra korábban elrejthető.</li>
+      <li><strong>Aktivitás-napló</strong> — a toolbar óra-ikonja mögötti popoverben minden korábbi visszajelzés visszakereshető, nem csak az éppen látszó toast-ok.</li>
     </ul>
   </div>
 
@@ -187,10 +222,11 @@
     <p class="tabname">Menüsor · ⌘,</p>
     <ul class="flist">
       <li><strong>Könyvtár fül</strong> — gyökér-útvonal, session-mappa elnevezési szabályok, tűrések.</li>
-      <li><strong>Helyszín fül</strong> — kézi szélesség/hosszúság vagy automatikus levezetés a FITS-fejlécek SITELAT/SITELONG medián-jából.</li>
-      <li><strong>Kalibráció fül</strong> — a lefedettség-illesztés szabályai (gain/offset/kamera/binning egyezés, elévülési határ).</li>
-      <li><strong>Pontozás & expozíció fül</strong> — a pontozó metrika-súlyok, kiugró-küszöb, Siril útvonala, workerek száma.</li>
-      <li><strong>Könyvtár-szabályok fül</strong> — a fájlnév/mappastruktúra-felismerés finomhangolása.</li>
+      <li><strong>Helyszín fül</strong> — kézi szélesség/hosszúság vagy automatikus levezetés a FITS-fejlécek SITELAT/SITELONG medián-jából; fülszintű "Alaphelyzetbe állítás…" gomb.</li>
+      <li><strong>Kalibráció fül</strong> — a lefedettség-illesztés szabályai (gain/offset/kamera/binning egyezés, elévülési határ), magyarázó captionökkel.</li>
+      <li><strong>Pontozás & expozíció fül</strong> — a pontozó metrika-súlyok, kiugró-küszöb, Siril útvonala, workerek száma; Siril-hiány esetén piros "Siril nem található" státusz + "Mi a Siril?" súgó-sheet (letöltés-link, mi megy nélküle) — ugyanez a Súgó menüből ("A Sirilről…") és a Minőség szegmens Siril-figyelmeztetéséből is elérhető.</li>
+      <li><strong>Könyvtár-szabályok fül</strong> — a fájlnév/mappastruktúra-felismerés finomhangolása + célpontonkénti wide-field/deep-sky besorolás felülbírálás-lista (ugyanez jobb-klikkből is elérhető a célpont-táblázatokban).</li>
+      <li><strong>Súgó menü</strong> — Fogalomtár, Mappastruktúra súgó, "A Sirilről…", Tutorial, CLI-referencia.</li>
     </ul>
   </div>
 

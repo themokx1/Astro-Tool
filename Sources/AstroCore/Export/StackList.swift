@@ -234,6 +234,50 @@ public enum StackList {
         return stacklistDir
     }
 
+    /// R11-T4 (`astrotool stacklist --out PATH`): the same materialization as
+    /// `export`, but directly into a caller-chosen `destDir` -- typically
+    /// OUTSIDE the library root, e.g. a WBPP project folder on another
+    /// volume -- instead of the default `.astro_tool/stacklists/<slug>/`
+    /// location. Deliberately bypasses `WriteGuard` entirely: `WriteGuard`'s
+    /// whole contract is "only ever writes to these specific known-safe
+    /// spots under the root", which is the opposite of what an explicit
+    /// `--out` is for. Same guard the CLI's `export --out PATH` already
+    /// applies (destDir must not resolve inside the library root) is the
+    /// caller's responsibility, not this function's -- this only performs
+    /// the write once that's already been checked.
+    ///
+    /// `destDir` becomes the stacklist directory directly (no extra
+    /// `<target>-<date>` slug subfolder, since the caller already chose the
+    /// exact destination): `destDir/lights/`, `destDir/stack.dssfilelist`,
+    /// `destDir/stack.ssf`. Same idempotent, additive, hardlink-only
+    /// behavior as `export` -- never overwrites a destination file that's
+    /// already there.
+    @discardableResult
+    public static func exportToDirectory(_ selection: StackSelection, destDir: URL, sourceRoot: URL) throws -> URL {
+        let fm = FileManager.default
+        let lightsDir = destDir.appendingPathComponent("lights", isDirectory: true)
+        try fm.createDirectory(at: lightsDir, withIntermediateDirectories: true)
+
+        var fileNames: [String] = []
+        for path in selection.selectedPaths {
+            let fileName = (path as NSString).lastPathComponent
+            fileNames.append(fileName)
+
+            let destFileURL = lightsDir.appendingPathComponent(fileName, isDirectory: false)
+            guard !fm.fileExists(atPath: destFileURL.path) else { continue }
+            let sourceURL = sourceRoot.appendingPathComponent(path)
+            try fm.linkItem(at: sourceURL, to: destFileURL)
+        }
+
+        let dssContent = renderDSSFilelist(fileNames: fileNames)
+        try Data(dssContent.utf8).write(to: destDir.appendingPathComponent("stack.dssfilelist"))
+
+        let ssfContent = try renderSSF(stacklistDir: destDir)
+        try Data(ssfContent.utf8).write(to: destDir.appendingPathComponent("stack.ssf"))
+
+        return destDir
+    }
+
     /// `<sanitized target>-<date>` -- the stacklist directory's own name
     /// under `.astro_tool/stacklists/`. Reuses `Sanitizer` (same convention
     /// `add_new_session.sh`/`SessionCreator` use for target folder names) so

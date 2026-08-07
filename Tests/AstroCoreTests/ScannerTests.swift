@@ -154,6 +154,64 @@ private struct ScanFixture {
     #expect(record?.missing == true)
 }
 
+// MARK: - changedTargets (R11-T4)
+
+@Test func changedTargetsListsEveryTargetTouchedThisRunAndNothingOnAnUnchangedRescan() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    let first = try scanner.scan()
+
+    // First scan: everything is `added`, so every target with at least one
+    // file counts as "changed" -- both a `sessions/` target and a `stacks/`
+    // one (the field is populated from any area, not just sessions).
+    #expect(first.changedTargets.contains("M45_Pleiades"))
+    #expect(first.changedTargets.contains("IC1805-1848_Heart_and_Soul_Nebula"))
+    #expect(first.changedTargets.contains("M42_Orion"))
+    // Sorted, deduplicated -- never one entry per file.
+    #expect(first.changedTargets == Array(Set(first.changedTargets)).sorted())
+
+    // Second scan over the exact same tree: nothing added/updated/missing,
+    // so nothing should be reported as changed either.
+    let second = try scanner.scan()
+    #expect(second.changedTargets.isEmpty)
+}
+
+@Test func changedTargetsReportsOnlyTheTargetOfAModifiedFile() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/light_0001.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try "changed content, now longer than before\n".write(to: fileURL, atomically: true, encoding: .utf8)
+    let future = Date().addingTimeInterval(30)
+    try FileManager.default.setAttributes([.modificationDate: future], ofItemAtPath: fileURL.path)
+
+    let summary = try scanner.scan()
+    #expect(summary.updated == 1)
+    #expect(summary.changedTargets == ["M45_Pleiades"])
+}
+
+@Test func changedTargetsIncludesTheTargetOfANewlyMissingFile() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    // Deleting inside the FIXTURE tmp tree only -- never the real library.
+    let relativePath = "sessions/IC1805-1848_Heart_and_Soul_Nebula/2026-01-17/lights/light_0001.fit"
+    try FileManager.default.removeItem(at: fixture.root.appendingPathComponent(relativePath))
+
+    let summary = try scanner.scan()
+    #expect(summary.missing == 1)
+    #expect(summary.changedTargets == ["IC1805-1848_Heart_and_Soul_Nebula"])
+}
+
 @Test func subpathScopedScanOnlyTouchesThatSubtree() throws {
     let fixture = try ScanFixture.make()
     defer { fixture.cleanup() }

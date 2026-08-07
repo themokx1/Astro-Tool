@@ -69,6 +69,7 @@ public final class AuditEngine {
             CoolerNotReachingSetpointRule(),
             MixedSetupInSessionRule(),
             MixedSetupInTargetRule(),
+            CorruptFITSRule(),
         ]
     }
 

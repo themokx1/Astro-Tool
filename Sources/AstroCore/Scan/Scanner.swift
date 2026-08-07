@@ -66,6 +66,13 @@ public struct ScanSummary: Codable, Sendable {
     /// brand-new scan of that file would. Additive field, defaults to 0 so
     /// existing JSON callers/decoders are unaffected.
     public var metaRefreshed: Int
+    /// R11-T4: sorted, deduplicated list of every target that had at least
+    /// one added, updated, or missing file THIS run -- the set a pipeline
+    /// should re-rate/re-audit next, without having to diff two full `scan
+    /// --json` snapshots itself. A target that only had `unchanged` files
+    /// (including ones merely `reclassified` by a healed `PathClassifier`
+    /// rule) never appears here. Empty on a scan that changed nothing.
+    public var changedTargets: [String]
 
     public init(
         added: Int = 0,
@@ -74,7 +81,8 @@ public struct ScanSummary: Codable, Sendable {
         missing: Int = 0,
         inaccessiblePaths: [String] = [],
         reclassified: Int = 0,
-        metaRefreshed: Int = 0
+        metaRefreshed: Int = 0,
+        changedTargets: [String] = []
     ) {
         self.added = added
         self.updated = updated
@@ -83,6 +91,7 @@ public struct ScanSummary: Codable, Sendable {
         self.inaccessiblePaths = inaccessiblePaths
         self.reclassified = reclassified
         self.metaRefreshed = metaRefreshed
+        self.changedTargets = changedTargets
     }
 }
 
@@ -133,6 +142,7 @@ public final class LibraryScanner {
         var seen = Set<String>()
         var summary = ScanSummary()
         var processedCount = 0
+        var changedTargets = Set<String>()
 
         try walk(
             dirURL: startURL,
@@ -142,6 +152,7 @@ public final class LibraryScanner {
             progress: progress,
             summary: &summary,
             refreshMeta: refreshMeta,
+            changedTargets: &changedTargets,
             isTopLevel: true
         )
 
@@ -156,10 +167,12 @@ public final class LibraryScanner {
             guard !seen.contains(record.path) else { return }
             guard !Self.isUnder(record.path, anyOf: summary.inaccessiblePaths) else { return }
             count += 1
+            if let target = record.target { changedTargets.insert(target) }
         }
 
         try db.markMissing(pathsNotIn: seen, underSubpath: subpath, excludingPrefixes: summary.inaccessiblePaths)
 
+        summary.changedTargets = changedTargets.sorted()
         return summary
     }
 
@@ -187,6 +200,7 @@ public final class LibraryScanner {
         progress: (@Sendable (Int) -> Void)?,
         summary: inout ScanSummary,
         refreshMeta: Bool,
+        changedTargets: inout Set<String>,
         isTopLevel: Bool = false
     ) throws {
         let entries: [URL]
@@ -221,7 +235,8 @@ public final class LibraryScanner {
                     processedCount: &processedCount,
                     progress: progress,
                     summary: &summary,
-                    refreshMeta: refreshMeta
+                    refreshMeta: refreshMeta,
+                    changedTargets: &changedTargets
                 )
                 continue
             }
@@ -239,7 +254,8 @@ public final class LibraryScanner {
                 fileURL: entryURL,
                 values: values,
                 summary: &summary,
-                refreshMeta: refreshMeta
+                refreshMeta: refreshMeta,
+                changedTargets: &changedTargets
             )
         }
     }
@@ -249,7 +265,8 @@ public final class LibraryScanner {
         fileURL: URL,
         values: URLResourceValues,
         summary: inout ScanSummary,
-        refreshMeta: Bool
+        refreshMeta: Bool,
+        changedTargets: inout Set<String>
     ) throws {
         let size = Int64(values.fileSize ?? 0)
         let mtime = (values.contentModificationDate ?? Date(timeIntervalSince1970: 0)).timeIntervalSince1970
@@ -310,6 +327,7 @@ public final class LibraryScanner {
         } else {
             summary.updated += 1
         }
+        if let target = info.target { changedTargets.insert(target) }
 
         // Metadata capture only runs for NEW/CHANGED files (never for the
         // `unchanged` early-return above) — that's what keeps incremental
@@ -410,9 +428,11 @@ public final class LibraryScanner {
         case "fit", "fits", "fz":
             // A corrupt/unreadable FITS header is swallowed by design here:
             // the file itself is still recorded in `files` above, just
-            // without a `fits_meta` row. TODO: a later audit task should
-            // flag fits-kind files with no fits_meta row as corrupt FITS,
-            // since the parse error itself isn't surfaced anywhere today.
+            // without a `fits_meta` row. R11-T4's `CorruptFITSRule` (audit)
+            // is what surfaces this to the user -- a light/flat/dark/bias/
+            // master-role file at a FITS-kind extension with no `fits_meta`
+            // row at all gets flagged `sure_error` there, since the parse
+            // failure itself isn't surfaced anywhere else.
             guard let header = try? FITSReader.readHeader(url: url) else { return }
             try db.upsertFITSMeta(Self.fitsMetaRecord(fileID: fileID, header: header))
         case "cr3", "tif":

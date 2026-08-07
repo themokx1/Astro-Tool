@@ -96,6 +96,14 @@
     background: var(--code-bg); border-radius: 6px; padding: 2px 7px;
     font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word;
   }
+  table.exitcodes { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.exitcodes th, table.exitcodes td {
+    text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line);
+  }
+  table.exitcodes th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  table.exitcodes td:first-child { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; white-space: nowrap; }
+  table.exitcodes tr:last-child td { border-bottom: none; }
+  table.exitcodes tr.reserved td { color: var(--muted); font-style: italic; }
   footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 36px; }
   a { color: var(--accent2); }
 </style>
@@ -112,24 +120,37 @@
 
   <h1 class="pagetitle">CLI-referencia</h1>
   <p class="pagesub">Minden alparancs, csoportosítva, egy sor leírással és egy futtatható példával.</p>
-  <div class="req">Minden parancs elfogadja a <code>--root PATH</code> kapcsolót a könyvtár felülbírálására, és a legtöbb támogatja a <code>--json</code> kapcsolót gépi olvasható (snake_case, rendezett) kimenethez.</div>
+  <div class="req">Minden parancs elfogadja a <code>--root PATH</code> kapcsolót a könyvtár felülbírálására, és a legtöbb támogatja a <code>--json</code> kapcsolót gépi olvasható (snake_case, rendezett) kimenethez. Minden <code>--json</code> kimenet gyökere <code>schema_version</code> mezőt kap; azoknál a parancsoknál, ahol a gyökér korábban egy sima tömb volt, a válasz mostantól <code>{"schema_version": "1", "items": [...]}</code> alakba van csomagolva — lásd a <a href="https://github.com/themokx1/Astro-Tool/blob/main/CHANGELOG.md">CHANGELOG-ot</a> a pontos listáért.</div>
+
+  <div class="card">
+    <h2>Kilépési kódok</h2>
+    <table class="exitcodes">
+      <tr><th>Kód</th><th>Jelentés</th></tr>
+      <tr><td>0</td><td>Siker.</td></tr>
+      <tr><td>1</td><td>Általános/usage hiba (hiányzó vagy érvénytelen kapcsoló, ismeretlen alparancs).</td></tr>
+      <tr><td>2</td><td>TCC/kötet-hiba — a könyvtár nem érhető el (Teljes lemezhozzáférés hiányzik, vagy a kötet nincs csatlakoztatva).</td></tr>
+      <tr><td>3</td><td>Nem található target/session — a <code>--target</code>/<code>--date</code> nem azonosít semmit a nyilvántartásban (pl. <code>stats</code>, <code>solve</code>, <code>match</code>, <code>link-calib</code>, <code>report</code>, <code>target-report</code>).</td></tr>
+      <tr><td>4</td><td>Külső eszköz hiba — a Siril nem található a konfigurált útvonalon (pl. <code>solve</code>).</td></tr>
+      <tr class="reserved"><td>5</td><td>Fenntartva egy jövőbeli <code>verify</code> parancsnak — jelenleg nem használt.</td></tr>
+    </table>
+  </div>
 
   <div class="card">
     <h2>Alap</h2>
     <div class="cmd">
       <div class="name">scan</div>
-      <div class="desc">Bejárja a könyvtárat, frissíti a belső SQLite indexet — mindig ez az első lépés.</div>
+      <div class="desc">Bejárja a könyvtárat, frissíti a belső SQLite indexet — mindig ez az első lépés. <code>--json</code> kimenete <code>changed_targets</code> mezőt is ad: azon célpontok listája, ahol ebben a futásban added/updated/missing fájl volt — ez alapján dönthető el egy pipeline-ban, mely célpontra érdemes rate/audit-ot futtatni utána.</div>
       <pre class="example">astrotool scan --root /Volumes/images/Astro</pre>
     </div>
     <div class="cmd">
       <div class="name">audit</div>
-      <div class="desc">Három súlyossági szintbe sorolt hibalista + duplikátum-keresés; <code>--suggest</code> esetén átnézhető javaslat-scriptet ír.</div>
-      <pre class="example">astrotool audit --suggest --include-suspicious</pre>
+      <div class="desc">Három súlyossági szintbe sorolt hibalista + duplikátum-keresés; <code>--suggest</code> esetén átnézhető javaslat-scriptet ír. <code>--out PATH</code> (csak <code>--suggest</code>-tel együtt) a könyvtáron kívülre is írhatja a scriptet a fix <code>.astro_tool/suggestions/</code> hely helyett; <code>--out -</code> stdoutra írja a script szövegét fájl írása nélkül.</div>
+      <pre class="example">astrotool audit --suggest --include-suspicious --out ~/Desktop/fix.sh</pre>
     </div>
     <div class="cmd">
       <div class="name">cleanup</div>
-      <div class="desc">A már azonosított reziduum/duplikátum-találatok korlátozott elemszámú összegzése és javaslat-script generálás.</div>
-      <pre class="example">astrotool cleanup --suggest --limit 50</pre>
+      <div class="desc">A már azonosított reziduum/duplikátum-találatok korlátozott elemszámú összegzése és javaslat-script generálás. <code>--out PATH|-</code> ugyanúgy működik, mint <code>audit --suggest</code>-nél.</div>
+      <pre class="example">astrotool cleanup --suggest --limit 50 --out -</pre>
     </div>
     <div class="cmd">
       <div class="name">ack</div>
@@ -153,8 +174,8 @@
     </div>
     <div class="cmd">
       <div class="name">config</div>
-      <div class="desc">A jelenleg érvényes konfiguráció (<code>show</code>) vagy a <code>config.json</code> elérési útja (<code>path</code>).</div>
-      <pre class="example">astrotool config show</pre>
+      <div class="desc">A jelenleg érvényes konfiguráció (<code>show</code>) vagy a <code>config.json</code> elérési útja (<code>path</code>). <code>config show</code> alapból ember-olvasható, szekciónkénti kulcs-érték kimenetet ad; <code>--json</code>-nal a teljes struktúrát.</div>
+      <pre class="example">astrotool config show --json</pre>
     </div>
     <div class="cmd">
       <div class="name">tag</div>
@@ -264,8 +285,8 @@
     </div>
     <div class="cmd">
       <div class="name">stacklist</div>
-      <div class="desc">A session legjobb frame-jeinek kiválasztása és exportálása (hardlink + <code>.dssfilelist</code> + Siril <code>.ssf</code>) a DSS/Siril munkafolyamathoz.</div>
-      <pre class="example">astrotool stacklist --target M31 --date 2026-03-15 --keep 0.8</pre>
+      <div class="desc">A session legjobb frame-jeinek kiválasztása és exportálása (hardlink + <code>.dssfilelist</code> + Siril <code>.ssf</code>) a DSS/Siril munkafolyamathoz. Alapból a <code>.astro_tool/stacklists/&lt;cél&gt;-&lt;dátum&gt;/</code> alá exportál; <code>--out PATH</code> helyette közvetlenül PATH-ba exportál (PATH lesz maga a stacklist-könyvtár, lehet a könyvtáron kívül is). <code>--out -</code> nem támogatott (ez egy egész könyvtárfát exportál, nem egyetlen fájlt) — világos hibával leáll.</div>
+      <pre class="example">astrotool stacklist --target M31 --date 2026-03-15 --keep 0.8 --out ~/Desktop/M31-stack</pre>
     </div>
     <div class="cmd">
       <div class="name">stacks</div>

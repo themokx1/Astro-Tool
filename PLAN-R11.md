@@ -21,7 +21,7 @@
 - [x] 1. Feltérképezés (7 agent) — kész
 - [x] 2. Persona-review (4 agent) — kész
 - [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
-- [ ] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [ ]
+- [x] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [x]
 - [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [ ] T6 [ ] T7 [ ] T8 [ ] T9 [ ] T10 [ ] T11 [ ] T12 [ ] T13 [ ]
 - [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [ ] T15 [ ] T16 [ ] T17 [ ]
 - [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
@@ -330,3 +330,8 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
 - 2026-08-07 reggel: kör indítva; feltérképezés (7 agent) + persona-review
   (4 agent) lezárva; szintézis + teljes spec + UI-terv beírva; task-lista kész.
   Következő: T1–T4 (A-hullám) kiosztása.
+- 2026-08-08: T4 (CLI/automatizálás + docs) kész — F10 teljes (exit-kódok
+  3/4/5-fenntartva, schema_version minden --json gyökérben, --out PATH|-
+  audit/cleanup/stacklist-en, scan changed_targets, config show --json-fix),
+  korrupt-FITS audit-szabály, docs/features.html + cli.html frissítve. Ezzel
+  az A-hullám (T1–T4) teljes. Következő: B-hullám (T5–T13) kiosztása.

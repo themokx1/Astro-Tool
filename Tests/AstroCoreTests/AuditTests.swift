@@ -474,6 +474,61 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
     #expect(hits.filter { $0.path == "sessions/M45_Pleiades/2026-01-10" }.count == 1)
 }
 
+// MARK: - corrupt-fits (R11-T4)
+
+@Test func auditFlagsFITSLightWithUnreadableHeaderAsCorruptFITS() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    // Same "garbage bytes, not a real FITS header" fixture
+    // `ScannerTests.corruptFITSFileIsRecordedButNoMetaRowIsWritten` uses --
+    // the scanner still records the file, just with no `fits_meta` row.
+    let corruptPath = "sessions/M45_Pleiades/2026-01-10/lights/corrupt.fit"
+    let corruptURL = fixture.root.appendingPathComponent(corruptPath)
+    try "this is not a valid FITS header at all, just garbage bytes\n".write(
+        to: corruptURL, atomically: true, encoding: .utf8
+    )
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let engine = AuditEngine(config: fixture.config, db: fixture.db)
+    let (_, all) = try engine.run()
+
+    let hits = findings(all, category: "corrupt-fits")
+    let hit = try #require(hits.first { $0.path == corruptPath })
+    #expect(hit.severity == .sureError)
+    #expect(hit.suggestion == nil)
+
+    // The fixture's OWN `flat_stray.fit` (added by `AuditFixture.make`) has a
+    // real, parseable FITS header (`buildHeaderData`) -- it must NOT be
+    // flagged even though it sits right next to the corrupt one.
+    #expect(!hits.contains { $0.path == "sessions/M45_Pleiades/2026-01-10/lights/flat_stray.fit" })
+}
+
+/// A wide-field DSLR light (CR3) never gets a `fits_meta` row either -- it
+/// isn't FITS at all, its metadata comes from `ImageIO`/EXIF instead -- so
+/// the rule must never flag one just because `fits_meta` happens to be empty
+/// for it (the false-positive case the rule is explicitly scoped against).
+@Test func auditDoesNotFlagWideFieldCR3AsCorruptFITS() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    let cr3Path = "sessions/WideField_Target/2026-02-01/lights/light_0001.cr3"
+    let cr3URL = fixture.root.appendingPathComponent(cr3Path)
+    try FileManager.default.createDirectory(at: cr3URL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "not a real CR3 file, just fixture bytes\n".write(to: cr3URL, atomically: true, encoding: .utf8)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let engine = AuditEngine(config: fixture.config, db: fixture.db)
+    let (_, all) = try engine.run()
+
+    let hits = findings(all, category: "corrupt-fits")
+    #expect(!hits.contains { $0.path == cr3Path })
+}
+
 @Test func auditFindingsArePersistedAndReadableFromDB() throws {
     let fixture = try AuditFixture.make()
     defer { fixture.cleanup() }
