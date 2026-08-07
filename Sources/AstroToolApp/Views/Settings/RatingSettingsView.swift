@@ -25,6 +25,12 @@ struct RatingSettingsView: View {
     @State private var saveMessage: String?
     @State private var saveError: String?
     @State private var showResetConfirm = false
+    /// R11-T3/F11(c): presented LOCALLY (not via the `.showSirilHelp`
+    /// notification `QualitySegment`/the Súgó menü use) -- this view lives in
+    /// the separate `Settings { }` scene/window, not the main `WindowGroup`
+    /// `RootView` owns, so posting that notification would pop the sheet on
+    /// a window the user isn't even looking at.
+    @State private var showSirilHelp = false
 
     private let defaults = AstroConfig()
 
@@ -129,6 +135,9 @@ struct RatingSettingsView: View {
             titleVisibility: .visible
         ) {
             Button("Alaphelyzetbe állítás", role: .destructive) { resetAll() }
+        }
+        .sheet(isPresented: $showSirilHelp) {
+            SirilHelpSheet()
         }
     }
 
@@ -246,6 +255,14 @@ struct RatingSettingsView: View {
             HStack(spacing: 6) {
                 Circle().fill(Color.red).frame(width: 8, height: 8)
                 Text("Siril nem található").foregroundStyle(.red)
+                // R11-T3/F11(c): same `SirilHelpSheet` content `QualitySegment`'s
+                // "Mi ez?" link and the Súgó menü's "A Sirilről…" item show --
+                // presented locally here, see `showSirilHelp`'s doc comment.
+                Button("Mi a Siril?") { showSirilHelp = true }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .underline()
             }
         }
     }

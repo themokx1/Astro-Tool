@@ -14,6 +14,11 @@ extension Notification.Name {
     /// `showFolderStructureHelp`: the sheet is presented from `RootView`,
     /// not `AppState`.
     static let showGlossary = Notification.Name("AstroTool.showGlossary")
+    /// "Súgó ▸ A Sirilről…" (R11-T3/F11(c)/F20) -- same reasoning as
+    /// `showGlossary`: the menu bar has no view-state of its own, so it
+    /// posts, and `RootView` (always on screen) is the one place that
+    /// listens and presents `SirilHelpSheet`.
+    static let showSirilHelp = Notification.Name("AstroTool.showSirilHelp")
 }
 
 private let tutorialURL = URL(string: "https://themokx1.github.io/Astro-Tool/tutorial.html")!
@@ -202,6 +207,9 @@ struct AstroToolCommands: Commands {
             }
             Button("Fogalomtár") {
                 NotificationCenter.default.post(name: .showGlossary, object: nil)
+            }
+            Button("A Sirilről…") {
+                NotificationCenter.default.post(name: .showSirilHelp, object: nil)
             }
             Button("Tutorial") { NSWorkspace.shared.open(tutorialURL) }
             Button("CLI-referencia") { NSWorkspace.shared.open(cliReferenceURL) }

@@ -36,6 +36,8 @@ struct RootView: View {
     /// state, so it posts a `Notification` this always-on-screen view
     /// observes" pattern `showFolderStructureHelp` already uses.
     @State private var showGlossary = false
+    /// R11-T3/F11(c)/F20: "Súgó ▸ A Sirilről…" -- same notification pattern.
+    @State private var showSirilHelp = false
 
     var body: some View {
         Group {
@@ -60,11 +62,17 @@ struct RootView: View {
         .sheet(isPresented: $showGlossary) {
             GlossarySheet()
         }
+        .sheet(isPresented: $showSirilHelp) {
+            SirilHelpSheet()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .showFolderStructureHelp)) { _ in
             showFolderStructureHelp = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .showGlossary)) { _ in
             showGlossary = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showSirilHelp)) { _ in
+            showSirilHelp = true
         }
     }
 }

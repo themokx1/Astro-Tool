@@ -230,6 +230,45 @@ struct SessionActionMenu: View {
     }
 }
 
+// MARK: - Wide-field classification menu (R11-T3/F20)
+
+/// "Besorolás" submenu -- lets `AllTargetsPage`'s target row menu and
+/// `TargetDetailPage`'s header override `WideFieldHeuristic`'s automatic
+/// wide-field/deep-sky guess for one target, three mutually exclusive
+/// options ("Automatikus (felismerés)" / "Wide-field" / "Deep-sky") with a
+/// checkmark on whichever is currently in effect -- same "`if current ==
+/// option { Image(systemName: "checkmark") }`" convention
+/// `DiscoveryPage.kindFilterMenu` already uses for its own Menu. Reads
+/// straight off `appState.config.wideField.overrides[target]` (no local
+/// `@State` -- there's nothing to draft here, the choice IS the save) and
+/// writes through `AppState.setWideFieldOverride(target:value:)`.
+struct WideFieldClassificationMenu: View {
+    @Environment(AppState.self) private var appState
+
+    let target: String
+
+    private var currentOverride: Bool? { appState.config.wideField.overrides[target] }
+
+    var body: some View {
+        Menu("Besorolás") {
+            optionButton(title: "Automatikus (felismerés)", value: nil)
+            optionButton(title: "Wide-field", value: true)
+            optionButton(title: "Deep-sky", value: false)
+        }
+    }
+
+    private func optionButton(title: String, value: Bool?) -> some View {
+        Button {
+            appState.setWideFieldOverride(target: target, value: value)
+        } label: {
+            HStack {
+                if currentOverride == value { Image(systemName: "checkmark") }
+                Text(title)
+            }
+        }
+    }
+}
+
 // MARK: - Verdict chip (R10 review)
 
 /// Shared "tonight verdict" chip -- unifies three near-identical copies

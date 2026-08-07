@@ -1747,6 +1747,59 @@ final class AppState: @unchecked Sendable {
         return "goal:\(String(format: "%.1f", hours))h"
     }
 
+    // MARK: - Wide-field classification (R11-T3/F20)
+
+    /// "Besorolás" context menu (`AllTargetsPage` row menu / `TargetDetailPage`
+    /// header) manual override of `WideFieldHeuristic`'s automatic wide-field
+    /// vs. deep-sky guess -- writes straight into `config.wideField.overrides`
+    /// via the same WriteGuard-gated `AstroConfig.save` every
+    /// `Views/Settings/*SettingsView.swift` tab's own `save()` already uses
+    /// (there's no dedicated "mutate config + save" helper to call instead).
+    /// `value == nil` clears the override back to "Automatikus (felismerés)";
+    /// `true`/`false` pins it to wide-field/deep-sky regardless of what
+    /// `WideFieldHeuristic.isWideField` would otherwise guess.
+    ///
+    /// Unlike the Settings tabs (which show `saveError` inline right next to
+    /// their own "Mentés" button), this fires from a context menu with
+    /// nowhere inline to put an error -- so it goes through the same
+    /// `beginOperation`/`handle(_:)`/`endOperation` toast+activity-log path
+    /// every other menu-triggered mutation (`addTag`/`setGoal`/…) already
+    /// uses, then reuses `reloadStatsAfterTagChange` to refresh `stats` --
+    /// the "wide-field" badge's one source, read by both `AllTargetsPage`
+    /// and `TargetDetailPage` -- for this target immediately. Not added to
+    /// `successToastTitles`: same quiet-on-success precedent as
+    /// `addTag`/`setGoal`, whose titles aren't in that set either.
+    func setWideFieldOverride(target: String, value: Bool?) {
+        guard let db else { return }
+
+        var newConfig = config
+        var wideField = newConfig.wideField
+        if let value {
+            wideField.overrides[target] = value
+        } else {
+            wideField.overrides.removeValue(forKey: target)
+        }
+        newConfig.wideField = wideField
+
+        let opID = beginOperation("Besorolás mentése…")
+        do {
+            let writeGuard = WriteGuard(root: URL(fileURLWithPath: newConfig.rootPath, isDirectory: true))
+            try newConfig.save(using: writeGuard)
+            config = newConfig
+        } catch {
+            handle(error)
+            endOperation(opID)
+            return
+        }
+
+        let cfg = newConfig
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            await self.reloadStatsAfterTagChange(db: db, config: cfg, target: target)
+            self.endOperation(opID)
+        }
+    }
+
     // MARK: - Target detail overview extras (R9-T3/A.3)
 
     /// The Célpont-részletek "Áttekintés" segment's coordinate box: the

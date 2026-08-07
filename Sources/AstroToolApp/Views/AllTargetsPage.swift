@@ -499,6 +499,10 @@ struct AllTargetsPage: View {
                 appState.currentPage = .target(stats.target)
             }
         }
+        // R11-T3/F20: manual wide-field/deep-sky override
+        // (`config.wideField.overrides`) -- see `WideFieldClassificationMenu`
+        // (SharedComponents.swift), shared with `TargetDetailPage`'s header.
+        WideFieldClassificationMenu(target: stats.target)
         // N12 (R9 round 3): "Mozaik-panelek…" used to do EXACTLY what
         // "Célpont megnyitása" already does (jump to the target's default
         // Áttekintés segment, which already has the inline mosaic table) --

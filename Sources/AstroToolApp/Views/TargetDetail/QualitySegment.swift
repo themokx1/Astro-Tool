@@ -173,8 +173,20 @@ struct QualitySegment: View {
             controlBar
 
             if !sirilAvailable {
-                Text("Siril nem található — csak natív statisztika")
-                    .font(.callout).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text("Siril nem található — csak natív statisztika")
+                        .font(.callout).foregroundStyle(.secondary)
+                    // R11-T3/F11(c): same `SirilHelpSheet`, reached via the
+                    // same notification `MetricInfoButton`'s "Fogalomtár…"
+                    // footer link already posts (`RootView` owns the sheet).
+                    Button("Mi ez?") {
+                        NotificationCenter.default.post(name: .showSirilHelp, object: nil)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .underline()
+                }
             }
             if let summaryText {
                 Text(summaryText).font(.callout).foregroundStyle(.secondary)

@@ -141,6 +141,10 @@ struct TargetDetailPage: View {
                 Button("CSV") { appState.exportAcquisition(target: target, format: .csv) }
                 Button("Markdown") { appState.exportAcquisition(target: target, format: .md) }
             }
+            // R11-T3/F20: manual wide-field/deep-sky override, right next to
+            // the "wide-field" badge it controls (line above) -- shared with
+            // `AllTargetsPage`'s target row menu.
+            WideFieldClassificationMenu(target: target)
         }
     }
 

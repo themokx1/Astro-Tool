@@ -8,11 +8,38 @@ történik.
 
 ## [Unreleased]
 
-Az R11-es kör A-hullámának második tétele (T2 — Akció-paritás + apró UX),
-az első (T1 — UI-konzisztencia csomag) után.
+Az R11-es kör A-hullámának harmadik tétele (T3 — Settings csomag), a T1 —
+UI-konzisztencia csomag és a T2 — Akció-paritás + apró UX után.
 
 ### Added
 
+- **Helyszín fül fülszintű reset**: a Beállítások ▸ Helyszín fül eddig volt
+  az egyetlen az öt fül közül "Alaphelyzetbe állítás…" gomb nélkül — most
+  a másik négy fül mintáját követi (megerősítő dialógus, majd a draft
+  visszaáll automatikus módra, üres koordinátákra és kikapcsolt
+  időjárás-előrejelzésre; "Mentés" kell a tényleges perzisztáláshoz).
+- **wideField.overrides UI** (F20): a célpontonkénti kézi wide-field/deep-sky
+  felülbírálás eddig csak a config.json kézi szerkesztésével volt elérhető.
+  Új "Besorolás" menü (`WideFieldClassificationMenu`, SharedComponents.swift)
+  az AllTargetsPage célpont-sorainak helyi menüjében és a TargetDetailPage
+  fejlécében (a "wide-field" jelvény mellett) — Automatikus (felismerés) /
+  Wide-field / Deep-sky, pipával a jelenlegin; a választás
+  `AppState.setWideFieldOverride(target:value:)`-on át a meglévő
+  WriteGuard-os config-mentési úton íródik, majd frissíti a `stats`-ot (a
+  jelvény/besorolás azonnal látszik). A Beállítások ▸ Könyvtár-szabályok fül
+  "Wide-field felismerés" szekciója új listát kapott a jelenlegi
+  felülbírálásokról (célpont + wide-field/deep-sky felirat + törlés gomb) —
+  csak áttekintés/törlés, új felvétel innen nem lehetséges.
+- **Siril-segéd sheet** (F11(c)): új `SirilHelpSheet` — mi a Siril (ingyenes,
+  nyílt forráskódú asztrofotó-feldolgozó), mire használja az app (FWHM/
+  kerekség/csillagszám metrikák a pontozáshoz, blind plate-solve), "Siril
+  letöltése…" gomb (siril.org megnyitása böngészőben), és egy táblázat, mi
+  működik nélküle (natív háttér-/telítettség-pontozás: igen; FWHM/csillag-
+  metrikák: nem; plate-solve: nem). Három belépési pont: a QualitySegment
+  Siril-hiány figyelmeztetésének "Mi ez?" gombja; a Beállítások ▸ Pontozás &
+  expozíció fül piros "Siril nem található" státusza melletti "Mi a Siril?"
+  link; a menüsor Súgó csoportjának új "A Sirilről…" pontja (a Fogalomtár
+  notification-mintáját követve, mivel a menüsornak nincs view-state-je).
 - **Közös session-akció menü-builder**: `SessionActionMenu`
   (SharedComponents.swift) adja mostantól a teljes session-sor akciókészletet
   (Célpont megnyitása / Megnyitás Finderben / Kalibráció linkelése… /
@@ -80,6 +107,11 @@ az első (T1 — UI-konzisztencia csomag) után.
   `AppState` aktivitás-napló popoverjében a hibaüzenet alatt megjelenik a
   tanács is; a toast változatlanul csak az alap üzenetet mutatja, hogy ne
   duzzadjon.
+- **Kalibráció fül tolerancia-captionök**: az `exposureToleranceS` sor
+  caption-je most jelzi, hogy "0 = kikapcsolva — ilyenkor csak az arányos
+  tolerancia (exposureToleranceFraction) él"; a `gainTolerance` caption-je
+  skála-magyarázatot kapott ("a FITS GAIN fejléc egységében; 0 = pontos
+  egyezés kell").
 
 ## [0.12.0] - 2026-08-06
 

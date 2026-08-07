@@ -22,6 +22,14 @@ struct LibraryRulesSettingsView: View {
     @State private var wideFieldExtensions: [String] = []
     @State private var wideFieldNameMarkers: [String] = []
     @State private var maxFocalLengthMM: Double = 135
+    /// R11-T3/F20: `wideField.overrides` -- per-target manual wide-field/
+    /// deep-sky classification, entered via the "Besorolás" context menu
+    /// (`AllTargetsPage`/`TargetDetailPage`, `WideFieldClassificationMenu` in
+    /// SharedComponents.swift). This tab only ever DISPLAYS + DELETES
+    /// entries (spec: "Új felvétel itt nem kell") -- so it can be reviewed/
+    /// undone from Settings without hunting down the target that was
+    /// overridden.
+    @State private var wideFieldOverrides: [String: Bool] = [:]
     @State private var statsExcludeLabels: [String] = []
     @State private var gapThresholdSeconds: Double = 0
     @State private var collectingThresholdSeconds: Double = 7200
@@ -101,6 +109,7 @@ struct LibraryRulesSettingsView: View {
                     "Max. fókusztávolság (mm)", value: $maxFocalLengthMM, defaultValue: defaults.wideField.maxFocalLengthMM,
                     caption: "Ennél kisebb/egyenlő FOCALLEN wide-field-re utal."
                 )
+                wideFieldOverridesList
             }
 
             Section("Statisztika") {
@@ -175,6 +184,40 @@ struct LibraryRulesSettingsView: View {
         }
     }
 
+    /// R11-T3/F20: read-only-plus-delete list of `wideField.overrides` --
+    /// entries are only ever ADDED via the "Besorolás" context menu
+    /// (`WideFieldClassificationMenu`), never here; this is purely for
+    /// review/undo. Sorted by target name so the list doesn't reorder
+    /// itself as entries are deleted (a `[String: Bool]` has no order of
+    /// its own).
+    @ViewBuilder
+    private var wideFieldOverridesList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Kézi felülbírálások").font(.subheadline)
+            if wideFieldOverrides.isEmpty {
+                Text("Nincs kézi felülbírálás — minden célpont besorolása a fenti szabályok szerint automatikus.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(wideFieldOverrides.keys.sorted(), id: \.self) { targetName in
+                    HStack {
+                        Text(targetName)
+                        Spacer()
+                        Text(wideFieldOverrides[targetName] == true ? "wide-field" : "deep-sky")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button {
+                            wideFieldOverrides.removeValue(forKey: targetName)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
     /// R10-B7: "Nem mentett módosítások" indicator next to Mentés -- true
     /// whenever the draft differs from `appState.config` (as opposed to
     /// each row's own `↺`, which compares against `AstroConfig()`/
@@ -190,6 +233,7 @@ struct LibraryRulesSettingsView: View {
             || wideFieldExtensions != config.wideField.extensions
             || wideFieldNameMarkers != config.wideField.nameMarkers
             || maxFocalLengthMM != config.wideField.maxFocalLengthMM
+            || wideFieldOverrides != config.wideField.overrides
             || statsExcludeLabels != config.stats.excludeLabels
             || gapThresholdSeconds != config.stats.gapThresholdSeconds
             || collectingThresholdSeconds != config.stats.collectingThresholdSeconds
@@ -207,6 +251,7 @@ struct LibraryRulesSettingsView: View {
         wideFieldExtensions = defaultConfig.wideField.extensions
         wideFieldNameMarkers = defaultConfig.wideField.nameMarkers
         maxFocalLengthMM = defaultConfig.wideField.maxFocalLengthMM
+        wideFieldOverrides = defaultConfig.wideField.overrides
         statsExcludeLabels = defaultConfig.stats.excludeLabels
         gapThresholdSeconds = defaultConfig.stats.gapThresholdSeconds
         collectingThresholdSeconds = defaultConfig.stats.collectingThresholdSeconds
@@ -223,6 +268,7 @@ struct LibraryRulesSettingsView: View {
         wideFieldExtensions = config.wideField.extensions
         wideFieldNameMarkers = config.wideField.nameMarkers
         maxFocalLengthMM = config.wideField.maxFocalLengthMM
+        wideFieldOverrides = config.wideField.overrides
         statsExcludeLabels = config.stats.excludeLabels
         gapThresholdSeconds = config.stats.gapThresholdSeconds
         collectingThresholdSeconds = config.stats.collectingThresholdSeconds
@@ -247,6 +293,7 @@ struct LibraryRulesSettingsView: View {
         wideField.extensions = wideFieldExtensions
         wideField.nameMarkers = wideFieldNameMarkers
         wideField.maxFocalLengthMM = maxFocalLengthMM
+        wideField.overrides = wideFieldOverrides
         newConfig.wideField = wideField
 
         var stats = newConfig.stats

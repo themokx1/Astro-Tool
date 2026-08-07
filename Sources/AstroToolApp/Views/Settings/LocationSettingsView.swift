@@ -30,6 +30,12 @@ struct LocationSettingsView: View {
 
     @State private var saveMessage: String?
     @State private var saveError: String?
+    /// R11-T3: this tab was the one tab of five missing the "Alaphelyzetbe
+    /// állítás…" affordance the other four (`LibrarySettingsView`,
+    /// `CalibrationSettingsView`, `RatingSettingsView`,
+    /// `LibraryRulesSettingsView`) all already had -- same confirm-then-
+    /// reset-the-draft pattern, wired up below.
+    @State private var showResetConfirm = false
 
     var body: some View {
         Form {
@@ -81,6 +87,8 @@ struct LocationSettingsView: View {
 
             Section {
                 HStack {
+                    Button("Alaphelyzetbe állítás…") { showResetConfirm = true }
+                    Spacer()
                     if isDirty {
                         Text("Nem mentett módosítások").font(.caption).foregroundStyle(.orange)
                     }
@@ -114,6 +122,24 @@ struct LocationSettingsView: View {
                 saveError = nil
             }
         }
+        .confirmationDialog(
+            "Biztosan alaphelyzetbe állítod a Helyszín beállításokat?",
+            isPresented: $showResetConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Alaphelyzetbe állítás", role: .destructive) { resetAll() }
+        }
+    }
+
+    /// R11-T3: factory default -- automatikus mód, üres koordináták, kikapcsolt
+    /// időjárás-előrejelzés (matches `SiteRule()`/`WeatherRule()`'s own
+    /// defaults, same "reset the DRAFT, not the saved config" semantics as
+    /// every other tab's `resetAll()` -- still needs "Mentés" to persist).
+    private func resetAll() {
+        mode = .automatic
+        latitudeText = ""
+        longitudeText = ""
+        weatherEnabled = false
     }
 
     private var resolvedLatitudeText: String {

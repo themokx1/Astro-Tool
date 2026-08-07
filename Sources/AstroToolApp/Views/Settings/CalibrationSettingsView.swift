@@ -58,7 +58,8 @@ struct CalibrationSettingsView: View {
                 )
                 numberRow(
                     "Expozíció-tolerancia (s)", value: $exposureToleranceS, defaultValue: defaults.exposureToleranceS,
-                    caption: "Fix, másodperces tolerancia a nominális expozíció-illesztéshez."
+                    caption: "Fix, másodperces tolerancia a nominális expozíció-illesztéshez. "
+                        + "0 = kikapcsolva — ilyenkor csak az arányos tolerancia (exposureToleranceFraction) él."
                 )
                 numberRow(
                     "Expozíció-tolerancia (arány)", value: $exposureToleranceFraction, defaultValue: defaults.exposureToleranceFraction,
@@ -74,7 +75,8 @@ struct CalibrationSettingsView: View {
                 )
                 numberRow(
                     "Gain-tolerancia", value: $gainTolerance, defaultValue: defaults.gainTolerance,
-                    caption: "A master és a light GAIN-je közt megengedett eltérés (0 = pontos egyezés)."
+                    caption: "A master és a light GAIN-je közt megengedett eltérés, a FITS GAIN fejléc egységében; "
+                        + "0 = pontos egyezés kell."
                 )
             }
 
