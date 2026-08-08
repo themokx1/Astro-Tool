@@ -46,6 +46,15 @@ public struct StackSelection: Codable, Sendable {
     /// `perFilter`, so `export`/`exportToDirectory` can render the manifest
     /// with no further DB access.
     public var manifest: [StackManifestRow]
+    /// R12-U2 (point 3): every distinct filter-bucket key `select()` found
+    /// among this session's usable lights -- a raw FITS `FILTER` value, or
+    /// `FilterBreakdownQueries.noFilterSentinel` -- regardless of whether
+    /// there was only ONE (in which case `perFilter` itself stays `nil` for
+    /// full backward compatibility, see that field's own doc). Lets a caller
+    /// (the CLI's `--keep-filter` unknown-name warning) know which filter
+    /// names actually exist in this session without needing `perFilter`
+    /// populated. Empty only when `totalFrames == 0`.
+    public var filterKeysPresent: [String]
 
     public init(
         target: String,
@@ -56,7 +65,8 @@ public struct StackSelection: Codable, Sendable {
         selectedPaths: [String],
         rejectedPaths: [String],
         perFilter: [StackFilterSelection]? = nil,
-        manifest: [StackManifestRow] = []
+        manifest: [StackManifestRow] = [],
+        filterKeysPresent: [String] = []
     ) {
         self.target = target
         self.date = date
@@ -67,6 +77,7 @@ public struct StackSelection: Codable, Sendable {
         self.rejectedPaths = rejectedPaths
         self.perFilter = perFilter
         self.manifest = manifest
+        self.filterKeysPresent = filterKeysPresent
     }
 }
 
@@ -276,9 +287,23 @@ public enum StackList {
         var manifestRows: [StackManifestRow] = []
         var perFilterResults: [StackFilterSelection] = []
 
+        // R12-U2 (point 3): case-insensitive matching between
+        // `keepFractionPerFilter`'s own keys and this session's bucket keys
+        // -- a caller typing "ha" instead of "Ha" (or vice versa) should
+        // still hit the override, the same case-folding
+        // `CalibAnalyzer.normalizedFilterKey`/`FilterGoalQueries.merge`
+        // already apply to a raw FITS FILTER value elsewhere in this
+        // codebase. The CLI's own "none" alias for the no-filter sentinel is
+        // resolved BEFORE this dictionary is built (`parseKeepFilterPerFilter`),
+        // so this is a plain case-fold, nothing more.
+        var normalizedOverrides: [String: Double] = [:]
+        for (key, value) in keepFractionPerFilter {
+            normalizedOverrides[normalizedFilterOverrideKey(key)] = value
+        }
+
         for filterKey in sortedFilterKeys {
             let groupFiles = filesByFilter[filterKey] ?? []
-            let fraction = keepFractionPerFilter[filterKey] ?? keepFraction
+            let fraction = normalizedOverrides[normalizedFilterOverrideKey(filterKey)] ?? keepFraction
 
             let result = try selectWithinGroup(
                 files: groupFiles, filterKey: filterKey, keepFraction: fraction, db: db, config: config
@@ -320,12 +345,24 @@ public enum StackList {
             selectedPaths: selectedPaths,
             rejectedPaths: rejectedPaths,
             perFilter: isSingleBucket ? nil : perFilterResults,
-            manifest: manifestRows
+            manifest: manifestRows,
+            filterKeysPresent: sortedFilterKeys
         )
     }
 
     private static func formattedPercent(_ fraction: Double) -> String {
         "\(Int((fraction * 100).rounded()))%"
+    }
+
+    /// Trimmed + lower-cased, for matching a `keepFractionPerFilter` key
+    /// against an actual bucket key case-insensitively (R12-U2, point 3) --
+    /// same normalization shape `CalibAnalyzer.normalizedFilterKey` already
+    /// uses for a raw FITS FILTER value, just without that function's
+    /// `nil`-for-blank behavior (an override key is never legitimately
+    /// blank -- `parseKeepFilterPerFilter` already rejects an empty filter
+    /// name outright).
+    private static func normalizedFilterOverrideKey(_ raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespaces).lowercased()
     }
 
     // MARK: - Per-filter selection (R11-T11)
@@ -449,23 +486,59 @@ public enum StackList {
 
     // MARK: - Export
 
+    /// Outcome of one `export`/`exportToDirectory` call (R12-U2) -- beyond
+    /// just "where did it write", both callers (CLI, `StackListSheet`) need
+    /// to know whether this run's own re-export SYNC removed anything left
+    /// over from a previous export with a different selection (point 2), and
+    /// whether a cross-device `--out` destination fell back to a plain copy
+    /// instead of a hardlink (point 1). `export` itself never crosses a
+    /// volume boundary (its destination is always under the SAME root as
+    /// its source), so `copyFallbackUsed` is always `false` there --
+    /// `exportToDirectory` is the only caller that can ever set it `true`.
+    public struct StackExportResult: Sendable, Equatable {
+        public var directory: URL
+        /// Regular files removed from the destination `lights/` tree because
+        /// they belonged to an EARLIER export's selection but not this one
+        /// (R12-U2, point 2) -- `0` for a fresh export or a re-export whose
+        /// tree already matches the current selection exactly.
+        public var removedStaleCount: Int
+        /// `true` iff at least one selected frame had to be plain-copied
+        /// instead of hardlinked because `destDir` sits on a different
+        /// volume than the source library (R12-U2, point 1).
+        public var copyFallbackUsed: Bool
+
+        public init(directory: URL, removedStaleCount: Int = 0, copyFallbackUsed: Bool = false) {
+            self.directory = directory
+            self.removedStaleCount = removedStaleCount
+            self.copyFallbackUsed = copyFallbackUsed
+        }
+    }
+
     /// Materializes `selection` on disk: hardlinks the selected frames into
     /// `.astro_tool/stacklists/<target>-<date>/lights/` (via
     /// `WriteGuard.linkStackListFile` -- additive, never overwrites), then
     /// writes a `.dssfilelist`/`.ssf` pair alongside it (via
     /// `WriteGuard.writeToolFile` -- freely overwritable, it's the tool's
-    /// own state, not the user's library), plus a `manifest.csv`. Returns
-    /// the stacklist directory.
+    /// own state, not the user's library), plus a `manifest.csv`.
     ///
     /// R11-T11 (F15): when `selection.perFilter` is non-`nil` (more than one
     /// filter bucket), the hardlink tree becomes `lights/<FILTER>/` (one
     /// subfolder per filter, sanitized the same way session/target folder
-    /// names are), and EACH filter gets its own `<slug>-<FILTER>.dssfilelist`
-    /// / `<slug>-<FILTER>.ssf` pair instead of one shared `stack.*` pair --
-    /// PixInsight's WBPP (and most other batch preprocessors) auto-detect
-    /// filters from folder names, so this shape lets a WBPP project just
-    /// point at `lights/`. `manifest.csv` is always written once at the
-    /// stacklist root regardless of filter count.
+    /// names are -- R12-U2, point 4: with a collision-safe fallback slug, see
+    /// `resolvedFilterSlugs`), and EACH filter gets its own
+    /// `<slug>-<FILTER>.dssfilelist`/`<slug>-<FILTER>.ssf` pair instead of one
+    /// shared `stack.*` pair -- PixInsight's WBPP (and most other batch
+    /// preprocessors) auto-detect filters from folder names, so this shape
+    /// lets a WBPP project just point at `lights/`. `manifest.csv` is always
+    /// written once at the stacklist root regardless of filter count.
+    ///
+    /// R12-U2 (point 2): after linking, the destination `lights/` tree is
+    /// SYNCED to the current selection -- any regular file directly under
+    /// `lights/` or one level under one of its own subfolders that ISN'T
+    /// part of THIS selection (left over from an earlier export with a
+    /// different keep-fraction, or from a flat->per-filter shape change) is
+    /// removed. Strictly scoped to this stacklist's own `lights/` tree (see
+    /// `syncLightsTree`'s own doc) -- the user's library is never touched.
     ///
     /// Idempotent: re-running `export` with the same (or an updated)
     /// selection never disturbs an already-linked frame -- `linkStackListFile`
@@ -473,22 +546,32 @@ public enum StackList {
     /// `.dssfilelist`/`.ssf`/`manifest.csv` text files to match the current
     /// selection.
     @discardableResult
-    public static func export(_ selection: StackSelection, root: URL, using writeGuard: WriteGuard) throws -> URL {
+    public static func export(_ selection: StackSelection, root: URL, using writeGuard: WriteGuard) throws -> StackExportResult {
         let slug = slug(target: selection.target, date: selection.date)
         let stacklistDir = root
             .appendingPathComponent(".astro_tool", isDirectory: true)
             .appendingPathComponent("stacklists/\(slug)", isDirectory: true)
+        let lightsDir = stacklistDir.appendingPathComponent("lights", isDirectory: true)
+
+        var expectedRelativePaths = Set<String>()
+        var linkedNameByPath: [String: String] = [:]
 
         if let perFilter = selection.perFilter, !perFilter.isEmpty {
-            for filterSelection in perFilter {
-                let filterSlug = Sanitizer.sanitize(filterSelection.filter)
+            let filterSlugs = resolvedFilterSlugs(for: perFilter)
+            for (index, filterSelection) in perFilter.enumerated() {
+                let filterSlug = filterSlugs[index]
                 let lightsDestDir = ".astro_tool/stacklists/\(slug)/lights/\(filterSlug)"
+                let nameByPath = disambiguatedFileNames(forPaths: filterSelection.selectedPaths)
 
                 var fileNames: [String] = []
                 for path in filterSelection.selectedPaths {
-                    let fileName = (path as NSString).lastPathComponent
-                    _ = try writeGuard.linkStackListFile(sourceRelative: path, destDirRelative: lightsDestDir)
+                    let fileName = nameByPath[path] ?? (path as NSString).lastPathComponent
+                    _ = try writeGuard.linkStackListFile(
+                        sourceRelative: path, destDirRelative: lightsDestDir, destFileName: fileName
+                    )
                     fileNames.append(fileName)
+                    expectedRelativePaths.insert("\(filterSlug)/\(fileName)")
+                    linkedNameByPath[path] = fileName
                 }
 
                 let baseName = "\(slug)-\(filterSlug)"
@@ -507,12 +590,17 @@ public enum StackList {
             }
         } else {
             let lightsDestDir = ".astro_tool/stacklists/\(slug)/lights"
+            let nameByPath = disambiguatedFileNames(forPaths: selection.selectedPaths)
 
             var fileNames: [String] = []
             for path in selection.selectedPaths {
-                let fileName = (path as NSString).lastPathComponent
-                _ = try writeGuard.linkStackListFile(sourceRelative: path, destDirRelative: lightsDestDir)
+                let fileName = nameByPath[path] ?? (path as NSString).lastPathComponent
+                _ = try writeGuard.linkStackListFile(
+                    sourceRelative: path, destDirRelative: lightsDestDir, destFileName: fileName
+                )
                 fileNames.append(fileName)
+                expectedRelativePaths.insert(fileName)
+                linkedNameByPath[path] = fileName
             }
 
             let dssContent = renderDSSFilelist(fileNames: fileNames, lightsRelativePath: "lights")
@@ -524,15 +612,23 @@ public enum StackList {
             // lights/, exactly like the per-filter branch above already got
             // right. Before this fix the flat/single-filter script cd'd one
             // level too high and `convert` would find zero frames.
-            let flatLightsDir = stacklistDir.appendingPathComponent("lights", isDirectory: true)
-            let ssfContent = try renderSSF(framesDir: flatLightsDir, filterLabel: nil)
+            let ssfContent = try renderSSF(framesDir: lightsDir, filterLabel: nil)
             try writeGuard.writeToolFile(relativePath: "stacklists/\(slug)/stack.ssf", data: Data(ssfContent.utf8))
         }
 
-        let manifestContent = renderManifestCSV(selection.manifest)
+        // R12-U2 (point 2): sync AFTER every filter's own frames have been
+        // linked, over the whole `lights/` tree at once -- a stale filter
+        // subfolder's leftover files (e.g. an old per-filter export where
+        // one filter has since disappeared entirely) are caught by this same
+        // pass, not just a stale file within a still-present bucket.
+        let removedStaleCount = try syncLightsTree(
+            lightsDir: lightsDir, expectedRelativePaths: expectedRelativePaths, guardBase: writeGuard.toolDir
+        )
+
+        let manifestContent = renderManifestCSV(selection.manifest, libraryRoot: root, linkedNameByPath: linkedNameByPath)
         try writeGuard.writeToolFile(relativePath: "stacklists/\(slug)/manifest.csv", data: Data(manifestContent.utf8))
 
-        return stacklistDir
+        return StackExportResult(directory: stacklistDir, removedStaleCount: removedStaleCount)
     }
 
     /// R11-T4 (`astrotool stacklist --out PATH`): the same materialization as
@@ -555,47 +651,76 @@ public enum StackList {
     /// plus one `<target>-<date>-<FILTER>.dssfilelist`/`.ssf` pair per
     /// filter. Same idempotent, additive, hardlink-only behavior as
     /// `export` -- never overwrites a destination file that's already there.
+    ///
+    /// R12-U2 (point 1): `destDir` can legitimately sit on a DIFFERENT
+    /// volume than `sourceRoot` -- the one hardlink destination in this whole
+    /// package where that's possible -- so a per-frame link that fails with
+    /// `EXDEV` (cross-device) falls back to a plain copy instead of
+    /// propagating the error; `result.copyFallbackUsed` tells the caller this
+    /// happened, so the CLI/app can say "hardlink helyett másolat készült"
+    /// rather than silently behaving differently.
     @discardableResult
-    public static func exportToDirectory(_ selection: StackSelection, destDir: URL, sourceRoot: URL) throws -> URL {
+    public static func exportToDirectory(
+        _ selection: StackSelection, destDir: URL, sourceRoot: URL
+    ) throws -> StackExportResult {
         let fm = FileManager.default
+        let lightsDir = destDir.appendingPathComponent("lights", isDirectory: true)
+
+        var expectedRelativePaths = Set<String>()
+        var linkedNameByPath: [String: String] = [:]
+        var copyFallbackUsed = false
 
         if let perFilter = selection.perFilter, !perFilter.isEmpty {
-            for filterSelection in perFilter {
-                let filterSlug = Sanitizer.sanitize(filterSelection.filter)
-                let lightsDir = destDir.appendingPathComponent("lights/\(filterSlug)", isDirectory: true)
-                try fm.createDirectory(at: lightsDir, withIntermediateDirectories: true)
+            let filterSlugs = resolvedFilterSlugs(for: perFilter)
+            for (index, filterSelection) in perFilter.enumerated() {
+                let filterSlug = filterSlugs[index]
+                let filterLightsDir = destDir.appendingPathComponent("lights/\(filterSlug)", isDirectory: true)
+                try fm.createDirectory(at: filterLightsDir, withIntermediateDirectories: true)
+                let nameByPath = disambiguatedFileNames(forPaths: filterSelection.selectedPaths)
 
                 var fileNames: [String] = []
                 for path in filterSelection.selectedPaths {
-                    let fileName = (path as NSString).lastPathComponent
+                    let fileName = nameByPath[path] ?? (path as NSString).lastPathComponent
                     fileNames.append(fileName)
+                    expectedRelativePaths.insert("\(filterSlug)/\(fileName)")
+                    linkedNameByPath[path] = fileName
 
-                    let destFileURL = lightsDir.appendingPathComponent(fileName, isDirectory: false)
-                    guard !fm.fileExists(atPath: destFileURL.path) else { continue }
+                    let destFileURL = filterLightsDir.appendingPathComponent(fileName, isDirectory: false)
                     let sourceURL = sourceRoot.appendingPathComponent(path)
-                    try fm.linkItem(at: sourceURL, to: destFileURL)
+                    if try linkOrCopyForExport(
+                        sourceURL: sourceURL, destFileURL: destFileURL,
+                        link: { try fm.linkItem(at: $0, to: $1) }, copy: { try fm.copyItem(at: $0, to: $1) }
+                    ) {
+                        copyFallbackUsed = true
+                    }
                 }
 
                 let baseName = "\(slug(target: selection.target, date: selection.date))-\(filterSlug)"
                 let dssContent = renderDSSFilelist(fileNames: fileNames, lightsRelativePath: "lights/\(filterSlug)")
                 try Data(dssContent.utf8).write(to: destDir.appendingPathComponent("\(baseName).dssfilelist"))
 
-                let ssfContent = try renderSSF(framesDir: lightsDir, filterLabel: filterSelection.filter)
+                let ssfContent = try renderSSF(framesDir: filterLightsDir, filterLabel: filterSelection.filter)
                 try Data(ssfContent.utf8).write(to: destDir.appendingPathComponent("\(baseName).ssf"))
             }
         } else {
-            let lightsDir = destDir.appendingPathComponent("lights", isDirectory: true)
             try fm.createDirectory(at: lightsDir, withIntermediateDirectories: true)
+            let nameByPath = disambiguatedFileNames(forPaths: selection.selectedPaths)
 
             var fileNames: [String] = []
             for path in selection.selectedPaths {
-                let fileName = (path as NSString).lastPathComponent
+                let fileName = nameByPath[path] ?? (path as NSString).lastPathComponent
                 fileNames.append(fileName)
+                expectedRelativePaths.insert(fileName)
+                linkedNameByPath[path] = fileName
 
                 let destFileURL = lightsDir.appendingPathComponent(fileName, isDirectory: false)
-                guard !fm.fileExists(atPath: destFileURL.path) else { continue }
                 let sourceURL = sourceRoot.appendingPathComponent(path)
-                try fm.linkItem(at: sourceURL, to: destFileURL)
+                if try linkOrCopyForExport(
+                    sourceURL: sourceURL, destFileURL: destFileURL,
+                    link: { try fm.linkItem(at: $0, to: $1) }, copy: { try fm.copyItem(at: $0, to: $1) }
+                ) {
+                    copyFallbackUsed = true
+                }
             }
 
             let dssContent = renderDSSFilelist(fileNames: fileNames, lightsRelativePath: "lights")
@@ -607,10 +732,215 @@ public enum StackList {
             try Data(ssfContent.utf8).write(to: destDir.appendingPathComponent("stack.ssf"))
         }
 
-        let manifestContent = renderManifestCSV(selection.manifest)
+        // R12-U2 (point 2): same re-export sync as `export`, scoped to
+        // `destDir`'s own `lights/` tree this time (the guard base for an
+        // external `--out` destination).
+        let removedStaleCount = try syncLightsTree(
+            lightsDir: lightsDir, expectedRelativePaths: expectedRelativePaths, guardBase: destDir
+        )
+
+        let manifestContent = renderManifestCSV(selection.manifest, libraryRoot: sourceRoot, linkedNameByPath: linkedNameByPath)
         try Data(manifestContent.utf8).write(to: destDir.appendingPathComponent("manifest.csv"))
 
-        return destDir
+        return StackExportResult(directory: destDir, removedStaleCount: removedStaleCount, copyFallbackUsed: copyFallbackUsed)
+    }
+
+    /// Links `sourceURL` to `destFileURL`, falling back to a plain COPY when
+    /// `link` itself reports a cross-device (`EXDEV`) failure (R12-U2, point
+    /// 1) -- `exportToDirectory`'s `destDir` is the one hardlink destination
+    /// in this package that can legitimately sit on a different volume than
+    /// the library root, and a hard link (a second directory entry for the
+    /// SAME inode) simply cannot cross a filesystem boundary by definition.
+    /// Skips entirely (returns `false`, touches nothing) when `destFileURL`
+    /// already exists -- same idempotent "never overwrite" rule every other
+    /// hardlink call site in this package follows.
+    ///
+    /// `link`/`copy` are injected rather than calling `FileManager` directly
+    /// so a test can simulate the `EXDEV` failure with a fake `link` closure
+    /// without needing a REAL second volume -- both production call sites
+    /// pass `FileManager.default.linkItem`/`copyItem`.
+    ///
+    /// Returns `true` iff the copy fallback actually fired.
+    @discardableResult
+    static func linkOrCopyForExport(
+        sourceURL: URL,
+        destFileURL: URL,
+        fileManager: FileManager = .default,
+        link: (URL, URL) throws -> Void,
+        copy: (URL, URL) throws -> Void
+    ) throws -> Bool {
+        guard !fileManager.fileExists(atPath: destFileURL.path) else { return false }
+        do {
+            try link(sourceURL, destFileURL)
+            return false
+        } catch {
+            guard isCrossDeviceLinkError(error) else { throw error }
+            try copy(sourceURL, destFileURL)
+            return true
+        }
+    }
+
+    /// Classifies a filesystem error as a cross-device link failure
+    /// (`EXDEV`) -- the OS's own answer to "hard-link a file onto a
+    /// different volume", impossible by definition (a hard link is a second
+    /// directory entry for the SAME inode, and an inode belongs to exactly
+    /// one filesystem). Mirrors `isPermissionError`'s own recursive "check
+    /// `NSUnderlyingErrorKey` too" shape (`ExclusionRules.swift`) -- Foundation
+    /// sometimes wraps the real POSIX error one level down rather than
+    /// surfacing it directly.
+    static func isCrossDeviceLinkError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EXDEV) {
+            return true
+        }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+            return isCrossDeviceLinkError(underlying)
+        }
+        return false
+    }
+
+    /// Resolves a stable, collision-free folder/basename SLUG for every one
+    /// of `perFilter`'s own filter buckets, in that array's order (R12-U2,
+    /// point 4) -- `export`/`exportToDirectory`'s per-filter tree
+    /// (`lights/<slug>/`, `<target>-<date>-<slug>.dssfilelist`/`.ssf`) used
+    /// to call `Sanitizer.sanitize(filterSelection.filter)` directly and let
+    /// two different filters collide silently: a filter name made ENTIRELY
+    /// of characters `Sanitizer` strips (e.g. `"###"`) sanitizes to an EMPTY
+    /// string, and two distinctly-named filters can sanitize to the very
+    /// SAME non-empty slug (e.g. `"Ha!"` and `"Ha?"` both -> `"Ha"`) --
+    /// either way, the second bucket's own `linkStackListFile`/`linkItem`
+    /// calls would silently no-op against the first bucket's already-linked
+    /// files (or empty-string path component would outright fail).
+    ///
+    /// Assigns, in encounter order:
+    /// - `"filter_1"`, `"filter_2"`, … to every EMPTY-slug bucket;
+    /// - a `"_2"`, `"_3"`, … numeric suffix to every non-empty slug that's
+    ///   ALREADY been used by an earlier bucket in this same export.
+    ///
+    /// A session with no collision at all resolves to exactly the plain
+    /// `Sanitizer.sanitize` output every existing bucket already used --
+    /// fully backward compatible.
+    static func resolvedFilterSlugs(for perFilter: [StackFilterSelection]) -> [String] {
+        var usedSlugs = Set<String>()
+        var emptySlugCounter = 0
+        var result: [String] = []
+        for filterSelection in perFilter {
+            var candidate = Sanitizer.sanitize(filterSelection.filter)
+            if candidate.isEmpty {
+                emptySlugCounter += 1
+                candidate = "filter_\(emptySlugCounter)"
+            } else if usedSlugs.contains(candidate) {
+                var suffix = 2
+                var attempt = "\(candidate)_\(suffix)"
+                while usedSlugs.contains(attempt) {
+                    suffix += 1
+                    attempt = "\(candidate)_\(suffix)"
+                }
+                candidate = attempt
+            }
+            usedSlugs.insert(candidate)
+            result.append(candidate)
+        }
+        return result
+    }
+
+    /// Builds a collision-safe hardlink FILENAME for every one of `paths`
+    /// (one filter bucket's already-selected, path-sorted frames) -- R12-U2,
+    /// point 4. `export`/`exportToDirectory` used to just take
+    /// `(path as NSString).lastPathComponent` and rely on the destination
+    /// write's own "already there, skip" idempotence to protect against a
+    /// re-run -- but that same idempotence silently swallows a SECOND,
+    /// DIFFERENT source file that happens to share a first file's basename
+    /// (e.g. two sub-folders' own `img_0001.fit`): the second frame would
+    /// just never get linked at all, with nothing in the output to say so.
+    ///
+    /// The FIRST path with a given basename keeps it unchanged. Every
+    /// subsequent path with the SAME basename gets a `<parent-dir>__<name>`
+    /// disambiguated name instead (e.g. `part2/img_0001.fit` ->
+    /// `"part2__img_0001.fit"`), falling back to a bare numeric `_2`/`_3`…
+    /// suffix on top of that if the parent-prefixed name is STILL taken (a
+    /// rarer, second-order collision). A bucket with no colliding basename
+    /// at all resolves every path to its own plain basename -- byte-for-byte
+    /// what this export produced before this fix.
+    static func disambiguatedFileNames(forPaths paths: [String]) -> [String: String] {
+        var usedNames = Set<String>()
+        var result: [String: String] = [:]
+        for path in paths {
+            let baseName = (path as NSString).lastPathComponent
+            var candidate = baseName
+            if usedNames.contains(candidate) {
+                let parentDir = ((path as NSString).deletingLastPathComponent as NSString).lastPathComponent
+                let prefixedBase = parentDir.isEmpty ? baseName : "\(parentDir)__\(baseName)"
+                candidate = prefixedBase
+                var suffix = 2
+                while usedNames.contains(candidate) {
+                    candidate = "\(prefixedBase)_\(suffix)"
+                    suffix += 1
+                }
+            }
+            usedNames.insert(candidate)
+            result[path] = candidate
+        }
+        return result
+    }
+
+    /// Removes every regular file (symlinks and directories left alone)
+    /// directly under `lightsDir`, or one level under any of `lightsDir`'s
+    /// OWN immediate subfolders (the flat vs. per-filter shapes `export`/
+    /// `exportToDirectory` produce), that ISN'T among `expectedRelativePaths`
+    /// (each relative to `lightsDir` itself -- a bare name like `"l1.fit"`
+    /// for the flat shape, `"Ha/ha1.fit"` for a per-filter one) -- R12-U2,
+    /// point 2's re-export sync. Never recurses past that one level, so a
+    /// stray deeper subfolder under `lights/` is left untouched either way.
+    ///
+    /// `guardBase` must be an ancestor of `lightsDir` (the tool's own
+    /// `toolDir` for `export`'s internal `.astro_tool/stacklists/...`
+    /// location, `destDir` for `exportToDirectory`'s external `--out` tree)
+    /// -- every candidate-for-deletion path is re-verified against it via
+    /// `standardizedFileURL` containment right before `removeItem` ever
+    /// runs, on top of already only ever walking `lightsDir`'s own two
+    /// levels: the same defense-in-depth `WriteGuard`'s own writes already
+    /// apply, so this can never reach outside the export's own tree, let
+    /// alone into the user's actual library.
+    ///
+    /// Returns the number of files actually removed.
+    static func syncLightsTree(lightsDir: URL, expectedRelativePaths: Set<String>, guardBase: URL) throws -> Int {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: lightsDir.path) else { return 0 }
+        let guardBasePath = guardBase.standardizedFileURL.path
+
+        func isRegularFile(_ url: URL) -> Bool {
+            let type = try? fm.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType
+            return type == .typeRegular
+        }
+
+        var removed = 0
+        func maybeRemove(_ url: URL, relativePath: String) throws {
+            guard !expectedRelativePaths.contains(relativePath) else { return }
+            guard isRegularFile(url) else { return }
+            let standardized = url.standardizedFileURL
+            guard standardized.path == guardBasePath || standardized.path.hasPrefix(guardBasePath + "/") else { return }
+            try fm.removeItem(at: standardized)
+            removed += 1
+        }
+
+        let topLevelNames = (try? fm.contentsOfDirectory(atPath: lightsDir.path)) ?? []
+        for name in topLevelNames {
+            let itemURL = lightsDir.appendingPathComponent(name, isDirectory: false)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: itemURL.path, isDirectory: &isDir) else { continue }
+            if isDir.boolValue {
+                let subDirURL = lightsDir.appendingPathComponent(name, isDirectory: true)
+                let subNames = (try? fm.contentsOfDirectory(atPath: subDirURL.path)) ?? []
+                for subName in subNames {
+                    let fileURL = subDirURL.appendingPathComponent(subName, isDirectory: false)
+                    try maybeRemove(fileURL, relativePath: "\(name)/\(subName)")
+                }
+            } else {
+                try maybeRemove(itemURL, relativePath: name)
+            }
+        }
+        return removed
     }
 
     /// `<sanitized target>-<date>` -- the stacklist directory's own name
@@ -620,7 +950,12 @@ public enum StackList {
     /// safe path component; `WriteGuard.linkStackListFile`'s own component
     /// validation is the actual defense against a pathological result
     /// (e.g. a target that sanitizes down to `".."`), not this function.
-    static func slug(target: String, date: String) -> String {
+    /// `public` (R12-U2, point 5) so the app layer (`StackListSheet`'s own
+    /// `exportDestinationCaption`) can show the REAL, slugged export path
+    /// instead of a raw `"\(target)-\(date)"` literal that silently diverges
+    /// from the actual on-disk folder name whenever `target` contains a
+    /// character `Sanitizer` strips.
+    public static func slug(target: String, date: String) -> String {
         "\(Sanitizer.sanitize(target))-\(date)"
     }
 
@@ -720,13 +1055,24 @@ public enum StackList {
 
     // MARK: - manifest.csv (R11-T11)
 
-    /// Renders `manifest.csv` -- see `StackManifestRow`'s own doc comment
-    /// for what each row/column means. Header first, then one row per
-    /// `rows` entry in its own order (grouped by filter, biggest bucket
-    /// first, path-sorted within a filter -- `select()`'s own construction
-    /// order).
-    private static func renderManifestCSV(_ rows: [StackManifestRow]) -> String {
-        var lines = ["file,filter,score,fwhm_px,session_date,verdict"]
+    /// Renders `manifest.csv` -- see `StackManifestRow`'s own doc comment for
+    /// what each data column means. R12-U2 (point 6): line 1 is now a `#`
+    /// comment carrying the LIBRARY root's absolute path (`# library_root:
+    /// /path/to/library`) -- every `file` column below is root-RELATIVE, so
+    /// without this a script reading `manifest.csv` in isolation (e.g. after
+    /// copying it off onto another machine) has no way to resolve those
+    /// paths back to real files; a leading `#` line is universally ignored
+    /// by CSV readers that don't know to look for it, so this doesn't break
+    /// any existing consumer. R12-U2 (point 4): the trailing `linked_name`
+    /// column is this row's ACTUAL on-disk hardlink filename under `lights/`
+    /// (post collision-disambiguation, see `disambiguatedFileNames`) --
+    /// blank for a row that was never linked at all (any `verdict` other
+    /// than `"selected"`).
+    private static func renderManifestCSV(
+        _ rows: [StackManifestRow], libraryRoot: URL, linkedNameByPath: [String: String] = [:]
+    ) -> String {
+        var lines = ["# library_root: \(libraryRoot.standardizedFileURL.path)"]
+        lines.append("file,filter,score,fwhm_px,session_date,verdict,linked_name")
         for row in rows {
             let fields = [
                 row.file,
@@ -735,6 +1081,7 @@ public enum StackList {
                 row.fwhmPx.map { String(format: "%.2f", $0) } ?? "",
                 row.sessionDate,
                 row.verdict,
+                linkedNameByPath[row.file] ?? "",
             ]
             lines.append(fields.map(csvField).joined(separator: ","))
         }

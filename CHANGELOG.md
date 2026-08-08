@@ -754,6 +754,46 @@ listát. Érintett parancsok/módok:
   setup-leírójára előszűrve nyit a Trendekre; a Felfedezés és a Naptár
   szegmens fejlécében diszkrét "Helyszín: <név>" jelvény jelenik meg, ha
   egynél több helyszín van konfigurálva.
+- **Stacklist/export javítások (R12-U2)**: hét kisebb, egymástól független
+  hiba a `stacklist` exportban és a DSS-import ágban, mind a valós
+  workflow-újranézés találatai.
+  - **EXDEV copy-fallback**: `stacklist --out PATH` másik kötetre hardlinkelt
+    volna (`FileManager.linkItem` ilyenkor kötethatáron mindig elhasal) —
+    most egy cross-device (`EXDEV`) hiba esetén az érintett keret másolással
+    kerül a célba, a kimenet jelzi ("hardlink helyett másolat készült —
+    másik kötet"). A könyvtáron BELÜLI export (`.astro_tool/stacklists`)
+    változatlanul tisztán hardlink, mivel az sosem lép kötethatárt.
+  - **Re-export szinkron**: újra-exportáláskor a cél `lights/` fa mostantól
+    szinkronba kerül a friss kiválasztással — a kiválasztásban már nem
+    szereplő korábbi hardlinkek eltűnnek (szigorú útvonal-guarddal,
+    kizárólag a tool saját stacklist-fáján belül, szimlinket/mappát sosem
+    érintve), a kimenet jelzi ("N elavult link eltávolítva"). Ez egy
+    szigorodó `--keep` utáni felesleges linket éppúgy eltakarít, mint egy
+    flat→per-filter átmenet stale lapos `lights/*.fit` maradékát.
+  - **`--keep-filter` normalizálás**: a szűrőnév-egyeztetés mostantól
+    kis-nagybetű-független (a `CalibAnalyzer`/`FilterGoalQueries` mintája);
+    a session-ben nem létező szűrőnévre stderr-figyelmeztetés (nem hiba); a
+    "(nincs szűrő-adat)" bucket CLI-alul íráshoz `none=<érték>` alias.
+  - **Slug/név ütközés-védelem**: üres filter-slug (pl. csupa szimbólumból
+    álló szűrőnév) "filter_1", "filter_2"… névre esik vissza; két szűrő
+    azonos sanitizált slugjánál számozott utótag (`Ha`, `Ha_2`…); egy
+    bucketen belüli azonos fájlnévnél (pl. két különböző session-almappa
+    saját `img_0001.fit`-je) a második eddig csendben kimaradt a linkelésből
+    — most megkülönböztető utótagot kap (`part2__img_0001.fit`), a
+    `.dssfilelist`/`manifest.csv` a tényleges linknevet írja.
+  - **`StackListSheet`**: a cél-felirat a valós (`Sanitizer`-slugolt)
+    exportútvonalat mutatja + a `.ssf`-et is megemlíti (eddig csak a
+    `.dssfilelist`-et); a Minőség szegmens kontroll-sávjában új "Stackelés
+    előkészítése…" gomb (a kiválasztott session-nel nyit, "Minden
+    session"-nél session-választó menüvel, a Stackek szegmens mintájára).
+  - **`manifest.csv`**: első sora mostantól `# library_root: <abszolút út>`
+    komment — a fájl `file` oszlopa gyökér-relatív, e nélkül egy külön
+    átvitt manifest önmagában nem lenne feloldható.
+  - **DSS-ingest guard**: a `.dssfilelist`→`user_verdicts` ág eddig egy
+    ellentmondó bulk-importnál felülírhatta egy `source == "app"` (a
+    felhasználó által EZEN belül az appban rögzített) döntést — mostantól
+    ez az ág sosem írja felül, ugyanaz a védelmi minta, mint amit az
+    `info.txt`-ág egy valódi astrotool/Siril-pontszámnál már alkalmazott.
 
 ## [0.12.0] - 2026-08-06
 

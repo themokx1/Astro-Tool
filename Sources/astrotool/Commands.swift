@@ -189,16 +189,28 @@ Commands:
                 Best-frame stack-list export: hardlinks the selected lights
                 into .astro_tool/stacklists/<target>-<date>/lights/ and
                 writes a .dssfilelist (DeepSkyStacker/Sirilic) and a .ssf
-                Siril script alongside it, plus a manifest.csv (file, filter,
-                score, fwhm_px, session_date, verdict per usable light).
+                Siril script alongside it, plus a manifest.csv (leading
+                "# library_root: <path>" comment line, then file, filter,
+                score, fwhm_px, session_date, verdict, linked_name columns
+                per usable light).
                 A session shot through more than one filter gets its own
-                lights/<FILTER>/ subfolder and its own .dssfilelist/.ssf per
-                filter instead (WBPP-friendly); --keep-filter overrides
-                --keep for one or more named filters (comma-separated
-                filter=fraction pairs, each in (0, 1]). Additive and
-                idempotent -- never touches your original files. --out PATH
-                exports straight into PATH instead (PATH becomes the
-                stacklist dir itself, may be outside the library root);
+                lights/<FILTER>/ subfolder (empty/colliding filter names
+                fall back to filter_N / a _2, _3... suffix) and its own
+                .dssfilelist/.ssf per filter instead (WBPP-friendly);
+                --keep-filter overrides --keep for one or more named filters
+                (comma-separated filter=fraction pairs, each in (0, 1],
+                filter names matched case-insensitively; "none" is an alias
+                for the no-filter bucket; an unmatched filter name warns on
+                stderr but doesn't fail the command). Re-running for the
+                same target/date SYNCS the lights/ tree to the current
+                selection -- a frame no longer selected (tighter --keep, or a
+                flat-to-per-filter shape change) is unlinked and reported as
+                "N elavult link eltávolítva". Additive and idempotent --
+                never touches your original files. --out PATH exports
+                straight into PATH instead (PATH becomes the stacklist dir
+                itself, may be outside the library root -- a cross-volume
+                destination falls back to a plain copy per file instead of a
+                hardlink, reported as "hardlink helyett másolat készült");
                 --out - is rejected (this exports a directory tree, not a
                 single file).
   stacks        [--target T] [--json] [--grouped] [--verbose] [--root R]
@@ -3732,28 +3744,64 @@ func cmdStackList(_ args: [String]) throws -> Int32 {
         target: target, date: date, keepFraction: keepFraction,
         keepFractionPerFilter: keepFractionPerFilter, db: db, config: config
     )
+
+    // R12-U2 (point 3): warn (stderr, non-fatal) for a `--keep-filter` name
+    // that matched NOTHING in this session -- case-insensitively against
+    // `selection.filterKeysPresent`, since `select()` itself already
+    // case-folds the match. A typo'd/stale filter name would otherwise just
+    // silently apply no override at all.
+    if !keepFractionPerFilter.isEmpty {
+        let presentLowercased = Set(selection.filterKeysPresent.map { $0.trimmingCharacters(in: .whitespaces).lowercased() })
+        for key in keepFractionPerFilter.keys.sorted() {
+            let normalized = key.trimmingCharacters(in: .whitespaces).lowercased()
+            if !presentLowercased.contains(normalized) {
+                eprint("warning: --keep-filter ismeretlen szűrőnév ebben a session-ben: \(key)")
+            }
+        }
+    }
+
     let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
 
-    let stacklistDir: URL
+    let result: StackList.StackExportResult
     if let out = parsed.value("--out") {
         guard let resolvedOut = resolveOutPathOutsideRoot(out, rootPath: config.rootPath) else {
             return 1
         }
-        stacklistDir = try StackList.exportToDirectory(selection, destDir: resolvedOut, sourceRoot: root)
+        result = try StackList.exportToDirectory(selection, destDir: resolvedOut, sourceRoot: root)
     } else {
         let writeGuard = makeWriteGuard(config: config)
-        stacklistDir = try StackList.export(selection, root: root, using: writeGuard)
+        result = try StackList.export(selection, root: root, using: writeGuard)
     }
 
     if parsed.has("--json") {
         struct Output: Encodable {
             var selection: StackSelection
             var stackListDir: String
+            var removedStaleLinks: Int
+            var copyFallbackUsed: Bool
         }
-        try printJSON(Output(selection: selection, stackListDir: stacklistDir.path))
+        try printJSON(
+            Output(
+                selection: selection, stackListDir: result.directory.path,
+                removedStaleLinks: result.removedStaleCount, copyFallbackUsed: result.copyFallbackUsed
+            )
+        )
     } else {
         printStackSelection(selection)
-        print("exportálva: \(stacklistDir.path)")
+        print("exportálva: \(result.directory.path)")
+        // R12-U2 (point 2): only printed when the re-export sync actually
+        // removed something -- a fresh export or an unchanged re-export
+        // stays silent on this line, same "only say something when
+        // something happened" convention `link-calib`'s own summary uses.
+        if result.removedStaleCount > 0 {
+            print("\(result.removedStaleCount) elavult link eltávolítva")
+        }
+        // R12-U2 (point 1): only ever `true` for `--out` onto a different
+        // volume -- the default `.astro_tool/stacklists/` destination never
+        // crosses a volume boundary.
+        if result.copyFallbackUsed {
+            print("megjegyzés: hardlink helyett másolat készült (másik kötet)")
+        }
     }
     return 0
 }
@@ -3783,13 +3831,24 @@ private func printStackSelection(_ selection: StackSelection) {
 /// out-of-`(0, 1]` fraction) or an entirely empty result -- the caller turns
 /// that into a single, clear CLI error rather than silently ignoring the bad
 /// part of the list.
+///
+/// R12-U2 (point 3): `"none"` (case-insensitive) is a CLI-friendly alias for
+/// the no-filter bucket -- typing `FilterBreakdownQueries.noFilterSentinel`'s
+/// literal Hungarian parenthesized text (`"(nincs szűrő-adat)"`) on a command
+/// line is needlessly awkward, so this one name maps directly onto it before
+/// `StackList.select` ever sees the dictionary (matching there is otherwise a
+/// plain case-fold against the session's own bucket keys, see
+/// `StackList.select`'s own doc).
 func parseKeepFilterPerFilter(_ raw: String) -> [String: Double]? {
     var result: [String: Double] = [:]
     for pair in raw.split(separator: ",") {
         let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
         guard parts.count == 2 else { return nil }
-        let filterName = parts[0].trimmingCharacters(in: .whitespaces)
+        var filterName = parts[0].trimmingCharacters(in: .whitespaces)
         guard !filterName.isEmpty else { return nil }
+        if filterName.caseInsensitiveCompare("none") == .orderedSame {
+            filterName = FilterBreakdownQueries.noFilterSentinel
+        }
         guard let fraction = Double(parts[1].trimmingCharacters(in: .whitespaces)), fraction > 0, fraction <= 1 else {
             return nil
         }

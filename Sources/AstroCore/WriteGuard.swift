@@ -252,14 +252,21 @@ public struct WriteGuard: Sendable {
     ///   (`StackList.export`'s per-filter tree).
     ///
     /// Creates `destDirRelative` (mkdir -p semantics) if it doesn't exist
-    /// yet. The destination file name is always the source file's own last
-    /// path component. If a file already sits there, this makes NO change
-    /// and returns `nil` -- a re-export of the same selection is fully
+    /// yet. The destination file name is `destFileName` when given,
+    /// otherwise the source file's own last path component (R12-U2, point
+    /// 4: `StackList.disambiguatedFileNames` passes an explicit
+    /// `destFileName` whenever two different source files in the same
+    /// bucket would otherwise share a basename -- every pre-existing caller
+    /// that never had that problem keeps getting the plain basename it
+    /// always did). If a file already sits there, this makes NO change and
+    /// returns `nil` -- a re-export of the same selection is fully
     /// idempotent, exactly like `linkCalibrationFile`'s own re-run
     /// behavior. Permission failures are reclassified as
     /// `AstroError.accessDenied`, same as every other write in this type.
     @discardableResult
-    public func linkStackListFile(sourceRelative: String, destDirRelative: String) throws -> URL? {
+    public func linkStackListFile(
+        sourceRelative: String, destDirRelative: String, destFileName: String? = nil
+    ) throws -> URL? {
         guard !sourceRelative.hasPrefix("/") else {
             throw AstroError.writeForbidden(path: sourceRelative)
         }
@@ -293,8 +300,20 @@ public struct WriteGuard: Sendable {
             throw AstroError.writeForbidden(path: destDirRelative)
         }
 
+        // R12-U2 (point 4): an explicit `destFileName` must be a single,
+        // ordinary path component -- same validation every other
+        // caller-influenced path component in this type gets, so a
+        // pathological disambiguated name (there shouldn't be one, but
+        // defense in depth) can never smuggle a `/`/`..` traversal into
+        // `destDirCandidate`.
+        if let destFileName {
+            try Self.validatePathComponent(destFileName)
+        }
+
         let fm = FileManager.default
-        let destFileURL = destDirCandidate.appendingPathComponent(sourceCandidate.lastPathComponent, isDirectory: false)
+        let destFileURL = destDirCandidate.appendingPathComponent(
+            destFileName ?? sourceCandidate.lastPathComponent, isDirectory: false
+        )
 
         guard !fm.fileExists(atPath: destFileURL.path) else {
             return nil

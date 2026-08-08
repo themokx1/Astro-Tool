@@ -229,13 +229,15 @@ public struct DSSIngestSummary: Codable, Equatable, Sendable {
 /// already sit in the library as DeepSkyStacker byproducts: every tracked
 /// `<frame>.info.txt` sidecar (DSS writes one next to each light it
 /// measured) becomes a `ratings` row with `source == "dss"`, and every
-/// tracked `.dssfilelist`'s `CHECKED` column becomes a `user_verdicts` row.
-/// Both walks start from `Database`, not the filesystem -- the scanner
-/// already tracks every `.txt`/`.dssfilelist` file it sees (as `kind ==
-/// "text"`/`"other"` respectively) as an ordinary `files` row, so finding
-/// them needs no extra disk traversal. Reading each *file's own content*
-/// (the info.txt's lines, the filelist's rows) does still touch disk --
-/// read-only, exactly like `SensorProfiler.measure`.
+/// tracked `.dssfilelist`'s `CHECKED` column becomes a `user_verdicts` row
+/// (unless that frame already has an in-app verdict, `source == "app"` --
+/// R12-U2, point 7: this bulk ingest never overwrites a deliberate in-app
+/// decision). Both walks start from `Database`, not the filesystem -- the
+/// scanner already tracks every `.txt`/`.dssfilelist` file it sees (as
+/// `kind == "text"`/`"other"` respectively) as an ordinary `files` row, so
+/// finding them needs no extra disk traversal. Reading each *file's own
+/// content* (the info.txt's lines, the filelist's rows) does still touch
+/// disk -- read-only, exactly like `SensorProfiler.measure`.
 public enum DSSIngest {
     private static let infoTxtSuffix = ".info.txt"
     private static let filelistSuffix = ".dssfilelist"
@@ -351,6 +353,21 @@ public enum DSSIngest {
 
             for row in rows {
                 guard let file = byPath[row.path], let fileID = file.id else {
+                    summary.skipped += 1
+                    continue
+                }
+                // R12-U2 (point 7): never let a bulk `.dssfilelist` re-import
+                // clobber a verdict the user recorded DIRECTLY in this app
+                // (`source == "app"` -- `AppState.setFrameVerdict`,
+                // `QualitySegment`'s frame context menu / `FrameReviewSheet`'s
+                // A/X keys) -- same "an existing, more deliberate decision
+                // outranks this ingest" protection `ingestInfoFiles` already
+                // gives a real astrotool/Siril rating over a DSS-derived one
+                // (see that function's own `existing.source == nil` check
+                // above). A one-by-one in-app click is a deliberate decision;
+                // a `.dssfilelist` re-import is a bulk, often unattended
+                // operation, so the deliberate one wins on conflict.
+                if let existing = try db.userVerdict(fileID: fileID), existing.source == "app" {
                     summary.skipped += 1
                     continue
                 }

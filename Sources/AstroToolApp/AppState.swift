@@ -1002,6 +1002,12 @@ final class AppState: @unchecked Sendable {
     /// Set once `exportStackList()` finishes -- the sheet's "Exportálás"
     /// button switches to a "kész" state and shows this path.
     var stackListExportDir: URL?
+    /// R12-U2 (point 2): how many stale hardlinks the same `exportStackList()`
+    /// run's own re-export sync removed from `lights/` -- `0` for a fresh
+    /// export or one whose tree already matched the current selection.
+    /// `StackListSheet`'s "kész" state shows this alongside the export path
+    /// whenever it's non-zero.
+    var stackListRemovedStaleCount: Int = 0
 
     var isBusy: Bool = false
     var progressText: String = ""
@@ -3578,6 +3584,7 @@ final class AppState: @unchecked Sendable {
         let cfg = config
         stackListSelection = nil
         stackListExportDir = nil
+        stackListRemovedStaleCount = 0
 
         let opID = beginOperation("Stack-lista számítása…")
         currentTask = Task { [weak self] in
@@ -3601,7 +3608,9 @@ final class AppState: @unchecked Sendable {
     /// Exports `stackListSelection` through `StackList.export`
     /// (WriteGuard-gated hardlinking + `.dssfilelist`/`.ssf` writing) and
     /// reveals the resulting stacklist directory in Finder. On success,
-    /// `stackListExportDir` is set so the sheet can switch to a "kész" state.
+    /// `stackListExportDir` is set so the sheet can switch to a "kész" state;
+    /// `stackListRemovedStaleCount` (R12-U2, point 2) carries how many
+    /// left-over hardlinks this same re-export sync just removed, if any.
     func exportStackList() {
         guard let selection = stackListSelection else { return }
         let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
@@ -3611,13 +3620,14 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let dir = try await Task.detached(priority: .userInitiated) {
+                let result = try await Task.detached(priority: .userInitiated) {
                     try StackList.export(selection, root: root, using: writeGuard)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.stackListExportDir = dir
-                self.progressText = "Exportálva: \(dir.lastPathComponent)"
-                NSWorkspace.shared.activateFileViewerSelecting([dir])
+                self.stackListExportDir = result.directory
+                self.stackListRemovedStaleCount = result.removedStaleCount
+                self.progressText = "Exportálva: \(result.directory.lastPathComponent)"
+                NSWorkspace.shared.activateFileViewerSelecting([result.directory])
             } catch {
                 self.handle(error)
             }
@@ -3630,6 +3640,7 @@ final class AppState: @unchecked Sendable {
     func clearStackListSelection() {
         stackListSelection = nil
         stackListExportDir = nil
+        stackListRemovedStaleCount = 0
     }
 
     // MARK: - Night report (R7-B5)

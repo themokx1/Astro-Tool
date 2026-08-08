@@ -489,12 +489,19 @@ struct StackListSheet: View {
         .disabled(appState.stackListExportDir != nil)
     }
 
+    /// R12-U2 (point 5): the REAL, `Sanitizer`-slugged export path
+    /// (`StackList.slug`) -- a raw `"\(target)-\(date)"` literal used to
+    /// silently diverge from the actual on-disk folder name whenever
+    /// `target` contains a character `Sanitizer` strips (e.g. a `/` in a
+    /// catalog-style target name). Also names the `.ssf` explicitly now,
+    /// not just the `.dssfilelist` -- both artifacts matter equally to
+    /// "how do I actually stack this".
     private func exportDestinationCaption(_ selection: StackSelection) -> String {
-        let base = ".astro_tool/stacklists/\(target)-\(date)/"
+        let base = ".astro_tool/stacklists/\(StackList.slug(target: target, date: date))/"
         if selection.perFilter != nil {
-            return "\(base) — lights/<szűrő>/ hardlinkek + dssfilelist szűrőnként + manifest.csv"
+            return "\(base) — lights/<szűrő>/ hardlinkek + .ssf/.dssfilelist szűrőnként + manifest.csv"
         } else {
-            return "\(base) — lights/ hardlinkek + dssfilelist + manifest.csv"
+            return "\(base) — lights/ hardlinkek + .ssf/.dssfilelist + manifest.csv"
         }
     }
 
@@ -506,6 +513,14 @@ struct StackListSheet: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+            // R12-U2 (point 2): only shown when the re-export sync actually
+            // removed something -- a fresh export or an unchanged re-export
+            // says nothing extra here.
+            if appState.stackListRemovedStaleCount > 0 {
+                Text("\(appState.stackListRemovedStaleCount) elavult link eltávolítva")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             HStack {
                 Spacer()
                 Button("Bezárás") { dismiss() }

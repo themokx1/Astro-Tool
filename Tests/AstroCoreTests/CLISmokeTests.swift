@@ -3569,6 +3569,82 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
     #expect(Set(contents) == Set(["l1.fit", "l2.fit", "l3.fit"]))
 }
 
+// MARK: - stacklist re-export sync (R12-U2, point 2)
+
+/// Sets up a 4-light session, exports it once (all 4 link), then drops a
+/// real DeepSkyStacker `.dssfilelist` DSS-rejecting 2 of the 4 into the
+/// session and runs `ingest-dss` -- purely through the normal CLI/library
+/// surface, no direct DB access from the test. Returns after that setup,
+/// right before the SECOND `stacklist` call the caller makes (with either
+/// `--json` or plain human output) to observe the re-export sync.
+private func setUpStackListStaleSyncFixture(_ label: String) throws -> URL {
+    let root = try makeTempRoot(label)
+
+    for i in 1...4 {
+        try writeStackListLight("sessions/T1/2026-01-10/lights/l\(i).fit", root: root)
+    }
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    // Every frame is unrated and un-verdicted, so this FIRST export links
+    // all 4.
+    let first = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10"])
+    #expect(first.exitCode == 0, "stderr: \(first.stderr)")
+    let lightsDir = root.appendingPathComponent(".astro_tool/stacklists/T1-2026-01-10/lights")
+    #expect(Set(try FileManager.default.contentsOfDirectory(atPath: lightsDir.path)) == Set(["l1.fit", "l2.fit", "l3.fit", "l4.fit"]))
+
+    let filelistText = """
+    DSS file list
+    CHECKED\tTYPE\tFILE
+    1\tlight\tlights/l1.fit
+    1\tlight\tlights/l2.fit
+    0\tlight\tlights/l3.fit
+    0\tlight\tlights/l4.fit
+    """
+    try filelistText.write(
+        to: root.appendingPathComponent("sessions/T1/2026-01-10/session.dssfilelist"),
+        atomically: true, encoding: .utf8
+    )
+    let rescan = try runCLI(["scan", "--root", root.path])
+    #expect(rescan.exitCode == 0, "stderr: \(rescan.stderr)")
+    let ingest = try runCLI(["ingest-dss", "--root", root.path])
+    #expect(ingest.exitCode == 0, "stderr: \(ingest.stderr)")
+
+    return root
+}
+
+@Test func stackListRerunAfterNewDSSRejectsReportsRemovedStaleLinksInJSON() throws {
+    let root = try setUpStackListStaleSyncFixture("stacklist-stale-sync-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let result = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let payload = try #require(try jsonObject(result.stdout))
+    let selection = try #require(payload["selection"] as? [String: Any])
+    #expect(selection["selected_frames"] as? Int == 2, "the 2 DSS-rejected frames are a HARD drop regardless of --keep")
+    #expect(payload["removed_stale_links"] as? Int == 2)
+    #expect(payload["copy_fallback_used"] as? Bool == false)
+
+    // The DSS-rejected frames' hardlinks are gone from the export tree; the
+    // still-selected ones remain; the LIBRARY (source) files are untouched
+    // either way.
+    let lightsDir = root.appendingPathComponent(".astro_tool/stacklists/T1-2026-01-10/lights")
+    #expect(Set(try FileManager.default.contentsOfDirectory(atPath: lightsDir.path)) == Set(["l1.fit", "l2.fit"]))
+    for i in 1...4 {
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("sessions/T1/2026-01-10/lights/l\(i).fit").path))
+    }
+}
+
+@Test func stackListRerunAfterNewDSSRejectsPrintsRemovedStaleLinkCountInHumanOutput() throws {
+    let root = try setUpStackListStaleSyncFixture("stacklist-stale-sync-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let result = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("2 elavult link eltávolítva"))
+}
+
 // MARK: - stacklist --out (R11-T4)
 
 @Test func stackListOutWritesDirectlyIntoGivenDirectory() throws {
@@ -3757,6 +3833,85 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     let payload = try #require(try jsonObject(result.stdout))
     let selection = try #require(payload["selection"] as? [String: Any])
     #expect(selection["selected_frames"] as? Int == 8)
+}
+
+// MARK: - stacklist --keep-filter case-insensitivity, "none" alias, unknown-name warning (R12-U2, point 3)
+
+@Test func stackListKeepFilterWarnsOnStderrForAnUnknownFilterNameButStillSucceeds() throws {
+    let root = try makeTempRoot("stacklist-keep-filter-unknown")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/ha1.fit", root: root, filter: "Ha")
+    try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/oiii1.fit", root: root, filter: "OIII")
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI([
+        "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
+        "--keep-filter", "Bogus=0.5",
+    ])
+    #expect(result.exitCode == 0, "a typo'd filter name warns, it doesn't fail the command; stderr: \(result.stderr)")
+    #expect(result.stderr.contains("ismeretlen szűrőnév"))
+    #expect(result.stderr.contains("Bogus"))
+}
+
+@Test func stackListKeepFilterMatchesActualFilterNamesCaseInsensitivelyWithoutWarning() throws {
+    let root = try makeTempRoot("stacklist-keep-filter-case")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    for i in 1...4 {
+        try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/ha\(i).fit", root: root, filter: "Ha")
+    }
+    for i in 1...4 {
+        try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/oiii\(i).fit", root: root, filter: "OIII")
+    }
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    // Deliberately wrong case on both names -- must still match, so NO
+    // "ismeretlen szűrőnév" warning for either.
+    let result = try runCLI([
+        "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
+        "--keep-filter", "ha=0.5,OIII=1.0", "--json",
+    ])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(!result.stderr.contains("ismeretlen szűrőnév"), "stderr: \(result.stderr)")
+
+    let payload = try #require(try jsonObject(result.stdout))
+    let selection = try #require(payload["selection"] as? [String: Any])
+    // Every frame here is unrated -- "unrated -- always kept" regardless of
+    // keepFraction (same caveat `stackListKeepFilterOverridesOneFilterOnly`
+    // already notes) -- this only pins that the case-insensitive match
+    // doesn't warn, not the keepFraction math itself.
+    #expect(selection["selected_frames"] as? Int == 8)
+}
+
+@Test func stackListKeepFilterNoneAliasTargetsTheNoFilterBucketWithoutWarning() throws {
+    let root = try makeTempRoot("stacklist-keep-filter-none-alias")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    // A named-filter frame (Ha) plus a filterless one (plain dummy light,
+    // no FITS FILTER header at all) -- two buckets: "Ha" and the no-filter
+    // sentinel.
+    try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/ha1.fit", root: root, filter: "Ha")
+    try writeStackListLight("sessions/T1/2026-01-10/lights/plain1.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI([
+        "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
+        "--keep-filter", "none=0.9", "--json",
+    ])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(!result.stderr.contains("ismeretlen szűrőnév"), "\"none\" must resolve to the actual no-filter bucket -- stderr: \(result.stderr)")
+
+    let payload = try #require(try jsonObject(result.stdout))
+    let selection = try #require(payload["selection"] as? [String: Any])
+    let perFilter = try #require(selection["per_filter"] as? [[String: Any]])
+    #expect(perFilter.count == 2)
 }
 
 // MARK: - report (R7-B5)

@@ -252,7 +252,7 @@ private func inode(_ url: URL) throws -> UInt64 {
     #expect(selection.selectedFrames == 3)
 
     let writeGuard = WriteGuard(root: fixture.libraryDir)
-    let stacklistDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard)
+    let stacklistDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard).directory
 
     let expectedDir = fixture.libraryDir.appendingPathComponent(".astro_tool/stacklists/T1-2026-01-10", isDirectory: true)
     #expect(stacklistDir.standardizedFileURL.path == expectedDir.standardizedFileURL.path)
@@ -319,7 +319,7 @@ private func inode(_ url: URL) throws -> UInt64 {
         let selection = try StackList.select(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
         #expect(selection.perFilter == nil)
         let writeGuard = WriteGuard(root: fixture.libraryDir)
-        let stacklistDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard)
+        let stacklistDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard).directory
 
         let ssfText = try String(contentsOf: stacklistDir.appendingPathComponent("stack.ssf"), encoding: .utf8)
         let cdPath = try cdTarget(in: ssfText)
@@ -348,7 +348,7 @@ private func inode(_ url: URL) throws -> UInt64 {
         let perFilter = try #require(selection.perFilter)
         #expect(perFilter.count == 2)
         let writeGuard = WriteGuard(root: fixture.libraryDir)
-        let stacklistDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard)
+        let stacklistDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard).directory
 
         for (filter, expectedFrame) in [("Ha", "ha1.fit"), ("OIII", "oiii1.fit")] {
             let ssfText = try String(
@@ -379,13 +379,19 @@ private func inode(_ url: URL) throws -> UInt64 {
     let selection = try StackList.select(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
     let writeGuard = WriteGuard(root: fixture.libraryDir)
 
-    let firstDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard)
+    let firstResult = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard)
+    let firstDir = firstResult.directory
     let firstInode = try inode(firstDir.appendingPathComponent("lights/l1.fit"))
+    #expect(firstResult.removedStaleCount == 0)
 
     // Re-export the same selection -- must not throw, must not disturb the
-    // already-linked frames, and must leave exactly the same set of files.
-    let secondDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard)
+    // already-linked frames, must leave exactly the same set of files, and
+    // (R12-U2, point 2d) the re-export sync must not consider any of them
+    // stale since the selection is unchanged.
+    let secondResult = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard)
+    let secondDir = secondResult.directory
     let secondInode = try inode(secondDir.appendingPathComponent("lights/l1.fit"))
+    #expect(secondResult.removedStaleCount == 0)
 
     #expect(firstDir.standardizedFileURL.path == secondDir.standardizedFileURL.path)
     #expect(firstInode == secondInode)
@@ -476,6 +482,51 @@ private func inode(_ url: URL) throws -> UInt64 {
 
     let oiii = try #require(perFilter.first { $0.filter == "OIII" })
     #expect(oiii.selectedFrames == 10) // overridden to 1.0 -- keeps everything
+}
+
+// MARK: - R12-U2 (point 3): --keep-filter case-insensitive matching
+
+@Test func selectMatchesKeepFractionPerFilterOverrideCaseInsensitively() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+
+    for i in 1...10 {
+        try insertLight(db: db, target: "T1", date: "2026-01-10", name: "ha\(i)", score: Double(i), filter: "Ha")
+    }
+    for i in 1...10 {
+        try insertLight(db: db, target: "T1", date: "2026-01-10", name: "oiii\(i)", score: Double(i), filter: "OIII")
+    }
+
+    // Deliberately wrong case ("ha"/"OIII " with padding) on both sides --
+    // must still hit the override exactly like an exact-case match would.
+    let selection = try StackList.select(
+        target: "T1", date: "2026-01-10", keepFraction: 0.5,
+        keepFractionPerFilter: ["ha": 1.0, "  oiii  ": 0.3], db: db, config: config
+    )
+
+    let perFilter = try #require(selection.perFilter)
+    let ha = try #require(perFilter.first { $0.filter == "Ha" })
+    #expect(ha.selectedFrames == 10, "\"ha\" must override the actual \"Ha\" bucket despite the case difference")
+
+    let oiii = try #require(perFilter.first { $0.filter == "OIII" })
+    #expect(oiii.selectedFrames == 3, "ceil(0.3 * 10) == 3, from the padded/differently-cased \"  oiii  \" key")
+}
+
+@Test func selectPopulatesFilterKeysPresentRegardlessOfSingleOrMultiBucket() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+
+    for i in 1...3 {
+        try insertLight(db: db, target: "T1", date: "2026-01-10", name: "s\(i)", score: Double(i), filter: "Ha")
+    }
+    let singleBucket = try StackList.select(target: "T1", date: "2026-01-10", db: db, config: config)
+    #expect(singleBucket.perFilter == nil, "single named-filter session -- perFilter stays nil (backward compat)")
+    #expect(singleBucket.filterKeysPresent == ["Ha"], "but filterKeysPresent still reports the actual bucket key")
+
+    try insertLight(db: db, target: "T1", date: "2026-01-11", name: "ha1", score: 1.0, filter: "Ha")
+    try insertLight(db: db, target: "T1", date: "2026-01-11", name: "oiii1", score: 1.0, filter: "OIII")
+    let multiBucket = try StackList.select(target: "T1", date: "2026-01-11", db: db, config: config)
+    #expect(Set(multiBucket.filterKeysPresent) == Set(["Ha", "OIII"]))
 }
 
 @Test func selectSingleNamedFilterSessionKeepsPerFilterNilAndCriteriaUnprefixed() throws {
@@ -592,7 +643,7 @@ private func inode(_ url: URL) throws -> UInt64 {
     #expect(selection.perFilter != nil)
 
     let writeGuard = WriteGuard(root: fixture.libraryDir)
-    let stacklistDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard)
+    let stacklistDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard).directory
 
     for name in ["ha1", "ha2"] {
         let linkedURL = stacklistDir.appendingPathComponent("lights/Ha/\(name).fit")
@@ -626,8 +677,11 @@ private func inode(_ url: URL) throws -> UInt64 {
     let manifestURL = stacklistDir.appendingPathComponent("manifest.csv")
     let manifestText = try String(contentsOf: manifestURL, encoding: .utf8)
     let manifestLines = manifestText.split(separator: "\n", omittingEmptySubsequences: false).filter { !$0.isEmpty }
-    #expect(manifestLines[0] == "file,filter,score,fwhm_px,session_date,verdict")
-    #expect(manifestLines.count == 4) // header + 3 frames across both filters
+    // R12-U2 (point 6): line 1 is the library_root comment.
+    #expect(manifestLines[0].hasPrefix("# library_root: "))
+    #expect(manifestLines[0].contains(fixture.libraryDir.standardizedFileURL.path))
+    #expect(manifestLines[1] == "file,filter,score,fwhm_px,session_date,verdict,linked_name")
+    #expect(manifestLines.count == 5) // comment + header + 3 frames across both filters
 }
 
 @Test func exportWritesManifestCSVAlongsideFlatSingleBucketExport() throws {
@@ -641,13 +695,14 @@ private func inode(_ url: URL) throws -> UInt64 {
 
     let selection = try StackList.select(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
     let writeGuard = WriteGuard(root: fixture.libraryDir)
-    let stacklistDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard)
+    let stacklistDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard).directory
 
     let manifestURL = stacklistDir.appendingPathComponent("manifest.csv")
     let manifestText = try String(contentsOf: manifestURL, encoding: .utf8)
     let lines = manifestText.split(separator: "\n", omittingEmptySubsequences: false).filter { !$0.isEmpty }
-    #expect(lines.count == 4) // header + 3 frames
-    #expect(lines[0] == "file,filter,score,fwhm_px,session_date,verdict")
+    #expect(lines.count == 5) // comment + header + 3 frames
+    #expect(lines[0].hasPrefix("# library_root: "))
+    #expect(lines[1] == "file,filter,score,fwhm_px,session_date,verdict,linked_name")
     for i in 1...3 {
         #expect(manifestText.contains("sessions/T1/2026-01-10/lights/l\(i).fit"))
     }
@@ -710,4 +765,309 @@ private func inode(_ url: URL) throws -> UInt64 {
 
     let frameNames = Set(try FileManager.default.contentsOfDirectory(atPath: expectedLightsDir.path))
     #expect(frameNames == Set(["l1.fit", "l2.fit", "l3.fit"]))
+}
+
+// MARK: - R12-U2 (point 1): EXDEV copy-fallback
+
+/// The fallback decision itself (`linkOrCopyForExport`), exercised with an
+/// INJECTED failing `link` closure -- a real cross-device volume isn't
+/// available to a sandboxed test run, so this pins the behavior the same way
+/// the ticket's own spec suggests ("a linkelő függvény injektálható
+/// hibájával"): a fake `link` that throws a synthetic `EXDEV` `NSError`
+/// stands in for the real cross-volume failure `exportToDirectory --out`
+/// would hit.
+@Test func linkOrCopyForExportFallsBackToCopyOnCrossDeviceLinkError() throws {
+    let fixture = try StackListExportFixture.make()
+    defer { fixture.cleanup() }
+
+    let sourceURL = fixture.libraryDir.appendingPathComponent("source.txt")
+    try "cross-device content".write(to: sourceURL, atomically: true, encoding: .utf8)
+    let destURL = fixture.libraryDir.appendingPathComponent("dest.txt")
+
+    var linkAttempts = 0
+    let didFallBack = try StackList.linkOrCopyForExport(
+        sourceURL: sourceURL,
+        destFileURL: destURL,
+        link: { _, _ in
+            linkAttempts += 1
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(EXDEV))
+        },
+        copy: { src, dst in try FileManager.default.copyItem(at: src, to: dst) }
+    )
+
+    #expect(didFallBack)
+    #expect(linkAttempts == 1)
+    #expect(FileManager.default.fileExists(atPath: destURL.path))
+    #expect(try String(contentsOf: destURL, encoding: .utf8) == "cross-device content")
+}
+
+/// A NON-EXDEV link failure must propagate as-is -- the copy fallback is
+/// strictly scoped to the one cross-device case, never a blanket "link
+/// failed, try copying instead".
+@Test func linkOrCopyForExportPropagatesNonCrossDeviceErrorsWithoutFallingBack() throws {
+    struct SomeOtherError: Error {}
+    let fixture = try StackListExportFixture.make()
+    defer { fixture.cleanup() }
+    let sourceURL = fixture.libraryDir.appendingPathComponent("source.txt")
+    try "x".write(to: sourceURL, atomically: true, encoding: .utf8)
+    let destURL = fixture.libraryDir.appendingPathComponent("dest.txt")
+
+    var copyAttempts = 0
+    #expect(throws: SomeOtherError.self) {
+        try StackList.linkOrCopyForExport(
+            sourceURL: sourceURL, destFileURL: destURL,
+            link: { _, _ in throw SomeOtherError() },
+            copy: { _, _ in copyAttempts += 1 }
+        )
+    }
+    #expect(copyAttempts == 0)
+}
+
+/// Same idempotent "already there, skip" rule every other hardlink call
+/// site in this package follows -- neither `link` nor `copy` should even be
+/// attempted when the destination already exists.
+@Test func linkOrCopyForExportSkipsEntirelyWhenDestinationAlreadyExists() throws {
+    let fixture = try StackListExportFixture.make()
+    defer { fixture.cleanup() }
+    let sourceURL = fixture.libraryDir.appendingPathComponent("source.txt")
+    try "x".write(to: sourceURL, atomically: true, encoding: .utf8)
+    let destURL = fixture.libraryDir.appendingPathComponent("dest.txt")
+    try "already-there".write(to: destURL, atomically: true, encoding: .utf8)
+
+    var linkAttempts = 0
+    let didFallBack = try StackList.linkOrCopyForExport(
+        sourceURL: sourceURL, destFileURL: destURL,
+        link: { _, _ in linkAttempts += 1 },
+        copy: { _, _ in Issue.record("copy must not run when the destination already exists") }
+    )
+    #expect(!didFallBack)
+    #expect(linkAttempts == 0)
+    #expect(try String(contentsOf: destURL, encoding: .utf8) == "already-there")
+}
+
+@Test func isCrossDeviceLinkErrorRecognizesEXDEVDirectlyAndViaUnderlyingError() {
+    let direct = NSError(domain: NSPOSIXErrorDomain, code: Int(EXDEV))
+    #expect(StackList.isCrossDeviceLinkError(direct))
+
+    let wrapped = NSError(
+        domain: NSCocoaErrorDomain, code: 512,
+        userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EXDEV))]
+    )
+    #expect(StackList.isCrossDeviceLinkError(wrapped))
+
+    let unrelated = NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+    #expect(!StackList.isCrossDeviceLinkError(unrelated))
+}
+
+// MARK: - R12-U2 (point 2): re-export sync removes stale hardlinks
+
+@Test func reExportWithTighterKeepFractionRemovesNoLongerSelectedLinksAndLeavesSourceUntouched() throws {
+    let fixture = try StackListExportFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 1...10 {
+        try fixture.writeLight("sessions/T1/2026-01-10/lights/s\(i).fit")
+    }
+    try fixture.scan()
+    for i in 1...10 {
+        let id = try #require(try fixture.db.fileID(path: "sessions/T1/2026-01-10/lights/s\(i).fit"))
+        try fixture.db.upsertRating(
+            RatingRecord(fileID: id, score: Double(i), ratedAt: 1_700_000_200, inputSig: "sig-\(i)")
+        )
+    }
+
+    let writeGuard = WriteGuard(root: fixture.libraryDir)
+    let firstSelection = try StackList.select(
+        target: "T1", date: "2026-01-10", keepFraction: 1.0, db: fixture.db, config: fixture.config
+    )
+    #expect(firstSelection.selectedFrames == 10)
+    let firstResult = try StackList.export(firstSelection, root: fixture.libraryDir, using: writeGuard)
+    #expect(firstResult.removedStaleCount == 0)
+
+    let lightsDir = firstResult.directory.appendingPathComponent("lights", isDirectory: true)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: lightsDir.path).count == 10)
+
+    // (a) tighten --keep -- the tree must now match the new, SMALLER
+    // selection exactly.
+    let secondSelection = try StackList.select(
+        target: "T1", date: "2026-01-10", keepFraction: 0.5, db: fixture.db, config: fixture.config
+    )
+    #expect(secondSelection.selectedFrames == 5)
+    let secondResult = try StackList.export(secondSelection, root: fixture.libraryDir, using: writeGuard)
+
+    #expect(secondResult.removedStaleCount == 5)
+    let remaining = Set(try FileManager.default.contentsOfDirectory(atPath: lightsDir.path))
+    let expectedRemaining = Set(secondSelection.selectedPaths.map { ($0 as NSString).lastPathComponent })
+    #expect(remaining == expectedRemaining)
+
+    // (c) the LIBRARY (source) files are never touched by the sync -- all
+    // 10 originals must still be there regardless of what got unlinked from
+    // the export tree.
+    for i in 1...10 {
+        let sourcePath = fixture.libraryDir.appendingPathComponent("sessions/T1/2026-01-10/lights/s\(i).fit")
+        #expect(FileManager.default.fileExists(atPath: sourcePath.path), "source frame s\(i).fit must remain")
+    }
+}
+
+@Test func reExportFromFlatToPerFilterRemovesStaleFlatLinks() throws {
+    let fixture = try StackListExportFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeLight("sessions/T1/2026-01-10/lights/l1.fit")
+    try fixture.writeLight("sessions/T1/2026-01-10/lights/l2.fit")
+    try fixture.writeLight("sessions/T1/2026-01-10/lights/l3.fit")
+    try fixture.scan()
+
+    let writeGuard = WriteGuard(root: fixture.libraryDir)
+    let flatSelection = try StackList.select(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
+    #expect(flatSelection.perFilter == nil)
+    let flatResult = try StackList.export(flatSelection, root: fixture.libraryDir, using: writeGuard)
+    let lightsDir = flatResult.directory.appendingPathComponent("lights", isDirectory: true)
+    #expect(Set(try FileManager.default.contentsOfDirectory(atPath: lightsDir.path)) == Set(["l1.fit", "l2.fit", "l3.fit"]))
+
+    // The SAME session gets FITS FILTER metadata -- the next `select()` now
+    // sees more than one bucket, and `export` switches to the per-filter
+    // `lights/<FILTER>/` tree shape.
+    let id1 = try #require(try fixture.db.fileID(path: "sessions/T1/2026-01-10/lights/l1.fit"))
+    try fixture.db.upsertFITSMeta(FITSMetaRecord(fileID: id1, filter: "Ha"))
+    let id2 = try #require(try fixture.db.fileID(path: "sessions/T1/2026-01-10/lights/l2.fit"))
+    try fixture.db.upsertFITSMeta(FITSMetaRecord(fileID: id2, filter: "OIII"))
+
+    let perFilterSelection = try StackList.select(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
+    #expect(perFilterSelection.perFilter != nil)
+    let perFilterResult = try StackList.export(perFilterSelection, root: fixture.libraryDir, using: writeGuard)
+
+    // (b) no stale FLAT link left directly under lights/.
+    #expect(perFilterResult.removedStaleCount == 3)
+    let topLevelAfter = try FileManager.default.contentsOfDirectory(atPath: lightsDir.path)
+    #expect(!topLevelAfter.contains("l1.fit"))
+    #expect(!topLevelAfter.contains("l2.fit"))
+    #expect(!topLevelAfter.contains("l3.fit"))
+    #expect(FileManager.default.fileExists(atPath: lightsDir.appendingPathComponent("Ha/l1.fit").path))
+    #expect(FileManager.default.fileExists(atPath: lightsDir.appendingPathComponent("OIII/l2.fit").path))
+}
+
+@Test func syncLightsTreeNeverRemovesSymlinksOrDirectoriesOrAnythingOutsideGuardBase() throws {
+    let fixture = try StackListExportFixture.make()
+    defer { fixture.cleanup() }
+
+    let lightsDir = fixture.libraryDir.appendingPathComponent(".astro_tool/stacklists/T1-2026-01-10/lights", isDirectory: true)
+    try FileManager.default.createDirectory(at: lightsDir, withIntermediateDirectories: true)
+
+    let realFile = lightsDir.appendingPathComponent("stale.fit")
+    try "stale".write(to: realFile, atomically: true, encoding: .utf8)
+
+    let symlinkTarget = fixture.libraryDir.appendingPathComponent("outside.fit")
+    try "outside".write(to: symlinkTarget, atomically: true, encoding: .utf8)
+    let symlink = lightsDir.appendingPathComponent("linked-elsewhere.fit")
+    try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: symlinkTarget)
+
+    let emptySubDir = lightsDir.appendingPathComponent("EmptyFilterDir", isDirectory: true)
+    try FileManager.default.createDirectory(at: emptySubDir, withIntermediateDirectories: true)
+
+    let guardBase = fixture.libraryDir.appendingPathComponent(".astro_tool", isDirectory: true)
+    let removed = try StackList.syncLightsTree(lightsDir: lightsDir, expectedRelativePaths: [], guardBase: guardBase)
+
+    // Only the ONE real regular file with no matching expected path counts.
+    #expect(removed == 1)
+    #expect(!FileManager.default.fileExists(atPath: realFile.path))
+    // The symlink itself is left alone (never a regular file), and its
+    // target is completely untouched either way.
+    #expect(FileManager.default.fileExists(atPath: symlinkTarget.path))
+    // The (now-empty) subdirectory itself is never removed -- only files.
+    var isDir: ObjCBool = false
+    #expect(FileManager.default.fileExists(atPath: emptySubDir.path, isDirectory: &isDir))
+    #expect(isDir.boolValue)
+}
+
+// MARK: - R12-U2 (point 4): slug/filename collision handling
+
+@Test func resolvedFilterSlugsFallsBackToNumberedNamesForEmptySlugs() {
+    let perFilter = [
+        StackFilterSelection(filter: "###", totalFrames: 1, selectedFrames: 1, selectedPaths: [], rejectedPaths: []),
+        StackFilterSelection(filter: "Ha", totalFrames: 1, selectedFrames: 1, selectedPaths: [], rejectedPaths: []),
+        StackFilterSelection(filter: "%%%", totalFrames: 1, selectedFrames: 1, selectedPaths: [], rejectedPaths: []),
+    ]
+
+    let slugs = StackList.resolvedFilterSlugs(for: perFilter)
+
+    #expect(slugs == ["filter_1", "Ha", "filter_2"])
+}
+
+@Test func resolvedFilterSlugsDisambiguatesTwoFiltersThatSanitizeToTheSameSlug() {
+    let perFilter = [
+        StackFilterSelection(filter: "Ha!", totalFrames: 1, selectedFrames: 1, selectedPaths: [], rejectedPaths: []),
+        StackFilterSelection(filter: "Ha?", totalFrames: 1, selectedFrames: 1, selectedPaths: [], rejectedPaths: []),
+        StackFilterSelection(filter: "Ha#", totalFrames: 1, selectedFrames: 1, selectedPaths: [], rejectedPaths: []),
+    ]
+
+    let slugs = StackList.resolvedFilterSlugs(for: perFilter)
+
+    // All three sanitize to plain "Ha" -- first keeps it, the rest get a
+    // numeric suffix, and every slug is still distinct.
+    #expect(slugs == ["Ha", "Ha_2", "Ha_3"])
+    #expect(Set(slugs).count == 3)
+}
+
+@Test func resolvedFilterSlugsWithNoCollisionMatchesPlainSanitizeOutput() {
+    let perFilter = [
+        StackFilterSelection(filter: "Ha", totalFrames: 1, selectedFrames: 1, selectedPaths: [], rejectedPaths: []),
+        StackFilterSelection(filter: "OIII", totalFrames: 1, selectedFrames: 1, selectedPaths: [], rejectedPaths: []),
+    ]
+
+    #expect(StackList.resolvedFilterSlugs(for: perFilter) == ["Ha", "OIII"])
+}
+
+@Test func disambiguatedFileNamesKeepsFirstOccurrencePlainAndSuffixesLaterCollisions() {
+    let paths = [
+        "sessions/T1/2026-01-10/lights/part1/img_0001.fit",
+        "sessions/T1/2026-01-10/lights/part2/img_0001.fit",
+        "sessions/T1/2026-01-10/lights/img_0002.fit",
+    ]
+
+    let names = StackList.disambiguatedFileNames(forPaths: paths)
+
+    #expect(names["sessions/T1/2026-01-10/lights/part1/img_0001.fit"] == "img_0001.fit")
+    #expect(names["sessions/T1/2026-01-10/lights/part2/img_0001.fit"] == "part2__img_0001.fit")
+    #expect(names["sessions/T1/2026-01-10/lights/img_0002.fit"] == "img_0002.fit")
+}
+
+@Test func disambiguatedFileNamesWithNoCollisionReturnsPlainBasenames() {
+    let paths = ["a/x.fit", "b/y.fit", "c/z.fit"]
+    let names = StackList.disambiguatedFileNames(forPaths: paths)
+    #expect(names == ["a/x.fit": "x.fit", "b/y.fit": "y.fit", "c/z.fit": "z.fit"])
+}
+
+/// End-to-end: two different sessions' subfolders both contributing a
+/// `img_0001.fit`-named frame to the SAME (single, filterless) bucket used
+/// to mean the SECOND one silently never got linked at all (`WriteGuard`'s
+/// idempotent "already there, skip" swallowed it). Now both actually land
+/// on disk under distinct names, and the `.dssfilelist`/manifest both name
+/// the ACTUAL link used.
+@Test func exportDisambiguatesCollidingBasenamesWithinOneBucket() throws {
+    let fixture = try StackListExportFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeLight("sessions/T1/2026-01-10/lights/part1/img_0001.fit")
+    try fixture.writeLight("sessions/T1/2026-01-10/lights/part2/img_0001.fit")
+    try fixture.scan()
+
+    let selection = try StackList.select(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
+    #expect(selection.selectedFrames == 2)
+
+    let writeGuard = WriteGuard(root: fixture.libraryDir)
+    let result = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard)
+
+    let lightsDir = result.directory.appendingPathComponent("lights", isDirectory: true)
+    let linkedNames = Set(try FileManager.default.contentsOfDirectory(atPath: lightsDir.path))
+    #expect(linkedNames == Set(["img_0001.fit", "part2__img_0001.fit"]), "both distinct source frames must actually be linked")
+
+    let dssText = try String(contentsOf: result.directory.appendingPathComponent("stack.dssfilelist"), encoding: .utf8)
+    #expect(dssText.contains("lights/img_0001.fit"))
+    #expect(dssText.contains("lights/part2__img_0001.fit"))
+
+    let manifestText = try String(contentsOf: result.directory.appendingPathComponent("manifest.csv"), encoding: .utf8)
+    #expect(manifestText.contains("sessions/T1/2026-01-10/lights/part1/img_0001.fit"))
+    #expect(manifestText.contains("sessions/T1/2026-01-10/lights/part2/img_0001.fit"))
+    #expect(manifestText.contains("part2__img_0001.fit"), "manifest's linked_name column must carry the disambiguated name")
 }

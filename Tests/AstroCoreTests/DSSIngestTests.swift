@@ -269,6 +269,82 @@ Circularity = 0.91
     #expect(fetched == existing, "an existing NULL-source rating must never be clobbered by a DSS ingest")
 }
 
+// MARK: - R12-U2 (point 7): DSS-ingest guard against a source == "app" verdict
+
+/// The info.txt-ingest side already refuses to clobber a real
+/// astrotool/Siril rating (`dssIngestDoesNotClobberExistingNonDSSRating`
+/// above); this pins the same protection on the `.dssfilelist`-ingest side
+/// for a verdict the user recorded DIRECTLY in this app
+/// (`source == "app"`, `AppState.setFrameVerdict`) -- a bulk re-import of a
+/// `.dssfilelist` must never silently flip a deliberate in-app accept/reject
+/// decision back to whatever DSS's own CHECKED column happens to say.
+@Test func dssIngestFilelistNeverOverwritesAnAppSourcedVerdict() throws {
+    let fixture = try DSSIngestFixture.make()
+    defer { fixture.cleanup() }
+
+    let lightID = try fixture.addLightFile(
+        relativePath: "sessions/M51/2026-04-04/lights/light_0001.fit", target: "M51"
+    )
+    // The user explicitly ACCEPTED this frame in the app.
+    try fixture.db.upsertUserVerdict(
+        UserVerdictRecord(fileID: lightID, accepted: true, source: "app", recordedAt: 1_700_000_500)
+    )
+
+    // The .dssfilelist disagrees -- REJECTS the same frame.
+    let filelistText = """
+    DSS file list
+    CHECKED\tTYPE\tFILE
+    0\tlight\tlights/light_0001.fit
+    """
+    try fixture.addTextFile(
+        relativePath: "sessions/M51/2026-04-04/session.dssfilelist",
+        content: filelistText, kind: "other", target: "M51", sessionDate: "2026-04-04"
+    )
+
+    let summary = try DSSIngest.ingest(db: fixture.db, config: fixture.config, root: fixture.root)
+
+    #expect(summary.filelistsParsed == 1)
+    #expect(summary.verdictsRecorded == 0, "the app-sourced verdict must not be counted as (re-)recorded")
+    #expect(summary.skipped == 1)
+
+    let verdict = try #require(try fixture.db.userVerdict(fileID: lightID))
+    #expect(verdict.accepted == true, "the app's own accept must survive the conflicting .dssfilelist ingest")
+    #expect(verdict.source == "app")
+}
+
+/// The mirror case: a frame with NO existing verdict (or a prior
+/// `dssfilelist`-sourced one) still gets ingested normally -- the guard is
+/// scoped to `source == "app"` specifically, not a blanket "never touch an
+/// existing verdict".
+@Test func dssIngestFilelistStillOverwritesAPriorDssfilelistSourcedVerdict() throws {
+    let fixture = try DSSIngestFixture.make()
+    defer { fixture.cleanup() }
+
+    let lightID = try fixture.addLightFile(
+        relativePath: "sessions/M51/2026-04-05/lights/light_0001.fit", target: "M51"
+    )
+    try fixture.db.upsertUserVerdict(
+        UserVerdictRecord(fileID: lightID, accepted: false, source: "dssfilelist", recordedAt: 1_700_000_500)
+    )
+
+    let filelistText = """
+    DSS file list
+    CHECKED\tTYPE\tFILE
+    1\tlight\tlights/light_0001.fit
+    """
+    try fixture.addTextFile(
+        relativePath: "sessions/M51/2026-04-05/session.dssfilelist",
+        content: filelistText, kind: "other", target: "M51", sessionDate: "2026-04-05"
+    )
+
+    let summary = try DSSIngest.ingest(db: fixture.db, config: fixture.config, root: fixture.root)
+    #expect(summary.verdictsRecorded == 1)
+
+    let verdict = try #require(try fixture.db.userVerdict(fileID: lightID))
+    #expect(verdict.accepted == true)
+    #expect(verdict.source == "dssfilelist")
+}
+
 @Test func dssIngestIsIdempotentSkippingUnchangedInfoFilesOnRepeatedRuns() throws {
     let fixture = try DSSIngestFixture.make()
     defer { fixture.cleanup() }

@@ -41,6 +41,12 @@ struct QualitySegment: View {
     /// attached to just the "Fájl" cell's own `HStack`, so right-clicking or
     /// double-clicking anywhere else in a row did nothing.
     @State private var selectedFrame: Row.ID?
+    /// R12-U2 (point 5): the session currently shown in `StackListSheet` --
+    /// `nil` when the sheet is closed. Set directly from the control bar's
+    /// "Stackelés előkészítése…" button (using `selectedDate` when one's
+    /// picked) or, for "Minden session", via its own session-picker `Menu`
+    /// (`StacksSegment`'s own equivalent button, same pattern).
+    @State private var stackListingSession: LinkingSession?
 
     /// R11-T1: Minőség-tábla oszlop-választó + szűkített alapkészlet. This
     /// app's deployment target (macOS 14) predates
@@ -305,6 +311,12 @@ struct QualitySegment: View {
         .sheet(isPresented: $showingBatchReject) {
             BatchRejectOutliersConfirmSheet(rows: undecidedOutlierRows)
         }
+        // R12-U2 (point 5): same row-scoped `.sheet(item:)` pattern
+        // `StacksSegment`/`AllTargetsPage`/`NightsPage` already use for
+        // `StackListSheet`.
+        .sheet(item: $stackListingSession) { session in
+            StackListSheet(target: session.target, date: session.date)
+        }
     }
 
     // MARK: - Control bar (rebuilt per A.3)
@@ -392,6 +404,8 @@ struct QualitySegment: View {
                 }
             }
 
+            stackPrepButton
+
             MetricInfoButton(metrics: Self.frameMetricInfo)
 
             columnsMenu
@@ -402,6 +416,32 @@ struct QualitySegment: View {
                 ProgressView().controlSize(.small)
                 Text(appState.progressText).foregroundStyle(.secondary)
                 Button("Mégse") { appState.cancelCurrentOperation() }
+            }
+        }
+    }
+
+    /// R12-U2 (point 5): "Stackelés előkészítése…" -- opens `StackListSheet`
+    /// straight for `selectedDate` when a specific session is picked in the
+    /// date `Menu` above; when it's "Minden session" (`nil`), there's no
+    /// single obvious session to default to, so this shows its OWN picker
+    /// `Menu` instead, same pattern `StacksSegment.stackPrepButton` already
+    /// uses for its own (count-based, not selection-based) version of this
+    /// same choice. Hidden entirely when the target has no sessions at all.
+    @ViewBuilder
+    private var stackPrepButton: some View {
+        if let date = selectedDate {
+            Button("Stackelés előkészítése…") {
+                stackListingSession = LinkingSession(target: target, date: date)
+            }
+        } else if sessionDates.count == 1, let onlyDate = sessionDates.first {
+            Button("Stackelés előkészítése…") {
+                stackListingSession = LinkingSession(target: target, date: onlyDate)
+            }
+        } else if !sessionDates.isEmpty {
+            Menu("Stackelés előkészítése…") {
+                ForEach(sessionDates, id: \.self) { date in
+                    Button(date) { stackListingSession = LinkingSession(target: target, date: date) }
+                }
             }
         }
     }
