@@ -25,6 +25,15 @@ public struct SetupFieldOfView: Equatable, Sendable {
     }
 }
 
+/// Domain-level validation failures shared by config/UI callers.
+public enum ImagingSetupValidationError: Error, Equatable, Sendable {
+    case emptyName
+    case emptyCameraName
+    case invalidSensorSize
+    case invalidFocalRange
+    case defaultFocalLengthOutsideRange
+}
+
 /// One user-defined camera + lens/telescope combination for planning.
 ///
 /// Physical sensor dimensions are persisted instead of a crop factor: they
@@ -70,6 +79,28 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
 
     public var isZoom: Bool {
         abs(focalLengthMaxMM - focalLengthMinMM) > 0.000_001
+    }
+
+    public func validate() throws {
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ImagingSetupValidationError.emptyName
+        }
+        guard !cameraName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ImagingSetupValidationError.emptyCameraName
+        }
+        guard sensorWidthMM.isFinite, sensorHeightMM.isFinite,
+              sensorWidthMM > 0, sensorHeightMM > 0 else {
+            throw ImagingSetupValidationError.invalidSensorSize
+        }
+        guard focalLengthMinMM.isFinite, focalLengthMaxMM.isFinite,
+              focalLengthMinMM > 0, focalLengthMaxMM >= focalLengthMinMM else {
+            throw ImagingSetupValidationError.invalidFocalRange
+        }
+        guard defaultFocalLengthMM.isFinite,
+              defaultFocalLengthMM >= focalLengthMinMM,
+              defaultFocalLengthMM <= focalLengthMaxMM else {
+            throw ImagingSetupValidationError.defaultFocalLengthOutsideRange
+        }
     }
 
     /// Returns a planning focal length constrained to this setup's usable

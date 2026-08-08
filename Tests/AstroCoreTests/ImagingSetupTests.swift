@@ -84,3 +84,30 @@ private let apscZoom = ImagingSetupProfile(
     #expect(ImagingSetupProfile.defaultSetup(in: [first])?.id == "first")
     #expect(ImagingSetupProfile.defaultSetup(in: []) == nil)
 }
+
+@Test func imagingSetupValidationAcceptsACompleteProfile() throws {
+    try apscZoom.validate()
+}
+
+@Test func imagingSetupValidationRejectsEachInvalidPhysicalInput() {
+    var setup = apscZoom
+
+    setup.name = "   "
+    #expect(throws: ImagingSetupValidationError.emptyName) { try setup.validate() }
+
+    setup = apscZoom
+    setup.cameraName = ""
+    #expect(throws: ImagingSetupValidationError.emptyCameraName) { try setup.validate() }
+
+    setup = apscZoom
+    setup.sensorWidthMM = 0
+    #expect(throws: ImagingSetupValidationError.invalidSensorSize) { try setup.validate() }
+
+    setup = apscZoom
+    setup.focalLengthMinMM = 500
+    #expect(throws: ImagingSetupValidationError.invalidFocalRange) { try setup.validate() }
+
+    setup = apscZoom
+    setup.defaultFocalLengthMM = 450
+    #expect(throws: ImagingSetupValidationError.defaultFocalLengthOutsideRange) { try setup.validate() }
+}

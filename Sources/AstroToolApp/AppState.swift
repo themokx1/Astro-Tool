@@ -632,6 +632,7 @@ final class AppState: @unchecked Sendable {
     enum SettingsTab: Hashable {
         case library
         case location
+        case equipment
         case calibration
         case rating
         case libraryRules
