@@ -168,6 +168,11 @@ final class AppState: @unchecked Sendable {
     private static let firstStepsCardDismissedKey = "firstStepsCardDismissed"
     /// R11-T15/F16: `selectedSiteName`'s `UserDefaults` key.
     private static let selectedSiteNameKey = "selectedSiteName"
+    /// The last explicit Discovery setup choice and each zoom profile's last
+    /// planning focal length are app-behavior preferences, not library
+    /// structure, so they live in UserDefaults rather than config.json.
+    private static let selectedImagingSetupIDKey = "selectedImagingSetupID"
+    private static let discoveryFocalLengthsBySetupKey = "discoveryFocalLengthsBySetup"
 
     /// App-lifetime singleton reference, set from `init()`. The menu bar
     /// (`Views/Commands.swift`) needs to call into `AppState` from `.commands`
@@ -850,6 +855,55 @@ final class AppState: @unchecked Sendable {
         effectiveSiteName ?? SiteProfile.defaultSite(in: config.sites)?.name ?? "-"
     }
 
+    /// Last setup chosen on Discovery. A stale ID is harmless: the computed
+    /// resolver below falls back to the configured default/first profile.
+    var selectedImagingSetupID: String? = nil {
+        didSet {
+            if let selectedImagingSetupID {
+                UserDefaults.standard.set(selectedImagingSetupID, forKey: Self.selectedImagingSetupIDKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.selectedImagingSetupIDKey)
+            }
+        }
+    }
+
+    /// Setup ID -> last focal length used by the Discovery zoom control.
+    /// Values are always clamped again when consumed, so a later edit of a
+    /// zoom range cannot leave an out-of-range value active.
+    var discoveryFocalLengthsBySetup: [String: Double] = [:] {
+        didSet {
+            if let data = try? JSONEncoder().encode(discoveryFocalLengthsBySetup) {
+                UserDefaults.standard.set(data, forKey: Self.discoveryFocalLengthsBySetupKey)
+            }
+        }
+    }
+
+    var effectiveImagingSetup: ImagingSetupProfile? {
+        config.imagingSetups.first { $0.id == selectedImagingSetupID }
+            ?? ImagingSetupProfile.defaultSetup(in: config.imagingSetups)
+    }
+
+    var effectiveDiscoveryFocalLengthMM: Double? {
+        guard let setup = effectiveImagingSetup else { return nil }
+        return setup.clampedFocalLengthMM(discoveryFocalLengthsBySetup[setup.id])
+    }
+
+    /// Changes the active setup and recomputes an already-open Discovery
+    /// page. The effective fallback keeps the selection valid after deletes.
+    func selectImagingSetup(_ id: String) {
+        guard config.imagingSetups.contains(where: { $0.id == id }) else { return }
+        selectedImagingSetupID = id
+        if discovery != nil, !isBusy { loadDiscovery() }
+    }
+
+    /// Stores one zoom planning value without starting a load itself. The
+    /// Slider calls this continuously and triggers exactly one load when the
+    /// editing gesture finishes, avoiding a cancellation storm per pixel.
+    func setDiscoveryFocalLengthMM(_ focalLengthMM: Double) {
+        guard let setup = effectiveImagingSetup else { return }
+        discoveryFocalLengthsBySetup[setup.id] = setup.clampedFocalLengthMM(focalLengthMM)
+    }
+
     var resolvedSite: SiteRule = SiteRule()
 
     /// Tonight's (or `planDate`'s) dark-time/Moon summary
@@ -1094,6 +1148,11 @@ final class AppState: @unchecked Sendable {
         firstStepsCardDismissed = UserDefaults.standard.bool(forKey: Self.firstStepsCardDismissedKey)
         autoScanOnMount = UserDefaults.standard.bool(forKey: Self.autoScanOnMountKey)
         selectedSiteName = UserDefaults.standard.string(forKey: Self.selectedSiteNameKey)
+        selectedImagingSetupID = UserDefaults.standard.string(forKey: Self.selectedImagingSetupIDKey)
+        if let data = UserDefaults.standard.data(forKey: Self.discoveryFocalLengthsBySetupKey),
+           let decoded = try? JSONDecoder().decode([String: Double].self, from: data) {
+            discoveryFocalLengthsBySetup = decoded
+        }
         loadRecentRoots()
         AppState.shared = self
     }
@@ -2468,6 +2527,8 @@ final class AppState: @unchecked Sendable {
         // same "capture, don't touch `self` inside `Task.detached`" shape
         // `cfg`/`currentStats` above already follow.
         let siteName = effectiveSiteName
+        let setupID = effectiveImagingSetup?.id
+        let focalLengthMM = effectiveDiscoveryFocalLengthMM
 
         let opID = beginOperation("Felfedezés számítása…")
         currentTask = Task { [weak self] in
@@ -2476,7 +2537,9 @@ final class AppState: @unchecked Sendable {
                 let (rows, fov, site) = try await Task.detached(priority: .userInitiated) {
                     let site = try Planner.resolveSite(db: db, config: cfg, siteName: siteName)
                     let existing = DiscoveryPlanner.existingDesignations(stats: currentStats)
-                    let fov = try FieldGeometry.dominantFOV(db: db, config: cfg)
+                    let fov = try FieldGeometry.discoveryFOV(
+                        db: db, config: cfg, setupID: setupID, focalLengthMM: focalLengthMM
+                    )
                     let rows = DiscoveryPlanner.discover(
                         date: Date(), site: site, minAltitudeDeg: plannerDefaultMinAltitudeDeg,
                         existingDesignations: existing,
@@ -2523,6 +2586,8 @@ final class AppState: @unchecked Sendable {
         guard let db else { return }
         let cfg = config
         let currentStats = stats
+        let setupID = effectiveImagingSetup?.id
+        let focalLengthMM = effectiveDiscoveryFocalLengthMM
 
         let opID = beginOperation("Helyszín felismerése a képek fejléceiből…")
         currentTask = Task { [weak self] in
@@ -2535,7 +2600,9 @@ final class AppState: @unchecked Sendable {
                         )
                     }
                     let existing = DiscoveryPlanner.existingDesignations(stats: currentStats)
-                    let fov = try FieldGeometry.dominantFOV(db: db, config: cfg)
+                    let fov = try FieldGeometry.discoveryFOV(
+                        db: db, config: cfg, setupID: setupID, focalLengthMM: focalLengthMM
+                    )
                     let rows = DiscoveryPlanner.discover(
                         date: Date(), site: site, minAltitudeDeg: plannerDefaultMinAltitudeDeg,
                         existingDesignations: existing,
@@ -2730,6 +2797,8 @@ final class AppState: @unchecked Sendable {
         let currentStats = stats
         let wantsMonth = monthPlan != nil
         let wantsDiscovery = discovery != nil
+        let setupID = effectiveImagingSetup?.id
+        let focalLengthMM = effectiveDiscoveryFocalLengthMM
 
         let opID = beginOperation("Helyszín-adatok frissítése…")
         currentTask = Task { [weak self] in
@@ -2750,7 +2819,9 @@ final class AppState: @unchecked Sendable {
                     var bundle = SiteScopedBundle(plan: plans, site: site, night: night, month: month)
                     if wantsDiscovery {
                         let existing = DiscoveryPlanner.existingDesignations(stats: currentStats)
-                        let fov = try FieldGeometry.dominantFOV(db: db, config: cfg)
+                        let fov = try FieldGeometry.discoveryFOV(
+                            db: db, config: cfg, setupID: setupID, focalLengthMM: focalLengthMM
+                        )
                         bundle.discovery = DiscoveryPlanner.discover(
                             date: Date(), site: site, minAltitudeDeg: plannerDefaultMinAltitudeDeg,
                             existingDesignations: existing,

@@ -68,3 +68,15 @@ private func detachedTaskBodies(in source: String) -> [Substring] {
         "Quick Look callbacks run on an arbitrary queue; their continuation must transport CGImage, not NSImage"
     )
 }
+
+@Test func everyAppDiscoveryLoadUsesTheManualFirstFOVResolver() throws {
+    let sourceURL = repositoryRoot()
+        .appendingPathComponent("Sources/AstroToolApp/AppState.swift")
+    let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+    let resolverCallCount = source.components(separatedBy: "FieldGeometry.discoveryFOV(").count - 1
+    #expect(resolverCallCount == 3, "loadDiscovery, header-site recognition, and site-scoped refresh must resolve the same setup FOV")
+    #expect(!source.contains("let fov = try FieldGeometry.dominantFOV"))
+    #expect(source.contains("selectedImagingSetupIDKey"))
+    #expect(source.contains("discoveryFocalLengthsBySetup"))
+}
