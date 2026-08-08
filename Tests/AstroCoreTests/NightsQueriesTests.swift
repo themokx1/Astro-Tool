@@ -275,6 +275,70 @@ private func insertSensorProfile(
     #expect(try #require(rows.first { $0.date == "2026-01-02" }).hasNotes == false)
 }
 
+// MARK: - Per-filter breakdown (R11-T5/F1)
+
+@Test func allNightsFilterBreakdownMatchesFilterBreakdownQueriesForThatDate() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+    try insertLight(db: db, target: "T1", date: "2026-01-10", name: "ha1", exptime: 300, filter: "Ha")
+    try insertLight(db: db, target: "T1", date: "2026-01-10", name: "ha2", exptime: 300, filter: "Ha")
+    try insertLight(db: db, target: "T1", date: "2026-01-10", name: "oiii1", exptime: 900, filter: "OIII")
+
+    let rows = try NightsQueries.allNights(db: db, config: config)
+    let row = try #require(rows.first { $0.date == "2026-01-10" })
+
+    let expected = try FilterBreakdownQueries.breakdown(db: db, config: config, target: "T1", date: "2026-01-10")
+    #expect(row.filterBreakdown == expected)
+    #expect(row.filterBreakdown.map(\.filter) == ["OIII", "Ha"])
+    #expect(row.filterBreakdown.first { $0.filter == "Ha" }?.usableFrameCount == 2)
+    #expect(row.filterBreakdown.first { $0.filter == "Ha" }?.integrationSeconds == 600.0)
+    #expect(row.filterBreakdown.first { $0.filter == "OIII" }?.integrationSeconds == 900.0)
+}
+
+/// An OSC/DSLR session (no `FILTER` header at all) still gets a single
+/// sentinel-bucket row -- same "(nincs szűrő-adat)" convention
+/// `FilterBreakdownQueries` documents, never an empty array masquerading as
+/// "no data at all".
+@Test func allNightsFilterBreakdownBucketsFilterlessFramesUnderTheSentinel() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+    try insertLight(db: db, target: "T1", date: "2026-01-01", name: "a", exptime: 60)
+
+    let rows = try NightsQueries.allNights(db: db, config: config)
+    let row = try #require(rows.first { $0.date == "2026-01-01" })
+    #expect(row.filterBreakdown.count == 1)
+    #expect(row.filterBreakdown[0].filter == FilterBreakdownQueries.noFilterSentinel)
+}
+
+/// Scoped strictly to its own date -- a sibling session's frames on another
+/// night must never leak into this row's breakdown.
+@Test func allNightsFilterBreakdownIsScopedToItsOwnDateOnly() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+    try insertLight(db: db, target: "T1", date: "2026-01-10", name: "a", exptime: 300, filter: "Ha")
+    try insertLight(db: db, target: "T1", date: "2026-01-11", name: "b", exptime: 300, filter: "OIII")
+
+    let rows = try NightsQueries.allNights(db: db, config: config)
+    let jan10 = try #require(rows.first { $0.date == "2026-01-10" })
+    #expect(jan10.filterBreakdown.map(\.filter) == ["Ha"])
+    let jan11 = try #require(rows.first { $0.date == "2026-01-11" })
+    #expect(jan11.filterBreakdown.map(\.filter) == ["OIII"])
+}
+
+/// An excluded (`_hibas`) night still reports its own real per-filter
+/// numbers here -- same "browsing surface, not a stats roll-up" stance the
+/// rest of `NightRow` already takes.
+@Test func allNightsFilterBreakdownStillReportsAnExcludedHibasNightsOwnFrames() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+    try insertLight(db: db, target: "T1", date: "2026-01-10_hibas", name: "a", exptime: 300, filter: "Ha")
+
+    let rows = try NightsQueries.allNights(db: db, config: config)
+    let row = try #require(rows.first { $0.date == "2026-01-10_hibas" })
+    #expect(row.filterBreakdown.map(\.filter) == ["Ha"])
+    #expect(row.filterBreakdown[0].integrationSeconds == 300.0)
+}
+
 // MARK: - Display name resolution
 
 @Test func allNightsResolvesDisplayNameViaTargetNameResolver() throws {

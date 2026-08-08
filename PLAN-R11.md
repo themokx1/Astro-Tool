@@ -22,7 +22,7 @@
 - [x] 2. Persona-review (4 agent) — kész
 - [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
 - [x] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [x]
-- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [ ] T6 [ ] T7 [ ] T8 [ ] T9 [ ] T10 [ ] T11 [ ] T12 [ ] T13 [ ]
+- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [ ] T7 [ ] T8 [ ] T9 [ ] T10 [ ] T11 [ ] T12 [ ] T13 [ ]
 - [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [ ] T15 [ ] T16 [ ] T17 [ ]
 - [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
 - [ ] 8. Release v0.13.0
@@ -335,3 +335,12 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   audit/cleanup/stacklist-en, scan changed_targets, config show --json-fix),
   korrupt-FITS audit-szabály, docs/features.html + cli.html frissítve. Ezzel
   az A-hullám (T1–T4) teljes. Következő: B-hullám (T5–T13) kiosztása.
+- 2026-08-08: T5 (Szűrő-dimenzió alapok) kész — F1 teljes (TargetDetail
+  "Szűrők" kártya, fejléc-tile top-3/legnagyobb-hiány caption, szűrőnkénti
+  Integráció-halmozódás grafikon, NightsPage óraszám-bontás+tooltip) és F2
+  teljes (`goal:F=Xh` tag-konvenció, `FilterGoalQueries.merge`/
+  `biggestDeficit`, GoalEditSheet "Szűrőnként" szekció, TonightPage
+  "Hiányzik" popover, CLI `goal set/clear --filter` + `goal list` + `stats
+  --filters --json` cél/hiány mezők). Mellékesen javítva: `AppState.setGoal`/
+  CLI `goal set/clear` (összcél) eddig egy bare `hasPrefix("goal:")`-tal
+  törölte volna a szűrőnkénti tageket is. Következő: T6 (Tervező-bővítés).

@@ -1685,21 +1685,28 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - Goal (B11)
 
-    /// Writes/replaces a target's `goal:Xh` tag (R9-T3/B11's inline
-    /// hour-stepper popover): removes every existing `goal:*` tag first
-    /// (there should only ever be at most one, but this is defensive against
-    /// a manually-edited DB with more), then adds the new one -- unless
-    /// `hours` is `nil`/`0`, which just clears the goal entirely ("Nincs
-    /// cél"). Refreshes `stats` (+ this target's `sessionDetailsByTarget`
-    /// entry, via the same helper a plain tag edit uses), `projectStates`
-    /// (so `missingSeconds`/phase reflect the new goal), and `plan` (if
-    /// already loaded -- so "Ma este"'s Cél/Hiányzik columns don't need a
-    /// separate manual refresh) -- the three places acceptance ⓓ checks.
+    /// Writes/replaces a target's overall `goal:Xh` tag (R9-T3/B11's inline
+    /// hour-stepper popover): removes every existing OVERALL `goal:*` tag
+    /// first (there should only ever be at most one, but this is defensive
+    /// against a manually-edited DB with more), then adds the new one --
+    /// unless `hours` is `nil`/`0`, which just clears the goal entirely
+    /// ("Nincs cél"). Refreshes `stats` (+ this target's
+    /// `sessionDetailsByTarget` entry, via the same helper a plain tag edit
+    /// uses), `projectStates` (so `missingSeconds`/phase reflect the new
+    /// goal), and `plan` (if already loaded -- so "Ma este"'s Cél/Hiányzik
+    /// columns don't need a separate manual refresh) -- the three places
+    /// acceptance ⓓ checks.
+    ///
+    /// R11-T5/F2: `GoalTag.isOverallGoalTag` (not a bare
+    /// `hasPrefix("goal:")`) is what keeps this from also deleting any
+    /// per-filter `goal:<filter>=<hours>h` tag the target might have --
+    /// those two conventions coexist independently (see `setFilterGoals`
+    /// below, which is the mirror-image fix for the per-filter side).
     func setGoal(target: String, hours: Double?) {
         guard let db else { return }
         let cfg = config
         let existingGoalTags = (stats.first { $0.target == target }?.tags ?? []).filter {
-            $0.lowercased().hasPrefix("goal:")
+            GoalTag.isOverallGoalTag($0)
         }
 
         let opID = beginOperation("Cél mentése…")
@@ -1745,6 +1752,129 @@ final class AppState: @unchecked Sendable {
     private static nonisolated func formatGoalTag(hours: Double) -> String {
         if hours.rounded() == hours { return "goal:\(Int(hours))h" }
         return "goal:\(String(format: "%.1f", hours))h"
+    }
+
+    // MARK: - Per-filter goals (R11-T5/F2)
+
+    /// One row of `GoalEditSheet`'s "Szűrőnként" DisclosureGroup -- a filter
+    /// this target has actually shot at least once (from
+    /// `FilterBreakdownQueries.breakdown`), or one it only has a goal tag
+    /// for so far (0 usable) -- paired with its current goal, in hours
+    /// (`0` = no goal = the tag gets removed on save, same "0 clears it"
+    /// convention the overall goal stepper already uses).
+    struct FilterGoalEditRow: Identifiable, Equatable {
+        let filter: String
+        let usableSeconds: Double
+        var goalHours: Double
+        var id: String { filter }
+    }
+
+    /// `nil` until `loadFilterGoalEditor(target:)` has run for the sheet
+    /// currently open; `GoalEditSheet` hides its "Szűrőnként" section
+    /// entirely while this is `nil` or empty (nothing to show for an
+    /// OSC/DSLR target with no per-filter data at all).
+    var filterGoalEditorRows: [FilterGoalEditRow]?
+
+    /// Loads `target`'s per-filter goal-editor rows (`GoalEditSheet`'s
+    /// "Szűrőnként" section, opened on appear same as `CalibLinkSheet`/
+    /// `StackListSheet`'s own "load on appear" sheets) -- every filter with
+    /// usable frames (`FilterBreakdownQueries.breakdown`, the sentinel
+    /// no-filter bucket excluded: a per-filter goal makes no sense for
+    /// "no filter recorded") merged with every `goal:<filter>=<hours>h` tag
+    /// already on the target (`GoalTag.parseFilterGoals`), so a filter
+    /// that's been GOALED but never shot yet still gets its own row (0h
+    /// usable, its set goal).
+    func loadFilterGoalEditor(target: String) {
+        guard let db else { return }
+        let cfg = config
+        filterGoalEditorRows = nil
+
+        let opID = beginOperation("Szűrőnkénti célok betöltése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let rows = try await Task.detached(priority: .userInitiated) {
+                    let breakdown = try FilterBreakdownQueries.breakdown(db: db, config: cfg, target: target)
+                    let tags = try db.tags(target: target, sessionDate: nil)
+                    let goals = GoalTag.parseFilterGoals(tags: tags)
+                    var goalHoursByLowercasedFilter: [String: Double] = [:]
+                    for goal in goals { goalHoursByLowercasedFilter[goal.filter.lowercased()] = goal.seconds / 3600.0 }
+
+                    var seenLowercasedFilters = Set<String>()
+                    var rows: [FilterGoalEditRow] = []
+                    for entry in breakdown where entry.filter != FilterBreakdownQueries.noFilterSentinel {
+                        let key = entry.filter.lowercased()
+                        seenLowercasedFilters.insert(key)
+                        rows.append(FilterGoalEditRow(
+                            filter: entry.filter,
+                            usableSeconds: entry.integrationSeconds,
+                            goalHours: goalHoursByLowercasedFilter[key] ?? 0
+                        ))
+                    }
+                    for goal in goals where !seenLowercasedFilters.contains(goal.filter.lowercased()) {
+                        rows.append(FilterGoalEditRow(filter: goal.filter, usableSeconds: 0, goalHours: goal.seconds / 3600.0))
+                    }
+                    return rows
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.filterGoalEditorRows = rows
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Clears `filterGoalEditorRows` -- `GoalEditSheet.onDisappear`, same
+    /// "clear on close" pattern `CalibLinkSheet`/`StackListSheet` already
+    /// follow for their own loaded state.
+    func clearFilterGoalEditor() {
+        filterGoalEditorRows = nil
+    }
+
+    /// Writes/removes every filter's `goal:<filter>=<hours>h` tag from
+    /// `GoalEditSheet`'s "Szűrőnként" save in ONE operation (rather than one
+    /// `beginOperation` per filter row): for each row, removes any existing
+    /// tag for THAT filter (`GoalTag.isFilterGoalTag`, case-insensitive --
+    /// never touches another filter's tag, or the overall `goal:<hours>h`
+    /// one), then adds a fresh tag when `goalHours > 0`. Refreshes `stats`
+    /// (the "Szűrők" card's/"Hiányzik" tile's own live re-derivation reads
+    /// straight off its `tags`) and `plan` (so `TonightPage`'s "Hiányzik"
+    /// popover reflects the change immediately) -- same two refreshes
+    /// `setGoal` above performs for the overall goal.
+    func setFilterGoals(target: String, rows: [FilterGoalEditRow]) {
+        guard let db else { return }
+        let cfg = config
+
+        let opID = beginOperation("Szűrőnkénti célok mentése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    let existingTags = try db.tags(target: target, sessionDate: nil)
+                    for row in rows {
+                        for tag in existingTags where GoalTag.isFilterGoalTag(tag, filter: row.filter) {
+                            try db.removeTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: tag))
+                        }
+                        if row.goalHours > 0 {
+                            let tag = GoalTag.formatFilter(filter: row.filter, hours: row.goalHours)
+                            try db.addTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: tag))
+                        }
+                    }
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                await self.reloadStatsAfterTagChange(db: db, config: cfg, target: target)
+                let planDate = self.planDate
+                if self.plan != nil, let planResult = try? await Task.detached(priority: .userInitiated, operation: {
+                    try Planner.plan(date: planDate, db: db, config: cfg)
+                }).value {
+                    self.plan = planResult
+                }
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
     }
 
     // MARK: - Wide-field classification (R11-T3/F20)
@@ -1844,6 +1974,20 @@ final class AppState: @unchecked Sendable {
     /// ever needs the SELECTED row's, via the existing `nightHealth`/
     /// `loadSessionTimeline`).
     var targetNightHealthByDate: [String: NightHealthReport] = [:]
+    /// R11-T5/F1: the target's whole-history per-filter usable-integration
+    /// breakdown (`FilterBreakdownQueries.breakdown`, seconds-descending) --
+    /// the Áttekintés segment's new "Szűrők" card, the header's "Valós
+    /// integráció" tile caption (top 3 filters), and the "Hiányzik" tile's
+    /// per-filter-deficit caption (merged with goal tags via
+    /// `FilterGoalQueries` right where each of those reads it, rather than
+    /// stored pre-merged here -- this array itself never carries goal data).
+    var targetFilterBreakdown: [FilterIntegration] = []
+    /// R11-T5/F1: one `FilterBreakdownQueries.breakdown(..., date:)` per
+    /// session date, keyed by `dateRaw` -- the Áttekintés segment's
+    /// "Integráció-halmozódás" chart needs each session's OWN per-filter
+    /// contribution to build the per-filter cumulative lines, the same way
+    /// `targetNightHealthByDate` above is keyed for the Sessionök table.
+    var targetFilterBreakdownByDate: [String: [FilterIntegration]] = [:]
 
     /// Bundles every query `TargetDetailPage.onAppear` needs so they can all
     /// load inside ONE `Task`/`beginOperation` -- see the doc on `runRate`'s
@@ -1872,6 +2016,8 @@ final class AppState: @unchecked Sendable {
         var nightHealthByDate: [String: NightHealthReport]
         var qualitySummaries: [SessionQualitySummary]
         var advice: ExposureAdvice
+        var filterBreakdown: [FilterIntegration]
+        var filterBreakdownByDate: [String: [FilterIntegration]]
     }
 
     /// Loads everything the Célpont-részletek page's header + Áttekintés/
@@ -1891,6 +2037,8 @@ final class AppState: @unchecked Sendable {
         targetSetupDescriptors = []
         targetSessionCalibrations = []
         targetNightHealthByDate = [:]
+        targetFilterBreakdown = []
+        targetFilterBreakdownByDate = [:]
         qualitySummaries = []
         exposureAdvice = nil
         sessionTimeline = nil
@@ -1944,10 +2092,19 @@ final class AppState: @unchecked Sendable {
                     let setupDescriptors = Array(Set(sessions.compactMap(\.setupDescriptor))).sorted()
                     var calibs: [SessionCalibration] = []
                     var nightHealthByDate: [String: NightHealthReport] = [:]
+                    // R11-T5/F1: one per-session filter breakdown alongside
+                    // the per-session calib/night-health lookups this loop
+                    // already builds -- the Áttekintés segment's per-filter
+                    // cumulative chart needs each session's OWN contribution.
+                    var filterBreakdownByDate: [String: [FilterIntegration]] = [:]
                     for session in sessions {
                         calibs.append(try SessionMatcher.match(target: target, date: session.dateRaw, db: db, config: cfg))
                         nightHealthByDate[session.dateRaw] = try NightHealth.report(target: target, date: session.dateRaw, db: db, config: cfg)
+                        filterBreakdownByDate[session.dateRaw] = try FilterBreakdownQueries.breakdown(
+                            db: db, config: cfg, target: target, date: session.dateRaw
+                        )
                     }
+                    let filterBreakdown = try FilterBreakdownQueries.breakdown(db: db, config: cfg, target: target)
                     let qualitySummaries = try SessionQuality.summaries(target: target, db: db, config: cfg)
                     let advice = try ExposureAdvisor.advise(target: target, db: db, config: cfg)
                     return TargetDetailBundle(
@@ -1955,7 +2112,8 @@ final class AppState: @unchecked Sendable {
                         stackGroups: stackGroups, projects: projects, plan: plan, site: site,
                         calibHealth: calibHealth, coordInfo: coordInfo, setupDescriptors: setupDescriptors,
                         calibs: calibs, nightHealthByDate: nightHealthByDate,
-                        qualitySummaries: qualitySummaries, advice: advice
+                        qualitySummaries: qualitySummaries, advice: advice,
+                        filterBreakdown: filterBreakdown, filterBreakdownByDate: filterBreakdownByDate
                     )
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
@@ -1991,6 +2149,8 @@ final class AppState: @unchecked Sendable {
                 self.targetSetupDescriptors = bundle.setupDescriptors
                 self.targetSessionCalibrations = bundle.calibs
                 self.targetNightHealthByDate = bundle.nightHealthByDate
+                self.targetFilterBreakdown = bundle.filterBreakdown
+                self.targetFilterBreakdownByDate = bundle.filterBreakdownByDate
                 self.qualitySummaries = bundle.qualitySummaries
                 self.exposureAdvice = bundle.advice
                 self.progressText = "Célpont-részletek kész: \(target)"

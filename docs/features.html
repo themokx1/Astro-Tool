@@ -113,7 +113,7 @@
     <ul class="flist">
       <li><strong>4-5 fejléc-tile</strong> — Sötét idő, Hold (megvilágítottság % + esemény), Ajánlott (hány célpont verdiktje "ma jó"), Helyszín (feloldott koordináta, kattintva a Beállítások Helyszín fülére ugrik), opcionális Felhőzet-tile (csak ha az Open-Meteo felhőzet-előrejelzés be van kapcsolva a Beállításokban).</li>
       <li><strong>Felhő-kontextus sáv</strong> — ha ma este a várható felhőzet 70% fölött van, egysoros, elutasítható figyelmeztetés a terv-táblázat fölött, link a következő derült éjszakára.</li>
-      <li><strong>Terv-táblázat</strong> — célpontonként Állapot (pipeline-fázis chip), Integráció, Cél, Hiányzik, Kulmináció, Max. magasság, Látható ablak, Hold-zavarás, Döntés — pontszám szerint rendezve, minden oszlop kereshető.</li>
+      <li><strong>Terv-táblázat</strong> — célpontonként Állapot (pipeline-fázis chip), Integráció, Cél, Hiányzik (szűrőnkénti célnál kis chevron-gomb, kattintva popover a szűrőnkénti megvan/cél/hiányzik bontással — az oszlop értéke marad az összesített szám), Kulmináció, Max. magasság, Látható ablak, Hold-zavarás, Döntés — pontszám szerint rendezve, minden oszlop kereshető.</li>
       <li><strong>Sor-műveletek</strong> — jobb klikk vagy dupla katt a sorban: célpont megnyitása, Cél beállítása…, Plate-solve… (csak koordináta nélküli célponton), Éjszaka-riport, Célpont-riport, Mappa megnyitása Finderben.</li>
       <li><strong>"Terv erre az éjszakára"</strong> — a Naptár egy másik éjszakájáról visszahozható ide a terv, "Vissza a mai estéhez" gombbal.</li>
     </ul>
@@ -158,7 +158,7 @@
     <ul class="flist">
       <li><strong>Minden session egy táblázatban</strong> — a "Minden célpont" célpontonként-csoportosított nézetének kereszt-célpontos megfelelője: minden éjszaka minden célponthoz, egy lapos, rendezhető, szűrhető táblázatban.</li>
       <li><strong>3 fejléc-tile</strong> — Éjszakák (db), Összes integráció, Legjobb FWHM.</li>
-      <li><strong>Táblázat</strong> — Dátum, Célpont, Keretek, Integráció, Expozíciók, FWHM″, Háttér e⁻/s/″², Hatékonyság, Szűrők (felsorolva), Jegyzet (✓, ha van hozzá jegyzet) oszlopokkal; Év/Hónap választó a lista kliens-oldali szűkítéséhez.</li>
+      <li><strong>Táblázat</strong> — Dátum, Célpont, Keretek, Integráció, Expozíciók, FWHM″, Háttér e⁻/s/″², Hatékonyság, Szűrők (óraszám-bontás, pl. "Ha 1,5h · OIII 0,8h", keretszámok tooltipben), Jegyzet (✓, ha van hozzá jegyzet) oszlopokkal; Év/Hónap választó a lista kliens-oldali szűkítéséhez.</li>
       <li><strong>Sor-műveletek</strong> — ugyanaz a közös session-akció menü, mint a "Minden célpont" oldalon (megnyitás, kalibráció linkelése, stackelés előkészítése, keretek pontozása, riport, jegyzet, címke).</li>
     </ul>
   </div>
@@ -167,8 +167,8 @@
     <h2>🔭 Célpont-részletek</h2>
     <p class="tabname">Sidebar-ból vagy "Minden célpont"-ból megnyitva</p>
     <ul class="flist">
-      <li><strong>Fejléc</strong> — azonosítás (feloldott katalógusnév + mappanév), fázis-chip, 5 tile (valós/bruttó integráció, Cél-szerkesztő, Hiányzik, Sessionök, Legjobb session), kártya-szerűen kiemelt "Következő lépés" mondat + akció-gomb.</li>
-      <li><strong>Áttekintés szegmens</strong> — koordináták (WCS fejléc/plate-solve/nincs forrás-jelöléssel, Plate-solve… gombbal ha kell), setup-ujjlenyomat (kamera/gyújtótáv/gain/szűrő), mai láthatóság + magasság-görbe, mozaik-panel táblázat (csak mozaik-célponton, közvetlenül a láthatóság alatt), Integráció-halmozódás grafikon (halmozott óraszám cél-vonallal, ha van kitűzött cél), Expozíció-tanácsadó, kalibráció-státusz.</li>
+      <li><strong>Fejléc</strong> — azonosítás (feloldott katalógusnév + mappanév), fázis-chip, 5 tile (valós integráció — szűrős célpontnál a top-3 szűrő-bontással a caption-ben, Cél-szerkesztő, Hiányzik — szűrőnkénti célnál a legnagyobb hiánnyal a caption-ben, Sessionök, Legjobb session), kártya-szerűen kiemelt "Következő lépés" mondat + akció-gomb.</li>
+      <li><strong>Áttekintés szegmens</strong> — koordináták (WCS fejléc/plate-solve/nincs forrás-jelöléssel, Plate-solve… gombbal ha kell), setup-ujjlenyomat (kamera/gyújtótáv/gain/szűrő), <strong>Szűrők kártya</strong> (szűrőnkénti usable keret/integráció/cél/hiányzik, mini progress-sávval; OSC/DSLR célpontnál egy diszkrét sor), mai láthatóság + magasság-görbe, mozaik-panel táblázat (csak mozaik-célponton, közvetlenül a láthatóság alatt), Integráció-halmozódás grafikon (halmozott óraszám cél-vonallal, ha van kitűzött cél — mono/szűrőkerekes célpontnál szűrőnként színezve), Expozíció-tanácsadó, kalibráció-státusz.</li>
       <li><strong>Sessionök szegmens</strong> — 10 oszlopos táblázat (keretszám, integráció, expozíciók, FWHM″, háttér e⁻/s/″², rang, hűtés-/fókusz-verdikt, README) + kiválasztott sor alatt idővonal-sáv és hardver-egészség.</li>
       <li><strong>Minőség szegmens</strong> — pontozás-vezérlő (session-szűrő "Minden session"-nel visszaállítható), 10-vödrös pontszám-hisztogram, tábla alapból 5 oszlop (Fájl, Pontszám, FWHM, Kiugró, Saját döntés), a többi (Mappa/Kerekség/Csillagok/Háttér/Szat.%/Exp.) az "Oszlopok" menü mögött, egyénileg be-/kikapcsolható (macOS 14.4+).</li>
       <li><strong>Keret-átnéző ("Átnézés")</strong> — R10-es "blink"-sheet: léptet a táblázat aktuális sorrendjében/szűrőjében a kereteken, billentyűkkel (<code>←</code>/<code>→</code> lépés, <code>A</code> elfogad, <code>X</code> elutasít, <code>U</code> töröl) — a gépi kiugró-jelzés nem lát műholdcsíkot, repülőt, vékony felhőt; ez az emberi visszaellenőrzés. Minden döntés azonnal hat a következő stackelésnél.</li>

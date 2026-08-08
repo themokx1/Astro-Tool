@@ -1557,6 +1557,183 @@ struct CLISmokeTests {
     #expect(result.exitCode == 1)
 }
 
+// MARK: - goal --filter / goal list (R11-T5/F2)
+
+@Test func goalSetFilterThenClearRoundTrips() throws {
+    let root = try makeTempRoot("goal-set-filter-clear")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let set = try runCLI([
+        "goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path, "--json",
+    ])
+    #expect(set.exitCode == 0, "stderr: \(set.stderr)")
+    let setJSON = try #require(try JSONSerialization.jsonObject(with: Data(set.stdout.utf8)) as? [String: Any])
+    #expect(setJSON["goal_tag"] as? String == "goal:Ha=12h")
+    #expect(setJSON["filter"] as? String == "Ha")
+
+    let tagList = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    #expect(tagList.exitCode == 0, "stderr: \(tagList.stderr)")
+    let tags = try jsonStringItems(tagList.stdout)
+    #expect(tags == ["goal:Ha=12h"])
+
+    let clear = try runCLI(["goal", "clear", "--target", "M45_Pleiades", "--filter", "Ha", "--root", root.path, "--json"])
+    #expect(clear.exitCode == 0, "stderr: \(clear.stderr)")
+    let clearJSON = try #require(try JSONSerialization.jsonObject(with: Data(clear.stdout.utf8)) as? [String: Any])
+    #expect(clearJSON["goal_tag"] == nil || clearJSON["goal_tag"] is NSNull)
+
+    let tagsAfterClear = try jsonStringItems(
+        try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"]).stdout
+    )
+    #expect(tagsAfterClear == [])
+}
+
+/// The two goal conventions must coexist -- setting a per-filter goal must
+/// never touch (or be touched by) the overall `goal:<hours>h` tag.
+@Test func goalSetFilterAndOverallGoalCoexistIndependently() throws {
+    let root = try makeTempRoot("goal-set-filter-coexist")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let setOverall = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "30", "--root", root.path])
+    #expect(setOverall.exitCode == 0, "stderr: \(setOverall.stderr)")
+    let setFilter = try runCLI([
+        "goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path,
+    ])
+    #expect(setFilter.exitCode == 0, "stderr: \(setFilter.stderr)")
+
+    let tags = try #require(try jsonStringItems(
+        try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"]).stdout
+    ))
+    #expect(Set(tags) == ["goal:30h", "goal:Ha=12h"])
+
+    // Clearing the OVERALL goal must leave the filter goal untouched.
+    let clearOverall = try runCLI(["goal", "clear", "--target", "M45_Pleiades", "--root", root.path])
+    #expect(clearOverall.exitCode == 0, "stderr: \(clearOverall.stderr)")
+    let tagsAfter = try jsonStringItems(
+        try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"]).stdout
+    )
+    #expect(tagsAfter == ["goal:Ha=12h"])
+}
+
+/// Setting a new goal for one filter must replace only THAT filter's prior
+/// tag (not any other filter's), same "replace, don't accumulate"
+/// invariant the overall goal already has.
+@Test func goalSetFilterReplacesOnlyThatFiltersPriorTag() throws {
+    let root = try makeTempRoot("goal-set-filter-replace")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    _ = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "4", "--root", root.path])
+    _ = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "OIII", "--hours", "6", "--root", root.path])
+    let second = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "8", "--root", root.path])
+    #expect(second.exitCode == 0, "stderr: \(second.stderr)")
+
+    let tags = try #require(try jsonStringItems(
+        try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"]).stdout
+    ))
+    #expect(Set(tags) == ["goal:Ha=8h", "goal:OIII=6h"])
+}
+
+@Test func goalListJSONShowsAGoalOnlyFilterAsZeroUsableWithFullMissing() throws {
+    let root = try makeTempRoot("goal-list-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let set = try runCLI([
+        "goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path,
+    ])
+    #expect(set.exitCode == 0, "stderr: \(set.stderr)")
+
+    let list = try runCLI(["goal", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    #expect(list.exitCode == 0, "stderr: \(list.stderr)")
+    let json = try #require(try JSONSerialization.jsonObject(with: Data(list.stdout.utf8)) as? [String: Any])
+    #expect(json["target"] as? String == "M45_Pleiades")
+    #expect(json["overall_goal_seconds"] == nil || json["overall_goal_seconds"] is NSNull)
+    let filters = try #require(json["filters"] as? [[String: Any]])
+    let ha = try #require(filters.first { $0["filter"] as? String == "Ha" })
+    #expect(ha["usable_frame_count"] as? Int == 0)
+    #expect(ha["goal_seconds"] as? Double == 12 * 3600.0)
+    #expect(ha["missing_seconds"] as? Double == 12 * 3600.0)
+}
+
+@Test func goalListHumanOutputPrintsTargetAndFilterTable() throws {
+    let root = try makeTempRoot("goal-list-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+    _ = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path])
+
+    let list = try runCLI(["goal", "list", "--target", "M45_Pleiades", "--root", root.path])
+    #expect(list.exitCode == 0, "stderr: \(list.stderr)")
+    #expect(list.stdout.contains("M45_Pleiades"))
+    #expect(list.stdout.contains("SZŰRŐ"))
+    #expect(list.stdout.contains("HIÁNYZIK"))
+}
+
+/// `stats --filters --json` (whole-target mode) must reflect a filter goal
+/// once one is set -- same merge `goal list` uses.
+@Test func statsFiltersJSONIncludesGoalAndMissingWhenAFilterGoalIsSet() throws {
+    let root = try makeTempRoot("stats-filters-with-goal")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+    _ = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path])
+
+    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--filters", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    let rows = try #require(try jsonItems(result.stdout))
+    let ha = try #require(rows.first { $0["filter"] as? String == "Ha" })
+    #expect(ha["goal_seconds"] as? Double == 12 * 3600.0)
+    #expect(ha["missing_seconds"] as? Double == 12 * 3600.0)
+}
+
+/// A date-scoped `stats --filters --json --date D` must NOT merge in goal
+/// data -- a single night has no goal of its own.
+@Test func statsFiltersWithDateNeverMergesInGoalData() throws {
+    let root = try makeTempRoot("stats-filters-date-no-goal")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+    _ = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path])
+
+    let result = try runCLI([
+        "stats", "--root", root.path, "--target", "M45_Pleiades", "--filters", "--date", "2026-01-10", "--json",
+    ])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    let rows = try #require(try jsonItems(result.stdout))
+    for row in rows {
+        #expect(row["goal_seconds"] == nil || row["goal_seconds"] is NSNull)
+    }
+}
+
+@Test func goalListWithoutTargetExitsWithError() throws {
+    let root = try makeTempRoot("goal-list-no-target")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI(["goal", "list", "--root", root.path])
+    #expect(result.exitCode == 1)
+}
+
 // MARK: - config (R11-T4)
 
 @Test func configShowHumanReadableByDefaultPrintsSectionsAndRootPath() throws {

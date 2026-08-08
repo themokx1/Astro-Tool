@@ -159,7 +159,7 @@
     </div>
     <div class="cmd">
       <div class="name">stats</div>
-      <div class="desc">Célpontonkénti integráció/keret-összegzés; <code>--target</code>-tel session-bontás, <code>--tag</code>-gel szűrés, <code>--filters</code>-szel szűrőnkénti integráció-bontás (mono LRGB/SHO "hány óra van meg szűrőnként").</div>
+      <div class="desc">Célpontonkénti integráció/keret-összegzés; <code>--target</code>-tel session-bontás, <code>--tag</code>-gel szűrés, <code>--filters</code>-szel szűrőnkénti integráció-bontás (mono LRGB/SHO "hány óra van meg szűrőnként") — teljes célpontra (nem <code>--date</code>-tel szűkítve) a szűrőnkénti <code>goal:F=&lt;óra&gt;h</code> cél/hiányzik is megjelenik, ha van.</div>
       <pre class="example">astrotool stats --target M31 --filters</pre>
     </div>
     <div class="cmd">
@@ -184,8 +184,9 @@
     </div>
     <div class="cmd">
       <div class="name">goal</div>
-      <div class="desc">Célpont cél-óraszám (<code>goal:&lt;óra&gt;h</code> címke) beállítása vagy törlése — ugyanaz a formátum, mint amit az app cél-szerkesztője ír, így a kettő szabadon felcserélhető.</div>
-      <pre class="example">astrotool goal set --target M31 --hours 8</pre>
+      <div class="desc">Célpont cél-óraszám (<code>goal:&lt;óra&gt;h</code> címke) beállítása vagy törlése — ugyanaz a formátum, mint amit az app cél-szerkesztője ír, így a kettő szabadon felcserélhető. <code>--filter F</code>-fel szűrőnkénti cél (<code>goal:F=&lt;óra&gt;h</code>, R11), függetlenül az összcéltól — a kettő szabadon együtt is élhet. <code>goal list --target T</code> a szűrőnkénti megvan/cél/hiányzik bontást adja vissza.</div>
+      <pre class="example">astrotool goal set --target M31 --filter Ha --hours 12
+astrotool goal list --target M31 --json</pre>
     </div>
     <div class="cmd">
       <div class="name">note</div>

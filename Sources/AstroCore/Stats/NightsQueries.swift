@@ -68,6 +68,18 @@ public struct NightRow: Codable, Sendable, Equatable {
     /// backs `NightsPage`'s "Címke eltávolítása" submenu, the one piece of
     /// the shared `SessionActionMenu` action set this row didn't carry yet.
     public var tags: [String]
+    /// R11-T5/F1: this ONE session's own per-filter usable-integration
+    /// breakdown (`FilterBreakdownQueries.breakdown(db:config:target:date:)`,
+    /// scoped to `date` -- so, like `filters`/`usableLightCount` above, this
+    /// still reports an excluded (`_hibas`) night's own real numbers rather
+    /// than an empty array). `filters` (the plain distinct-names list) is
+    /// left untouched for whatever else already reads it; this is what
+    /// `NightsPage`'s "Szűrők" column needs for its hour-bucketed
+    /// ("Ha 1,5h · OIII 0,8h") cell text and frame-count tooltip. Never
+    /// carries goal/missing data (`FilterIntegration.goalSeconds` stays
+    /// `nil` here) -- a single NIGHT has no goal of its own, only the whole
+    /// TARGET does (`TargetPlan.filterGoals`).
+    public var filterBreakdown: [FilterIntegration]
 
     public init(
         target: String,
@@ -84,7 +96,8 @@ public struct NightRow: Codable, Sendable, Equatable {
         dutyCyclePercent: Double? = nil,
         hasNotes: Bool = false,
         isExcludedFromTotals: Bool = false,
-        tags: [String] = []
+        tags: [String] = [],
+        filterBreakdown: [FilterIntegration] = []
     ) {
         self.target = target
         self.displayName = displayName
@@ -101,6 +114,7 @@ public struct NightRow: Codable, Sendable, Equatable {
         self.hasNotes = hasNotes
         self.isExcludedFromTotals = isExcludedFromTotals
         self.tags = tags
+        self.filterBreakdown = filterBreakdown
     }
 }
 
@@ -155,6 +169,9 @@ public enum NightsQueries {
 
                 let quality = qualityByDate[session.dateRaw]
                 let timeline = try SessionTimeline.timeline(target: target, date: session.dateRaw, db: db, config: config)
+                let filterBreakdown = try FilterBreakdownQueries.breakdown(
+                    db: db, config: config, target: target, date: session.dateRaw
+                )
 
                 let row = NightRow(
                     target: target,
@@ -171,7 +188,8 @@ public enum NightsQueries {
                     dutyCyclePercent: timeline.dutyCycle.map { $0 * 100 },
                     hasNotes: !session.notes.isEmpty,
                     isExcludedFromTotals: session.isExcludedFromTotals,
-                    tags: session.tags
+                    tags: session.tags,
+                    filterBreakdown: filterBreakdown
                 )
                 // Falls back to the raw text itself when it doesn't parse as
                 // a date at all, so the sort below still has SOME stable key

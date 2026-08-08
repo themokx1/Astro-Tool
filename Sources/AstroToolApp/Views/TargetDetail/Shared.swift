@@ -129,6 +129,32 @@ enum TDFormat {
     static func percent(_ value: Double) -> String {
         "\(Int(value.rounded()))%"
     }
+
+    /// `"8,2h"` -- decimal hours with the Hungarian comma separator (one
+    /// decimal place), for compact per-filter breakdown text ("Ha 8,2h ·
+    /// OIII 3,1h") where the canonical `hm` (h:mm) format would run too wide
+    /// across several filters side by side. Same "swap the ASCII decimal
+    /// point for a comma" trick `ExposureAdvisor`'s own private `hu` helper
+    /// (AstroCore) established first, for the same reason (Hungarian UI
+    /// text, not locale-dependent formatting).
+    static func decimalHours(_ seconds: Double) -> String {
+        let hours = seconds / 3600.0
+        return "\(String(format: "%.1f", hours).replacingOccurrences(of: ".", with: ","))h"
+    }
+
+    /// `"Ha 8,2h · OIII 3,1h"` -- the top `maxCount` filters from `breakdown`
+    /// (already sorted seconds-descending by `FilterBreakdownQueries.
+    /// breakdown`), for `TargetDetailPage`'s "Valós integráció" tile caption
+    /// and `NightsPage`'s "Szűrők" column. `nil` when `breakdown` has no
+    /// REAL filter at all (empty, or only
+    /// `FilterBreakdownQueries.noFilterSentinel`) -- callers fall back to
+    /// their own filterless-caption text in that case (R11-T5/F1: "csak-
+    /// szűrőtlen anyagnál maradjon a mostani caption").
+    static func filterBreakdownSummary(_ breakdown: [FilterIntegration], maxCount: Int = 3) -> String? {
+        let real = breakdown.filter { $0.filter != FilterBreakdownQueries.noFilterSentinel }
+        guard !real.isEmpty else { return nil }
+        return real.prefix(maxCount).map { "\($0.filter) \(decimalHours($0.integrationSeconds))" }.joined(separator: " · ")
+    }
 }
 
 /// szerkesztett=kék, starless=lila, starmask=szürke, export=zöld (R8-3

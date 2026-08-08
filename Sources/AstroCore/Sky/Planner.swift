@@ -36,6 +36,16 @@ public struct TargetPlan: Codable, Sendable, Equatable {
     /// Sort key (descending): missing-need x visibility x Moon-penalty.
     /// Higher means "point at this one tonight".
     public var score: Double
+    /// R11-T5/F2: this target's per-filter usable-vs-goal breakdown
+    /// (`FilterGoalQueries.merge`), `[]` when it has no
+    /// `goal:<filter>=<hours>h` tag at all -- `TonightPage`'s "Hiányzik"
+    /// cell shows a popover with this breakdown exactly when it's
+    /// non-empty. Deliberately NOT computed for every target unconditionally
+    /// (see `Planner.plan`'s own comment): it needs its own
+    /// `FilterBreakdownQueries.breakdown` pass, gated on the target actually
+    /// having a filter goal tag to keep the common (no filter goals) case
+    /// cheap.
+    public var filterGoals: [FilterIntegration]
 
     public init(
         target: String,
@@ -52,7 +62,8 @@ public struct TargetPlan: Codable, Sendable, Equatable {
         moonIlluminationPercent: Double? = nil,
         moonSeparationDeg: Double? = nil,
         verdict: String,
-        score: Double
+        score: Double,
+        filterGoals: [FilterIntegration] = []
     ) {
         self.target = target
         self.displayName = displayName ?? target.replacingOccurrences(of: "_", with: " ")
@@ -69,12 +80,13 @@ public struct TargetPlan: Codable, Sendable, Equatable {
         self.moonSeparationDeg = moonSeparationDeg
         self.verdict = verdict
         self.score = score
+        self.filterGoals = filterGoals
     }
 
     private enum CodingKeys: String, CodingKey {
         case target, displayName, raDeg, decDeg, usableIntegrationSeconds, goalSeconds,
              culminationUTC, culminationLocal, maxAltitudeDeg, visibleWindowLocal, visibleHours,
-             moonIlluminationPercent, moonSeparationDeg, verdict, score
+             moonIlluminationPercent, moonSeparationDeg, verdict, score, filterGoals
     }
 
     public init(from decoder: Decoder) throws {
@@ -96,6 +108,9 @@ public struct TargetPlan: Codable, Sendable, Equatable {
         moonSeparationDeg = try c.decodeIfPresent(Double.self, forKey: .moonSeparationDeg)
         verdict = try c.decode(String.self, forKey: .verdict)
         score = try c.decode(Double.self, forKey: .score)
+        // Absent in JSON produced before this field existed -- falls back to
+        // "no filter goals", same default the memberwise `init` uses.
+        filterGoals = try c.decodeIfPresent([FilterIntegration].self, forKey: .filterGoals) ?? []
     }
 }
 
@@ -489,11 +504,23 @@ public enum Planner {
             let goalSeconds = GoalTag.parse(tags: stat.tags)
             let isComet = TargetNameResolver.resolve(folderName: stat.target).isComet
 
+            // R11-T5/F2: per-filter goal breakdown, gated on the target
+            // actually having at least one `goal:<filter>=<hours>h` tag --
+            // `FilterBreakdownQueries.breakdown` needs its own fresh
+            // `db.allFiles` pass, so this keeps the (common) no-filter-goal
+            // case from paying that cost for every target in the library.
+            var filterGoals: [FilterIntegration] = []
+            if !GoalTag.parseFilterGoals(tags: stat.tags).isEmpty {
+                let breakdown = try FilterBreakdownQueries.breakdown(db: db, config: config, target: stat.target)
+                filterGoals = FilterGoalQueries.merge(breakdown: breakdown, tags: stat.tags)
+            }
+
             plans.append(buildPlan(
                 target: stat.target,
                 displayName: stat.displayName,
                 usableIntegrationSeconds: stat.usableIntegrationSeconds,
                 goalSeconds: goalSeconds,
+                filterGoals: filterGoals,
                 coord: coord,
                 isComet: isComet,
                 minAltitudeDeg: minAltitudeDeg,
@@ -569,6 +596,7 @@ public enum Planner {
         displayName: String,
         usableIntegrationSeconds: Double,
         goalSeconds: Double?,
+        filterGoals: [FilterIntegration],
         coord: (raDeg: Double, decDeg: Double)?,
         isComet: Bool,
         minAltitudeDeg: Double,
@@ -586,7 +614,8 @@ public enum Planner {
                 usableIntegrationSeconds: usableIntegrationSeconds,
                 goalSeconds: goalSeconds,
                 verdict: Verdict.cometStaleCoordinate,
-                score: 0
+                score: 0,
+                filterGoals: filterGoals
             )
         }
 
@@ -601,7 +630,8 @@ public enum Planner {
                 usableIntegrationSeconds: usableIntegrationSeconds,
                 goalSeconds: goalSeconds,
                 verdict: Verdict.noCoordinate,
-                score: 0
+                score: 0,
+                filterGoals: filterGoals
             )
         }
 
@@ -651,7 +681,8 @@ public enum Planner {
             moonIlluminationPercent: moonIllum,
             moonSeparationDeg: moonSeparation,
             verdict: verdict,
-            score: score
+            score: score,
+            filterGoals: filterGoals
         )
     }
 

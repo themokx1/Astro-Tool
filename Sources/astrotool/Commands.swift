@@ -104,6 +104,18 @@ Commands:
   goal clear    --target T [--root R] [--json]
                 Target goal-hours tag (`goal:<hours>h`) editing; --hours
                 must be > 0 for 'set'. Prints the resulting tag state.
+  goal set      --target T --filter F --hours H [--root R] [--json]
+  goal clear    --target T --filter F [--root R] [--json]
+                Per-filter goal-hours tag (`goal:<filter>=<hours>h`, R11-T5)
+                editing -- coexists with the plain (no --filter) overall
+                goal above, independently. --filter is matched
+                case-insensitively against FITS FILTER values elsewhere;
+                --hours must be > 0 for 'set'.
+  goal list     --target T [--root R] [--json]
+                Per-filter usable/goal/missing breakdown for T (merges
+                `stats --filters` with every `goal:<filter>=<hours>h` tag) --
+                a filter with a goal but no frames shot yet still appears,
+                with 0 usable.
   plan          [--date YYYY-MM-DD] [--min-alt 30] [--root R] [--json]
                 [--month [--nights 30]]
                 Without --month: tonight's per-target observation plan.
@@ -711,9 +723,14 @@ func cmdStats(_ args: [String]) throws -> Int32 {
     if parsed.has("--filters") {
         let breakdown: [FilterIntegration]
         if let date = parsed.value("--date") {
+            // R11-T5/F2: NOT merged with goal tags -- a single NIGHT has no
+            // goal of its own, only the whole target does (mirrors
+            // `NightsQueries.NightRow.filterBreakdown`'s own choice).
             breakdown = try FilterBreakdownQueries.breakdown(db: db, config: config, target: target, date: date)
         } else {
-            breakdown = try FilterBreakdownQueries.breakdown(db: db, config: config, target: target)
+            let wholeTargetBreakdown = try FilterBreakdownQueries.breakdown(db: db, config: config, target: target)
+            let tags = try db.tags(target: target, sessionDate: nil)
+            breakdown = FilterGoalQueries.merge(breakdown: wholeTargetBreakdown, tags: tags)
         }
         if parsed.has("--json") {
             try printJSON(breakdown)
@@ -892,7 +909,12 @@ private func printSingleTargetStats(_ s: TargetStats, showGross: Bool) {
 /// `stats --target T --filters` table -- Hungarian SZŰRŐ/KERET/INTEGRÁCIÓ
 /// columns, same padded-column style `printStatsTable`/`printPlanTable` use.
 /// Rows already arrive seconds-descending from
-/// `FilterBreakdownQueries.breakdown`.
+/// `FilterBreakdownQueries.breakdown` (goal-only synthetic rows, if any,
+/// appended after -- see `FilterGoalQueries.merge`). R11-T5/F2: CÉL/HIÁNYZIK
+/// columns are added only when at least one row actually carries a goal
+/// (the whole-target, no `--date` case, merged with `goal:<filter>=<hours>h`
+/// tags upstream) -- a date-scoped breakdown never has one, so its table
+/// stays exactly as before.
 private func printFilterBreakdown(_ breakdown: [FilterIntegration]) {
     guard !breakdown.isEmpty else {
         print("nincs szűrő-adat")
@@ -900,12 +922,23 @@ private func printFilterBreakdown(_ breakdown: [FilterIntegration]) {
     }
 
     let filterWidth = max(breakdown.map { $0.filter.count }.max() ?? 5, 5)
+    let hasGoals = breakdown.contains { $0.goalSeconds != nil }
     let header = "SZŰRŐ".padding(toLength: filterWidth, withPad: " ", startingAt: 0)
-    print("\(header)  KERET  INTEGRÁCIÓ")
+    if hasGoals {
+        print("\(header)  KERET  INTEGRÁCIÓ  CÉL      HIÁNYZIK")
+    } else {
+        print("\(header)  KERET  INTEGRÁCIÓ")
+    }
     for f in breakdown {
         let name = f.filter.padding(toLength: filterWidth, withPad: " ", startingAt: 0)
         let frames = String(f.usableFrameCount).padding(toLength: 5, withPad: " ", startingAt: 0)
-        print("\(name)  \(frames)  \(formatHoursMinutes(f.integrationSeconds))")
+        if hasGoals {
+            let goalText = (f.goalSeconds.map(formatHoursMinutes) ?? "-").padding(toLength: 7, withPad: " ", startingAt: 0)
+            let missingText = f.missingSeconds.map(formatHoursMinutes) ?? "-"
+            print("\(name)  \(frames)  \(formatHoursMinutes(f.integrationSeconds).padding(toLength: 11, withPad: " ", startingAt: 0))\(goalText)  \(missingText)")
+        } else {
+            print("\(name)  \(frames)  \(formatHoursMinutes(f.integrationSeconds))")
+        }
     }
 }
 
@@ -2091,19 +2124,30 @@ private func cmdNoteSet(_ args: [String]) throws -> Int32 {
     return 0
 }
 
-// MARK: - goal (R10-B8)
+// MARK: - goal (R10-B8, R11-T5/F2)
 
-/// `astrotool goal set|clear --target T [--hours H]` -- CLI parity for the
-/// target-detail page's inline goal hour-stepper (`AppState.setGoal`,
-/// R9-T3/B11), app-only until now. Reuses the exact `goal:<hours>h` tag
-/// text `GoalTag.format` produces (kept byte-for-byte identical to
-/// `AppState`'s own private `formatGoalTag` -- see that function's doc
-/// comment) so a goal set from either surface round-trips through
-/// `GoalTag.parse` the same way and never produces two different-looking
-/// tags for the same target.
+/// `astrotool goal set|clear --target T [--hours H] [--filter F]` -- CLI
+/// parity for the target-detail page's inline goal hour-stepper
+/// (`AppState.setGoal`/`AppState.setFilterGoals`, R9-T3/B11 + R11-T5).
+/// Reuses the exact `goal:<hours>h`/`goal:<filter>=<hours>h` tag text
+/// `GoalTag.format`/`GoalTag.formatFilter` produce (kept byte-for-byte
+/// identical to the app's own tag-writing code -- see those functions' doc
+/// comments) so a goal set from either surface round-trips through
+/// `GoalTag.parse`/`parseFilterGoals` the same way and never produces two
+/// different-looking tags for the same target/filter.
+///
+/// `--filter F` switches `set`/`clear` to the PER-FILTER convention
+/// (`goal:F=<hours>h`), independent of the plain (no `--filter`) OVERALL
+/// goal tag -- `GoalTag.isOverallGoalTag`/`isFilterGoalTag` is what makes
+/// the two never step on each other's existing tag(s) when replacing.
+///
+/// `astrotool goal list --target T [--json]` (new, R11-T5) prints the
+/// merged per-filter usable/goal/missing breakdown (`stats --filters`'s
+/// whole-target mode, but as its own subcommand so a script doesn't need
+/// `stats --filters` at all just to read filter goals back).
 func cmdGoal(_ args: [String]) throws -> Int32 {
     guard let sub = args.first else {
-        eprint("error: expected 'set' or 'clear'")
+        eprint("error: expected 'set', 'clear', or 'list'")
         eprint(usageText)
         return 1
     }
@@ -2113,6 +2157,7 @@ func cmdGoal(_ args: [String]) throws -> Int32 {
         FlagSpec("--root", takesValue: true),
         FlagSpec("--target", takesValue: true),
         FlagSpec("--hours", takesValue: true),
+        FlagSpec("--filter", takesValue: true),
         FlagSpec("--json", takesValue: false),
     ]
     let parsed = try ArgParser.parse(rest, specs: specs)
@@ -2125,7 +2170,7 @@ func cmdGoal(_ args: [String]) throws -> Int32 {
 
     let config = try resolveConfig(rootFlag: parsed.value("--root"))
     let db = try makeDatabase(config: config)
-    let existingGoalTags = try db.tags(target: target, sessionDate: nil).filter { $0.lowercased().hasPrefix("goal:") }
+    let filterArg = parsed.value("--filter")
 
     switch sub {
     case "set":
@@ -2134,35 +2179,94 @@ func cmdGoal(_ args: [String]) throws -> Int32 {
             eprint(usageText)
             return 1
         }
-        for tag in existingGoalTags {
-            try db.removeTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: tag))
+        let allTags = try db.tags(target: target, sessionDate: nil)
+        if let filterArg {
+            for tag in allTags where GoalTag.isFilterGoalTag(tag, filter: filterArg) {
+                try db.removeTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: tag))
+            }
+            try db.addTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: GoalTag.formatFilter(filter: filterArg, hours: hours)))
+        } else {
+            for tag in allTags where GoalTag.isOverallGoalTag(tag) {
+                try db.removeTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: tag))
+            }
+            try db.addTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: GoalTag.format(hours: hours)))
         }
-        try db.addTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: GoalTag.format(hours: hours)))
     case "clear":
-        for tag in existingGoalTags {
-            try db.removeTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: tag))
+        let allTags = try db.tags(target: target, sessionDate: nil)
+        if let filterArg {
+            for tag in allTags where GoalTag.isFilterGoalTag(tag, filter: filterArg) {
+                try db.removeTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: tag))
+            }
+        } else {
+            for tag in allTags where GoalTag.isOverallGoalTag(tag) {
+                try db.removeTag(TagRecord(kind: "target", target: target, sessionDate: nil, tag: tag))
+            }
         }
+    case "list":
+        try hintIfEmpty(db)
+        let breakdown = try FilterBreakdownQueries.breakdown(db: db, config: config, target: target)
+        let tags = try db.tags(target: target, sessionDate: nil)
+        let merged = FilterGoalQueries.merge(breakdown: breakdown, tags: tags)
+        let result = GoalListResult(target: target, overallGoalSeconds: GoalTag.parse(tags: tags), filters: merged)
+        if parsed.has("--json") {
+            try printJSON(result)
+        } else {
+            printGoalList(result)
+        }
+        return 0
     default:
-        eprint("error: expected 'set' or 'clear', got '\(sub)'")
+        eprint("error: expected 'set', 'clear', or 'list', got '\(sub)'")
         eprint(usageText)
         return 1
     }
 
-    let resultTag = try db.tags(target: target, sessionDate: nil).first { $0.lowercased().hasPrefix("goal:") }
-    if parsed.has("--json") {
-        try printJSON(GoalResult(target: target, goalTag: resultTag))
+    let resultTag: String?
+    if let filterArg {
+        resultTag = try db.tags(target: target, sessionDate: nil).first { GoalTag.isFilterGoalTag($0, filter: filterArg) }
     } else {
-        print("\(target): \(resultTag ?? "nincs cél")")
+        resultTag = try db.tags(target: target, sessionDate: nil).first { GoalTag.isOverallGoalTag($0) }
+    }
+    if parsed.has("--json") {
+        try printJSON(GoalResult(target: target, filter: filterArg, goalTag: resultTag))
+    } else {
+        print("\(target)\(filterArg.map { " [\($0)]" } ?? ""): \(resultTag ?? "nincs cél")")
     }
     return 0
 }
 
 /// `goal set`/`goal clear`'s JSON echo of the resulting tag state --
 /// `goalTag` is `nil` after a `clear` (or a `set` on a target that somehow
-/// still has none), never a fabricated placeholder.
+/// still has none), never a fabricated placeholder. `filter` is `nil`
+/// exactly when `--filter` wasn't passed (the overall-goal case) -- kept as
+/// an ADDITIVE field (R11-T5) so a pre-existing script reading `goal_tag`
+/// off the plain `set`/`clear` (no `--filter`) response sees no shape
+/// change at all.
 private struct GoalResult: Encodable {
     let target: String
+    let filter: String?
     let goalTag: String?
+}
+
+/// `goal list --target T --json`'s root -- `overallGoalSeconds` is the
+/// plain `goal:<hours>h` tag (if any, for context alongside the per-filter
+/// breakdown), `filters` is `stats --filters`'s own whole-target
+/// (`FilterGoalQueries.merge`-ed) breakdown.
+private struct GoalListResult: Encodable {
+    let target: String
+    let overallGoalSeconds: Double?
+    let filters: [FilterIntegration]
+}
+
+/// `goal list` human-readable output -- reuses `printFilterBreakdown`'s
+/// table for the per-filter part, with the overall goal (if any) printed
+/// as a one-line header above it.
+private func printGoalList(_ result: GoalListResult) {
+    if let overallGoalSeconds = result.overallGoalSeconds {
+        print("\(result.target): összcél \(formatHoursMinutes(overallGoalSeconds))")
+    } else {
+        print("\(result.target): nincs összcél")
+    }
+    printFilterBreakdown(result.filters)
 }
 
 // MARK: - plan

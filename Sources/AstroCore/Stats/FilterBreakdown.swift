@@ -14,11 +14,47 @@ public struct FilterIntegration: Codable, Sendable, Equatable {
     public let filter: String
     public let usableFrameCount: Int
     public let integrationSeconds: Double
+    /// This filter's `goal:<filter>=<hours>h` tag, in seconds -- `nil` when
+    /// no such tag is set (the common case: most callers never populate
+    /// this at all). Set only by `FilterGoalQueries.merge`, never by
+    /// `FilterBreakdownQueries.breakdown` itself -- that query is a pure
+    /// usable-integration MEASUREMENT with no notion of tags/goals; keeping
+    /// goal data as optional, separately-attached fields here (rather than a
+    /// parallel `FilterGoalStatus` type) lets every existing caller
+    /// (`NightsQueries`, `stats --filters --json`'s date-scoped mode, ...)
+    /// keep using plain `FilterIntegration` unchanged, while the few callers
+    /// that DO have goal tags to merge in (`TargetDetailPage`'s "Szűrők"
+    /// card, `TonightPage`'s "Hiányzik" popover, `stats --filters --json`'s
+    /// whole-target mode, `goal list --json`) get it as additive fields on
+    /// the exact same JSON shape.
+    public var goalSeconds: Double?
+    /// `max(0, goalSeconds - integrationSeconds)` -- `nil` iff `goalSeconds`
+    /// is `nil`. Kept as a stored (not computed) property so it round-trips
+    /// through `Codable` unchanged rather than needing callers to recompute
+    /// it after decoding.
+    public var missingSeconds: Double?
 
-    public init(filter: String, usableFrameCount: Int, integrationSeconds: Double) {
+    public init(
+        filter: String, usableFrameCount: Int, integrationSeconds: Double,
+        goalSeconds: Double? = nil, missingSeconds: Double? = nil
+    ) {
         self.filter = filter
         self.usableFrameCount = usableFrameCount
         self.integrationSeconds = integrationSeconds
+        self.goalSeconds = goalSeconds
+        self.missingSeconds = missingSeconds
+    }
+
+    /// Returns a copy with `goalSeconds` (and the derived `missingSeconds`)
+    /// attached -- `FilterGoalQueries.merge`'s one mutation primitive, kept
+    /// here (rather than duplicated at each call site) so `missingSeconds`
+    /// can never drift from `max(0, goalSeconds - integrationSeconds)`.
+    /// `seconds: nil` clears both back to absent.
+    public func withGoal(seconds: Double?) -> FilterIntegration {
+        FilterIntegration(
+            filter: filter, usableFrameCount: usableFrameCount, integrationSeconds: integrationSeconds,
+            goalSeconds: seconds, missingSeconds: seconds.map { max(0, $0 - integrationSeconds) }
+        )
     }
 }
 

@@ -623,12 +623,21 @@ struct TonightPage: View {
 
     @ViewBuilder
     private func missingCell(_ row: PlanRow) -> some View {
-        if let missing = row.missingSeconds {
-            Text(TDFormat.hm(missing)).foregroundStyle(missing > 0 ? .red : .secondary)
-        } else {
-            // R10 review (item 20): table CELLS use "-", not "—" -- see
-            // `TDFormat`'s own doc comment for the full rule.
-            Text(TDFormat.missingCell).foregroundStyle(.secondary)
+        HStack(spacing: 4) {
+            if let missing = row.missingSeconds {
+                Text(TDFormat.hm(missing)).foregroundStyle(missing > 0 ? .red : .secondary)
+            } else {
+                // R10 review (item 20): table CELLS use "-", not "—" -- see
+                // `TDFormat`'s own doc comment for the full rule.
+                Text(TDFormat.missingCell).foregroundStyle(.secondary)
+            }
+            // R11-T5/F2: only for a target with at least one
+            // `goal:<filter>=<hours>h` tag -- the table cell itself always
+            // stays the aggregated number, this is one click away from the
+            // per-filter breakdown behind it.
+            if !row.plan.filterGoals.isEmpty {
+                FilterGoalsPopoverButton(filterGoals: row.plan.filterGoals)
+            }
         }
     }
 
@@ -938,6 +947,57 @@ struct TonightPage: View {
     private static var todayString: String { isoDateFormatter.string(from: Date()) }
     private static var tomorrowString: String {
         isoDateFormatter.string(from: Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date())
+    }
+}
+
+// MARK: - Filter-goals popover (R11-T5/F2)
+
+/// The "Hiányzik" cell's per-filter breakdown popover: Szűrő | Megvan | Cél |
+/// Hiányzik for a target that has at least one `goal:<filter>=<hours>h` tag
+/// (`TargetPlan.filterGoals`, already merged with goal tags via
+/// `FilterGoalQueries.merge` in `Planner.plan`). Same self-contained "own
+/// `showPopover` state" shape as `MetricInfoButton` -- no per-row `@State`
+/// needed back in `TonightPage` itself.
+private struct FilterGoalsPopoverButton: View {
+    let filterGoals: [FilterIntegration]
+
+    @State private var showPopover = false
+
+    var body: some View {
+        Button {
+            showPopover = true
+        } label: {
+            Image(systemName: "chevron.down.circle")
+        }
+        .buttonStyle(.plain)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .help("Szűrőnkénti bontás")
+        .popover(isPresented: $showPopover) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Szűrőnkénti bontás").font(.headline)
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
+                    GridRow {
+                        Text("Szűrő").font(.caption).foregroundStyle(.secondary)
+                        Text("Megvan").font(.caption).foregroundStyle(.secondary)
+                        Text("Cél").font(.caption).foregroundStyle(.secondary)
+                        Text("Hiányzik").font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(filterGoals, id: \.filter) { entry in
+                        GridRow {
+                            Text(entry.filter)
+                            Text(TDFormat.hm(entry.integrationSeconds))
+                            Text(entry.goalSeconds.map(TDFormat.hm) ?? TDFormat.missingCell)
+                            Text(entry.missingSeconds.map(TDFormat.hm) ?? TDFormat.missingCell)
+                                .foregroundStyle((entry.missingSeconds ?? 0) > 0 ? .orange : .secondary)
+                        }
+                        .font(.callout)
+                    }
+                }
+            }
+            .padding(14)
+            .frame(minWidth: 260)
+        }
     }
 }
 

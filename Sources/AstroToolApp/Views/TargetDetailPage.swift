@@ -155,7 +155,7 @@ struct TargetDetailPage: View {
             StatTile(
                 title: "Valós integráció",
                 value: TDFormat.tile(stat.map { TDFormat.hm($0.usableIntegrationSeconds) }),
-                caption: stat.map { "bruttó \(TDFormat.hm($0.grossIntegrationSeconds))" },
+                caption: integrationCaptionText,
                 compact: true,
                 tintsBackground: false
             )
@@ -164,6 +164,7 @@ struct TargetDetailPage: View {
                 title: "Hiányzik",
                 value: missingValueText,
                 color: (projectState?.missingSeconds ?? 0) > 0 ? .orange : .primary,
+                caption: missingFilterDeficitCaptionText,
                 compact: true,
                 tintsBackground: false
             )
@@ -189,6 +190,28 @@ struct TargetDetailPage: View {
     private var missingValueText: String {
         guard let missing = projectState?.missingSeconds else { return TDFormat.missingTile }
         return TDFormat.hm(missing)
+    }
+
+    /// R11-T5/F1: "Valós integráció" tile caption -- top 3 filters
+    /// (`TDFormat.filterBreakdownSummary`) for a mono/filter-wheel target
+    /// ("Ha 8,2h · OIII 3,1h"); falls back to the plain "bruttó X" caption
+    /// this tile always showed before whenever the target has no REAL
+    /// filter data at all (an OSC/DSLR target, or a target with nothing
+    /// scanned yet).
+    private var integrationCaptionText: String? {
+        TDFormat.filterBreakdownSummary(appState.targetFilterBreakdown)
+            ?? stat.map { "bruttó \(TDFormat.hm($0.grossIntegrationSeconds))" }
+    }
+
+    /// R11-T5/F2: "Hiányzik" tile caption -- the single biggest per-filter
+    /// deficit ("legtöbb hiány: SII 6,5h") when the target has at least one
+    /// `goal:<filter>=<hours>h` tag with something still outstanding; `nil`
+    /// (no caption at all) when it has none, or every goaled filter is
+    /// already met.
+    private var missingFilterDeficitCaptionText: String? {
+        let merged = FilterGoalQueries.merge(breakdown: appState.targetFilterBreakdown, tags: stat?.tags ?? [])
+        guard let biggest = FilterGoalQueries.biggestDeficit(merged), let missing = biggest.missingSeconds else { return nil }
+        return "legtöbb hiány: \(biggest.filter) \(TDFormat.decimalHours(missing))"
     }
 
     private var sessionSpanCaption: String? {

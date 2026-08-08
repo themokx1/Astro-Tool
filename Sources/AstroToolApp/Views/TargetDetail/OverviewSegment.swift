@@ -28,12 +28,19 @@ struct OverviewSegment: View {
     /// `AppState.projectStates` is already a live `@Observable` array cheap
     /// to re-filter per render.
     private var projectState: ProjectState? { appState.projectStates.first { $0.target == target } }
+    /// This target's `TargetStats` -- the "Szűrők" card's own goal-tag merge
+    /// (`mergedFilterBreakdown`) needs `.tags`, same lookup
+    /// `TargetDetailPage`'s header already uses.
+    private var stat: TargetStats? { appState.stats.first { $0.target == target } }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 coordinatesBlock
                 setupFingerprintBlock
+                // R11-T5/F1: right after "Setup", ahead of "Láthatóság ma
+                // este" -- PLAN-R11's own UI-terv order.
+                filtersBlock
                 visibilityBlock
                 // R11-T2: moved up from just before `calibrationBlock` -- for
                 // a mosaic target, panel coverage IS the project-status
@@ -105,6 +112,109 @@ struct OverviewSegment: View {
 
     private func sessionCount(for descriptor: String) -> Int {
         sessions.count { $0.setupDescriptor == descriptor }
+    }
+
+    // MARK: - Szűrők (R11-T5/F1)
+
+    /// This target's whole-history per-filter breakdown, merged with its
+    /// `goal:<filter>=<hours>h` tags (`FilterGoalQueries.merge`) -- the
+    /// "Szűrők" card's own Cél/Hiányzik columns need the merge; the caption
+    /// (top 3, `TDFormat.filterBreakdownSummary`) reads the UN-merged
+    /// `appState.targetFilterBreakdown` directly instead (no goal data
+    /// needed there).
+    private var mergedFilterBreakdown: [FilterIntegration] {
+        FilterGoalQueries.merge(breakdown: appState.targetFilterBreakdown, tags: stat?.tags ?? [])
+    }
+
+    /// `true` when the ONLY bucket this target has at all is the sentinel
+    /// "no filter recorded" one -- the typical OSC/DSLR case (R11-T5/F1's
+    /// own spec: "ha a célpontnak csak egyetlen, szűrő nélküli bucketje
+    /// van... a kártya EGYETLEN diszkrét sorrá egyszerűsödjön").
+    private var isFilterlessOnlyTarget: Bool {
+        let breakdown = appState.targetFilterBreakdown
+        return breakdown.count == 1 && breakdown[0].filter == FilterBreakdownQueries.noFilterSentinel
+    }
+
+    private var filtersBlock: some View {
+        section("Szűrők") {
+            if appState.targetFilterBreakdown.isEmpty {
+                Text("Nincs szűrő-adat.").font(.callout).foregroundStyle(.secondary)
+            } else if isFilterlessOnlyTarget {
+                Text("Nincs szűrő-adat — OSC/DSLR anyag.").font(.callout).foregroundStyle(.secondary)
+            } else {
+                filtersTable
+            }
+        }
+    }
+
+    /// Real (non-sentinel) filters first -- in `FilterGoalQueries.merge`'s
+    /// own order (usable breakdown seconds-descending, then any goal-only
+    /// filters by name) -- the sentinel "(nincs szűrő-adat)" bucket (if this
+    /// target ALSO has unfiltered frames alongside real ones -- a mixed
+    /// mono+OSC setup) always sorts last, dimmed, per spec ("külön sorként,
+    /// szürkén").
+    private var filtersTable: some View {
+        let merged = mergedFilterBreakdown
+        let real = merged.filter { $0.filter != FilterBreakdownQueries.noFilterSentinel }
+        let sentinel = merged.first { $0.filter == FilterBreakdownQueries.noFilterSentinel }
+
+        return VStack(alignment: .leading, spacing: 6) {
+            filtersTableHeader
+            ForEach(real, id: \.filter) { entry in
+                filterRow(entry, dimmed: false)
+            }
+            if let sentinel {
+                filterRow(sentinel, dimmed: true)
+            }
+        }
+    }
+
+    private var filtersTableHeader: some View {
+        HStack {
+            Text("Szűrő").frame(width: 70, alignment: .leading)
+            Text("Usable keret").frame(width: 90, alignment: .trailing)
+            Text("Integráció").frame(width: 80, alignment: .trailing)
+            Text("Cél").frame(width: 70, alignment: .trailing)
+            Text("Hiányzik").frame(width: 80, alignment: .trailing)
+            Spacer()
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
+    /// One filter's row: numbers on top, an optional thin progress bar
+    /// below (only when this filter actually HAS a goal -- "cél nélkül sáv
+    /// nélkül") colored orange while short of the goal, green once met.
+    private func filterRow(_ entry: FilterIntegration, dimmed: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(entry.filter).frame(width: 70, alignment: .leading)
+                Text("\(entry.usableFrameCount)").frame(width: 90, alignment: .trailing)
+                Text(TDFormat.hm(entry.integrationSeconds)).frame(width: 80, alignment: .trailing)
+                Text(entry.goalSeconds.map(TDFormat.hm) ?? TDFormat.missingCell).frame(width: 70, alignment: .trailing)
+                Text(entry.missingSeconds.map(TDFormat.hm) ?? TDFormat.missingCell)
+                    .foregroundStyle((entry.missingSeconds ?? 0) > 0 ? .orange : .secondary)
+                    .frame(width: 80, alignment: .trailing)
+                Spacer()
+            }
+            .font(.callout)
+            if let goalSeconds = entry.goalSeconds, goalSeconds > 0 {
+                filterProgressBar(entry, goalSeconds: goalSeconds)
+            }
+        }
+        .opacity(dimmed ? 0.6 : 1.0)
+    }
+
+    private func filterProgressBar(_ entry: FilterIntegration, goalSeconds: Double) -> some View {
+        let fraction = max(0, min(1, entry.integrationSeconds / goalSeconds))
+        let isShort = (entry.missingSeconds ?? 0) > 0
+        return GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.secondary.opacity(0.15))
+                Capsule().fill(isShort ? Color.orange : Color.green).frame(width: geo.size.width * fraction)
+            }
+        }
+        .frame(height: 4)
     }
 
     // MARK: - Mai láthatóság
@@ -242,41 +352,130 @@ struct OverviewSegment: View {
         projectState?.goalSeconds.map { $0 / 3600.0 }
     }
 
+    // MARK: - Per-filter cumulative points (R11-T5/F1)
+
+    /// One filter's cumulative hours as of one session date -- same
+    /// `Identifiable`-not-`\.date` reasoning as `IntegrationPoint` (a
+    /// same-night labeled/run-suffix session collides on the bare date).
+    private struct FilterIntegrationPoint: Identifiable {
+        let id = UUID()
+        let date: Date
+        let filter: String
+        let cumulativeHours: Double
+    }
+
+    /// `true` when this target has ever recorded a REAL filter (anything
+    /// other than `FilterBreakdownQueries.noFilterSentinel`) -- gates
+    /// whether `integrationTrendBlock` draws the per-filter-colored chart or
+    /// falls back to the original single accent-colored line (R11-T5/F1:
+    /// "szűrőtlen anyagnál a mostani egyvonalas forma maradjon").
+    private var hasRealFilterData: Bool {
+        appState.targetFilterBreakdown.contains { $0.filter != FilterBreakdownQueries.noFilterSentinel }
+    }
+
+    /// Running per-filter sum across this target's sessions (excluded/
+    /// `_hibas` sessions skipped, same as `integrationPoints` above), reading
+    /// each session's OWN filter breakdown from `appState.
+    /// targetFilterBreakdownByDate`. Emits one point per (date, filter EVER
+    /// SEEN so far) -- including a filter this particular night didn't
+    /// contribute to at all -- so `.stepEnd` keeps that filter's own line
+    /// flat instead of just stopping, the same way the single-line chart's
+    /// step interpolation already reads as "no change" between sessions.
+    /// The no-filter sentinel bucket is dropped entirely (a per-filter chart
+    /// has nothing meaningful to plot for "no filter recorded").
+    private var filterIntegrationPoints: [FilterIntegrationPoint] {
+        let parsedSessions = sessions
+            .filter { !$0.isExcludedFromTotals }
+            .compactMap { session -> (date: Date, dateRaw: String)? in
+                guard let date = Self.parseSessionDate(session.dateRaw) else { return nil }
+                return (date, session.dateRaw)
+            }
+            .sorted { lhs, rhs in
+                lhs.date != rhs.date ? lhs.date < rhs.date : lhs.dateRaw < rhs.dateRaw
+            }
+
+        var runningSecondsByFilter: [String: Double] = [:]
+        var points: [FilterIntegrationPoint] = []
+        for entry in parsedSessions {
+            let dayBreakdown = appState.targetFilterBreakdownByDate[entry.dateRaw] ?? []
+            for filterEntry in dayBreakdown where filterEntry.filter != FilterBreakdownQueries.noFilterSentinel {
+                runningSecondsByFilter[filterEntry.filter, default: 0] += filterEntry.integrationSeconds
+            }
+            for (filter, seconds) in runningSecondsByFilter {
+                points.append(FilterIntegrationPoint(date: entry.date, filter: filter, cumulativeHours: seconds / 3600.0))
+            }
+        }
+        return points
+    }
+
     private var integrationTrendBlock: some View {
         section("Integráció-halmozódás") {
-            if integrationPoints.count < 2 {
-                Text("Egy sessionnél még nincs mit halmozni.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+            if hasRealFilterData {
+                filterIntegrationChart
             } else {
-                Chart {
-                    integrationArea
-                    integrationLine
-                    integrationPointMarks
-                    goalRule
-                }
-                .chartLegend(.hidden)
-                // R10 review (item 21): "óra" alone reads as "current hour
-                // of day" at a glance -- this axis is a RUNNING TOTAL
-                // (`IntegrationPoint.cumulativeHours`), not a point-in-time
-                // value.
-                .chartYAxisLabel("óra (halmozott)")
-                .chartXAxis {
-                    AxisMarks { _ in
-                        AxisGridLine().foregroundStyle(.secondary)
-                        AxisTick()
-                        AxisValueLabel()
-                    }
-                }
-                .chartYAxis {
-                    AxisMarks { _ in
-                        AxisGridLine().foregroundStyle(.secondary)
-                        AxisTick()
-                        AxisValueLabel()
-                    }
-                }
-                .frame(height: 190)
+                singleLineIntegrationChart
             }
+        }
+    }
+
+    @ViewBuilder
+    private var singleLineIntegrationChart: some View {
+        if integrationPoints.count < 2 {
+            Text("Egy sessionnél még nincs mit halmozni.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        } else {
+            Chart {
+                integrationArea
+                integrationLine
+                integrationPointMarks
+                goalRule
+            }
+            .chartLegend(.hidden)
+            // R10 review (item 21): "óra" alone reads as "current hour
+            // of day" at a glance -- this axis is a RUNNING TOTAL
+            // (`IntegrationPoint.cumulativeHours`), not a point-in-time
+            // value.
+            .chartYAxisLabel("óra (halmozott)")
+            .integrationChartAxes()
+            .frame(height: 190)
+        }
+    }
+
+    /// R11-T5/F1: session-önkénti kumulatív vonal szűrőnként bontva,
+    /// `foregroundStyle(by:)` szerint színezve -- same step interpolation
+    /// and Y-axis label as the single-line chart, plus a visible legend
+    /// (hidden there since there's only ever one series to distinguish).
+    @ViewBuilder
+    private var filterIntegrationChart: some View {
+        let points = filterIntegrationPoints
+        if points.count < 2 {
+            Text("Egy sessionnél még nincs mit halmozni.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        } else {
+            Chart {
+                ForEach(points) { point in
+                    LineMark(
+                        x: .value("Dátum", point.date),
+                        y: .value("Halmozott óra", point.cumulativeHours)
+                    )
+                    .foregroundStyle(by: .value("Szűrő", point.filter))
+                    .interpolationMethod(.stepEnd)
+                }
+                ForEach(points) { point in
+                    PointMark(
+                        x: .value("Dátum", point.date),
+                        y: .value("Halmozott óra", point.cumulativeHours)
+                    )
+                    .foregroundStyle(by: .value("Szűrő", point.filter))
+                    .symbolSize(20)
+                }
+                goalRule
+            }
+            .chartYAxisLabel("óra (halmozott)")
+            .integrationChartAxes()
+            .frame(height: 190)
         }
     }
 
@@ -460,5 +659,28 @@ struct OverviewSegment: View {
             Text(label).font(.caption2).foregroundStyle(.secondary)
             Text(value).font(.callout)
         }
+    }
+}
+
+/// Shared X/Y axis styling for both `OverviewSegment.integrationTrendBlock`
+/// variants (single-line and per-filter-colored, R11-T5/F1) -- pulled out so
+/// the two chart shapes can never visually drift apart from each other.
+private extension View {
+    func integrationChartAxes() -> some View {
+        self
+            .chartXAxis {
+                AxisMarks { _ in
+                    AxisGridLine().foregroundStyle(.secondary)
+                    AxisTick()
+                    AxisValueLabel()
+                }
+            }
+            .chartYAxis {
+                AxisMarks { _ in
+                    AxisGridLine().foregroundStyle(.secondary)
+                    AxisTick()
+                    AxisValueLabel()
+                }
+            }
     }
 }

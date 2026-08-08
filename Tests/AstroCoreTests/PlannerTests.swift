@@ -43,7 +43,8 @@ private struct PlannerFixture {
         date: String = "2026-08-10",
         exptime: Double = 300,
         extraCards: [String: String] = [:],
-        fileSuffix: String = "1"
+        fileSuffix: String = "1",
+        filter: String? = nil
     ) throws -> Int64 {
         let path = "sessions/\(target)/\(date)/lights/l\(fileSuffix)_\(UUID().uuidString).fit"
         let id = try db.upsertFile(FileRecord(
@@ -52,7 +53,7 @@ private struct PlannerFixture {
         ))
         var cards = extraCards
         cards["EXPTIME"] = cards["EXPTIME"] ?? "\(exptime)"
-        try db.upsertFITSMeta(FITSMetaRecord(fileID: id, exptime: exptime, headerJSON: headerJSON(cards)))
+        try db.upsertFITSMeta(FITSMetaRecord(fileID: id, exptime: exptime, filter: filter, headerJSON: headerJSON(cards)))
         return id
     }
 }
@@ -176,6 +177,56 @@ private struct PlannerFixture {
     let plans = try Planner.plan(date: utc(2026, 8, 10), db: fixture.db, config: fixture.config)
     let plan = try #require(plans.first { $0.target == "T_GoalFrac" })
     #expect(plan.goalSeconds == 6.5 * 3600)
+}
+
+// MARK: - Per-filter goals (R11-T5/F2)
+
+@Test func plannerLeavesFilterGoalsEmptyWithoutAnyFilterGoalTag() throws {
+    var fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    fixture.config.site = SiteRule(latitudeDeg: 47.5, longitudeDeg: 19.0)
+    try fixture.addLight(target: "T_NoFilterGoal", extraCards: ["CRVAL1": "350.0", "CRVAL2": "47.5"], filter: "Ha")
+
+    let plans = try Planner.plan(date: utc(2026, 8, 10), db: fixture.db, config: fixture.config)
+    let plan = try #require(plans.first { $0.target == "T_NoFilterGoal" })
+    #expect(plan.filterGoals.isEmpty)
+}
+
+@Test func plannerPopulatesFilterGoalsWhenAFilterGoalTagIsSet() throws {
+    var fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    fixture.config.site = SiteRule(latitudeDeg: 47.5, longitudeDeg: 19.0)
+    try fixture.addLight(
+        target: "T_FilterGoal", exptime: 3600 * 8, extraCards: ["CRVAL1": "350.0", "CRVAL2": "47.5"], filter: "Ha"
+    )
+    try fixture.db.addTag(TagRecord(kind: "target", target: "T_FilterGoal", sessionDate: nil, tag: "goal:Ha=12h"))
+
+    let plans = try Planner.plan(date: utc(2026, 8, 10), db: fixture.db, config: fixture.config)
+    let plan = try #require(plans.first { $0.target == "T_FilterGoal" })
+    #expect(plan.filterGoals.count == 1)
+    let ha = try #require(plan.filterGoals.first { $0.filter == "Ha" })
+    #expect(ha.integrationSeconds == 3600 * 8)
+    #expect(ha.goalSeconds == 12 * 3600.0)
+    #expect(ha.missingSeconds == 4 * 3600.0)
+}
+
+/// The overall goal tag stays independent of any per-filter goal tag on the
+/// same target -- both must be readable off the same `TargetPlan`.
+@Test func plannerFilterGoalsCoexistWithAnOverallGoalTag() throws {
+    var fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    fixture.config.site = SiteRule(latitudeDeg: 47.5, longitudeDeg: 19.0)
+    try fixture.addLight(
+        target: "T_BothGoals", exptime: 3600 * 8, extraCards: ["CRVAL1": "350.0", "CRVAL2": "47.5"], filter: "Ha"
+    )
+    try fixture.db.addTag(TagRecord(kind: "target", target: "T_BothGoals", sessionDate: nil, tag: "goal:30h"))
+    try fixture.db.addTag(TagRecord(kind: "target", target: "T_BothGoals", sessionDate: nil, tag: "goal:Ha=12h"))
+
+    let plans = try Planner.plan(date: utc(2026, 8, 10), db: fixture.db, config: fixture.config)
+    let plan = try #require(plans.first { $0.target == "T_BothGoals" })
+    #expect(plan.goalSeconds == 30 * 3600.0)
+    #expect(plan.filterGoals.count == 1)
+    #expect(plan.filterGoals.first?.filter == "Ha")
 }
 
 // MARK: - Site derivation from SITELAT/SITELONG when config.site is unset

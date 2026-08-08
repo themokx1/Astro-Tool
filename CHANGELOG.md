@@ -109,6 +109,55 @@ T3 — Settings csomag után.
 - **"Következő lépés" kártya-kiemelés**: a TargetDetailPage fejlécének 3.
   sora mostantól halvány, a célpont fázis-színével tintelt kártya-hátteret
   kap, hogy az oldal cselekvésre hívó fókuszaként olvasható legyen.
+- **Szűrő-dimenzió a UI-ban (R11-T5/F1)**: a core-ban már meglévő
+  `FilterBreakdownQueries` mostantól látszik is — mono/szűrőkerekes és
+  dual-band OSC felhasználóknak a "hány óra van meg szűrőnként" végre nem
+  csak a `stats --filters` CLI-ból derül ki.
+  - TargetDetailPage ▸ Áttekintés: új "Szűrők" kártya a Setup után (Szűrő |
+    Usable keret | Integráció | Cél | Hiányzik, mini progress-sávval —
+    narancs ha hiányos, cél nélkül sáv nélkül); a "(nincs szűrő-adat)"
+    bucket külön, szürkén; tisztán szűrő nélküli (OSC/DSLR) célpontnál a
+    kártya egyetlen diszkrét sorrá egyszerűsödik.
+  - Fejléc "Valós integráció" tile: mono/szűrős célpontnál a caption a top 3
+    szűrő-bontást mutatja ("Ha 8,2h · OIII 3,1h"); szűrőtlen anyagnál marad a
+    "bruttó X" caption.
+  - Integráció-halmozódás grafikon: mono/szűrős célpontnál session-önkénti
+    kumulatív vonal szűrőnként színezve (Swift Charts
+    `foregroundStyle(by:)`); szűrőtlen anyagnál az eredeti egyvonalas forma
+    marad.
+  - NightsPage "Szűrők" oszlop: felsorolás helyett óraszám-bontás ("Ha 1,5h
+    · OIII 0,8h"), tooltipben a keretszámokkal (`NightRow.filterBreakdown`,
+    additív mező — `FilterBreakdownQueries.breakdown(..., date:)` session-
+    önkénti hívásából).
+- **Szűrőnkénti célok (R11-T5/F2)**: `goal:<szűrő>=<óra>h` tag-konvenció
+  (pl. `goal:Ha=12h`) a meglévő `goal:<óra>h` összcél mellett, egymástól
+  függetlenül — mindkettő élhet ugyanazon a célponton (`GoalTag.
+  parseFilterGoals`/`formatFilter`/`isFilterGoalTag`/`isOverallGoalTag`, core
+  teszt kötelező). Új `FilterGoalQueries.merge`/`biggestDeficit` (core) fűzi
+  össze a szűrőnkénti usable-integrációt a goal-tagekkel — ezt használja a
+  "Szűrők" kártya, a fejléc-tile-ok és a CLI is, egy helyen.
+  - GoalEditSheet: az összcél-stepper alatt "Szűrőnként" lenyitható szekció —
+    a célpontnál ténylegesen előforduló (vagy csak megcélzott, de még nem
+    lőtt) szűrők soronként óra-stepperrel, 0 = nincs cél = tag törlése.
+  - Fejléc "Hiányzik" tile: szűrőnkénti célnál a caption a legnagyobb
+    deficitet mutatja ("legtöbb hiány: SII 6,5h").
+  - TonightPage "Hiányzik" cella: szűrőnkénti célnál kis chevron-gomb,
+    kattintva popover a szűrőnkénti megvan/cél/hiányzik bontással — az
+    oszlop értéke marad az összesített szám (`TargetPlan.filterGoals`,
+    additív mező, `Planner.plan` csak azoknál a célpontoknál számolja ki,
+    amiknek ténylegesen van szűrő-cél tagje, hogy a gyakori "nincs
+    szűrő-cél" eset ne fizessen extra `FilterBreakdownQueries` lekérdezést).
+  - CLI: `goal set/clear --target T --filter F [--hours H]` a szűrőnkénti tag
+    írására/törlésére (az összcéltól függetlenül); új `goal list --target T
+    [--json]` alparancs a szűrőnkénti megvan/cél/hiányzik bontáshoz; `stats
+    --filters --json` (teljes célpontra, `--date` nélkül) is megkapja a
+    szűrőnkénti cél/hiány mezőket, ha van (additív `goal_seconds`/
+    `missing_seconds` mező a meglévő `FilterIntegration` JSON-sémán).
+  - **Javítás**: `AppState.setGoal`/a CLI `goal set/clear` (összcél, `--filter`
+    nélkül) eddig egy bare `hasPrefix("goal:")` szűrővel találta meg a
+    törlendő régi taget — ez a szűrőnkénti `goal:F=Xh` tageket is törölte
+    volna egy összcél-mentésnél. Mostantól `GoalTag.isOverallGoalTag`
+    szűr, ami csak a saját (nem szűrő-scope-olt) taget találja meg.
 
 ### Changed
 

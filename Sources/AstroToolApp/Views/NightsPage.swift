@@ -107,7 +107,20 @@ struct NightsPage: View {
         var usableLightCount: Int { row.usableLightCount }
         var integrationSeconds: Double { row.integrationSeconds }
         var exposureSummary: String { row.exposureSummary }
-        var filtersText: String { row.filters.isEmpty ? TDFormat.missingCell : row.filters.joined(separator: ", ") }
+        /// R11-T5/F1: hour-bucketed breakdown ("Ha 1,5h · OIII 0,8h") instead
+        /// of the old plain filter-name list -- falls back to the missing-
+        /// cell glyph for a session with no real filter data at all (no
+        /// `FilterBreakdownQueries.breakdown` rows, or only the sentinel
+        /// "no filter recorded" bucket).
+        var filtersText: String { TDFormat.filterBreakdownSummary(row.filterBreakdown) ?? TDFormat.missingCell }
+        /// Per-filter frame counts for the "Szűrők" cell's tooltip -- `""`
+        /// (no tooltip attached) when there's no real filter data, same gate
+        /// `filtersText`'s own fallback uses.
+        var filtersTooltipText: String {
+            let real = row.filterBreakdown.filter { $0.filter != FilterBreakdownQueries.noFilterSentinel }
+            guard !real.isEmpty else { return "" }
+            return real.map { "\($0.filter): \($0.usableFrameCount) keret" }.joined(separator: "\n")
+        }
         var medianFWHMArcsec: Double? { row.medianFWHMArcsec }
         /// R10 review (item 11): `fwhmText`'s pixel-only fallback (like
         /// `SessionsSegment.fwhmText`) for a rated session with no
@@ -453,9 +466,18 @@ struct NightsPage: View {
     /// whole `Table` builder expression in reasonable time. Routing through
     /// a plain `@ViewBuilder` helper (same convention every other cell in
     /// this table already follows) gives it a concrete anchor instead.
+    ///
+    /// R11-T5/F1: `.help(_:)` (the frame-count tooltip) only attached when
+    /// there's actually a real per-filter breakdown to explain -- an empty
+    /// tooltip on a "-" cell would just be noise.
     @ViewBuilder
     private func filtersCell(_ row: NightTableRow) -> some View {
-        Text(row.filtersText).lineLimit(1).truncationMode(.tail)
+        if row.filtersTooltipText.isEmpty {
+            Text(row.filtersText).lineLimit(1).truncationMode(.tail)
+        } else {
+            Text(row.filtersText).lineLimit(1).truncationMode(.tail)
+                .help(row.filtersTooltipText)
+        }
     }
 
     // MARK: - Row interactions
