@@ -1,30 +1,23 @@
 import AstroCore
+import Charts
 import SwiftUI
 
 /// R9-T5/A.6 -- full rebuild of the "eltemetett oldal" the review flagged:
 /// 3 header tiles, a permanent "mire jó?" explainer (so this page's own
-/// purpose is visible without reading docs), the profile table with a new
-/// `Mért` column and a freshness warning for anything measured before the
-/// read-noise-estimator fix, and a confirm-first "Szenzor mérése…" (A.10
-/// rename from bare "Mérés") that spells out what it reads, how long it
-/// takes, and that it only ever writes ONE database row.
+/// purpose is visible without reading docs), the profile list with a
+/// staleness warning for anything measured with an outdated estimator, and
+/// a confirm-first "Szenzor mérése…" (A.10 rename from bare "Mérés") that
+/// spells out what it reads, how long it takes, and that it only ever
+/// writes to this library's own database.
+///
+/// R11-T10/F8: staleness is now `SensorProfileRecord.isEstimatorStale`
+/// (estimator_version-based, generalizing the earlier hardcoded 2026-08-05
+/// fix-date check), and each row is a `DisclosureGroup` that expands into
+/// its full measurement history (`AppState.sensorProfileHistoryByCombo`)
+/// plus two mini sparklines (read noise, dark rate over time).
 struct SensorPage: View {
     @Environment(AppState.self) private var appState
     @State private var showMeasureSheet = false
-
-    /// The read-noise estimator fix date (commit `0928189`, "sample all
-    /// bayer parities in native stats; keep sensor noise tail in
-    /// read-noise estimate", 2026-08-05) -- any `SensorProfileRecord`
-    /// measured before this instant used the OLD (biased) estimator and is
-    /// flagged stale here so a user notices before trusting its numbers.
-    /// Hardcoded (not derived from the CHANGELOG) since this is a one-time
-    /// migration marker, not a config knob.
-    static let readNoiseEstimatorFixDate: Date = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        return formatter.date(from: "2026-08-05") ?? Date()
-    }()
 
     private var profiles: [SensorProfileRecord] { appState.sensorProfiles }
     private var distinctCameraCount: Int { Set(profiles.map(\.camera)).count }
@@ -50,7 +43,7 @@ struct SensorPage: View {
                     Text(lastError).foregroundStyle(.red)
                 }
 
-                SensorProfileTable(profiles: profiles, freshnessCutoff: Self.readNoiseEstimatorFixDate)
+                SensorProfileList(profiles: profiles, historyByCombo: appState.sensorProfileHistoryByCombo)
             }
 
             Spacer(minLength: 0)
@@ -128,9 +121,10 @@ struct SensorPage: View {
 
 /// "Szenzor mérése…" confirmation sheet (A.6): explains what the operation
 /// reads (`calibration_library` bias/dark frames already on record), that
-/// it only writes ONE database row per `(camera, gain, offset)` combo, and
-/// roughly how long it takes -- then, only on explicit confirmation, runs
-/// the existing `AppState.measureSensorProfiles()`.
+/// every measurement joins the append-only history and becomes the new
+/// "latest" per combo (R11-T10/F8), and roughly how long it takes -- then,
+/// only on explicit confirmation, runs the existing
+/// `AppState.measureSensorProfiles()`.
 private struct SensorMeasureConfirmSheet: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -143,7 +137,7 @@ private struct SensorMeasureConfirmSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Mit tesz: beolvassa a tracked BIAS/DARK kereteket kamera/gain/offset kombónként, és kiszámolja a bias-szintet, a leolvasási zajt, a dark-áramot és az EGAIN-t.")
                 Text("Meddig tart: néhány másodperc kombónként.")
-                Text("Csak egy adatbázis-sort ír kombónként, a könyvtárhoz nem nyúl.")
+                Text("Minden mérés bekerül a mérés-történetbe; a legfrissebb lesz az érvényes. A könyvtárhoz nem nyúl.")
                     .bold()
             }
             .font(.callout)
@@ -182,58 +176,35 @@ private struct SensorMeasureConfirmSheet: View {
     }
 }
 
-/// Read-only list of measured sensor profiles (R7-B1 item C) -- one row per
-/// `(camera, gain, offset)` combo, bias level/read noise/dark rate/EGAIN as
-/// measured by `SensorProfiler.measure`. R9-T5/A.6 adds the `Mért` column
-/// (`measuredAt`) and a freshness warning (yellow row background + caption)
-/// for any profile measured before `freshnessCutoff`. Never edits anything
-/// itself; the "Szenzor mérése…" button that actually runs a measurement
-/// lives on `SensorPage` above this table.
-struct SensorProfileTable: View {
+/// Read-only, expandable list of measured sensor profiles (R7-B1 item C) --
+/// one row per `(camera, gain, offset)` combo, bias level/read noise/dark
+/// rate/EGAIN as measured by `SensorProfiler.measure`. R9-T5/A.6 added the
+/// `Mért` column and a freshness warning; R11-T10/F8 replaces the fixed
+/// `Table` with a `List` of `DisclosureGroup`s (a `Table` has no per-row
+/// expansion of its own) so each combo's full measurement history + two
+/// mini sparklines (read noise, dark rate) are one click away, and swaps
+/// the hardcoded fix-date staleness check for `SensorProfileRecord
+/// .isEstimatorStale`. Never edits anything itself; the "Szenzor mérése…"
+/// button that actually runs a measurement lives on `SensorPage` above this.
+struct SensorProfileList: View {
     let profiles: [SensorProfileRecord]
-    let freshnessCutoff: Date
+    let historyByCombo: [String: [SensorProfileHistoryRecord]]
 
-    private struct Row: Identifiable {
-        let id: String
-        let profile: SensorProfileRecord
-    }
-
-    private var rows: [Row] {
-        let sorted = profiles.sorted { lhs, rhs in
+    private var sortedProfiles: [SensorProfileRecord] {
+        profiles.sorted { lhs, rhs in
             if lhs.camera != rhs.camera { return lhs.camera < rhs.camera }
             return (lhs.gain ?? -.infinity) < (rhs.gain ?? -.infinity)
         }
-        return sorted.map { Row(id: rowID(for: $0), profile: $0) }
     }
 
-    private func rowID(for profile: SensorProfileRecord) -> String {
-        let gainText = TDFormat.cell(profile.gain.map { String($0) })
-        let offsetText = TDFormat.cell(profile.offset.map { String($0) })
-        return "\(profile.camera)|\(gainText)|\(offsetText)"
+    private func history(for profile: SensorProfileRecord) -> [SensorProfileHistoryRecord] {
+        historyByCombo[profile.comboKey] ?? []
     }
 
-    private func isStale(_ profile: SensorProfileRecord) -> Bool {
-        profile.measuredAt < freshnessCutoff.timeIntervalSince1970
-    }
-
-    /// Every column's cell is wrapped with this so a stale row reads as a
-    /// solid yellow row -- `Table` has no per-row background modifier of its
-    /// own, so tinting every cell identically is what actually produces
-    /// that look.
-    @ViewBuilder
-    private func cell(_ row: Row, text: String) -> some View {
-        Text(text)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isStale(row.profile) ? Color.yellow.opacity(0.25) : Color.clear)
-    }
-
-    /// D32: this table's computed-metric columns, explained -- same
+    /// D32: this list's computed-metric columns, explained -- same
     /// "one button per table" `MetricInfoButton` pattern the target-detail
     /// segments already established. Explicitly covers the "mikor hazudik"
     /// caveats `SensorProfiler.measure`'s own doc comments call out.
-    // R10 review (item 20): quoted glyphs updated to match `cell(_:text:)`'s
-    // own -- table CELLS use "-", not "n/a" (see `TDFormat`'s doc comment
-    // for the full rule); this table's own columns used to mix both.
     private static let metricInfo: [MetricInfoButton.Metric] = [
         .init(
             title: "Leolvasási zaj (e⁻)",
@@ -255,41 +226,82 @@ struct SensorProfileTable: View {
                 Spacer()
                 MetricInfoButton(metrics: Self.metricInfo)
             }
-            Table(rows) {
-                TableColumn("Kamera") { row in cell(row, text: row.profile.camera) }
-                    .width(min: 100, ideal: 140)
-                TableColumn("Gain") { row in cell(row, text: TDFormat.cell(row.profile.gain.map { String(format: "%g", $0) })) }
-                    .width(60)
-                TableColumn("Offset") { row in cell(row, text: TDFormat.cell(row.profile.offset.map { String(format: "%g", $0) })) }
-                    .width(60)
-                // R10 review (item 20): every column below now falls back
-                // to "-" -- was a mix of "-" ("Gain"/"Offset"/"Dark hőm.")
-                // and "n/a" ("Bias"/"Leolvasási zaj"/"Dark"/"EGAIN") within
-                // the SAME table; table CELLS use "-" (see `TDFormat`'s doc
-                // comment for the full rule, TILES are the "n/a" case).
-                TableColumn("Bias (ADU)") { row in cell(row, text: TDFormat.cell(row.profile.biasLevelADU.map { String(format: "%.0f", $0) })) }
-                    .width(90)
-                TableColumn("Leolvasási zaj (e⁻)") { row in cell(row, text: TDFormat.cell(row.profile.readNoiseE.map { String(format: "%.2f", $0) })) }
-                    .width(130)
-                TableColumn("Dark (e⁻/s)") { row in cell(row, text: TDFormat.cell(row.profile.darkRateEPerS.map { String(format: "%.4f", $0) })) }
-                    .width(100)
-                TableColumn("Dark hőm. (°C)") { row in cell(row, text: TDFormat.cell(row.profile.darkTempC.map { String(format: "%.1f", $0) })) }
-                    .width(100)
-                TableColumn("EGAIN") { row in cell(row, text: TDFormat.cell(row.profile.egain.map { String(format: "%.3f", $0) })) }
-                    .width(80)
-                TableColumn("Mért") { row in
-                    cell(row, text: Self.dateFormatter.string(from: Date(timeIntervalSince1970: row.profile.measuredAt)))
-                }
-                .width(90)
-            }
-            .tableStyle(.inset(alternatesRowBackgrounds: true))
 
-            if rows.contains(where: { isStale($0.profile) }) {
-                Text("Újramérés javasolt — a leolvasási zaj becslő javult.")
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(sortedProfiles, id: \.comboKey) { profile in
+                    DisclosureGroup {
+                        SensorHistoryDetail(history: history(for: profile))
+                            .padding(.leading, 8)
+                            .padding(.vertical, 6)
+                    } label: {
+                        SensorProfileRow(profile: profile)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(profile.isEstimatorStale ? Color.yellow.opacity(0.18) : Color.secondary.opacity(0.05))
+                    )
+                }
+            }
+
+            if sortedProfiles.contains(where: \.isEstimatorStale) {
+                Text("Újramérés javasolt — a mérés-becslő verziója elavult (\(SensorProfiler.estimatorVersion)-nél régebbi vagy ismeretlen).")
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .padding(.horizontal, 4)
             }
+        }
+    }
+}
+
+/// One profile's `DisclosureGroup` label -- the same fields the old `Table`
+/// showed, laid out as a two-line card instead of fixed table columns
+/// (a `DisclosureGroup` label has no column grid of its own to slot into).
+private struct SensorProfileRow: View {
+    let profile: SensorProfileRecord
+
+    private var comboText: String {
+        let gainText = TDFormat.cell(profile.gain.map { String(format: "%g", $0) })
+        let offsetText = TDFormat.cell(profile.offset.map { String(format: "%g", $0) })
+        return "\(profile.camera) · gain \(gainText) · offset \(offsetText)"
+    }
+
+    private var biasText: String { TDFormat.cell(profile.biasLevelADU.map { String(format: "%.0f ADU", $0) }) }
+    private var readNoiseText: String { TDFormat.cell(profile.readNoiseE.map { String(format: "%.2f e⁻", $0) }) }
+    private var darkText: String {
+        guard let darkRate = profile.darkRateEPerS else { return TDFormat.missingCell }
+        let tempText = profile.darkTempC.map { String(format: "%.1f°C", $0) } ?? "?"
+        return String(format: "%.4f e⁻/s (%@)", darkRate, tempText)
+    }
+    private var egainText: String { TDFormat.cell(profile.egain.map { String(format: "%.3f", $0) }) }
+    private var measuredText: String { Self.dateFormatter.string(from: Date(timeIntervalSince1970: profile.measuredAt)) }
+    private var estimatorVersionText: String {
+        profile.estimatorVersion.map { "becslő v\($0)" } ?? "becslő: ismeretlen"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(comboText).font(.body.bold())
+                if profile.isEstimatorStale {
+                    Text("elavult").font(.caption2.bold()).foregroundStyle(.orange)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill(Color.orange.opacity(0.15)))
+                }
+                Spacer()
+                Text("Mért: \(measuredText) · \(estimatorVersionText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 16) {
+                Text("Bias: \(biasText)")
+                Text("Leolvasási zaj: \(readNoiseText)")
+                Text("Dark: \(darkText)")
+                Text("EGAIN: \(egainText)")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -298,4 +310,95 @@ struct SensorProfileTable: View {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
+}
+
+/// One profile's expanded history -- oldest-first entries (date, read
+/// noise, dark rate, estimator version) plus two mini sparklines. `history`
+/// is `Database.sensorProfileHistory`'s own ascending order.
+private struct SensorHistoryDetail: View {
+    let history: [SensorProfileHistoryRecord]
+
+    var body: some View {
+        if history.isEmpty {
+            Text("Nincs mérés-történet ehhez a kombóhoz.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 20) {
+                    Sparkline(title: "Leolvasási zaj (e⁻)", values: history.map(\.readNoiseE))
+                    Sparkline(title: "Dark (e⁻/s)", values: history.map(\.darkRateEPerS))
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    // Newest first for readability -- the sparklines above
+                    // stay chronological (oldest first), this is purely the
+                    // list's own display order.
+                    ForEach(Array(history.reversed().enumerated()), id: \.offset) { _, entry in
+                        historyRow(entry)
+                    }
+                }
+            }
+        }
+    }
+
+    private func historyRow(_ entry: SensorProfileHistoryRecord) -> some View {
+        HStack(spacing: 12) {
+            Text(Self.dateFormatter.string(from: Date(timeIntervalSince1970: entry.measuredAt)))
+                .frame(width: 84, alignment: .leading)
+            Text("zaj \(TDFormat.cell(entry.readNoiseE.map { String(format: "%.2f e⁻", $0) }))")
+                .frame(width: 120, alignment: .leading)
+            Text("dark \(TDFormat.cell(entry.darkRateEPerS.map { String(format: "%.4f e⁻/s", $0) }))")
+                .frame(width: 150, alignment: .leading)
+            Text(entry.estimatorVersion.map { "becslő v\($0)" } ?? "becslő: ismeretlen")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+}
+
+/// A tiny, axis-less line+point chart over one metric's history values --
+/// `nil` entries (not every measurement derives every metric, see
+/// `SensorProfileHistoryRecord`'s own doc comment) are simply skipped
+/// rather than plotted as zero.
+private struct Sparkline: View {
+    let title: String
+    let values: [Double?]
+
+    private struct Point: Identifiable {
+        let index: Int
+        let value: Double
+        var id: Int { index }
+    }
+
+    private var points: [Point] {
+        values.enumerated().compactMap { index, value in value.map { Point(index: index, value: $0) } }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.caption2).foregroundStyle(.secondary)
+            if points.count < 2 {
+                Text(TDFormat.missingCell).font(.caption2).foregroundStyle(.secondary)
+                    .frame(width: 110, height: 28, alignment: .leading)
+            } else {
+                Chart(points) { point in
+                    LineMark(x: .value("Mérés", point.index), y: .value(title, point.value))
+                        .foregroundStyle(Color.accentColor)
+                    PointMark(x: .value("Mérés", point.index), y: .value(title, point.value))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .chartXAxis(.hidden)
+                .chartYAxis(.hidden)
+                .chartLegend(.hidden)
+                .frame(width: 110, height: 28)
+            }
+        }
+    }
 }

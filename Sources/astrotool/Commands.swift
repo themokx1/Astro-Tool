@@ -144,6 +144,22 @@ Commands:
                 targets, sessions, files, and notes in one result set.
   solve         --target T|--all [--frames N] [--force] [--root R] [--json]
   sensor        [--measure] [--json] [--root R]
+  sensor        --history [--json] [--root R]
+                Full measurement history (every `SensorProfiler.measure` run
+                on record, not just the latest) grouped by (camera, gain,
+                offset) combo, newest combo-group first, each group's own
+                entries oldest first.
+  trends        --metric fwhm|background|efficiency [--setup FP]
+                [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--json] [--root R]
+                Long-term session-level time series across every target:
+                median FWHM (arcsec, or pixels with is_pixel_fallback=true
+                when no pixel scale is derivable), background e-/s/arcsec2,
+                or duty-cycle efficiency%, one date+value pair per rated
+                session that has that metric, oldest first. --setup
+                restricts to one EquipmentProfile setup-fingerprint
+                descriptor (exact text, e.g. as shown by the app's Trendek
+                toolbar filter); --from/--to filter by the session's
+                canonical start date (inclusive).
   ingest-dss    [--root R] [--json]
                 Harvests DeepSkyStacker <frame>.info.txt star metrics and
                 .dssfilelist accept/reject decisions already in the library.
@@ -2990,6 +3006,7 @@ func cmdSensor(_ args: [String]) throws -> Int32 {
     let specs = [
         FlagSpec("--root", takesValue: true),
         FlagSpec("--measure", takesValue: false),
+        FlagSpec("--history", takesValue: false),
         FlagSpec("--json", takesValue: false),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
@@ -2998,6 +3015,30 @@ func cmdSensor(_ args: [String]) throws -> Int32 {
     let config = try resolveConfig(rootFlag: parsed.value("--root"))
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
+
+    // R11-T10/F8: `--history` reports the FULL measurement log (every
+    // `SensorProfiler.measure` run on record), grouped by combo -- a
+    // separate report mode from the normal "latest view" table below, not
+    // combinable with `--measure` (measuring and dumping the whole history
+    // in one call would conflate two different questions).
+    if parsed.has("--history") {
+        guard !parsed.has("--measure") else {
+            eprint("error: --history cannot be combined with --measure")
+            eprint(usageText)
+            return 1
+        }
+        let profiles = try db.allSensorProfiles()
+        let groups = try profiles.map { profile -> SensorHistoryGroup in
+            let history = try db.sensorProfileHistory(camera: profile.camera, gain: profile.gain, offset: profile.offset)
+            return SensorHistoryGroup(camera: profile.camera, gain: profile.gain, offset: profile.offset, history: history)
+        }
+        if isJSON {
+            try printJSON(groups)
+        } else {
+            printSensorHistoryGroups(groups)
+        }
+        return 0
+    }
 
     let profiles: [SensorProfileRecord]
     if parsed.has("--measure") {
@@ -3053,6 +3094,180 @@ private func printSensorProfiles(_ profiles: [SensorProfileRecord]) {
         let egainText = p.egain.map { String(format: "%.3f", $0) } ?? "n/a"
         print("\(sensorComboDescription(camera: p.camera, gain: p.gain, offset: p.offset)): bias \(biasText), leolvasási zaj \(readNoiseText), \(darkText), EGAIN \(egainText)")
     }
+}
+
+// MARK: - sensor --history (R11-T10/F8)
+
+/// One `(camera, gain, offset)` combo's full measurement log --
+/// `astrotool sensor --history --json`'s per-item shape. `history` is
+/// oldest-first (`Database.sensorProfileHistory`'s own order).
+private struct SensorHistoryGroup: Encodable {
+    let camera: String
+    let gain: Double?
+    let offset: Double?
+    let history: [SensorProfileHistoryRecord]
+}
+
+private func printSensorHistoryGroups(_ groups: [SensorHistoryGroup]) {
+    guard !groups.isEmpty else {
+        print("nincs mért szenzor-profil (astrotool sensor --measure)")
+        return
+    }
+    let dateFormatter = DateFormatter()
+    dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+    dateFormatter.dateFormat = "yyyy-MM-dd"
+
+    for group in groups {
+        print("\(sensorComboDescription(camera: group.camera, gain: group.gain, offset: group.offset)):")
+        guard !group.history.isEmpty else {
+            print("  (nincs történeti bejegyzés)")
+            continue
+        }
+        for entry in group.history {
+            let dateText = dateFormatter.string(from: Date(timeIntervalSince1970: entry.measuredAt))
+            let readNoiseText = entry.readNoiseE.map { String(format: "%.2f e⁻", $0) } ?? "n/a"
+            let darkText = entry.darkRateEPerS.map { String(format: "%.4f e⁻/s", $0) } ?? "n/a"
+            let versionText = entry.estimatorVersion.map { "v\($0)" } ?? "ismeretlen becslő"
+            print("  \(dateText)  leolvasási zaj \(readNoiseText)  dark \(darkText)  becslő \(versionText)")
+        }
+    }
+}
+
+// MARK: - trends (R11-T10/F7)
+
+/// `astrotool trends --metric fwhm|background|efficiency [--setup FP]
+/// [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--json]` -- CLI counterpart to the
+/// app's "Trendek" page. Reuses `TrendQueries.points` directly (same
+/// filtering the app's own toolbar setup-fingerprint/date-range controls
+/// drive), then narrows to whichever ONE metric was asked for, dropping any
+/// session that doesn't have it -- "date+value pairs", not a sparse table
+/// with nulls in it.
+func cmdTrends(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--metric", takesValue: true),
+        FlagSpec("--setup", takesValue: true),
+        FlagSpec("--from", takesValue: true),
+        FlagSpec("--to", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    guard let metricRaw = parsed.value("--metric"), let metric = TrendMetric(rawValue: metricRaw) else {
+        eprint("error: --metric must be one of fwhm, background, efficiency")
+        eprint(usageText)
+        return 1
+    }
+
+    var from: Date?
+    if let raw = parsed.value("--from") {
+        guard let date = parseTrendDate(raw) else {
+            eprint("error: invalid --from (expected YYYY-MM-DD): \(raw)")
+            return 1
+        }
+        from = date
+    }
+    var to: Date?
+    if let raw = parsed.value("--to") {
+        guard let date = parseTrendDate(raw) else {
+            eprint("error: invalid --to (expected YYYY-MM-DD): \(raw)")
+            return 1
+        }
+        to = date
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let points = try TrendQueries.points(
+        db: db, config: config, setupFingerprint: parsed.value("--setup"), from: from, to: to
+    )
+    let series = metric.series(from: points)
+
+    if parsed.has("--json") {
+        try printJSON(series)
+    } else {
+        printTrendsTable(series, metric: metric)
+    }
+    return 0
+}
+
+private enum TrendMetric: String {
+    case fwhm, background, efficiency
+
+    var label: String {
+        switch self {
+        case .fwhm: return "FWHM"
+        case .background: return "HÁTTÉR (e⁻/s/□″)"
+        case .efficiency: return "HATÉKONYSÁG%"
+        }
+    }
+
+    /// Extracts this metric's `(date, target, value)` triples from `points`,
+    /// dropping any session that doesn't have it -- see `cmdTrends`'s own
+    /// doc comment for why this is date+value pairs, not a sparse table.
+    func series(from points: [TrendPoint]) -> [TrendSeriesPoint] {
+        switch self {
+        case .fwhm:
+            return points.compactMap { point in
+                guard let fwhm = point.fwhmValue else { return nil }
+                return TrendSeriesPoint(
+                    date: point.date, target: point.target, value: fwhm.value, isPixelFallback: fwhm.isPixelFallback
+                )
+            }
+        case .background:
+            return points.compactMap { point in
+                guard let value = point.backgroundEPerSecPerArcsec2 else { return nil }
+                return TrendSeriesPoint(date: point.date, target: point.target, value: value, isPixelFallback: nil)
+            }
+        case .efficiency:
+            return points.compactMap { point in
+                guard let value = point.efficiencyPercent else { return nil }
+                return TrendSeriesPoint(date: point.date, target: point.target, value: value, isPixelFallback: nil)
+            }
+        }
+    }
+}
+
+/// One `--metric`'s single JSON/table row -- `isPixelFallback` is only ever
+/// non-nil for `--metric fwhm` (see `TrendPoint.fwhmValue`'s own doc
+/// comment); Swift's synthesized `Encodable` omits a `nil` optional key
+/// entirely, so `background`/`efficiency` rows simply carry no
+/// `is_pixel_fallback` key at all rather than an always-`false` one.
+private struct TrendSeriesPoint: Encodable {
+    let date: String
+    let target: String
+    let value: Double
+    let isPixelFallback: Bool?
+}
+
+private func printTrendsTable(_ series: [TrendSeriesPoint], metric: TrendMetric) {
+    guard !series.isEmpty else {
+        print("nincs adat ehhez a metrikához a megadott szűréssel")
+        return
+    }
+
+    let dateWidth = max(series.map { $0.date.count }.max() ?? 10, 10)
+    let targetWidth = max(series.map { $0.target.count }.max() ?? 7, 7)
+    let dateHeader = "DÁTUM".padding(toLength: dateWidth, withPad: " ", startingAt: 0)
+    let targetHeader = "CÉLPONT".padding(toLength: targetWidth, withPad: " ", startingAt: 0)
+    print("\(dateHeader)  \(targetHeader)  \(metric.label)")
+
+    for point in series {
+        let date = point.date.padding(toLength: dateWidth, withPad: " ", startingAt: 0)
+        let target = point.target.padding(toLength: targetWidth, withPad: " ", startingAt: 0)
+        let suffix = point.isPixelFallback == true ? " px" : ""
+        print("\(date)  \(target)  \(String(format: "%.2f", point.value))\(suffix)")
+    }
+}
+
+private func parseTrendDate(_ raw: String) -> Date? {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(identifier: "UTC")
+    formatter.dateFormat = "yyyy-MM-dd"
+    return formatter.date(from: raw)
 }
 
 // MARK: - ingest-dss (R7-B2)

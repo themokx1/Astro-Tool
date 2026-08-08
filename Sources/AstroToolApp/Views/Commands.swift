@@ -100,6 +100,9 @@ struct AstroToolCommands: Commands {
                 AppState.shared?.currentPage = .cleanup
             }
             .keyboardShortcut("8", modifiers: .command)
+            // R11-T10/F7: no keyboard shortcut -- ⌘1-9 stays exactly as
+            // documented above, unchanged by this new page.
+            Button("Trendek") { AppState.shared?.currentPage = .trends }
             Button("Szenzor") { AppState.shared?.currentPage = .sensor }
                 .keyboardShortcut("9", modifiers: .command)
 

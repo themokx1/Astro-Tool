@@ -195,6 +195,13 @@ struct SidebarView: View {
                 // above still highlights whenever `currentPage == .audit`
                 // specifically, unaffected by this.
                 navRow("Takarítás", systemImage: "trash", page: .cleanup, badgeText: cleanupBadgeText)
+                // R11-T10/F7: long-term time series across every target --
+                // no `⌘`-shortcut (same stance "Előző éjszaka" above already
+                // takes; the existing ⌘1-9 assignment doesn't change) and no
+                // badge (there's no single "count" that reads naturally
+                // here, unlike Kalibráció/Audit/Takarítás's missing/error/
+                // size badges).
+                navRow("Trendek", systemImage: "chart.xyaxis.line", page: .trends)
             }
 
             Section("ESZKÖZÖK") {

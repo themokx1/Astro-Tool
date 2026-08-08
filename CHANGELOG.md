@@ -310,6 +310,69 @@ T3 — Settings csomag után.
     (nem `AstroConfig`-ban: ez app-viselkedés, nem könyvtár-szabály).
     Bekapcsolva: a meglévő mount-observer sikeres `retryRootAccess()`-e
     után, ha épp nem fut más művelet, automatikusan `runScan()`-t indít.
+- **Trendek oldal (R11-T10/F7)**: hosszú távú, session-szintű idősorok
+  célpontokon átívelve. Új core `TrendQueries.points` (`Sources/AstroCore/
+  Stats/TrendQueries.swift`) — újrahasznosítja `NightsQueries.allNights`
+  már kiszámolt session-metrikáit (medián FWHM″/px, háttér e⁻/s/□″,
+  duty cycle), időrendi (legrégebbi elöl, a böngésző-nézettel ellentétes)
+  sorrendbe rendezve, opcionális `setupFingerprint`/`from`/`to` szűréssel
+  (`EquipmentProfile.dominant` per session); `TrendPoint.fwhmValue` adja
+  vissza az ívmásodperc-értéket vagy — ha nincs képpont-skála — a
+  px-fallbacket a jelző flaggel együtt. Tiszta `TrendMath.movingAverage`
+  (5-pontos alapértelmezett ablak, hiányzó pontokat kihagyva, de a
+  visszamaradó sorozatot meg nem szakítva) — teszttel.
+  - **App**: új "Trendek" sidebar-sor az ÁLLAPOT szekcióban (Kalibráció/
+    Audit/Takarítás után), `⌘`-gyorsbillentyű NÉLKÜL. `TrendsPage`:
+    időtartomány-picker (6 hónap/1 év/3 év/Mind, segmented) azonnal
+    látható; 3 Swift Charts idősor (medián FWHM″, háttér, hatékonyság%)
+    pont + mozgóátlag-vonallal, a px-fallback FWHM-pontok üres karikával
+    (a `Circle().stroke(...)` szimbólum) + jelmagyarázattal. Pontra
+    kattintás (`chartOverlay` + legközelebbi pont keresés) a célpont
+    Sessionök szegmensére navigál, a session előválasztásával (ugyanaz a
+    `pendingTargetSegment`/`pendingSessionSelection` mechanizmus, mint az
+    "Előző éjszaka" kártyáknál). Toolbar Menu mögött setup-fingerprint
+    (a meglévő EquipmentProfile-kombinációkból) és célpont-típus
+    (wide-field/deep-sky/mind, `TargetStats.isWideField`-ből) szűrő — a
+    lap `AppState.trendPoints`-t UNFILTERED tölti be egyszer
+    (`loadTrends()`), minden szűrés kliens-oldali (ugyanaz a minta, mint
+    a NightsPage év/hónap Pickere). 5 session alatt a szűrt eredményben
+    magyarázó `ContentUnavailableView` (szűrők törlésére felkínáló
+    gombbal, ha aktív szűrő okozza).
+  - **CLI**: `trends --metric fwhm|background|efficiency [--setup FP]
+    [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--json]` — dátum+érték párok
+    (a `fwhm` metrikánál `is_pixel_fallback` jelzővel), `schema_version`
+    a közös `printJSON`-on át. Emberi kimenet egyszerű táblázat.
+- **Szenzor-profil történet (R11-T10/F8)**: a `sensor_profile` tábla
+  eddig csak a LEGFRISSEBB mérést tartotta kombónként, a korábbi mérések
+  felülíródtak. Új séma-v10 migráció (additív, egy v9-es DB gond nélkül
+  nyílik — teszttel): `ALTER TABLE sensor_profile ADD COLUMN
+  estimator_version` (a meglévő sorokon `NULL` — sosem kitalált érték) +
+  új append-only `sensor_profile_history` tábla (camera, gain, offset,
+  bias_level_adu, read_noise_e, dark_rate_e_per_s, dark_temp_c, egain,
+  measured_at, estimator_version), a migráció visszatölti a meglévő
+  `sensor_profile` sorokat egy-egy history-bejegyzésként (`estimator_
+  version = NULL`, ugyanaz az "ismeretlen, sosem kitalált" elv). Új
+  `SensorProfiler.estimatorVersion` konstans (jelenleg 2 — a 2026-08-05-i
+  leolvasásizaj-becslő javítás óta érvényes verzió); `SensorProfiler
+  .measure` mostantól MINDEN mérésnél előbb a history-ba ír, utána
+  upsertel a "legfrissebb" `sensor_profile` sorba, mindkettőt ugyanazzal
+  a becslő-verzióval jelölve. Új `Database.insertSensorProfileHistory`/
+  `sensorProfileHistory(camera:gain:offset:)` DAO — teszttel (migráció +
+  insert + legfrissebb-nézet konzisztencia).
+  - **Staleness általánosítás**: a `SensorPage` korábbi hardcode-olt
+    2026-08-05 dátum-alapú "elavult mérés" jelzése helyett `SensorProfile
+    Record.isEstimatorStale` (estimator_version < `SensorProfiler
+    .estimatorVersion`, vagy ismeretlen = elavult) — a sárga
+    figyelmeztető sáv szövege ennek megfelelően általánosodott.
+  - **App**: `SensorPage` profil-táblázata `List` + `DisclosureGroup`-ra
+    cserélődött (a `Table`-nek nincs soronkénti lenyitása) — soronként
+    lenyitható a mérés-történet (dátum, leolvasási zaj, dark-ráta,
+    becslő-verzió) + két mini sparkline (leolvasási zaj, dark-ráta
+    időben, Swift Charts). A "Szenzor mérése…" megerősítő sheet szövege:
+    "minden mérés bekerül a mérés-történetbe; a legfrissebb lesz az
+    érvényes".
+  - **CLI**: `sensor --history [--json]` — kombónkénti csoportosításban a
+    teljes mérés-történet (nem kombinálható `--measure`-rel).
 
 ### Changed
 

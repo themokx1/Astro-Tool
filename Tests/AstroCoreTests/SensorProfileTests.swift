@@ -382,6 +382,83 @@ private struct SensorFixture {
     #expect(try fixture.db.allSensorProfiles().count == 1)
 }
 
+// MARK: - History append (R11-T10/F8)
+
+/// `measure` writes BOTH the "latest view" (`sensor_profile`) row AND a new
+/// `sensor_profile_history` entry, and both are stamped with the SAME
+/// `SensorProfiler.estimatorVersion` -- the two must never disagree about
+/// what estimator produced this measurement.
+@Test func sensorProfilerMeasureStampsBothTheLatestRowAndANewHistoryRowWithTheCurrentEstimatorVersion() throws {
+    let fixture = try SensorFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.addFrame(
+        relativePath: "calibration_library/biases/bias_a.fit", role: .bias,
+        data: buildFlatFITS(value: 500)
+    )
+
+    _ = try SensorProfiler.measure(db: fixture.db, config: fixture.config, root: fixture.libraryDir)
+
+    let stored = try #require(try fixture.db.sensorProfile(camera: "ASI2600MC", gain: 100, offset: 50))
+    #expect(stored.estimatorVersion == SensorProfiler.estimatorVersion)
+
+    let history = try fixture.db.sensorProfileHistory(camera: "ASI2600MC", gain: 100, offset: 50)
+    #expect(history.count == 1)
+    #expect(history[0].estimatorVersion == SensorProfiler.estimatorVersion)
+    #expect(history[0].biasLevelADU == 500)
+}
+
+/// A SECOND `measure` run (e.g. after taking fresh bias frames) APPENDS a
+/// new history row rather than replacing the first one -- `sensor_profile`
+/// itself still only ever holds the latest.
+@Test func sensorProfilerMeasureTwiceAppendsTwoHistoryRowsButOnlyOneLatestProfile() throws {
+    let fixture = try SensorFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.addFrame(
+        relativePath: "calibration_library/biases/bias_a.fit", role: .bias,
+        data: buildFlatFITS(value: 500)
+    )
+    _ = try SensorProfiler.measure(db: fixture.db, config: fixture.config, root: fixture.libraryDir)
+
+    // Re-measure against a changed bias level (e.g. fresh frames taken).
+    try fixture.addFrame(
+        relativePath: "calibration_library/biases/bias_a.fit", role: .bias,
+        data: buildFlatFITS(value: 520)
+    )
+    _ = try SensorProfiler.measure(db: fixture.db, config: fixture.config, root: fixture.libraryDir)
+
+    #expect(try fixture.db.allSensorProfiles().count == 1)
+    let latest = try #require(try fixture.db.sensorProfile(camera: "ASI2600MC", gain: 100, offset: 50))
+    #expect(latest.biasLevelADU == 520)
+
+    let history = try fixture.db.sensorProfileHistory(camera: "ASI2600MC", gain: 100, offset: 50)
+    #expect(history.count == 2)
+    #expect(history.map(\.biasLevelADU) == [500, 520])
+}
+
+// MARK: - isEstimatorStale / comboKey
+
+@Test func isEstimatorStaleIsTrueForNilOrOlderVersionFalseForCurrentOrNewer() throws {
+    let unknown = SensorProfileRecord(camera: "Cam", measuredAt: 1_700_000_000, estimatorVersion: nil)
+    #expect(unknown.isEstimatorStale == true)
+
+    let older = SensorProfileRecord(camera: "Cam", measuredAt: 1_700_000_000, estimatorVersion: SensorProfiler.estimatorVersion - 1)
+    #expect(older.isEstimatorStale == true)
+
+    let current = SensorProfileRecord(camera: "Cam", measuredAt: 1_700_000_000, estimatorVersion: SensorProfiler.estimatorVersion)
+    #expect(current.isEstimatorStale == false)
+}
+
+@Test func comboKeyDistinguishesDifferentCombosAndHandlesNilGainOffset() throws {
+    let a = SensorProfileRecord(camera: "Cam", gain: 100, offset: 50, measuredAt: 0)
+    let b = SensorProfileRecord(camera: "Cam", gain: 200, offset: 50, measuredAt: 0)
+    let c = SensorProfileRecord(camera: "Cam", measuredAt: 0)
+    #expect(a.comboKey != b.comboKey)
+    #expect(a.comboKey != c.comboKey)
+    #expect(c.comboKey == "Cam|-|-")
+}
+
 @Test func sensorProfilerReportsProgressPerCombo() throws {
     let fixture = try SensorFixture.make()
     defer { fixture.cleanup() }

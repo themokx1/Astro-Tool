@@ -47,6 +47,7 @@ do {
     case "search": exitCode = try cmdSearch(rest)
     case "solve": exitCode = try cmdSolve(rest)
     case "sensor": exitCode = try cmdSensor(rest)
+    case "trends": exitCode = try cmdTrends(rest)
     case "ingest-dss": exitCode = try cmdIngestDSS(rest)
     case "expose": exitCode = try cmdExpose(rest)
     case "stacklist": exitCode = try cmdStackList(rest)

@@ -947,6 +947,197 @@ struct CLISmokeTests {
     #expect(result.exitCode == 1)
 }
 
+// MARK: - trends (R11-T10/F7)
+
+/// Writes a LIGHT frame with real `DATE-OBS`/`FOCALLEN`/`XPIXSZ` cards --
+/// none of `writeSensorFITS`/`writeBayerLightFITS` above carry those, but
+/// the "hatékonyság%" (duty-cycle) metric needs `DATE-OBS`+`EXPTIME` to
+/// derive a session window at all, and the setup-fingerprint filter needs
+/// `FOCALLEN`/`XPIXSZ`/`INSTRUME` to differ meaningfully between two
+/// sessions.
+private func writeTrendLightFITS(
+    _ relativePath: String, root: URL,
+    width: Int = 8, height: Int = 8, pixelValue: Int = 500,
+    instrume: String = "ASI2600MC", focallen: Double = 500, xpixsz: Double = 3.76,
+    exptime: Double = 60, dateObs: String
+) throws {
+    let url = root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+    let cards = [
+        "SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2",
+        "NAXIS1  =                 \(width)", "NAXIS2  =                 \(height)",
+        "INSTRUME= '\(instrume)'",
+        "FOCALLEN=                \(focallen)",
+        "XPIXSZ  =                \(xpixsz)",
+        "EXPTIME =                \(exptime)",
+        "DATE-OBS= '\(dateObs)'",
+        "END",
+    ]
+    var data = buildHeaderData(cards)
+    var pixelBytes = Data()
+    pixelBytes.reserveCapacity(width * height * 2)
+    let unsigned = UInt16(bitPattern: Int16(pixelValue))
+    for _ in 0..<(width * height) {
+        pixelBytes.append(UInt8(unsigned >> 8))
+        pixelBytes.append(UInt8(unsigned & 0xFF))
+    }
+    data.append(pixelBytes)
+    try data.write(to: url)
+}
+
+@Test func trendsRequiresMetricFlag() throws {
+    let root = try makeTempRoot("trends-no-metric")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI(["trends", "--root", root.path])
+    #expect(result.exitCode == 1)
+}
+
+@Test func trendsRejectsUnknownMetric() throws {
+    let root = try makeTempRoot("trends-bad-metric")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI(["trends", "--root", root.path, "--metric", "bogus"])
+    #expect(result.exitCode == 1)
+}
+
+/// Duty-cycle (efficiency%) needs no `rate`/Siril at all -- two frames with
+/// real `DATE-OBS` timestamps are already enough for `SessionTimeline` to
+/// derive a window, unlike FWHM/background which need a real Siril-measured
+/// rating (out of scope for a CI-safe CLI smoke test; `TrendQueriesTests`
+/// covers those numerically against a direct in-memory DB instead).
+@Test func trendsEfficiencyJSONAfterScanReportsSessionsOldestFirst() throws {
+    let root = try makeTempRoot("trends-efficiency-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeTrendLightFITS(
+        "sessions/M42/2026-03-10/lights/a.fit", root: root, dateObs: "2026-03-10T20:00:00"
+    )
+    try writeTrendLightFITS(
+        "sessions/M42/2026-03-10/lights/b.fit", root: root, dateObs: "2026-03-10T20:02:00"
+    )
+    try writeTrendLightFITS(
+        "sessions/M31/2026-01-05/lights/a.fit", root: root, dateObs: "2026-01-05T20:00:00"
+    )
+    try writeTrendLightFITS(
+        "sessions/M31/2026-01-05/lights/b.fit", root: root, dateObs: "2026-01-05T20:02:00"
+    )
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["trends", "--root", root.path, "--metric", "efficiency", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let items = try #require(try jsonItems(result.stdout))
+    #expect(items.map { $0["date"] as? String } == ["2026-01-05", "2026-03-10"])
+    #expect(items.allSatisfy { $0["value"] != nil })
+    #expect(items.allSatisfy { $0["is_pixel_fallback"] == nil })
+}
+
+@Test func trendsHumanOutputPrintsHungarianHeader() throws {
+    let root = try makeTempRoot("trends-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeTrendLightFITS("sessions/M42/2026-03-10/lights/a.fit", root: root, dateObs: "2026-03-10T20:00:00")
+    try writeTrendLightFITS("sessions/M42/2026-03-10/lights/b.fit", root: root, dateObs: "2026-03-10T20:02:00")
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["trends", "--root", root.path, "--metric", "efficiency"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("DÁTUM"))
+    #expect(result.stdout.contains("CÉLPONT"))
+    #expect(result.stdout.contains("HATÉKONYSÁG%"))
+}
+
+@Test func trendsFromToFiltersToTheGivenInclusiveRange() throws {
+    let root = try makeTempRoot("trends-from-to")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeTrendLightFITS("sessions/M42/2026-01-01/lights/a.fit", root: root, dateObs: "2026-01-01T20:00:00")
+    try writeTrendLightFITS("sessions/M42/2026-01-01/lights/b.fit", root: root, dateObs: "2026-01-01T20:02:00")
+    try writeTrendLightFITS("sessions/M42/2026-02-15/lights/a.fit", root: root, dateObs: "2026-02-15T20:00:00")
+    try writeTrendLightFITS("sessions/M42/2026-02-15/lights/b.fit", root: root, dateObs: "2026-02-15T20:02:00")
+    try writeTrendLightFITS("sessions/M42/2026-03-30/lights/a.fit", root: root, dateObs: "2026-03-30T20:00:00")
+    try writeTrendLightFITS("sessions/M42/2026-03-30/lights/b.fit", root: root, dateObs: "2026-03-30T20:02:00")
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI([
+        "trends", "--root", root.path, "--metric", "efficiency",
+        "--from", "2026-02-01", "--to", "2026-03-01", "--json",
+    ])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    let items = try #require(try jsonItems(result.stdout))
+    #expect(items.map { $0["date"] as? String } == ["2026-02-15"])
+}
+
+@Test func trendsSetupFilterRestrictsToTheMatchingSetupDescriptorOnly() throws {
+    let root = try makeTempRoot("trends-setup-filter")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeTrendLightFITS(
+        "sessions/M42/2026-01-01/lights/a.fit", root: root,
+        instrume: "CamA", focallen: 500, xpixsz: 3.76, dateObs: "2026-01-01T20:00:00"
+    )
+    try writeTrendLightFITS(
+        "sessions/M42/2026-01-01/lights/b.fit", root: root,
+        instrume: "CamA", focallen: 500, xpixsz: 3.76, dateObs: "2026-01-01T20:02:00"
+    )
+    try writeTrendLightFITS(
+        "sessions/M31/2026-02-01/lights/a.fit", root: root,
+        instrume: "CamB", focallen: 200, xpixsz: 2.4, dateObs: "2026-02-01T20:00:00"
+    )
+    try writeTrendLightFITS(
+        "sessions/M31/2026-02-01/lights/b.fit", root: root,
+        instrume: "CamB", focallen: 200, xpixsz: 2.4, dateObs: "2026-02-01T20:02:00"
+    )
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let unfiltered = try #require(try jsonItems(
+        try runCLI(["trends", "--root", root.path, "--metric", "efficiency", "--json"]).stdout
+    ))
+    #expect(unfiltered.count == 2)
+
+    // "CamA·500mm·3.76µm" -- `EquipmentProfile.fingerprint`'s own descriptor
+    // format (camera, rounded focal length, 2-decimal pixel size, joined by
+    // "·"), no binning/Bayer/guide-cam cards written here.
+    let camASetup = "CamA·500mm·3.76µm"
+    let filtered = try #require(try jsonItems(
+        try runCLI(["trends", "--root", root.path, "--metric", "efficiency", "--setup", camASetup, "--json"]).stdout
+    ))
+    #expect(filtered.map { $0["date"] as? String } == ["2026-01-01"])
+
+    let noMatch = try #require(try jsonItems(
+        try runCLI(["trends", "--root", root.path, "--metric", "efficiency", "--setup", "no-such-setup", "--json"]).stdout
+    ))
+    #expect(noMatch.isEmpty)
+}
+
+@Test func trendsWithNoMatchingDataPrintsEmptyResultAndHumanMessage() throws {
+    let root = try makeTempRoot("trends-empty")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let jsonResult = try runCLI(["trends", "--root", root.path, "--metric", "fwhm", "--json"])
+    #expect(jsonResult.exitCode == 0, "stderr: \(jsonResult.stderr)")
+    #expect(try jsonItems(jsonResult.stdout)?.isEmpty == true)
+
+    let humanResult = try runCLI(["trends", "--root", root.path, "--metric", "fwhm"])
+    #expect(humanResult.exitCode == 0, "stderr: \(humanResult.stderr)")
+    #expect(humanResult.stdout.contains("nincs adat"))
+}
+
 // MARK: - health
 
 @Test func healthJSONAfterScanDecodesForFixtureTarget() throws {
@@ -2662,6 +2853,87 @@ private func writeSensorFITS(
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stderr.contains("nincs mérés ehhez"))
     #expect(result.stderr.contains("ASI2600MC"))
+}
+
+// MARK: - sensor --history (R11-T10/F8)
+
+@Test func sensorHistoryJSONGroupsTwoMeasureRunsOldestFirstWithEstimatorVersion() throws {
+    let root = try makeTempRoot("sensor-history-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeSensorFITS("calibration_library/biases/bias_a.fit", root: root, pixelValue: 500, egain: 0.25)
+    let scan1 = try runCLI(["scan", "--root", root.path])
+    #expect(scan1.exitCode == 0, "stderr: \(scan1.stderr)")
+    let measure1 = try runCLI(["sensor", "--root", root.path, "--measure"])
+    #expect(measure1.exitCode == 0, "stderr: \(measure1.stderr)")
+
+    // Re-measure against a changed bias level, simulating fresh frames --
+    // `SensorProfiler.measure` re-reads the file's pixel bytes straight off
+    // disk at measurement time (not from any cached DB metadata), so no
+    // rescan is needed just to pick up the new pixel VALUES at the same
+    // already-tracked path.
+    try writeSensorFITS("calibration_library/biases/bias_a.fit", root: root, pixelValue: 520, egain: 0.25)
+    let measure2 = try runCLI(["sensor", "--root", root.path, "--measure"])
+    #expect(measure2.exitCode == 0, "stderr: \(measure2.stderr)")
+
+    let result = try runCLI(["sensor", "--root", root.path, "--history", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let groups = try jsonItems(result.stdout)
+    let allGroups = try #require(groups)
+    let group = try #require(allGroups.first { $0["camera"] as? String == "ASI2600MC" })
+    let history = try #require(group["history"] as? [[String: Any]])
+    #expect(history.count == 2)
+    #expect(history.map { $0["bias_level_adu"] as? Double } == [500, 520])
+    #expect(history.allSatisfy { ($0["estimator_version"] as? Int) != nil })
+
+    // The "latest view" (plain `sensor --json`) still only ever has ONE row
+    // per combo -- history is additive, not a replacement.
+    let latest = try jsonItems(try runCLI(["sensor", "--root", root.path, "--json"]).stdout)
+    #expect(latest?.count == 1)
+    #expect(latest?.first?["bias_level_adu"] as? Double == 520)
+}
+
+@Test func sensorHistoryHumanOutputPrintsPerComboEntriesWithEstimatorVersion() throws {
+    let root = try makeTempRoot("sensor-history-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeSensorFITS("calibration_library/biases/bias_a.fit", root: root, pixelValue: 500, egain: 0.25)
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+    let measure = try runCLI(["sensor", "--root", root.path, "--measure"])
+    #expect(measure.exitCode == 0, "stderr: \(measure.stderr)")
+
+    let result = try runCLI(["sensor", "--root", root.path, "--history"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("ASI2600MC"))
+    #expect(result.stdout.contains("becslő v"))
+}
+
+@Test func sensorHistoryCombinedWithMeasureExitsWithUsageError() throws {
+    let root = try makeTempRoot("sensor-history-measure-conflict")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI(["sensor", "--root", root.path, "--history", "--measure"])
+    #expect(result.exitCode == 1)
+}
+
+@Test func sensorHistoryWithNoProfilesPrintsEmptyResult() throws {
+    let root = try makeTempRoot("sensor-history-empty")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let jsonResult = try runCLI(["sensor", "--root", root.path, "--history", "--json"])
+    #expect(jsonResult.exitCode == 0, "stderr: \(jsonResult.stderr)")
+    #expect(try jsonItems(jsonResult.stdout)?.isEmpty == true)
+
+    let humanResult = try runCLI(["sensor", "--root", root.path, "--history"])
+    #expect(humanResult.exitCode == 0, "stderr: \(humanResult.stderr)")
+    #expect(humanResult.stdout.contains("nincs mért szenzor-profil"))
 }
 
 // MARK: - expose (R7-B3)

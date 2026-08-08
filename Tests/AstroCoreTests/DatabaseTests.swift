@@ -83,7 +83,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 9)
+    #expect(version == 10)
 }
 
 @Test func migrateIsIdempotentAndDoesNotDuplicateVersionRow() throws {
@@ -99,7 +99,7 @@ import Testing
 
     let expectedTables = [
         "schema_version", "files", "fits_meta", "ratings", "findings", "runs", "tags", "session_notes",
-        "sensor_profile", "finding_acks",
+        "sensor_profile", "finding_acks", "sensor_profile_history",
     ]
     var found: Set<String> = []
     try database.db.query("SELECT name FROM sqlite_master WHERE type = 'table';") { row in
@@ -147,7 +147,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 9)
+    #expect(version == 10)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -200,7 +200,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 9)
+    #expect(version == 10)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -269,7 +269,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 9)
+    #expect(version == 10)
 
     let fileID1 = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let meta1 = try database.fitsMeta(fileID: fileID1)
@@ -993,7 +993,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 9)
+    #expect(version == 10)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1, "the v4 row must survive the upgrade untouched")
@@ -1047,7 +1047,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 9)
+    #expect(version == 10)
 
     let fileID = try #require(try database.fileID(path: "sessions/M45_Pleiades/2026-01-01/lights/f1.cr3"))
     let metaBeforeSolve = try database.fitsMeta(fileID: fileID)
@@ -1102,7 +1102,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 9)
+    #expect(version == 10)
 
     let fileID = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let rating = try database.rating(fileID: fileID)
@@ -1162,7 +1162,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 9)
+    #expect(version == 10)
 
     let fileID = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let rating = try database.rating(fileID: fileID)
@@ -1598,12 +1598,143 @@ private func sessionFile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 9)
+    #expect(version == 10)
 
     // finding_acks table exists and is usable after the same migration.
     #expect(try database.ackedKeys().isEmpty)
     try database.ackFindingGroup(category: "residue", groupKey: "*.seq", note: "known Siril leftovers")
     #expect(try database.ackedKeys() == ["residue|*.seq"])
+}
+
+// MARK: - v9 -> v10 (R11-T10/F8: sensor_profile_history + estimator_version)
+
+@Test func migrateUpgradesExistingV9DatabaseToV10AddingSensorProfileHistoryTable() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-migrate-v9-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("v9.sqlite").path
+
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.exec(Database.schemaSQLv1)
+        try raw.exec(Database.schemaSQLv2)
+        try raw.exec(Database.schemaSQLv3)
+        try raw.exec(Database.schemaSQLv4)
+        try raw.exec(Database.schemaSQLv5)
+        try raw.exec(Database.schemaSQLv6)
+        try raw.exec(Database.schemaSQLv7)
+        try raw.exec(Database.schemaSQLv8)
+        try raw.exec(Database.schemaSQLv9)
+        try raw.run("INSERT INTO schema_version(version) VALUES (9);")
+    }
+
+    // A real v9 database opens without error and upgrades in place.
+    let database = try Database(path: path)
+
+    var version: Int64 = -1
+    try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
+        version = row.int64(0) ?? -1
+    }
+    #expect(version == 10)
+
+    // sensor_profile_history exists and is usable after the same migration.
+    #expect(try database.sensorProfileHistory(camera: "ASI2600MC", gain: 100, offset: 50).isEmpty)
+    try database.insertSensorProfileHistory(
+        SensorProfileHistoryRecord(camera: "ASI2600MC", gain: 100, offset: 50, biasLevelADU: 501, measuredAt: 1_700_000_000, estimatorVersion: 2)
+    )
+    #expect(try database.sensorProfileHistory(camera: "ASI2600MC", gain: 100, offset: 50).count == 1)
+
+    // sensor_profile itself is still readable/writable (existing data
+    // untouched), and its new estimator_version column round-trips too.
+    try database.upsertSensorProfile(
+        SensorProfileRecord(camera: "ASI2600MC", gain: 100, offset: 50, biasLevelADU: 501, measuredAt: 1_700_000_000, estimatorVersion: 2)
+    )
+    let profile = try #require(try database.sensorProfile(camera: "ASI2600MC", gain: 100, offset: 50))
+    #expect(profile.estimatorVersion == 2)
+}
+
+/// The migration's own backfill: an EXISTING (pre-v10) `sensor_profile` row
+/// must show up as a history entry too, with `estimatorVersion` left `nil`
+/// (never invented) -- otherwise a profile measured before this migration
+/// would show an empty history/sparkline until the next re-measure, even
+/// though `sensor_profile` itself already has a real row for it.
+@Test func migrateV9ToV10BackfillsSensorProfileHistoryFromExistingSensorProfileRow() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-migrate-v9-backfill-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("v9.sqlite").path
+
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.exec(Database.schemaSQLv1)
+        try raw.exec(Database.schemaSQLv2)
+        try raw.exec(Database.schemaSQLv3)
+        try raw.exec(Database.schemaSQLv4)
+        try raw.exec(Database.schemaSQLv5)
+        try raw.exec(Database.schemaSQLv6)
+        try raw.exec(Database.schemaSQLv7)
+        try raw.exec(Database.schemaSQLv8)
+        try raw.exec(Database.schemaSQLv9)
+        try raw.run("INSERT INTO schema_version(version) VALUES (9);")
+        // A real pre-v10 measurement, written directly against the v7
+        // `sensor_profile` schema (no `estimator_version` column exists yet
+        // at this point).
+        try raw.run(
+            """
+            INSERT INTO sensor_profile(camera, gain, offset, bias_level_adu, read_noise_e, dark_rate_e_per_s, dark_temp_c, egain, measured_at, frame_count)
+            VALUES ('ASI2600MC', 100, 50, 501, 1.30, 0.0012, -10.0, 0.242863, 1650000000, 2);
+            """
+        )
+    }
+
+    let database = try Database(path: path)
+
+    let history = try database.sensorProfileHistory(camera: "ASI2600MC", gain: 100, offset: 50)
+    #expect(history.count == 1)
+    let backfilled = try #require(history.first)
+    #expect(backfilled.estimatorVersion == nil)
+    #expect(backfilled.biasLevelADU == 501)
+    #expect(backfilled.readNoiseE == 1.30)
+    #expect(backfilled.measuredAt == 1_650_000_000)
+
+    // The "latest view" row's own new column is NULL too -- never guessed.
+    let profile = try #require(try database.sensorProfile(camera: "ASI2600MC", gain: 100, offset: 50))
+    #expect(profile.estimatorVersion == nil)
+}
+
+@Test func insertSensorProfileHistoryThenQueryReturnsAscendingByMeasuredAt() throws {
+    let database = try Database(path: ":memory:")
+    try database.insertSensorProfileHistory(
+        SensorProfileHistoryRecord(camera: "ASI2600MC", gain: 100, offset: 50, biasLevelADU: 510, measuredAt: 1_700_000_200, estimatorVersion: 2)
+    )
+    try database.insertSensorProfileHistory(
+        SensorProfileHistoryRecord(camera: "ASI2600MC", gain: 100, offset: 50, biasLevelADU: 501, measuredAt: 1_700_000_000, estimatorVersion: nil)
+    )
+
+    let history = try database.sensorProfileHistory(camera: "ASI2600MC", gain: 100, offset: 50)
+    #expect(history.map(\.measuredAt) == [1_700_000_000, 1_700_000_200])
+    #expect(history.map(\.biasLevelADU) == [501, 510])
+    #expect(history.map(\.estimatorVersion) == [nil, 2])
+}
+
+@Test func sensorProfileHistoryReturnsEmptyForUnknownCombo() throws {
+    let database = try Database(path: ":memory:")
+    #expect(try database.sensorProfileHistory(camera: "NoSuchCam", gain: nil, offset: nil).isEmpty)
+}
+
+@Test func sensorProfileHistoryIsScopedToItsExactComboOnly() throws {
+    let database = try Database(path: ":memory:")
+    try database.insertSensorProfileHistory(
+        SensorProfileHistoryRecord(camera: "ASI2600MC", gain: 100, offset: 50, measuredAt: 1_700_000_000)
+    )
+    try database.insertSensorProfileHistory(
+        SensorProfileHistoryRecord(camera: "ASI2600MC", gain: 200, offset: 50, measuredAt: 1_700_000_000)
+    )
+
+    #expect(try database.sensorProfileHistory(camera: "ASI2600MC", gain: 100, offset: 50).count == 1)
+    #expect(try database.sensorProfileHistory(camera: "ASI2600MC", gain: 200, offset: 50).count == 1)
 }
 
 @Test func ackFindingGroupThenUnackRoundTrips() throws {

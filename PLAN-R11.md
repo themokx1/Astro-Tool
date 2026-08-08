@@ -22,7 +22,7 @@
 - [x] 2. Persona-review (4 agent) — kész
 - [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
 - [x] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [x]
-- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [x] T10 [ ] T11 [ ] T12 [ ] T13 [ ]
+- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [x] T10 [x] T11 [ ] T12 [ ] T13 [ ]
 - [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [ ] T15 [ ] T16 [ ] T17 [ ]
 - [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
 - [ ] 8. Release v0.13.0
@@ -306,7 +306,7 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   elvetés-jelölés, "javasolt: elvetés").
 - **T8 [x] — Audit-diff + Tárhely**: F6 + F19.
 - **T9 [x] — Előző éjszaka**: F5 (oldal + feltételes sidebar-sor + auto-scan opt-in).
-- **T10 — Trendek + szenzor-történet**: F7 + F8.
+- **T10 [x] — Trendek + szenzor-történet**: F7 + F8.
 - **T11 — Stack-lista v2**: F15 (szűrő-bontott hardlink-fa, manifest.csv,
   sheet-finomhangolás).
 - **T12 — Kezdő-csomag**: F11 + F12 (Fogalomtár, ⓘ-k, Siril-segéd linkek,
@@ -404,3 +404,32 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   `AstroConfig`-ban — app-viselkedés, nem könyvtár-szabály), a meglévő
   mount-observer sikeres `retryRootAccess()`-e után indít `runScan()`-t,
   ha épp semmi más nem fut. Következő: T10 (Trendek + szenzor-történet).
+- 2026-08-08: T10 (Trendek + szenzor-történet) kész — F7 teljes: core
+  `TrendQueries.points` (`NightsQueries.allNights` session-metrikáinak
+  újrahasznosítása, időrendi sorrend, opcionális setup-fingerprint/
+  dátumtartomány szűrés, `EquipmentProfile.dominant` per session) +
+  tiszta `TrendMath.movingAverage` (5-pontos ablak, hiányzó pontot
+  átugorva); `TrendsPage` (időtartomány-picker + 3 Swift Charts, px-
+  fallback FWHM üres karikával, pontra kattintás → `pendingTargetSegment`/
+  `pendingSessionSelection` a Sessionök szegmensre, toolbar setup/
+  célpont-típus szűrő, kliens-oldali szűrés a NightsPage-mintára, <5
+  session ContentUnavailableView); sidebar "Trendek" sor (ÁLLAPOT, `⌘`
+  nélkül) + menü-parancs; CLI `trends --metric fwhm|background|
+  efficiency [--setup][--from][--to][--json]`. F8 teljes: séma-v10
+  migráció (`sensor_profile.estimator_version` additív oszlop NULL a
+  régi sorokon + új append-only `sensor_profile_history` tábla,
+  visszatöltve a meglévő `sensor_profile` sorokból NULL becslő-
+  verzióval — teszt bizonyítja, hogy egy v9 DB gond nélkül nyílik), új
+  `SensorProfiler.estimatorVersion` konstans (2) — `measure` mostantól
+  history-ba ír, majd upsertel; `SensorProfileRecord.isEstimatorStale`
+  váltja a `SensorPage` korábbi hardcode-olt 2026-08-05 dátum-ellenőrzését;
+  `SensorPage` `Table` → `List`+`DisclosureGroup` (soronkénti mérés-
+  történet + 2 sparkline), "Szenzor mérése…" sheet-szöveg frissítve; CLI
+  `sensor --history [--json]`. 25 új teszt (core: TrendQueries+
+  DatabaseTests migráció+SensorProfileTests; CLI: trends+sensor
+  --history smoke), `swift test` zöld (1146). Tudatos eltérés: a
+  px-fallback jelölés nem szó szerint SwiftUI Charts beépített "üres
+  kör" szimbólum (nincs ilyen `BasicChartSymbolShape`), hanem
+  `.symbol { Circle().stroke(...) }` egyedi tartalom — vizuálisan
+  ugyanaz, csak nem a `.symbol(_ shape:)` API-n át. Következő: T11
+  (Stack-lista v2).

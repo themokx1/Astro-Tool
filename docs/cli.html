@@ -168,6 +168,11 @@
       <pre class="example">astrotool nights --year 2026 --month 3</pre>
     </div>
     <div class="cmd">
+      <div class="name">trends</div>
+      <div class="desc">Hosszú távú, session-szintű idősor célpontokon átívelve: medián FWHM (ívmásodperc, vagy képpont <code>is_pixel_fallback=true</code>-val, ha nincs képpont-skála), háttér e⁻/s/□″, vagy hatékonyság% (duty cycle) — <code>--metric</code>-kel választva, dátum+érték párokban, legrégebbi elöl. <code>--setup</code> egy konkrét EquipmentProfile setup-fingerprint leírásra szűkít; <code>--from</code>/<code>--to</code> a session kanonikus kezdő-dátumára.</div>
+      <pre class="example">astrotool trends --metric fwhm --from 2026-01-01 --json</pre>
+    </div>
+    <div class="cmd">
       <div class="name">new-session</div>
       <div class="desc">Új session könyvtár létrehozása (<code>YYYY-MM-DD</code>) README-sablonnal egy célponthoz.</div>
       <pre class="example">astrotool new-session --catalog M --name 31 --date 2026-03-15</pre>
@@ -209,8 +214,9 @@ astrotool goal list --target M31 --json</pre>
     </div>
     <div class="cmd">
       <div class="name">sensor</div>
-      <div class="desc">Mért szenzor-profilok (bias-szint, leolvasási zaj, dark-ráta, EGAIN) listázása, vagy <code>--measure</code>-rel újramérés bias/dark keretekből.</div>
-      <pre class="example">astrotool sensor --measure</pre>
+      <div class="desc">Mért szenzor-profilok (bias-szint, leolvasási zaj, dark-ráta, EGAIN) listázása, vagy <code>--measure</code>-rel újramérés bias/dark keretekből — minden mérés a mérés-történetbe is bekerül, a <code>sensor_profile</code> tábla csak a legfrissebbet mutatja. <code>--history</code>-val a teljes mérés-történet kombónkénti csoportosításban (dátum, leolvasási zaj, dark-ráta, becslő-verzió); nem kombinálható <code>--measure</code>-rel.</div>
+      <pre class="example">astrotool sensor --measure
+astrotool sensor --history --json</pre>
     </div>
     <div class="cmd">
       <div class="name">ingest-dss</div>

@@ -333,6 +333,14 @@ public struct SensorProfileRecord: Codable, Equatable, Sendable {
     public var egain: Double?
     public var measuredAt: Double
     public var frameCount: Int?
+    /// `SensorProfiler.estimatorVersion` at the moment this (latest)
+    /// measurement was taken -- schema v10, additive (R11-T10/F8). `nil`
+    /// for every row that predates this column (an existing v9 database's
+    /// `sensor_profile` rows migrate with `NULL` here, deliberately never a
+    /// guessed version) as well as for a row a pre-v10 code path might still
+    /// write. `SensorPage`'s staleness warning treats `nil` the same as "too
+    /// old": less than `SensorProfiler.estimatorVersion`.
+    public var estimatorVersion: Int?
 
     public init(
         camera: String,
@@ -344,7 +352,8 @@ public struct SensorProfileRecord: Codable, Equatable, Sendable {
         darkTempC: Double? = nil,
         egain: Double? = nil,
         measuredAt: Double,
-        frameCount: Int? = nil
+        frameCount: Int? = nil,
+        estimatorVersion: Int? = nil
     ) {
         self.camera = camera
         self.gain = gain
@@ -356,6 +365,68 @@ public struct SensorProfileRecord: Codable, Equatable, Sendable {
         self.egain = egain
         self.measuredAt = measuredAt
         self.frameCount = frameCount
+        self.estimatorVersion = estimatorVersion
+    }
+
+    /// `true` when this profile's measurement predates the current
+    /// `SensorProfiler.estimatorVersion` -- schema-version generalization
+    /// (R11-T10/F8) of what used to be a hardcoded fix-date check in
+    /// `SensorPage`. `nil` (unknown/pre-versioning) counts as stale too.
+    public var isEstimatorStale: Bool {
+        guard let estimatorVersion else { return true }
+        return estimatorVersion < SensorProfiler.estimatorVersion
+    }
+}
+
+/// One APPEND-ONLY measurement of a `(camera, gain, offset)` combo's sensor
+/// characteristics -- schema v10 (R11-T10/F8). Unlike `sensor_profile`
+/// (which `SensorProfiler.measure` upserts in place, always holding just the
+/// LATEST measurement per combo), a row here is never updated or replaced:
+/// every `SensorProfiler.measure` run appends one NEW row per combo it
+/// measures, so a user who re-measures (fresh bias/dark frames, or after an
+/// estimator fix) can see how the numbers moved over time, not just "the
+/// last one wins". `estimatorVersion` records `SensorProfiler
+/// .estimatorVersion` at the moment of THIS measurement -- `nil` for rows
+/// backfilled from a pre-v10 `sensor_profile` row during migration (an
+/// honest "unknown, pre-versioning estimator" marker, never a guessed
+/// version number).
+public struct SensorProfileHistoryRecord: Codable, Equatable, Sendable {
+    public var id: Int64?
+    public var camera: String
+    public var gain: Double?
+    public var offset: Double?
+    public var biasLevelADU: Double?
+    public var readNoiseE: Double?
+    public var darkRateEPerS: Double?
+    public var darkTempC: Double?
+    public var egain: Double?
+    public var measuredAt: Double
+    public var estimatorVersion: Int?
+
+    public init(
+        id: Int64? = nil,
+        camera: String,
+        gain: Double? = nil,
+        offset: Double? = nil,
+        biasLevelADU: Double? = nil,
+        readNoiseE: Double? = nil,
+        darkRateEPerS: Double? = nil,
+        darkTempC: Double? = nil,
+        egain: Double? = nil,
+        measuredAt: Double,
+        estimatorVersion: Int? = nil
+    ) {
+        self.id = id
+        self.camera = camera
+        self.gain = gain
+        self.offset = offset
+        self.biasLevelADU = biasLevelADU
+        self.readNoiseE = readNoiseE
+        self.darkRateEPerS = darkRateEPerS
+        self.darkTempC = darkTempC
+        self.egain = egain
+        self.measuredAt = measuredAt
+        self.estimatorVersion = estimatorVersion
     }
 }
 
@@ -606,6 +677,24 @@ public final class Database: @unchecked Sendable {
       note TEXT);
     """
 
+    // Internal (not private) for the same reason as the earlier schemaSQLv*
+    // constants: migration tests apply this directly to a raw `SQLiteDB` to
+    // simulate an existing v9 database before verifying `Database(path:)`
+    // upgrades it in place. R11-T10/F8: `sensor_profile` gains
+    // `estimator_version` (additive column, `NULL` for every pre-existing
+    // row -- never guessed, see `SensorProfileRecord.estimatorVersion`'s own
+    // doc comment) alongside a brand-new APPEND-ONLY `sensor_profile_history`
+    // table that records every measurement, not just the latest one.
+    static let schemaSQLv10 = """
+    ALTER TABLE sensor_profile ADD COLUMN estimator_version INTEGER;
+    CREATE TABLE IF NOT EXISTS sensor_profile_history(
+      id INTEGER PRIMARY KEY,
+      camera TEXT NOT NULL, gain REAL, offset REAL,
+      bias_level_adu REAL, read_noise_e REAL, dark_rate_e_per_s REAL, dark_temp_c REAL,
+      egain REAL, measured_at REAL NOT NULL, estimator_version INTEGER);
+    CREATE INDEX IF NOT EXISTS idx_sensor_profile_history_combo ON sensor_profile_history(camera, gain, offset);
+    """
+
     public init(path: String) throws {
         self.db = try SQLiteDB(path: path)
         try migrate()
@@ -681,6 +770,44 @@ public final class Database: @unchecked Sendable {
             try db.exec(Self.schemaSQLv9)
             try db.run("UPDATE schema_version SET version = ?;", bind: [.int(9)])
             version = 9
+        }
+
+        if version < 10 {
+            try db.exec(Self.schemaSQLv10)
+            try backfillSensorProfileHistoryFromExistingProfiles()
+            try db.run("UPDATE schema_version SET version = ?;", bind: [.int(10)])
+            version = 10
+        }
+    }
+
+    /// One-time v9->v10 upgrade step: seeds `sensor_profile_history` with
+    /// one row per EXISTING `sensor_profile` row, so a profile measured
+    /// before this migration still shows up as the earliest point in its own
+    /// history list/sparkline rather than the history starting completely
+    /// empty until the next re-measure. `estimatorVersion` is left `NULL`
+    /// (never invented) for these backfilled rows, matching the `NULL`
+    /// `sensor_profile.estimator_version` the `ALTER TABLE` above just gave
+    /// that same row -- both say "unknown, pre-versioning estimator", never
+    /// a guessed version number.
+    private func backfillSensorProfileHistoryFromExistingProfiles() throws {
+        var rows: [SensorProfileRecord] = []
+        try db.query("SELECT \(Self.sensorProfileColumns) FROM sensor_profile;") { row in
+            rows.append(Self.sensorProfileRecord(from: row))
+        }
+
+        for r in rows {
+            try db.run(
+                """
+                INSERT INTO sensor_profile_history(camera, gain, offset, bias_level_adu, read_noise_e, dark_rate_e_per_s, dark_temp_c, egain, measured_at, estimator_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);
+                """,
+                bind: [
+                    .text(r.camera), r.gain.map(SQLiteValue.real) ?? .null, r.offset.map(SQLiteValue.real) ?? .null,
+                    r.biasLevelADU.map(SQLiteValue.real) ?? .null, r.readNoiseE.map(SQLiteValue.real) ?? .null,
+                    r.darkRateEPerS.map(SQLiteValue.real) ?? .null, r.darkTempC.map(SQLiteValue.real) ?? .null,
+                    r.egain.map(SQLiteValue.real) ?? .null, .real(r.measuredAt),
+                ]
+            )
         }
     }
 
@@ -1357,12 +1484,13 @@ public final class Database: @unchecked Sendable {
         try withLock {
             try db.run(
                 """
-                INSERT INTO sensor_profile(camera, gain, offset, bias_level_adu, read_noise_e, dark_rate_e_per_s, dark_temp_c, egain, measured_at, frame_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO sensor_profile(camera, gain, offset, bias_level_adu, read_noise_e, dark_rate_e_per_s, dark_temp_c, egain, measured_at, frame_count, estimator_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(camera, gain, offset) DO UPDATE SET
                   bias_level_adu = excluded.bias_level_adu, read_noise_e = excluded.read_noise_e,
                   dark_rate_e_per_s = excluded.dark_rate_e_per_s, dark_temp_c = excluded.dark_temp_c,
-                  egain = excluded.egain, measured_at = excluded.measured_at, frame_count = excluded.frame_count;
+                  egain = excluded.egain, measured_at = excluded.measured_at, frame_count = excluded.frame_count,
+                  estimator_version = excluded.estimator_version;
                 """,
                 bind: [
                     .text(r.camera), r.gain.map(SQLiteValue.real) ?? .null, r.offset.map(SQLiteValue.real) ?? .null,
@@ -1370,6 +1498,7 @@ public final class Database: @unchecked Sendable {
                     r.darkRateEPerS.map(SQLiteValue.real) ?? .null, r.darkTempC.map(SQLiteValue.real) ?? .null,
                     r.egain.map(SQLiteValue.real) ?? .null, .real(r.measuredAt),
                     r.frameCount.map { SQLiteValue.int(Int64($0)) } ?? .null,
+                    r.estimatorVersion.map { SQLiteValue.int(Int64($0)) } ?? .null,
                 ]
             )
         }
@@ -1385,10 +1514,7 @@ public final class Database: @unchecked Sendable {
         try withLock {
             var record: SensorProfileRecord?
             try db.query(
-                """
-                SELECT camera, gain, offset, bias_level_adu, read_noise_e, dark_rate_e_per_s, dark_temp_c, egain, measured_at, frame_count
-                FROM sensor_profile WHERE camera = ? AND gain IS ? AND offset IS ?;
-                """,
+                "SELECT \(Self.sensorProfileColumns) FROM sensor_profile WHERE camera = ? AND gain IS ? AND offset IS ?;",
                 bind: [.text(camera), gain.map(SQLiteValue.real) ?? .null, offset.map(SQLiteValue.real) ?? .null]
             ) { row in
                 record = Self.sensorProfileRecord(from: row)
@@ -1403,17 +1529,19 @@ public final class Database: @unchecked Sendable {
     public func allSensorProfiles() throws -> [SensorProfileRecord] {
         try withLock {
             var results: [SensorProfileRecord] = []
-            try db.query(
-                """
-                SELECT camera, gain, offset, bias_level_adu, read_noise_e, dark_rate_e_per_s, dark_temp_c, egain, measured_at, frame_count
-                FROM sensor_profile ORDER BY camera, gain, offset;
-                """
-            ) { row in
+            try db.query("SELECT \(Self.sensorProfileColumns) FROM sensor_profile ORDER BY camera, gain, offset;") { row in
                 results.append(Self.sensorProfileRecord(from: row))
             }
             return results
         }
     }
+
+    /// Shared column list for every `sensor_profile` SELECT -- also reused
+    /// (R11-T10/F8) by the v9->v10 migration's own backfill query, so the
+    /// migration and the ordinary DAO reads can never quietly drift apart on
+    /// column order.
+    private static let sensorProfileColumns =
+        "camera, gain, offset, bias_level_adu, read_noise_e, dark_rate_e_per_s, dark_temp_c, egain, measured_at, frame_count, estimator_version"
 
     private static func sensorProfileRecord(from row: SQLiteRow) -> SensorProfileRecord {
         SensorProfileRecord(
@@ -1426,8 +1554,67 @@ public final class Database: @unchecked Sendable {
             darkTempC: row.double(6),
             egain: row.double(7),
             measuredAt: row.double(8) ?? 0,
-            frameCount: row.int64(9).map(Int.init)
+            frameCount: row.int64(9).map(Int.init),
+            estimatorVersion: row.int64(10).map(Int.init)
         )
+    }
+
+    // MARK: sensor_profile_history (R11-T10/F8)
+
+    /// Appends one measurement row -- always an `INSERT`, never an upsert:
+    /// this table exists specifically so a re-measure doesn't erase what
+    /// came before it (that's what `sensor_profile` itself is for).
+    public func insertSensorProfileHistory(_ r: SensorProfileHistoryRecord) throws {
+        try withLock {
+            try db.run(
+                """
+                INSERT INTO sensor_profile_history(camera, gain, offset, bias_level_adu, read_noise_e, dark_rate_e_per_s, dark_temp_c, egain, measured_at, estimator_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                bind: [
+                    .text(r.camera), r.gain.map(SQLiteValue.real) ?? .null, r.offset.map(SQLiteValue.real) ?? .null,
+                    r.biasLevelADU.map(SQLiteValue.real) ?? .null, r.readNoiseE.map(SQLiteValue.real) ?? .null,
+                    r.darkRateEPerS.map(SQLiteValue.real) ?? .null, r.darkTempC.map(SQLiteValue.real) ?? .null,
+                    r.egain.map(SQLiteValue.real) ?? .null, .real(r.measuredAt),
+                    r.estimatorVersion.map { SQLiteValue.int(Int64($0)) } ?? .null,
+                ]
+            )
+        }
+    }
+
+    /// Every history row for an EXACT `(camera, gain, offset)` combo,
+    /// ascending by `measured_at` (oldest first -- a plain time series, same
+    /// "chronological, not browsing-order" convention `TrendQueries.points`
+    /// uses) -- backs `SensorPage`'s per-profile history/sparkline
+    /// disclosure and `astrotool sensor --history`.
+    public func sensorProfileHistory(camera: String, gain: Double?, offset: Double?) throws -> [SensorProfileHistoryRecord] {
+        try withLock {
+            var results: [SensorProfileHistoryRecord] = []
+            try db.query(
+                """
+                SELECT id, camera, gain, offset, bias_level_adu, read_noise_e, dark_rate_e_per_s, dark_temp_c, egain, measured_at, estimator_version
+                FROM sensor_profile_history WHERE camera = ? AND gain IS ? AND offset IS ? ORDER BY measured_at ASC;
+                """,
+                bind: [.text(camera), gain.map(SQLiteValue.real) ?? .null, offset.map(SQLiteValue.real) ?? .null]
+            ) { row in
+                results.append(
+                    SensorProfileHistoryRecord(
+                        id: row.int64(0),
+                        camera: row.string(1) ?? "",
+                        gain: row.double(2),
+                        offset: row.double(3),
+                        biasLevelADU: row.double(4),
+                        readNoiseE: row.double(5),
+                        darkRateEPerS: row.double(6),
+                        darkTempC: row.double(7),
+                        egain: row.double(8),
+                        measuredAt: row.double(9) ?? 0,
+                        estimatorVersion: row.int64(10).map(Int.init)
+                    )
+                )
+            }
+            return results
+        }
     }
 
     // MARK: tags

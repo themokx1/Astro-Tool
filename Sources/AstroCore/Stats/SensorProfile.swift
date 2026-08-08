@@ -18,6 +18,16 @@ public struct MissingProfileCombo: Equatable, Sendable {
     }
 }
 
+extension SensorProfileRecord {
+    /// Stable string key for this record's `(camera, gain, offset)` combo --
+    /// R11-T10/F8: keys `AppState.sensorProfileHistoryByCombo` and
+    /// `SensorProfileList`'s row `id`, so the loader and the view always
+    /// agree on what "the same combo" means.
+    public var comboKey: String {
+        "\(camera)|\(gain.map { String($0) } ?? "-")|\(offset.map { String($0) } ?? "-")"
+    }
+}
+
 /// Measures real sensor characteristics (bias pedestal, read noise, dark
 /// current, EGAIN) per `(camera, gain, offset)` combo, straight from
 /// tracked BIAS/DARK frames already on record in `Database` -- the
@@ -35,6 +45,19 @@ public enum SensorProfiler {
     /// `NAXIS2`, which two frames from the same camera/combo always do.
     private static let cropFraction = 0.5
     private static let clipSigmaThreshold = 10.0
+
+    /// Bumped whenever the measurement algorithm itself changes in a way
+    /// that makes an OLD measurement's numbers not directly comparable to a
+    /// NEW one -- e.g. the 2026-08-05 read-noise-estimator fix (commit
+    /// `0928189`, "sample all bayer parities in native stats; keep sensor
+    /// noise tail in read-noise estimate") is what bumped this from 1 to 2.
+    /// `measure` stamps every `SensorProfileRecord`/`SensorProfileHistoryRecord`
+    /// it writes with the CURRENT value of this constant; `SensorPage`'s
+    /// staleness warning (R11-T10/F8) flags any profile whose own
+    /// `estimatorVersion` is `nil` or below it -- a generalization of what
+    /// used to be a hardcoded fix-date check, so the NEXT estimator change
+    /// only needs to bump this number, not add another hardcoded date.
+    public static let estimatorVersion: Int = 2
 
     /// Groups tracked BIAS (and DARK) frames by `(instrume, gain, offset)`
     /// and measures one `SensorProfileRecord` per combo that has at least
@@ -118,7 +141,22 @@ public enum SensorProfiler {
                 darkTempC: darkTemp,
                 egain: egain,
                 measuredAt: Date().timeIntervalSince1970,
-                frameCount: biasSet.count
+                frameCount: biasSet.count,
+                estimatorVersion: Self.estimatorVersion
+            )
+            // R11-T10/F8: append to the history log FIRST, then upsert the
+            // "latest" row -- both writes happen from the same freshly-built
+            // `record`, so they can never disagree about what this
+            // measurement's own numbers were, even if a caller crashed or
+            // was killed between the two (worst case: an extra history row
+            // with no matching upsert having landed yet, never the reverse).
+            try db.insertSensorProfileHistory(
+                SensorProfileHistoryRecord(
+                    camera: record.camera, gain: record.gain, offset: record.offset,
+                    biasLevelADU: record.biasLevelADU, readNoiseE: record.readNoiseE,
+                    darkRateEPerS: record.darkRateEPerS, darkTempC: record.darkTempC,
+                    egain: record.egain, measuredAt: record.measuredAt, estimatorVersion: record.estimatorVersion
+                )
             )
             try db.upsertSensorProfile(record)
             results.append(record)

@@ -214,6 +214,9 @@ private struct DetailContainerView: View {
         case .cleanup:
             AuditPage()
                 .onAppear { appState.auditSegment = .cleanable }
+        // R11-T10/F7: no segment to preselect (its own page, like `.nights`/
+        // `.discover` above).
+        case .trends: TrendsPage()
         case .sensor: SensorPage()
         case .searchResults: SearchResultsPage()
         }
@@ -231,6 +234,7 @@ private struct DetailContainerView: View {
         case .calibration: return "Kalibráció"
         case .audit: return "Audit"
         case .cleanup: return "Takarítás"
+        case .trends: return "Trendek"
         case .sensor: return "Szenzor-profilok"
         // R10 review: "Kereső" ("search engine"/noun) renamed to "Keresés"
         // ("search"/action) -- "Kereső" is reserved for the ⌘F "Kereső

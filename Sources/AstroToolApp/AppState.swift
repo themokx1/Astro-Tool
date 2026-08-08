@@ -60,6 +60,13 @@ enum Page: Hashable {
     case calibration
     case audit
     case cleanup
+    /// R11-T10/F7: the "Trendek" page -- long-term session-level time series
+    /// (median FWHM″, background e⁻/s/″², hatékonyság%) across every target.
+    /// Sits in the ÁLLAPOT section after Audit/Takarítás (see the UI plan's
+    /// sidebar order), deliberately with NO `⌘`-shortcut of its own -- the
+    /// existing ⌘1-9 assignment doesn't move for it, same stance
+    /// `Page.previousNight` already takes.
+    case trends
     case sensor
     case searchResults
 }
@@ -477,6 +484,13 @@ final class AppState: @unchecked Sendable {
     /// `loadSensorProfiles()`/`measureSensorProfiles()` has run at least once
     /// this session.
     var sensorProfiles: [SensorProfileRecord] = []
+    /// Every `sensor_profile_history` entry for each of `sensorProfiles`'
+    /// combos, keyed by `SensorProfileRecord.comboKey` (R11-T10/F8) --
+    /// backs `SensorPage`'s per-profile expandable history list + sparkline.
+    /// Loaded alongside `sensorProfiles` (`loadSensorProfiles()`/
+    /// `measureSensorProfiles()`), never separately -- a combo missing from
+    /// this dictionary simply has no history rows on record yet.
+    var sensorProfileHistoryByCombo: [String: [SensorProfileHistoryRecord]] = [:]
     var frameScores: [FrameScore] = []
     /// The user's own manual accept/reject verdict for each frame currently
     /// in `frameScores`, keyed by `FrameScore.path` (R10-B1) -- `FrameScore`
@@ -559,6 +573,16 @@ final class AppState: @unchecked Sendable {
     /// loaded automatically, same "lazily loaded on the page's own
     /// `onAppear`" stance `monthPlan` takes.
     var nights: [NightRow]?
+
+    /// Every session's trend-relevant metrics across every target
+    /// (`TrendQueries.points`, R11-T10/F7), backing the "Trendek" page
+    /// (`TrendsPage`) -- loaded UNFILTERED (`loadTrends()` never passes
+    /// `setupFingerprint`/`from`/`to`) for the exact same "load once, filter
+    /// client-side" reason `nights`/`loadNights()` documents above:
+    /// `TrendsPage`'s time-range/setup/target-type controls all narrow this
+    /// same in-memory array rather than re-querying per Picker change. `nil`
+    /// until `loadTrends()` has run at least once this session.
+    var trendPoints: [TrendPoint]?
 
     /// The catalog "what should I shoot tonight that I don't already have"
     /// sweep (`DiscoveryPlanner.discover`, R10-A4), backing the
@@ -2931,6 +2955,11 @@ final class AppState: @unchecked Sendable {
     /// Loads whatever's already persisted in `sensor_profile` -- read-only,
     /// never runs a measurement itself. Shown as the "Szenzor-profilok" list
     /// on its own Szenzor-profilok oldal (`SensorPage`, `Page.sensor`).
+    /// R11-T10/F8: also loads each profile's full `sensor_profile_history`
+    /// (one query per combo -- the same "N+1 is fine at this scale" stance
+    /// `SensorProfiler.measure` itself already takes per-file) into
+    /// `sensorProfileHistoryByCombo`, for the page's per-row expandable
+    /// history/sparkline.
     func loadSensorProfiles() {
         guard let db else { return }
 
@@ -2938,12 +2967,20 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try db.allSensorProfiles()
+                let (profiles, historyByCombo) = try await Task.detached(priority: .userInitiated) {
+                    let profiles = try db.allSensorProfiles()
+                    var historyByCombo: [String: [SensorProfileHistoryRecord]] = [:]
+                    for profile in profiles {
+                        historyByCombo[profile.comboKey] = try db.sensorProfileHistory(
+                            camera: profile.camera, gain: profile.gain, offset: profile.offset
+                        )
+                    }
+                    return (profiles, historyByCombo)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.sensorProfiles = result
-                self.progressText = "Szenzor-profilok betöltve: \(result.count) kombináció"
+                self.sensorProfiles = profiles
+                self.sensorProfileHistoryByCombo = historyByCombo
+                self.progressText = "Szenzor-profilok betöltve: \(profiles.count) kombináció"
             } catch {
                 self.handle(error)
             }
@@ -2953,8 +2990,10 @@ final class AppState: @unchecked Sendable {
 
     /// Runs `SensorProfiler.measure` in the background (the "Mérés" button):
     /// re-derives every `(camera, gain, offset)` combo's bias level/read
-    /// noise/dark rate/EGAIN from tracked BIAS/DARK frames, persisting as it
-    /// goes, then refreshes `sensorProfiles` with the fresh set.
+    /// noise/dark rate/EGAIN from tracked BIAS/DARK frames, appending a new
+    /// `sensor_profile_history` row per combo as it goes (R11-T10/F8), then
+    /// refreshes `sensorProfiles`/`sensorProfileHistoryByCombo` with the
+    /// fresh set.
     func measureSensorProfiles() {
         guard let db else { return }
         let cfg = config
@@ -2964,16 +3003,50 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await Task.detached(priority: .userInitiated) { [weak self] in
-                    try SensorProfiler.measure(db: db, config: cfg, root: root) { message in
+                let (result, historyByCombo) = try await Task.detached(priority: .userInitiated) { [weak self] in
+                    let result = try SensorProfiler.measure(db: db, config: cfg, root: root) { message in
                         Task { @MainActor in
                             self?.progressText = message
                         }
                     }
+                    var historyByCombo: [String: [SensorProfileHistoryRecord]] = [:]
+                    for profile in result {
+                        historyByCombo[profile.comboKey] = try db.sensorProfileHistory(
+                            camera: profile.camera, gain: profile.gain, offset: profile.offset
+                        )
+                    }
+                    return (result, historyByCombo)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.sensorProfiles = result
+                self.sensorProfileHistoryByCombo = historyByCombo
                 self.progressText = "Szenzor-mérés kész: \(result.count) kombináció"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    // MARK: - Trends (R11-T10/F7)
+
+    /// Loads every session's trend-relevant metrics across every target
+    /// (`TrendQueries.points`, UNFILTERED -- see `trendPoints`'s own doc
+    /// comment for why), backing the "Trendek" page.
+    func loadTrends() {
+        guard let db else { return }
+        let cfg = config
+
+        let opID = beginOperation("Trendek betöltése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try TrendQueries.points(db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.trendPoints = result
+                self.progressText = "Trendek betöltve: \(result.count) session"
             } catch {
                 self.handle(error)
             }
