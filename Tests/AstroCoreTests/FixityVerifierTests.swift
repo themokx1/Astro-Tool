@@ -172,6 +172,32 @@ private struct VerifyFixture {
     #expect(newHash != originalHash)
 }
 
+/// An in-place rewrite can change the bytes and timestamp without changing
+/// the byte count. That is suspicious, but it is not the same evidence as
+/// silent bitrot with unchanged metadata.
+@Test func fixityVerifierDetectsModifiedInPlaceWhenOnlyMtimeChanged() throws {
+    let fixture = try VerifyFixture.make()
+    defer { fixture.cleanup() }
+
+    let path = "sessions/M31/2026-01-01/lights/a.fit"
+    let url = fixture.url(path)
+    try writeFile(at: url, bytes: Array(repeating: 0xAB, count: 2048))
+    let stat = try statInfo(url)
+    let originalHash = try DuplicateFinder.sha256Hash(of: url)
+    try fixture.db.upsertFile(makeFileRecord(path: path, size: stat.size, mtime: stat.mtime, contentHash: originalHash))
+
+    try writeFile(at: url, bytes: Array(repeating: 0xCD, count: 2048))
+    try setModificationDate(stat.mtime + 100, at: url.path)
+
+    let result = try #require(FixityVerifier.verify(db: fixture.db, config: fixture.config).first)
+    guard case .modifiedInPlace(let oldHash, let newHash) = result.status else {
+        Issue.record("expected modifiedInPlace, got \(result.status)")
+        return
+    }
+    #expect(oldHash == originalHash)
+    #expect(newHash != originalHash)
+}
+
 /// Edge case the spec's two named categories don't directly cover: only ONE
 /// of mtime/size differs (here just the size; mtime is pinned back to what
 /// it was on record). Falls back to the more cautious `content-changed`
@@ -353,13 +379,14 @@ private struct VerifyFixture {
     let results: [FixityVerifier.FileResult] = [
         FixityVerifier.FileResult(file: file("ok.fit"), status: .ok),
         FixityVerifier.FileResult(file: file("mod.fit"), status: .modified(oldHash: "a", newHash: "b")),
+        FixityVerifier.FileResult(file: file("in-place.fit"), status: .modifiedInPlace(oldHash: "a", newHash: "b")),
         FixityVerifier.FileResult(file: file("bad.fit"), status: .contentChanged(oldHash: "a", newHash: "b")),
         FixityVerifier.FileResult(file: file("err.fit"), status: .readError("boom")),
     ]
 
     let findings = FixityVerifier.findings(from: results)
-    // `.ok` produces nothing -- only the three non-ok statuses do.
-    #expect(findings.count == 3)
+    // `.ok` produces nothing -- only the four non-ok statuses do.
+    #expect(findings.count == 4)
     #expect(!findings.contains { $0.path == "ok.fit" })
 
     let modified = try #require(findings.first { $0.path == "mod.fit" })
@@ -367,13 +394,18 @@ private struct VerifyFixture {
     #expect(modified.category == "modified")
     #expect(modified.suggestion == nil)
 
+    let modifiedInPlace = try #require(findings.first { $0.path == "in-place.fit" })
+    #expect(modifiedInPlace.severity == .suspicious)
+    #expect(modifiedInPlace.category == "modified-in-place")
+    #expect(modifiedInPlace.suggestion == nil)
+
     let corrupt = try #require(findings.first { $0.path == "bad.fit" })
     #expect(corrupt.severity == .sureError)
     #expect(corrupt.category == "content-changed")
     #expect(corrupt.suggestion == nil)
 
     let errorFinding = try #require(findings.first { $0.path == "err.fit" })
-    #expect(errorFinding.severity == .sureError)
+    #expect(errorFinding.severity == .suspicious)
     #expect(errorFinding.category == "verify-read-error")
     #expect(errorFinding.suggestion == nil)
     #expect(errorFinding.message.contains("boom"))
@@ -385,16 +417,45 @@ private struct VerifyFixture {
         FixityVerifier.FileResult(file: file, status: .ok),
         FixityVerifier.FileResult(file: file, status: .ok),
         FixityVerifier.FileResult(file: file, status: .modified(oldHash: "a", newHash: "b")),
+        FixityVerifier.FileResult(file: file, status: .modifiedInPlace(oldHash: "a", newHash: "b")),
         FixityVerifier.FileResult(file: file, status: .contentChanged(oldHash: "a", newHash: "b")),
         FixityVerifier.FileResult(file: file, status: .readError("x")),
     ]
 
     let summary = FixityVerifier.summarize(results)
-    #expect(summary.checked == 5)
+    #expect(summary.checked == 6)
     #expect(summary.ok == 2)
     #expect(summary.modified == 1)
+    #expect(summary.modifiedInPlace == 1)
     #expect(summary.contentChanged == 1)
     #expect(summary.readErrors == 1)
+}
+
+@Test func fixityMismatchWithoutReadableMetadataIsNotConfirmedCorruption() throws {
+    let file = makeFileRecord(path: "x.fit", size: 10, mtime: 100, contentHash: "old")
+
+    let missingSize = FixityVerifier.classifyMismatch(
+        file: file, oldHash: "old", newHash: "new", currentSize: nil, currentMTime: 100
+    )
+    let missingMTime = FixityVerifier.classifyMismatch(
+        file: file, oldHash: "old", newHash: "new", currentSize: 10, currentMTime: nil
+    )
+
+    guard case .readError = missingSize else {
+        Issue.record("missing size must remain unverified")
+        return
+    }
+    guard case .readError = missingMTime else {
+        Issue.record("missing mtime must remain unverified")
+        return
+    }
+}
+
+@Test func fixitySummaryDecodesLegacyJSONWithoutModifiedInPlaceCount() throws {
+    let json = #"{"checked":3,"ok":1,"contentChanged":1,"modified":1,"readErrors":0}"#
+    let summary = try JSONDecoder().decode(FixityVerifier.Summary.self, from: Data(json.utf8))
+
+    #expect(summary.modifiedInPlace == 0)
 }
 
 // MARK: - run(...): persistence into a fresh "verify"-kind run
@@ -445,4 +506,95 @@ private struct VerifyFixture {
     #expect(results.count == 1)
     #expect(findings.isEmpty)
     #expect(try fixture.db.findings(runID: runID).isEmpty)
+}
+
+@Test func fixityVerifierRunPersistsRestorableSummaryMetadata() throws {
+    let fixture = try VerifyFixture.make()
+    defer { fixture.cleanup() }
+
+    let path = "sessions/M31/2026-01-01/lights/a.fit"
+    let url = fixture.url(path)
+    try writeFile(at: url, bytes: Array(repeating: 0xAB, count: 2048))
+    let stat = try statInfo(url)
+    let hash = try DuplicateFinder.sha256Hash(of: url)
+    try fixture.db.upsertFile(
+        makeFileRecord(path: path, size: stat.size, mtime: stat.mtime, contentHash: hash)
+    )
+
+    let (runID, results, _) = try FixityVerifier.run(
+        db: fixture.db, config: fixture.config, samplePercent: 10, seed: 42
+    )
+    let row = try #require(try fixture.db.runSummary(id: runID))
+    let metadata = try #require(try FixityVerifier.decodeRunMetadata(row.configJSON))
+
+    #expect(metadata.astroConfig.rootPath == fixture.config.rootPath)
+    #expect(metadata.samplePercent == 10)
+    #expect(metadata.summary == FixityVerifier.summarize(results))
+}
+
+@Test func fixityVerifierDecodesLegacyPlainConfigWithoutInventingASummary() throws {
+    let config = AstroConfig(rootPath: "/legacy/library")
+    let json = String(data: try JSONEncoder().encode(config), encoding: .utf8)
+
+    let metadata = try #require(try FixityVerifier.decodeRunMetadata(json))
+    #expect(metadata.astroConfig.rootPath == config.rootPath)
+    #expect(metadata.samplePercent == nil)
+    #expect(metadata.summary == nil)
+}
+
+// MARK: - baseline / coverage (R12-U3)
+
+@Test func fixityBaselineHashesOnlyUnhashedFilesAndBecomesIdempotent() throws {
+    let fixture = try VerifyFixture.make()
+    defer { fixture.cleanup() }
+
+    for (index, target) in ["M31", "M31", "M42"].enumerated() {
+        let path = "sessions/\(target)/2026-01-01/lights/f\(index).fit"
+        let url = fixture.url(path)
+        try writeFile(at: url, bytes: Array(repeating: UInt8(index + 1), count: 1024))
+        let stat = try statInfo(url)
+        let precomputed = index == 0 ? try DuplicateFinder.sha256Hash(of: url) : nil
+        try fixture.db.upsertFile(
+            makeFileRecord(path: path, size: stat.size, mtime: stat.mtime, contentHash: precomputed, target: target)
+        )
+    }
+
+    let before = try FixityVerifier.coverage(db: fixture.db)
+    #expect(before.tracked == 3)
+    #expect(before.hashed == 1)
+    #expect(before.unhashed == 2)
+    #expect(before.percent == 100.0 / 3.0)
+
+    let first = try FixityVerifier.baseline(db: fixture.db, config: fixture.config)
+    #expect(first.hashed == 2)
+    #expect(first.errors.isEmpty)
+    #expect(try FixityVerifier.coverage(db: fixture.db).hashed == 3)
+
+    let second = try FixityVerifier.baseline(db: fixture.db, config: fixture.config)
+    #expect(second.hashed == 0)
+    #expect(second.errors.isEmpty)
+
+    let m31 = try FixityVerifier.coverage(db: fixture.db, target: "M31")
+    #expect(m31.tracked == 2)
+    #expect(m31.hashed == 2)
+}
+
+@Test func fixityBaselineContinuesPastUnreadableFiles() throws {
+    let fixture = try VerifyFixture.make()
+    defer { fixture.cleanup() }
+
+    let missingPath = "sessions/M31/2026-01-01/lights/gone.fit"
+    try fixture.db.upsertFile(makeFileRecord(path: missingPath, size: 10, mtime: 0, contentHash: nil, target: "M31"))
+
+    let goodPath = "sessions/M31/2026-01-01/lights/good.fit"
+    let goodURL = fixture.url(goodPath)
+    try writeFile(at: goodURL, bytes: Array(repeating: 0xAB, count: 1024))
+    let stat = try statInfo(goodURL)
+    try fixture.db.upsertFile(makeFileRecord(path: goodPath, size: stat.size, mtime: stat.mtime, contentHash: nil, target: "M31"))
+
+    let result = try FixityVerifier.baseline(db: fixture.db, config: fixture.config)
+    #expect(result.hashed == 1)
+    #expect(result.errors.map(\.path) == [missingPath])
+    #expect(try fixture.db.file(path: goodPath)?.contentHash != nil)
+    #expect(try fixture.db.file(path: missingPath)?.contentHash == nil)
 }

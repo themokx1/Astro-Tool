@@ -210,7 +210,8 @@
       <li><strong>Rendben-jelölés</strong> — egy csoport (kategória + csoportkulcs alapján) elrejthető újraauditálás után is; a toolbar váltóval visszakapcsolható a megjelenítésük.</li>
       <li><strong>Duplikátum-keresés</strong> — kikapcsolható ("Duplikátum-keresés nélkül auditálás"), ha csak a strukturális hibákra koncentrálnál.</li>
       <li><strong>Script-menü</strong> — Javító script (hibák) és Karantén-script (takarítható) egy átnézhető <code>.sh</code>-ba a <code>.astro_tool/</code> alá; az eszköz sosem futtatja le magától, csak <code>mv</code>-vel karanténba mozgat.</li>
-      <li><strong>Integritás-ellenőrzés…</strong> — a toolbar-menü egy külön megerősítő sheettel (időbecslés, opcionális "csak minta 10%") újraszámolja a korábban lehash-elt fájlok SHA-256-ját; azonos méret/módosítási idő mellett eltérő hash = "néma korrupció" gyanú, a Hibák szegmensben jelenik meg. Csak olvas, sosem ír vissza hash-t vagy javasol semmit.</li>
+      <li><strong>Integritás-ellenőrzés…</strong> — a megerősítő sheet megmutatja a teljes hash-lefedettséget, opcionális 10%-os mintát kínál, és külön gombbal pótolja a hiányzó baseline összegeket. A normál verify csak olvas; a baseline kizárólag az Astro Tool DB-jét egészíti ki, a képfájlokat nem módosítja. Azonos méret/mtime mellett eltérő hash biztos hiba; azonos méret, új mtime külön suspicious "helyben módosult" állapot. A legutóbbi verify összegzése és findingjai újraindítás után is visszatöltődnek.</li>
+      <li><strong>Karantén-utóélet</strong> — a Takarítható szegmens megmutatja a karantén fájl- és batch-számát, méretét, legrégebbi csomagját, és Finderben megnyithatóvá teszi; automatikus ürítés/törlés nincs.</li>
     </ul>
   </div>
 

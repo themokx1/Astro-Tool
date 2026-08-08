@@ -146,3 +146,41 @@ private let config = AstroConfig()
     #expect(diff.newCount == 0)
     #expect(diff.resolvedCount == 0)
 }
+
+@Test func auditDiffOmitsDuplicateCategoriesWhenRunSettingsDiffer() throws {
+    let previous = [
+        finding(severity: .suspicious, category: "duplicate-content", path: "sessions/A/a.fit"),
+        finding(path: "stacks/StillThere"),
+    ]
+    let current = [finding(path: "stacks/StillThere")]
+
+    let diff = AuditDiff.compute(
+        previous: previous,
+        current: current,
+        config: config,
+        previousIncludedDuplicates: true,
+        currentIncludedDuplicates: false
+    )
+
+    #expect(diff.omittedCategories == ["duplicate-content"])
+    #expect(diff.newCount == 0)
+    #expect(diff.resolvedCount == 0)
+    #expect(diff.unchangedCount == 1)
+}
+
+@Test func auditDiffIncludesDuplicateCategoriesWhenBothRunsUsedThem() throws {
+    let previous = [
+        finding(severity: .suspicious, category: "duplicate-content", path: "sessions/A/a.fit"),
+    ]
+
+    let diff = AuditDiff.compute(
+        previous: previous,
+        current: [],
+        config: config,
+        previousIncludedDuplicates: true,
+        currentIncludedDuplicates: true
+    )
+
+    #expect(diff.omittedCategories.isEmpty)
+    #expect(diff.resolvedCount == 1)
+}

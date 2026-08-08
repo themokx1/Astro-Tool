@@ -39,9 +39,8 @@ struct AuditPage: View {
     /// gets a confirmation sheet (with a rough time estimate) the same way
     /// no OTHER audit-menu action needs one.
     @State private var showVerifyConfirmation = false
-    /// Snapshotted once, right when the confirmation sheet opens -- see
-    /// `VerifyConfirmationSheet`'s own doc comment.
-    @State private var verifyEligibleFileCount = 0
+    /// Snapshotted once, right when the confirmation sheet opens.
+    @State private var verifyCoverage = FixityVerifier.Coverage(tracked: 0, hashed: 0)
 
     // MARK: - Derived finding buckets (A.5's reframing)
 
@@ -87,7 +86,8 @@ struct AuditPage: View {
     /// A.5's green "Minden rendben" empty state. `intentionalFindings` is
     /// deliberately excluded: those are expected, not something to clear.
     private var isEverythingClean: Bool {
-        errorFindings.isEmpty && suspiciousFindings.isEmpty && cleanupFileCount == 0
+        appState.lastRunID != nil
+            && errorFindings.isEmpty && suspiciousFindings.isEmpty && cleanupFileCount == 0
     }
 
     private var currentSegmentFindings: [Finding] {
@@ -143,12 +143,16 @@ struct AuditPage: View {
         Set((appState.auditDiff?.newGroups ?? []).map(\.key))
     }
 
+    private static let verifyCategories: Set<String> = [
+        "content-changed", "modified", "modified-in-place", "verify-read-error",
+    ]
+
     private func isNewGroup(_ group: FindingGrouper.Group) -> Bool {
-        newGroupKeys.contains(group.key)
+        newGroupKeys.contains(group.key) || Self.verifyCategories.contains(group.key.category)
     }
 
     private var hasNewFindings: Bool {
-        !newGroupKeys.isEmpty
+        !newGroupKeys.isEmpty || visibleGroups.contains { Self.verifyCategories.contains($0.key.category) }
     }
 
     /// "Csak az újak" applied on top of the ack filter -- shown-groups list
@@ -238,6 +242,11 @@ struct AuditPage: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
+                if !(appState.auditDiff?.omittedCategories.isEmpty ?? true) {
+                    Text("A duplikátumok kimaradtak: a két audit eltérő vagy ismeretlen beállítással futott.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 switch appState.auditSegment {
                 case .errors, .suspicious, .intentional:
@@ -245,6 +254,9 @@ struct AuditPage: View {
                 case .cleanable:
                     cleanableSegment
                 }
+            }
+            if appState.lastVerifyRunID != nil {
+                lastVerifyStatusRow
             }
         }
         .padding()
@@ -279,7 +291,9 @@ struct AuditPage: View {
                         // file can take a while, so the user gets a rough
                         // time estimate (and a "Csak minta" shortcut) first.
                         Button("Integritás-ellenőrzés…") {
-                            verifyEligibleFileCount = appState.countVerifyEligibleFiles()
+                            appState.loadVerifyCoverage()
+                            verifyCoverage = appState.verifyCoverage
+                                ?? FixityVerifier.Coverage(tracked: 0, hashed: 0)
                             showVerifyConfirmation = true
                         }
                     } label: {
@@ -324,7 +338,7 @@ struct AuditPage: View {
             }
         }
         .sheet(isPresented: $showVerifyConfirmation) {
-            VerifyConfirmationSheet(eligibleFileCount: verifyEligibleFileCount)
+            VerifyConfirmationSheet(coverage: verifyCoverage)
         }
     }
 
@@ -369,7 +383,7 @@ struct AuditPage: View {
     /// own count is always real.
     private var tiles: some View {
         HStack(spacing: 12) {
-            if !hasAnyAuditRun {
+            if appState.lastRunID == nil {
                 StatTile(title: "Biztos hiba", value: TDFormat.missingTile, color: .gray, caption: "nincs audit")
                 StatTile(title: "Gyanús", value: TDFormat.missingTile, color: .gray, caption: "nincs audit")
                 StatTile(title: "Takarítható", value: cleanupBytesText, color: .blue)
@@ -381,6 +395,34 @@ struct AuditPage: View {
                 StatTile(title: "Szándékos", value: "\(intentionalFindings.count)", color: .gray)
             }
         }
+    }
+
+    private var lastVerifyStatusRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.shield")
+                .foregroundStyle(.secondary)
+            if let date = appState.lastVerifyDate {
+                Text("Utolsó integritás-ellenőrzés: \(AppState.relativeTimeText(since: date))")
+            } else {
+                Text("Utolsó integritás-ellenőrzés")
+            }
+            Text("·").foregroundStyle(.tertiary)
+            if let summary = appState.lastVerifySummary {
+                let suspicious = summary.modifiedInPlace + summary.readErrors
+                Text(
+                    "\(summary.checked) ellenőrizve · \(summary.contentChanged) biztos eltérés · "
+                        + "\(suspicious) gyanús"
+                )
+            } else {
+                Text("összegzés nem elérhető")
+            }
+            if let coverage = appState.verifyCoverage {
+                Text("· \(coverage.hashed)/\(coverage.tracked) hash (\(coverage.percent, specifier: "%.1f")%)")
+            }
+            Spacer()
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
     }
 
     // MARK: - Hibák / Gyanús segment
@@ -819,11 +861,37 @@ struct AuditPage: View {
     /// The Vasszabály, spelled out where a user actually looks before
     /// running the script -- not buried in the README (A.5's explicit ask).
     private var quarantineBanner: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "shield.lefthalf.filled").foregroundStyle(.blue)
-            Text("A script `mv`-vel karanténba mozgat, soha nem töröl. A karantént te üríted ki kézzel.")
-                .font(.callout)
-            Spacer()
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "shield.lefthalf.filled").foregroundStyle(.blue)
+                Text("A script `mv`-vel karanténba mozgat, soha nem töröl. A karantént te üríted ki kézzel.")
+                    .font(.callout)
+                Spacer()
+            }
+            if let error = appState.quarantineInspectionError {
+                Label("A karantén állapota nem olvasható: \(error)", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            } else if let state = appState.quarantineState, state.fileCount > 0 {
+                HStack(spacing: 8) {
+                    Text(
+                        "Karanténban: \(state.fileCount) fájl · \(state.batchCount) csomag · "
+                            + "\(Self.formatBytes(state.totalBytes))"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    if let oldest = state.oldestBatch {
+                        Text("· legrégebbi: \(oldest.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Megnyitás Finderben") {
+                        appState.revealPathInFinder(".astro_tool/cleanup_quarantine")
+                    }
+                    .buttonStyle(.link)
+                }
+            }
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.blue.opacity(0.1)))
@@ -880,4 +948,3 @@ struct AuditPage: View {
         return formatter.string(fromByteCount: bytes)
     }
 }
-

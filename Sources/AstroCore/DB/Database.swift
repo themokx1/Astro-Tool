@@ -14,6 +14,34 @@ extension Array {
 
 // MARK: - Record types
 
+/// Persisted metadata for one row in `runs`. Keeping this query result in
+/// AstroCore lets the app restore operation-specific state after relaunch
+/// without reaching into SQLite directly.
+public struct RunSummary: Equatable, Sendable {
+    public let id: Int64
+    public let kind: String
+    public let startedAt: Date
+    public let finishedAt: Date?
+    public let root: String
+    public let configJSON: String?
+
+    public init(
+        id: Int64,
+        kind: String,
+        startedAt: Date,
+        finishedAt: Date?,
+        root: String,
+        configJSON: String?
+    ) {
+        self.id = id
+        self.kind = kind
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.root = root
+        self.configJSON = configJSON
+    }
+}
+
 /// A scanned filesystem entry, root-relative to the library. One row per
 /// path in `files`; the scanner upserts these, everything else reads them.
 public struct FileRecord: Codable, Equatable, Sendable {
@@ -1148,6 +1176,40 @@ public final class Database: @unchecked Sendable {
         }
     }
 
+    /// Replaces the operation-specific metadata envelope after a run has
+    /// produced its final summary. This updates only Astro Tool's database;
+    /// it never touches any library file.
+    public func updateRunConfig(id: Int64, configJSON: String?) throws {
+        try withLock {
+            try db.run(
+                "UPDATE runs SET config_json = ? WHERE id = ?;",
+                bind: [configJSON.map(SQLiteValue.text) ?? .null, .int(id)]
+            )
+        }
+    }
+
+    /// Full persisted metadata for one run id, or `nil` when it does not
+    /// exist. Used for restoring verify summaries and audit settings.
+    public func runSummary(id: Int64) throws -> RunSummary? {
+        try withLock {
+            var result: RunSummary?
+            try db.query(
+                "SELECT id, kind, started_at, finished_at, root, config_json FROM runs WHERE id = ? LIMIT 1;",
+                bind: [.int(id)]
+            ) { row in
+                result = RunSummary(
+                    id: row.int64(0) ?? 0,
+                    kind: row.string(1) ?? "",
+                    startedAt: Date(timeIntervalSince1970: row.double(2) ?? 0),
+                    finishedAt: row.double(3).map(Date.init(timeIntervalSince1970:)),
+                    root: row.string(4) ?? "",
+                    configJSON: row.string(5)
+                )
+            }
+            return result
+        }
+    }
+
     /// The `started_at` of the most recent `runs` row of the given `kind`
     /// (e.g. `"scan"`, `"audit"`), or `nil` if none exist yet -- the app
     /// layer's "has this root ever been scanned" signal (R9-T1's first-run
@@ -1185,6 +1247,22 @@ public final class Database: @unchecked Sendable {
         }
     }
 
+    /// Most recent successfully finished run of `kind`. Restoration paths
+    /// use this instead of `lastRunID` so a process crash cannot promote a
+    /// partial run to the latest trusted result.
+    public func lastCompletedRunID(kind: String) throws -> Int64? {
+        try withLock {
+            var id: Int64?
+            try db.query(
+                "SELECT id FROM runs WHERE kind = ? AND finished_at IS NOT NULL ORDER BY started_at DESC LIMIT 1;",
+                bind: [.text(kind)]
+            ) { row in
+                id = row.int64(0)
+            }
+            return id
+        }
+    }
+
     /// The `id` of the most recent `runs` row of the given `kind` that
     /// started strictly before `runID`'s own `started_at`, or `nil` if
     /// `runID` is the first run of that kind (or doesn't exist). R11-T8/F6:
@@ -1201,6 +1279,26 @@ public final class Database: @unchecked Sendable {
                 """
                 SELECT id FROM runs
                 WHERE kind = ? AND started_at < (SELECT started_at FROM runs WHERE id = ?)
+                ORDER BY started_at DESC LIMIT 1;
+                """,
+                bind: [.text(kind), .int(runID)]
+            ) { row in
+                id = row.int64(0)
+            }
+            return id
+        }
+    }
+
+    /// Completed counterpart of `previousRunID`, used for trustworthy audit
+    /// diffs when an interrupted run row exists between two finished runs.
+    public func previousCompletedRunID(before runID: Int64, kind: String) throws -> Int64? {
+        try withLock {
+            var id: Int64?
+            try db.query(
+                """
+                SELECT id FROM runs
+                WHERE kind = ? AND finished_at IS NOT NULL
+                  AND started_at < (SELECT started_at FROM runs WHERE id = ?)
                 ORDER BY started_at DESC LIMIT 1;
                 """,
                 bind: [.text(kind), .int(runID)]
@@ -2093,6 +2191,32 @@ public final class Database: @unchecked Sendable {
         }
     }
 
+    /// Cheap denominator for fixity coverage: every tracked, non-missing
+    /// file in the requested target/path scope, regardless of whether it
+    /// already has a cached content hash.
+    public func countTrackedFiles(target: String? = nil, pathPrefix: String? = nil) throws -> Int {
+        try withLock {
+            var sql = "SELECT COUNT(*) FROM files WHERE missing = 0"
+            var bind: [SQLiteValue] = []
+            if let target {
+                sql += " AND target = ?"
+                bind.append(.text(target))
+            }
+            if let pathPrefix {
+                sql += " AND (path = ? OR instr(path, ?) = 1)"
+                bind.append(.text(pathPrefix))
+                bind.append(.text(pathPrefix + "/"))
+            }
+            sql += ";"
+
+            var count = 0
+            try db.query(sql, bind: bind) { row in
+                count = Int(row.int64(0) ?? 0)
+            }
+            return count
+        }
+    }
+
     /// Cheap `COUNT(*)` of files `FixityVerifier.eligibleFiles(...)` would
     /// actually re-hash for the given scope -- tracked (non-missing) files
     /// that already have a cached `content_hash`, optionally narrowed to one
@@ -2117,9 +2241,9 @@ public final class Database: @unchecked Sendable {
                 bind.append(.text(target))
             }
             if let pathPrefix {
-                sql += " AND (path = ? OR path LIKE ?)"
+                sql += " AND (path = ? OR instr(path, ?) = 1)"
                 bind.append(.text(pathPrefix))
-                bind.append(.text(pathPrefix + "/%"))
+                bind.append(.text(pathPrefix + "/"))
             }
             sql += ";"
 

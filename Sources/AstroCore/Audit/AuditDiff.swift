@@ -33,11 +33,20 @@ public enum AuditDiff {
         public let resolvedGroups: [FindingGrouper.Group]
         /// Present in both runs.
         public let unchangedGroups: [FindingGrouper.Group]
+        /// Categories deliberately excluded because the two runs did not
+        /// execute comparable checks.
+        public let omittedCategories: [String]
 
-        public init(newGroups: [FindingGrouper.Group], resolvedGroups: [FindingGrouper.Group], unchangedGroups: [FindingGrouper.Group]) {
+        public init(
+            newGroups: [FindingGrouper.Group],
+            resolvedGroups: [FindingGrouper.Group],
+            unchangedGroups: [FindingGrouper.Group],
+            omittedCategories: [String] = []
+        ) {
             self.newGroups = newGroups
             self.resolvedGroups = resolvedGroups
             self.unchangedGroups = unchangedGroups
+            self.omittedCategories = omittedCategories
         }
 
         public var newCount: Int { newGroups.count }
@@ -49,9 +58,22 @@ public enum AuditDiff {
     /// severity-first/size-desc ordering is preserved within each bucket)
     /// and buckets every group's key into new/resolved/unchanged by set
     /// membership.
-    public static func compute(previous: [Finding], current: [Finding], config: AstroConfig) -> Result {
-        let previousGroups = FindingGrouper.group(previous, config: config)
-        let currentGroups = FindingGrouper.group(current, config: config)
+    public static func compute(
+        previous: [Finding],
+        current: [Finding],
+        config: AstroConfig,
+        previousIncludedDuplicates: Bool? = true,
+        currentIncludedDuplicates: Bool? = true
+    ) -> Result {
+        let duplicateCategories: Set<String> = ["duplicate-content"]
+        let duplicatesComparable = previousIncludedDuplicates != nil
+            && previousIncludedDuplicates == currentIncludedDuplicates
+        let omittedCategories = duplicatesComparable ? Set<String>() : duplicateCategories
+
+        let comparablePrevious = previous.filter { !omittedCategories.contains($0.category) }
+        let comparableCurrent = current.filter { !omittedCategories.contains($0.category) }
+        let previousGroups = FindingGrouper.group(comparablePrevious, config: config)
+        let currentGroups = FindingGrouper.group(comparableCurrent, config: config)
 
         let previousKeys = Set(previousGroups.map(\.key))
         let currentKeys = Set(currentGroups.map(\.key))
@@ -59,7 +81,8 @@ public enum AuditDiff {
         return Result(
             newGroups: currentGroups.filter { !previousKeys.contains($0.key) },
             resolvedGroups: previousGroups.filter { !currentKeys.contains($0.key) },
-            unchangedGroups: currentGroups.filter { previousKeys.contains($0.key) }
+            unchangedGroups: currentGroups.filter { previousKeys.contains($0.key) },
+            omittedCategories: omittedCategories.sorted()
         )
     }
 }

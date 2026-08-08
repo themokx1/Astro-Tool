@@ -14,6 +14,12 @@ T3 — Settings csomag után.
 
 ### Added
 
+- **R12-U3 — verify/audit konzisztencia**: külön `modified-in-place`
+  suspicious állapot; suspicious olvasási hiba; explicit, idempotens
+  `verify --baseline`; hash-lefedettség a CLI-ben és appban; audit- és
+  verify-találatok külön perzisztálva és újraindításkor visszatöltve;
+  duplikátum-beállításra érzékeny auditdiff; read-only karantén-összesítő.
+
 - **Exit-kód szerződés bővítve** (F10-a): a korábbi 0 (siker) / 1 (általános
   hiba) / 2 (TCC/kötet) mellé **3** = nem található target/session (a
   `stats`, `solve`, `match`, `link-calib`, `report`, `target-report`

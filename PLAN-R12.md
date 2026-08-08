@@ -9,7 +9,7 @@
 ## Állapot
 
 - [x] 0. Újra-átnézés lefutott, eredmények feldolgozva
-- [ ] 1. U-hullám (javítások): U1 [x] U2 [x] U3 [ ] U4 [ ] U5 [ ]
+- [ ] 1. U-hullám (javítások): U1 [x] U2 [x] U3 [x] U4 [ ] U5 [ ]
 - [ ] 2. Release v0.13.0 (R11 + javítások)
 - [ ] 3. V-hullám (új funkciók): V1 [ ] V2 [ ] V3 [ ] V4 [ ] V5 [ ] V6 [ ] V7 [ ]
 - [ ] 4. Záró review + release v0.14.0
@@ -219,3 +219,5 @@ U1→U2→U3→U4→U5 (javítások, egyenként commit+push, teszt-kapuval) →
 ## 5. Iterációs napló
 
 - 2026-08-08: újra-átnézés lezárva (11 agent), PLAN-R12 megírva. Következő: U1.
+- 2026-08-08: U3 elkészült — tartós verify/audit állapot, baseline + coverage,
+  konfiguráció-tudatos auditdiff és karantén-összesítő; 1333 teszt zöld.

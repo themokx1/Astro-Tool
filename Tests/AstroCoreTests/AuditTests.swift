@@ -596,6 +596,22 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
 
 // MARK: - Diff against the previous run (R11-T8/F6 integration)
 
+@Test func auditEnginePersistsDuplicateSettingAndDecodesLegacyConfig() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    let (runID, _) = try AuditEngine(config: fixture.config, db: fixture.db)
+        .run(includeDuplicates: false)
+    let run = try #require(try fixture.db.runSummary(id: runID))
+    let metadata = try #require(AuditEngine.decodeRunConfig(run.configJSON))
+    #expect(metadata.astroConfig.rootPath == fixture.config.rootPath)
+    #expect(metadata.includeDuplicates == false)
+
+    let legacyJSON = String(data: try JSONEncoder().encode(fixture.config), encoding: .utf8)
+    let legacy = try #require(AuditEngine.decodeRunConfig(legacyJSON))
+    #expect(legacy.includeDuplicates == nil)
+}
+
 /// End-to-end proof that the pieces `AppState.runAudit`/`Commands.cmdAudit`
 /// actually wire together at their call sites -- `Database.previousRunID`,
 /// `AuditEngine.run`'s own `pruneFindings(keepRuns: 3)` call, and

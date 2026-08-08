@@ -72,20 +72,24 @@ Commands:
                 (requires --suggest; same --out convention as audit)
                 --json's storage block: per-target on-disk size, broken
                 down by area (sessions/stacks/processed/other), size-desc.
-  verify        [--target T] [--path P] [--sample N (1-100)] [--json] [--root R]
+  verify        [--target T] [--path P] [--sample N (1-100)|--baseline] [--json] [--root R]
                 Fixity/bitrot re-check: re-hashes every already-hashed,
                 non-missing tracked file and compares against the stored
                 content_hash. --target/--path narrow the scope; --sample N
                 checks a random N% of the scope instead of all of it.
+                --baseline computes only the missing content hashes and
+                stores them in Astro Tool's database; it never changes the
+                library files and cannot be combined with --sample.
                 Read-only -- never rewrites the cached hash or the file
                 itself; a mismatch only ever produces a finding for a human
                 to act on (restore from backup). --json's summary block:
-                checked/ok/content_changed/modified/read_errors counts.
+                checked/ok/content_changed/modified/modified_in_place/
+                read_errors counts plus hash coverage.
                 Exit 5 if at least one file's content actually changed
                 (mtime/size unchanged, hash mismatch -- corruption suspect);
-                a same-size-and-mtime match with a different hash is
-                reported as "modified" (a legitimate edit) instead and does
-                NOT affect the exit code.
+                a newer mtime with unchanged size is reported separately as
+                suspicious in-place modification and does NOT affect the
+                exit code.
   rate          [--root R] --target T [--date D] [--json] [--no-siril] [--force]
   stats         [--root R] [--target T] [--json] [--gross] [--sessions (requires --target)] [--tag TAG]
                 [--timeline (requires --target) [--date D]]
@@ -448,9 +452,19 @@ func cmdAudit(_ args: [String]) throws -> Int32 {
     // `nil` on the very first audit ever, in which case neither the `--json`
     // `diff` block nor the human-readable summary line appear at all.
     let diff: AuditDiff.Result?
-    if let previousRunID = try? db.previousRunID(before: runID, kind: "audit") {
+    if let previousRunID = try? db.previousCompletedRunID(before: runID, kind: "audit") {
         let previousFindings = (try? db.findings(runID: previousRunID)) ?? []
-        diff = AuditDiff.compute(previous: previousFindings, current: findings, config: config)
+        let previousSetting = try? db.runSummary(id: previousRunID)
+        let currentSetting = try? db.runSummary(id: runID)
+        diff = AuditDiff.compute(
+            previous: previousFindings,
+            current: findings,
+            config: config,
+            previousIncludedDuplicates: previousSetting
+                .flatMap { AuditEngine.decodeRunConfig($0.configJSON)?.includeDuplicates },
+            currentIncludedDuplicates: currentSetting
+                .flatMap { AuditEngine.decodeRunConfig($0.configJSON)?.includeDuplicates }
+        )
     } else {
         diff = nil
     }
@@ -516,6 +530,9 @@ func cmdAudit(_ args: [String]) throws -> Int32 {
     } else {
         if let diff {
             print("diff (vs previous run): \(diff.newCount) new, \(diff.resolvedCount) resolved, \(diff.unchangedCount) unchanged")
+            if !diff.omittedCategories.isEmpty {
+                print("diff note: duplicate findings omitted because run settings differ or are unknown")
+            }
         }
         printAuditFindings(findings, config: config)
         if let suggestMessage { print(suggestMessage) }
@@ -541,12 +558,14 @@ private struct AuditDiffJSON: Encodable {
     let resolvedCount: Int
     let unchangedCount: Int
     let newGroups: [FindingGrouper.Key]
+    let omittedCategories: [String]
 
     init(_ result: AuditDiff.Result) {
         newCount = result.newCount
         resolvedCount = result.resolvedCount
         unchangedCount = result.unchangedCount
         newGroups = result.newGroups.map(\.key)
+        omittedCategories = result.omittedCategories
     }
 }
 
@@ -591,7 +610,20 @@ private func printAuditFindings(_ findings: [Finding], config: AstroConfig) {
 /// comment) so the shape rhymes with `audit --json`'s own `items`.
 private struct VerifyJSONPayload: Encodable {
     let summary: FixityVerifier.Summary
+    let coverage: FixityVerifier.Coverage
     let items: [Finding]
+}
+
+private struct VerifyBaselineSummary: Encodable {
+    let eligible: Int
+    let hashed: Int
+    let errors: Int
+}
+
+private struct VerifyBaselineJSONPayload: Encodable {
+    let summary: VerifyBaselineSummary
+    let coverage: FixityVerifier.Coverage
+    let items: [FixityVerifier.BaselineResult]
 }
 
 /// Fixity ("bitrot") re-check: re-hashes every already-hashed, non-missing
@@ -605,6 +637,7 @@ func cmdVerify(_ args: [String]) throws -> Int32 {
         FlagSpec("--target", takesValue: true),
         FlagSpec("--path", takesValue: true),
         FlagSpec("--sample", takesValue: true),
+        FlagSpec("--baseline", takesValue: false),
         FlagSpec("--json", takesValue: false),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
@@ -619,25 +652,63 @@ func cmdVerify(_ args: [String]) throws -> Int32 {
         samplePercent = sample
     }
 
+    guard !(parsed.has("--baseline") && samplePercent != nil) else {
+        eprint("error: --baseline and --sample cannot be used together")
+        return 1
+    }
+
     let config = try resolveConfig(rootFlag: parsed.value("--root"))
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
 
+    let target = parsed.value("--target")
+    let path = parsed.value("--path")
+    if parsed.has("--baseline") {
+        let before = try FixityVerifier.coverage(db: db, target: target, path: path)
+        let outcome = try FixityVerifier.baseline(
+            db: db, config: config, target: target, path: path
+        )
+        let coverage = try FixityVerifier.coverage(db: db, target: target, path: path)
+        let baselineSummary = VerifyBaselineSummary(
+            eligible: before.unhashed,
+            hashed: outcome.hashed,
+            errors: outcome.errors.count
+        )
+
+        if parsed.has("--json") {
+            try printJSON(VerifyBaselineJSONPayload(
+                summary: baselineSummary, coverage: coverage, items: outcome.errors
+            ))
+        } else {
+            print(
+                "baseline: új hash \(outcome.hashed), hiba \(outcome.errors.count); "
+                    + "lefedettség \(coverage.hashed)/\(coverage.tracked) "
+                    + "(\(String(format: "%.1f", coverage.percent))%)"
+            )
+            for error in outcome.errors {
+                print("  HIBA  \(error.path)")
+                if let reason = error.readError { print("    \(reason)") }
+            }
+        }
+        return outcome.errors.isEmpty ? 0 : 1
+    }
+
     let (_, results, findingsList) = try FixityVerifier.run(
         db: db,
         config: config,
-        target: parsed.value("--target"),
-        path: parsed.value("--path"),
+        target: target,
+        path: path,
         samplePercent: samplePercent
     )
     let summary = FixityVerifier.summarize(results)
+    let coverage = try FixityVerifier.coverage(db: db, target: target, path: path)
 
     if parsed.has("--json") {
-        try printJSON(VerifyJSONPayload(summary: summary, items: findingsList))
+        try printJSON(VerifyJSONPayload(summary: summary, coverage: coverage, items: findingsList))
     } else {
         print(
             "verify: ellenőrizve \(summary.checked), ok \(summary.ok), eltérés \(summary.contentChanged), "
-                + "módosult \(summary.modified), hiba \(summary.readErrors)"
+                + "módosult \(summary.modified), helyben módosult \(summary.modifiedInPlace), hiba \(summary.readErrors)"
         )
         for finding in findingsList where finding.category == "content-changed" {
             print("  ELTÉRÉS  \(finding.path)")
@@ -649,6 +720,10 @@ func cmdVerify(_ args: [String]) throws -> Int32 {
         }
         for finding in findingsList where finding.category == "modified" {
             print("  módosult  \(finding.path)")
+        }
+        for finding in findingsList where finding.category == "modified-in-place" {
+            print("  GYANÚS HELYBEN MÓDOSÍTÁS  \(finding.path)")
+            print("    \(finding.message)")
         }
     }
 

@@ -1,5 +1,18 @@
 import Foundation
 
+/// Settings persisted alongside an audit run. `includeDuplicates` is
+/// optional so a legacy plain-config row can explicitly represent an
+/// unknown setting rather than inventing `true` or `false`.
+public struct AuditRunConfig: Codable, Sendable {
+    public let astroConfig: AstroConfig
+    public let includeDuplicates: Bool?
+
+    public init(astroConfig: AstroConfig, includeDuplicates: Bool?) {
+        self.astroConfig = astroConfig
+        self.includeDuplicates = includeDuplicates
+    }
+}
+
 /// A single classification rule the audit engine evaluates against a
 /// snapshot of the scanned library. Implementations are pure functions of
 /// `AuditContext` — no filesystem or database access of their own, so they
@@ -73,6 +86,20 @@ public final class AuditEngine {
         ]
     }
 
+    /// Decodes the current envelope and accepts legacy rows containing a
+    /// plain `AstroConfig`, where duplicate participation is unknown.
+    public static func decodeRunConfig(_ json: String?) -> AuditRunConfig? {
+        guard let json, let data = json.data(using: .utf8) else { return nil }
+        let decoder = JSONDecoder()
+        if let current = try? decoder.decode(AuditRunConfig.self, from: data) {
+            return current
+        }
+        if let legacy = try? decoder.decode(AstroConfig.self, from: data) {
+            return AuditRunConfig(astroConfig: legacy, includeDuplicates: nil)
+        }
+        return nil
+    }
+
     /// Begins an "audit" run, evaluates every rule against a fresh
     /// `AuditContext`, persists all findings, finishes the run, and returns
     /// them sorted with sure errors first, then suspicious, then
@@ -98,7 +125,10 @@ public final class AuditEngine {
             }
         }
 
-        let configData = try? JSONEncoder().encode(config)
+        let runConfig = AuditRunConfig(
+            astroConfig: config, includeDuplicates: includeDuplicates
+        )
+        let configData = try? JSONEncoder().encode(runConfig)
         let configJSON = configData.flatMap { String(data: $0, encoding: .utf8) }
 
         let runID = try db.beginRun(kind: "audit", root: config.rootPath, configJSON: configJSON)

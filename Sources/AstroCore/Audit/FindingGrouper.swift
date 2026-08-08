@@ -52,7 +52,7 @@ public enum FindingGrouper {
     ///   `placeholder-name`, `tool-output`, `intentional-date`,
     ///   `missing-counterpart`, `similar-target-names`, ... — plus
     ///   `FixityVerifier`'s per-file `content-changed`/`modified`/
-    ///   `verify-read-error`, R11-T14): the finding's own path. These rules
+    ///   `modified-in-place`/`verify-read-error`): the finding's own path. These rules
     ///   already fire at most once (or a handful of times) per offending
     ///   directory, so grouping by path is a no-op that still lets the
     ///   shared `group(_:config:)` machinery treat every category

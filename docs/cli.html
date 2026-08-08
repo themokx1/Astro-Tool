@@ -131,7 +131,7 @@
       <tr><td>2</td><td>TCC/kötet-hiba — a könyvtár nem érhető el (Teljes lemezhozzáférés hiányzik, vagy a kötet nincs csatlakoztatva).</td></tr>
       <tr><td>3</td><td>Nem található target/session — a <code>--target</code>/<code>--date</code> nem azonosít semmit a nyilvántartásban (pl. <code>stats</code>, <code>solve</code>, <code>match</code>, <code>link-calib</code>, <code>report</code>, <code>target-report</code>).</td></tr>
       <tr><td>4</td><td>Külső eszköz hiba — a Siril nem található a konfigurált útvonalon (pl. <code>solve</code>).</td></tr>
-      <tr><td>5</td><td>A <code>verify</code> legalább egy megerősített tartalom-eltérést talált (<code>content-changed</code> — azonos méret/módosítási idő mellett más hash, néma korrupció gyanús). Egy azonos hash-eltérés ELTÉRŐ mérettel/idővel ("modified", szándékos szerkesztés) NEM számít bele; olvasási hiba az 1-es kódot adja, nem az 5-öst.</td></tr>
+      <tr><td>5</td><td>A <code>verify</code> legalább egy megerősített tartalom-eltérést talált (<code>content-changed</code> — azonos méret/módosítási idő mellett más hash, néma korrupció gyanús). A <code>modified</code> és a suspicious <code>modified-in-place</code> NEM számít bele; olvasási hiba az 1-es kódot adja, nem az 5-öst.</td></tr>
     </table>
   </div>
 
@@ -144,7 +144,7 @@
     </div>
     <div class="cmd">
       <div class="name">audit</div>
-      <div class="desc">Három súlyossági szintbe sorolt hibalista + duplikátum-keresés; <code>--suggest</code> esetén átnézhető javaslat-scriptet ír. <code>--out PATH</code> (csak <code>--suggest</code>-tel együtt) a könyvtáron kívülre is írhatja a scriptet a fix <code>.astro_tool/suggestions/</code> hely helyett; <code>--out -</code> stdoutra írja a script szövegét fájl írása nélkül. <code>--json</code> kimenete <code>diff</code> mezőt is ad, ha volt előző audit-futás: új/megoldódott/változatlan csoport-darabszám + az új csoportok kulcsai (severity/category/group_key); emberi kimenetben ugyanez egy összegző sorként jelenik meg. Az első futásnál (nincs mihez viszonyítani) a mező elmarad.</div>
+      <div class="desc">Három súlyossági szintbe sorolt hibalista + duplikátum-keresés; <code>--suggest</code> esetén átnézhető javaslat-scriptet ír. <code>--out PATH</code> (csak <code>--suggest</code>-tel együtt) a könyvtáron kívülre is írhatja a scriptet a fix <code>.astro_tool/suggestions/</code> hely helyett; <code>--out -</code> stdoutra írja a script szövegét fájl írása nélkül. <code>--json</code> kimenete <code>diff</code> mezőt is ad, ha volt előző audit-futás: új/megoldódott/változatlan csoport-darabszám + az új csoportok kulcsai (severity/category/group_key). Ha a két futás duplikátum-beállítása eltér vagy régi futásnál ismeretlen, a duplikátum-kategória mindkét oldalról kimarad, és az <code>omitted_categories</code> ezt jelzi. Az első futásnál a diff elmarad.</div>
       <pre class="example">astrotool audit --suggest --include-suspicious --out ~/Desktop/fix.sh</pre>
     </div>
     <div class="cmd">
@@ -154,8 +154,8 @@
     </div>
     <div class="cmd">
       <div class="name">verify</div>
-      <div class="desc">Fixity/bitrot-ellenőrzés: minden már egyszer lehash-elt (tehát egy korábbi <code>audit</code> által a <code>content_hash</code> mezőbe cache-elt), nem-hiányzó indexelt fájlt újraolvas, és összeveti a tárolt ellenőrző-összeggel. Kizárólag olvas — sosem ír vissza hash-t, sosem javít vagy mozgat semmit; egy eltérést csak jelöl, a visszaállítás biztonsági mentésből emberi döntés marad. <code>--target T</code>/<code>--path P</code> szűkíti a kört; <code>--sample N</code> (1-100) csak a kör N százalékát, véletlenszerűen ellenőrzi a teljes kör helyett. Fájlonkénti eredmény: <b>ok</b> (egyezik), <b>content-changed</b> (méret és módosítási idő is változatlan, mégis más a hash — néma korrupció gyanús, <code>sure_error</code>), <b>modified</b> (méret ÉS módosítási idő is megváltozott — szándékos szerkesztés, nem bitrot, <code>probably_intentional</code>), vagy olvasási hiba. <code>--json</code> gyökere additív <code>summary</code> blokkot ad (checked/ok/content_changed/modified/read_errors) a szokásos <code>items</code> találat-lista mellett.</div>
-      <pre class="example">astrotool verify --sample 20 --json</pre>
+      <div class="desc">Fixity/bitrot-ellenőrzés: minden már baseline SHA-256-tal rendelkező, nem-hiányzó indexelt fájlt újraolvas, és összeveti a tárolt ellenőrző-összeggel. A normál ellenőrzés kizárólag olvas; eltérést csak jelöl, a visszaállítás biztonsági mentésből emberi döntés marad. <code>--target T</code>/<code>--path P</code> szűkíti a kört; <code>--sample N</code> (1-100) véletlen mintát ellenőriz. Az explicit <code>--baseline</code> csak a hiányzó hash-eket tölti fel az Astro Tool adatbázisában, a képfájlokhoz nem nyúl, és <code>--sample</code>-lel nem kombinálható. Fájlonkénti eredmény: <b>ok</b>; <b>content-changed</b> (változatlan méret/mtime mellett más hash, <code>sure_error</code>); <b>modified</b> (méret és mtime is változott, szándékos); <b>modified-in-place</b> (csak mtime változott, suspicious); vagy suspicious olvasási hiba. A JSON <code>summary</code>, <code>coverage</code> és <code>items</code> blokkokat ad.</div>
+      <pre class="example">astrotool verify --baseline --json<br>astrotool verify --sample 20 --json</pre>
     </div>
     <div class="cmd">
       <div class="name">ack</div>

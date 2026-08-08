@@ -31,7 +31,7 @@
 - Produces: `Summary.modifiedInPlace: Int`
 - Preserves: exit code 5 iff `summary.contentChanged > 0`
 
-- [ ] **Step 1: Add failing tests for same-size/new-mtime and read-error severity**
+- [x] **Step 1: Add failing tests for same-size/new-mtime and read-error severity**
 
 ```swift
 @Test func fixityVerifierClassifiesSameSizeNewMtimeAsModifiedInPlace() throws {
@@ -49,17 +49,17 @@
 }
 ```
 
-- [ ] **Step 2: Run the focused tests and confirm the old behavior fails**
+- [x] **Step 2: Run the focused tests and confirm the old behavior fails**
 
 Run: `swift test --filter FixityVerifierTests`
 
 Expected before implementation: missing enum/count behavior or severity mismatch; after the user's partial work it may compile but must expose any missing assertions.
 
-- [ ] **Step 3: Finish all exhaustive switches and CLI summary text**
+- [x] **Step 3: Finish all exhaustive switches and CLI summary text**
 
 Update `cmdVerify` human output to include `helyben módosult \(summary.modifiedInPlace)`, keep `readErrors` separate, and ensure JSON naturally encodes the new additive field.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run: `swift test --filter FixityVerifierTests`
 
@@ -81,7 +81,7 @@ Expected: all fixity classification tests pass.
 - Consumes existing: `FixityVerifier.baseline(...)`
 - CLI: `verify --baseline [--target T] [--path P] [--json]`
 
-- [ ] **Step 1: Add failing baseline and coverage tests**
+- [x] **Step 1: Add failing baseline and coverage tests**
 
 ```swift
 @Test func baselineHashesOnlyPreviouslyUnhashedFilesAndIsIdempotent() throws {
@@ -95,11 +95,11 @@ Expected: all fixity classification tests pass.
 }
 ```
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run: `swift test --filter FixityVerifierTests`
 
-- [ ] **Step 3: Implement one database count query and the Coverage value**
+- [x] **Step 3: Implement one database count query and the Coverage value**
 
 Use non-missing files as denominator and normalize target/path filters identically for `countTrackedFiles`, `countHashedFiles`, `eligibleFiles`, and `baselineEligibleFiles`.
 
@@ -112,15 +112,15 @@ public struct Coverage: Codable, Equatable, Sendable {
 }
 ```
 
-- [ ] **Step 4: Add failing CLI smoke tests**
+- [x] **Step 4: Add failing CLI smoke tests**
 
 Test human and JSON baseline output, mutual exclusion with `--sample`, an empty library, and a second idempotent run.
 
-- [ ] **Step 5: Implement `--baseline` parsing and output**
+- [x] **Step 5: Implement `--baseline` parsing and output**
 
 Reject `--baseline --sample`; print hashed/error/coverage summary; use ordinary error exit for read failures and never exit 5 without a confirmed mismatch.
 
-- [ ] **Step 6: Run focused suites**
+- [x] **Step 6: Run focused suites**
 
 Run: `swift test --filter FixityVerifierTests && swift test --filter CLISmokeTests`
 
@@ -138,11 +138,11 @@ Run: `swift test --filter FixityVerifierTests && swift test --filter CLISmokeTes
 - Produces app state: `lastVerifyDate`, `lastVerifySummary`, `verifyFindings`
 - Maintains `findings` as deduplicated audit + verify union
 
-- [ ] **Step 1: Add failing DB round-trip tests for verify run metadata**
+- [x] **Step 1: Add failing DB round-trip tests for verify run metadata**
 
 Persist a verify run, finish it, and assert `lastRunID(kind: "verify")`, date, findings, and checked/summary metadata can be restored without running verify again.
 
-- [ ] **Step 2: Store verify summary in run config JSON using an additive envelope**
+- [x] **Step 2: Store verify summary in run config JSON using an additive envelope**
 
 ```swift
 private struct VerifyRunConfig: Codable {
@@ -154,7 +154,7 @@ private struct VerifyRunConfig: Codable {
 
 Older runs containing a plain `AstroConfig` must decode with `summary == nil` rather than fail.
 
-- [ ] **Step 3: Add an AppState composition helper**
+- [x] **Step 3: Add an AppState composition helper**
 
 ```swift
 private func composeAuditFindings(audit: [Finding], verify: [Finding]) -> [Finding] {
@@ -165,11 +165,11 @@ private func composeAuditFindings(audit: [Finding], verify: [Finding]) -> [Findi
 
 Use it in `openRoot`, `runAudit`, and `runVerify`; never replace the other run kind's evidence.
 
-- [ ] **Step 4: Correct clean/no-audit derivation**
+- [x] **Step 4: Correct clean/no-audit derivation**
 
 `isEverythingClean` requires `lastRunID != nil`; verify-only mode shows `n/a · nincs audit` tiles while still listing verify findings.
 
-- [ ] **Step 5: Run build and focused tests**
+- [x] **Step 5: Run build and focused tests**
 
 Run: `swift build && swift test --filter FixityVerifierTests`
 
@@ -188,7 +188,7 @@ Run: `swift build && swift test --filter FixityVerifierTests`
 - Produces: `AuditRunConfig(astroConfig:includeDuplicates:)`
 - Produces: `AuditDiff.Result.omittedCategories: [String]`
 
-- [ ] **Step 1: Add failing tests for different includeDuplicates values**
+- [x] **Step 1: Add failing tests for different includeDuplicates values**
 
 ```swift
 @Test func auditDiffOmitsDuplicateCategoriesWhenRunSettingsDiffer() {
@@ -199,19 +199,19 @@ Run: `swift build && swift test --filter FixityVerifierTests`
 }
 ```
 
-- [ ] **Step 2: Persist and decode `AuditRunConfig`**
+- [x] **Step 2: Persist and decode `AuditRunConfig`**
 
 Fallback for legacy plain `AstroConfig` is `includeDuplicates == nil`, which triggers conservative duplicate omission and UI explanation.
 
-- [ ] **Step 3: Apply category comparability before grouping/counting**
+- [x] **Step 3: Apply category comparability before grouping/counting**
 
 Filter both previous and current findings with the same omitted-category set before computing new/resolved/unchanged counts.
 
-- [ ] **Step 4: Show partial-diff caption in AuditPage**
+- [x] **Step 4: Show partial-diff caption in AuditPage**
 
 Render `A duplikátumok kimaradtak: a két audit eltérő beállítással futott.` only when `omittedCategories` is non-empty.
 
-- [ ] **Step 5: Run audit suites**
+- [x] **Step 5: Run audit suites**
 
 Run: `swift test --filter AuditDiffTests && swift test --filter AuditTests`
 
@@ -226,19 +226,19 @@ Run: `swift test --filter AuditDiffTests && swift test --filter AuditTests`
 - Produces app actions: `loadVerifyCoverage()`, `runVerifyBaseline()`
 - Consumes: `FixityVerifier.Coverage`
 
-- [ ] **Step 1: Add observable coverage and baseline result state**
+- [x] **Step 1: Add observable coverage and baseline result state**
 
 Use one load method and one operation method. Baseline completion refreshes coverage, but does not automatically run verify or overwrite prior verify evidence.
 
-- [ ] **Step 2: Redesign the confirmation sheet around explicit choices**
+- [x] **Step 2: Redesign the confirmation sheet around explicit choices**
 
 Show `N fájlnak van ellenőrző-összege M-ből (X%)`, buttons `Ellenőrzés` and `Hiányzó összegek pótlása`, plus the existing sample option. Disable baseline when `unhashed == 0`.
 
-- [ ] **Step 3: Add last verify status row**
+- [x] **Step 3: Add last verify status row**
 
 Render date, checked count, confirmed differences, suspicious count, and coverage. Missing legacy summary renders the date and `összegzés nem elérhető`, never invented zeros.
 
-- [ ] **Step 4: Build the app target**
+- [x] **Step 4: Build the app target**
 
 Run: `swift build --target AstroToolApp`
 
@@ -253,11 +253,11 @@ Run: `swift build --target AstroToolApp`
 **Interfaces:**
 - Produces: `QuarantineSummary.inspect(root:config:) throws -> QuarantineState`
 
-- [ ] **Step 1: Add failing filesystem tests**
+- [x] **Step 1: Add failing filesystem tests**
 
 Cover missing directory, two timestamp batch directories with nested files, oldest date, total bytes, and an unreadable entry that does not invent a clean state.
 
-- [ ] **Step 2: Implement read-only directory aggregation**
+- [x] **Step 2: Implement read-only directory aggregation**
 
 ```swift
 public struct QuarantineState: Codable, Equatable, Sendable {
@@ -268,11 +268,11 @@ public struct QuarantineState: Codable, Equatable, Sendable {
 }
 ```
 
-- [ ] **Step 3: Load it with cleanup data and render the row**
+- [x] **Step 3: Load it with cleanup data and render the row**
 
 Show size, batch count, oldest batch, and `Megnyitás Finderben`; do not add empty/delete actions.
 
-- [ ] **Step 4: Run quarantine tests and app build**
+- [x] **Step 4: Run quarantine tests and app build**
 
 Run: `swift test --filter QuarantineSummaryTests && swift build --target AstroToolApp`
 
@@ -285,21 +285,21 @@ Run: `swift test --filter QuarantineSummaryTests && swift build --target AstroTo
 - Modify: `PLAN-R12.md`
 - Test: `Tests/AstroCoreTests/CLISmokeTests.swift`
 
-- [ ] **Step 1: Align usage/docs with status and baseline semantics**
+- [x] **Step 1: Align usage/docs with status and baseline semantics**
 
 Document `modified-in-place`, suspicious read errors, coverage, and `verify --baseline`; remove text claiming verify checks every indexed file before a full baseline exists.
 
-- [ ] **Step 2: Run contradiction searches**
+- [x] **Step 2: Run contradiction searches**
 
 Run: `rg -n "minden indexelt|content-changed|verify-read-error|--baseline" Sources docs README.md`
 
-- [ ] **Step 3: Run the full test suite**
+- [x] **Step 3: Run the full test suite**
 
 Run: `swift test`
 
 Expected: 0 failures.
 
-- [ ] **Step 4: Verify diff and commit only U3 files**
+- [x] **Step 4: Verify diff and commit only U3 files**
 
 Run: `git diff --check && git status --short`
 

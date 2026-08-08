@@ -524,6 +524,28 @@ private func sampleFile(path: String = "sessions/M31/2026-01-01/lights/f1.fits")
     try database.finishRun(id: runID)
 }
 
+@Test func runSummaryRoundTripsMetadataAndUpdatedConfig() throws {
+    let database = try Database(path: ":memory:")
+    let runID = try database.beginRun(
+        kind: "verify", root: "/Volumes/images/Astro", configJSON: "{\"phase\":\"started\"}"
+    )
+
+    let started = try #require(try database.runSummary(id: runID))
+    #expect(started.id == runID)
+    #expect(started.kind == "verify")
+    #expect(started.root == "/Volumes/images/Astro")
+    #expect(started.configJSON == "{\"phase\":\"started\"}")
+    #expect(started.finishedAt == nil)
+
+    try database.updateRunConfig(id: runID, configJSON: "{\"phase\":\"finished\"}")
+    try database.finishRun(id: runID)
+
+    let finished = try #require(try database.runSummary(id: runID))
+    #expect(finished.configJSON == "{\"phase\":\"finished\"}")
+    #expect(finished.finishedAt != nil)
+    #expect(try database.runSummary(id: runID + 999) == nil)
+}
+
 @Test func findingsFiltersByRunID() throws {
     let database = try Database(path: ":memory:")
     let run1 = try database.beginRun(kind: "audit", root: "/root", configJSON: nil)
@@ -593,6 +615,16 @@ private func sampleFile(path: String = "sessions/M31/2026-01-01/lights/f1.fits")
     let latest = try database.beginRun(kind: "audit", root: "/root", configJSON: nil)
 
     #expect(try database.lastRunID(kind: "audit") == latest)
+}
+
+@Test func completedRunQueriesIgnoreANewerInterruptedRun() throws {
+    let database = try Database(path: ":memory:")
+    let completed = try database.beginRun(kind: "audit", root: "/root", configJSON: nil)
+    try database.finishRun(id: completed)
+    let interrupted = try database.beginRun(kind: "audit", root: "/root", configJSON: nil)
+
+    #expect(try database.lastCompletedRunID(kind: "audit") == completed)
+    #expect(try database.previousCompletedRunID(before: interrupted, kind: "audit") == completed)
 }
 
 // MARK: - Database: previousRunID (R11-T8/F6)
@@ -1969,4 +2001,24 @@ private func sessionFile(
     #expect(try database.countHashedFiles(target: "M42") == 2)
     #expect(try database.countHashedFiles(pathPrefix: "sessions/M42/2026-01-02/lights") == 1)
     #expect(try database.countHashedFiles(target: "M42", pathPrefix: "sessions/M42/2026-01-02/flats") == 1)
+}
+
+@Test func fixityCountsTreatPathPrefixWildcardsAndCaseLiterally() throws {
+    let database = try Database(path: ":memory:")
+    for path in [
+        "sessions/M_1/night/a.fit",
+        "sessions/MX1/night/b.fit",
+        "sessions/M%2/night/c.fit",
+        "sessions/MX2/night/d.fit",
+        "sessions/m_1/night/e.fit",
+    ] {
+        var record = sampleFile(path: path)
+        record.contentHash = "hash"
+        try database.upsertFile(record)
+    }
+
+    #expect(try database.countTrackedFiles(pathPrefix: "sessions/M_1") == 1)
+    #expect(try database.countHashedFiles(pathPrefix: "sessions/M_1") == 1)
+    #expect(try database.countTrackedFiles(pathPrefix: "sessions/M%2") == 1)
+    #expect(try database.countHashedFiles(pathPrefix: "sessions/M%2") == 1)
 }

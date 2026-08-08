@@ -482,18 +482,23 @@ final class AppState: @unchecked Sendable {
         didSet { UserDefaults.standard.set(autoScanOnMount, forKey: Self.autoScanOnMountKey) }
     }
     var findings: [Finding] = []
+    /// Audit and verify evidence are persisted independently, then composed
+    /// into `findings` for the shared Audit UI.
+    private var auditFindings: [Finding] = []
+    var verifyFindings: [Finding] = []
     var lastRunID: Int64?
     /// R11-T14/F9: set by `runVerify` once a fixity/bitrot check has
-    /// completed this launch -- alongside `lastRunID`, the AuditPage's "has
+    /// completed -- alongside `lastRunID`, the AuditPage's "has
     /// SOMETHING run yet" gate (`hasAnyAuditRun`), so a user who runs ONLY
     /// "Integritás-ellenőrzés…" without ever running a full "Audit
     /// futtatása" still sees its findings instead of the page's "run an
     /// audit first" empty state. Deliberately independent of `lastRunID`
-    /// (a `"verify"`-kind run, not `"audit"`) and NOT restored across
-    /// launches by `openRoot` -- a verify run's findings are merged into
-    /// `findings` for THIS session only (see `runVerify`'s own doc
-    /// comment); restoring them from disk on relaunch is out of scope here.
+    /// (a `"verify"`-kind run, not `"audit"`) and restored by `openRoot`.
     var lastVerifyRunID: Int64?
+    var lastVerifyDate: Date?
+    var lastVerifySummary: FixityVerifier.Summary?
+    var verifyCoverage: FixityVerifier.Coverage?
+    var verifyBaselineErrors: [FixityVerifier.BaselineResult] = []
     /// R11-T8/F6: this run's findings compared against the run immediately
     /// before it (`Database.previousRunID(before:kind:)`), or `nil` when
     /// there is no previous audit run to compare against (the very first
@@ -507,6 +512,8 @@ final class AppState: @unchecked Sendable {
     var includeSuspiciousInScript: Bool = false
 
     var cleanupSummary: CleanupSummary?
+    var quarantineState: QuarantineState?
+    var quarantineInspectionError: String?
     /// R11-T8/F19: per-target on-disk size map for the Audit page's
     /// Takarítható segment "Tárhely" block. Loaded alongside
     /// `cleanupSummary` everywhere that populates it (`loadCleanup`,
@@ -1254,11 +1261,17 @@ final class AppState: @unchecked Sendable {
         lastError = nil
         lastScanDate = nil
         didDismissFirstRun = false
-        // R11-T14/F9: a verify run's findings never survive a root switch
-        // (`findings` itself gets fully replaced by whatever `lastRunID`
-        // restore below finds, or stays empty) -- this just keeps the gate
-        // in sync with that.
+        findings = []
+        auditFindings = []
+        verifyFindings = []
+        lastRunID = nil
         lastVerifyRunID = nil
+        lastVerifyDate = nil
+        lastVerifySummary = nil
+        verifyCoverage = nil
+        verifyBaselineErrors = []
+        quarantineState = nil
+        quarantineInspectionError = nil
         // N5 (R9 round 3): switching roots without this left the PREVIOUS
         // root's per-target coordinate memo in place -- a target name that
         // happens to recur across two different libraries would silently
@@ -1296,12 +1309,27 @@ final class AppState: @unchecked Sendable {
             // `runAudit()` itself, so both silently reset to empty/`nil` on
             // every relaunch even though the last run's rows were still
             // sitting in the `runs`/`findings` tables.
-            lastRunID = try? opened.lastRunID(kind: "audit")
-            findings = lastRunID.flatMap { try? opened.findings(runID: $0) } ?? []
+            lastRunID = try? opened.lastCompletedRunID(kind: "audit")
+            auditFindings = lastRunID.flatMap { try? opened.findings(runID: $0) } ?? []
+            lastVerifyRunID = try? opened.lastCompletedRunID(kind: "verify")
+            verifyFindings = lastVerifyRunID.flatMap { try? opened.findings(runID: $0) } ?? []
+            if let verifyRunID = lastVerifyRunID,
+               let verifyRun = try? opened.runSummary(id: verifyRunID)
+            {
+                lastVerifyDate = verifyRun.startedAt
+                lastVerifySummary = (try? FixityVerifier.decodeRunMetadata(verifyRun.configJSON))?.summary
+            }
+            verifyCoverage = try? FixityVerifier.coverage(db: opened)
+            findings = Self.composeAuditFindings(audit: auditFindings, verify: verifyFindings)
             // R11-T8/F6: restore the diff-vs-previous-run alongside
             // `findings`/`lastRunID` -- see `auditDiff`'s own doc comment for
             // why this needs to happen in both places that set those two.
-            auditDiff = Self.loadAuditDiff(currentRunID: lastRunID, currentFindings: findings, db: opened, config: config)
+            auditDiff = Self.loadAuditDiff(
+                currentRunID: lastRunID,
+                currentFindings: auditFindings,
+                db: opened,
+                config: config
+            )
             // R9-D2/D3: same idea for the dashboard data (stats/plan/
             // projects/cleanup) every sidebar badge, phase dot, and the "Ma
             // este" Állapot/Hiányzik column depend on -- see
@@ -1538,7 +1566,10 @@ final class AppState: @unchecked Sendable {
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.lastRunID = runID
-                self.findings = findings
+                self.auditFindings = findings
+                self.findings = Self.composeAuditFindings(
+                    audit: self.auditFindings, verify: self.verifyFindings
+                )
                 self.auditDiff = diff
                 self.progressText = "Audit kész: \(findings.count) találat"
 
@@ -1547,10 +1578,16 @@ final class AppState: @unchecked Sendable {
                 // here shouldn't turn an otherwise-successful audit into a
                 // reported error.
                 if let refreshed = try? await Task.detached(priority: .userInitiated, operation: {
-                    (try CleanupReport.build(db: db, config: cfg), try StorageQueries.perTarget(db: db, config: cfg))
+                    (
+                        try CleanupReport.build(db: db, config: cfg),
+                        try StorageQueries.perTarget(db: db, config: cfg),
+                        Self.inspectQuarantine(config: cfg)
+                    )
                 }).value {
                     self.cleanupSummary = refreshed.0
                     self.storageSummary = refreshed.1
+                    self.quarantineState = refreshed.2.state
+                    self.quarantineInspectionError = refreshed.2.error
                 }
             } catch {
                 self.handle(error)
@@ -1572,14 +1609,43 @@ final class AppState: @unchecked Sendable {
         db: Database,
         config: AstroConfig
     ) -> AuditDiff.Result? {
-        guard let currentRunID, let previousRunID = try? db.previousRunID(before: currentRunID, kind: "audit") else {
+        guard let currentRunID,
+              let previousRunID = try? db.previousCompletedRunID(before: currentRunID, kind: "audit")
+        else {
             return nil
         }
         let previousFindings = (try? db.findings(runID: previousRunID)) ?? []
-        return AuditDiff.compute(previous: previousFindings, current: currentFindings, config: config)
+        let previousIncludedDuplicates: Bool?
+        if let run = try? db.runSummary(id: previousRunID) {
+            previousIncludedDuplicates = AuditEngine.decodeRunConfig(run.configJSON)?.includeDuplicates
+        } else {
+            previousIncludedDuplicates = nil
+        }
+        let currentIncludedDuplicates: Bool?
+        if let run = try? db.runSummary(id: currentRunID) {
+            currentIncludedDuplicates = AuditEngine.decodeRunConfig(run.configJSON)?.includeDuplicates
+        } else {
+            currentIncludedDuplicates = nil
+        }
+        return AuditDiff.compute(
+            previous: previousFindings,
+            current: currentFindings,
+            config: config,
+            previousIncludedDuplicates: previousIncludedDuplicates,
+            currentIncludedDuplicates: currentIncludedDuplicates
+        )
     }
 
     // MARK: - Verify (R11-T14/F9)
+
+    private static nonisolated func composeAuditFindings(
+        audit: [Finding], verify: [Finding]
+    ) -> [Finding] {
+        var seen = Set<String>()
+        return (audit + verify).filter { finding in
+            seen.insert("\(finding.category)|\(finding.path)|\(finding.message)").inserted
+        }
+    }
 
     /// Cheap synchronous estimate of how many files `runVerify()` would
     /// actually re-hash -- the app always runs verify over the WHOLE
@@ -1596,6 +1662,44 @@ final class AppState: @unchecked Sendable {
         return (try? db.countHashedFiles()) ?? 0
     }
 
+    /// Refreshes hash coverage using only database counts.
+    func loadVerifyCoverage() {
+        guard let db else {
+            verifyCoverage = nil
+            return
+        }
+        verifyCoverage = try? FixityVerifier.coverage(db: db)
+    }
+
+    /// Computes missing baseline hashes while leaving every library file
+    /// byte-for-byte untouched. Only Astro Tool's DB cache is updated.
+    func runVerifyBaseline() {
+        guard let db else { return }
+        let cfg = config
+        let opID = beginOperation("Hiányzó ellenőrző-összegek pótlása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) { [weak self] in
+                    try FixityVerifier.baseline(db: db, config: cfg) { done, total in
+                        Task { @MainActor in
+                            self?.progressText = "Hash kész: \(done)/\(total)"
+                        }
+                    }
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.verifyBaselineErrors = result.errors
+                self.verifyCoverage = try? FixityVerifier.coverage(db: db)
+                self.progressText = result.errors.isEmpty
+                    ? "Baseline kész: \(result.hashed) új ellenőrző-összeg"
+                    : "Baseline: \(result.hashed) új hash, \(result.errors.count) hiba"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
     /// Runs a fixity/bitrot check over the whole library --
     /// `samplePercent`, when given, checks only a random N% of the
     /// already-hashed files instead of all of them (the confirmation
@@ -1603,16 +1707,9 @@ final class AppState: @unchecked Sendable {
     /// itself; see `FixityVerifier`'s own doc comment for the full
     /// contract (never rewrites the cached hash, never "fixes" anything).
     ///
-    /// Unlike `runAudit`, this does NOT replace `findings` wholesale -- it
-    /// drops any STALE verify-category findings from a previous verify run
-    /// (so re-running verify doesn't pile up duplicate rows for a file that
-    /// turned out fine on a later check) and APPENDS the fresh ones onto
-    /// whatever `findings` already holds from the last `runAudit`, if any --
-    /// so the Audit page's Hibák/Szándékos segments show an audit's and a
-    /// verify's findings side by side without forcing a full re-audit just
-    /// to see them together. `lastVerifyRunID` (alongside `lastRunID`) is
-    /// what lets the page show them even if no audit has ever run this
-    /// launch -- see that property's own doc comment.
+    /// Audit and verify evidence remain separate and are recomposed after
+    /// each run, so neither operation can erase the other's latest result.
+    /// The persisted verify run is restored the same way after relaunch.
     func runVerify(samplePercent: Int? = nil) {
         guard let db else { return }
         let cfg = config
@@ -1631,11 +1728,14 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
 
                 self.lastVerifyRunID = runID
-                let verifyCategories: Set<String> = ["content-changed", "modified", "verify-read-error"]
-                self.findings.removeAll { verifyCategories.contains($0.category) }
-                self.findings.append(contentsOf: verifyFindings)
-
                 let summary = FixityVerifier.summarize(results)
+                self.verifyFindings = verifyFindings
+                self.findings = Self.composeAuditFindings(
+                    audit: self.auditFindings, verify: self.verifyFindings
+                )
+                self.lastVerifyDate = (try? db.runSummary(id: runID))?.startedAt ?? Date()
+                self.lastVerifySummary = summary
+                self.verifyCoverage = try? FixityVerifier.coverage(db: db)
                 let mismatchCount = summary.checked - summary.ok
                 self.progressText = "Integritás: \(summary.ok) fájl rendben, \(mismatchCount) eltérés"
             } catch {
@@ -1765,6 +1865,22 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - Cleanup
 
+    private struct QuarantineLoad: Sendable {
+        let state: QuarantineState?
+        let error: String?
+    }
+
+    private static nonisolated func inspectQuarantine(config: AstroConfig) -> QuarantineLoad {
+        do {
+            let state = try QuarantineSummary.inspect(
+                root: URL(fileURLWithPath: config.rootPath, isDirectory: true), config: config
+            )
+            return QuarantineLoad(state: state, error: nil)
+        } catch {
+            return QuarantineLoad(state: nil, error: (error as NSError).localizedDescription)
+        }
+    }
+
     /// Loads the size-ordered cleanup report (residue + duplicate-content
     /// groups) for the Audit page's "Takarítható" segment. Safe to call any
     /// time the DB has data -- unlike `runAudit`, this never runs
@@ -1785,12 +1901,18 @@ final class AppState: @unchecked Sendable {
                 // above this same report's content and is loaded on the
                 // exact same trigger, so it's fetched alongside rather than
                 // via a separate on-appear/operation.
-                let (result, storage) = try await Task.detached(priority: .userInitiated) {
-                    (try CleanupReport.build(db: db, config: cfg), try StorageQueries.perTarget(db: db, config: cfg))
+                let (result, storage, quarantine) = try await Task.detached(priority: .userInitiated) {
+                    (
+                        try CleanupReport.build(db: db, config: cfg),
+                        try StorageQueries.perTarget(db: db, config: cfg),
+                        Self.inspectQuarantine(config: cfg)
+                    )
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.cleanupSummary = result
                 self.storageSummary = storage
+                self.quarantineState = quarantine.state
+                self.quarantineInspectionError = quarantine.error
                 self.progressText = "Takarítási riport kész: \(result.groups.count) csoport"
             } catch {
                 self.handle(error)
@@ -2657,6 +2779,7 @@ final class AppState: @unchecked Sendable {
         /// segment) so a fresh launch's Audit page shows the "Tárhely"
         /// block without a separate on-demand load.
         var storage: StorageSummary
+        var quarantine: QuarantineLoad
         // N7 (R9 round 3): the sidebar's Kalibráció/Szenzor-profilok badges
         // read `calibNeeds`/`sensorProfiles` directly -- without these in
         // the SAME bundle, a fresh launch showed both badges stuck at 0
@@ -2744,12 +2867,13 @@ final class AppState: @unchecked Sendable {
                     let projects = try ProjectStatusQueries.projects(db: db, config: cfg)
                     let cleanup = try CleanupReport.build(db: db, config: cfg)
                     let storage = try StorageQueries.perTarget(db: db, config: cfg)
+                    let quarantine = Self.inspectQuarantine(config: cfg)
                     let calib = try Self.loadCalibBundle(db: db, config: cfg)
                     return DashboardBundle(
                         stats: stats, sessionsByTarget: sessionsByTarget, panelsByTarget: panelsByTarget,
                         stacksByTarget: stacksByTarget, stackGroupsByTarget: stackGroupsByTarget,
                         plan: plans, site: site, night: night, projects: projects, cleanup: cleanup,
-                        storage: storage, calib: calib
+                        storage: storage, quarantine: quarantine, calib: calib
                     )
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
@@ -2765,6 +2889,8 @@ final class AppState: @unchecked Sendable {
                 self.projectStates = bundle.projects
                 self.cleanupSummary = bundle.cleanup
                 self.storageSummary = bundle.storage
+                self.quarantineState = bundle.quarantine.state
+                self.quarantineInspectionError = bundle.quarantine.error
                 // N7 (R9 round 3): see `DashboardBundle.calib`'s doc comment
                 // -- this is what makes the sidebar's Kalibráció/Szenzor-
                 // profilok badges non-zero on a fresh launch.

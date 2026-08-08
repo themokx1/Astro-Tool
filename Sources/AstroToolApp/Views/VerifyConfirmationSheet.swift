@@ -1,3 +1,5 @@
+import Foundation
+import AstroCore
 import SwiftUI
 
 /// R11-T14/F9: the Audit page toolbar's "Integritás-ellenőrzés…" confirmation
@@ -10,11 +12,8 @@ struct VerifyConfirmationSheet: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
 
-    /// `AppState.countVerifyEligibleFiles()`'s result at the moment the
-    /// sheet was requested -- a snapshot, not re-queried while the sheet is
-    /// open (the file count can't meaningfully change in the few seconds a
-    /// user spends deciding here).
-    let eligibleFileCount: Int
+    /// DB-only coverage snapshot taken when the sheet opens.
+    let coverage: FixityVerifier.Coverage
 
     @State private var sampleOnly = false
 
@@ -22,8 +21,8 @@ struct VerifyConfirmationSheet: View {
     /// is on -- matches `FixityVerifier.eligibleFiles`'s own rounding
     /// (`round(count * percent / 100)`, minimum 1).
     private var effectiveFileCount: Int {
-        guard sampleOnly, eligibleFileCount > 0 else { return eligibleFileCount }
-        return max(1, Int((Double(eligibleFileCount) * 0.1).rounded()))
+        guard sampleOnly, coverage.hashed > 0 else { return coverage.hashed }
+        return max(1, Int((Double(coverage.hashed) * 0.1).rounded()))
     }
 
     /// Durva ökölszabály, nem mért érték: ~300 fájl/perc egy óvatos,
@@ -40,6 +39,11 @@ struct VerifyConfirmationSheet: View {
         return "\(effectiveFileCount) fájl — ez akár \(hours) óráig is tarthat"
     }
 
+    private var coverageText: String {
+        "\(coverage.hashed) fájlnak van ellenőrző-összege \(coverage.tracked)-ből "
+            + "(\(String(format: "%.1f", coverage.percent))%)"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Integritás-ellenőrzés").font(.headline)
@@ -54,20 +58,29 @@ struct VerifyConfirmationSheet: View {
             Text(estimateText)
                 .font(.callout)
 
+            Text(coverageText)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+
             Toggle("Csak minta (10%)", isOn: $sampleOnly)
 
             HStack {
                 Spacer()
                 Button("Mégse") { dismiss() }
-                Button("Indítás") {
+                Button("Hiányzó összegek pótlása") {
+                    appState.runVerifyBaseline()
+                    dismiss()
+                }
+                .disabled(coverage.unhashed == 0)
+                Button("Ellenőrzés") {
                     appState.runVerify(samplePercent: sampleOnly ? 10 : nil)
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(eligibleFileCount == 0)
+                .disabled(coverage.hashed == 0)
             }
         }
         .padding(20)
-        .frame(width: 400)
+        .frame(width: 480)
     }
 }

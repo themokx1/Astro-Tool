@@ -522,6 +522,35 @@ struct CLISmokeTests {
     #expect(humanResult.stdout.contains(path1))
 }
 
+/// A same-size rewrite with a newer mtime is suspicious and must be visible
+/// in the human CLI output, but it is not a confirmed-corruption exit-5.
+@Test func verifyHumanOutputReportsModifiedInPlaceSeparately() throws {
+    let root = try makeTempRoot("verify-modified-in-place")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let path1 = "sessions/M31/2026-01-01/lights/a.fit"
+    let path2 = "sessions/M31/2026-01-01/lights/b.fit"
+    let url1 = root.appendingPathComponent(path1)
+    let url2 = root.appendingPathComponent(path2)
+    try writeVerifyFixtureFile(at: url1, byte: 0xAB, size: verifyDupSize)
+    try writeVerifyFixtureFile(at: url2, byte: 0xAB, size: verifyDupSize)
+
+    #expect(try runCLI(["scan", "--root", root.path]).exitCode == 0)
+    #expect(try runCLI(["audit", "--root", root.path]).exitCode == 0)
+
+    let oldMTime = try url1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate ?? Date()
+    try writeVerifyFixtureFile(at: url1, byte: 0xCD, size: verifyDupSize)
+    try FileManager.default.setAttributes(
+        [.modificationDate: oldMTime.addingTimeInterval(100)],
+        ofItemAtPath: url1.path
+    )
+
+    let result = try runCLI(["verify", "--root", root.path])
+    #expect(result.exitCode == 0, "stdout: \(result.stdout), stderr: \(result.stderr)")
+    #expect(result.stdout.contains("helyben módosult 1"))
+    #expect(result.stdout.contains(path1))
+}
+
 @Test func verifySampleFlagRejectsOutOfRangeOrNonNumericValues() throws {
     let root = try makeTempRoot("verify-sample-invalid")
     defer { try? FileManager.default.removeItem(at: root) }
@@ -531,6 +560,62 @@ struct CLISmokeTests {
         #expect(result.exitCode == 1, "sample=\(badValue) should be rejected")
         #expect(result.stderr.contains("--sample"))
     }
+}
+
+@Test func verifyBaselineRejectsSampling() throws {
+    let root = try makeTempRoot("verify-baseline-sample")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let result = try runCLI([
+        "verify", "--root", root.path, "--baseline", "--sample", "10",
+    ])
+
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("--baseline"))
+    #expect(result.stderr.contains("--sample"))
+}
+
+@Test func verifyBaselineHumanOutputHashesMissingChecksumsAndIsIdempotent() throws {
+    let root = try makeTempRoot("verify-baseline-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let relativePath = "sessions/M31/2026-01-01/lights/a.fit"
+    try writeVerifyFixtureFile(
+        at: root.appendingPathComponent(relativePath), byte: 0xAB, size: 128
+    )
+    #expect(try runCLI(["scan", "--root", root.path]).exitCode == 0)
+
+    let first = try runCLI(["verify", "--root", root.path, "--baseline"])
+    #expect(first.exitCode == 0, "stdout: \(first.stdout), stderr: \(first.stderr)")
+    #expect(first.stdout.contains("új hash 1"))
+    #expect(first.stdout.contains("lefedettség 1/1"))
+    #expect(first.stdout.contains("100"))
+
+    let second = try runCLI(["verify", "--root", root.path, "--baseline"])
+    #expect(second.exitCode == 0, "stdout: \(second.stdout), stderr: \(second.stderr)")
+    #expect(second.stdout.contains("új hash 0"))
+    #expect(second.stdout.contains("lefedettség 1/1"))
+}
+
+@Test func verifyBaselineJSONReportsCoverageForAnEmptyLibrary() throws {
+    let root = try makeTempRoot("verify-baseline-empty-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let result = try runCLI([
+        "verify", "--root", root.path, "--baseline", "--json",
+    ])
+    #expect(result.exitCode == 0, "stdout: \(result.stdout), stderr: \(result.stderr)")
+
+    let payload = try #require(try jsonObject(result.stdout))
+    let summary = try #require(payload["summary"] as? [String: Any])
+    let coverage = try #require(payload["coverage"] as? [String: Any])
+    #expect(summary["hashed"] as? Int == 0)
+    #expect(summary["errors"] as? Int == 0)
+    #expect(coverage["tracked"] as? Int == 0)
+    #expect(coverage["hashed"] as? Int == 0)
+    #expect(coverage["unhashed"] as? Int == 0)
+    #expect(coverage["percent"] as? Double == 0)
+    #expect(try #require(payload["items"] as? [[String: Any]]).isEmpty)
 }
 
 @Test func verifyTargetFlagScopesToOneTargetOnly() throws {
