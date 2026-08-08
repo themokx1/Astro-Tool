@@ -231,6 +231,51 @@ T3 — Settings csomag után.
   - Saját döntés cellában, ha a keret kiugró és nincs még döntés, halvány
     "javasolt: elvetés" felirat a "-" helyett; ugyanez a jelvény a
     `FrameReviewSheet` fejlécében a ⚠️ Kiugró jelvény mellett.
+- **Audit-diff (R11-T8/F6)**: audit futás után az ELŐZŐ audit-run
+  findings-ei és a mostani futás összevetése — új core `AuditDiff`
+  (`AstroCore/Audit/AuditDiff.swift`, tiszta, DB-mentes függvény), a
+  `FindingGrouper`-rel azonos `(severity, category, groupKey)` granularitáson
+  hasonlít: minden csoport vagy ÚJ (csak a mostani futásban), MEGOLDÓDOTT
+  (csak az előzőben) vagy VÁLTOZATLAN (mindkettőben). Az ack-állapot külön
+  dimenzió marad — egy elfogadott csoport is simán "változatlan"-ként
+  jelenik meg, ha még mindig előfordul. A DB-oldali "előző futás"-keresést
+  új `Database.previousRunID(before:kind:)` adja (a `runID` elé eső
+  legutóbbi futás azonosítója) — ugyanaz a hívás szolgálja ki friss
+  audit-futás UTÁN (`AppState.runAudit`, `Commands.cmdAudit`) ÉS az
+  alkalmazás újraindítás utáni visszaállítást (`AppState.openRoot`) is,
+  szimmetrikusan. A `pruneFindings(keepRuns: 3)` (B20) miatt az előző futás
+  findings-ei garantáltan megvannak, amíg csak 1 futás telt el azóta.
+  - AuditPage: a szegmens-picker alatt összegző sor ("+3 új · 5
+    megoldódott · 12 változatlan", 0 értékek elhagyva; a sor teljesen
+    hiányzik, ha nincs előző futás). "ÚJ" kék kapszula-jelvény a Hibák/
+    Gyanús/Szándékos csoportlista új csoportjainak fejlécén. Toolbar
+    "Csak az újak" váltó — csak akkor látszik, ha van diff ÉS van benne
+    legalább egy új csoport.
+  - CLI: `audit --json` kimenete additív `diff` mezőt kap (`new_count`/
+    `resolved_count`/`unchanged_count` + `new_groups` — az új csoportok
+    `severity`/`category`/`group_key` kulcsai), csak ha volt előző
+    audit-futás; emberi kimenet ugyanerről egy összegző sort ír
+    ("diff (vs previous run): 3 new, 5 resolved, 12 unchanged"). A
+    findings tömb továbbra is az eddigi `items` kulcs alatt van — teljesen
+    visszafelé kompatibilis bővítés.
+- **Tárhely-nézet (R11-T8/F19)**: célpontonkénti méret-összesítés area-
+  bontással (sessions/stacks/processed/egyéb), méret szerint csökkenő —
+  új core `StorageQueries`/`TargetStorage`/`StorageSummary`
+  (`AstroCore/Stats/StorageQueries.swift`), tiszta lekérdezés a `files`
+  táblából (`missing` fájlok kizárva, ugyanaz a konvenció, mint
+  `CleanupReport`-nál). Wide-field/deep-sky besorolás itt nem számít.
+  - AuditPage ▸ Takarítható szegmens: a meglévő cleanup-tartalom FÖLÉ új
+    "Tárhely" `DisclosureGroup` (alapból nyitva, becsukható) — top 10
+    célpont soronként (név, mini area-sáv + szöveges bontás, összméret),
+    "Összes megjelenítése" lenyitással a többihez; soronként "⋯" menü:
+    "Célpont megnyitása", "Megnyitás Finderben". Tisztán térkép — semmi
+    törlés-akció. Független attól, futott-e már audit (ugyanúgy töltődik,
+    mint a `cleanupSummary`).
+  - CLI: `cleanup --json` kimenete additív `storage` mezőt kap (ugyanez az
+    összesítés) — nem külön `storage` alparancs, mert az app ugyanabba a
+    Takarítható szegmensbe teszi, a meglévő takarítási lista FÖLÉ, sosem
+    önálló oldalként; a parancsstruktúra ezt 1:1 követi. A meglévő
+    `groups`/`grand_total_bytes` mezők változatlanok.
 
 ### Changed
 

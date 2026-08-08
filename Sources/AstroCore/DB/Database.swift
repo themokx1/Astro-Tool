@@ -1058,6 +1058,32 @@ public final class Database: @unchecked Sendable {
         }
     }
 
+    /// The `id` of the most recent `runs` row of the given `kind` that
+    /// started strictly before `runID`'s own `started_at`, or `nil` if
+    /// `runID` is the first run of that kind (or doesn't exist). R11-T8/F6:
+    /// lets a caller that already has a just-created (or previously
+    /// restored) run id look up "the run before this one" to diff against,
+    /// symmetric whether called right after `AuditEngine.run` (using its
+    /// returned `runID`) or on app relaunch (using the restored
+    /// `lastRunID(kind:)`) -- both end up asking the same question, "what
+    /// ran immediately before this run id".
+    public func previousRunID(before runID: Int64, kind: String) throws -> Int64? {
+        try withLock {
+            var id: Int64?
+            try db.query(
+                """
+                SELECT id FROM runs
+                WHERE kind = ? AND started_at < (SELECT started_at FROM runs WHERE id = ?)
+                ORDER BY started_at DESC LIMIT 1;
+                """,
+                bind: [.text(kind), .int(runID)]
+            ) { row in
+                id = row.int64(0)
+            }
+            return id
+        }
+    }
+
     public func insertFinding(runID: Int64, _ f: Finding) throws {
         let suggestionJSON: String?
         if let suggestion = f.suggestion {

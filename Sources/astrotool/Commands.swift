@@ -64,8 +64,14 @@ Commands:
                 [--out PATH|-] (requires --suggest; PATH may be outside the
                 library root, - prints the script to stdout instead of
                 writing it)
+                --json's diff block (new/resolved/unchanged group counts +
+                new groups' keys) appears only when a previous audit run
+                exists to compare against; human output prints one summary
+                line for the same comparison.
   cleanup       [--root R] [--json] [--suggest] [--limit N] [--out PATH|-]
                 (requires --suggest; same --out convention as audit)
+                --json's storage block: per-target on-disk size, broken
+                down by area (sessions/stacks/processed/other), size-desc.
   rate          [--root R] --target T [--date D] [--json] [--no-siril] [--force]
   stats         [--root R] [--target T] [--json] [--gross] [--sessions (requires --target)] [--tag TAG]
                 [--timeline (requires --target) [--date D]]
@@ -386,7 +392,18 @@ func cmdAudit(_ args: [String]) throws -> Int32 {
     try hintIfEmpty(db)
 
     let includeDuplicates = !parsed.has("--no-duplicates")
-    let (_, findings) = try AuditEngine(config: config, db: db).run(includeDuplicates: includeDuplicates)
+    let (runID, findings) = try AuditEngine(config: config, db: db).run(includeDuplicates: includeDuplicates)
+
+    // R11-T8/F6: diff against the run immediately before this one, if any --
+    // `nil` on the very first audit ever, in which case neither the `--json`
+    // `diff` block nor the human-readable summary line appear at all.
+    let diff: AuditDiff.Result?
+    if let previousRunID = try? db.previousRunID(before: runID, kind: "audit") {
+        let previousFindings = (try? db.findings(runID: previousRunID)) ?? []
+        diff = AuditDiff.compute(previous: previousFindings, current: findings, config: config)
+    } else {
+        diff = nil
+    }
 
     var suggestMessage: String?
     if parsed.has("--suggest") {
@@ -439,12 +456,48 @@ func cmdAudit(_ args: [String]) throws -> Int32 {
         // so in --json mode it goes to stderr instead of interleaving with
         // the findings array on stdout.
         if let suggestMessage { eprint(suggestMessage) }
-        try printJSON(findings)
+        // R11-T8/F6: `items` keeps the pre-existing bare-array shape
+        // (`{"schema_version": ..., "items": [...]}`, see `printJSON`'s doc
+        // comment) so no existing consumer of `audit --json` breaks; `diff`
+        // is a purely additive sibling key, and `AuditDiffJSON`'s Optional
+        // property is omitted entirely (not even `null`) by the synthesized
+        // `Encodable` when there's no previous run to compare against.
+        try printJSON(AuditJSONPayload(items: findings, diff: diff.map(AuditDiffJSON.init)))
     } else {
+        if let diff {
+            print("diff (vs previous run): \(diff.newCount) new, \(diff.resolvedCount) resolved, \(diff.unchangedCount) unchanged")
+        }
         printAuditFindings(findings, config: config)
         if let suggestMessage { print(suggestMessage) }
     }
     return 0
+}
+
+/// `audit --json`'s root object (R11-T8/F6): `items` is the pre-existing
+/// findings array under its established key (see `printJSON`'s array-wrap
+/// doc comment), `diff` is the new additive block -- present only when
+/// there was a previous audit run to compare against.
+private struct AuditJSONPayload: Encodable {
+    let items: [Finding]
+    let diff: AuditDiffJSON?
+}
+
+/// `AuditDiff.Result` flattened for JSON: counts plus the new groups' own
+/// keys (severity/category/group_key after `printJSON`'s snake_case
+/// conversion) -- not the new groups' full finding lists, which would just
+/// duplicate `items` under a different shape.
+private struct AuditDiffJSON: Encodable {
+    let newCount: Int
+    let resolvedCount: Int
+    let unchangedCount: Int
+    let newGroups: [FindingGrouper.Key]
+
+    init(_ result: AuditDiff.Result) {
+        newCount = result.newCount
+        resolvedCount = result.resolvedCount
+        unchangedCount = result.unchangedCount
+        newGroups = result.newGroups.map(\.key)
+    }
 }
 
 /// Human-readable audit output, aggregated the same way as the app's
@@ -506,6 +559,13 @@ func cmdCleanup(_ args: [String]) throws -> Int32 {
     try hintIfEmpty(db)
 
     let summary = try CleanupReport.build(db: db, config: config)
+    // R11-T8/F19: `storage` rides along on `cleanup --json` rather than a
+    // new `storage` subcommand -- the app puts this same per-target size
+    // map directly ABOVE the cleanup-candidate list, inside the same
+    // Takarítható segment (never its own page), so the CLI command
+    // structure mirrors that 1:1 instead of adding a whole new top-level
+    // command for what's really one more block on this same report.
+    let storage = try StorageQueries.perTarget(db: db, config: config)
 
     var suggestMessage: String?
     if parsed.has("--suggest") {
@@ -553,7 +613,12 @@ func cmdCleanup(_ args: [String]) throws -> Int32 {
     if parsed.has("--json") {
         // Same stdout-purity contract as `audit --json --suggest`.
         if let suggestMessage { eprint(suggestMessage) }
-        try printJSON(summary)
+        // R11-T8/F19: `groups`/`grand_total_bytes` keep `CleanupSummary`'s
+        // own pre-existing field names (a plain `Encodable` mirror, not
+        // `CleanupSummary` itself, only so `storage` can ride alongside as
+        // a third sibling key) -- purely additive, no existing consumer's
+        // parse breaks.
+        try printJSON(CleanupJSONPayload(groups: summary.groups, grandTotalBytes: summary.grandTotalBytes, storage: storage))
     } else {
         let limit = parsed.value("--limit").flatMap(Int.init) ?? 10
         let sizeByPath = Dictionary(
@@ -564,6 +629,17 @@ func cmdCleanup(_ args: [String]) throws -> Int32 {
         if let suggestMessage { print(suggestMessage) }
     }
     return 0
+}
+
+/// `cleanup --json`'s root object (R11-T8/F19): `groups`/`grand_total_bytes`
+/// reproduce `CleanupSummary`'s own shape verbatim so no existing consumer's
+/// parse breaks; `storage` is the new additive per-target size map (see
+/// `cmdCleanup`'s own comment for why this rides here rather than a new
+/// subcommand).
+private struct CleanupJSONPayload: Encodable {
+    let groups: [CleanupGroup]
+    let grandTotalBytes: Int64
+    let storage: StorageSummary
 }
 
 private func printCleanupReport(_ summary: CleanupSummary, limit: Int, sizeByPath: [String: Int64]) {

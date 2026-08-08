@@ -144,12 +144,12 @@
     </div>
     <div class="cmd">
       <div class="name">audit</div>
-      <div class="desc">Három súlyossági szintbe sorolt hibalista + duplikátum-keresés; <code>--suggest</code> esetén átnézhető javaslat-scriptet ír. <code>--out PATH</code> (csak <code>--suggest</code>-tel együtt) a könyvtáron kívülre is írhatja a scriptet a fix <code>.astro_tool/suggestions/</code> hely helyett; <code>--out -</code> stdoutra írja a script szövegét fájl írása nélkül.</div>
+      <div class="desc">Három súlyossági szintbe sorolt hibalista + duplikátum-keresés; <code>--suggest</code> esetén átnézhető javaslat-scriptet ír. <code>--out PATH</code> (csak <code>--suggest</code>-tel együtt) a könyvtáron kívülre is írhatja a scriptet a fix <code>.astro_tool/suggestions/</code> hely helyett; <code>--out -</code> stdoutra írja a script szövegét fájl írása nélkül. <code>--json</code> kimenete <code>diff</code> mezőt is ad, ha volt előző audit-futás: új/megoldódott/változatlan csoport-darabszám + az új csoportok kulcsai (severity/category/group_key); emberi kimenetben ugyanez egy összegző sorként jelenik meg. Az első futásnál (nincs mihez viszonyítani) a mező elmarad.</div>
       <pre class="example">astrotool audit --suggest --include-suspicious --out ~/Desktop/fix.sh</pre>
     </div>
     <div class="cmd">
       <div class="name">cleanup</div>
-      <div class="desc">A már azonosított reziduum/duplikátum-találatok korlátozott elemszámú összegzése és javaslat-script generálás. <code>--out PATH|-</code> ugyanúgy működik, mint <code>audit --suggest</code>-nél.</div>
+      <div class="desc">A már azonosított reziduum/duplikátum-találatok korlátozott elemszámú összegzése és javaslat-script generálás. <code>--out PATH|-</code> ugyanúgy működik, mint <code>audit --suggest</code>-nél. <code>--json</code> kimenete <code>storage</code> mezőt is ad: célpontonkénti méret area-bontással (sessions/stacks/processed/other), méret szerint csökkenő sorrendben — ugyanaz az adat, amit az app Takarítható szegmensének "Tárhely" blokkja mutat, ezért itt fér rá a meglévő <code>cleanup</code> parancsra, nem külön alparancsként.</div>
       <pre class="example">astrotool cleanup --suggest --limit 50 --out -</pre>
     </div>
     <div class="cmd">

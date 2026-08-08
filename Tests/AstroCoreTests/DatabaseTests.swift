@@ -595,6 +595,58 @@ private func sampleFile(path: String = "sessions/M31/2026-01-01/lights/f1.fits")
     #expect(try database.lastRunID(kind: "audit") == latest)
 }
 
+// MARK: - Database: previousRunID (R11-T8/F6)
+
+@Test func previousRunIDReturnsNilWhenTheGivenRunIsTheOnlyOneOfItsKind() throws {
+    let database = try Database(path: ":memory:")
+    let onlyRun = try database.beginRun(kind: "audit", root: "/root", configJSON: nil)
+
+    #expect(try database.previousRunID(before: onlyRun, kind: "audit") == nil)
+}
+
+@Test func previousRunIDReturnsTheRunImmediatelyBeforeTheGivenOne() throws {
+    let database = try Database(path: ":memory:")
+
+    // Explicit `started_at` values (same technique as
+    // `lastRunDateReturnsTheMostRecentStartedAtForThatKind`) so this test
+    // doesn't race the clock across three back-to-back `beginRun` calls.
+    try database.db.run(
+        "INSERT INTO runs(id, kind, started_at, root) VALUES (1, 'audit', 1000, '/root');"
+    )
+    try database.db.run(
+        "INSERT INTO runs(id, kind, started_at, root) VALUES (2, 'audit', 2000, '/root');"
+    )
+    try database.db.run(
+        "INSERT INTO runs(id, kind, started_at, root) VALUES (3, 'audit', 3000, '/root');"
+    )
+
+    #expect(try database.previousRunID(before: 3, kind: "audit") == 2)
+    #expect(try database.previousRunID(before: 2, kind: "audit") == 1)
+    #expect(try database.previousRunID(before: 1, kind: "audit") == nil)
+}
+
+@Test func previousRunIDIgnoresRunsOfADifferentKind() throws {
+    let database = try Database(path: ":memory:")
+
+    try database.db.run(
+        "INSERT INTO runs(id, kind, started_at, root) VALUES (1, 'scan', 1000, '/root');"
+    )
+    try database.db.run(
+        "INSERT INTO runs(id, kind, started_at, root) VALUES (2, 'audit', 2000, '/root');"
+    )
+
+    // The scan run started before the audit run, but it's the wrong kind --
+    // there's no PREVIOUS audit run to find.
+    #expect(try database.previousRunID(before: 2, kind: "audit") == nil)
+}
+
+@Test func previousRunIDReturnsNilWhenTheAnchorRunIDDoesNotExist() throws {
+    let database = try Database(path: ":memory:")
+    _ = try database.beginRun(kind: "audit", root: "/root", configJSON: nil)
+
+    #expect(try database.previousRunID(before: 999_999, kind: "audit") == nil)
+}
+
 // MARK: - Database: ratings
 
 private func sampleRating(fileID: Int64, inputSig: String = "sig-1") -> RatingRecord {

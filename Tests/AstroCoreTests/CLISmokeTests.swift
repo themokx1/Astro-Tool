@@ -216,6 +216,97 @@ struct CLISmokeTests {
     #expect(categories.contains("placeholder-name"))
 }
 
+// MARK: - audit --json diff (R11-T8/F6)
+
+@Test func auditJSONFirstRunHasNoDiffBlock() throws {
+    let root = try makeTempRoot("audit-diff-first")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let audit = try runCLI(["audit", "--root", root.path, "--json"])
+    #expect(audit.exitCode == 0, "stderr: \(audit.stderr)")
+
+    let json = try jsonObject(audit.stdout)
+    #expect(json?["diff"] == nil)
+    // `items` (the pre-existing bare-array shape, R11-T4) must still be
+    // there unchanged, additive-only.
+    #expect((json?["items"] as? [[String: Any]])?.isEmpty == false)
+}
+
+@Test func auditJSONSecondRunHasDiffBlockWithUnchangedGroups() throws {
+    let root = try makeTempRoot("audit-diff-second")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let first = try runCLI(["audit", "--root", root.path, "--json"])
+    #expect(first.exitCode == 0, "stderr: \(first.stderr)")
+
+    // Nothing changed on disk between the two runs -- every group should
+    // come back "unchanged", none new/resolved.
+    let second = try runCLI(["audit", "--root", root.path, "--json"])
+    #expect(second.exitCode == 0, "stderr: \(second.stderr)")
+
+    let diff = try #require(try jsonObject(second.stdout)?["diff"] as? [String: Any])
+    #expect(diff["new_count"] as? Int == 0)
+    #expect(diff["resolved_count"] as? Int == 0)
+    #expect((diff["unchanged_count"] as? Int ?? 0) > 0)
+    #expect((diff["new_groups"] as? [Any])?.isEmpty == true)
+}
+
+@Test func auditJSONReportsNewGroupKeysAfterALibraryChange() throws {
+    let root = try makeTempRoot("audit-diff-new")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let first = try runCLI(["audit", "--root", root.path, "--json"])
+    #expect(first.exitCode == 0, "stderr: \(first.stderr)")
+
+    // A brand-new placeholder-named stack directory the first audit never
+    // saw.
+    let strayDir = root.appendingPathComponent("stacks/Please_enter_a_value.._Andromeda/2026-05-01")
+    try FileManager.default.createDirectory(at: strayDir, withIntermediateDirectories: true)
+    try "fixture dummy content\n".write(to: strayDir.appendingPathComponent("stack.fit"), atomically: true, encoding: .utf8)
+
+    let rescan = try runCLI(["scan", "--root", root.path])
+    #expect(rescan.exitCode == 0, "stderr: \(rescan.stderr)")
+
+    let second = try runCLI(["audit", "--root", root.path, "--json"])
+    #expect(second.exitCode == 0, "stderr: \(second.stderr)")
+
+    let diff = try #require(try jsonObject(second.stdout)?["diff"] as? [String: Any])
+    #expect((diff["new_count"] as? Int ?? 0) > 0)
+    let newGroups = try #require(diff["new_groups"] as? [[String: Any]])
+    #expect(newGroups.contains {
+        $0["category"] as? String == "placeholder-name" && $0["group_key"] as? String == "stacks/Please_enter_a_value.._Andromeda"
+    })
+}
+
+@Test func auditHumanOutputPrintsDiffSummaryLineOnlyFromTheSecondRunOnward() throws {
+    let root = try makeTempRoot("audit-diff-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let first = try runCLI(["audit", "--root", root.path])
+    #expect(first.exitCode == 0, "stderr: \(first.stderr)")
+    #expect(!first.stdout.contains("diff (vs previous run)"))
+
+    let second = try runCLI(["audit", "--root", root.path])
+    #expect(second.exitCode == 0, "stderr: \(second.stderr)")
+    #expect(second.stdout.contains("diff (vs previous run): 0 new, 0 resolved,"))
+}
+
 @Test func auditSuggestWritesSuggestionScript() throws {
     let root = try makeTempRoot("audit-suggest")
     defer { try? FileManager.default.removeItem(at: root) }
@@ -338,6 +429,44 @@ struct CLISmokeTests {
     #expect(categories.contains("residue-lst"))
     #expect(categories.contains("residue-process-dir"))
     #expect((json?["grand_total_bytes"] as? Int ?? 0) > 0)
+}
+
+// MARK: - cleanup --json storage block (R11-T8/F19)
+
+@Test func cleanupJSONReportsPerTargetStorageBreakdown() throws {
+    let root = try makeTempRoot("cleanup-storage-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["cleanup", "--root", root.path, "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try jsonObject(result.stdout)
+    // `groups`/`grand_total_bytes` (the pre-existing `CleanupSummary` shape)
+    // must still be there unchanged -- `storage` is a purely additive third
+    // sibling key.
+    #expect(json?["groups"] != nil)
+    #expect(json?["grand_total_bytes"] != nil)
+
+    let storage = try #require(json?["storage"] as? [String: Any])
+    let targets = try #require(storage["targets"] as? [[String: Any]])
+    #expect(!targets.isEmpty)
+    #expect((storage["grand_total_bytes"] as? Int ?? 0) > 0)
+
+    // `Fixtures.makeMessyLibrary` gives `M45_Pleiades` several session light
+    // files -- it must show up as a target row somewhere in the list.
+    let names = targets.compactMap { $0["target"] as? String }
+    #expect(names.contains("M45_Pleiades"))
+    let firstRow = try #require(targets.first)
+    #expect(firstRow["display_name"] != nil)
+    #expect((firstRow["total_bytes"] as? Int ?? 0) > 0)
+
+    // Sorted size-descending.
+    let totals = targets.compactMap { $0["total_bytes"] as? Int }
+    #expect(totals == totals.sorted(by: >))
 }
 
 @Test func cleanupHumanOutputPrintsGroupsAndTotal() throws {

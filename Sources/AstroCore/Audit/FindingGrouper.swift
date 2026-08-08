@@ -8,8 +8,10 @@ import Foundation
 /// dozens or hundreds of near-identical rows.
 public enum FindingGrouper {
     /// Identifies one group: same severity, same category, same
-    /// `groupKey` (see `groupKey(for:config:)`).
-    public struct Key: Hashable, Sendable {
+    /// `groupKey` (see `groupKey(for:config:)`). `Codable` (R11-T8) so
+    /// `AuditDiff`'s new-group keys can be serialized straight into
+    /// `audit --json`'s `diff` block without a separate DTO.
+    public struct Key: Hashable, Codable, Sendable {
         public let severity: Severity
         public let category: String
         public let groupKey: String

@@ -594,6 +594,78 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
     #expect(seenRunIDs == Set(runIDs.suffix(3)))
 }
 
+// MARK: - Diff against the previous run (R11-T8/F6 integration)
+
+/// End-to-end proof that the pieces `AppState.runAudit`/`Commands.cmdAudit`
+/// actually wire together at their call sites -- `Database.previousRunID`,
+/// `AuditEngine.run`'s own `pruneFindings(keepRuns: 3)` call, and
+/// `AuditDiff.compute` -- really do fit together the way the doc comments on
+/// each piece claim, using the SAME fixture library every other
+/// `AuditEngine` test in this file uses (rather than `AuditDiffTests`'s
+/// hand-built `Finding` arrays).
+@Test func auditEngineRunsTwiceInARowDiffCleanlyAgainstThePreviousRun() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    let engine = AuditEngine(config: fixture.config, db: fixture.db)
+    let (firstRunID, firstFindings) = try engine.run()
+
+    // Nothing on disk changed between the two runs -- every group from the
+    // first run must still be there, unchanged, on the second.
+    let (secondRunID, secondFindings) = try engine.run()
+
+    let previousRunID = try fixture.db.previousRunID(before: secondRunID, kind: "audit")
+    #expect(previousRunID == firstRunID)
+
+    let previousFindings = try fixture.db.findings(runID: try #require(previousRunID))
+    let diff = AuditDiff.compute(previous: previousFindings, current: secondFindings, config: fixture.config)
+
+    #expect(diff.newCount == 0)
+    #expect(diff.resolvedCount == 0)
+    #expect(diff.unchangedCount == FindingGrouper.group(firstFindings, config: fixture.config).count)
+    #expect(diff.unchangedCount > 0)
+}
+
+/// A brand-new finding category (a fresh placeholder-named stack directory
+/// dropped between the two runs) shows up as `newGroups`, with everything
+/// else from the first run reported unchanged -- not folded into "resolved"
+/// or dropped silently.
+@Test func auditEngineDiffFlagsAFreshlyIntroducedFindingAsNew() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    let engine = AuditEngine(config: fixture.config, db: fixture.db)
+    let (firstRunID, _) = try engine.run()
+
+    // Same "please_enter" placeholder pattern `PlaceholderNameRule` already
+    // catches in the fixture's `Please_enter_a_value.._Milkyway`, just under
+    // a different target name -- a genuinely NEW group, not a duplicate of
+    // the one the first run already found.
+    let newStrayURL = fixture.root.appendingPathComponent("stacks/Please_enter_a_value.._Andromeda/2026-05-01/stack.fit")
+    try FileManager.default.createDirectory(at: newStrayURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "fixture dummy content\n".write(to: newStrayURL, atomically: true, encoding: .utf8)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let (secondRunID, secondFindings) = try engine.run()
+    let previousRunID = try #require(try fixture.db.previousRunID(before: secondRunID, kind: "audit"))
+    #expect(previousRunID == firstRunID)
+    let previousFindings = try fixture.db.findings(runID: previousRunID)
+
+    let diff = AuditDiff.compute(previous: previousFindings, current: secondFindings, config: fixture.config)
+
+    // The new stray stack directory trips TWO rules at once (a placeholder
+    // name AND -- since it has no matching `sessions/` counterpart --
+    // `missing-counterpart`), so both show up as new groups; nothing from
+    // the first run disappears.
+    #expect(diff.resolvedCount == 0)
+    let newHit = try #require(diff.newGroups.first {
+        $0.key.category == "placeholder-name" && $0.key.groupKey == "stacks/Please_enter_a_value.._Andromeda"
+    })
+    #expect(newHit.key.severity == .sureError)
+}
+
 // MARK: - Unit tests for the small helpers
 
 @Test func globMatcherHandlesSimpleWildcards() throws {

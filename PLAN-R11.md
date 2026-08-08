@@ -22,7 +22,7 @@
 - [x] 2. Persona-review (4 agent) — kész
 - [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
 - [x] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [x]
-- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [ ] T9 [ ] T10 [ ] T11 [ ] T12 [ ] T13 [ ]
+- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [ ] T10 [ ] T11 [ ] T12 [ ] T13 [ ]
 - [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [ ] T15 [ ] T16 [ ] T17 [ ]
 - [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
 - [ ] 8. Release v0.13.0
@@ -304,7 +304,7 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   (terv-export + kalibrációs bevásárlólista).
 - **T7 — Kiugró-híd**: F4 teljes (miért-popover, kiugrók átnézése, batch
   elvetés-jelölés, "javasolt: elvetés").
-- **T8 — Audit-diff + Tárhely**: F6 + F19.
+- **T8 [x] — Audit-diff + Tárhely**: F6 + F19.
 - **T9 — Előző éjszaka**: F5 (oldal + feltételes sidebar-sor + auto-scan opt-in).
 - **T10 — Trendek + szenzor-történet**: F7 + F8.
 - **T11 — Stack-lista v2**: F15 (szűrő-bontott hardlink-fa, manifest.csv,
@@ -369,3 +369,16 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   jelölése… (N)" megerősítő sheet, "javasolt: elvetés" jelzés a Saját
   döntés cellában és a review-sheet fejlécében. Következő: T8
   (Audit-diff + Tárhely).
+- 2026-08-08: T8 (Audit-diff + Tárhely) kész — F6: core `AuditDiff`
+  (severity/category/groupKey granularitás, ack-független) +
+  `Database.previousRunID(before:kind:)` (ugyanaz a hívás szolgálja ki a
+  friss futást ÉS az újraindítás utáni visszaállítást); AuditPage
+  diff-összegző sor a szegmens-picker alatt, "ÚJ" jelvény, "Csak az újak"
+  toolbar-váltó; CLI `audit --json` additív `diff` blokk + emberi
+  összegző sor. F19: core `StorageQueries`/`TargetStorage`/
+  `StorageSummary` (célpontonkénti méret area-bontással, `missing`
+  kizárva); AuditPage ▸ Takarítható "Tárhely" `DisclosureGroup` a
+  cleanup-tartalom fölött (top 10 + "Összes megjelenítése", "⋯" menü,
+  semmi törlés-akció); CLI `cleanup --json` additív `storage` blokk
+  (indoklás: ugyanaz a szegmens, nem külön alparancs). Következő: T9
+  (Előző éjszaka).

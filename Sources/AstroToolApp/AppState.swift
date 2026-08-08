@@ -227,9 +227,25 @@ final class AppState: @unchecked Sendable {
     var scanSummary: ScanSummary?
     var findings: [Finding] = []
     var lastRunID: Int64?
+    /// R11-T8/F6: this run's findings compared against the run immediately
+    /// before it (`Database.previousRunID(before:kind:)`), or `nil` when
+    /// there is no previous audit run to compare against (the very first
+    /// audit ever, or before any audit has run this launch). Set alongside
+    /// `lastRunID`/`findings` in both places that populate them --
+    /// `runAudit` (a fresh run) and `openRoot` (restoring the last completed
+    /// run across launches) -- so the Audit page's diff summary row/"ÚJ"
+    /// badges/"Csak az újak" toggle work identically whether the audit just
+    /// ran or was restored from disk.
+    var auditDiff: AuditDiff.Result?
     var includeSuspiciousInScript: Bool = false
 
     var cleanupSummary: CleanupSummary?
+    /// R11-T8/F19: per-target on-disk size map for the Audit page's
+    /// Takarítható segment "Tárhely" block. Loaded alongside
+    /// `cleanupSummary` everywhere that populates it (`loadCleanup`,
+    /// `loadDashboardData`) since both are pure `files`-table reads shown on
+    /// the same segment -- never tied to whether an audit has ever run.
+    var storageSummary: StorageSummary?
     /// R9-T2/A.5's "Takarítható" segment `Limit` stepper -- how many paths
     /// each expanded cleanup-category row shows before an "…további N" row,
     /// same idea as the CLI `cleanup --limit` display cap (default 10).
@@ -775,6 +791,10 @@ final class AppState: @unchecked Sendable {
             // sitting in the `runs`/`findings` tables.
             lastRunID = try? opened.lastRunID(kind: "audit")
             findings = lastRunID.flatMap { try? opened.findings(runID: $0) } ?? []
+            // R11-T8/F6: restore the diff-vs-previous-run alongside
+            // `findings`/`lastRunID` -- see `auditDiff`'s own doc comment for
+            // why this needs to happen in both places that set those two.
+            auditDiff = Self.loadAuditDiff(currentRunID: lastRunID, currentFindings: findings, db: opened, config: config)
             // R9-D2/D3: same idea for the dashboard data (stats/plan/
             // projects/cleanup) every sidebar badge, phase dot, and the "Ma
             // este" Állapot/Hiányzik column depend on -- see
@@ -962,29 +982,55 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let (runID, findings) = try await Task.detached(priority: .userInitiated) {
+                let (runID, findings, diff) = try await Task.detached(priority: .userInitiated) {
                     let engine = AuditEngine(config: cfg, db: db)
-                    return try engine.run(includeDuplicates: includeDuplicates)
+                    let (runID, findings) = try engine.run(includeDuplicates: includeDuplicates)
+                    // R11-T8/F6: diff against the run immediately before
+                    // this one -- see `AppState.loadAuditDiff`'s doc comment.
+                    let diff = Self.loadAuditDiff(currentRunID: runID, currentFindings: findings, db: db, config: cfg)
+                    return (runID, findings, diff)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.lastRunID = runID
                 self.findings = findings
+                self.auditDiff = diff
                 self.progressText = "Audit kész: \(findings.count) találat"
 
-                // Best-effort refresh of the cleanup report, same as Stats/
-                // Calib get refreshed after a scan -- a failure here
-                // shouldn't turn an otherwise-successful audit into a
+                // Best-effort refresh of the cleanup/storage reports, same
+                // as Stats/Calib get refreshed after a scan -- a failure
+                // here shouldn't turn an otherwise-successful audit into a
                 // reported error.
-                if let cleanupResult = try? await Task.detached(priority: .userInitiated, operation: {
-                    try CleanupReport.build(db: db, config: cfg)
+                if let refreshed = try? await Task.detached(priority: .userInitiated, operation: {
+                    (try CleanupReport.build(db: db, config: cfg), try StorageQueries.perTarget(db: db, config: cfg))
                 }).value {
-                    self.cleanupSummary = cleanupResult
+                    self.cleanupSummary = refreshed.0
+                    self.storageSummary = refreshed.1
                 }
             } catch {
                 self.handle(error)
             }
             self.endOperation(opID)
         }
+    }
+
+    /// `currentRunID`'s previous audit run's findings compared against
+    /// `currentFindings`, or `nil` when there's no previous run to compare
+    /// against (`currentRunID == nil`, or it's the first audit run ever).
+    /// A `static` helper (not an instance method) so `runAudit`'s
+    /// `Task.detached` closure can call it without capturing `self` --
+    /// shared between that (fresh-run) call site and `openRoot` (restoring
+    /// the diff across launches) so the two never compute it differently.
+    private static nonisolated func loadAuditDiff(
+        currentRunID: Int64?,
+        currentFindings: [Finding],
+        db: Database,
+        config: AstroConfig
+    ) -> AuditDiff.Result? {
+        guard let currentRunID, let previousRunID = try? db.previousRunID(before: currentRunID, kind: "audit") else {
+            return nil
+        }
+        let previousFindings = (try? db.findings(runID: previousRunID)) ?? []
+        return AuditDiff.compute(previous: previousFindings, current: currentFindings, config: config)
     }
 
     // MARK: - Finding acks (B5)
@@ -1109,11 +1155,16 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try CleanupReport.build(db: db, config: cfg)
+                // R11-T8/F19: the Takarítható segment's "Tárhely" block sits
+                // above this same report's content and is loaded on the
+                // exact same trigger, so it's fetched alongside rather than
+                // via a separate on-appear/operation.
+                let (result, storage) = try await Task.detached(priority: .userInitiated) {
+                    (try CleanupReport.build(db: db, config: cfg), try StorageQueries.perTarget(db: db, config: cfg))
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.cleanupSummary = result
+                self.storageSummary = storage
                 self.progressText = "Takarítási riport kész: \(result.groups.count) csoport"
             } catch {
                 self.handle(error)
@@ -1512,6 +1563,10 @@ final class AppState: @unchecked Sendable {
         var night: NightInfo
         var projects: [ProjectState]
         var cleanup: CleanupSummary
+        /// R11-T8/F19: fetched alongside `cleanup` (same trigger, same
+        /// segment) so a fresh launch's Audit page shows the "Tárhely"
+        /// block without a separate on-demand load.
+        var storage: StorageSummary
         // N7 (R9 round 3): the sidebar's Kalibráció/Szenzor-profilok badges
         // read `calibNeeds`/`sensorProfiles` directly -- without these in
         // the SAME bundle, a fresh launch showed both badges stuck at 0
@@ -1590,12 +1645,13 @@ final class AppState: @unchecked Sendable {
                     let night = Planner.nightInfo(date: date, site: site)
                     let projects = try ProjectStatusQueries.projects(db: db, config: cfg)
                     let cleanup = try CleanupReport.build(db: db, config: cfg)
+                    let storage = try StorageQueries.perTarget(db: db, config: cfg)
                     let calib = try Self.loadCalibBundle(db: db, config: cfg)
                     return DashboardBundle(
                         stats: stats, sessionsByTarget: sessionsByTarget, panelsByTarget: panelsByTarget,
                         stacksByTarget: stacksByTarget, stackGroupsByTarget: stackGroupsByTarget,
                         plan: plans, site: site, night: night, projects: projects, cleanup: cleanup,
-                        calib: calib
+                        storage: storage, calib: calib
                     )
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
@@ -1610,6 +1666,7 @@ final class AppState: @unchecked Sendable {
                 self.planDate = date
                 self.projectStates = bundle.projects
                 self.cleanupSummary = bundle.cleanup
+                self.storageSummary = bundle.storage
                 // N7 (R9 round 3): see `DashboardBundle.calib`'s doc comment
                 // -- this is what makes the sidebar's Kalibráció/Szenzor-
                 // profilok badges non-zero on a fresh launch.

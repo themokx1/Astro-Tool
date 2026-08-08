@@ -22,6 +22,17 @@ struct AuditPage: View {
     /// szűrő többválasztós Menu lesz"). Empty means "no filter" (show every
     /// category present in the current segment).
     @State private var selectedCategories: Set<String> = []
+    /// R11-T8/F6: the Hibák/Gyanús/Szándékos toolbar toggle -- when `true`,
+    /// only groups `appState.auditDiff` flags as new since the previous
+    /// audit run are shown. Only ever surfaced in the toolbar when there IS
+    /// a diff with at least one new group (see the `.toolbar` builder).
+    @State private var showOnlyNewFindings: Bool = false
+    /// R11-T8/F19: the Takarítható segment's "Tárhely" block starts open but
+    /// is collapsible (spec: "alapból nyitva, de becsukható").
+    @State private var storageSectionExpanded: Bool = true
+    /// R11-T8/F19: "Összes megjelenítése" under the Tárhely block's top-10 --
+    /// once toggled on, every target shows (with a "Kevesebb" way back).
+    @State private var showAllStorageTargets: Bool = false
 
     // MARK: - Derived finding buckets (A.5's reframing)
 
@@ -103,6 +114,44 @@ struct AuditPage: View {
         appState.showAckedFindings ? groups : groups.filter { !isAcked($0) }
     }
 
+    // MARK: - Diff (R11-T8/F6)
+
+    /// Every group `appState.auditDiff` considers new since the previous
+    /// audit run -- `[]` (never `nil`) when there's no diff at all, so
+    /// `isNewGroup`/`hasNewFindings` don't need their own nil-handling.
+    private var newGroupKeys: Set<FindingGrouper.Key> {
+        Set((appState.auditDiff?.newGroups ?? []).map(\.key))
+    }
+
+    private func isNewGroup(_ group: FindingGrouper.Group) -> Bool {
+        newGroupKeys.contains(group.key)
+    }
+
+    private var hasNewFindings: Bool {
+        !newGroupKeys.isEmpty
+    }
+
+    /// "Csak az újak" applied on top of the ack filter -- shown-groups list
+    /// the findings segment actually renders.
+    private var newFilteredGroups: [FindingGrouper.Group] {
+        guard showOnlyNewFindings else { return visibleGroups }
+        return visibleGroups.filter { isNewGroup($0) }
+    }
+
+    /// "+3 új · 5 megoldódott · 12 változatlan" -- zero-value segments
+    /// dropped (spec: "0 értékek elhagyva"); `nil` (row hidden entirely)
+    /// when there's no previous run to compare against, OR every count
+    /// happens to be zero (nothing left worth saying).
+    private var diffSummaryText: String? {
+        guard let diff = appState.auditDiff else { return nil }
+        var parts: [String] = []
+        if diff.newCount > 0 { parts.append("+\(diff.newCount) új") }
+        if diff.resolvedCount > 0 { parts.append("\(diff.resolvedCount) megoldódott") }
+        if diff.unchangedCount > 0 { parts.append("\(diff.unchangedCount) változatlan") }
+        guard !parts.isEmpty else { return nil }
+        return parts.joined(separator: " · ")
+    }
+
     /// N8 (R9 round 3): writes `currentPage` (`.cleanup`/`.audit`) alongside
     /// `auditSegment` -- without this, flipping the segmented picker by hand
     /// (rather than via the sidebar's "Takarítás" row) left `currentPage`
@@ -170,6 +219,15 @@ struct AuditPage: View {
                     selectedCategories = []
                 }
 
+                // R11-T8/F6: "+3 új · 5 megoldódott · 12 változatlan" --
+                // absent entirely when there's no previous run to compare
+                // against, or (defensively) when every count is zero.
+                if let diffSummaryText {
+                    Text(diffSummaryText)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
                 if let lastError = appState.lastError {
                     Text(lastError).foregroundStyle(.red)
                 }
@@ -220,6 +278,15 @@ struct AuditPage: View {
             if appState.auditSegment != .cleanable {
                 ToolbarItem {
                     Toggle("Rendben-jelöltek megjelenítése", isOn: $appState.showAckedFindings)
+                }
+            }
+
+            // R11-T8/F6: only worth showing once there's actually a diff
+            // AND it actually has a new group -- otherwise it's a toggle
+            // with nothing to filter.
+            if appState.auditSegment != .cleanable, hasNewFindings {
+                ToolbarItem {
+                    Toggle("Csak az újak", isOn: $showOnlyNewFindings)
                 }
             }
 
@@ -311,10 +378,15 @@ struct AuditPage: View {
             } else if visibleGroups.isEmpty {
                 Text("Minden csoport rendben jelölve -- kapcsold be a \"Rendben-jelöltek megjelenítése\" váltót a megtekintésükhöz.")
                     .foregroundStyle(.secondary)
+            } else if newFilteredGroups.isEmpty {
+                // R11-T8/F6: only reachable with "Csak az újak" on -- there
+                // ARE visible groups, just none of them new.
+                Text("Nincs új találat ebben a szegmensben -- kapcsold ki a \"Csak az újak\" váltót a többi megtekintéséhez.")
+                    .foregroundStyle(.secondary)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 4) {
-                        ForEach(visibleGroups, id: \.key) { group in
+                        ForEach(newFilteredGroups, id: \.key) { group in
                             groupRow(group)
                             Divider()
                         }
@@ -402,6 +474,16 @@ struct AuditPage: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+
+            // R11-T8/F6: only present since the previous audit run.
+            if isNewGroup(group) {
+                Text("ÚJ")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.blue))
+            }
 
             Text(group.firstMessage)
                 .font(.callout)
@@ -527,6 +609,12 @@ struct AuditPage: View {
 
     private var cleanableSegment: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // R11-T8/F19: the storage map sits ABOVE the cleanup-candidate
+            // content -- it's a pure "what's using space" view, unrelated to
+            // whether anything's worth cleaning up, so it doesn't wait on
+            // `noAuditReminderBanner`/`quarantineBanner` either.
+            storageBlock
+
             if appState.lastRunID == nil {
                 noAuditReminderBanner
             }
@@ -550,6 +638,140 @@ struct AuditPage: View {
                 .tableStyle(.inset(alternatesRowBackgrounds: true))
             }
         }
+    }
+
+    // MARK: - Tárhely block (R11-T8/F19)
+
+    private var storageTargets: [TargetStorage] {
+        appState.storageSummary?.targets ?? []
+    }
+
+    /// Top 10 by default (already size-desc from `StorageQueries.perTarget`),
+    /// every target once "Összes megjelenítése" is tapped.
+    private var visibleStorageTargets: [TargetStorage] {
+        showAllStorageTargets ? storageTargets : Array(storageTargets.prefix(10))
+    }
+
+    /// Pure "what's using space" map -- no cleanup action of any kind lives
+    /// here (spec: "Tisztán térkép — SEMMI törlés-akció"), only "Megnyitás
+    /// Finderben"/"Célpont megnyitása" per row, same as `AllTargetsPage`'s
+    /// target context menu.
+    @ViewBuilder
+    private var storageBlock: some View {
+        if !storageTargets.isEmpty {
+            DisclosureGroup(isExpanded: $storageSectionExpanded) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(visibleStorageTargets, id: \.target) { row in
+                        storageRow(row)
+                        Divider()
+                    }
+                    if storageTargets.count > 10 {
+                        Button(showAllStorageTargets ? "Kevesebb megjelenítése" : "Összes megjelenítése (\(storageTargets.count))") {
+                            showAllStorageTargets.toggle()
+                        }
+                        .buttonStyle(.link)
+                        .font(.callout)
+                    }
+                }
+                .padding(.top, 6)
+            } label: {
+                Text("Tárhely").font(.headline)
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.06)))
+        }
+    }
+
+    private func storageRow(_ row: TargetStorage) -> some View {
+        HStack(spacing: 10) {
+            Text(row.displayName)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(row.displayName)
+                .frame(minWidth: 160, maxWidth: 240, alignment: .leading)
+
+            Self.storageAreaBar(row)
+                .frame(width: 90, height: 8)
+
+            Text(Self.storageAreaCaption(row))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(Self.storageAreaCaption(row))
+
+            Spacer()
+
+            Text(Self.formatBytes(row.totalBytes))
+                .foregroundStyle(.secondary)
+                .frame(width: 90, alignment: .trailing)
+
+            storageRowMenu(row)
+        }
+    }
+
+    private func storageRowMenu(_ row: TargetStorage) -> some View {
+        Menu {
+            // Same wording/order as `AllTargetsPage`'s target context menu
+            // (R10 review item 8) -- "Megnyitás Finderben" targets the
+            // `sessions/<target>` folder, same convention as every other
+            // target-level Finder reveal in the app, even though a
+            // stacks/processed-only target has no such folder on disk.
+            Button("Célpont megnyitása") { appState.currentPage = .target(row.target) }
+            Button("Megnyitás Finderben") { appState.revealPathInFinder("sessions/\(row.target)") }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .frame(width: 24)
+    }
+
+    /// Fixed area order (not size-sorted) so the bar reads as a consistent
+    /// little legend across rows -- sessions/stacks/processed/egyéb, same
+    /// order the spec itself lists them in.
+    private static func storageAreaSegments(_ row: TargetStorage) -> [(area: LibraryArea, bytes: Int64)] {
+        guard row.totalBytes > 0 else { return [] }
+        return [
+            (.sessions, row.sessionsBytes), (.stacks, row.stacksBytes),
+            (.processed, row.processedBytes), (.other, row.otherBytes),
+        ].filter { $0.1 > 0 }
+    }
+
+    private static func storageAreaColor(_ area: LibraryArea) -> Color {
+        switch area {
+        case .sessions: return .blue
+        case .stacks: return .purple
+        case .processed: return .green
+        case .calibration, .other: return .gray
+        }
+    }
+
+    @ViewBuilder
+    private static func storageAreaBar(_ row: TargetStorage) -> some View {
+        let segments = storageAreaSegments(row)
+        if segments.isEmpty {
+            Color.secondary.opacity(0.15)
+                .clipShape(RoundedRectangle(cornerRadius: 2))
+        } else {
+            GeometryReader { geo in
+                HStack(spacing: 1) {
+                    ForEach(segments, id: \.area) { segment in
+                        storageAreaColor(segment.area)
+                            .frame(width: max(1, geo.size.width * (Double(segment.bytes) / Double(row.totalBytes))))
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 2))
+        }
+    }
+
+    private static func storageAreaCaption(_ row: TargetStorage) -> String {
+        var parts: [String] = []
+        if row.sessionsBytes > 0 { parts.append("sessions \(formatBytes(row.sessionsBytes))") }
+        if row.stacksBytes > 0 { parts.append("stacks \(formatBytes(row.stacksBytes))") }
+        if row.processedBytes > 0 { parts.append("processed \(formatBytes(row.processedBytes))") }
+        if row.otherBytes > 0 { parts.append("egyéb \(formatBytes(row.otherBytes))") }
+        return parts.joined(separator: " · ")
     }
 
     /// R11-T2: a thin, dismissal-free reminder atop the Takarítható segment
