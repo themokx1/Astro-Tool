@@ -22,7 +22,7 @@
 - [x] 2. Persona-review (4 agent) — kész
 - [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
 - [x] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [x]
-- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [ ] T10 [ ] T11 [ ] T12 [ ] T13 [ ]
+- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [x] T10 [ ] T11 [ ] T12 [ ] T13 [ ]
 - [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [ ] T15 [ ] T16 [ ] T17 [ ]
 - [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
 - [ ] 8. Release v0.13.0
@@ -305,7 +305,7 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
 - **T7 — Kiugró-híd**: F4 teljes (miért-popover, kiugrók átnézése, batch
   elvetés-jelölés, "javasolt: elvetés").
 - **T8 [x] — Audit-diff + Tárhely**: F6 + F19.
-- **T9 — Előző éjszaka**: F5 (oldal + feltételes sidebar-sor + auto-scan opt-in).
+- **T9 [x] — Előző éjszaka**: F5 (oldal + feltételes sidebar-sor + auto-scan opt-in).
 - **T10 — Trendek + szenzor-történet**: F7 + F8.
 - **T11 — Stack-lista v2**: F15 (szűrő-bontott hardlink-fa, manifest.csv,
   sheet-finomhangolás).
@@ -382,3 +382,25 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   semmi törlés-akció); CLI `cleanup --json` additív `storage` blokk
   (indoklás: ugyanaz a szegmens, nem külön alparancs). Következő: T9
   (Előző éjszaka).
+- 2026-08-08: T9 (Előző éjszaka) kész — F5 teljes: core
+  `ScanSummary.changedSessions` (`Scanner.swift`) a `changedTargets`
+  (T4) session-szintű additív bővítése — csak `.sessions`-terület LIGHT
+  hozzáadás/frissítés számít bele (hiányzó fájl, más szerep, stacks/
+  processed-terület nem), új `ScanSummary.SessionKey` típus, 4 új
+  `ScannerTests` eset. `AppState.freshSessionKeys` (memóriában, session-
+  only) a legutóbbi scan `changedSessions`-e; feltételes "Előző éjszaka"
+  sidebar-sor (jelvény = friss session-szám, `⌘`-gyorsbillentyű nélkül,
+  mint a majdani Trendek) a Ma este/Naptár/Felfedezés alatt. Új
+  `Page.previousNight` + `PreviousNightPage`: session-kártyák (célpont+
+  dátum címsor a Sessionök szegmensre navigál, keret/integráció/szűrő-
+  bontás a T5 `TDFormat.filterBreakdownSummary`-val, medián FWHM″,
+  Hűtés/Fókusz `VerdictChip` `NightHealth.report`-ból, kiugró-arány
+  `Rater.cachedScores`-ból vagy "még nincs pontozva"), kártyánként
+  Pontozás/Átnézés…/Éjszaka-riport gomb, felül "Új sessionök pontozása"
+  (megerősítés nélkül, meglévő isBusy/progress/Mégse infrastruktúra),
+  üres állapot `ContentUnavailableView` + "Beolvasás" gombbal. Opt-in
+  "Automatikus beolvasás kötet csatlakozásakor" (Settings ▸ Könyvtár,
+  alapból KI) `UserDefaults`-ban (`AppState.autoScanOnMount`, NEM
+  `AstroConfig`-ban — app-viselkedés, nem könyvtár-szabály), a meglévő
+  mount-observer sikeres `retryRootAccess()`-e után indít `runScan()`-t,
+  ha épp semmi más nem fut. Következő: T10 (Trendek + szenzor-történet).

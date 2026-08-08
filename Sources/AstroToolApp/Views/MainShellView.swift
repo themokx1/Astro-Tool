@@ -192,6 +192,10 @@ private struct DetailContainerView: View {
         // R10-B4: the catalog discovery sweep -- its own page, no segment
         // to preselect (same shape as `.nights` below).
         case .discover: DiscoveryPage()
+        // R11-T9/F5: no segment to preselect (its own page, like `.discover`
+        // above) -- reachable even with zero fresh sessions (its own empty
+        // state), see `Page.previousNight`'s doc comment.
+        case .previousNight: PreviousNightPage()
         case .allTargets: AllTargetsPage()
         // R10-B3: the cross-target session browser -- no segment to
         // preselect (unlike `.calendar`/`.cleanup` below), its own page.
@@ -220,6 +224,7 @@ private struct DetailContainerView: View {
         case .tonight: return "Ma este"
         case .calendar: return "Naptár"
         case .discover: return "Felfedezés"
+        case .previousNight: return "Előző éjszaka"
         case .allTargets: return "Minden célpont"
         case .nights: return "Éjszakák"
         case .target(let name): return appState.stats.first { $0.target == name }?.displayName ?? name

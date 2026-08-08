@@ -212,6 +212,90 @@ private struct ScanFixture {
     #expect(summary.changedTargets == ["IC1805-1848_Heart_and_Soul_Nebula"])
 }
 
+// MARK: - changedSessions (R11-T9/F5)
+
+@Test func changedSessionsListsEveryTargetDatePairWithANewLightFrame() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    let first = try scanner.scan()
+
+    // First scan: every LIGHT frame under `sessions/` is `added`, so its
+    // (target, date) pair counts as changed -- a `stacks/`-area file (no
+    // "session date" of its own) never contributes an entry.
+    #expect(first.changedSessions.contains(ScanSummary.SessionKey(target: "M45_Pleiades", date: "2026-01-10")))
+    #expect(first.changedSessions.contains(
+        ScanSummary.SessionKey(target: "IC1805-1848_Heart_and_Soul_Nebula", date: "2026-01-17")
+    ))
+    // Sorted, deduplicated -- never one entry per file within the same night.
+    #expect(first.changedSessions == Array(Set(first.changedSessions)).sorted())
+
+    // Second scan over the exact same tree: nothing added/updated, so
+    // nothing should be reported as a fresh session either.
+    let second = try scanner.scan()
+    #expect(second.changedSessions.isEmpty)
+}
+
+@Test func changedSessionsReportsOnlyTheSessionOfAModifiedLightFrame() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/light_0001.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try "changed content, now longer than before\n".write(to: fileURL, atomically: true, encoding: .utf8)
+    let future = Date().addingTimeInterval(30)
+    try FileManager.default.setAttributes([.modificationDate: future], ofItemAtPath: fileURL.path)
+
+    let summary = try scanner.scan()
+    #expect(summary.updated == 1)
+    #expect(summary.changedSessions == [ScanSummary.SessionKey(target: "M45_Pleiades", date: "2026-01-10")])
+}
+
+@Test func changedSessionsExcludesANewlyMissingLightFrame() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    // Deleting inside the FIXTURE tmp tree only -- never the real library.
+    let relativePath = "sessions/IC1805-1848_Heart_and_Soul_Nebula/2026-01-17/lights/light_0001.fit"
+    try FileManager.default.removeItem(at: fixture.root.appendingPathComponent(relativePath))
+
+    let summary = try scanner.scan()
+    #expect(summary.missing == 1)
+    // `changedTargets` still lists it (a rescan pipeline should re-rate this
+    // target), but `changedSessions` -- "fresh material to REVIEW" -- must
+    // not, since nothing new arrived.
+    #expect(summary.changedTargets == ["IC1805-1848_Heart_and_Soul_Nebula"])
+    #expect(summary.changedSessions.isEmpty)
+}
+
+@Test func changedSessionsExcludesANewStackFile() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    // A `stacks/`-area file has no session date, and isn't a light frame --
+    // touching it must bump `changedTargets` but never `changedSessions`.
+    let relativePath = "stacks/M42_Orion/2026-01-17/result.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try "changed stack content, now longer than before\n".write(to: fileURL, atomically: true, encoding: .utf8)
+    let future = Date().addingTimeInterval(30)
+    try FileManager.default.setAttributes([.modificationDate: future], ofItemAtPath: fileURL.path)
+
+    let summary = try scanner.scan()
+    #expect(summary.updated == 1)
+    #expect(summary.changedTargets == ["M42_Orion"])
+    #expect(summary.changedSessions.isEmpty)
+}
+
 @Test func subpathScopedScanOnlyTouchesThatSubtree() throws {
     let fixture = try ScanFixture.make()
     defer { fixture.cleanup() }

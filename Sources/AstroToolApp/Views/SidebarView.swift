@@ -141,6 +141,16 @@ struct SidebarView: View {
                 // for TONIGHT), not a library-browsing one, hence living
                 // here rather than next to "Éjszakák" under KÖNYVTÁR below.
                 navRow("Felfedezés", systemImage: "sparkles", page: .discover)
+                // R11-T9/F5: only shown once the last scan actually left
+                // something fresh -- `freshSessionKeys` is session-only
+                // (never persisted), so this naturally disappears again on
+                // relaunch until the next scan finds new light frames.
+                if !appState.freshSessionKeys.isEmpty {
+                    navRow(
+                        "Előző éjszaka", systemImage: "sunrise", page: .previousNight,
+                        badgeCount: appState.freshSessionKeys.count
+                    )
+                }
                 // R10-A5: `Page.searchResults` had no sidebar row at all --
                 // no highlight while it was on screen, no way back to it
                 // once you navigated elsewhere. Only shown once a search has

@@ -276,6 +276,40 @@ T3 — Settings csomag után.
     Takarítható szegmensbe teszi, a meglévő takarítási lista FÖLÉ, sosem
     önálló oldalként; a parancsstruktúra ezt 1:1 követi. A meglévő
     `groups`/`grand_total_bytes` mezők változatlanok.
+- **"Előző éjszaka" reggeli triage-oldal (R11-T9/F5)**: az éjszaka utáni
+  rutin szét volt szórva 4-5 oldalra — most egy helyen. Új core
+  `ScanSummary.changedSessions` (`Scanner.swift`): a `changedTargets`
+  (R11-T4) target-szintű bővítése SESSION-szintre — minden `(target, dátum)`
+  pár, amihez EBBEN a futásban új/frissült LIGHT-fájl jött (szűrő/dark/bias
+  változás, `stacks`/`processed`-terület vagy egy eltűnt fájl sosem számít
+  bele — csak a valódi "friss anyag" jelentés), rendezett+deduplikált
+  `SessionKey` lista, teszttel (négy új `ScannerTests` eset).
+  - `AppState.freshSessionKeys`: a legutóbbi `runScan()` `changedSessions`-e,
+    memóriában (session-only, ahogy a spec kéri — app-újraindítás után
+    magától kiürül, amíg nincs új scan).
+  - Feltételes sidebar-sor "Előző éjszaka" a Ma este/Naptár/Felfedezés
+    szekció alján — CSAK akkor látszik, ha `freshSessionKeys` nem üres,
+    jelvénnyel (friss session-szám); saját `Page.previousNight`, `⌘`-
+    gyorsbillentyű nélkül (mint a Trendek majd később).
+  - `PreviousNightPage` (új): session-kártyák (LazyVStack) célpont+dátum
+    címsorral (kattintva a célpont Sessionök szegmensére visz), keretszám +
+    integráció + szűrő-bontás (a meglévő T5 `TDFormat.filterBreakdownSummary`
+    formázóval, ugyanaz, mint a NightsPage "Szűrők" oszlopa), medián FWHM″
+    (px-fallback), Hűtés/Fókusz `VerdictChip` (`NightHealth.report`),
+    kiugró-arány (`Rater.cachedScores` + `FrameScore.isOutlier`; pontozatlan
+    sessionnél "még nincs pontozva"). Kártyánként "Pontozás", "Átnézés…"
+    (`FrameReviewSheet`, saját `AppState.reviewFrameScores`/
+    `loadReviewFrames` — nem a célpont-oldal `frameScores`-ét használja,
+    hogy ne írja felül azt), "Éjszaka-riport" gomb. Felül "Új sessionök
+    pontozása" — megerősítés NÉLKÜL lefuttatja a rate-et minden friss
+    sessionre, a meglévő isBusy/progress/Mégse toolbar-infrastruktúrával.
+    Üres állapot (nincs friss anyag): `ContentUnavailableView` +
+    "Beolvasás" gomb.
+  - Opt-in "Automatikus beolvasás kötet csatlakozásakor" (Settings ▸
+    Könyvtár, alapból KI) — `AppState.autoScanOnMount`, `UserDefaults`-ban
+    (nem `AstroConfig`-ban: ez app-viselkedés, nem könyvtár-szabály).
+    Bekapcsolva: a meglévő mount-observer sikeres `retryRootAccess()`-e
+    után, ha épp nem fut más művelet, automatikusan `runScan()`-t indít.
 
 ### Changed
 

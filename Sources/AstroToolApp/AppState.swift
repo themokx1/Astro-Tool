@@ -40,6 +40,17 @@ enum Page: Hashable {
     /// one) -- deliberately NOT next to "Éjszakák" under KÖNYVTÁR, which
     /// only ever shows targets/sessions the user already has.
     case discover
+    /// R11-T9/F5: the "Előző éjszaka" morning-triage page -- session cards
+    /// for every `(target, date)` the last scan reported a new/updated
+    /// LIGHT frame for (`AppState.freshSessionKeys`). Sits in the same
+    /// unnamed top section as `.tonight`/`.calendar`/`.discover` (see the UI
+    /// plan's sidebar order: Ma este → Naptár → Felfedezés → [feltételes]
+    /// Előző éjszaka → [feltételes] Keresés) -- `SidebarView` only shows its
+    /// row when `freshSessionKeys` is non-empty, but the `Page` case itself
+    /// always exists so a page already open when the last fresh session gets
+    /// acted on doesn't vanish out from under the user; it falls back to
+    /// `PreviousNightPage`'s own empty state instead (F5 item 6).
+    case previousNight
     case allTargets
     /// R10-B3: the "Éjszakák" cross-target session browser -- every session
     /// across every target in one sortable table (`NightsPage`), the flat
@@ -64,6 +75,38 @@ struct DiscoveryFOV: Equatable {
     var heightDeg: Double
 }
 
+/// R11-T9/F5: one "Előző éjszaka" triage card -- a `NightRow` (already
+/// carries the display name, usable-frame count, integration,
+/// `FilterBreakdown`, and median FWHM `SessionsSegment`/`NightsPage` show)
+/// plus the two pieces of per-session state that live only on the DETAIL
+/// page today (`NightHealth`'s cooler/focus verdicts, `Rater`'s outlier
+/// flag) -- built by `AppState.buildPreviousNightCards`, never by a core
+/// query of its own (there's no new core API for this beyond `ScanSummary
+/// .changedSessions`; every field below is a straight read of an existing
+/// one).
+struct PreviousNightCard: Identifiable, Equatable {
+    var target: String
+    var displayName: String
+    var date: String
+    var usableLightCount: Int
+    var integrationSeconds: Double
+    var filterBreakdown: [FilterIntegration]
+    var medianFWHMArcsec: Double?
+    var medianFWHMPixels: Double?
+    var coolerVerdict: String
+    var focusVerdict: String
+    /// Count of frames `Rater.cachedScores` found for this session -- `0`
+    /// means "still nincs pontozva" (never rated at all), distinct from a
+    /// rated session that just happens to have zero outliers.
+    var ratedFrameCount: Int
+    /// Fraction (0...1) of `ratedFrameCount` flagged `FrameScore.isOutlier`;
+    /// `nil` exactly when `ratedFrameCount == 0` -- the card shows "még
+    /// nincs pontozva" in that case rather than a fake "0%".
+    var outlierRatio: Double?
+
+    var id: String { "\(target)|\(date)" }
+}
+
 /// The app's single source of truth. Thin by design: every real operation
 /// (scan/audit/rate/stats/calib/new-session) is a direct call into AstroCore,
 /// run off the main thread; this class only tracks UI-observable state and
@@ -80,6 +123,8 @@ struct DiscoveryFOV: Equatable {
 final class AppState: @unchecked Sendable {
     private static let bookmarkKey = "rootBookmark"
     private static let recentRootsKey = "recentRootBookmarks"
+    /// R11-T9/F5: `autoScanOnMount`'s `UserDefaults` key.
+    private static let autoScanOnMountKey = "autoScanOnMount"
 
     /// App-lifetime singleton reference, set from `init()`. The menu bar
     /// (`Views/Commands.swift`) needs to call into `AppState` from `.commands`
@@ -225,6 +270,50 @@ final class AppState: @unchecked Sendable {
     private var activationObserver: NSObjectProtocol?
 
     var scanSummary: ScanSummary?
+    /// R11-T9/F5: every `(target, date)` the MOST RECENT `runScan()` this
+    /// process ran reported a new/updated light frame for
+    /// (`ScanSummary.changedSessions`) -- the "Előző éjszaka" sidebar row's
+    /// badge count and the gate on whether it shows at all. Deliberately
+    /// REPLACED (not accumulated) on every scan, and deliberately
+    /// session-only (never persisted, unlike `lastScanDate`): the spec is
+    /// "what changed since the last scan", not "everything ever flagged
+    /// fresh this app run" -- an app relaunch (or a rescan that changes
+    /// nothing) naturally empties this back out, same as `scanSummary`
+    /// itself resets to whatever the most recent scan reported.
+    var freshSessionKeys: [ScanSummary.SessionKey] = []
+    /// R11-T9/F5: one triage card per `freshSessionKeys` entry, built by
+    /// `loadPreviousNight()`/`runRateFreshSessions()`/
+    /// `runRateFreshSession(target:date:)` -- `[]` before the page has ever
+    /// loaded this session (or whenever `freshSessionKeys` is empty).
+    var previousNightCards: [PreviousNightCard] = []
+    /// R11-T9/F5: `PreviousNightReviewSheet`'s own "Átnézés…" load target --
+    /// kept separate from the target-detail page's `frameScores` (which
+    /// belongs to whichever target's Minőség segment is open) so opening
+    /// this sheet from the triage page never clobbers that unrelated
+    /// state. `nil` while the sheet's load is in flight (or before it's
+    /// been opened at all this session); `PreviousNightReviewSheet`'s own
+    /// `onDisappear` clears it back to `nil`, same "operation-scoped
+    /// result, cleared on close" convention `PlateSolveSheet`'s
+    /// `plateSolveSummary` already established.
+    var reviewFrameScores: [FrameScore]?
+    /// R11-T9/F5: "Automatikus beolvasás kötet csatlakozásakor" (Settings ▸
+    /// Könyvtár) -- default OFF. This is app-BEHAVIOR config (whether a
+    /// filesystem event alone should ever trigger a scan), not
+    /// library-shape config, so it deliberately lives in `UserDefaults`
+    /// rather than `AstroConfig`/`config.json` -- same reasoning
+    /// `bookmarkKey`/`recentRootsKey` above already follow (this app's own
+    /// prefs, not something that should round-trip through the library's
+    /// checked-in-adjacent config file, and not something the CLI has any
+    /// use for). A plain computed property backed by `UserDefaults.standard`
+    /// directly, not `@AppStorage`: `AppState` is a plain `@Observable`
+    /// class, not a `View`, so `@AppStorage`'s `DynamicProperty` machinery
+    /// wouldn't integrate with `@Observable`'s own change tracking anyway --
+    /// same "raw `UserDefaults` read/write, no property-wrapper" shape
+    /// `recentRoots`'s persistence already uses.
+    var autoScanOnMount: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.autoScanOnMountKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.autoScanOnMountKey) }
+    }
     var findings: [Finding] = []
     var lastRunID: Int64?
     /// R11-T8/F6: this run's findings compared against the run immediately
@@ -720,6 +809,22 @@ final class AppState: @unchecked Sendable {
                 self.staleCheckTick += 1
                 guard self.rootStatus == .notMounted else { return }
                 self.retryRootAccess()
+                // R11-T9/F5: opt-in auto-scan -- ONLY when the user has
+                // explicitly turned on "Automatikus beolvasás kötet
+                // csatlakozásakor" (Settings ▸ Könyvtár, default OFF), the
+                // root just became reachable (`retryRootAccess()` above
+                // moved `rootStatus` off `.notMounted` to something other
+                // than another error), and nothing else is already running
+                // (`runScan`'s own `beginOperation` would otherwise cancel
+                // whatever `openRoot`'s dashboard-data reload just started --
+                // harmless on its own, same "latest wins" race every other
+                // back-to-back `beginOperation` call in this file already
+                // accepts, but pointless to trigger on top of some OTHER
+                // operation the user is actively waiting on).
+                guard self.autoScanOnMount, !self.isBusy,
+                      self.rootStatus == .ok || self.rootStatus == .notScanned
+                else { return }
+                self.runScan()
             }
         }
     }
@@ -763,6 +868,11 @@ final class AppState: @unchecked Sendable {
         // reuse the old root's (wrong) cached coordinate/`nil` instead of
         // ever resolving it for the newly opened one.
         coordinateInfoCache = [:]
+        // R11-T9/F5: same reasoning -- the PREVIOUS root's "fresh sessions"
+        // (and any triage cards built from them) must not leak into the
+        // newly opened one, which hasn't been scanned yet at all here.
+        freshSessionKeys = []
+        previousNightCards = []
 
         guard FileManager.default.fileExists(atPath: path) else {
             rootStatus = Self.classifyMissingRoot(path: path)
@@ -915,6 +1025,19 @@ final class AppState: @unchecked Sendable {
                 self.scanSummary = summary
                 self.rootStatus = .ok
                 self.lastScanDate = Date()
+                // R11-T9/F5: REPLACES (not merges into) whatever the
+                // previous scan this run reported -- "fresh" means "since
+                // the last scan", so a rescan that touched nothing empties
+                // this back out, same as `scanSummary` itself always
+                // reflects only the MOST RECENT scan. Any stale triage
+                // cards from a prior fresh set are dropped here too --
+                // `PreviousNightPage`'s own `onAppear`/`onChange` reload
+                // `previousNightCards` from the new `freshSessionKeys`
+                // whenever it's actually visible.
+                self.freshSessionKeys = summary.changedSessions
+                if summary.changedSessions.isEmpty {
+                    self.previousNightCards = []
+                }
                 // D12: any target's frames may have changed (new files,
                 // moved files, re-solved headers) -- drop the whole
                 // per-target coordinate-info memo rather than try to guess
@@ -1322,6 +1445,222 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.nights = result
                 self.progressText = "Éjszakák betöltve: \(result.count) session"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    // MARK: - Previous night (R11-T9/F5)
+
+    /// Builds one `PreviousNightCard` per `keys` entry -- reuses
+    /// `NightsQueries.allNights` (the exact same per-session bundle
+    /// `NightsPage`/`SessionsSegment` already show: display name, usable
+    /// frame count, integration, `FilterBreakdown`, median FWHM) rather than
+    /// re-deriving any of that, then adds the two fields that query doesn't
+    /// carry: `NightHealth.report`'s cooler/focus verdicts, and an outlier
+    /// ratio from `Rater.cachedScores`. Cheap even though `allNights` walks
+    /// every session in the library: `keys` is normally a small handful of
+    /// sessions (this run's fresh ones), and `NightsPage`'s own "Éjszakák"
+    /// page already pays this exact same full-library cost on every visit.
+    /// `nonisolated static` (not an instance method) so it can run inside
+    /// `Task.detached` without capturing `self`, same convention
+    /// `loadAuditDiff`/`loadVerdicts` above already use.
+    private nonisolated static func buildPreviousNightCards(
+        keys: [ScanSummary.SessionKey], db: Database, config: AstroConfig
+    ) throws -> [PreviousNightCard] {
+        guard !keys.isEmpty else { return [] }
+        let keySet = Set(keys)
+        let allRows = try NightsQueries.allNights(db: db, config: config)
+        let matched = allRows.filter { keySet.contains(ScanSummary.SessionKey(target: $0.target, date: $0.date)) }
+
+        var cards: [PreviousNightCard] = []
+        cards.reserveCapacity(matched.count)
+        for row in matched {
+            let health = try NightHealth.report(target: row.target, date: row.date, db: db, config: config)
+            let scores = try Rater.cachedScores(target: row.target, date: row.date, db: db, config: config)
+            let outlierRatio: Double? = scores.isEmpty
+                ? nil
+                : Double(scores.count { $0.isOutlier }) / Double(scores.count)
+            cards.append(PreviousNightCard(
+                target: row.target,
+                displayName: row.displayName,
+                date: row.date,
+                usableLightCount: row.usableLightCount,
+                integrationSeconds: row.integrationSeconds,
+                filterBreakdown: row.filterBreakdown,
+                medianFWHMArcsec: row.medianFWHMArcsec,
+                medianFWHMPixels: row.medianFWHMPixels,
+                coolerVerdict: health.cooler.verdict,
+                focusVerdict: health.focus.verdict,
+                ratedFrameCount: scores.count,
+                outlierRatio: outlierRatio
+            ))
+        }
+        // Most-recent-night-first -- the whole point of a MORNING triage
+        // page is "what did I shoot last", so last night's session(s)
+        // should be the very first cards, not wherever `changedSessions`'
+        // target-then-date sort happens to put them.
+        return cards.sorted { lhs, rhs in
+            if lhs.date != rhs.date { return lhs.date > rhs.date }
+            return lhs.target < rhs.target
+        }
+    }
+
+    /// `PreviousNightPage`'s own load -- called from its `onAppear` and
+    /// whenever `freshSessionKeys` changes while the page is visible (a
+    /// rescan while already looking at this page). A no-op DB round-trip
+    /// skip (not just an empty result) when there's nothing fresh at all,
+    /// so opening this page with zero fresh sessions never shows even a
+    /// momentary spinner before the empty state renders.
+    func loadPreviousNight() {
+        guard let db else { return }
+        let cfg = config
+        let keys = freshSessionKeys
+        guard !keys.isEmpty else {
+            previousNightCards = []
+            return
+        }
+
+        let opID = beginOperation("Előző éjszaka betöltése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let cards = try await Task.detached(priority: .userInitiated) {
+                    try Self.buildPreviousNightCards(keys: keys, db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.previousNightCards = cards
+                self.progressText = "Előző éjszaka betöltve: \(cards.count) session"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// One triage card's "Pontozás" button -- the same `Rater.rate` a
+    /// single-target `runRate(target:date:)` call runs, but refreshes only
+    /// THIS card's own derived fields in `previousNightCards` afterward
+    /// (not the target-detail page's `frameScores`/`qualitySummaries`/
+    /// `exposureAdvice` bundle, which this page never shows) -- kept as its
+    /// own method rather than reusing `runRate` so the two post-rate
+    /// refreshes can never race each other (see `runRate`'s own doc comment
+    /// on why chaining two `beginOperation`-based calls back-to-back drops
+    /// all but the last one).
+    func runRateFreshSession(target: String, date: String) {
+        guard let db else { return }
+        let cfg = config
+        let key = ScanSummary.SessionKey(target: target, date: date)
+
+        let opID = beginOperation("Pontozás indul…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await Task.detached(priority: .userInitiated) { [weak self] in
+                    var provider: StarMetricsProvider?
+                    if FileManager.default.isExecutableFile(atPath: cfg.rating.sirilPath) {
+                        provider = try? SirilCLI(path: cfg.rating.sirilPath)
+                    }
+                    let rater = Rater(db: db, config: cfg, provider: provider)
+                    return try rater.rate(target: target, date: date, force: false) { done, total in
+                        Task { @MainActor in
+                            self?.progressText = "Pontozás: \(done)/\(total)"
+                        }
+                    }
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+
+                let refreshed = try await Task.detached(priority: .userInitiated) {
+                    try Self.buildPreviousNightCards(keys: [key], db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                if let card = refreshed.first, let index = self.previousNightCards.firstIndex(where: { $0.id == card.id }) {
+                    self.previousNightCards[index] = card
+                }
+                self.progressText = "Pontozás kész: \(target) \(date)"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// "Új sessionök pontozása" -- rates every CURRENTLY fresh session, one
+    /// after another, then rebuilds every card from scratch (an outlier
+    /// ratio/FWHM this run just changed for one session never leaves
+    /// another session's card stale). No confirmation sheet (F5 spec: "csak
+    /// az újakra megy", a small, self-limiting set unlike "Minden célpont
+    /// pontozása…"'s whole-library scope) -- reuses the same `isBusy`/
+    /// `progressText`/"Mégse" toolbar infrastructure every other batch
+    /// operation in this file already surfaces through `beginOperation`.
+    func runRateFreshSessions() {
+        guard let db else { return }
+        let cfg = config
+        let keys = freshSessionKeys
+        guard !keys.isEmpty else { return }
+
+        let opID = beginOperation("Új sessionök pontozása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.detached(priority: .userInitiated) { [weak self] in
+                    var provider: StarMetricsProvider?
+                    if FileManager.default.isExecutableFile(atPath: cfg.rating.sirilPath) {
+                        provider = try? SirilCLI(path: cfg.rating.sirilPath)
+                    }
+                    let rater = Rater(db: db, config: cfg, provider: provider)
+                    for (index, key) in keys.enumerated() {
+                        _ = try rater.rate(target: key.target, date: key.date, force: false) { done, total in
+                            Task { @MainActor in
+                                self?.progressText =
+                                    "Pontozás: \(key.target) \(key.date) (\(index + 1)/\(keys.count)) — \(done)/\(total)"
+                            }
+                        }
+                    }
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+
+                let cards = try await Task.detached(priority: .userInitiated) {
+                    try Self.buildPreviousNightCards(keys: keys, db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.previousNightCards = cards
+                self.progressText = "Pontozás kész: \(keys.count) session"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// `PreviousNightReviewSheet`'s "Átnézés…" load -- see `reviewFrameScores`'
+    /// own doc comment for why this is a dedicated property/method rather
+    /// than reusing `loadFrameScores`/`frameScores`.
+    func loadReviewFrames(target: String, date: String) {
+        guard let db else { return }
+        let cfg = config
+
+        let opID = beginOperation("Keretek betöltése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let results = try await Task.detached(priority: .userInitiated) {
+                    try Rater.cachedScores(target: target, date: date, db: db, config: cfg)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.reviewFrameScores = results
+
+                // R10-B1: manual verdicts alongside the scores, same as
+                // `loadFrameScores`/`runRate` -- `FrameReviewSheet`'s A/X/U
+                // keys read/write the shared `frameVerdicts` dict regardless
+                // of which array loaded the frames it's blinking through.
+                let verdicts = try await Task.detached(priority: .userInitiated) {
+                    try Self.loadVerdicts(forScores: results, db: db)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.frameVerdicts = verdicts
             } catch {
                 self.handle(error)
             }
@@ -3413,6 +3752,10 @@ final class AppState: @unchecked Sendable {
         "Minden célpont pontozása…",
         "Expozíció-tanácsadó (minden célpont)…",
         "DSS-adatok beolvasása…",
+        // R11-T9/F5: "Előző éjszaka"'s own batch rate -- same "whole-set
+        // batch operation toasts its summary" precedent as "Minden célpont
+        // pontozása…" above.
+        "Új sessionök pontozása…",
     ]
 
     /// Strips the trailing "…" every `beginOperation` title ends with, so an

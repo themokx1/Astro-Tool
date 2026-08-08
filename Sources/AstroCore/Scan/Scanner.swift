@@ -73,6 +73,45 @@ public struct ScanSummary: Codable, Sendable {
     /// (including ones merely `reclassified` by a healed `PathClassifier`
     /// rule) never appears here. Empty on a scan that changed nothing.
     public var changedTargets: [String]
+    /// R11-T9/F5: sorted, deduplicated list of every `(target, session date)`
+    /// pair that had at least one ADDED or UPDATED **light** frame this run
+    /// -- what the "Előző éjszaka" morning-triage page (`AppState
+    /// .freshSessions`) considers "fresh material worth a look", a
+    /// deliberately narrower notion than `changedTargets` above:
+    /// - Only `.sessions`-area frames classified `role == .light` count --
+    ///   a flat/dark/bias/master change, or a `stacks`/`processed`-area
+    ///   file, never adds an entry (those have no "session date" a triage
+    ///   card could show).
+    /// - Only `added`/`updated` frames count, never `missing` ones -- a
+    ///   light that vanished isn't "new material to review".
+    /// - A frame merely `reclassified` (unchanged bytes, healed
+    ///   classification) doesn't count either, same "nothing actually
+    ///   arrived" reasoning.
+    /// Empty on a scan that added/updated no light frame at all (including
+    /// every fully-`unchanged` rescan).
+    public var changedSessions: [SessionKey]
+
+    /// One `(target, session date)` pair -- `changedSessions`' element type.
+    /// A small `Codable`/`Hashable` value type rather than a bare tuple so it
+    /// can live in a `Set` while walking and round-trip through `--json`
+    /// (a Swift tuple is neither `Hashable` nor `Codable`).
+    public struct SessionKey: Codable, Sendable, Equatable, Hashable, Comparable {
+        public var target: String
+        public var date: String
+
+        public init(target: String, date: String) {
+            self.target = target
+            self.date = date
+        }
+
+        /// Sorts by target first, then date -- same tie-break order
+        /// `changedTargets.sorted()` already uses for its own flat list, so
+        /// `changedSessions` reads in the same deterministic, humanly
+        /// sensible order.
+        public static func < (lhs: SessionKey, rhs: SessionKey) -> Bool {
+            (lhs.target, lhs.date) < (rhs.target, rhs.date)
+        }
+    }
 
     public init(
         added: Int = 0,
@@ -82,7 +121,8 @@ public struct ScanSummary: Codable, Sendable {
         inaccessiblePaths: [String] = [],
         reclassified: Int = 0,
         metaRefreshed: Int = 0,
-        changedTargets: [String] = []
+        changedTargets: [String] = [],
+        changedSessions: [SessionKey] = []
     ) {
         self.added = added
         self.updated = updated
@@ -92,6 +132,7 @@ public struct ScanSummary: Codable, Sendable {
         self.reclassified = reclassified
         self.metaRefreshed = metaRefreshed
         self.changedTargets = changedTargets
+        self.changedSessions = changedSessions
     }
 }
 
@@ -143,6 +184,7 @@ public final class LibraryScanner {
         var summary = ScanSummary()
         var processedCount = 0
         var changedTargets = Set<String>()
+        var changedSessions = Set<ScanSummary.SessionKey>()
 
         try walk(
             dirURL: startURL,
@@ -153,6 +195,7 @@ public final class LibraryScanner {
             summary: &summary,
             refreshMeta: refreshMeta,
             changedTargets: &changedTargets,
+            changedSessions: &changedSessions,
             isTopLevel: true
         )
 
@@ -173,6 +216,7 @@ public final class LibraryScanner {
         try db.markMissing(pathsNotIn: seen, underSubpath: subpath, excludingPrefixes: summary.inaccessiblePaths)
 
         summary.changedTargets = changedTargets.sorted()
+        summary.changedSessions = changedSessions.sorted()
         return summary
     }
 
@@ -201,6 +245,7 @@ public final class LibraryScanner {
         summary: inout ScanSummary,
         refreshMeta: Bool,
         changedTargets: inout Set<String>,
+        changedSessions: inout Set<ScanSummary.SessionKey>,
         isTopLevel: Bool = false
     ) throws {
         let entries: [URL]
@@ -236,7 +281,8 @@ public final class LibraryScanner {
                     progress: progress,
                     summary: &summary,
                     refreshMeta: refreshMeta,
-                    changedTargets: &changedTargets
+                    changedTargets: &changedTargets,
+                    changedSessions: &changedSessions
                 )
                 continue
             }
@@ -255,7 +301,8 @@ public final class LibraryScanner {
                 values: values,
                 summary: &summary,
                 refreshMeta: refreshMeta,
-                changedTargets: &changedTargets
+                changedTargets: &changedTargets,
+                changedSessions: &changedSessions
             )
         }
     }
@@ -266,7 +313,8 @@ public final class LibraryScanner {
         values: URLResourceValues,
         summary: inout ScanSummary,
         refreshMeta: Bool,
-        changedTargets: inout Set<String>
+        changedTargets: inout Set<String>,
+        changedSessions: inout Set<ScanSummary.SessionKey>
     ) throws {
         let size = Int64(values.fileSize ?? 0)
         let mtime = (values.contentModificationDate ?? Date(timeIntervalSince1970: 0)).timeIntervalSince1970
@@ -328,6 +376,13 @@ public final class LibraryScanner {
             summary.updated += 1
         }
         if let target = info.target { changedTargets.insert(target) }
+        // R11-T9/F5: only a `.sessions`-area LIGHT frame counts as "fresh
+        // material" for the morning-triage page -- see `changedSessions`'
+        // own doc comment for the full reasoning (missing frames, non-light
+        // roles, and stacks/processed files are deliberately excluded).
+        if info.area == .sessions, info.role == .light, let target = info.target, let date = info.dateRaw {
+            changedSessions.insert(ScanSummary.SessionKey(target: target, date: date))
+        }
 
         // Metadata capture only runs for NEW/CHANGED files (never for the
         // `unchanged` early-return above) — that's what keeps incremental

@@ -21,6 +21,8 @@ struct LibrarySettingsView: View {
     private let defaults = AstroConfig()
 
     var body: some View {
+        @Bindable var appState = appState
+
         Form {
             Section("Gyökér") {
                 LabeledContent("Útvonal", value: appState.config.rootPath)
@@ -37,6 +39,18 @@ struct LibrarySettingsView: View {
                     }
                     Button("config.json megjelenítése") { appState.revealConfigInFinder() }
                 }
+
+                // R11-T9/F5: opt-in, default OFF -- a live toggle (no
+                // "Mentés" needed, same "takes effect immediately" shape
+                // `QualitySegment`'s own `@AppStorage`-backed toggle uses),
+                // since `AppState.autoScanOnMount` round-trips straight to
+                // `UserDefaults` on every write, unlike this tab's
+                // `excludedDirNames`/`excludedPaths` draft below (those are
+                // library-shape config, checked into `config.json`).
+                Toggle("Automatikus beolvasás kötet csatlakozásakor", isOn: $appState.autoScanOnMount)
+                Text("Ha be van kapcsolva, a beolvasás automatikusan elindul, amikor a kötet csatlakozik és a gyökér elérhetővé válik (csak ha épp nem fut más művelet).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Kizárások") {
