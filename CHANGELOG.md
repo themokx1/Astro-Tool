@@ -480,6 +480,46 @@ T3 — Settings csomag után.
     kimenetben "⚠ eltér a README-től" a sor végén, `--json`-ban additív
     `conflicts` blokk (a jegyzetek maguk változatlanul a gyökér-objektum
     lapos kulcsai maradnak, nincs törésre változó séma).
+- **`astrotool verify` — fixity/bitrot-ellenőrzés (R11-T14/F9)**: a T4-ben
+  fenntartott, addig használatlan **5**-ös kilépési kód mostantól ténylegesen
+  ezt jelzi (lásd a `docs/cli.html` frissített táblázatát).
+  - **Core**: új `FixityVerifier` (Sources/AstroCore/Audit/) — a `files`
+    tábla nem-hiányzó, korábban `DuplicateFinder` által már lehash-elt
+    fájljain újraszámolja a SHA-256-ot, és összeveti a tárolttal.
+    `target`/`path`/`samplePercent` (opcionális, determinisztikus `seed`-del
+    a tesztelhetőségért, SplitMix64 alapon) szűkíti a kört. Fájlonkénti
+    eredmény: **ok** (egyezik), **content-changed** (méret ÉS módosítási idő
+    is változatlan, mégis más hash — néma korrupció gyanús, `sure_error`
+    finding), **modified** (méret ÉS módosítási idő is megváltozott —
+    szándékos szerkesztés, nem bitrot, `probably_intentional` finding,
+    informatív), vagy olvasási hiba. Vasszabály-megfelelés: KIZÁRÓLAG olvas
+    — sosem ír vissza hash-t a `content_hash` mezőbe (ellentétben a
+    `DuplicateFinder`-rel), és a findingekhez sosem generál javaslat-scriptet
+    (egy korrupt fájlra nincs automatikus javítás, a finding-üzenet mondja
+    ki: biztonsági mentésből való visszaállítás emberi döntés marad).
+    Eredménye egy saját `"verify"`-kind runba íródik (`Database.
+    pruneFindings` additív `kind` paramétert kapott, alapértelmezetten
+    `"audit"`, hogy a T14 előtti hívók változatlanok maradjanak). Új
+    `Database.countHashedFiles` (dedikált `COUNT(*)`, cél/útvonal-szűréssel)
+    az app becslésének gyors forrása. Teszttel (ok/content-changed/modified/
+    olvasási hiba/hash-visszaírás-tiltás/scope/minta/progress/perzisztencia).
+  - **CLI**: `verify [--target T] [--path P] [--sample N (1-100)] [--json]`
+    — human kimenet: összegző sor (ellenőrzött/ok/eltérés/módosult/hiba) +
+    eltérés-lista; `--json` additív `summary` blokk a szokásos `items`
+    találat-lista mellett. Exit 0 minden rendben (a "modified" is annak
+    számít), **5** ha legalább egy `content-changed` eltérés van, 1 olvasási
+    hibára vagy hibás `--sample`-re, 2 TCC/kötet-hibára. Teszttel
+    (CLISmokeTests).
+  - **App**: az Audit oldal "Audit futtatása" toolbar split-menüjében új
+    "Integritás-ellenőrzés…" tétel — megerősítő sheet (mit csinál, durva
+    időbecslés a fájlszám alapján, opcionális "Csak minta (10%)"
+    jelölőnégyzet) a meglévő `beginOperation`/progress/"Mégse"
+    infrastruktúrával indítva. Az eredmény a Hibák szegmensben jelenik meg
+    saját `content-changed` kategóriával, a "modified" a Szándékos
+    szegmensben; `AppState.lastVerifyRunID` (a `lastRunID` mellett) biztosítja,
+    hogy a lap akkor is mutassa az eredményt, ha ebben a munkamenetben csak
+    integritás-ellenőrzés futott, teljes audit nem. Záró toast: "Integritás:
+    N fájl rendben, M eltérés".
 
 ### Changed
 

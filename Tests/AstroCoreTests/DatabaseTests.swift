@@ -1870,3 +1870,103 @@ private func sessionFile(
     #expect(countAfterFirstPrune == 3)
     #expect(countAfterSecondPrune == 3)
 }
+
+/// R11-T14/F9: `pruneFindings`'s `kind` parameter (additive, defaults to
+/// `"audit"` so every test/call site above this one is unaffected) lets
+/// `FixityVerifier.run` prune its own `"verify"`-kind findings independently
+/// of `"audit"`'s -- pruning one kind must never touch the other's rows.
+@Test func pruneFindingsWithExplicitKindOnlyPrunesThatKind() throws {
+    let database = try Database(path: ":memory:")
+
+    var verifyRunIDs: [Int64] = []
+    for i in 0..<5 {
+        let runID = try database.beginRun(kind: "verify", root: "/lib", configJSON: nil)
+        try database.insertFinding(runID: runID, Finding(severity: .sureError, category: "content-changed", path: "f\(i).fit", message: "m"))
+        try database.finishRun(id: runID)
+        verifyRunIDs.append(runID)
+    }
+
+    let auditRunID = try database.beginRun(kind: "audit", root: "/lib", configJSON: nil)
+    try database.insertFinding(runID: auditRunID, Finding(severity: .suspicious, category: "residue", path: "a.seq", message: "m"))
+    try database.finishRun(id: auditRunID)
+
+    try database.pruneFindings(keepRuns: 3, kind: "verify")
+
+    var seenRunIDs: Set<Int64> = []
+    try database.db.query("SELECT run_id FROM findings;") { row in
+        if let id = row.int64(0) { seenRunIDs.insert(id) }
+    }
+    // Only the 3 newest "verify" runs' findings survive, PLUS the untouched
+    // "audit" one.
+    #expect(seenRunIDs == Set(verifyRunIDs.suffix(3) + [auditRunID]))
+}
+
+@Test func pruneFindingsDefaultKindStillOnlyPrunesAudit() throws {
+    let database = try Database(path: ":memory:")
+
+    let verifyRunID = try database.beginRun(kind: "verify", root: "/lib", configJSON: nil)
+    try database.insertFinding(runID: verifyRunID, Finding(severity: .sureError, category: "content-changed", path: "f.fit", message: "m"))
+    try database.finishRun(id: verifyRunID)
+
+    for i in 0..<4 {
+        let runID = try database.beginRun(kind: "audit", root: "/lib", configJSON: nil)
+        try database.insertFinding(runID: runID, Finding(severity: .suspicious, category: "residue", path: "run\(i).seq", message: "m"))
+        try database.finishRun(id: runID)
+    }
+
+    // No explicit `kind:` -- must default to "audit", exactly as it did
+    // before this parameter existed.
+    try database.pruneFindings(keepRuns: 3)
+
+    var verifyFindingCount = 0
+    try database.db.query("SELECT run_id FROM findings WHERE run_id = ?;", bind: [.int(verifyRunID)]) { _ in verifyFindingCount += 1 }
+    #expect(verifyFindingCount == 1)
+}
+
+// MARK: - countHashedFiles (R11-T14/F9)
+
+@Test func countHashedFilesCountsOnlyNonMissingFilesWithACachedHash() throws {
+    let database = try Database(path: ":memory:")
+
+    var hashedA = sampleFile(path: "a.fit")
+    hashedA.contentHash = "h1"
+    try database.upsertFile(hashedA)
+
+    var hashedB = sampleFile(path: "b.fit")
+    hashedB.contentHash = "h2"
+    try database.upsertFile(hashedB)
+
+    // No cached hash -- excluded.
+    try database.upsertFile(sampleFile(path: "c.fit"))
+
+    // Missing -- excluded even though it has a cached hash.
+    var missingButHashed = sampleFile(path: "d.fit")
+    missingButHashed.contentHash = "h4"
+    missingButHashed.missing = true
+    try database.upsertFile(missingButHashed)
+
+    #expect(try database.countHashedFiles() == 2)
+}
+
+@Test func countHashedFilesScopesToTargetAndPathPrefix() throws {
+    let database = try Database(path: ":memory:")
+
+    var m31Light = sampleFile(path: "sessions/M31/2026-01-01/lights/a.fit")
+    m31Light.target = "M31"
+    m31Light.contentHash = "h1"
+    try database.upsertFile(m31Light)
+
+    var m42Light = sampleFile(path: "sessions/M42/2026-01-02/lights/b.fit")
+    m42Light.target = "M42"
+    m42Light.contentHash = "h2"
+    try database.upsertFile(m42Light)
+
+    var m42Flat = sampleFile(path: "sessions/M42/2026-01-02/flats/c.fit")
+    m42Flat.target = "M42"
+    m42Flat.contentHash = "h3"
+    try database.upsertFile(m42Flat)
+
+    #expect(try database.countHashedFiles(target: "M42") == 2)
+    #expect(try database.countHashedFiles(pathPrefix: "sessions/M42/2026-01-02/lights") == 1)
+    #expect(try database.countHashedFiles(target: "M42", pathPrefix: "sessions/M42/2026-01-02/flats") == 1)
+}

@@ -23,7 +23,7 @@
 - [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
 - [x] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [x]
 - [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [x] T10 [x] T11 [x] T12 [x] T13 [ ]
-- [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [ ] T15 [ ] T16 [ ] T17 [ ]
+- [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [x] T15 [ ] T16 [ ] T17 [ ]
 - [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
 - [ ] 8. Release v0.13.0
 
@@ -526,3 +526,23 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   háttér-lekérdezést a SessionsSegmentből, hogy a per-cél oldal ne kapjon
   egy váratlan, egész könyvtárat átfésülő terhelést. Következő: T13
   (Navigáció + jegyzet-híd).
+- 2026-08-08: T14 (Verify) kész — F9 teljes. Core: új `FixityVerifier`
+  (Sources/AstroCore/Audit/) — a `files` tábla korábban lehash-elt,
+  nem-hiányzó fájljain újraszámolja a SHA-256-ot; `target`/`path`/
+  `samplePercent` (determinisztikus `seed`-del) szűkíti a kört. Két
+  eltérés-kategória: "content-changed" (méret+mtime változatlan, más hash —
+  néma korrupció gyanús, sure_error) és "modified" (méret ÉS mtime is
+  változott — szándékos szerkesztés, probably_intentional); vasszabály:
+  kizárólag olvas, sosem ír vissza hash-t, sosem generál javaslatot.
+  `Database.pruneFindings` additív `kind` paramétert kapott (alap "audit"),
+  új `Database.countHashedFiles` az app-becslés gyors forrása. CLI:
+  `astrotool verify [--target T] [--path P] [--sample N] [--json]`, exit 5 =
+  content-changed eltérés (a T4-ben fenntartott kód élesítve), docs/cli.html
+  frissítve. App: Audit toolbar split-menü "Integritás-ellenőrzés…" →
+  megerősítő sheet (időbecslés, "Csak minta (10%)") → `AppState.runVerify`
+  a meglévő beginOperation/progress/Mégse infrastruktúrával; eredmény a
+  Hibák/Szándékos szegmensben, `lastVerifyRunID` gondoskodik róla, hogy a
+  lap akkor is mutassa, ha ebben a munkamenetben csak verify futott, teljes
+  audit nem. 25 új teszt (16 `FixityVerifierTests` + 4 `DatabaseTests` +
+  5 `CLISmokeTests`), `swift test` zöld (1211). Következő: T15 (Több
+  helyszín).

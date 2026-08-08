@@ -91,6 +91,33 @@ private func makeTempRoot(_ label: String) throws -> URL {
     return dir
 }
 
+// MARK: - R11-T14/F9 verify fixture helpers
+//
+// `FixityVerifier` only ever re-checks a file that already has a cached
+// `content_hash`, and that cache is only ever populated by `DuplicateFinder`
+// (part of a normal `audit` run) for same-size files >= its 1 MiB
+// threshold -- so, same as `DuplicateFinderTests`, these CLI-level fixtures
+// need two BYTE-IDENTICAL files above that threshold for `scan` + `audit` to
+// actually cache a hash worth re-verifying.
+
+/// 1.5 MiB -- comfortably above `DuplicateFinder`'s default 1 MiB
+/// `minSizeBytes` threshold, mirroring `DuplicateFinderTests`' own constant.
+private let verifyDupSize = 1_048_576 + 1_048_576 / 2
+
+private func writeVerifyFixtureFile(at url: URL, byte: UInt8, size: Int) throws {
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data(repeating: byte, count: size).write(to: url)
+}
+
+/// Overwrites `url` with `byte` repeated `size` times, then forces its
+/// on-disk mtime back to `mtime` -- simulates silent disk-level corruption
+/// (bitrot never touches a file's own mtime/size), so `verify` classifies
+/// the result as `content-changed` rather than `modified`.
+private func corruptFileInPlacePreservingMTime(at url: URL, byte: UInt8, size: Int, mtime: Date) throws {
+    try Data(repeating: byte, count: size).write(to: url)
+    try FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: url.path)
+}
+
 // MARK: - R11-T4 JSON envelope helpers
 //
 // Every `--json` root now carries a `schema_version` field (see
@@ -405,6 +432,127 @@ struct CLISmokeTests {
     let result = try runCLI(["audit", "--root", root.path, "--suggest", "--out", insidePath])
     #expect(result.exitCode == 1)
     #expect(!FileManager.default.fileExists(atPath: insidePath))
+}
+
+// MARK: - verify (R11-T14/F9)
+
+@Test func verifyOnAnEmptyDatabaseReportsZeroCheckedAndHintsToScanFirst() throws {
+    let root = try makeTempRoot("verify-empty")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let result = try runCLI(["verify", "--root", root.path, "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stderr.contains("scan"))
+
+    let root2 = try #require(try jsonObject(result.stdout))
+    let summary = try #require(root2["summary"] as? [String: Any])
+    #expect(summary["checked"] as? Int == 0)
+}
+
+/// `scan` + `audit` on two byte-identical files above `DuplicateFinder`'s
+/// size threshold caches a hash for both -- `verify` then re-checks them,
+/// finds nothing wrong, and exits 0.
+@Test func verifyJSONAfterAuditReportsOkForUnchangedFiles() throws {
+    let root = try makeTempRoot("verify-ok")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let path1 = "sessions/M31/2026-01-01/lights/a.fit"
+    let path2 = "sessions/M31/2026-01-01/lights/b.fit"
+    try writeVerifyFixtureFile(at: root.appendingPathComponent(path1), byte: 0xAB, size: verifyDupSize)
+    try writeVerifyFixtureFile(at: root.appendingPathComponent(path2), byte: 0xAB, size: verifyDupSize)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+    let audit = try runCLI(["audit", "--root", root.path])
+    #expect(audit.exitCode == 0, "stderr: \(audit.stderr)")
+
+    let result = try runCLI(["verify", "--root", root.path, "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let root2 = try #require(try jsonObject(result.stdout))
+    let summary = try #require(root2["summary"] as? [String: Any])
+    #expect(summary["checked"] as? Int == 2)
+    #expect(summary["ok"] as? Int == 2)
+    #expect(summary["content_changed"] as? Int == 0)
+    #expect(try #require(root2["items"] as? [[String: Any]]).isEmpty)
+}
+
+/// The end-to-end exit-5 contract (F9/F10-a): a same-size, same-mtime
+/// content mismatch -- silent corruption -- must be reported as
+/// `content-changed` and exit 5, distinctly from every other exit code.
+@Test func verifyDetectsContentChangedAndExitsWithCode5() throws {
+    let root = try makeTempRoot("verify-corrupt")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let path1 = "sessions/M31/2026-01-01/lights/a.fit"
+    let path2 = "sessions/M31/2026-01-01/lights/b.fit"
+    let url1 = root.appendingPathComponent(path1)
+    let url2 = root.appendingPathComponent(path2)
+    try writeVerifyFixtureFile(at: url1, byte: 0xAB, size: verifyDupSize)
+    try writeVerifyFixtureFile(at: url2, byte: 0xAB, size: verifyDupSize)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+    let audit = try runCLI(["audit", "--root", root.path])
+    #expect(audit.exitCode == 0, "stderr: \(audit.stderr)")
+
+    let mtimeBeforeCorruption = try url1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate ?? Date()
+    // Same length, different byte value, mtime forced back -- classic
+    // bitrot shape: content changed, metadata didn't.
+    try corruptFileInPlacePreservingMTime(at: url1, byte: 0xCD, size: verifyDupSize, mtime: mtimeBeforeCorruption)
+
+    let result = try runCLI(["verify", "--root", root.path, "--json"])
+    #expect(result.exitCode == 5, "stdout: \(result.stdout), stderr: \(result.stderr)")
+
+    let root2 = try #require(try jsonObject(result.stdout))
+    let summary = try #require(root2["summary"] as? [String: Any])
+    #expect(summary["content_changed"] as? Int == 1)
+    #expect(summary["ok"] as? Int == 1)
+
+    let items = try #require(root2["items"] as? [[String: Any]])
+    #expect(items.count == 1)
+    #expect(items.first?["category"] as? String == "content-changed")
+    #expect(items.first?["severity"] as? String == "sure_error")
+    #expect(items.first?["path"] as? String == path1)
+
+    // Human output surfaces the same mismatch under an "ELTÉRÉS" line.
+    let humanResult = try runCLI(["verify", "--root", root.path])
+    #expect(humanResult.exitCode == 5)
+    #expect(humanResult.stdout.contains("ELTÉRÉS"))
+    #expect(humanResult.stdout.contains(path1))
+}
+
+@Test func verifySampleFlagRejectsOutOfRangeOrNonNumericValues() throws {
+    let root = try makeTempRoot("verify-sample-invalid")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    for badValue in ["0", "101", "abc", "-5"] {
+        let result = try runCLI(["verify", "--root", root.path, "--sample", badValue])
+        #expect(result.exitCode == 1, "sample=\(badValue) should be rejected")
+        #expect(result.stderr.contains("--sample"))
+    }
+}
+
+@Test func verifyTargetFlagScopesToOneTargetOnly() throws {
+    let root = try makeTempRoot("verify-target-scope")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeVerifyFixtureFile(at: root.appendingPathComponent("sessions/M31/2026-01-01/lights/a.fit"), byte: 0xAB, size: verifyDupSize)
+    try writeVerifyFixtureFile(at: root.appendingPathComponent("sessions/M31/2026-01-01/lights/b.fit"), byte: 0xAB, size: verifyDupSize)
+    try writeVerifyFixtureFile(at: root.appendingPathComponent("sessions/M42/2026-02-02/lights/c.fit"), byte: 0xCD, size: verifyDupSize)
+    try writeVerifyFixtureFile(at: root.appendingPathComponent("sessions/M42/2026-02-02/lights/d.fit"), byte: 0xCD, size: verifyDupSize)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+    let audit = try runCLI(["audit", "--root", root.path])
+    #expect(audit.exitCode == 0, "stderr: \(audit.stderr)")
+
+    let result = try runCLI(["verify", "--root", root.path, "--target", "M42", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let root2 = try #require(try jsonObject(result.stdout))
+    let summary = try #require(root2["summary"] as? [String: Any])
+    #expect(summary["checked"] as? Int == 2)
 }
 
 // MARK: - cleanup

@@ -429,6 +429,17 @@ final class AppState: @unchecked Sendable {
     }
     var findings: [Finding] = []
     var lastRunID: Int64?
+    /// R11-T14/F9: set by `runVerify` once a fixity/bitrot check has
+    /// completed this launch -- alongside `lastRunID`, the AuditPage's "has
+    /// SOMETHING run yet" gate (`hasAnyAuditRun`), so a user who runs ONLY
+    /// "Integritás-ellenőrzés…" without ever running a full "Audit
+    /// futtatása" still sees its findings instead of the page's "run an
+    /// audit first" empty state. Deliberately independent of `lastRunID`
+    /// (a `"verify"`-kind run, not `"audit"`) and NOT restored across
+    /// launches by `openRoot` -- a verify run's findings are merged into
+    /// `findings` for THIS session only (see `runVerify`'s own doc
+    /// comment); restoring them from disk on relaunch is out of scope here.
+    var lastVerifyRunID: Int64?
     /// R11-T8/F6: this run's findings compared against the run immediately
     /// before it (`Database.previousRunID(before:kind:)`), or `nil` when
     /// there is no previous audit run to compare against (the very first
@@ -1032,6 +1043,11 @@ final class AppState: @unchecked Sendable {
         lastError = nil
         lastScanDate = nil
         didDismissFirstRun = false
+        // R11-T14/F9: a verify run's findings never survive a root switch
+        // (`findings` itself gets fully replaced by whatever `lastRunID`
+        // restore below finds, or stays empty) -- this just keeps the gate
+        // in sync with that.
+        lastVerifyRunID = nil
         // N5 (R9 round 3): switching roots without this left the PREVIOUS
         // root's per-target coordinate memo in place -- a target name that
         // happens to recur across two different libraries would silently
@@ -1324,6 +1340,72 @@ final class AppState: @unchecked Sendable {
         }
         let previousFindings = (try? db.findings(runID: previousRunID)) ?? []
         return AuditDiff.compute(previous: previousFindings, current: currentFindings, config: config)
+    }
+
+    // MARK: - Verify (R11-T14/F9)
+
+    /// Cheap synchronous estimate of how many files `runVerify()` would
+    /// actually re-hash -- the app always runs verify over the WHOLE
+    /// library (unlike the CLI's `--target`/`--path`, there is no scoping
+    /// UI here), so this is a plain unscoped count. Backs the
+    /// "Integritás-ellenőrzés…" confirmation sheet's "N fájl — ez akár X
+    /// percig is tarthat" estimate; `Database.countHashedFiles` is a
+    /// dedicated `COUNT(*)` query (not `FixityVerifier.eligibleFiles(...)
+    /// .count`) specifically so this stays fast enough to call synchronously
+    /// right before presenting the sheet, even on a library with tens of
+    /// thousands of files. `0` if there's no open DB or the query fails.
+    func countVerifyEligibleFiles() -> Int {
+        guard let db else { return 0 }
+        return (try? db.countHashedFiles()) ?? 0
+    }
+
+    /// Runs a fixity/bitrot check over the whole library --
+    /// `samplePercent`, when given, checks only a random N% of the
+    /// already-hashed files instead of all of them (the confirmation
+    /// sheet's "Csak minta (10%)" checkbox). Read-only against the library
+    /// itself; see `FixityVerifier`'s own doc comment for the full
+    /// contract (never rewrites the cached hash, never "fixes" anything).
+    ///
+    /// Unlike `runAudit`, this does NOT replace `findings` wholesale -- it
+    /// drops any STALE verify-category findings from a previous verify run
+    /// (so re-running verify doesn't pile up duplicate rows for a file that
+    /// turned out fine on a later check) and APPENDS the fresh ones onto
+    /// whatever `findings` already holds from the last `runAudit`, if any --
+    /// so the Audit page's Hibák/Szándékos segments show an audit's and a
+    /// verify's findings side by side without forcing a full re-audit just
+    /// to see them together. `lastVerifyRunID` (alongside `lastRunID`) is
+    /// what lets the page show them even if no audit has ever run this
+    /// launch -- see that property's own doc comment.
+    func runVerify(samplePercent: Int? = nil) {
+        guard let db else { return }
+        let cfg = config
+
+        let opID = beginOperation("Integritás-ellenőrzés fut…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let (runID, results, verifyFindings) = try await Task.detached(priority: .userInitiated) { [weak self] in
+                    try FixityVerifier.run(db: db, config: cfg, samplePercent: samplePercent) { done, total in
+                        Task { @MainActor in
+                            self?.progressText = "Ellenőrizve: \(done)/\(total)"
+                        }
+                    }
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+
+                self.lastVerifyRunID = runID
+                let verifyCategories: Set<String> = ["content-changed", "modified", "verify-read-error"]
+                self.findings.removeAll { verifyCategories.contains($0.category) }
+                self.findings.append(contentsOf: verifyFindings)
+
+                let summary = FixityVerifier.summarize(results)
+                let mismatchCount = summary.checked - summary.ok
+                self.progressText = "Integritás: \(summary.ok) fájl rendben, \(mismatchCount) eltérés"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
     }
 
     // MARK: - Finding acks (B5)
@@ -3984,6 +4066,9 @@ final class AppState: @unchecked Sendable {
         // batch operation toasts its summary" precedent as "Minden célpont
         // pontozása…" above.
         "Új sessionök pontozása…",
+        // R11-T14/F9: `runVerify`'s title -- so its "Integritás: N fájl
+        // rendben, M eltérés" summary toasts too.
+        "Integritás-ellenőrzés fut…",
     ]
 
     /// Strips the trailing "…" every `beginOperation` title ends with, so an

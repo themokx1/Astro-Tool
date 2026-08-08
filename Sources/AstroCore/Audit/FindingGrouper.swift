@@ -50,11 +50,17 @@ public enum FindingGrouper {
     ///   misclassified the same way, a whole duplicated folder, ...).
     /// - everything else (dir-level findings — `nested-session-tree`,
     ///   `placeholder-name`, `tool-output`, `intentional-date`,
-    ///   `missing-counterpart`, `similar-target-names`, ...): the finding's
-    ///   own path. These rules already fire at most once (or a handful of
-    ///   times) per offending directory, so grouping by path is a no-op that
-    ///   still lets the shared `group(_:config:)` machinery treat every
-    ///   category uniformly.
+    ///   `missing-counterpart`, `similar-target-names`, ... — plus
+    ///   `FixityVerifier`'s per-file `content-changed`/`modified`/
+    ///   `verify-read-error`, R11-T14): the finding's own path. These rules
+    ///   already fire at most once (or a handful of times) per offending
+    ///   directory, so grouping by path is a no-op that still lets the
+    ///   shared `group(_:config:)` machinery treat every category
+    ///   uniformly. For the verify categories specifically, per-file (i.e.
+    ///   effectively "no grouping") IS the right shape: unlike a residue
+    ///   pattern or a misclassified directory, bitrot has no single root
+    ///   cause spanning multiple files, so each corrupt/modified/unreadable
+    ///   file is its own story and deserves its own row.
     public static func groupKey(for finding: Finding, config: AstroConfig) -> String {
         switch finding.category {
         case "residue":

@@ -194,7 +194,12 @@ public enum DuplicateFinder {
     /// every chunk linger for the entire audit run instead of being freed
     /// as they're consumed, so peak memory grows with total bytes hashed
     /// across *all* files instead of staying bounded to one chunk.
-    private static func sha256Hash(of url: URL) throws -> String {
+    ///
+    /// Not `private` (R11-T14): `FixityVerifier` re-hashes the exact same
+    /// way to compare against a cached hash, and re-implementing the same
+    /// chunked/autoreleasepool'd streaming logic there would just be a
+    /// second copy to keep in sync.
+    static func sha256Hash(of url: URL) throws -> String {
         guard let handle = FileHandle(forReadingAtPath: url.path) else {
             throw AstroError.pathNotFound(path: url.path)
         }

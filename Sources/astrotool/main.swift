@@ -24,6 +24,7 @@ do {
     switch subcommand {
     case "scan": exitCode = try cmdScan(rest)
     case "audit": exitCode = try cmdAudit(rest)
+    case "verify": exitCode = try cmdVerify(rest)
     case "cleanup": exitCode = try cmdCleanup(rest)
     case "rate": exitCode = try cmdRate(rest)
     case "stats": exitCode = try cmdStats(rest)
@@ -62,8 +63,10 @@ do {
 } catch let error as AstroError {
     // Exit-code contract (R11-T4, documented in full in docs/cli.html):
     //   0 success · 1 usage/general error · 2 TCC/volume · 3 no such
-    //   target/session · 4 external tool (Siril) · 5 reserved for a future
-    //   `verify` command. Cases 3 aren't decided here -- they're specific
+    //   target/session · 4 external tool (Siril) · 5 `verify` found a
+    //   confirmed content mismatch (R11-T14, decided directly in `cmdVerify`,
+    //   not here -- it's a summary-count decision, not an `AstroError` case).
+    //   Cases 3 aren't decided here -- they're specific
     //   target/session lookups (`stats`, `solve`, `match`, `link-calib`,
     //   `report`, `target-report`) that already know they're about a
     //   target/session and return 3 directly from their own command

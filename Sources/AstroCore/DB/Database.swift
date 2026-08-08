@@ -2063,30 +2063,71 @@ public final class Database: @unchecked Sendable {
 
     // MARK: - findings retention (B20)
 
-    /// Deletes `findings` rows belonging to any `"audit"`-kind run except the
+    /// Deletes `findings` rows belonging to any `kind`-kind run except the
     /// most recent `keepRuns` -- the `runs` rows themselves are left alone
-    /// (only their child findings are pruned), and runs of any other kind
+    /// (only their child findings are pruned), and runs of any OTHER kind
     /// (and their findings, if they ever have any) are never touched.
     ///
     /// This is the app's OWN `.astro_tool` database, not the image library
     /// the iron rule protects -- deleting rows here is ordinary DAO
     /// housekeeping, the same class of operation as `markMissing`'s UPDATE or
     /// `removeTag`'s DELETE elsewhere in this file. Called once at the end of
-    /// every `AuditEngine.run` so the table (32k+ rows across 12 runs on a
-    /// real library, never pruned before this) stops growing unbounded.
-    public func pruneFindings(keepRuns: Int = 3) throws {
+    /// every `AuditEngine.run` (kind `"audit"`, the original B20 call site)
+    /// and every `FixityVerifier.run` (kind `"verify"`, R11-T14) so neither
+    /// table grows unbounded; `kind` defaults to `"audit"` so that original
+    /// call site (and every existing test) is unaffected by this parameter's
+    /// addition.
+    public func pruneFindings(keepRuns: Int = 3, kind: String = "audit") throws {
         try withLock {
             try db.run(
                 """
                 DELETE FROM findings WHERE run_id IN (
-                  SELECT id FROM runs WHERE kind = 'audit'
+                  SELECT id FROM runs WHERE kind = ?
                   AND id NOT IN (
-                    SELECT id FROM runs WHERE kind = 'audit' ORDER BY started_at DESC LIMIT ?
+                    SELECT id FROM runs WHERE kind = ? ORDER BY started_at DESC LIMIT ?
                   )
                 );
                 """,
-                bind: [.int(Int64(keepRuns))]
+                bind: [.text(kind), .text(kind), .int(Int64(keepRuns))]
             )
+        }
+    }
+
+    /// Cheap `COUNT(*)` of files `FixityVerifier.eligibleFiles(...)` would
+    /// actually re-hash for the given scope -- tracked (non-missing) files
+    /// that already have a cached `content_hash`, optionally narrowed to one
+    /// `target` and/or one root-relative `pathPrefix` subtree (matching the
+    /// file itself or anything nested under it, same convention as
+    /// `markMissing(underSubpath:)`).
+    ///
+    /// A dedicated COUNT query rather than `allFiles(...).filter(...).count`
+    /// (which `FixityVerifier` itself uses for the real run, since it needs
+    /// the full `FileRecord`s anyway) because this backs a synchronous UI
+    /// estimate -- the app's "Integritás-ellenőrzés…" confirmation sheet's
+    /// "N fájl" figure -- that must stay fast even on a library with tens of
+    /// thousands of files, where materializing every `FileRecord` just to
+    /// throw away everything except a count would be wasteful. Same
+    /// reasoning as `hasTrackedFileWithSuffix`'s own doc comment.
+    public func countHashedFiles(target: String? = nil, pathPrefix: String? = nil) throws -> Int {
+        try withLock {
+            var sql = "SELECT COUNT(*) FROM files WHERE missing = 0 AND content_hash IS NOT NULL"
+            var bind: [SQLiteValue] = []
+            if let target {
+                sql += " AND target = ?"
+                bind.append(.text(target))
+            }
+            if let pathPrefix {
+                sql += " AND (path = ? OR path LIKE ?)"
+                bind.append(.text(pathPrefix))
+                bind.append(.text(pathPrefix + "/%"))
+            }
+            sql += ";"
+
+            var count = 0
+            try db.query(sql, bind: bind) { row in
+                count = Int(row.int64(0) ?? 0)
+            }
+            return count
         }
     }
 }

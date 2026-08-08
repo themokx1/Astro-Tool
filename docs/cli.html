@@ -131,7 +131,7 @@
       <tr><td>2</td><td>TCC/kötet-hiba — a könyvtár nem érhető el (Teljes lemezhozzáférés hiányzik, vagy a kötet nincs csatlakoztatva).</td></tr>
       <tr><td>3</td><td>Nem található target/session — a <code>--target</code>/<code>--date</code> nem azonosít semmit a nyilvántartásban (pl. <code>stats</code>, <code>solve</code>, <code>match</code>, <code>link-calib</code>, <code>report</code>, <code>target-report</code>).</td></tr>
       <tr><td>4</td><td>Külső eszköz hiba — a Siril nem található a konfigurált útvonalon (pl. <code>solve</code>).</td></tr>
-      <tr class="reserved"><td>5</td><td>Fenntartva egy jövőbeli <code>verify</code> parancsnak — jelenleg nem használt.</td></tr>
+      <tr><td>5</td><td>A <code>verify</code> legalább egy megerősített tartalom-eltérést talált (<code>content-changed</code> — azonos méret/módosítási idő mellett más hash, néma korrupció gyanús). Egy azonos hash-eltérés ELTÉRŐ mérettel/idővel ("modified", szándékos szerkesztés) NEM számít bele; olvasási hiba az 1-es kódot adja, nem az 5-öst.</td></tr>
     </table>
   </div>
 
@@ -151,6 +151,11 @@
       <div class="name">cleanup</div>
       <div class="desc">A már azonosított reziduum/duplikátum-találatok korlátozott elemszámú összegzése és javaslat-script generálás. <code>--out PATH|-</code> ugyanúgy működik, mint <code>audit --suggest</code>-nél. <code>--json</code> kimenete <code>storage</code> mezőt is ad: célpontonkénti méret area-bontással (sessions/stacks/processed/other), méret szerint csökkenő sorrendben — ugyanaz az adat, amit az app Takarítható szegmensének "Tárhely" blokkja mutat, ezért itt fér rá a meglévő <code>cleanup</code> parancsra, nem külön alparancsként.</div>
       <pre class="example">astrotool cleanup --suggest --limit 50 --out -</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">verify</div>
+      <div class="desc">Fixity/bitrot-ellenőrzés: minden már egyszer lehash-elt (tehát egy korábbi <code>audit</code> által a <code>content_hash</code> mezőbe cache-elt), nem-hiányzó indexelt fájlt újraolvas, és összeveti a tárolt ellenőrző-összeggel. Kizárólag olvas — sosem ír vissza hash-t, sosem javít vagy mozgat semmit; egy eltérést csak jelöl, a visszaállítás biztonsági mentésből emberi döntés marad. <code>--target T</code>/<code>--path P</code> szűkíti a kört; <code>--sample N</code> (1-100) csak a kör N százalékát, véletlenszerűen ellenőrzi a teljes kör helyett. Fájlonkénti eredmény: <b>ok</b> (egyezik), <b>content-changed</b> (méret és módosítási idő is változatlan, mégis más a hash — néma korrupció gyanús, <code>sure_error</code>), <b>modified</b> (méret ÉS módosítási idő is megváltozott — szándékos szerkesztés, nem bitrot, <code>probably_intentional</code>), vagy olvasási hiba. <code>--json</code> gyökere additív <code>summary</code> blokkot ad (checked/ok/content_changed/modified/read_errors) a szokásos <code>items</code> találat-lista mellett.</div>
+      <pre class="example">astrotool verify --sample 20 --json</pre>
     </div>
     <div class="cmd">
       <div class="name">ack</div>

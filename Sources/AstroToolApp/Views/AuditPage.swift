@@ -33,6 +33,15 @@ struct AuditPage: View {
     /// R11-T8/F19: "Összes megjelenítése" under the Tárhely block's top-10 --
     /// once toggled on, every target shows (with a "Kevesebb" way back).
     @State private var showAllStorageTargets: Bool = false
+    /// R11-T14/F9: the toolbar split-menu's "Integritás-ellenőrzés…" item
+    /// opens this instead of running immediately -- re-hashing every
+    /// indexed file is a heavy, potentially long-running operation, so it
+    /// gets a confirmation sheet (with a rough time estimate) the same way
+    /// no OTHER audit-menu action needs one.
+    @State private var showVerifyConfirmation = false
+    /// Snapshotted once, right when the confirmation sheet opens -- see
+    /// `VerifyConfirmationSheet`'s own doc comment.
+    @State private var verifyEligibleFileCount = 0
 
     // MARK: - Derived finding buckets (A.5's reframing)
 
@@ -60,6 +69,17 @@ struct AuditPage: View {
 
     private var cleanupBytesText: String {
         Self.formatBytes(appState.cleanupSummary?.grandTotalBytes ?? 0)
+    }
+
+    /// R11-T14/F9: whether EITHER a full audit OR a standalone
+    /// "Integritás-ellenőrzés…" has produced a result this launch --
+    /// `appState.lastRunID` alone used to be this page's only "has anything
+    /// run yet" signal, which is wrong once verify can populate `findings`
+    /// on its own (a user might run only the integrity check and never a
+    /// full audit). Everywhere the old code checked `appState.lastRunID ==
+    /// nil` to gate the empty state now checks `!hasAnyAuditRun` instead.
+    private var hasAnyAuditRun: Bool {
+        appState.lastRunID != nil || appState.lastVerifyRunID != nil
     }
 
     /// `true` once an audit has actually run (`noAuditYetState` handles the
@@ -156,13 +176,14 @@ struct AuditPage: View {
         @Bindable var appState = appState
 
         VStack(alignment: .leading, spacing: 12) {
-            // `lastRunID` is only ever set by `runAudit` (same call site that
-            // populates both `findings` and `cleanupSummary`), so it's the
-            // one reliable "has an audit actually run this session" signal
-            // -- checking `findings.isEmpty` alone would be wrong once a
-            // real audit comes back all-clear (0 findings is a valid,
-            // celebrated result, not "never ran").
-            if appState.lastRunID == nil {
+            // `lastRunID`/`lastVerifyRunID` are only ever set by
+            // `runAudit`/`runVerify` respectively (see `hasAnyAuditRun`'s
+            // own doc comment), so together they're the one reliable "has
+            // SOMETHING actually run this session" signal -- checking
+            // `findings.isEmpty` alone would be wrong once a real audit
+            // comes back all-clear (0 findings is a valid, celebrated
+            // result, not "never ran").
+            if !hasAnyAuditRun {
                 // R10-A5: an audit has never run for this root, but
                 // `cleanupSummary` (residue + duplicate-content) loads
                 // independently (`AppState.loadCleanup()`/
@@ -256,6 +277,15 @@ struct AuditPage: View {
                         Button("Duplikátum-keresés nélkül (gyors)") {
                             appState.runAudit(includeSuspicious: appState.includeSuspiciousInScript, includeDuplicates: false)
                         }
+                        Divider()
+                        // R11-T14/F9: opens a confirmation sheet rather than
+                        // running immediately -- re-hashing every indexed
+                        // file can take a while, so the user gets a rough
+                        // time estimate (and a "Csak minta" shortcut) first.
+                        Button("Integritás-ellenőrzés…") {
+                            verifyEligibleFileCount = appState.countVerifyEligibleFiles()
+                            showVerifyConfirmation = true
+                        }
                     } label: {
                         Text("Audit futtatása")
                     } primaryAction: {
@@ -297,6 +327,9 @@ struct AuditPage: View {
                 }
             }
         }
+        .sheet(isPresented: $showVerifyConfirmation) {
+            VerifyConfirmationSheet(eligibleFileCount: verifyEligibleFileCount)
+        }
     }
 
     // MARK: - Empty states (A.5)
@@ -326,20 +359,21 @@ struct AuditPage: View {
 
     // MARK: - Header tiles
 
-    /// R11-T2: while `lastRunID == nil` (no audit has run this session),
-    /// `errorFindings`/`suspiciousFindings`/`intentionalFindings` all read
-    /// as empty arrays -- rendering "0" there would read as "audited and
-    /// clean", which is a different (and false) claim from "never
-    /// audited". Those three tiles fall back to `TDFormat.missingTile`
-    /// ("n/a", this app's own tile-scale missing-value glyph -- see
-    /// `TDFormat`'s doc comment for why not the literal "—" this ticket's
-    /// own wording used: T1 just finished stamping out that exact
-    /// undocumented third glyph) with a "nincs audit" caption. "Takarítható"
-    /// is untouched -- `cleanupSummary` loads independently of any audit
-    /// run (`AppState.loadCleanup()`), so its own count is always real.
+    /// R11-T2: while `!hasAnyAuditRun` (neither an audit nor a standalone
+    /// verify has run this session), `errorFindings`/`suspiciousFindings`/
+    /// `intentionalFindings` all read as empty arrays -- rendering "0"
+    /// there would read as "audited and clean", which is a different (and
+    /// false) claim from "never audited". Those three tiles fall back to
+    /// `TDFormat.missingTile` ("n/a", this app's own tile-scale
+    /// missing-value glyph -- see `TDFormat`'s doc comment for why not the
+    /// literal "—" this ticket's own wording used: T1 just finished
+    /// stamping out that exact undocumented third glyph) with a "nincs
+    /// audit" caption. "Takarítható" is untouched -- `cleanupSummary` loads
+    /// independently of any audit run (`AppState.loadCleanup()`), so its
+    /// own count is always real.
     private var tiles: some View {
         HStack(spacing: 12) {
-            if appState.lastRunID == nil {
+            if !hasAnyAuditRun {
                 StatTile(title: "Biztos hiba", value: TDFormat.missingTile, color: .gray, caption: "nincs audit")
                 StatTile(title: "Gyanús", value: TDFormat.missingTile, color: .gray, caption: "nincs audit")
                 StatTile(title: "Takarítható", value: cleanupBytesText, color: .blue)

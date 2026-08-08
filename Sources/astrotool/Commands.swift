@@ -72,6 +72,20 @@ Commands:
                 (requires --suggest; same --out convention as audit)
                 --json's storage block: per-target on-disk size, broken
                 down by area (sessions/stacks/processed/other), size-desc.
+  verify        [--target T] [--path P] [--sample N (1-100)] [--json] [--root R]
+                Fixity/bitrot re-check: re-hashes every already-hashed,
+                non-missing tracked file and compares against the stored
+                content_hash. --target/--path narrow the scope; --sample N
+                checks a random N% of the scope instead of all of it.
+                Read-only -- never rewrites the cached hash or the file
+                itself; a mismatch only ever produces a finding for a human
+                to act on (restore from backup). --json's summary block:
+                checked/ok/content_changed/modified/read_errors counts.
+                Exit 5 if at least one file's content actually changed
+                (mtime/size unchanged, hash mismatch -- corruption suspect);
+                a same-size-and-mtime match with a different hash is
+                reported as "modified" (a legitimate edit) instead and does
+                NOT affect the exit code.
   rate          [--root R] --target T [--date D] [--json] [--no-siril] [--force]
   stats         [--root R] [--target T] [--json] [--gross] [--sessions (requires --target)] [--tag TAG]
                 [--timeline (requires --target) [--date D]]
@@ -555,6 +569,85 @@ private func printAuditFindings(_ findings: [Finding], config: AstroConfig) {
             }
         }
     }
+}
+
+// MARK: - verify (R11-T14/F9)
+
+/// `verify --json`'s root object: the aggregate `summary` block plus the
+/// findings list (`content-changed`/`modified`/`verify-read-error`) under
+/// the pre-established `items` key (see `printJSON`'s array-wrap doc
+/// comment) so the shape rhymes with `audit --json`'s own `items`.
+private struct VerifyJSONPayload: Encodable {
+    let summary: FixityVerifier.Summary
+    let items: [Finding]
+}
+
+/// Fixity ("bitrot") re-check: re-hashes every already-hashed, non-missing
+/// tracked file (optionally narrowed to one `--target` and/or `--path`
+/// subtree, optionally sampled to `--sample N`%) and compares against the
+/// stored `content_hash`. Read-only — never rewrites the cached hash, never
+/// touches the file itself; see `FixityVerifier`'s own doc comment for why.
+func cmdVerify(_ args: [String]) throws -> Int32 {
+    let specs = [
+        FlagSpec("--root", takesValue: true),
+        FlagSpec("--target", takesValue: true),
+        FlagSpec("--path", takesValue: true),
+        FlagSpec("--sample", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ]
+    let parsed = try ArgParser.parse(args, specs: specs)
+
+    var samplePercent: Int?
+    if let sampleRaw = parsed.value("--sample") {
+        guard let sample = Int(sampleRaw), sample >= 1, sample <= 100 else {
+            eprint("error: --sample must be an integer 1-100")
+            eprint(usageText)
+            return 1
+        }
+        samplePercent = sample
+    }
+
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    try hintIfEmpty(db)
+
+    let (_, results, findingsList) = try FixityVerifier.run(
+        db: db,
+        config: config,
+        target: parsed.value("--target"),
+        path: parsed.value("--path"),
+        samplePercent: samplePercent
+    )
+    let summary = FixityVerifier.summarize(results)
+
+    if parsed.has("--json") {
+        try printJSON(VerifyJSONPayload(summary: summary, items: findingsList))
+    } else {
+        print(
+            "verify: ellenőrizve \(summary.checked), ok \(summary.ok), eltérés \(summary.contentChanged), "
+                + "módosult \(summary.modified), hiba \(summary.readErrors)"
+        )
+        for finding in findingsList where finding.category == "content-changed" {
+            print("  ELTÉRÉS  \(finding.path)")
+            print("    \(finding.message)")
+        }
+        for finding in findingsList where finding.category == "verify-read-error" {
+            print("  HIBA  \(finding.path)")
+            print("    \(finding.message)")
+        }
+        for finding in findingsList where finding.category == "modified" {
+            print("  módosult  \(finding.path)")
+        }
+    }
+
+    // Exit-code contract (R11-T4/F10-a, R11-T14): 5 is reserved specifically
+    // for a CONFIRMED content mismatch (`content-changed`) -- a read error
+    // couldn't confirm OR refute the file's integrity, so it falls back to
+    // the ordinary general-error code instead of claiming corruption that
+    // was never actually verified.
+    if summary.contentChanged > 0 { return 5 }
+    if summary.readErrors > 0 { return 1 }
+    return 0
 }
 
 // MARK: - cleanup
