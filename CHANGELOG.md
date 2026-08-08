@@ -8,6 +8,40 @@ történik.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-08
+
+### Added
+
+- Új **Beállítások ▸ Felszerelés** lap névvel menthető kamera–optika
+  setupokhoz, fizikai szenzormérettel, kamerajelleggel, fix vagy zoom
+  fókusztávval és kijelölhető alapértelmezett profillal.
+- Közvetlen sablonok a gyakori workflow-khoz: APS-C dedikált asztrokamera
+  100–400 mm, nem modifikált full-frame Canon R8 16 mm, valamint Canon R8
+  28–70 mm.
+- Setupválasztó a Felfedezés oldalon. Zoomprofilnál csúszka, numerikus mező
+  és léptető állítja a konkrét tervezési fókusztávot; az alkalmazás csak az
+  explicit „Alkalmazás és újraszámítás” művelettel történik.
+
+### Changed
+
+- A Felfedezés FOV-számítása elsőként a kiválasztott kézi setup valódi
+  szenzorméretét és fókusztávját használja. Ha nincs kézi profil, a korábbi
+  domináns, WCS-alapú könyvtári látómező marad az automatikus fallback.
+- A kiválasztott setup és a zoomprofilok legutóbbi alkalmazott fókusztávja
+  megmarad az app újraindítása után is.
+- A FOV tile megmutatja a setup nevét és a konkrét fókusztávot; setup- vagy
+  fókusztávváltáskor az előző FOV és a belőle számolt célpontilleszkedések
+  azonnal érvénytelenné válnak, amíg az új eredmény elkészül.
+
+### Fixed
+
+- Hibásan kézzel szerkesztett, fordított vagy nem véges zoomtartomány nem
+  tudja összeomlasztani a Felfedezés csúszkáját.
+- Érvénytelen kézi setupnál az app nem talál ki FOV-ot: `n/a` állapotot és
+  közvetlen **Érvénytelen setup javítása…** műveletet mutat.
+- Felszerelés mentése közben futó korábbi Discovery-számítás nem írhat vissza
+  tartósan elavult FOV-ot; a frissítés sorba áll és az új konfigurációval fut.
+
 ## [0.13.2] - 2026-08-08
 
 ### Fixed
