@@ -18,6 +18,7 @@ Asztrofotó-könyvtár auditálása, minőség-pontozás és kalibráció-követ
 - **Session-párosítás (match)** — egy adott célpont+dátum session-höz tartozó kalibrációs keretek és light frame-ek összerendelése, problémákkal.
 - **Új session létrehozás (new-session)** — kanonikus `YYYY-MM-DD` könyvtárstruktúra és README-sablon létrehozása egy célponthoz.
 - **Észlelés-tervező (plan)** — ma esti kulmináció, max magasság, láthatósági ablak és Hold-zavarás célpontonként, pontszám szerint rendezve.
+- **Kézi setup-látómező (Felfedezés)** — több kamera+optika profil, APS-C/full-frame/egyedi szenzorméret, fix vagy zoom fókusztáv; a célpontok FOV-illeszkedése az éppen kiválasztott valós setupból számolódik.
 - **Kereshető éjszaka-napló (search)** — a session `README.txt`-jébe kézzel beírt Bortle/SQM/seeing/megjegyzés szöveg indexelve, kulcs vagy érték szerint kereshetően.
 - **Plate-solve backfill (solve)** — wide-field Canon CR3 célpontok koordináta-pótlása Siril blind plate-solve-jával, hogy a tervező és a mozaik-panel követés ezekre is működjön.
 - **Expozíció-tanácsadó (expose)** — mért szenzor-zajból és per-Bayer égháttérből számolt ideális sub-hossz + relatív SNR-tanács ("mennyivel javul a jel, ha még N órát integrálok").
@@ -114,6 +115,34 @@ astrotool plan --month
 ```
 
 Minden parancs elfogadja a `--root <PATH>` kapcsolót az alapértelmezett könyvtár felülbírálására.
+
+## Képalkotó setupok és látómező
+
+Az alkalmazás **Beállítások ▸ Felszerelés** lapján névvel menthető minden
+kamera + objektív/távcső kombináció. A szenzor valódi szélessége és magassága
+milliméterben, valamint a fókusztáv határozza meg a látómezőt; crop-faktort nem
+kell számolni.
+
+A **Setup hozzáadása** menü közvetlen sablont ad három gyakori workflow-hoz:
+
+- APS-C dedikált asztrokamera + 100–400 mm zoom;
+- Canon R8 (nem modolt, full frame) + 16 mm;
+- Canon R8 (nem modolt, full frame) + 28–70 mm zoom.
+
+Minden sablon szabadon átírható. A szenzorpresetek: tipikus APS-C
+`23,5 × 15,7 mm`, Canon APS-C `22,3 × 14,9 mm`, full frame `36 × 24 mm`,
+illetve tetszőleges egyedi méret.
+
+A **Felfedezés** felső sorában választható ki az aktív setup. Zoomobjektívnél
+a mellette lévő mm-gombbal állítható be a konkrét tervezési fókusztáv; a FOV
+és minden „befér / mozaik kellene / túl kicsi” címke ehhez számolódik újra.
+A választott setup és a legutóbbi zoomállás setup-onként megmarad.
+
+Ha nincs kézi setup, a korábbi működés változatlan: a program a könyvtár
+domináns felszerelésének WCS/pixelskála adataiból próbál medián FOV-ot
+felismerni. `n/a` csak akkor jelenik meg, ha sem kézi profil, sem használható
+automatikus adat nincs; ilyenkor a **Setup beállítása…** gomb közvetlenül a
+Felszerelés lapra visz.
 
 ## Tervező
 
