@@ -57,3 +57,14 @@ private func detachedTaskBodies(in source: String) -> [Substring] {
         )
     }
 }
+
+@Test func quickLookContinuationDoesNotTransportNonSendableNSImage() throws {
+    let sourceURL = repositoryRoot()
+        .appendingPathComponent("Sources/AstroToolApp/Views/ThumbnailCell.swift")
+    let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+    #expect(
+        !source.contains("CheckedContinuation<NSImage"),
+        "Quick Look callbacks run on an arbitrary queue; their continuation must transport CGImage, not NSImage"
+    )
+}

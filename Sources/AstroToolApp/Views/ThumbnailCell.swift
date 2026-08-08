@@ -115,15 +115,18 @@ struct ThumbnailCell: View {
             fileAt: url, size: CGSize(width: size, height: size), scale: 2,
             representationTypes: .thumbnail
         )
-        return await withCheckedContinuation { (continuation: CheckedContinuation<NSImage?, Never>) in
+        let cgImage = await withCheckedContinuation { (continuation: CheckedContinuation<CGImage?, Never>) in
             QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { thumbnail, _ in
                 // Extracted immediately, outside the actor-hop the caller
                 // does: the callback itself runs on an arbitrary queue, and
-                // `QLThumbnailRepresentation` isn't `Sendable` -- only the
-                // plain `NSImage` it hands out crosses the continuation.
-                continuation.resume(returning: thumbnail?.nsImage)
+                // `QLThumbnailRepresentation` isn't `Sendable`. Its immutable,
+                // Sendable `CGImage` crosses the continuation instead; the
+                // AppKit object is created back on the main actor below.
+                continuation.resume(returning: thumbnail?.cgImage)
             }
         }
+        guard let cgImage else { return nil }
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }
 
     /// Renders a FITS/FIT/.fz frame's primary HDU into a small `NSImage` via

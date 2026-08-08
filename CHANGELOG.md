@@ -8,6 +8,14 @@ történik.
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-08-08
+
+### Fixed
+
+- A Quick Look callback már `CGImage` értéket ad át a continuationön, és az
+  `NSImage` csak a fő actoron készül el. Ez megszünteti a macOS 15 runner
+  utolsó, nem Sendable AppKit-objektumra vonatkozó fordítási hibáját.
+
 ## [0.13.1] - 2026-08-08
 
 ### Fixed
