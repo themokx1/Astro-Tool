@@ -24,8 +24,8 @@
 - [x] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [x]
 - [x] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [x] T10 [x] T11 [x] T12 [x] T13 [x]
 - [x] 6. Végrehajtás — C-hullám (pro funkciók): T14 [x] T15 [x] T16 [x] T17 [x]
-- [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
-- [ ] 8. Release v0.13.0
+- [x] 7. Záró review-kör lefutott (2026-08-08, 11 agent) — a találatok és a
+  folytatás a PLAN-R12.md-ben; a v0.13.0 release az R12 U-hulláma után esedékes.
 
 ---
 
