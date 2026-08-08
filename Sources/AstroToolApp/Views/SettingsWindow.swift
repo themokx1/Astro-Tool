@@ -23,6 +23,9 @@ struct SettingsWindow: View {
             LocationSettingsView()
                 .tabItem { Text("Helyszín") }
                 .tag(AppState.SettingsTab.location)
+            EquipmentSettingsView()
+                .tabItem { Text("Felszerelés") }
+                .tag(AppState.SettingsTab.equipment)
             CalibrationSettingsView()
                 .tabItem { Text("Kalibráció") }
                 .tag(AppState.SettingsTab.calibration)
@@ -33,6 +36,6 @@ struct SettingsWindow: View {
                 .tabItem { Text("Könyvtár-szabályok") }
                 .tag(AppState.SettingsTab.libraryRules)
         }
-        .frame(width: 560, height: 480)
+        .frame(width: 700, height: 610)
     }
 }

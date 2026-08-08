@@ -58,6 +58,46 @@ import Testing
     #expect(AstroConfig().sites == [])
 }
 
+// MARK: - Imaging setups
+
+@Test func defaultConfigHasNoManualImagingSetups() {
+    #expect(AstroConfig().imagingSetups == [])
+}
+
+@Test func decodingLegacyConfigWithoutImagingSetupsKeepsAutomaticFOVMode() throws {
+    let config = try JSONDecoder().decode(AstroConfig.self, from: Data("{}".utf8))
+    #expect(config.imagingSetups == [])
+}
+
+@Test func imagingSetupsRoundTripThroughAstroConfig() throws {
+    var config = AstroConfig()
+    config.imagingSetups = [
+        ImagingSetupProfile(
+            id: "apsc", name: "APS-C astro 100–400", cameraName: "Astro kamera",
+            cameraKind: .dedicatedAstro, sensorWidthMM: 23.5, sensorHeightMM: 15.7,
+            focalLengthMinMM: 100, focalLengthMaxMM: 400,
+            defaultFocalLengthMM: 200, isDefault: true
+        ),
+        ImagingSetupProfile(
+            id: "r8-16", name: "Canon R8 · 16 mm", cameraName: "Canon R8",
+            cameraKind: .unmodifiedColor, sensorWidthMM: 36, sensorHeightMM: 24,
+            focalLengthMinMM: 16, focalLengthMaxMM: 16,
+            defaultFocalLengthMM: 16
+        ),
+        ImagingSetupProfile(
+            id: "r8-zoom", name: "Canon R8 · 28–70 mm", cameraName: "Canon R8",
+            cameraKind: .unmodifiedColor, sensorWidthMM: 36, sensorHeightMM: 24,
+            focalLengthMinMM: 28, focalLengthMaxMM: 70,
+            defaultFocalLengthMM: 50
+        ),
+    ]
+
+    let data = try JSONEncoder().encode(config)
+    let decoded = try JSONDecoder().decode(AstroConfig.self, from: data)
+    #expect(decoded.imagingSetups == config.imagingSetups)
+    #expect(decoded == config)
+}
+
 @Test func siteProfileDefaultsIsDefaultToFalse() {
     let profile = SiteProfile(name: "Kert", latitudeDeg: 47.5, longitudeDeg: 19.0)
     #expect(profile.isDefault == false)
