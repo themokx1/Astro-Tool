@@ -6,8 +6,9 @@ import SwiftUI
 /// targets, R10-A4) that I'm not already collecting? Backed by
 /// `DiscoveryPlanner.discover` -- the exact same altitude/Moon/verdict/score
 /// math `Planner.plan` runs for the user's OWN library, just swept over the
-/// static catalog instead, plus `FieldGeometry.dominantFOV` for the FOV-fit
-/// column/tile. `AppState.loadDiscovery()` is lazily triggered from this
+/// static catalog instead, plus the selected manual imaging setup (falling
+/// back to `FieldGeometry.dominantFOV`) for the FOV-fit column/tile.
+/// `AppState.loadDiscovery()` is lazily triggered from this
 /// page's own `onAppear`, same "don't auto-refresh, this is tonight-
 /// specific" stance `TonightPage`/`NightsPage` already take for their own
 /// on-demand datasets.
@@ -23,6 +24,7 @@ struct DiscoveryPage: View {
     @State private var selectedDesignation: String?
     @State private var skyArcItem: SkyArcItem?
     @State private var newSessionPrefill: NewSessionPrefillItem?
+    @State private var showFocalLengthPopover = false
 
     // MARK: - Body
 
@@ -87,6 +89,15 @@ struct DiscoveryPage: View {
             Toggle("Meglévő célpontok elrejtése", isOn: $hideAlreadyInLibrary)
             kindFilterMenu
             Spacer()
+            if !appState.config.imagingSetups.isEmpty {
+                setupPicker
+                if appState.effectiveImagingSetup?.isZoom == true {
+                    focalLengthButton
+                }
+            } else if appState.discoveryFOV == nil, appState.discovery != nil {
+                Button("Setup beállítása…") { openEquipmentSettings() }
+                    .buttonStyle(.link)
+            }
             // R12-U1 item 6: this page has no site-Picker of its own (it
             // always uses whichever site `TonightPage`/Settings currently
             // has selected) -- a discreet reminder of WHICH one is in
@@ -101,6 +112,86 @@ struct DiscoveryPage: View {
             Button("Frissítés") { appState.loadDiscovery() }
                 .disabled(appState.isBusy || appState.db == nil)
         }
+    }
+
+    private var setupPicker: some View {
+        Picker("Setup", selection: Binding(
+            get: { appState.effectiveImagingSetup?.id ?? "" },
+            set: { appState.selectImagingSetup($0) }
+        )) {
+            ForEach(appState.config.imagingSetups) { setup in
+                Text(setup.name).tag(setup.id)
+            }
+        }
+        .frame(width: 230)
+        .disabled(appState.isBusy)
+        .help("A FOV és a FOV-illeszkedés ehhez a setuphoz készül")
+    }
+
+    private var focalLengthButton: some View {
+        Button {
+            showFocalLengthPopover = true
+        } label: {
+            Label(focalLengthText, systemImage: "viewfinder")
+        }
+        .disabled(appState.isBusy)
+        .popover(isPresented: $showFocalLengthPopover) {
+            if let setup = appState.effectiveImagingSetup {
+                focalLengthPopover(for: setup)
+            }
+        }
+    }
+
+    private var focalLengthText: String {
+        guard let focal = appState.effectiveDiscoveryFocalLengthMM else { return "– mm" }
+        return String(format: "%.0f mm", focal)
+    }
+
+    private var discoveryFocalLengthBinding: Binding<Double> {
+        Binding(
+            get: { appState.effectiveDiscoveryFocalLengthMM ?? 1 },
+            set: { appState.setDiscoveryFocalLengthMM($0) }
+        )
+    }
+
+    private func focalLengthPopover(for setup: ImagingSetupProfile) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Tervezési fókusztáv").font(.headline)
+                Text(setup.name).font(.caption).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                Text(String(format: "%.0f", setup.focalLengthMinMM))
+                    .font(.caption).monospacedDigit()
+                Slider(value: discoveryFocalLengthBinding, in: setup.focalLengthMinMM...setup.focalLengthMaxMM, step: 1)
+                Text(String(format: "%.0f mm", setup.focalLengthMaxMM))
+                    .font(.caption).monospacedDigit()
+            }
+            LabeledContent("Aktuális", value: focalLengthText)
+                .monospacedDigit()
+            Text("A FOV mindig ehhez az egy konkrét zoomálláshoz számolódik.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack {
+                Button("Alapérték") {
+                    appState.setDiscoveryFocalLengthMM(setup.defaultFocalLengthMM)
+                }
+                Spacer()
+                Button("Újraszámítás") {
+                    showFocalLengthPopover = false
+                    appState.loadDiscovery()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(appState.isBusy || appState.db == nil)
+            }
+        }
+        .padding()
+        .frame(width: 330)
+    }
+
+    private func openEquipmentSettings() {
+        appState.settingsTab = .equipment
+        openSettings()
     }
 
     private var kindFilterMenu: some View {
@@ -259,7 +350,13 @@ struct DiscoveryPage: View {
     }
 
     private var fovTileCaptionText: String? {
-        appState.discoveryFOV == nil ? "nincs WCS-adat" : nil
+        if let setup = appState.effectiveImagingSetup,
+           let focal = appState.effectiveDiscoveryFocalLengthMM {
+            return "\(setup.name) · \(String(format: "%.0f mm", focal))"
+        }
+        return appState.discoveryFOV == nil
+            ? "nincs kézi setup vagy WCS-adat"
+            : "automatikus · könyvtárból"
     }
 
     private var tilesRow: some View {
@@ -293,7 +390,7 @@ struct DiscoveryPage: View {
         ),
         .init(
             title: "FOV",
-            explanation: "A célpont mérete a könyvtár domináns felszerelésének medián látómezejéhez mérve („befér” / „mozaik kellene” / „túl kicsi a képmezőhöz”). Mikor hazudik: reduktor/barlow (vagy kamera) váltás után a RÉGI, most már nem domináns setup FOV-ját mutatja, amíg elég új keret nem gyűlik össze az új felszereléssel."
+            explanation: "A célpont mérete a Felfedezésben kiválasztott kézi setup és konkrét zoom-fókusztáv látómezejéhez mérve („befér” / „mozaik kellene” / „túl kicsi a képmezőhöz”). Kézi setup nélkül a könyvtár domináns, WCS-ből felismert látómezeje a tartalék. A számítás a katalógus egyetlen méretadatából dolgozik, ezért elnyúlt vagy elforgatott célpontnál közelítés."
         ),
         .init(
             title: "Döntés",

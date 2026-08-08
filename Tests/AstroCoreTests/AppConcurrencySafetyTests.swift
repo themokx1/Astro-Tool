@@ -80,3 +80,14 @@ private func detachedTaskBodies(in source: String) -> [Substring] {
     #expect(source.contains("selectedImagingSetupIDKey"))
     #expect(source.contains("discoveryFocalLengthsBySetup"))
 }
+
+@Test func discoveryPageExposesSetupSelectionZoomControlAndEquipmentDeepLink() throws {
+    let sourceURL = repositoryRoot()
+        .appendingPathComponent("Sources/AstroToolApp/Views/DiscoveryPage.swift")
+    let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+    #expect(source.contains("setupPicker"))
+    #expect(source.contains("Slider(value: discoveryFocalLengthBinding"))
+    #expect(source.contains("appState.settingsTab = .equipment"))
+    #expect(source.contains("nincs kézi setup vagy WCS-adat"))
+}
