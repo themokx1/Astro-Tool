@@ -480,3 +480,66 @@ private func insertFingerprintedLight(
     #expect(abs(fov.widthDeg - 1.0) < 1e-9)
     #expect(abs(fov.heightDeg - (2400.0 / 3600.0)) < 1e-9)
 }
+
+// MARK: - Discovery FOV source selection
+
+@Test func discoveryFOVUsesSelectedManualSetupWithoutAnyLibraryFrames() throws {
+    let db = try makeMemoryDB()
+    var config = AstroConfig()
+    config.imagingSetups = [
+        ImagingSetupProfile(
+            id: "apsc", name: "APS-C astro 100–400", cameraName: "Astro kamera",
+            cameraKind: .dedicatedAstro, sensorWidthMM: 23.5, sensorHeightMM: 15.7,
+            focalLengthMinMM: 100, focalLengthMaxMM: 400,
+            defaultFocalLengthMM: 200, isDefault: true
+        ),
+        ImagingSetupProfile(
+            id: "r8-16", name: "Canon R8 · 16 mm", cameraName: "Canon R8",
+            cameraKind: .unmodifiedColor, sensorWidthMM: 36, sensorHeightMM: 24,
+            focalLengthMinMM: 16, focalLengthMaxMM: 16,
+            defaultFocalLengthMM: 16
+        ),
+    ]
+
+    let fov = try #require(try FieldGeometry.discoveryFOV(
+        db: db, config: config, setupID: "r8-16", focalLengthMM: 16
+    ))
+    #expect(abs(fov.widthDeg - 96.73) < 0.01)
+    #expect(abs(fov.heightDeg - 73.74) < 0.01)
+}
+
+@Test func discoveryFOVFallsBackToConfiguredDefaultAndClampsZoomValue() throws {
+    let db = try makeMemoryDB()
+    var config = AstroConfig()
+    config.imagingSetups = [
+        ImagingSetupProfile(
+            id: "apsc", name: "APS-C astro 100–400", cameraName: "Astro kamera",
+            cameraKind: .dedicatedAstro, sensorWidthMM: 23.5, sensorHeightMM: 15.7,
+            focalLengthMinMM: 100, focalLengthMaxMM: 400,
+            defaultFocalLengthMM: 200, isDefault: true
+        ),
+    ]
+
+    let fov = try #require(try FieldGeometry.discoveryFOV(
+        db: db, config: config, setupID: "deleted-id", focalLengthMM: 900
+    ))
+    #expect(abs(fov.widthDeg - 3.36) < 0.01)
+    #expect(abs(fov.heightDeg - 2.25) < 0.01)
+}
+
+@Test func discoveryFOVKeepsDominantWCSFallbackWhenNoManualSetupExists() throws {
+    let db = try makeMemoryDB()
+    for scale in [1.0, 1.2, 1.4] {
+        try insertFingerprintedLight(
+            db: db, target: "AUTO", date: "2026-08-08", name: "s\(scale)",
+            instrume: "ASI2600MC", focallen: 302, xpixsz: 3.76,
+            scaleArcsecPerPixel: scale
+        )
+    }
+
+    let fov = try #require(try FieldGeometry.discoveryFOV(
+        db: db, config: AstroConfig(), setupID: nil, focalLengthMM: nil
+    ))
+    #expect(abs(fov.widthDeg - 1.2) < 1e-9)
+    #expect(abs(fov.heightDeg - 0.8) < 1e-9)
+}

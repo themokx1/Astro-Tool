@@ -394,6 +394,29 @@ public enum FieldGeometry {
 
     // MARK: - Dominant-setup field of view (R10-B4)
 
+    /// Resolves the field of view used by catalog discovery.
+    ///
+    /// A configured manual setup is authoritative because it describes what
+    /// the photographer plans to use tonight, including equipment that has
+    /// not produced any scanned frame yet. When the requested ID is stale,
+    /// the configured default (or first profile) is used. The legacy library
+    /// inference remains the fallback only while no manual profiles exist.
+    public static func discoveryFOV(
+        db: Database,
+        config: AstroConfig,
+        setupID: String?,
+        focalLengthMM: Double?
+    ) throws -> (widthDeg: Double, heightDeg: Double)? {
+        guard !config.imagingSetups.isEmpty else {
+            return try dominantFOV(db: db, config: config)
+        }
+
+        let setup = config.imagingSetups.first { $0.id == setupID }
+            ?? ImagingSetupProfile.defaultSetup(in: config.imagingSetups)
+        guard let field = setup?.fieldOfView(at: focalLengthMM) else { return nil }
+        return (widthDeg: field.widthDeg, heightDeg: field.heightDeg)
+    }
+
     /// The astrophotography library's dominant equipment setup's median
     /// field of view, across every usable, WCS-resolved light frame on
     /// record -- "if I don't already have a specific target/session in
