@@ -87,6 +87,14 @@ struct DiscoveryPage: View {
             Toggle("Meglévő célpontok elrejtése", isOn: $hideAlreadyInLibrary)
             kindFilterMenu
             Spacer()
+            // R12-U1 item 6: this page has no site-Picker of its own (it
+            // always uses whichever site `TonightPage`/Settings currently
+            // has selected) -- a discreet reminder of WHICH one is in
+            // effect, since every altitude/visibility number on this page
+            // depends on it.
+            if appState.config.sites.count > 1 {
+                SiteChip(name: appState.effectiveSiteDisplayName)
+            }
             if appState.isBusy {
                 ProgressView().controlSize(.small)
             }

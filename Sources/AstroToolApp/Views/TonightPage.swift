@@ -125,22 +125,21 @@ struct TonightPage: View {
 
     private var sitePickerSelection: Binding<String> {
         Binding(
-            get: {
-                appState.effectiveSiteName ?? SiteProfile.defaultSite(in: appState.config.sites)?.name ?? ""
-            },
+            get: { appState.effectiveSiteDisplayName },
             set: { newName in
                 appState.selectedSiteName = newName
-                // Every dataset that plans against a site recomputes --
-                // `plan`/`resolvedSite`/`nightInfo` always (this page's own
-                // tiles/table), `monthPlan`/`discovery` only if they were
-                // ever loaded this session (same "refresh what's already on
-                // screen, don't eagerly load what wasn't" stance
-                // `LocationSettingsView.save()` already takes for these same
-                // two datasets).
-                appState.loadPlan(date: appState.planDate)
-                if appState.monthPlan != nil { appState.loadMonthPlan() }
-                if appState.discovery != nil { appState.loadDiscovery() }
-                appState.loadWeather()
+                // R12-U1 item 1: ONE combined loader, not four back-to-back
+                // calls -- `plan`/`resolvedSite`/`nightInfo` (this page's own
+                // tiles/table) always, `monthPlan`/`discovery` only if they
+                // were ever loaded this session, `loadWeather()` only once
+                // the new `resolvedSite` has actually landed. The previous
+                // four separate calls here raced each other (each one's own
+                // `beginOperation` cancels the one before it, since none of
+                // them awaits in between) -- see `AppState
+                // .loadSiteScopedData`'s own doc comment for the full story,
+                // including why `loadWeather()` used to fetch the OLD site's
+                // coordinate even when the race didn't otherwise lose data.
+                appState.loadSiteScopedData(date: appState.planDate)
             }
         )
     }
@@ -922,6 +921,15 @@ struct TonightPage: View {
     private var calendarSegmentView: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
+                // R12-U1 item 6: this table's own reminder of which site its
+                // Sötét/Hold/Felhő columns are computed against -- the
+                // interactive site-Picker up top (shared with "Ma este")
+                // already lets a user CHANGE it, but nothing INSIDE this
+                // segment's own header confirmed which one is currently in
+                // effect.
+                if appState.config.sites.count > 1 {
+                    SiteChip(name: appState.effectiveSiteDisplayName)
+                }
                 Spacer()
                 if appState.isBusy {
                     ProgressView().controlSize(.small)

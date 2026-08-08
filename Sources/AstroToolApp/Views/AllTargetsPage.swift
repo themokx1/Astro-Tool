@@ -537,6 +537,7 @@ struct AllTargetsPage: View {
             target: target,
             date: detail.dateRaw,
             tags: detail.tags,
+            setupDescriptor: detail.setupDescriptor,
             linkingSession: $linkingSession,
             stackListingSession: $stackListingSession,
             noteEditingSession: $noteEditingSession,

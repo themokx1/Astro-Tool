@@ -173,7 +173,7 @@ private struct PreviousNightReviewSheet: View {
     var body: some View {
         Group {
             if let frames = appState.reviewFrameScores {
-                FrameReviewSheet(frames: frames)
+                FrameReviewSheet(frames: frames, isReviewScoped: true)
             } else {
                 VStack(spacing: 12) {
                     ProgressView().controlSize(.small)
@@ -183,6 +183,10 @@ private struct PreviousNightReviewSheet: View {
             }
         }
         .onAppear { appState.loadReviewFrames(target: target, date: date) }
-        .onDisappear { appState.reviewFrameScores = nil }
+        // R12-U1 item 3: `cancelReviewFrames()` (cancels the in-flight load
+        // + clears `reviewFrameScores`/`reviewFrameVerdicts`), not just
+        // `appState.reviewFrameScores = nil` -- see that method's own doc
+        // comment.
+        .onDisappear { appState.cancelReviewFrames() }
     }
 }

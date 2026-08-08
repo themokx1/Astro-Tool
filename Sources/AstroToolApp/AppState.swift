@@ -297,14 +297,26 @@ final class AppState: @unchecked Sendable {
     /// R11-T12/F12: "Ma este"'s dismissible "Első lépések" card -- persisted
     /// (unlike `cloudBannerDismissed`) since the spec wants this to stay
     /// dismissed across relaunches once the user has waved it off, same
-    /// `UserDefaults` get/set shape `autoScanOnMount` already establishes.
+    /// `UserDefaults` persistence `autoScanOnMount` already establishes.
     /// The card's own VISIBILITY also requires `firstSteps` to have fewer
     /// than 4 done steps (`MainShellView`/`TonightPage` check both), so
     /// dismissing it here doesn't mean "never compute `firstSteps` again" --
     /// just "don't show the unsolicited nudge".
-    var firstStepsCardDismissed: Bool {
-        get { UserDefaults.standard.bool(forKey: Self.firstStepsCardDismissedKey) }
-        set { UserDefaults.standard.set(newValue, forKey: Self.firstStepsCardDismissedKey) }
+    ///
+    /// R12-U1 item 4: a plain STORED property with a `didSet` mirror to
+    /// `UserDefaults` -- was a computed property whose getter/setter read/
+    /// wrote `UserDefaults` directly with no backing storage of its own.
+    /// `@Observable`'s change tracking only instruments a type's STORED
+    /// properties (each one's synthesized accessor calls `access(keyPath:)`/
+    /// `withMutation(keyPath:)`); a computed property that reaches straight
+    /// into `UserDefaults` participates in none of that, so setting it
+    /// never marked any view that had READ it as needing to redraw -- the
+    /// dismiss button's own toggle only visually updated when some
+    /// UNRELATED tracked property happened to change right after. `init()`
+    /// reads the persisted starting value once (a stored property's own
+    /// declared default can't reach `UserDefaults` itself).
+    var firstStepsCardDismissed: Bool = false {
+        didSet { UserDefaults.standard.set(firstStepsCardDismissed, forKey: Self.firstStepsCardDismissedKey) }
     }
 
     /// R11-T12/F12: the "Első lépések" checklist -- 6 fixed steps, each
@@ -411,6 +423,38 @@ final class AppState: @unchecked Sendable {
     /// result, cleared on close" convention `PlateSolveSheet`'s
     /// `plateSolveSummary` already established.
     var reviewFrameScores: [FrameScore]?
+    /// R12-U1 item 3: `reviewFrameScores`'s own manual-verdict counterpart --
+    /// kept SEPARATE from the shared `frameVerdicts` (populated by
+    /// `loadFrameScores`/`runRate`/`runRateAll` for the target-detail
+    /// Minőség segment) so loading ONE triage session's review frames here
+    /// can never silently wipe out verdicts `QualitySegment` already has
+    /// cached for some OTHER target/session. Before this, `loadReviewFrames`
+    /// fully REPLACED (not merged into) the shared `frameVerdicts` with
+    /// whatever this one small session resolved, discarding every other
+    /// target's entry in the process. `FrameReviewSheet` reads/writes
+    /// whichever of the two dictionaries matches the frame set it was
+    /// handed (see its own `isReviewScoped` doc comment). Cleared the same
+    /// way `reviewFrameScores` is -- `PreviousNightReviewSheet`'s
+    /// `onDisappear`.
+    var reviewFrameVerdicts: [String: Bool] = [:]
+    /// R12-U1 item 3: the `(target, date)` `loadReviewFrames` was most
+    /// recently asked to load -- set right before its background `Task`
+    /// starts, re-checked after each `await` inside it before writing
+    /// `reviewFrameScores`/`reviewFrameVerdicts`. `Task.isCancelled` alone
+    /// doesn't close the race this guards against: `PreviousNightReviewSheet`
+    /// is a `.sheet(item:)` (one session at a time), and the freshly
+    /// swapped-in sheet's own `.onAppear` (which is what actually calls
+    /// `loadReviewFrames` again, cancelling the previous load's
+    /// `currentTask`) can lag slightly behind the moment the OLD sheet's
+    /// `onDisappear` fires -- if the old session's background query
+    /// finishes inside that window, its own `Task.isCancelled` check still
+    /// reads `false` (nothing has cancelled it YET), so it would otherwise
+    /// apply the WRONG session's frames/verdicts under the sheet that's
+    /// actually on screen now. This key is the real ground truth of "what
+    /// does the CURRENTLY shown sheet want" -- `nil` whenever no review load
+    /// is in flight.
+    @ObservationIgnored
+    private var reviewFramesRequest: ScanSummary.SessionKey?
     /// R11-T9/F5: "Automatikus beolvasás kötet csatlakozásakor" (Settings ▸
     /// Könyvtár) -- default OFF. This is app-BEHAVIOR config (whether a
     /// filesystem event alone should ever trigger a scan), not
@@ -419,15 +463,23 @@ final class AppState: @unchecked Sendable {
     /// `bookmarkKey`/`recentRootsKey` above already follow (this app's own
     /// prefs, not something that should round-trip through the library's
     /// checked-in-adjacent config file, and not something the CLI has any
-    /// use for). A plain computed property backed by `UserDefaults.standard`
-    /// directly, not `@AppStorage`: `AppState` is a plain `@Observable`
+    /// use for). Not `@AppStorage`: `AppState` is a plain `@Observable`
     /// class, not a `View`, so `@AppStorage`'s `DynamicProperty` machinery
-    /// wouldn't integrate with `@Observable`'s own change tracking anyway --
-    /// same "raw `UserDefaults` read/write, no property-wrapper" shape
-    /// `recentRoots`'s persistence already uses.
-    var autoScanOnMount: Bool {
-        get { UserDefaults.standard.bool(forKey: Self.autoScanOnMountKey) }
-        set { UserDefaults.standard.set(newValue, forKey: Self.autoScanOnMountKey) }
+    /// wouldn't integrate with `@Observable`'s own change tracking anyway.
+    ///
+    /// R12-U1 item 4: a plain STORED property with a `didSet` mirror to
+    /// `UserDefaults` -- was a computed property whose getter/setter read/
+    /// wrote `UserDefaults` directly with no backing storage of its own,
+    /// which meant `@Observable` never tracked it at all (its change
+    /// tracking only instruments STORED properties -- see
+    /// `firstStepsCardDismissed`'s own doc comment for the full
+    /// explanation): the Settings toggle bound to this via `$appState
+    /// .autoScanOnMount` still worked (a `Binding`'s get/set calls the
+    /// accessors directly, tracking or not), but nothing else that merely
+    /// READ this property ever got invalidated the instant it changed.
+    /// `init()` reads the persisted starting value once.
+    var autoScanOnMount: Bool = false {
+        didSet { UserDefaults.standard.set(autoScanOnMount, forKey: Self.autoScanOnMountKey) }
     }
     var findings: [Finding] = []
     var lastRunID: Int64?
@@ -602,6 +654,21 @@ final class AppState: @unchecked Sendable {
     /// the date filter on `QualitySegment`, which consumes it once (same
     /// "set, navigate, consume on appear" pattern as `pendingSessionSelection`).
     var pendingQualityDate: String?
+    /// R12-U1 item 5: a session row's "Megnyitás a Trendeken" action
+    /// (`SessionActionMenu`, shared by `AllTargetsPage`/`NightsPage`/
+    /// `SessionsSegment`) sets this to that session's own dominant setup
+    /// descriptor (`SessionDetail.setupDescriptor` -- built from the exact
+    /// same `EquipmentProfile.dominant(...)?.descriptor` calculation
+    /// `TrendPoint.setupDescriptor` is, so the two always compare equal)
+    /// right before navigating to `Page.trends`. `TrendsPage.onAppear`
+    /// consumes it once (preselecting its own `selectedSetup` `@State`),
+    /// same "set, navigate, consume on appear" pattern as
+    /// `pendingTargetSegment` above. `nil` is itself a perfectly valid value
+    /// to hand over -- a session with no derivable dominant setup just means
+    /// "show unfiltered", exactly `TrendsPage`'s own default, so there's no
+    /// need to distinguish "no pending request" from "pending request for no
+    /// filter" here.
+    var pendingTrendsSetupFilter: String?
 
     var stats: [TargetStats] = []
     /// Every target's session detail rows, keyed by target name -- populated
@@ -659,7 +726,14 @@ final class AppState: @unchecked Sendable {
     /// (see `loadVerdicts(forScores:db:)`), patched directly by
     /// `setFrameVerdict` without a full reload. A path absent from this
     /// dictionary means "no verdict recorded", same as `Database
-    /// .userVerdict(fileID:)` returning `nil`.
+    /// .userVerdict(fileID:)` returning `nil`. A full REPLACE here (not a
+    /// merge) is correct and intended whenever it happens alongside a fresh
+    /// `frameScores` load, same contract that array itself follows -- this
+    /// is "verdicts for whatever `frameScores` currently holds", not a
+    /// cross-target running cache. See `reviewFrameVerdicts` for the
+    /// SEPARATE dictionary the "Előző éjszaka" review sheet uses instead
+    /// (R12-U1 item 3), precisely because ITS load doesn't get to replace
+    /// this one.
     var frameVerdicts: [String: Bool] = [:]
 
     /// Whether any `.dssfilelist` is currently tracked -- gates the
@@ -700,17 +774,23 @@ final class AppState: @unchecked Sendable {
     /// it"); this property holds today's actually-in-effect coordinate.
     /// R11-T15/F16: `TonightPage`'s site-Picker persisted choice (shown only
     /// once `config.sites.count > 1`) -- `nil` means "use the configured
-    /// default site" (`SiteProfile.defaultSite(in:)`). Raw `UserDefaults`
-    /// storage, same "app-behavior preference, not library-shape config"
-    /// reasoning `autoScanOnMount` documents -- this is a per-machine UI
-    /// choice, not something that belongs in `config.json`/the CLI's own
-    /// `--site` flag (which always defaults to the configured default site,
-    /// with no memory of any previous choice).
-    var selectedSiteName: String? {
-        get { UserDefaults.standard.string(forKey: Self.selectedSiteNameKey) }
-        set {
-            if let newValue {
-                UserDefaults.standard.set(newValue, forKey: Self.selectedSiteNameKey)
+    /// default site" (`SiteProfile.defaultSite(in:)`). Persisted, same
+    /// "app-behavior preference, not library-shape config" reasoning
+    /// `autoScanOnMount` documents -- this is a per-machine UI choice, not
+    /// something that belongs in `config.json`/the CLI's own `--site` flag
+    /// (which always defaults to the configured default site, with no
+    /// memory of any previous choice).
+    ///
+    /// R12-U1 item 4: a plain STORED property with a `didSet` mirror to
+    /// `UserDefaults` -- was a computed property whose getter/setter read/
+    /// wrote `UserDefaults` directly with no backing storage of its own, the
+    /// same untracked-by-`@Observable` shape `firstStepsCardDismissed`'s own
+    /// doc comment explains in full. `init()` reads the persisted starting
+    /// value once.
+    var selectedSiteName: String? = nil {
+        didSet {
+            if let selectedSiteName {
+                UserDefaults.standard.set(selectedSiteName, forKey: Self.selectedSiteNameKey)
             } else {
                 UserDefaults.standard.removeObject(forKey: Self.selectedSiteNameKey)
             }
@@ -728,9 +808,33 @@ final class AppState: @unchecked Sendable {
     /// default site instead, the same forgiving stance the CLI's own
     /// `--site` flag deliberately does NOT take (there, an unknown name is a
     /// typo worth a hard error).
+    ///
+    /// R12-U1 item 6: matches site names CASE-INSENSITIVELY, same as
+    /// `Planner`'s own `resolveConfiguredSite(config:siteName:)` already
+    /// does when it looks up an explicit `siteName` argument -- this used
+    /// to be a strict `==`, stricter than what the core itself accepts, so
+    /// a `selectedSiteName` whose casing drifted from `config.sites`' own
+    /// entry (e.g. a site renamed with different capitalization in
+    /// Settings) silently read back as "no selection" here even though
+    /// `Planner.resolveSite(siteName:)` would have matched it just fine --
+    /// the persisted choice looked "lost" for no reason a user could see.
     var effectiveSiteName: String? {
-        guard let name = selectedSiteName, config.sites.contains(where: { $0.name == name }) else { return nil }
+        guard let name = selectedSiteName,
+              config.sites.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame })
+        else { return nil }
         return name
+    }
+
+    /// `effectiveSiteName`, falling back to the configured default site's
+    /// own name -- what a discreet "Helyszín: <név>" chip (Felfedezés/Naptár
+    /// segment headers, R12-U1 item 6) shows, and the same fallback
+    /// `TonightPage`'s site-Picker `Binding` getter already computes for
+    /// its own selection. `"-"` only in the pathological case `config.sites`
+    /// is non-empty but somehow has no entry flagged `isDefault` at all
+    /// (shouldn't happen -- `LocationSettingsView.save()` always normalizes
+    /// to exactly one -- but this is a display string, never worth a crash).
+    var effectiveSiteDisplayName: String {
+        effectiveSiteName ?? SiteProfile.defaultSite(in: config.sites)?.name ?? "-"
     }
 
     var resolvedSite: SiteRule = SiteRule()
@@ -919,12 +1023,59 @@ final class AppState: @unchecked Sendable {
     /// synchronous functions with no cancellation checks of their own, this
     /// only ever prevents the FOLLOW-UP step (applying the result to
     /// published state) from running -- it can never abort mid-operation.
+    /// Every loader/mutation in this file shares this ONE slot except
+    /// `runScan` (see `scanTask`'s own doc comment) -- `beginOperation`
+    /// cancelling whatever's already here is deliberate "latest wins"
+    /// behavior for this whole class of quick, idempotent re-fetches.
     @ObservationIgnored
     private var currentTask: Task<Void, Never>?
+
+    /// R12-U1 item 2: `runScan`'s OWN task slot, deliberately independent of
+    /// `currentTask`. Before this, `runScan` shared `currentTask` like every
+    /// other loader -- harmless for a quick re-fetch (the whole point of
+    /// `currentTask`'s "latest wins" cancellation), but a scan is slow,
+    /// rare, and its result (`scanSummary`/`lastScanDate`/`freshSessionKeys`
+    /// + the post-scan stats/calib/projects refresh) is exactly what the
+    /// user is waiting for -- losing it to an unrelated read-only loader
+    /// starting in the meantime (e.g. switching pages, which fires
+    /// `loadDashboardData`/`loadPlan`/…) is a real bug, not a harmless race.
+    /// `Task.detached` (what the scan itself actually runs on) was already
+    /// immune to this -- it's deliberately unlinked from the outer `Task`'s
+    /// cancellation/priority, so the SCAN never stopped mid-flight either
+    /// way -- the bug was purely that `runScan`'s own `guard
+    /// !Task.isCancelled` (checking the OUTER wrapper `Task` stored in
+    /// whichever slot it's in) would trip and silently discard the
+    /// already-finished result once some UNRELATED `beginOperation` call
+    /// had cancelled that same shared `currentTask` out from under it.
+    /// Giving `runScan` its own slot means only ANOTHER `runScan` call (or
+    /// an explicit "Mégse", see `cancelCurrentOperation`) can ever cancel
+    /// it -- the `beginOperation`/`isBusy`/`progressText`/activity-log/toast
+    /// machinery is untouched, so the progress UI and "Mégse" both keep
+    /// working exactly as before. Trade-off, deliberately accepted: if some
+    /// OTHER operation starts and finishes WHILE a scan is still running,
+    /// `endOperation`'s own `currentOperationID` guard (unchanged) means the
+    /// scan's activity-log entry/success toast can end up silently
+    /// superseded once the scan itself finishes -- the DATA still lands
+    /// (the actual fix this exists for), only the notification of it might
+    /// not. Considered the smaller risk of the two options this ticket
+    /// weighed (the other being "never gate `runScan`'s own writes on
+    /// `Task.isCancelled` at all", which risks an OLDER scan overwriting a
+    /// NEWER one's result if two scans ever really do overlap).
+    @ObservationIgnored
+    private var scanTask: Task<Void, Never>?
 
     // MARK: - Root selection
 
     init() {
+        // R12-U1 item 4: `firstStepsCardDismissed`/`autoScanOnMount`/
+        // `selectedSiteName` are now plain STORED properties (see each
+        // one's own doc comment for why) -- the one-time read of whatever
+        // was already persisted has to happen explicitly here, since a
+        // stored property's own declared default (`false`/`nil`) is all
+        // `@Observable` initializes it to otherwise.
+        firstStepsCardDismissed = UserDefaults.standard.bool(forKey: Self.firstStepsCardDismissedKey)
+        autoScanOnMount = UserDefaults.standard.bool(forKey: Self.autoScanOnMountKey)
+        selectedSiteName = UserDefaults.standard.string(forKey: Self.selectedSiteNameKey)
         loadRecentRoots()
         AppState.shared = self
     }
@@ -1221,9 +1372,15 @@ final class AppState: @unchecked Sendable {
     // MARK: - Cancellation
 
     /// "Mégse": see `currentTask`'s doc comment for exactly what this can
-    /// and can't stop.
+    /// and can't stop. Cancels BOTH task slots (R12-U1 item 2: `runScan` now
+    /// runs in its own `scanTask`, not `currentTask`) -- only one of the two
+    /// is ever actually running in practice (whichever operation's
+    /// `progressText`/"Mégse" button the user is currently looking at), so
+    /// cancelling the other is always a harmless no-op against an already-
+    /// finished (or `nil`) `Task`.
     func cancelCurrentOperation() {
         currentTask?.cancel()
+        scanTask?.cancel()
     }
 
     // MARK: - Scan
@@ -1232,6 +1389,15 @@ final class AppState: @unchecked Sendable {
     /// (D23: `AllTargetsPage`'s folder-drop scoped rescan) -- otherwise the
     /// same full-root scan every other caller (toolbar "Beolvasás", ⌘R,
     /// first-run) has always run.
+    ///
+    /// R12-U1 item 2: runs in its OWN `scanTask` slot (see that property's
+    /// own doc comment) rather than the shared `currentTask` -- an unrelated
+    /// read-only loader starting while a scan is still running must never
+    /// make this method's own result silently vanish. `scanTask?.cancel()`
+    /// right below keeps the one case that SHOULD still cancel a
+    /// still-running scan (a second `runScan` call) working exactly like
+    /// `beginOperation`'s own `currentTask?.cancel()` already does for every
+    /// other loader in this file.
     func runScan(subpath: String? = nil) {
         guard let db else { return }
         let cfg = config
@@ -1242,7 +1408,8 @@ final class AppState: @unchecked Sendable {
         // `Set<String>` of exact strings), so its "Kész — új: …" summary
         // never toasted even though a full scan's did.
         let opID = beginOperation(subpath == nil ? "Könyvtár beolvasása…" : "Almappa beolvasása…")
-        currentTask = Task { [weak self] in
+        scanTask?.cancel()
+        scanTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let summary = try await Task.detached(priority: .userInitiated) { [weak self] in
@@ -1286,6 +1453,15 @@ final class AppState: @unchecked Sendable {
                 self.progressText =
                     "Kész — új: \(summary.added), frissült: \(summary.updated), " +
                     "változatlan: \(summary.unchanged), hiányzó: \(summary.missing)"
+                // R12-U1 item 5: a rescan may have changed session-level
+                // metrics (FWHM/background/duty-cycle, a re-solved setup
+                // fingerprint) `trendPoints` was computed from -- `nil`s it
+                // back out so `TrendsPage` recomputes on its next visit
+                // instead of silently showing pre-scan numbers next to
+                // fresh ones. Cheap either way: a scan is rare enough that
+                // forcing one extra `TrendQueries.points` re-run next time
+                // "Trendek" is opened costs nothing worth guarding against.
+                self.trendPoints = nil
 
                 // Refresh Stats/Calib so those tabs never show stale
                 // pre-scan data. Best-effort: a failure here shouldn't turn
@@ -1937,6 +2113,11 @@ final class AppState: @unchecked Sendable {
                     self.previousNightCards[index] = card
                 }
                 self.progressText = "Pontozás kész: \(target) \(date)"
+                // R12-U1 item 5: this session's metrics just changed --
+                // see `runScan`'s own `trendPoints = nil` comment for why
+                // this is a blunt but cheap invalidation rather than trying
+                // to patch just this one point in place.
+                self.trendPoints = nil
             } catch {
                 self.handle(error)
             }
@@ -1985,6 +2166,10 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.previousNightCards = cards
                 self.progressText = "Pontozás kész: \(keys.count) session"
+                // R12-U1 item 5: same invalidation `runScan`/
+                // `runRateFreshSession` apply -- these sessions' metrics
+                // just changed.
+                self.trendPoints = nil
             } catch {
                 self.handle(error)
             }
@@ -1995,9 +2180,21 @@ final class AppState: @unchecked Sendable {
     /// `PreviousNightReviewSheet`'s "Átnézés…" load -- see `reviewFrameScores`'
     /// own doc comment for why this is a dedicated property/method rather
     /// than reusing `loadFrameScores`/`frameScores`.
+    ///
+    /// R12-U1 item 3: guards every write-back with `reviewFramesRequest ==
+    /// key`, not just `Task.isCancelled` -- see that property's own doc
+    /// comment for the exact race this closes (the OLD sheet's load
+    /// finishing in the brief window before the NEW sheet's `.onAppear` has
+    /// actually cancelled it). Also writes into the dedicated
+    /// `reviewFrameVerdicts` now, never the shared `frameVerdicts` -- see
+    /// THAT property's own doc comment for why a straight `self.frameVerdicts
+    /// = verdicts` here used to silently discard every other target's
+    /// cached verdict.
     func loadReviewFrames(target: String, date: String) {
         guard let db else { return }
         let cfg = config
+        let key = ScanSummary.SessionKey(target: target, date: date)
+        reviewFramesRequest = key
 
         let opID = beginOperation("Keretek betöltése…")
         currentTask = Task { [weak self] in
@@ -2006,23 +2203,39 @@ final class AppState: @unchecked Sendable {
                 let results = try await Task.detached(priority: .userInitiated) {
                     try Rater.cachedScores(target: target, date: date, db: db, config: cfg)
                 }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
+                guard !Task.isCancelled, self.reviewFramesRequest == key else { self.endOperation(opID); return }
                 self.reviewFrameScores = results
 
                 // R10-B1: manual verdicts alongside the scores, same as
                 // `loadFrameScores`/`runRate` -- `FrameReviewSheet`'s A/X/U
-                // keys read/write the shared `frameVerdicts` dict regardless
-                // of which array loaded the frames it's blinking through.
+                // keys read/write `reviewFrameVerdicts` (R12-U1 item 3)
+                // regardless of which array loaded the frames it's blinking
+                // through.
                 let verdicts = try await Task.detached(priority: .userInitiated) {
                     try Self.loadVerdicts(forScores: results, db: db)
                 }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
-                self.frameVerdicts = verdicts
+                guard !Task.isCancelled, self.reviewFramesRequest == key else { self.endOperation(opID); return }
+                self.reviewFrameVerdicts = verdicts
             } catch {
                 self.handle(error)
             }
             self.endOperation(opID)
         }
+    }
+
+    /// `PreviousNightReviewSheet`'s own `onDisappear` -- cancels
+    /// `loadReviewFrames` if it's still in flight (belt-and-suspenders
+    /// alongside the `reviewFramesRequest` key-check above: this sheet is
+    /// always presented modally, one session at a time, via `.sheet(item:)`,
+    /// so nothing else should be racing `currentTask` while it's open) and
+    /// clears both `reviewFrameScores`/`reviewFrameVerdicts` so the NEXT
+    /// "Átnézés…" open never flashes a previous session's frames before its
+    /// own load lands.
+    func cancelReviewFrames() {
+        reviewFramesRequest = nil
+        currentTask?.cancel()
+        reviewFrameScores = nil
+        reviewFrameVerdicts = [:]
     }
 
     // MARK: - Discovery (R10-B4)
@@ -2258,6 +2471,114 @@ final class AppState: @unchecked Sendable {
                 self.pushToast(.error, "\(Self.toastLabel(for: "Felhőzet-előrejelzés lekérése…")) — \(message)")
             }
             self.endOperation(opID)
+        }
+    }
+
+    /// Bundles every query `loadSiteScopedData` needs so it can all load
+    /// inside ONE `Task`/`beginOperation` -- same shape/reasoning as
+    /// `DashboardBundle`.
+    private struct SiteScopedBundle {
+        var plan: [TargetPlan]
+        var site: SiteRule
+        var night: NightInfo
+        /// `nil` when the caller didn't ask for it (`monthPlan` wasn't
+        /// loaded this session yet) -- distinct from "computed, zero
+        /// nights", which `Planner.month` itself can legitimately return.
+        var month: [NightSummary]?
+        /// `discovery`/`discoveryFOV` are only ever MEANINGFUL together --
+        /// both stay at their default (`[]`/`nil`) when `discovery` wasn't
+        /// loaded this session yet; the caller gates on its own captured
+        /// `wantsDiscovery` flag rather than trying to tell "not requested"
+        /// apart from "requested, nothing found" from these two alone.
+        var discovery: [DiscoveryRow] = []
+        var discoveryFOV: (widthDeg: Double, heightDeg: Double)?
+    }
+
+    /// R12-U1 item 1: `loadDashboardData`'s sibling for whatever depends on
+    /// the EFFECTIVE SITE rather than the whole library -- `plan`/
+    /// `resolvedSite`/`nightInfo` always, PLUS `monthPlan`/`discovery` (each
+    /// only if already loaded this session, same "refresh what's already on
+    /// screen, don't eagerly load what wasn't" stance those two datasets'
+    /// own loaders already take), all computed in ONE background operation
+    /// against the SAME resolved site -- `loadWeather()` fires only AFTER
+    /// that site has actually landed (same "fire-and-forget, after this
+    /// op's own `endOperation`" shape `loadDashboardData` already uses).
+    ///
+    /// Fixes the site-switch bug this ticket exists for: `TonightPage`'s
+    /// site-Picker setter and `LocationSettingsView.save()` used to call
+    /// `loadPlan()`/`loadMonthPlan()`/`loadDiscovery()`/`loadWeather()`
+    /// back-to-back with no `await` between them -- each one's own
+    /// `beginOperation` cancels whatever `currentTask` the PREVIOUS call in
+    /// that same chain just started (see `currentTask`'s own doc comment),
+    /// so only the LAST call's dataset ever actually landed. In practice
+    /// that meant `plan`/`resolvedSite`/`nightInfo` silently stayed on the
+    /// OLD site whenever `monthPlan` or `discovery` had ever been loaded
+    /// this session (their own trailing calls kept winning the race), and
+    /// `loadWeather()` -- called synchronously right after `loadPlan()`,
+    /// before its result could possibly have landed yet -- fetched the OLD
+    /// site's coordinate even when it DIDN'T lose that race. Called by
+    /// `TonightPage`'s site-Picker setter and `LocationSettingsView.save()`
+    /// -- the only two places a user actually changes which site is in
+    /// effect.
+    func loadSiteScopedData(date: Date? = nil) {
+        guard let db else { return }
+        let cfg = config
+        let siteName = effectiveSiteName
+        let currentStats = stats
+        let wantsMonth = monthPlan != nil
+        let wantsDiscovery = discovery != nil
+
+        let opID = beginOperation("Helyszín-adatok frissítése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let bundle = try await Task.detached(priority: .userInitiated) {
+                    let site = try Planner.resolveSite(db: db, config: cfg, siteName: siteName)
+                    let plans = try Planner.plan(date: date, siteName: siteName, db: db, config: cfg)
+                    let night = Planner.nightInfo(date: date, site: site)
+
+                    let month: [NightSummary]?
+                    if wantsMonth {
+                        month = try Planner.month(siteName: siteName, db: db, config: cfg)
+                    } else {
+                        month = nil
+                    }
+
+                    var bundle = SiteScopedBundle(plan: plans, site: site, night: night, month: month)
+                    if wantsDiscovery {
+                        let existing = DiscoveryPlanner.existingDesignations(stats: currentStats)
+                        let fov = try FieldGeometry.dominantFOV(db: db, config: cfg)
+                        bundle.discovery = DiscoveryPlanner.discover(
+                            date: Date(), site: site, minAltitudeDeg: plannerDefaultMinAltitudeDeg,
+                            existingDesignations: existing,
+                            setupFOVDeg: fov.map { (width: $0.widthDeg, height: $0.heightDeg) }
+                        )
+                        bundle.discoveryFOV = fov
+                    }
+                    return bundle
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.plan = bundle.plan
+                self.resolvedSite = bundle.site
+                self.nightInfo = bundle.night
+                self.planDate = date
+                if let month = bundle.month {
+                    self.monthPlan = month
+                }
+                if wantsDiscovery {
+                    self.discovery = bundle.discovery
+                    self.discoveryFOV = bundle.discoveryFOV.map { DiscoveryFOV(widthDeg: $0.widthDeg, heightDeg: $0.heightDeg) }
+                }
+                self.progressText = "Terv kész: \(bundle.plan.count) célpont"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+            // R10-B6 pattern (see `loadDashboardData`'s own comment on its
+            // identical trailing call): fire-and-forget, deliberately AFTER
+            // this operation's OWN `endOperation(opID)` above, and only now
+            // that `resolvedSite` actually holds the NEW site's coordinate.
+            self.loadWeather()
         }
     }
 
@@ -3618,6 +3939,9 @@ final class AppState: @unchecked Sendable {
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.frameVerdicts = verdicts
+                // R12-U1 item 5: see `runScan`'s own `trendPoints = nil`
+                // comment -- this session's rated metrics just changed.
+                self.trendPoints = nil
             } catch {
                 self.handle(error)
             }
@@ -3718,16 +4042,46 @@ final class AppState: @unchecked Sendable {
     func setFrameVerdict(path: String, accepted: Bool?) {
         guard let db else { return }
         do {
-            guard let fileID = try db.fileID(path: path) else { return }
-            if let accepted {
-                try db.setUserVerdict(fileID: fileID, accepted: accepted, source: "app")
-            } else {
-                try db.clearUserVerdict(fileID: fileID)
-            }
+            guard try writeFrameVerdict(path: path, accepted: accepted, db: db) else { return }
             frameVerdicts[path] = accepted
         } catch {
             handle(error)
         }
+    }
+
+    /// R12-U1 item 3: `FrameReviewSheet`'s review-scoped counterpart to
+    /// `setFrameVerdict` -- same single-row DB write, but patches
+    /// `reviewFrameVerdicts` instead of the shared `frameVerdicts`, for a
+    /// verdict recorded while blinking through `AppState.reviewFrameScores`
+    /// (the "Előző éjszaka" triage sheet) rather than `QualitySegment`'s own
+    /// `frameScores`. See `reviewFrameVerdicts`'s own doc comment for why
+    /// the two dictionaries are kept apart at all.
+    func setReviewFrameVerdict(path: String, accepted: Bool?) {
+        guard let db else { return }
+        do {
+            guard try writeFrameVerdict(path: path, accepted: accepted, db: db) else { return }
+            reviewFrameVerdicts[path] = accepted
+        } catch {
+            handle(error)
+        }
+    }
+
+    /// The actual DB write `setFrameVerdict`/`setReviewFrameVerdict` share --
+    /// factored out so the two differ ONLY in which in-memory dictionary
+    /// they patch afterward, never in how the write itself happens. Returns
+    /// `false` (nothing thrown) exactly when `path` doesn't resolve to a
+    /// tracked file at all -- the caller must skip patching its own
+    /// dictionary in that case too, same as the pre-refactor inline code
+    /// did (a bare `return` from inside its `do` block already exited the
+    /// whole function before ever reaching its own dictionary write).
+    private func writeFrameVerdict(path: String, accepted: Bool?, db: Database) throws -> Bool {
+        guard let fileID = try db.fileID(path: path) else { return false }
+        if let accepted {
+            try db.setUserVerdict(fileID: fileID, accepted: accepted, source: "app")
+        } else {
+            try db.clearUserVerdict(fileID: fileID)
+        }
+        return true
     }
 
     // MARK: - Plate-solve backfill (R7-1)
@@ -4079,6 +4433,8 @@ final class AppState: @unchecked Sendable {
                     self.frameVerdicts = targetReload.2
                 }
                 self.progressText = "Pontozás kész: \(targets.count) célpont"
+                // R12-U1 item 5: every target's metrics may have changed.
+                self.trendPoints = nil
             } catch {
                 self.handle(error)
             }

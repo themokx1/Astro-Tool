@@ -9,7 +9,7 @@
 ## Állapot
 
 - [x] 0. Újra-átnézés lefutott, eredmények feldolgozva
-- [ ] 1. U-hullám (javítások): U1 [ ] U2 [ ] U3 [ ] U4 [ ] U5 [ ]
+- [ ] 1. U-hullám (javítások): U1 [x] U2 [ ] U3 [ ] U4 [ ] U5 [ ]
 - [ ] 2. Release v0.13.0 (R11 + javítások)
 - [ ] 3. V-hullám (új funkciók): V1 [ ] V2 [ ] V3 [ ] V4 [ ] V5 [ ] V6 [ ] V7 [ ]
 - [ ] 4. Záró review + release v0.14.0

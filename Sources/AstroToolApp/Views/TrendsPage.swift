@@ -120,10 +120,33 @@ struct TrendsPage: View {
         .padding()
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                filterMenu
+                HStack(spacing: 8) {
+                    // R12-U1 item 5: only once there's actually something to
+                    // refresh -- `notLoadedState`'s own "Betöltés" button
+                    // already covers the "never loaded yet" case.
+                    if appState.trendPoints != nil {
+                        if appState.isBusy {
+                            ProgressView().controlSize(.small)
+                        }
+                        Button("Frissítés") { appState.loadTrends() }
+                            .disabled(appState.isBusy || appState.db == nil)
+                    }
+                    filterMenu
+                }
             }
         }
         .onAppear {
+            // R12-U1 item 5: a session row's "Megnyitás a Trendeken" action
+            // (`SessionActionMenu`) sets this right before navigating here --
+            // consumed once, same "set, navigate, consume on appear" pattern
+            // `pendingTargetSegment`/`pendingSessionSelection` establish. A
+            // `nil` pending value (a session with no derivable dominant
+            // setup) needs no special handling here -- `selectedSetup`
+            // already starts `nil` on a freshly created page.
+            if let pending = appState.pendingTrendsSetupFilter {
+                selectedSetup = pending
+                appState.pendingTrendsSetupFilter = nil
+            }
             if appState.trendPoints == nil && !appState.isBusy { appState.loadTrends() }
         }
     }

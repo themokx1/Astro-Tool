@@ -705,6 +705,56 @@ listát. Érintett parancsok/módok:
   objektum, ÉRINTETLEN)
 - `stacks --json` és `stacks --json --grouped`
 
+### Fixed
+
+- **Állapot-versenyek az AppState-ben (R12-U1)**: a helyszín-váltó, a
+  beolvasás, az "Előző éjszaka" átnézés-visszaírás és a Trendek-cache négy
+  külön versenyhelyzetet okozott.
+  - **Site-váltó**: a `TonightPage` helyszín-Picker-e és a
+    `LocationSettingsView` mentése eddig `loadPlan()`/`loadMonthPlan()`/
+    `loadDiscovery()`/`loadWeather()`-t hívta egymás után `await` nélkül —
+    mindegyik saját `beginOperation`-je lemondta az előzőt, így a terv a
+    régi helyszínen ragadt (a `loadWeather()` is a RÉGI koordinátát kérte le,
+    mire a `resolvedSite` frissült volna). Új, összevont
+    `AppState.loadSiteScopedData(date:)` EGY háttérműveletben számolja a
+    terv/éjszaka-infó/felbontott helyszín (+ feltételesen a havi terv és a
+    Felfedezés, ha már be voltak töltve) hármasát, az időjárás-lekérést csak
+    ez után indítva.
+  - **Beolvasás-védelem**: egy másik, olvasás-jellegű háttérművelet indítása
+    (pl. lapváltás) a beolvasás futása közben eddig lemondhatta a beolvasás
+    saját `Task`-ját, és az összegzés (`scanSummary`/`lastScanDate`/
+    `freshSessionKeys` + az azt követő statisztika/kalibráció-frissítés)
+    némán elveszett. A beolvasás mostantól saját, a többi művelettől
+    független `Task`-slotban fut.
+  - **"Előző éjszaka" átnézés visszaírása**: az Átnézés-sheet gyors
+    zárás+újranyitása mellett egy korábbi session lassú betöltése
+    rácsúszhatott az újonnan nyitott sheetre (rossz keretek/pontszámok
+    jelentek volna meg alatta); most cél+dátum egyezés-ellenőrzés védi a
+    visszaírást, és a sheet bezárása lemondja a folyamatban lévő betöltést.
+    A visszaírás emellett többé nem cserélte le teljesen a megosztott
+    `frameVerdicts` szótárat egyetlen session részhalmazára (ami más
+    célpontok gyorsítótárazott döntéseit némán törölte) — saját
+    `reviewFrameVerdicts` szótárat kapott.
+  - **Nem-observált beállítások**: `firstStepsCardDismissed`,
+    `autoScanOnMount`, `selectedSiteName` eddig `UserDefaults`-ba író/olvasó
+    számított property-k voltak, amiket az `@Observable` nem követett — egy
+    változtatásuk nem feltétlenül frissítette azonnal az őket olvasó
+    nézeteket. Mostantól tárolt property-k `didSet`-es visszaírással.
+  - **`effectiveSiteName`**: mostantól kis-nagybetű-független
+    összehasonlítással azonosítja a kiválasztott helyszínt (ugyanaz a
+    szabály, mint amit a `Planner` már használ) — egy eltérő
+    kis-nagybetűzéssel elmentett választás korábban némán "nincs
+    kiválasztva"-ként viselkedett.
+- **Trendek-frissesség**: a beolvasás és bármelyik pontozás-művelet után a
+  `trendPoints` gyorsítótár érvényteleníti magát, hogy a Trendek oldal
+  legközelebbi megnyitásakor ne mutasson elavult session-metrikákat a friss
+  mérések mellett. Ehhez kapcsolódóan: a Trendek oldal eszköztára "Frissítés"
+  gombot kapott betöltött állapotban; az Éjszakák/Sessionök/Minden célpont
+  sor-menükben új "Megnyitás a Trendeken" akció a session saját
+  setup-leírójára előszűrve nyit a Trendekre; a Felfedezés és a Naptár
+  szegmens fejlécében diszkrét "Helyszín: <név>" jelvény jelenik meg, ha
+  egynél több helyszín van konfigurálva.
+
 ## [0.12.0] - 2026-08-06
 
 Az R10-es kör felülvizsgálati menete: egy teljes kód-review (nem talált

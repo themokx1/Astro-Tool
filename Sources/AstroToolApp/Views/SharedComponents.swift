@@ -10,6 +10,29 @@ import SwiftUI
 /// can never quietly drift apart table-to-table again.
 let actionColumnWidth: CGFloat = 28
 
+// MARK: - Site chip (R12-U1 item 6)
+
+/// A small, non-interactive "Helyszín: <name>" reminder -- `DiscoveryPage`
+/// (which has no site-Picker of its own, unlike `TonightPage`) and
+/// `TonightPage`'s Naptár segment (whose own calendar table has no other
+/// on-screen confirmation of which site its Sötét/Hold/Felhő columns were
+/// computed against, even though the interactive site-Picker up top --
+/// shared with "Ma este" -- already lets a user CHANGE it). Both callers
+/// only ever show this when `appState.config.sites.count > 1` -- a single
+/// (or zero) configured site has nothing to disambiguate.
+struct SiteChip: View {
+    let name: String
+
+    var body: some View {
+        Text("Helyszín: \(name)")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Color.secondary.opacity(0.15)))
+    }
+}
+
 // MARK: - Error advice (R11-T1)
 
 /// A one-sentence Hungarian "Mit tehetsz: …" follow-up for the common
@@ -171,6 +194,13 @@ struct PhaseChip: View {
 /// over to see the result in), while `NightsPage`/`AllTargetsPage` have no
 /// frame table of their own -- their default (`nil`) navigates to the
 /// target's Minőség segment with this date preselected instead.
+///
+/// R12-U1 item 5: `setupDescriptor` (`SessionDetail.setupDescriptor`, or a
+/// `NightsPage` row's own lookup into `sessionDetailsByTarget` -- see that
+/// page's own doc comment) backs "Megnyitás a Trendeken", pre-filtering the
+/// Trendek page to this exact session's dominant setup via `AppState
+/// .pendingTrendsSetupFilter`. `nil` (the default) just means "no derivable
+/// setup for this session" -- the action still navigates, unfiltered.
 struct SessionActionMenu: View {
     @Environment(AppState.self) private var appState
 
@@ -179,6 +209,7 @@ struct SessionActionMenu: View {
     let tags: [String]
     var showOpenTarget: Bool = true
     var onRateFrames: (() -> Void)?
+    var setupDescriptor: String? = nil
 
     @Binding var linkingSession: LinkingSession?
     @Binding var stackListingSession: LinkingSession?
@@ -189,7 +220,7 @@ struct SessionActionMenu: View {
         // Split into two `Group`s -- a plain `@ViewBuilder` block (unlike
         // `TableColumnBuilder`, which the R10-B7 comments elsewhere in this
         // file call out by name) still only has `buildBlock` overloads up
-        // to 10 children; this menu's full action set is 12 statements, so
+        // to 10 children; this menu's full action set is 13 statements, so
         // one `Group` alone won't type-check.
         Group {
             if showOpenTarget {
@@ -215,6 +246,13 @@ struct SessionActionMenu: View {
             }
             Button("Éjszaka-riport készítése") { appState.exportNightReport(target: target, date: date) }
             Button("Éjszaka-jegyzet szerkesztése…") { noteEditingSession = LinkingSession(target: target, date: date) }
+            // R12-U1 item 5: pre-filters via the same "set, navigate,
+            // consume on appear" pending pattern `pendingTargetSegment`
+            // already establishes.
+            Button("Megnyitás a Trendeken") {
+                appState.pendingTrendsSetupFilter = setupDescriptor
+                appState.currentPage = .trends
+            }
         }
         Group {
             Divider()

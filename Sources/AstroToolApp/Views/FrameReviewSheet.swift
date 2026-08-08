@@ -33,6 +33,17 @@ struct FrameReviewSheet: View {
     /// through a narrowed subset can never be mistaken for the whole
     /// session.
     var subsetLabel: String? = nil
+    /// R12-U1 item 3: `true` when showing `AppState.reviewFrameScores` (the
+    /// "Előző éjszaka" triage sheet, `PreviousNightReviewSheet`) rather than
+    /// `QualitySegment`'s own `frameScores` subset -- routes every verdict
+    /// read/write through `AppState.reviewFrameVerdicts`/
+    /// `setReviewFrameVerdict` instead of the shared `frameVerdicts`/
+    /// `setFrameVerdict`, so loading one triage session's frames here can
+    /// never clobber verdicts already cached for some OTHER target (see
+    /// `AppState.reviewFrameVerdicts`'s own doc comment for the full story).
+    /// `false` (the default) keeps the original `QualitySegment` behavior
+    /// unchanged.
+    var isReviewScoped: Bool = false
 
     @State private var index = 0
     @State private var image: NSImage?
@@ -59,10 +70,17 @@ struct FrameReviewSheet: View {
         frames.indices.contains(index) ? frames[index] : nil
     }
 
+    /// R12-U1 item 3: reads whichever of `AppState.frameVerdicts`/
+    /// `reviewFrameVerdicts` matches `isReviewScoped` -- every other verdict
+    /// read/write in this file goes through this single choke point.
+    private func verdict(for path: String) -> Bool? {
+        isReviewScoped ? appState.reviewFrameVerdicts[path] : appState.frameVerdicts[path]
+    }
+
     private var tally: (accepted: Int, rejected: Int, none: Int) {
         var accepted = 0, rejected = 0, none = 0
         for frame in frames {
-            switch appState.frameVerdicts[frame.path] {
+            switch verdict(for: frame.path) {
             case .some(true): accepted += 1
             case .some(false): rejected += 1
             case .none: none += 1
@@ -132,13 +150,13 @@ struct FrameReviewSheet: View {
                         // hint the Minőség táblázat's "Saját döntés" cell
                         // shows for a still-undecided outlier, mirrored here
                         // right next to the badge.
-                        if appState.frameVerdicts[frame.path] == nil {
+                        if verdict(for: frame.path) == nil {
                             Text("javasolt: elvetés").font(.caption2).foregroundStyle(.secondary)
                         }
                     }
                 }
 
-                verdictChip(appState.frameVerdicts[frame.path])
+                verdictChip(verdict(for: frame.path))
             } else {
                 Text("Nincs megjeleníthető keret").foregroundStyle(.secondary)
                 Spacer()
@@ -259,7 +277,11 @@ struct FrameReviewSheet: View {
     /// on", so it deliberately leaves the sheet right where it is.
     private func recordVerdict(_ accepted: Bool?) {
         guard let frame = currentFrame else { return }
-        appState.setFrameVerdict(path: frame.path, accepted: accepted)
+        if isReviewScoped {
+            appState.setReviewFrameVerdict(path: frame.path, accepted: accepted)
+        } else {
+            appState.setFrameVerdict(path: frame.path, accepted: accepted)
+        }
         if accepted != nil {
             goNext()
         }

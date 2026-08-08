@@ -226,6 +226,7 @@ struct SessionsSegment: View {
             tags: detail.tags,
             showOpenTarget: false,
             onRateFrames: { appState.runRate(target: target, date: detail.dateRaw) },
+            setupDescriptor: detail.setupDescriptor,
             linkingSession: $linkingSession,
             stackListingSession: $stackListingSession,
             noteEditingSession: $noteEditingSession,

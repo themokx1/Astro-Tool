@@ -425,30 +425,29 @@ struct LocationSettingsView: View {
             // D13: the Ma este/Naptár plan (kulminál/magasság/szürkület) is
             // computed from the site at load time -- a save here used to
             // leave whatever was already on screen stale until the next
-            // unrelated reload. Recompute it (respecting a date-scoped
-            // "Ma este" view via `planDate`) if a plan's ever been loaded
-            // this session; otherwise just refresh the "Automatikus"
-            // resolved-site display for THIS tab.
+            // unrelated reload. R12-U1 item 1: recomputed via the combined
+            // `loadSiteScopedData` (plan/resolvedSite/nightInfo, PLUS
+            // monthPlan/discovery if either was ever loaded this session,
+            // PLUS a `loadWeather()` fired only once the new site has
+            // actually landed) if a plan's ever been loaded this session;
+            // otherwise just refresh the "Automatikus" resolved-site display
+            // for THIS tab -- no `Planner.resolveSite` DB round trip needed,
+            // `newConfig.site` already IS the answer either way: the
+            // manually entered value, or (automatic) the empty `SiteRule()`
+            // that makes `resolvedLatitudeText`/`resolvedLongitudeText` show
+            // "-" honestly until a real plan load resolves it from the
+            // library median. `loadWeather()` still needs its own explicit
+            // call in that second branch (covers "the toggle just turned
+            // on" AND "already on, coordinates changed" -- its own guard
+            // makes this an instant no-op when the toggle ended up off) --
+            // `loadSiteScopedData` only fires ITS trailing `loadWeather()`
+            // call as part of the first branch.
             if appState.plan != nil {
-                appState.loadPlan(date: appState.planDate)
+                appState.loadSiteScopedData(date: appState.planDate)
             } else {
-                // No plan loaded yet this session (Ma este never opened) --
-                // no `Planner.resolveSite` DB round trip needed, `newConfig
-                // .site` already IS the answer either way: the manually
-                // entered value, or (automatic) the empty `SiteRule()` that
-                // makes `resolvedLatitudeText`/`resolvedLongitudeText` show
-                // "-" honestly until a real plan load resolves it from the
-                // library median.
                 appState.resolvedSite = newConfig.site
+                appState.loadWeather()
             }
-            // R10-B6: covers "the toggle just turned on" (the task this
-            // exists for) AND "already on, coordinates changed" -- either
-            // way `loadWeather()`'s own guard makes this an instant no-op
-            // when the toggle ended up off, and `WeatherService`'s cache
-            // makes a redundant call (toggle was already on, nothing
-            // relevant changed) cheap rather than a wasted network round
-            // trip.
-            appState.loadWeather()
         } catch let error as AstroError {
             saveError = describeSettingsError(error)
         } catch {

@@ -649,10 +649,22 @@ struct NightsPage: View {
             target: row.target,
             date: row.date,
             tags: row.tags,
+            setupDescriptor: setupDescriptor(for: row),
             linkingSession: $linkingSession,
             stackListingSession: $stackListingSession,
             noteEditingSession: $noteEditingSession,
             addingTag: $addingTag
         )
+    }
+
+    /// R12-U1 item 5: `NightRow` (unlike `SessionDetail`) carries no
+    /// `setupDescriptor` of its own -- looked up here from
+    /// `appState.sessionDetailsByTarget` instead (populated for every
+    /// target alongside `stats` by `loadDashboardData`, so this is normally
+    /// already on hand by the time this table has any rows to show a menu
+    /// for at all). `nil` when that target/date combination isn't found
+    /// there either -- "Megnyitás a Trendeken" still works, just unfiltered.
+    private func setupDescriptor(for row: NightTableRow) -> String? {
+        appState.sessionDetailsByTarget[row.target]?.first { $0.dateRaw == row.date }?.setupDescriptor
     }
 }
