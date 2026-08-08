@@ -530,6 +530,10 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var expose: ExposeRule
     public var weather: WeatherRule
     public var plan: PlanRule
+    /// User-defined camera + optic combinations for manual Discovery FOV
+    /// planning. An empty list preserves the legacy automatic behavior that
+    /// derives the dominant setup from scanned image/WCS metadata.
+    public var imagingSetups: [ImagingSetupProfile]
     /// R11-T16/F20: AstroBin filter-ID mapping. Additive, empty by default --
     /// see `AstroBinRule`'s own doc comment.
     public var astrobin: AstroBinRule
@@ -551,6 +555,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         expose: ExposeRule = ExposeRule(),
         weather: WeatherRule = WeatherRule(),
         plan: PlanRule = PlanRule(),
+        imagingSetups: [ImagingSetupProfile] = [],
         astrobin: AstroBinRule = AstroBinRule()
     ) {
         self.rootPath = rootPath
@@ -569,12 +574,13 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.expose = expose
         self.weather = weather
         self.plan = plan
+        self.imagingSetups = imagingSetups
         self.astrobin = astrobin
     }
 
     private enum CodingKeys: String, CodingKey {
         case rootPath, excludedDirNames, excludedPaths, residuePatterns, residueDirNames, toolOutputDirNames
-        case intentional, wideField, calib, rating, stats, site, sites, expose, weather, plan, astrobin
+        case intentional, wideField, calib, rating, stats, site, sites, expose, weather, plan, imagingSetups, astrobin
     }
 
     public init(from decoder: any Decoder) throws {
@@ -609,6 +615,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.expose = try container.decodeIfPresent(ExposeRule.self, forKey: .expose) ?? defaults.expose
         self.weather = try container.decodeIfPresent(WeatherRule.self, forKey: .weather) ?? defaults.weather
         self.plan = try container.decodeIfPresent(PlanRule.self, forKey: .plan) ?? defaults.plan
+        self.imagingSetups = try container.decodeIfPresent([ImagingSetupProfile].self, forKey: .imagingSetups) ?? defaults.imagingSetups
         self.astrobin = try container.decodeIfPresent(AstroBinRule.self, forKey: .astrobin) ?? defaults.astrobin
     }
 
