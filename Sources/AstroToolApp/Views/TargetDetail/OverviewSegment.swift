@@ -227,7 +227,16 @@ struct OverviewSegment: View {
                     labeledValue("Max. mag.", TDFormat.tile(plan.maxAltitudeDeg.map { String(format: "%.0f°", $0) }))
                     labeledValue("Látható", visibleWindowText(plan))
                     labeledValue("Hold", moonText(plan))
-                    VerdictChip(verdict: plan.verdict)
+                    // R11-T12/F11(d): clickable -- same popover
+                    // (`VerdictExplainPopover`) `TonightPage.planTable`'s
+                    // Döntés column uses, sourced from this same `plan`.
+                    VerdictExplainPopover(
+                        verdict: plan.verdict,
+                        maxAltitudeDeg: plan.maxAltitudeDeg,
+                        visibleHours: plan.visibleHours,
+                        moonIlluminationPercent: plan.moonIlluminationPercent,
+                        moonSeparationDeg: plan.moonSeparationDeg
+                    )
                 }
             } else {
                 Text("Nincs terv-adat.").font(.callout).foregroundStyle(.secondary)

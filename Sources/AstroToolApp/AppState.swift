@@ -114,6 +114,30 @@ struct PreviousNightCard: Identifiable, Equatable {
     var id: String { "\(target)|\(date)" }
 }
 
+/// R11-T12/F12: one "Első lépések" checklist row -- title, a one-sentence
+/// "miért" (why this matters), whether it's already done, and the one
+/// action (start an operation or navigate/open a settings tab) that moves
+/// it forward. Built by `AppState.firstSteps` from data every one of these
+/// six checks already has cheaply on hand (no new query beyond
+/// `Database.hasAnyRating`, F12's own one small addition).
+struct FirstStepItem: Identifiable {
+    enum ActionKind {
+        case runScan
+        case runAudit
+        case openLocationSettings
+        case openSirilSettings
+        case rateAll
+        case measureSensor
+    }
+
+    let id: String
+    let title: String
+    let reason: String
+    let isDone: Bool
+    let actionTitle: String
+    let actionKind: ActionKind
+}
+
 /// The app's single source of truth. Thin by design: every real operation
 /// (scan/audit/rate/stats/calib/new-session) is a direct call into AstroCore,
 /// run off the main thread; this class only tracks UI-observable state and
@@ -132,6 +156,8 @@ final class AppState: @unchecked Sendable {
     private static let recentRootsKey = "recentRootBookmarks"
     /// R11-T9/F5: `autoScanOnMount`'s `UserDefaults` key.
     private static let autoScanOnMountKey = "autoScanOnMount"
+    /// R11-T12/F12: `firstStepsCardDismissed`'s `UserDefaults` key.
+    private static let firstStepsCardDismissedKey = "firstStepsCardDismissed"
 
     /// App-lifetime singleton reference, set from `init()`. The menu bar
     /// (`Views/Commands.swift`) needs to call into `AppState` from `.commands`
@@ -260,6 +286,81 @@ final class AppState: @unchecked Sendable {
     /// skipped first scan doesn't silently disable the flow forever if the
     /// user relaunches still not having scanned.
     var didDismissFirstRun: Bool = false
+
+    /// R11-T12/F12: "Ma este"'s dismissible "Első lépések" card -- persisted
+    /// (unlike `cloudBannerDismissed`) since the spec wants this to stay
+    /// dismissed across relaunches once the user has waved it off, same
+    /// `UserDefaults` get/set shape `autoScanOnMount` already establishes.
+    /// The card's own VISIBILITY also requires `firstSteps` to have fewer
+    /// than 4 done steps (`MainShellView`/`TonightPage` check both), so
+    /// dismissing it here doesn't mean "never compute `firstSteps` again" --
+    /// just "don't show the unsolicited nudge".
+    var firstStepsCardDismissed: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.firstStepsCardDismissedKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.firstStepsCardDismissedKey) }
+    }
+
+    /// R11-T12/F12: the "Első lépések" checklist -- 6 fixed steps, each
+    /// derived from data this class already tracks (or, for "Volt már
+    /// pontozás?", one cheap `Database.hasAnyRating()` existence probe).
+    /// Recomputed on every access (no caching): every input is either
+    /// already an in-memory `@Observable` property or a `FileManager`
+    /// existence check, so there's nothing expensive to memoize.
+    var firstSteps: [FirstStepItem] {
+        let sirilAvailable = FileManager.default.isExecutableFile(atPath: config.rating.sirilPath)
+        let everRated = (try? db?.hasAnyRating()) ?? false
+
+        return [
+            FirstStepItem(
+                id: "scan",
+                title: "Beolvasás",
+                reason: "A beolvasás tölti fel a könyvtárad session-jeit és célpontjait -- minden más lépés erre épül.",
+                isDone: lastScanDate != nil,
+                actionTitle: "Beolvasás indítása",
+                actionKind: .runScan
+            ),
+            FirstStepItem(
+                id: "audit",
+                title: "Audit",
+                reason: "Az audit megkeresi a hiányzó kalibrációt, a duplikátumokat és az egyéb könyvtár-problémákat.",
+                isDone: lastRunID != nil,
+                actionTitle: "Audit futtatása",
+                actionKind: .runAudit
+            ),
+            FirstStepItem(
+                id: "site",
+                title: "Megfigyelési helyszín",
+                reason: "Helyszín nélkül a magasság/kulmináció/láthatóság csak a FITS-fejlécekből becsült, nem pontos.",
+                isDone: resolvedSite.latitudeDeg != nil && resolvedSite.longitudeDeg != nil,
+                actionTitle: "Helyszín beállítása…",
+                actionKind: .openLocationSettings
+            ),
+            FirstStepItem(
+                id: "siril",
+                title: "Siril",
+                reason: "Siril nélkül a FWHM/kerekség/csillagszám metrikák és a plate-solve nem érhetők el -- a natív pontozás enélkül is működik.",
+                isDone: sirilAvailable,
+                actionTitle: "Siril beállítása…",
+                actionKind: .openSirilSettings
+            ),
+            FirstStepItem(
+                id: "rating",
+                title: "Keretek pontozása",
+                reason: "Pontozás nélkül nincs minőségi sorrend, kiugró-jelzés vagy stacklista-ajánlás.",
+                isDone: everRated,
+                actionTitle: "Pontozás indítása…",
+                actionKind: .rateAll
+            ),
+            FirstStepItem(
+                id: "sensor",
+                title: "Szenzor-profil",
+                reason: "Mért szenzor-profil nélkül a háttér csak nyers ADU-ban látszik, és az Expozíció-tanácsadó sem tud tanácsot adni.",
+                isDone: !sensorProfiles.isEmpty,
+                actionTitle: "Szenzor mérése…",
+                actionKind: .measureSensor
+            ),
+        ]
+    }
 
     /// B6: a non-mounted volume that reappears (`NSWorkspace.didMountNotification`)
     /// auto-retries root access; kept so the observer is only ever

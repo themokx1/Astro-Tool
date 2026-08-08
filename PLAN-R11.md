@@ -22,7 +22,7 @@
 - [x] 2. Persona-review (4 agent) — kész
 - [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
 - [x] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [x]
-- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [x] T10 [x] T11 [x] T12 [ ] T13 [ ]
+- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [x] T10 [x] T11 [x] T12 [x] T13 [ ]
 - [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [ ] T15 [ ] T16 [ ] T17 [ ]
 - [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
 - [ ] 8. Release v0.13.0
@@ -309,7 +309,7 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
 - **T10 [x] — Trendek + szenzor-történet**: F7 + F8.
 - **T11 — Stack-lista v2**: F15 (szűrő-bontott hardlink-fa, manifest.csv,
   sheet-finomhangolás).
-- **T12 — Kezdő-csomag**: F11 + F12 (Fogalomtár, ⓘ-k, Siril-segéd linkek,
+- **T12 [x] — Kezdő-csomag**: F11 + F12 (Fogalomtár, ⓘ-k, Siril-segéd linkek,
   VerdictChip-popover, percentilis-sávok, Első lépések checklist).
 - **T13 — Navigáció + jegyzet-híd**: F13 (Naptár/Takarítás valódi al-elem) +
   F20 README↔jegyzet ütközés.
@@ -318,6 +318,10 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
 - **T15 — Több helyszín**: F16.
 - **T16 — Kalibráció v2 + AstroBin ID**: F17 + F20 AstroBin filter-ID.
 - **T17 — (tartalék/összefésülő)**: az előzőekből kimaradt apróságok, review-találatok.
+  Ismert tétel: a T11 agent által jelzett valószínű bug — az EGYSZŰRŐS/lapos
+  stacklist `.ssf` script `cd` célja a stacklist gyökerére mutat a `lights/`
+  almappa helyett, így a Siril `convert` nem talál kereteket; ellenőrizni és
+  javítani (teszt a cd-célra).
 
 ### Záró kör
 - Kód-review agent (funkcionális hibák) + UX-sweep agent (konzisztencia) +
@@ -479,3 +483,43 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   meglévő (lapos) `.ssf` valójában nem talál frame-eket futtatáskor; az új,
   R11-T11-es szűrőnkénti `.ssf`-ek ezt már helyesen, közvetlenül a szűrő
   mappájába cd-zve generálják. Következő: T12 (Kezdő-csomag).
+- 2026-08-08: T12 (Kezdő-csomag) kész — F11 teljes: `GlossarySheet` ~17 új
+  szócikkel (Bortle-skála, SQM, Seeing, Átlátszóság, Plate-solve, Master,
+  Gain/Offset, ADU, EGAIN, Kulmináció, Sub-expozíció, Integráció
+  bruttó/valós, Dither, Szűrő NB/BB, Setup-fingerprint, Szél,
+  Páralecsapódás) + keresőmező (cím+szöveg) + `ScrollViewReader`-alapú
+  horgony (`.showGlossary` notification `object`-je mostantól opcionális
+  `String?` szócikk-név, minden régi hívó változatlanul `nil`-lel postol).
+  `SessionNoteSheet` hat megfigyelési sablonmezője (Bortle/SQM/Seeing/
+  Átlátszóság/Szél/Páralecsapódás) ⓘ gombot kapott (magyarázat + skála +
+  Fogalomtár-link) és példa-placeholdert. Új közös `VerdictExplainPopover`
+  (SharedComponents.swift) -- a `VerdictChip`-et kattinthatóvá teszi
+  popoverrel (max. magasság, látható órák, Hold-illum%, Hold-szeparáció),
+  bekötve a Ma este planTable/Áttekintés "Láthatóság"/Felfedezés Döntés
+  oszlopába; ahol egy szám sem elérhető (pl. `DiscoveryRow`-nak nincs
+  Hold-illum mezője, vagy a verdikt "nincs koordináta"), a chip sima marad.
+  `SirilHelpSheet`-et a T3 óta megvolt entry pointokkal (Súgó menü,
+  RatingSettingsView, QualitySegment) ELLENŐRIZVE, nem újraírva. Új core
+  `LibraryPercentiles.evaluate` (tiszta függvény, teszttel) -- a könyvtár
+  saját FWHM″/Hatékonyság-eloszlásához mérve zöld/sárga/narancs
+  (legjobb/középső/leggyengébb harmad) sávot ad, 6 session alatt `nil`
+  (nincs színezés); bekötve a NightsPage FWHM″/Hatékonyság és a
+  SessionsSegment FWHM″ celláiba halvány pöttyel + help-tooltippel. F12
+  teljes: `AppState.firstSteps` (6 tétel: Beolvasás/Audit/Helyszín/Siril/
+  Pontozás/Szenzor-profil, cím + "miért" + akció) + `FirstStepsChecklistView`/
+  `FirstStepsSheet`; megjelenik a FirstScanView eredmény-kártyája alatt, a
+  Ma este tetején elutasítható (perzisztens `firstStepsCardDismissed`)
+  kártyaként <4 pipa alatt, és a Súgó menü "Első lépések…" pontjából
+  bármikor. Core: `Database.hasAnyRating()` (teszttel) az "volt már
+  pontozás?" tételhez. 9 új teszt (core: 7 `LibraryPercentilesTests` + 2
+  `DatabaseTests` a `hasAnyRating`-re), `swift test` zöld (1172). Tudatos
+  eltérés: a SessionsSegment FWHM″ percentilis-pöttye `appState.nights`-ból
+  olvas, amit -- a meglévő tervezői döntés szerint -- csak a NightsPage
+  saját `loadNights()`-a tölt be (sosem a dashboard-betöltés része, lásd
+  `AppState.loadNights` doc-ját); emiatt a pötty csak azután jelenik meg egy
+  célpont Sessionök fülén, hogy a felhasználó legalább egyszer megnyitotta
+  az Éjszakák oldalt -- addig egyszerűen nincs pötty, ugyanaz a
+  "megjelenés" mint kevés session esetén. Nem indítottam ehhez külön
+  háttér-lekérdezést a SessionsSegmentből, hogy a per-cél oldal ne kapjon
+  egy váratlan, egész könyvtárat átfésülő terhelést. Következő: T13
+  (Navigáció + jegyzet-híd).

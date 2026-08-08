@@ -113,6 +113,14 @@ struct TonightPage: View {
 
     private var tonightSegmentView: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // R11-T12/F12: dismissible, at the very top -- gone for good
+            // (persisted, `AppState.firstStepsCardDismissed`) once the user
+            // waves it off, and never shown again once 4+ of the 6 steps
+            // are already done (spec: "amíg < 4 pipa").
+            if showsFirstStepsCard {
+                firstStepsCard
+            }
+
             HStack {
                 if appState.planDate != nil {
                     dateScopedCaption
@@ -217,6 +225,34 @@ struct TonightPage: View {
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.yellow.opacity(0.15)))
+    }
+
+    // MARK: - Első lépések card (R11-T12/F12)
+
+    private var showsFirstStepsCard: Bool {
+        !appState.firstStepsCardDismissed && appState.firstSteps.count { $0.isDone } < 4
+    }
+
+    /// Dismissible "Első lépések" nudge -- same "`Text` + trailing plain
+    /// `xmark` button" shape `cloudContextBanner` already establishes below,
+    /// just persisted (`firstStepsCardDismissed`) rather than session-only.
+    private var firstStepsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Első lépések").font(.subheadline).bold()
+                Spacer()
+                Button {
+                    appState.firstStepsCardDismissed = true
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+            FirstStepsChecklistView()
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.06)))
     }
 
     // MARK: - Calibration shopping list (R11-T6/F18b)
@@ -614,8 +650,19 @@ struct TonightPage: View {
                 .width(150)
             TableColumn("Hold", value: \.moonSortKey) { row in Text(moonRowText(row)) }
                 .width(110)
-            TableColumn("Döntés", value: \.verdictSortKey) { row in VerdictChip(verdict: row.plan.verdict) }
-                .width(140)
+            // R11-T12/F11(d): clickable -- popover with the numbers behind
+            // tonight's verdict (max magasság, látható órák, Hold-illum%,
+            // Hold-szeparáció), all straight off this same `TargetPlan`.
+            TableColumn("Döntés", value: \.verdictSortKey) { row in
+                VerdictExplainPopover(
+                    verdict: row.plan.verdict,
+                    maxAltitudeDeg: row.plan.maxAltitudeDeg,
+                    visibleHours: row.plan.visibleHours,
+                    moonIlluminationPercent: row.plan.moonIlluminationPercent,
+                    moonSeparationDeg: row.plan.moonSeparationDeg
+                )
+            }
+            .width(140)
             // R10-B7: visible row-actions -- mirrors `planContextMenuItems`
             // exactly (same function, both call sites), so the right-click
             // menu and this borderless "⋯" button can never drift apart.

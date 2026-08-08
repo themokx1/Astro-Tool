@@ -1329,6 +1329,18 @@ public final class Database: @unchecked Sendable {
         }
     }
 
+    /// `true` once at least one frame anywhere in the library has ever been
+    /// rated -- backs the "Első lépések" checklist's "Volt már pontozás?"
+    /// step (R11-T12/F12). A cheap existence probe (`LIMIT 1`), never a
+    /// `COUNT(*)` over the whole table.
+    public func hasAnyRating() throws -> Bool {
+        try withLock {
+            var found = false
+            try db.query("SELECT 1 FROM ratings LIMIT 1;") { _ in found = true }
+            return found
+        }
+    }
+
     /// N6 (R9 round 3): batch form of `rating(fileID:)`, used by
     /// `Rater.cachedScores` (which used to fetch one `rating` + one
     /// `fitsMeta` row PER FRAME in a loop -- ~18k queries on a real

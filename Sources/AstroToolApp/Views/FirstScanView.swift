@@ -147,6 +147,15 @@ struct FirstScanView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+
+            // R11-T12/F12: right after the first successful scan's result --
+            // the natural next moment to point a first-time user at "what's
+            // left before this app is fully useful" (audit, helyszín, Siril,
+            // pontozás, szenzor-profil).
+            Divider().padding(.vertical, 4)
+            Text("Első lépések").font(.headline)
+            FirstStepsChecklistView()
         }
+        .frame(maxWidth: 520, alignment: .leading)
     }
 }

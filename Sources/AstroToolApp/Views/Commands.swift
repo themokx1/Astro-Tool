@@ -12,13 +12,21 @@ extension Notification.Name {
     static let showFolderStructureHelp = Notification.Name("AstroTool.showFolderStructureHelp")
     /// "Súgó ▸ Fogalomtár" (R9-T6/B16(b)) -- same reasoning as
     /// `showFolderStructureHelp`: the sheet is presented from `RootView`,
-    /// not `AppState`.
+    /// not `AppState`. R11-T12/F11(a): the post's `object` is now an
+    /// optional `String?` anchor (a `GlossarySheet` term name to scroll
+    /// straight to) -- every existing poster keeps passing `nil` (open at
+    /// the top), only the new per-field ⓘ popovers (`SessionNoteSheet`,
+    /// `MetricInfoButton`) pass a real term name.
     static let showGlossary = Notification.Name("AstroTool.showGlossary")
     /// "Súgó ▸ A Sirilről…" (R11-T3/F11(c)/F20) -- same reasoning as
     /// `showGlossary`: the menu bar has no view-state of its own, so it
     /// posts, and `RootView` (always on screen) is the one place that
     /// listens and presents `SirilHelpSheet`.
     static let showSirilHelp = Notification.Name("AstroTool.showSirilHelp")
+    /// "Súgó ▸ Első lépések…" (R11-T12/F12) -- same notification pattern:
+    /// the "Első lépések" checklist sheet is presented from `RootView`, the
+    /// one place always on screen regardless of which page is open.
+    static let showFirstSteps = Notification.Name("AstroTool.showFirstSteps")
 }
 
 private let tutorialURL = URL(string: "https://themokx1.github.io/Astro-Tool/tutorial.html")!
@@ -213,6 +221,13 @@ struct AstroToolCommands: Commands {
             }
             Button("A Sirilről…") {
                 NotificationCenter.default.post(name: .showSirilHelp, object: nil)
+            }
+            // R11-T12/F12: reachable any time, not just right after a first
+            // scan (`FirstScanView`'s own result-card checklist) or via the
+            // "Ma este" dismissible card -- same notification pattern as
+            // the two "Súgó" items above it.
+            Button("Első lépések…") {
+                NotificationCenter.default.post(name: .showFirstSteps, object: nil)
             }
             Button("Tutorial") { NSWorkspace.shared.open(tutorialURL) }
             Button("CLI-referencia") { NSWorkspace.shared.open(cliReferenceURL) }

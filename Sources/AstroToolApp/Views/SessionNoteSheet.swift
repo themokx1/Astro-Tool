@@ -9,6 +9,14 @@ import SwiftUI
 /// second block shows the session's README-sourced notes read-only (lock
 /// icon) -- editing those means opening the README itself, which this tool
 /// will never do on the user's behalf.
+///
+/// R11-T12/F11(b): each of the six OBSERVING-CONDITION template fields
+/// (everything but the free-text "Megjegyzés") now carries a small ⓘ button
+/// -- a 1-2 sentence explanation plus a value scale, footer-linked to this
+/// term's own `GlossarySheet` entry (`.showGlossary`'s anchor payload) --
+/// and an example placeholder, since a first-time user staring at "Bortle"
+/// or "SQM" with no hint of what a plausible value even looks like was
+/// exactly the R11 persona review's own finding (spec F11 item 4).
 struct SessionNoteSheet: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -90,11 +98,79 @@ struct SessionNoteSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(editableKeys, id: \.self) { key in
                     HStack(spacing: 6) {
-                        Text(key).frame(width: 130, alignment: .leading)
-                        TextField("", text: binding(for: key))
+                        HStack(spacing: 3) {
+                            Text(key)
+                            if Self.fieldInfo[key] != nil {
+                                FieldInfoButton(fieldKey: key)
+                            }
+                        }
+                        .frame(width: 130, alignment: .leading)
+                        TextField(Self.examplePlaceholder(for: key), text: binding(for: key))
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Field ⓘ (R11-T12/F11(b))
+
+    /// One template field's ⓘ popover content: a 1-2 sentence explanation,
+    /// a value scale, and a footer link to this field's own `GlossarySheet`
+    /// entry -- keyed by the exact `templateKeys` text above. `fileprivate`
+    /// (not `private`): `FieldInfoButton` below is a sibling top-level type
+    /// in this same file, not an extension of `SessionNoteSheet`, so a
+    /// plain `private` here wouldn't be visible to it.
+    fileprivate struct FieldInfo {
+        let explanation: String
+        let scale: String
+        /// The `GlossarySheet` term name to scroll to -- always a real
+        /// entry in that sheet's own list (R11-T12/F11(a) added the missing
+        /// ones specifically so every field here has a match).
+        let glossaryAnchor: String
+    }
+
+    fileprivate static let fieldInfo: [String: FieldInfo] = [
+        "Bortle": FieldInfo(
+            explanation: "Az égi háttér fényszennyezettsége egy 1-9-es skálán.",
+            scale: "1 = sötét vidéki ég … 9 = belvárosi ég",
+            glossaryAnchor: "Bortle-skála"
+        ),
+        "SQM": FieldInfo(
+            explanation: "Az égi háttér fényessége mag/ívmásodperc² egységben, kézi műszerrel mérve.",
+            scale: "≈17 = városi, világos ég … ≈22 = kiváló, sötét vidéki ég",
+            glossaryAnchor: "SQM"
+        ),
+        "Seeing": FieldInfo(
+            explanation: "A légkör pillanatnyi nyugalma -- ez szabja meg, mennyire éles pontra tud fókuszálni a csillag.",
+            scale: "1 = nyugtalan/rossz … 5 = kristálytiszta/kiváló",
+            glossaryAnchor: "Seeing"
+        ),
+        "Átlátszóság": FieldInfo(
+            explanation: "Az égbolt fényáteresztő képessége -- pára, füst vagy magas felhő rontja, a seeing-től függetlenül.",
+            scale: "1 = párás/rossz … 5 = kristálytiszta/kiváló",
+            glossaryAnchor: "Átlátszóság"
+        ),
+        "Szél": FieldInfo(
+            explanation: "A session közben mért/becsült szélsebesség -- erős szél rezgést, csillag-nyúlást okozhat.",
+            scale: "pl. km/h vagy m/s, vagy egyszerű \"nyugodt / közepes / erős\" jelölés",
+            glossaryAnchor: "Szél"
+        ),
+        "Páralecsapódás": FieldInfo(
+            explanation: "Harmat/dér lecsapódása az optikán vagy a szenzoron -- fokozatosan elmosódó csillagokat okoz.",
+            scale: "pl. \"nem\" / \"enyhe\" / \"erős -- páramentesítő kellett volna\"",
+            glossaryAnchor: "Páralecsapódás"
+        ),
+    ]
+
+    private static func examplePlaceholder(for key: String) -> String {
+        switch key {
+        case "Bortle": return "pl. 5"
+        case "SQM": return "pl. 20.8"
+        case "Seeing": return "pl. 3/5"
+        case "Átlátszóság": return "pl. 4/5"
+        case "Szél": return "pl. 15 km/h"
+        case "Páralecsapódás": return "pl. nem"
+        default: return ""
         }
     }
 
@@ -161,5 +237,45 @@ struct SessionNoteSheet: View {
         let notes = editableKeys.map { ($0, values[$0] ?? "") }
         appState.saveSessionNotes(target: target, date: date, notes: notes)
         dismiss()
+    }
+}
+
+/// One template field's ⓘ button -- same "borderless `info.circle` button
+/// popover" shape `MetricInfoButton` already establishes, scoped to a single
+/// field instead of a whole table's columns. `fieldKey` must have a
+/// `SessionNoteSheet.fieldInfo` entry (the caller only ever constructs this
+/// for keys it already checked).
+private struct FieldInfoButton: View {
+    let fieldKey: String
+
+    @State private var showPopover = false
+
+    var body: some View {
+        Button {
+            showPopover = true
+        } label: {
+            Image(systemName: "info.circle")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .popover(isPresented: $showPopover) {
+            if let info = SessionNoteSheet.fieldInfo[fieldKey] {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(fieldKey).font(.subheadline).bold()
+                    Text(info.explanation).font(.caption)
+                    Text(info.scale).font(.caption2).foregroundStyle(.secondary)
+                    Divider()
+                    Button("Fogalomtár…") {
+                        showPopover = false
+                        NotificationCenter.default.post(name: .showGlossary, object: info.glossaryAnchor)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .padding(12)
+                .frame(width: 260)
+            }
+        }
     }
 }

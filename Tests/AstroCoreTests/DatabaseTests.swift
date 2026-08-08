@@ -701,6 +701,20 @@ private func sampleRating(fileID: Int64, inputSig: String = "sig-1") -> RatingRe
     #expect(try database.rating(fileID: fileID) == nil)
 }
 
+// MARK: - Database: hasAnyRating (R11-T12/F12)
+
+@Test func hasAnyRatingIsFalseForAFreshDatabase() throws {
+    let database = try Database(path: ":memory:")
+    #expect(try database.hasAnyRating() == false)
+}
+
+@Test func hasAnyRatingIsTrueOnceAnyFrameHasBeenRated() throws {
+    let database = try Database(path: ":memory:")
+    let fileID = try database.upsertFile(sampleFile())
+    try database.upsertRating(sampleRating(fileID: fileID))
+    #expect(try database.hasAnyRating() == true)
+}
+
 // MARK: - Database: ratingsBatch (N6, R9 round 3)
 
 @Test func ratingsBatchReturnsRecordsKeyedByFileID() throws {

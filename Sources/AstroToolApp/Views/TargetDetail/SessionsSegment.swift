@@ -43,7 +43,7 @@ struct SessionsSegment: View {
     private static let sessionMetricInfo: [MetricInfoButton.Metric] = [
         .init(
             title: "FWHM″",
-            explanation: "A session kerete(i) félértékszélessége ívmásodpercben (pixelméret+fókusz ismeretében) vagy pixelben. Mikor hazudik: pontozás nélkül „-”; \"Siril nélkül\" pontozásnál is mindig „-”."
+            explanation: "A session kerete(i) félértékszélessége ívmásodpercben (pixelméret+fókusz ismeretében) vagy pixelben. Mikor hazudik: pontozás nélkül „-”; \"Siril nélkül\" pontozásnál is mindig „-”. A színes pötty a könyvtárad saját eloszlásához mérve mutatja a session helyét (zöld = jobbik harmad, sárga = középső, narancs = leggyengébb) -- csak az Éjszakák oldal legalább egyszeri betöltése után jelenik meg, és 6 összehasonlítható session alatt akkor sincs pötty."
         ),
         .init(
             title: "Háttér e⁻/s/″²",
@@ -85,8 +85,31 @@ struct SessionsSegment: View {
         }
     }
 
+    /// R11-T12/F11(e): this library's FULL arcsec-FWHM distribution, for the
+    /// FWHM″ column's percentile dot -- same "library-wide, never just this
+    /// target" comparison `NightsPage`'s own dot uses. Deliberately reads
+    /// `appState.nights` (only ever populated once `NightsPage.loadNights()`
+    /// has run this session -- see that property's own doc comment for why
+    /// it's never eagerly loaded) rather than triggering a fresh whole-
+    /// library query from a per-target segment: `[]` (no dot at all, same
+    /// as "too few sessions") until the user has visited Éjszakák at least
+    /// once, a deliberate scope tradeoff over adding a second place that
+    /// kicks off that query.
+    private var libraryFWHMArcsecValues: [Double] {
+        appState.nights?.compactMap(\.medianFWHMArcsec) ?? []
+    }
+
+    private func fwhmPercentile(for date: String, libraryValues: [Double]) -> LibraryPercentileResult? {
+        guard let arcsec = qualityByDate[date]?.medianFWHMArcsec else { return nil }
+        return LibraryPercentiles.evaluate(value: arcsec, allValues: libraryValues, higherIsBetter: false)
+    }
+
     private var table: some View {
-        Table(rows, selection: $selectedDate) {
+        // Computed once per render, not once per row -- see `NightsPage
+        // .table`'s identical comment for why.
+        let fwhmLibraryValues = libraryFWHMArcsecValues
+
+        return Table(rows, selection: $selectedDate) {
             TableColumn("Dátum") { row in
                 HStack(spacing: 4) {
                     Text(row.detail.dateRaw)
@@ -110,8 +133,13 @@ struct SessionsSegment: View {
             }
             .width(min: 100, ideal: 140)
 
-            TableColumn("FWHM″") { row in Text(fwhmText(for: row.detail.dateRaw)) }
-                .width(min: 60, ideal: 70)
+            TableColumn("FWHM″") { row in
+                HStack(spacing: 4) {
+                    Text(fwhmText(for: row.detail.dateRaw))
+                    LibraryPercentileDot(result: fwhmPercentile(for: row.detail.dateRaw, libraryValues: fwhmLibraryValues), unit: "″")
+                }
+            }
+            .width(min: 60, ideal: 70)
 
             TableColumn("Háttér e⁻/s/″²") { row in Text(backgroundText(for: row.detail.dateRaw)) }
                 .width(min: 90, ideal: 110)

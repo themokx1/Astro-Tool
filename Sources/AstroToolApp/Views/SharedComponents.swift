@@ -318,3 +318,127 @@ struct VerdictChip: View {
         return .gray // "nincs koordináta" / üstökös / "n/a — …" / "javuló FWHM …"
     }
 }
+
+// MARK: - Verdict explain popover (R11-T12/F11(d))
+
+/// `VerdictChip`, made clickable: a popover spelling out the numbers behind
+/// a sky verdict -- max magasság, látható órák, Hold-illum%, Hold-szeparáció
+/// -- so "Hold zavar (23°, 87%)" reads as more than an unexplained color.
+/// Backs `TonightPage.planTable`'s Döntés column, `OverviewSegment`'s
+/// "Láthatóság ma este" card, and `DiscoveryPage.table`'s Döntés column --
+/// the three call sites PLAN-R11's own UI-terv names for F11(d), all
+/// sourced from `TargetPlan`/`DiscoveryRow` (`NightSweep`/`Planner`/
+/// `DiscoveryPlanner`'s shared math).
+///
+/// Every parameter is optional because not every verdict has every number
+/// (a "nincs koordináta" verdict has none of them; `DiscoveryRow` never
+/// carries a Moon-illumination value at all, only a separation) -- whenever
+/// ALL of them are `nil`, this renders a PLAIN `VerdictChip` instead of a
+/// button wrapping an empty popover (spec: "ahol az adat nem elérhető, a
+/// chip maradjon sima").
+struct VerdictExplainPopover: View {
+    let verdict: String
+    var maxAltitudeDeg: Double?
+    var visibleHours: Double?
+    var moonIlluminationPercent: Double?
+    var moonSeparationDeg: Double?
+
+    @State private var showPopover = false
+
+    private var hasAnyData: Bool {
+        maxAltitudeDeg != nil || visibleHours != nil || moonIlluminationPercent != nil || moonSeparationDeg != nil
+    }
+
+    var body: some View {
+        if hasAnyData {
+            Button {
+                showPopover = true
+            } label: {
+                VerdictChip(verdict: verdict)
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showPopover) {
+                popoverContent
+            }
+        } else {
+            VerdictChip(verdict: verdict)
+        }
+    }
+
+    private var popoverContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Miért ez a döntés?").font(.subheadline).bold()
+            VStack(alignment: .leading, spacing: 4) {
+                if let maxAltitudeDeg {
+                    explainRow("Max. magasság", String(format: "%.0f°", maxAltitudeDeg))
+                }
+                if let visibleHours {
+                    explainRow("Látható", String(format: "%.1f ó", visibleHours))
+                }
+                if let moonIlluminationPercent {
+                    explainRow("Hold megvilágítottsága", "\(Int(moonIlluminationPercent.rounded()))%")
+                }
+                if let moonSeparationDeg {
+                    explainRow("Hold-szeparáció", String(format: "%.0f°", moonSeparationDeg))
+                }
+            }
+        }
+        .font(.callout)
+        .padding(14)
+        .frame(width: 240)
+    }
+
+    private func explainRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label).foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+        }
+    }
+}
+
+// MARK: - Library percentile dot (R11-T12/F11(e))
+
+/// A small color dot next to a FWHM″/Hatékonyság cell, showing where THIS
+/// library's own distribution places the value -- green (best third),
+/// yellow (middle third), orange (worst third), per `LibraryPercentiles
+/// .evaluate`. Renders nothing at all when `result` is `nil` (below the
+/// minimum sample size, or the row itself has no comparable value -- e.g. a
+/// px-fallback-only FWHM never gets a dot, since it was never in the
+/// arcsec distribution to begin with).
+struct LibraryPercentileDot: View {
+    let result: LibraryPercentileResult?
+    /// Appended after `medianValue` in the tooltip ("″" or "%").
+    let unit: String
+
+    var body: some View {
+        if let result {
+            Circle()
+                .fill(Self.color(for: result.band))
+                .frame(width: 7, height: 7)
+                .help(Self.tooltipText(result, unit: unit))
+        }
+    }
+
+    private static func color(for band: PercentileBand) -> Color {
+        switch band {
+        case .best: return .green
+        case .middle: return .yellow
+        case .worst: return .orange
+        }
+    }
+
+    private static func tooltipText(_ result: LibraryPercentileResult, unit: String) -> String {
+        let medianText = String(format: "%.1f", result.medianValue) + unit
+        let prefix = "A könyvtárad mediánja \(medianText) — ez a session"
+        switch result.band {
+        case .best:
+            let topPercent = max(1, min(33, Int(((1 - result.betterThanFraction) * 100).rounded())))
+            return "\(prefix) a jobbik \(topPercent)%-ban van."
+        case .middle:
+            return "\(prefix) a középmezőnyben van."
+        case .worst:
+            return "\(prefix) a leggyengébb harmadban van."
+        }
+    }
+}

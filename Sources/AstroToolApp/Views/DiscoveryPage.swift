@@ -311,8 +311,20 @@ struct DiscoveryPage: View {
                 .width(min: 55, ideal: 65)
             TableColumn("FOV", value: \.fovFitSortKey) { row in fovCell(row) }
                 .width(min: 90, ideal: 140)
-            TableColumn("Döntés", value: \.verdictSortKey) { row in VerdictChip(verdict: row.verdict) }
-                .width(min: 120, ideal: 150)
+            // R11-T12/F11(d): clickable -- `DiscoveryRow` carries no Moon-
+            // illumination value of its own (only separation), so its
+            // popover just omits that one row -- `VerdictExplainPopover`
+            // handles a partial number set the same way it handles none at
+            // all.
+            TableColumn("Döntés", value: \.verdictSortKey) { row in
+                VerdictExplainPopover(
+                    verdict: row.verdict,
+                    maxAltitudeDeg: row.maxAltitudeDeg,
+                    visibleHours: row.visibleHours,
+                    moonSeparationDeg: row.moonSeparationDeg
+                )
+            }
+            .width(min: 120, ideal: 150)
             // R10-B7: visible row-actions -- mirrors `contextMenuItems(for:)`
             // exactly (same function, both call sites), so the right-click
             // menu and this borderless "⋯" button can never drift apart.

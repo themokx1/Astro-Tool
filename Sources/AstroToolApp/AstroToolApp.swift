@@ -36,8 +36,15 @@ struct RootView: View {
     /// state, so it posts a `Notification` this always-on-screen view
     /// observes" pattern `showFolderStructureHelp` already uses.
     @State private var showGlossary = false
+    /// R11-T12/F11(a): the optional term name to scroll `GlossarySheet` to,
+    /// read off `.showGlossary`'s notification `object` -- `nil` for every
+    /// existing poster (open at the top), set whenever a per-field ⓘ
+    /// popover's "Fogalomtár…" link posts with a specific term.
+    @State private var glossaryAnchor: String?
     /// R11-T3/F11(c)/F20: "Súgó ▸ A Sirilről…" -- same notification pattern.
     @State private var showSirilHelp = false
+    /// R11-T12/F12: "Súgó ▸ Első lépések…" -- same notification pattern.
+    @State private var showFirstSteps = false
 
     var body: some View {
         Group {
@@ -60,19 +67,26 @@ struct RootView: View {
             FolderStructureHelpSheet()
         }
         .sheet(isPresented: $showGlossary) {
-            GlossarySheet()
+            GlossarySheet(anchor: glossaryAnchor)
         }
         .sheet(isPresented: $showSirilHelp) {
             SirilHelpSheet()
         }
+        .sheet(isPresented: $showFirstSteps) {
+            FirstStepsSheet()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .showFolderStructureHelp)) { _ in
             showFolderStructureHelp = true
         }
-        .onReceive(NotificationCenter.default.publisher(for: .showGlossary)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .showGlossary)) { note in
+            glossaryAnchor = note.object as? String
             showGlossary = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .showSirilHelp)) { _ in
             showSirilHelp = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showFirstSteps)) { _ in
+            showFirstSteps = true
         }
     }
 }

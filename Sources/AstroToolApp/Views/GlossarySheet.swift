@@ -4,8 +4,20 @@ import SwiftUI
 /// for the vocabulary this app's numbers/labels assume the reader already
 /// knows. Kept static (no live data), 1-2 sentences each, ordered
 /// roughly pipeline-first (capture -> processing -> library housekeeping).
+///
+/// R11-T12/F11(a): grew a search field (title+text, case/diacritic
+/// insensitive) and an optional `anchor` -- the term name to scroll straight
+/// to on open, used by `MetricInfoButton`'s per-column links and
+/// `SessionNoteSheet`'s per-field ⓘ popovers (both post `.showGlossary` with
+/// the anchor as the notification's `object`, read by `RootView`).
 struct GlossarySheet: View {
     @Environment(\.dismiss) private var dismiss
+
+    /// The term name to scroll to on open, `nil` for "just open at the top"
+    /// (every existing caller before this task).
+    var anchor: String?
+
+    @State private var searchText = ""
 
     private struct Term {
         let name: String
@@ -27,7 +39,38 @@ struct GlossarySheet: View {
         Term(name: "Bias", definition: "A szenzor kiolvasási zaját és alapszintjét (offset) rögzítő kalibrációs keret: 0 másodperces (vagy minimális) expozíció, fedett optikával. A dark- és flat-kalibráció egyik bemenete."),
         Term(name: "Dark", definition: "A szenzor hőzaját (dark current) rögzítő kalibrációs keret: ugyanolyan expozíciós idő és hőmérséklet, mint a light kereteknél, fedett optikával. A pixel-szintű hőzaj kivonásához használt."),
         Term(name: "Flat", definition: "A szenzor/optika egyenetlen megvilágítás-érzékenységét (vinjettálás, por) rögzítő kalibrációs keret: egyenletesen megvilágított felület felvétele ugyanazzal a setuppal, mint a light kereteknél."),
+
+        // R11-T12/F11(a): ~15 new entries -- the beginner's-own vocabulary
+        // this app's session-note template and planner numbers assume
+        // already known, per the R11 persona review's own finding (spec
+        // F11 item 4: "a Fogalomtárból pont azok a fogalmak hiányoznak,
+        // amiket az app maga kérdez").
+        Term(name: "Bortle-skála", definition: "1-9-es skála az égi háttér fényszennyezettségére: 1 = tökéletesen sötét vidéki ég, 9 = belvárosi ég, ahol csak a legfényesebb csillagok látszanak. A SessionNoteSheet \"Bortle\" mezője ezt a számot várja -- minél alacsonyabb, annál sötétebb (jobb) az ég."),
+        Term(name: "SQM", definition: "\"Sky Quality Meter\" -- az égi háttér fényessége mag/ívmásodperc² egységben, egy kézi műszerrel mérve. Jellemző tartomány kb. 17 (városi, világos ég) és 22 (kiváló, sötét vidéki ég) között; nagyobb szám = sötétebb (jobb) ég."),
+        Term(name: "Seeing", definition: "A légkör pillanatnyi nyugalma/turbulenciája -- ez szabja meg, mennyire éles pontra tudnak fókuszálni a csillagok, függetlenül a felszerelés minőségétől. A SessionNoteSheet-ben gyakran 1-5-ös skálán (1 = nyugtalan/rossz, 5 = kristálytiszta/kiváló) jegyzik fel, de a szöveges \"kiváló/jó/közepes/rossz\" jelölés is elterjedt."),
+        Term(name: "Átlátszóság", definition: "Az égbolt fényáteresztő képessége -- pára, füst vagy magas felhő rontja, még ha az ég éjszaka csillagosnak is látszik. A seeing-től független: lehet nyugodt (jó seeing), de párás (rossz átlátszóság) éjszaka is. Szintén gyakran 1-5-ös skálán rögzített érték."),
+        Term(name: "Plate-solve", definition: "Egy felvétel csillagmintázatának automatikus összevetése katalógusokkal, hogy az app pontosan meghatározza a kép közepének RA/Dec koordinátáját fejléc-adat nélkül is. Ehhez ez az app a Siril parancssori eszközét hívja -- Siril nélkül nem működik."),
+        Term(name: "Master (kalibráció)", definition: "Sok egyedi kalibrációs keret (pl. 50 dark) egyetlen, zajcsökkentett átlag/medián-képpé kombinálva (\"master dark\", \"master flat\", \"master bias\"). A tényleges kalibrációt (light-keretek tisztítását) ez a kombinált master végzi, nem az egyedi nyers keretek."),
+        Term(name: "Gain/Offset", definition: "A szenzor kamera-vezérlőjében beállított erősítés (gain) és alapszint-eltolás (offset) -- ugyanahhoz a kamerához setuponként/session-önként eltérő is lehet. A szenzor-profil, a kalibráció-illesztés és a háttér e⁻/s/″² számítás mind pontos (kamera, gain, offset) hármas egyezést vár, sosem közelítő találgatást."),
+        Term(name: "ADU", definition: "\"Analog-to-Digital Unit\" -- a szenzor nyers, kalibrálatlan kimeneti egysége (a pixel \"fényessége\" a fejléc/mérés szintjén, még e⁻-be/valós fényességbe át nem váltva). A háttér ADU-ban mért értéke setupok között nem összehasonlítható -- ehhez kell a mért szenzor-profil e⁻/s/″²-es átváltása."),
+        Term(name: "EGAIN", definition: "A szenzor e⁻/ADU átváltási tényezője az adott gain-beállításnál (hány elektronnak felel meg egyetlen ADU) -- a FITS-fejléc `EGAIN` kulcsa, vagy a mért szenzor-profil adja. Ez teszi lehetővé az ADU-ban mért nyers háttér átváltását valódi, setup-független e⁻/s/″² értékre."),
+        Term(name: "Kulmináció", definition: "A célpont legnagyobb magasságának pillanata az éjszaka során -- ekkor halad át a délkörön (meridiánon). Kulmináció körül a legrövidebb a fényútja a légkörben, tehát jellemzően ekkor a legjobb a képminőség (feltéve, hogy a meridián-átfordulás nem szakítja meg a felvételt)."),
+        Term(name: "Sub(-expozíció)", definition: "Egyetlen nyers light-keret expozíciós ideje (pl. \"300s-es sub-ok\") -- a végső stack ezek sokaságából áll össze. A sub hossza kompromisszum: hosszabb sub kevesebb leolvasási zajt halmoz, de nagyobb a műholdnyom/felhő/vezetési hiba kockázata egy-egy keretben."),
+        Term(name: "Integráció (bruttó vs valós)", definition: "A bruttó integráció minden session light-keret expozíciós idejének nyers összege; a valós (usable) integráció csak a duplikátum-mentesített, el nem utasított, ki nem zárt session kereteket számolja -- ez utóbbi az, ami ténylegesen belekerül a végső stackbe. Ez az app mindenhol a valós számot emeli ki fejlécként, a bruttót csak összevetésként mutatja."),
+        Term(name: "Dither", definition: "A felvevőrendszer szándékos, apró (néhány pixeles) elmozdítása két sub között -- ez véletlenszerűvé teszi, hogy egy adott égi pont melyik pixelre esik, így a stackelés a fix mintázatú zajt (hot pixel, szenzor-hiba) ki tudja átlagolni ahelyett, hogy minden keretben ugyanott maradna."),
+        Term(name: "Szűrő (NB vs BB)", definition: "NB (\"narrowband\", keskenysáv, pl. Ha, OIII, SII) csak egy szűk hullámhossz-tartományt enged át -- kevésbé érzékeny a holdfényre/fényszennyezésre, ezért holdas vagy városi égen is használható. BB (\"broadband\", szélessáv, pl. L, R, G, B, vagy szűretlen OSC) a látható fény nagy részét átengedi -- sötét, holdmentes égen ad valós színt/fényességet."),
+        Term(name: "Setup-fingerprint", definition: "Egy session kamera+optika+redukátor/Barlow kombinációjának \"ujjlenyomata\", a FITS-fejlécekből (fókusztávolság, pixelméret, kamera neve) automatikusan felismerve. Ez különbözteti meg, hogy két session ugyanazzal a felszereléssel készült-e -- enélkül a látómező-illesztés és a trendek nem lennének összehasonlíthatók."),
+        Term(name: "Szél", definition: "A session közben mért/becsült szélsebesség (jellemzően km/h vagy m/s) -- erős szél rezgést vihet a csőre/állványra, ami csillag-nyúlást vagy elmosódást okozhat, még kiváló seeing mellett is."),
+        Term(name: "Páralecsapódás", definition: "Harmat/dér lecsapódása az optikán vagy a szenzoron a session alatt -- fokozatosan elmosódó, majd teljesen eltűnő csillagokat okoz a felvételeken. A SessionNoteSheet mezője azt rögzíti, hogy volt-e ilyen probléma aznap éjjel (pl. \"nem\", \"enyhe\", \"erős -- páramentesítő kellett volna\")."),
     ]
+
+    private var filteredTerms: [Term] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return Self.terms }
+        return Self.terms.filter {
+            $0.name.localizedStandardContains(query) || $0.definition.localizedStandardContains(query)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -38,18 +81,58 @@ struct GlossarySheet: View {
             }
             .padding(16)
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    ForEach(Array(Self.terms.enumerated()), id: \.offset) { _, term in
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(term.name).font(.subheadline).bold()
-                            Text(term.definition).font(.callout).foregroundStyle(.secondary)
+
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Keresés a fogalomtárban…", text: $searchText)
+                    .textFieldStyle(.plain)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
+            .padding(.top, 12)
+
+            if filteredTerms.isEmpty {
+                ContentUnavailableView.search(text: searchText)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            ForEach(filteredTerms, id: \.name) { term in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(term.name).font(.subheadline).bold()
+                                    Text(term.definition).font(.callout).foregroundStyle(.secondary)
+                                }
+                                .id(term.name)
+                            }
+                        }
+                        .padding(16)
+                    }
+                    .onAppear {
+                        guard let anchor else { return }
+                        // R11-T12/F11(a): a fresh sheet's `ScrollView` needs a
+                        // beat to lay out its content before `scrollTo` has
+                        // anything to scroll to -- same "next runloop tick"
+                        // workaround this app's other `ScrollViewReader`
+                        // call sites use for the identical reason.
+                        DispatchQueue.main.async {
+                            proxy.scrollTo(anchor, anchor: .top)
                         }
                     }
                 }
-                .padding(16)
             }
         }
-        .frame(width: 480, height: 520)
+        .frame(width: 480, height: 560)
     }
 }

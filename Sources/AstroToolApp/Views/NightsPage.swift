@@ -332,7 +332,7 @@ struct NightsPage: View {
             // already has -- this column falls back to a pixel value (see
             // `fwhmText`) exactly when there's no pixel-scale metadata to
             // convert with, i.e. "nincs pixelskála".
-            explanation: "A session kerete(i) félértékszélessége ívmásodpercben (pixelméret+fókusz ismeretében) vagy pixelben, ha nincs pixelskála a konverzióhoz. Mikor hazudik: pontozás nélkül „-”; „Siril nélkül” pontozásnál is mindig „-”."
+            explanation: "A session kerete(i) félértékszélessége ívmásodpercben (pixelméret+fókusz ismeretében) vagy pixelben, ha nincs pixelskála a konverzióhoz. Mikor hazudik: pontozás nélkül „-”; „Siril nélkül” pontozásnál is mindig „-”. A színes pötty a könyvtárad saját eloszlásához mérve mutatja a session helyét (zöld = jobbik harmad, sárga = középső, narancs = leggyengébb) -- 6 összehasonlítható session alatt nincs pötty."
         ),
         .init(
             title: "Háttér e⁻/s/″²",
@@ -340,14 +340,53 @@ struct NightsPage: View {
         ),
         .init(
             title: "Hatékonyság",
-            explanation: "A session tényleges integrációs ideje a light-keretek első és utolsó felvétele közti ablakhoz mérve, százalékban. Mikor hazudik: „-” marad, ha nincs elég értelmezhető DATE-OBS időbélyeg a keretek fejléceiben."
+            explanation: "A session tényleges integrációs ideje a light-keretek első és utolsó felvétele közti ablakhoz mérve, százalékban. Mikor hazudik: „-” marad, ha nincs elég értelmezhető DATE-OBS időbélyeg a keretek fejléceiben. Ugyanaz a percentilis-pötty, mint a FWHM″ oszlopnál."
         ),
     ]
+
+    // MARK: - Library percentiles (R11-T12/F11(e))
+
+    /// This library's FULL (unfiltered by the year/month Picker -- always
+    /// the whole library, per spec: "a KÖNYVTÁR SAJÁT eloszlásához mérve")
+    /// arcsec-FWHM distribution -- a px-fallback-only row (`medianFWHMArcsec
+    /// == nil`) contributes nothing here, so it never pollutes the arcsec
+    /// distribution and never gets a dot of its own either (spec: "FWHM-nél
+    /// a px-fallback értékek NE keveredjenek az arcsec-eloszlásba").
+    private var libraryFWHMArcsecValues: [Double] {
+        appState.nights?.compactMap(\.medianFWHMArcsec) ?? []
+    }
+
+    private var libraryDutyCycleValues: [Double] {
+        appState.nights?.compactMap(\.dutyCyclePercent) ?? []
+    }
+
+    /// `nil` for a row with no derivable arcsec value at all (never rated,
+    /// or px-fallback-only) -- same gate `libraryFWHMArcsecValues` itself
+    /// uses, so a px-fallback row is excluded on BOTH sides of the
+    /// comparison, not just the distribution.
+    private func fwhmPercentile(_ row: NightTableRow, libraryValues: [Double]) -> LibraryPercentileResult? {
+        guard let arcsec = row.medianFWHMArcsec else { return nil }
+        return LibraryPercentiles.evaluate(value: arcsec, allValues: libraryValues, higherIsBetter: false)
+    }
+
+    private func dutyPercentile(_ row: NightTableRow, libraryValues: [Double]) -> LibraryPercentileResult? {
+        guard let duty = row.dutyCyclePercent else { return nil }
+        return LibraryPercentiles.evaluate(value: duty, allValues: libraryValues, higherIsBetter: true)
+    }
 
     // MARK: - Table
 
     private var table: some View {
-        Table(tableRows, selection: $selection, sortOrder: $sortOrder) {
+        // R11-T12/F11(e): computed ONCE per table render (not per row/per
+        // cell) -- `libraryFWHMArcsecValues`/`libraryDutyCycleValues` are
+        // computed properties that re-derive the whole array on every
+        // access, so capturing them into a local `let` here keeps the
+        // per-row `fwhmPercentile`/`dutyPercentile` calls below from turning
+        // an O(n) table into an O(n²) one.
+        let fwhmLibraryValues = libraryFWHMArcsecValues
+        let dutyLibraryValues = libraryDutyCycleValues
+
+        return Table(tableRows, selection: $selection, sortOrder: $sortOrder) {
             TableColumn("Dátum", value: \.sortDateKey) { row in dateCell(row) }
                 .width(min: 110, ideal: 130)
             TableColumn("Célpont", value: \.displayName) { row in targetCell(row) }
@@ -360,12 +399,22 @@ struct NightsPage: View {
                 Text(row.exposureSummary).lineLimit(1).truncationMode(.tail)
             }
             .width(min: 100, ideal: 140)
-            TableColumn("FWHM″", value: \.fwhmSortKey) { row in Text(fwhmText(row)) }
-                .width(min: 60, ideal: 70)
+            TableColumn("FWHM″", value: \.fwhmSortKey) { row in
+                HStack(spacing: 4) {
+                    Text(fwhmText(row))
+                    LibraryPercentileDot(result: fwhmPercentile(row, libraryValues: fwhmLibraryValues), unit: "″")
+                }
+            }
+            .width(min: 60, ideal: 70)
             TableColumn("Háttér e⁻/s/″²", value: \.backgroundSortKey) { row in Text(backgroundText(row)) }
                 .width(min: 90, ideal: 120)
-            TableColumn("Hatékonyság", value: \.dutySortKey) { row in Text(dutyText(row)) }
-                .width(min: 80, ideal: 100)
+            TableColumn("Hatékonyság", value: \.dutySortKey) { row in
+                HStack(spacing: 4) {
+                    Text(dutyText(row))
+                    LibraryPercentileDot(result: dutyPercentile(row, libraryValues: dutyLibraryValues), unit: "%")
+                }
+            }
+            .width(min: 80, ideal: 100)
             // R10-B7: grouped so the table stays AT (not over) `Table`'s
             // 10-top-level-column cap once the trailing "⋯" actions column
             // below needs its own slot -- same `Group { }` workaround

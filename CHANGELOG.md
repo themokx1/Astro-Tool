@@ -402,6 +402,51 @@ T3 — Settings csomag után.
     `filter=arány` lista) szűrőnként felülbírálja a `--keep`-et; a
     `--json` kimenet additív `per_filter` tömbje szűrőnkénti kiválasztva/
     összes bontást ad.
+- **Kezdő-csomag — Fogalomtár-bővítés, mező-ⓘ-k, verdikt-indoklás,
+  percentilis-sávok, Első lépések (R11-T12/F11+F12)**:
+  - **Fogalomtár**: ~17 új szócikk (Bortle-skála, SQM, Seeing, Átlátszóság,
+    Plate-solve, Master, Gain/Offset, ADU, EGAIN, Kulmináció,
+    Sub-expozíció, Integráció bruttó/valós, Dither, Szűrő NB/BB,
+    Setup-fingerprint, Szél, Páralecsapódás) — pont azok a fogalmak,
+    amiket a session-jegyzet sablonja és a tervező számai már eddig is
+    feltételeztek, de a Fogalomtárban nem szerepeltek. `GlossarySheet`
+    kapott egy kereső mezőt (cím+szöveg) és egy opcionális horgony-
+    paramétert (`anchor`) — a `.showGlossary` notification `object`-je
+    mostantól egy konkrét szócikk nevét is hordozhatja, amire a sheet
+    `ScrollViewReader`-rel azonnal odagörget; minden korábbi hívó
+    változatlanul `nil`-lel postol (tetején nyílik).
+  - **SessionNoteSheet mező-ⓘ-k**: a hat megfigyelési sablonmező (Bortle,
+    SQM, Seeing, Átlátszóság, Szél, Páralecsapódás — a szabad szöveges
+    "Megjegyzés" kivételével) mellé kis ⓘ gomb került: 1-2 mondatos
+    magyarázat + értékskála + lábléc-link a Fogalomtár megfelelő
+    szócikkére; a mezők placeholder-e mostantól példaértéket mutat
+    ("pl. 5", "pl. 20.8", "pl. 3/5"…).
+  - **VerdictChip → kattintható indoklás**: új közös
+    `VerdictExplainPopover` (SharedComponents.swift) — kattintásra
+    popover a számokkal (max. magasság, látható órák, Hold
+    megvilágítottsága, Hold-szeparáció), a `TargetPlan`/`DiscoveryRow`
+    már meglévő mezőiből. Bekötve a Ma este planTable Döntés oszlopába,
+    az Áttekintés "Láthatóság ma este" kártyájába és a Felfedezés Döntés
+    oszlopába; ahol egyetlen szám sem elérhető (pl. "nincs koordináta"),
+    a chip sima marad, popover nélkül.
+  - **Percentilis-színsávok**: új core `LibraryPercentiles.evaluate`
+    (tiszta függvény, teszttel) — a könyvtár SAJÁT FWHM″/Hatékonyság
+    eloszlásához méri egy session értékét, és zöld/sárga/narancs
+    (legjobb/középső/leggyengébb harmad) sávba sorolja; 6 összehasonlítható
+    session alatt nincs színezés. Bekötve a NightsPage FWHM″/Hatékonyság
+    és a SessionsSegment FWHM″ celláiba, halvány pötty + help-tooltip
+    formában ("A könyvtárad mediánja 3,1″ — ez a session a jobbik
+    25%-ban"). A FWHM-eloszlás kizárólag az ívmásodperc-értékeket
+    tartalmazza — egy px-fallback-only session sosem keveredik bele, és
+    sosem kap pöttyöt sem.
+  - **Első lépések checklist**: új `AppState.firstSteps` (6 tétel:
+    Beolvasás/Audit/Helyszín/Siril/Pontozás/Szenzor-profil, mindegyikhez
+    cím, egy mondatos "miért" és egy akció-gomb) + `FirstStepsChecklistView`/
+    `FirstStepsSheet`. Megjelenik a FirstScanView sikeres beolvasás utáni
+    eredmény-kártyája alatt, a Ma este lap tetején elutasítható (perzisztens,
+    `AppState.firstStepsCardDismissed`) kártyaként amíg 4-nél kevesebb pipa
+    van, és bármikor a Súgó menü "Első lépések…" pontjából. Core:
+    `Database.hasAnyRating()` (teszttel) az "volt már pontozás?" tételhez.
 
 ### Changed
 
