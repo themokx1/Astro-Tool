@@ -591,6 +591,56 @@ private struct PlannerFixture {
     #expect(site.longitudeDeg == 19.0)
 }
 
+// MARK: - detectSiteFromFITSHeaders (R11-T17, F4 "Felismerés a képeim fejlécéből")
+
+/// The raw FITS-median detector finds the SAME coordinate `resolveSite`'s own
+/// fallback would derive -- proof it's exercising the identical
+/// `TargetCoordinates.medianSite` math, just without the `config.sites`/
+/// `config.site` gate in front of it.
+@Test func detectSiteFromFITSHeadersFindsTheLibraryMedianCoordinate() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    try fixture.addLight(target: "T_Median", extraCards: ["SITELAT": "47.4", "SITELONG": "19.0"])
+
+    let site = try #require(try Planner.detectSiteFromFITSHeaders(db: fixture.db))
+    #expect(site.latitudeDeg == 47.4)
+    #expect(site.longitudeDeg == 19.0)
+}
+
+/// The real point of this function existing separately from `resolveSite`:
+/// it reads the FITS headers EVEN WHEN a manual site is fully configured
+/// (which would make `resolveSite` never even look at the headers at all) --
+/// a "Felismerés a képeim fejlécéből" button must be able to answer "is
+/// there real header data?" independent of whatever's currently configured.
+@Test func detectSiteFromFITSHeadersIgnoresAConfiguredManualSite() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    var config = fixture.config
+    config.site = SiteRule(latitudeDeg: 10.0, longitudeDeg: 20.0)
+    try fixture.addLight(target: "T_Median", extraCards: ["SITELAT": "47.4", "SITELONG": "19.0"])
+
+    // `resolveSite` itself would honor the manual override...
+    let resolved = try Planner.resolveSite(db: fixture.db, config: config)
+    #expect(resolved.latitudeDeg == 10.0)
+
+    // ...but the detector always reports what's actually in the headers.
+    let detected = try #require(try Planner.detectSiteFromFITSHeaders(db: fixture.db))
+    #expect(detected.latitudeDeg == 47.4)
+    #expect(detected.longitudeDeg == 19.0)
+}
+
+/// No scanned light has ANY `SITELAT`/`SITELONG` at all -- an honest `nil`,
+/// never a half-populated `SiteRule`, so the caller can tell "nothing to
+/// detect" apart from "found it" without inspecting individual fields.
+@Test func detectSiteFromFITSHeadersReturnsNilWhenNoHeaderHasSiteCoordinates() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    try fixture.addLight(target: "T_NoSite")
+
+    let detected = try Planner.detectSiteFromFITSHeaders(db: fixture.db)
+    #expect(detected == nil)
+}
+
 /// `plan(...)`'s own `siteName` plumbing: the SAME target's plan differs
 /// (visibility-wise) depending on which configured site is selected -- proof
 /// the whole `Planner.plan` pipeline (not just `resolveSite` in isolation)

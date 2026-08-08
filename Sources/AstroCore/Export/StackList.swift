@@ -502,7 +502,7 @@ public enum StackList {
                 // directory, never a subfolder -- verified against Siril's
                 // own docs), so this per-filter script is self-contained.
                 let filterLightsDir = stacklistDir.appendingPathComponent("lights/\(filterSlug)", isDirectory: true)
-                let ssfContent = try renderSSF(stacklistDir: filterLightsDir, filterLabel: filterSelection.filter)
+                let ssfContent = try renderSSF(framesDir: filterLightsDir, filterLabel: filterSelection.filter)
                 try writeGuard.writeToolFile(relativePath: "stacklists/\(slug)/\(baseName).ssf", data: Data(ssfContent.utf8))
             }
         } else {
@@ -518,7 +518,14 @@ public enum StackList {
             let dssContent = renderDSSFilelist(fileNames: fileNames, lightsRelativePath: "lights")
             try writeGuard.writeToolFile(relativePath: "stacklists/\(slug)/stack.dssfilelist", data: Data(dssContent.utf8))
 
-            let ssfContent = try renderSSF(stacklistDir: stacklistDir, filterLabel: nil)
+            // R11-T17: cd's into the flat export's OWN lights/ subfolder, not
+            // its parent stacklistDir -- Siril's `convert` reads only the
+            // current working directory, and the hardlinked frames live in
+            // lights/, exactly like the per-filter branch above already got
+            // right. Before this fix the flat/single-filter script cd'd one
+            // level too high and `convert` would find zero frames.
+            let flatLightsDir = stacklistDir.appendingPathComponent("lights", isDirectory: true)
+            let ssfContent = try renderSSF(framesDir: flatLightsDir, filterLabel: nil)
             try writeGuard.writeToolFile(relativePath: "stacklists/\(slug)/stack.ssf", data: Data(ssfContent.utf8))
         }
 
@@ -573,7 +580,7 @@ public enum StackList {
                 let dssContent = renderDSSFilelist(fileNames: fileNames, lightsRelativePath: "lights/\(filterSlug)")
                 try Data(dssContent.utf8).write(to: destDir.appendingPathComponent("\(baseName).dssfilelist"))
 
-                let ssfContent = try renderSSF(stacklistDir: lightsDir, filterLabel: filterSelection.filter)
+                let ssfContent = try renderSSF(framesDir: lightsDir, filterLabel: filterSelection.filter)
                 try Data(ssfContent.utf8).write(to: destDir.appendingPathComponent("\(baseName).ssf"))
             }
         } else {
@@ -594,7 +601,9 @@ public enum StackList {
             let dssContent = renderDSSFilelist(fileNames: fileNames, lightsRelativePath: "lights")
             try Data(dssContent.utf8).write(to: destDir.appendingPathComponent("stack.dssfilelist"))
 
-            let ssfContent = try renderSSF(stacklistDir: destDir, filterLabel: nil)
+            // R11-T17: same fix as `export` above -- cd into lights/ itself,
+            // not destDir (its parent).
+            let ssfContent = try renderSSF(framesDir: lightsDir, filterLabel: nil)
             try Data(ssfContent.utf8).write(to: destDir.appendingPathComponent("stack.ssf"))
         }
 
@@ -648,31 +657,36 @@ public enum StackList {
 
     // MARK: - .ssf
 
-    /// A minimal, reviewable Siril script over `stacklistDir`'s own
-    /// contents: `convert` (raw -> Siril's working format), `register`
-    /// (star alignment), then a single rejection-stack. This is
-    /// deliberately NOT a "run everything end to end" pipeline -- it has no
-    /// calibration step at all (Siril 1.4's `calibrate` needs master paths
-    /// this type has no way to know are still valid/current), so the
-    /// generated comment header tells the user to insert their own
-    /// `calibrate`/`calibrate_single` line(s) first if this session needs
-    /// them. Never contains a destructive command (no `rm`, no overwriting
-    /// redirect) -- same "generated for a human to read before running"
-    /// stance as `SuggestionScript`.
+    /// A minimal, reviewable Siril script over `framesDir`'s own contents:
+    /// `convert` (raw -> Siril's working format), `register` (star
+    /// alignment), then a single rejection-stack. This is deliberately NOT a
+    /// "run everything end to end" pipeline -- it has no calibration step at
+    /// all (Siril 1.4's `calibrate` needs master paths this type has no way
+    /// to know are still valid/current), so the generated comment header
+    /// tells the user to insert their own `calibrate`/`calibrate_single`
+    /// line(s) first if this session needs them. Never contains a
+    /// destructive command (no `rm`, no overwriting redirect) -- same
+    /// "generated for a human to read before running" stance as
+    /// `SuggestionScript`.
     ///
-    /// `stacklistDir`'s path is interpolated into a quoted `cd "..."` line;
-    /// same injection guard `SirilCLI.buildScript` uses (a path containing
-    /// `"` or `\` is rejected outright rather than guessing at escaping
-    /// rules Siril's script grammar may or may not support).
+    /// `framesDir`'s path is interpolated into a quoted `cd "..."` line; same
+    /// injection guard `SirilCLI.buildScript` uses (a path containing `"` or
+    /// `\` is rejected outright rather than guessing at escaping rules
+    /// Siril's script grammar may or may not support). `framesDir` MUST be
+    /// the folder that directly contains the hardlinked light frames --
+    /// Siril's `convert` only ever reads the current working directory, not
+    /// a subfolder of it -- so every caller passes the actual `lights/` (or
+    /// `lights/<FILTER>/`) directory itself, never its parent. (R11-T17: the
+    /// flat/single-filter export used to pass its parent -- the stacklist
+    /// root -- here, so `convert` would find zero frames; see `export`'s own
+    /// doc comment.)
     ///
     /// `filterLabel` (R11-T11): when non-`nil`, adds a `# Filter: <name>`
-    /// comment line -- used for a per-filter script, where `stacklistDir` is
-    /// that filter's OWN `lights/<FILTER>` folder (not its parent), since
-    /// Siril's `convert` only ever reads the current working directory.
-    /// `nil` for the flat/single-filter export, whose `stacklistDir`/script
-    /// text are unchanged from before this ticket.
-    private static func renderSSF(stacklistDir: URL, filterLabel: String?) throws -> String {
-        let path = stacklistDir.path
+    /// comment line -- used for a per-filter script, where `framesDir` is
+    /// that filter's OWN `lights/<FILTER>` folder. `nil` for the flat/
+    /// single-filter export.
+    private static func renderSSF(framesDir: URL, filterLabel: String?) throws -> String {
+        let path = framesDir.path
         guard !containsSirilScriptInjectionRisk(path) else {
             throw AstroError.invalidInput("stacklist dir path unsafe for a Siril script: \(path)")
         }

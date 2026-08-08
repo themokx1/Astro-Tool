@@ -255,6 +255,31 @@ public enum Planner {
         return TargetCoordinates.resolveSite(files: lights, meta: meta, config: config.site)
     }
 
+    /// R11-T17 (F4 "Felismerés a képeim fejlécéből"): the RAW FITS-median
+    /// half of `resolveSite`'s own fallback (`TargetCoordinates.medianSite`),
+    /// deliberately WITHOUT first checking `config.sites`/`config.site` --
+    /// unlike `resolveSite` (which never even looks at the FITS headers once
+    /// a manual site is configured), this always reads straight from the
+    /// library's own scanned light frames, so a "Felismerés…" button can
+    /// answer "is there ANY extractable SITELAT/SITELONG in my images at
+    /// all?" regardless of whatever's currently configured -- including the
+    /// case a user is stuck in "Kézi helyszínek" mode with an incomplete/
+    /// wrong manual entry that would otherwise mask the automatic fallback
+    /// entirely. `nil` when not a single scanned light has a derivable
+    /// `SITELAT`/`SITELONG` header value (nothing to detect) -- the caller
+    /// must treat that as an honest failure (an informative error), never a
+    /// silent no-op. Never touches `config`/disk itself; same "resolve, let
+    /// the caller decide whether/how to cache or persist it" contract
+    /// `resolveSite` already documents.
+    public static func detectSiteFromFITSHeaders(db: Database) throws -> SiteRule? {
+        let files = try db.allFiles(includeMissing: false)
+        let lights = files.filter { $0.area == .sessions && $0.role == .light }
+        let meta = try metaByFileID(for: lights, db: db)
+        let derived = TargetCoordinates.medianSite(files: lights, meta: meta)
+        guard derived.latitudeDeg != nil, derived.longitudeDeg != nil else { return nil }
+        return derived
+    }
+
     /// The `config.sites`-driven half of `resolveSite(db:config:siteName:)`,
     /// factored out (DB-free) so `plan(...)`/`month(...)` can reuse it
     /// against a `db.allFiles` pass they already had to make for their own

@@ -239,10 +239,6 @@ struct AuditPage: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if let lastError = appState.lastError {
-                    Text(lastError).foregroundStyle(.red)
-                }
-
                 switch appState.auditSegment {
                 case .errors, .suspicious, .intentional:
                     findingsSegment

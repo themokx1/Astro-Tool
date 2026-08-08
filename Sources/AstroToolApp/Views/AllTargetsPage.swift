@@ -183,10 +183,6 @@ struct AllTargetsPage: View {
                     }
                 }
 
-                if let lastError = appState.lastError {
-                    Text(lastError).foregroundStyle(.red)
-                }
-
                 tilesRow
 
                 if rows.isEmpty {

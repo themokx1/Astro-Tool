@@ -768,6 +768,23 @@ final class AppState: @unchecked Sendable {
     /// `onAppear`" stance `monthPlan` takes.
     var nights: [NightRow]?
 
+    /// R11-T17: cheap FWHM-only stand-in for `nights` -- feeds
+    /// `SessionsSegment`'s FWHM″ percentile dot the FIRST time a user opens a
+    /// target's page in a session, before `nights` itself has ever been
+    /// populated (that only happens once "Éjszakák" has actually been
+    /// visited -- see `nights`' own doc comment above). `loadTargetDetail`
+    /// kicks off `loadLibraryFWHMArcsecBaselineIfNeeded()` in the background
+    /// whenever `nights == nil`, entirely OUTSIDE the `beginOperation`/
+    /// `currentTask` machinery (never flips `isBusy`, never cancels or is
+    /// cancelled by any other operation -- see that function's own doc
+    /// comment). `nil` until that fetch completes at least once; `[]` is a
+    /// real, valid result (library has no comparable FWHM data yet at all),
+    /// so this stays Optional rather than defaulting to `[]`. `SessionsSegment
+    /// .libraryFWHMArcsecValues` prefers `nights` itself once THAT'S been
+    /// loaded (the superset, authoritative source) and only falls back to
+    /// this baseline otherwise.
+    var libraryFWHMArcsecBaseline: [Double]?
+
     /// Every session's trend-relevant metrics across every target
     /// (`TrendQueries.points`, R11-T10/F7), backing the "Trendek" page
     /// (`TrendsPage`) -- loaded UNFILTERED (`loadTrends()` never passes
@@ -1756,6 +1773,42 @@ final class AppState: @unchecked Sendable {
         }
     }
 
+    /// R11-T17: keyed by `Task` identity so a second `loadTargetDetail` call
+    /// (switching targets quickly) never launches a duplicate fetch on top
+    /// of one already in flight.
+    @ObservationIgnored
+    private var libraryFWHMArcsecBaselineTask: Task<Void, Never>?
+
+    /// See `libraryFWHMArcsecBaseline`'s own doc comment for what this feeds
+    /// and why. A no-op whenever `nights` is already loaded (that's the
+    /// authoritative superset, nothing left for this baseline to add), this
+    /// baseline is already populated, or a fetch is already running.
+    ///
+    /// Deliberately does NOT go through `beginOperation`/`currentTask` --
+    /// unlike every other loader in this file, this one must never flip
+    /// `isBusy` (a spinner over the whole target-detail page just for a
+    /// color dot would be absurd) and must never be cancelled by, or itself
+    /// cancel, an unrelated operation (`beginOperation` always cancels
+    /// `currentTask` first, which would otherwise tear down whatever
+    /// `loadTargetDetail` itself just started). Failures are silently
+    /// swallowed (`try?`): worst case the dot just doesn't appear yet, the
+    /// same "no dot" state a too-small library already produces -- this is a
+    /// cosmetic nicety, not a page the user is depending on to load at all.
+    func loadLibraryFWHMArcsecBaselineIfNeeded() {
+        guard nights == nil, libraryFWHMArcsecBaseline == nil, libraryFWHMArcsecBaselineTask == nil, let db else { return }
+        let cfg = config
+        libraryFWHMArcsecBaselineTask = Task { [weak self] in
+            let values = try? await Task.detached(priority: .utility) {
+                try LibraryPercentiles.libraryFWHMArcsecValues(db: db, config: cfg)
+            }.value
+            guard let self else { return }
+            if let values {
+                self.libraryFWHMArcsecBaseline = values
+            }
+            self.libraryFWHMArcsecBaselineTask = nil
+        }
+    }
+
     // MARK: - Previous night (R11-T9/F5)
 
     /// Builds one `PreviousNightCard` per `keys` entry -- reuses
@@ -2020,6 +2073,67 @@ final class AppState: @unchecked Sendable {
                 self.discoveryFOV = fov.map { DiscoveryFOV(widthDeg: $0.widthDeg, heightDeg: $0.heightDeg) }
                 self.resolvedSite = site
                 self.progressText = "Felfedezés kész: \(rows.count) katalógustétel"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// R11-T17 (F4 "Felismerés a képeim fejlécéből"): `DiscoveryPage`'s
+    /// no-site empty state offers this as an alternative to opening
+    /// Settings -- tries `Planner.detectSiteFromFITSHeaders` (the RAW
+    /// FITS-median, regardless of whatever `config.site`/`config.sites`
+    /// currently hold -- see that function's own doc comment for why this
+    /// can find a coordinate even in a state `resolvedSite` itself came up
+    /// empty for, e.g. a "Kézi helyszínek" mode with an incomplete manual
+    /// entry) and, if it finds one, runs the exact same discovery
+    /// computation `loadDiscovery()` itself would -- deliberately inlined
+    /// here (rather than detecting the site and then calling
+    /// `loadDiscovery()` as a second step) so this stays the ONE
+    /// `beginOperation`/`Task` for the whole action: chaining a second
+    /// `beginOperation`-based call after this one completes would silently
+    /// drop THIS operation's own toast/activity-log entry (see
+    /// `runRateFreshSession`'s own doc comment for the same trap).
+    ///
+    /// Throws an honest `AstroError.invalidInput`, routed through the
+    /// ordinary `lastError`/toast/activity-log channel by `endOperation`,
+    /// when NOTHING is extractable -- the empty state's whole point is that
+    /// this button must never silently do nothing. Never writes
+    /// `resolvedSite` to disk, same "cache in-memory only" contract every
+    /// other assignment to it already follows elsewhere in this file --
+    /// Settings ▸ Helyszín remains the only path that persists a site.
+    func recognizeSiteFromImageHeaders() {
+        guard let db else { return }
+        let cfg = config
+        let currentStats = stats
+
+        let opID = beginOperation("Helyszín felismerése a képek fejléceiből…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let (rows, fov, site) = try await Task.detached(priority: .userInitiated) {
+                    guard let site = try Planner.detectSiteFromFITSHeaders(db: db) else {
+                        throw AstroError.invalidInput(
+                            "egyetlen kép fejlécében sem található SITELAT/SITELONG -- állítsd be kézzel a helyszínt a Beállítások ▸ Helyszín lapon"
+                        )
+                    }
+                    let existing = DiscoveryPlanner.existingDesignations(stats: currentStats)
+                    let fov = try FieldGeometry.dominantFOV(db: db, config: cfg)
+                    let rows = DiscoveryPlanner.discover(
+                        date: Date(), site: site, minAltitudeDeg: plannerDefaultMinAltitudeDeg,
+                        existingDesignations: existing,
+                        setupFOVDeg: fov.map { (width: $0.widthDeg, height: $0.heightDeg) }
+                    )
+                    return (rows, fov, site)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.discovery = rows
+                self.discoveryFOV = fov.map { DiscoveryFOV(widthDeg: $0.widthDeg, heightDeg: $0.heightDeg) }
+                self.resolvedSite = site
+                let latText = String(format: "%.4f", site.latitudeDeg ?? 0)
+                let lonText = String(format: "%.4f", site.longitudeDeg ?? 0)
+                self.progressText = "Helyszín felismerve: \(latText)°, \(lonText)° — Felfedezés kész: \(rows.count) katalógustétel"
             } catch {
                 self.handle(error)
             }
@@ -2800,6 +2914,9 @@ final class AppState: @unchecked Sendable {
         guard let db else { return }
         let cfg = config
         let siteName = effectiveSiteName
+        // R11-T17: fire-and-forget, non-blocking -- see the function's own
+        // doc comment for why this never touches `isBusy`/`currentTask`.
+        loadLibraryFWHMArcsecBaselineIfNeeded()
         targetCoordinateInfo = nil
         targetSetupDescriptors = []
         targetSessionCalibrations = []
@@ -4138,6 +4255,13 @@ final class AppState: @unchecked Sendable {
         // R11-T14/F9: `runVerify`'s title -- so its "Integritás: N fájl
         // rendben, M eltérés" summary toasts too.
         "Integritás-ellenőrzés fut…",
+        // R11-T17/F4: `recognizeSiteFromImageHeaders`'s title -- unlike the
+        // ordinary "Felfedezés számítása…" (which is NOT in this list, since
+        // its own page already shows the result directly), this one starts
+        // from a completely empty "nincs helyszín" state, so a toast
+        // confirming exactly which coordinate got picked up is worth the
+        // extra reassurance.
+        "Helyszín felismerése a képek fejléceiből…",
     ]
 
     /// Strips the trailing "…" every `beginOperation` title ends with, so an

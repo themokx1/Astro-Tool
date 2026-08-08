@@ -204,10 +204,6 @@ struct NightsPage: View {
         VStack(alignment: .leading, spacing: 12) {
             controlRow
 
-            if let lastError = appState.lastError {
-                Text(lastError).foregroundStyle(.red)
-            }
-
             Group {
                 if let nights = appState.nights {
                     if nights.isEmpty {

@@ -58,3 +58,68 @@ import Testing
     let result = try #require(LibraryPercentiles.evaluate(value: 1, allValues: values, higherIsBetter: false))
     #expect(result.betterThanFraction == 5.0 / 6.0)
 }
+
+// MARK: - LibraryPercentiles.libraryFWHMArcsecValues (R11-T17)
+
+/// `LibraryPercentiles.libraryFWHMArcsecValues` reads only `Database` rows --
+/// same fixture spirit as `SessionQualityTests`, which it delegates to
+/// per-target.
+private func makeMemoryDB() throws -> Database {
+    try Database(path: ":memory:")
+}
+
+@discardableResult
+private func insertRatedLight(
+    db: Database, target: String, date: String, name: String,
+    xpixsz: Double?, focallen: Double?, fwhm: Double?
+) throws -> Int64 {
+    let path = "sessions/\(target)/\(date)/lights/\(name).fit"
+    let fileID = try db.upsertFile(
+        FileRecord(
+            path: path, size: 1024, mtime: 1_700_000_000, ext: "fit", kind: "fits",
+            area: .sessions, target: target, sessionDate: date, role: .light,
+            scannedAt: 1_700_000_100
+        )
+    )
+    try db.backfillInode(id: fileID, inode: fileID, nlink: 1)
+    try db.upsertFITSMeta(FITSMetaRecord(fileID: fileID, focallen: focallen, xpixsz: xpixsz))
+    try db.upsertRating(RatingRecord(fileID: fileID, fwhm: fwhm, ratedAt: 1_700_000_200, inputSig: "sig-\(name)"))
+    return fileID
+}
+
+@Test func libraryFWHMArcsecValuesCollectsMedianFWHMAcrossEveryTargetNotJustOne() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+
+    // Two different targets, each with its own session -- the function must
+    // walk EVERY target on record, not just the first one it finds.
+    try insertRatedLight(db: db, target: "M42", date: "2026-01-01", name: "a", xpixsz: 3.76, focallen: 302, fwhm: 3.0)
+    try insertRatedLight(db: db, target: "M31", date: "2026-01-02", name: "b", xpixsz: 3.76, focallen: 302, fwhm: 2.0)
+
+    let values = try LibraryPercentiles.libraryFWHMArcsecValues(db: db, config: config)
+
+    let expectedScale = 206.265 * 3.76 / 302.0
+    let expected = Set([3.0 * expectedScale, 2.0 * expectedScale].map { ($0 * 10000).rounded() / 10000 })
+    let actual = Set(values.map { ($0 * 10000).rounded() / 10000 })
+    #expect(actual == expected)
+}
+
+@Test func libraryFWHMArcsecValuesSkipsSessionsWithNoDerivableArcsecValue() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+
+    // No xpixsz/focallen at all -- `medianFWHMArcsec` stays `nil`, so this
+    // session contributes NOTHING to the library-wide array (never a 0 or a
+    // pixel fallback -- this feeds a percentile comparison, which must never
+    // mix units).
+    try insertRatedLight(db: db, target: "M42", date: "2026-01-01", name: "a", xpixsz: nil, focallen: nil, fwhm: 3.0)
+
+    let values = try LibraryPercentiles.libraryFWHMArcsecValues(db: db, config: config)
+    #expect(values.isEmpty)
+}
+
+@Test func libraryFWHMArcsecValuesReturnsEmptyArrayForAnEmptyLibrary() throws {
+    let db = try makeMemoryDB()
+    let values = try LibraryPercentiles.libraryFWHMArcsecValues(db: db, config: AstroConfig())
+    #expect(values.isEmpty)
+}

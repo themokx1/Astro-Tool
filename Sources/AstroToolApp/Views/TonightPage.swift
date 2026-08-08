@@ -56,10 +56,6 @@ struct TonightPage: View {
                 sitePickerIfNeeded
             }
 
-            if let lastError = appState.lastError {
-                Text(lastError).foregroundStyle(.red)
-            }
-
             switch appState.tonightSegment {
             case .tonight: tonightSegmentView
             case .calendar: calendarSegmentView

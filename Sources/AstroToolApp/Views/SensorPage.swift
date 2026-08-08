@@ -39,10 +39,6 @@ struct SensorPage: View {
                 tiles
                 explainerBlock
 
-                if let lastError = appState.lastError {
-                    Text(lastError).foregroundStyle(.red)
-                }
-
                 SensorProfileList(profiles: profiles, historyByCombo: appState.sensorProfileHistoryByCombo)
             }
 

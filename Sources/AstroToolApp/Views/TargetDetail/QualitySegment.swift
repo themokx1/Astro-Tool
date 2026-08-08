@@ -241,9 +241,6 @@ struct QualitySegment: View {
             if let summaryText {
                 Text(summaryText).font(.callout).foregroundStyle(.secondary)
             }
-            if let lastError = appState.lastError {
-                Text(lastError).foregroundStyle(.red)
-            }
 
             if filteredFrameScores.isEmpty {
                 if appState.frameScores.isEmpty {

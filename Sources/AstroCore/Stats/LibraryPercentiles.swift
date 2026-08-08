@@ -81,4 +81,29 @@ public enum LibraryPercentiles {
         }
         return sorted[mid]
     }
+
+    /// R11-T17: the library's FULL `medianFWHMArcsec` distribution, computed
+    /// as cheaply as possible -- for a caller (`AppState.loadTargetDetail`)
+    /// that wants THIS type's own input for a target-detail page, before the
+    /// user has ever visited "Éjszakák" (`AppState.nights`, which
+    /// `NightsPage.loadNights()` alone populates -- see that property's own
+    /// doc comment). `NightsQueries.allNights` -- the query that DOES fill
+    /// `nights` -- ALSO computes `SessionTimeline`, `FilterBreakdownQueries
+    /// .breakdown`, tags/`displayName`, and (once multi-site is configured)
+    /// per-session site resolution for every single session it touches, none
+    /// of which this dot needs; this walks only `SessionQuality.summaries`
+    /// per target (itself one of `allNights`' own two heaviest steps, so
+    /// this is a strict, real subset of that work, not a duplicate of all of
+    /// it) and keeps just the one field this whole type ever asks of a
+    /// session's data. Read-only, never touches the filesystem, no ordering
+    /// guarantee (`evaluate` sorts its own copy).
+    public static func libraryFWHMArcsecValues(db: Database, config: AstroConfig) throws -> [Double] {
+        let targets = Set(try db.allSessionPairs().map(\.target))
+        var values: [Double] = []
+        for target in targets {
+            let summaries = try SessionQuality.summaries(target: target, db: db, config: config)
+            values.append(contentsOf: summaries.compactMap(\.medianFWHMArcsec))
+        }
+        return values
+    }
 }

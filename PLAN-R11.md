@@ -22,8 +22,8 @@
 - [x] 2. Persona-review (4 agent) — kész
 - [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
 - [x] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [x]
-- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [x] T10 [x] T11 [x] T12 [x] T13 [ ]
-- [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [x] T15 [x] T16 [x] T17 [ ]
+- [x] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [x] T10 [x] T11 [x] T12 [x] T13 [x]
+- [x] 6. Végrehajtás — C-hullám (pro funkciók): T14 [x] T15 [x] T16 [x] T17 [x]
 - [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
 - [ ] 8. Release v0.13.0
 
@@ -314,17 +314,19 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
 - **T13 [x] — Navigáció + jegyzet-híd**: F13 (Naptár/Takarítás valódi al-elem) +
   F20 README↔jegyzet ütközés.
 ### C-hullám — pro funkciók
-- **T14 — Verify**: F9.
-- **T15 — Több helyszín**: F16.
+- **T14 [x] — Verify**: F9.
+- **T15 [x] — Több helyszín**: F16.
 - **T16 [x] — Kalibráció v2 + AstroBin ID**: F17 + F20 AstroBin filter-ID.
-- **T17 — (tartalék/összefésülő)**: az előzőekből kimaradt apróságok, review-találatok.
+- **T17 [x] — (tartalék/összefésülő)**: az előzőekből kimaradt apróságok, review-találatok.
   Ismert tétel: a T11 agent által jelzett valószínű bug — az EGYSZŰRŐS/lapos
   stacklist `.ssf` script `cd` célja a stacklist gyökerére mutat a `lights/`
   almappa helyett, így a Siril `convert` nem talál kereteket; ellenőrizni és
-  javítani (teszt a cd-célra).
+  javítani (teszt a cd-célra). **Megerősítve valós bug volt — javítva, lásd
+  az iterációs napló T17 bejegyzését.**
   Ismert tétel 2 (T12-ből): a SessionsSegment FWHM percentilis-pöttye csak az
   Éjszakák oldal betöltése után jelenik meg (appState.nights lustán töltődik) —
-  megfontolni egy könnyű háttér-betöltést a célpont-oldalról.
+  megfontolni egy könnyű háttér-betöltést a célpont-oldalról. **Megoldva —
+  lásd az iterációs napló T17 bejegyzését.**
 
 ### Záró kör
 - Kód-review agent (funkcionális hibák) + UX-sweep agent (konzisztencia) +
@@ -595,3 +597,64 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   flat-linkelő mechanizmus — `CalibLinker` flatokat sosem "linkel" a
   calibration_library-ból, csak a hozzájuk tartozó flat-darkot), ez
   T16-on kívül esik. Következő: T17 (tartalék/összefésülő).
+- 2026-08-08: T17 (tartalék/összefésülő) kész. Ismert tétel 1 -- a T11 agent
+  gyanúja BEIGAZOLÓDOTT, valós bug volt: `StackList.export`/
+  `exportToDirectory` egyszűrős/lapos ága a `.ssf` `cd`-jét a stacklist
+  GYÖKERÉBE írta (`lights/` SZÜLŐJE), nem magába a `lights/`-ba, holott
+  Siril `convert`-je csak a cwd-t olvassa -- a script futtatásakor 0 keretet
+  talált volna. A többszűrős ág (T11-ben már jónak talált) valóban helyes
+  volt. Javítva mindkét export-függvényben (`renderSSF` paramétere
+  `stacklistDir` -> `framesDir`, mindig a tényleges frame-mappa); 2 új teszt
+  (a `cd`-célt ténylegesen a hardlinkelt keretek mappájával veti össze, a
+  flat/single-filter `export`-ra ÉS `exportToDirectory`-ra is, plusz a
+  per-filter ág regressziós ellenőrzése) + 1 meglévő teszt javítva (eddig a
+  BUGOS célt várta el). Ismert tétel 2 -- `AppState.loadTargetDetail`
+  mostantól, ha
+  `appState.nights` még `nil`, elindít egy KÜLÖN, `beginOperation`/
+  `currentTask`-on KÍVÜLI háttér-lekérdezést
+  (`loadLibraryFWHMArcsecBaselineIfNeeded`, sosem billenti az `isBusy`-t,
+  sosem törli/törlődik más művelettel) egy új, könnyű core
+  `LibraryPercentiles.libraryFWHMArcsecValues` felé (csak
+  `SessionQuality.summaries` per target, NEM a teljes
+  `NightsQueries.allNights`, amit `loadNights()` futtatna) -- a
+  SessionsSegment FWHM-pöttye ettől kezdve az Éjszakák oldal meglátogatása
+  NÉLKÜL is megjelenik. Hibapolitika: 8 helyen távolítottam el felesleges
+  inline `lastError`-sávot (AllTargets/TonightPage/DiscoveryPage/AuditPage/
+  CalibrationPage/SensorPage/NightsPage/QualitySegment -- mindegyik már
+  teljes értékű oldalat/`ContentUnavailableView`-t mutat `lastError` nélkül
+  is, a toast+napló önmagában elég); 8 helyen MEGHAGYTAM (FirstScanView,
+  WelcomeView -- valódi kezdeti-betöltés, nincs más felület;
+  RateAllConfirmSheet, NewSessionSheet, SensorMeasureConfirmSheet,
+  CalibLinkSheet, PlateSolveSheet, StackListSheet -- mind "tölts be/futtass
+  egy műveletet ebben a sheetben, a spinner végtelenségig pörögne hiba
+  esetén enélkül" mintájú akció-sheet). Felfedezés nincs-helyszín üres
+  állapot: `noSiteUnavailableView` most már két gombos ("Helyszín
+  beállítása…" + "Felismerés a képeim fejlécéből"); új core
+  `Planner.detectSiteFromFITSHeaders` (a `resolveSite` fallback-jának RAW
+  fele, `config.site`/`config.sites` figyelmen kívül hagyásával -- 3 új
+  teszt) + `AppState.recognizeSiteFromImageHeaders()` (egyetlen
+  `beginOperation`, a `loadDiscovery()`-vel azonos számítást futtatja a
+  felismert site-tal; nincs extrahálható adat esetén honest
+  `AstroError.invalidInput`, sosem néma no-op). docs/features.html: a 6
+  névvel nevezett C-hullám funkció közül a Trendek és az Előző éjszaka már
+  szerepelt; az Integritás-ellenőrzés, a flat-lefedettség, a több helyszín
+  (Ma este site-Picker, Éjszakák Helyszín oszlop, Beállítások Helyszín fül)
+  és az AstroBin filter-ID (Beállítások Könyvtár fül) hiányzott -- pótolva,
+  rövid stílusban. (Mellékesen talált, KÜLÖN feladatba jelölve: az
+  Audit-diff/Tárhely-nézet, R11-T8, szintén hiányzik a docs/features.html
+  Audit kártyájából -- ez nem szerepelt a T17 named-listában, nem
+  javítottam itt.) CHANGELOG `## [Unreleased]` tematikus rendezés: a 30
+  `### Added` tétel sorrendje már majdnem tematikus volt (minden ticket a
+  saját landolásakor a helyére került) -- egyetlen valódi elcsúszás: az
+  "Audit kereszt-szegmens állapot-jelzés" (T2) bekerült az Audit-diff/
+  Tárhely (T8) mellé, ahova tartalmilag tartozik; a `### Changed`/
+  `### Breaking` blokk változatlan (már koherens volt). Tartalmi
+  változtatás sehol, csak sorrend (ellenőrizve: a teljes fájl sor-halmaza
+  előtte/utána identikus, `diff <(sort régi) <(sort új)` üres). Mellékesen:
+  az Állapot-szakasz (5./6. sor) és a T13-T16 saját checkbox-sora korábban
+  tévesen `[ ]`/hiányos volt, holott mind rég landolt (commit 6dd8c04,
+  illetve a T14-T16 log-bejegyzések) -- javítva. 8 új teszt (2
+  `StackListTests` az ssf cd-célra, 3 `LibraryPercentilesTests` az új
+  `libraryFWHMArcsecValues`-ra, 3 `PlannerTests` a
+  `detectSiteFromFITSHeaders`-re), `swift test` zöld (1295, 1287-ről).
+  Következő: 7. Záró review-kör.

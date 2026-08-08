@@ -30,10 +30,6 @@ struct DiscoveryPage: View {
         VStack(alignment: .leading, spacing: 12) {
             controlRow
 
-            if let lastError = appState.lastError {
-                Text(lastError).foregroundStyle(.red)
-            }
-
             if !hasResolvedSite {
                 noSiteBanner
                 noSiteUnavailableView
@@ -145,16 +141,30 @@ struct DiscoveryPage: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.yellow.opacity(0.15)))
     }
 
+    /// R11-T17 (F4): now with a SECOND way out beside the Settings deep-link
+    /// -- "Felismerés a képeim fejlécéből" runs
+    /// `AppState.recognizeSiteFromImageHeaders()` right here, which tries
+    /// the RAW FITS-median regardless of whatever's (not) configured (see
+    /// that function's own doc comment) instead of making the user go type
+    /// coordinates in by hand when their images already carry them (a common
+    /// case: ASIAIR/NINA/… stamp `SITELAT`/`SITELONG` into every FITS header
+    /// automatically). Never a silent no-op: a library with no extractable
+    /// header data at all surfaces an honest error (toast + activity log)
+    /// instead of doing nothing.
     private var noSiteUnavailableView: some View {
         ContentUnavailableView {
             Label("Nincs megfigyelési helyszín", systemImage: "location.slash")
         } description: {
-            Text("A katalógus-felfedezéshez ismerni kell a megfigyelőhely koordinátáit — állítsd be a Beállítások ▸ Helyszín lapon, majd nyomj Frissítést.")
+            Text("A katalógus-objektumok láthatóságát csak a földrajzi helyed ismeretében lehet kiszámolni.")
         } actions: {
-            Button("Beállítás…") {
+            Button("Helyszín beállítása…") {
                 appState.settingsTab = .location
                 openSettings()
             }
+            Button("Felismerés a képeim fejlécéből") {
+                appState.recognizeSiteFromImageHeaders()
+            }
+            .disabled(appState.isBusy || appState.db == nil)
         }
     }
 

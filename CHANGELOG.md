@@ -95,12 +95,6 @@ T3 — Settings csomag után.
   címke-akciója nem volt (a `NightRow`/`NightTableRow` új `tags` mezőt
   kapott ehhez); az AllTargetsPage session-sorainak eddig nem volt "Célpont
   megnyitása"; a SessionsSegmentnek eddig nem volt címke hozzáadás/eltávolítás.
-- **Audit kereszt-szegmens állapot-jelzés**: ha még sosem futott audit ebben
-  a munkamenetben, a Hibák/Gyanús/Szándékos fejléc-csempék "0" helyett "n/a"
-  értéket mutatnak "nincs audit" caption-nel (a Takarítható csempe
-  változatlan — az független forrásból töltődik); a Takarítható szegmens
-  tetején egy diszkrét info-sor jelenik meg ("Az audit még nem futott — a
-  Hibák/Gyanús listához futtasd le.") inline "Audit futtatása" gombbal.
 - **TonightPage felhő-kontextus sáv**: ha az időjárás be van kapcsolva és a
   ma esti (Open-Meteo napi átlag) felhőzet 70% fölött van, a terv-tábla
   fölött egy elutasítható sáv jelenik meg ("Ma este ~N% felhő várható —
@@ -231,6 +225,12 @@ T3 — Settings csomag után.
   - Saját döntés cellában, ha a keret kiugró és nincs még döntés, halvány
     "javasolt: elvetés" felirat a "-" helyett; ugyanez a jelvény a
     `FrameReviewSheet` fejlécében a ⚠️ Kiugró jelvény mellett.
+- **Audit kereszt-szegmens állapot-jelzés**: ha még sosem futott audit ebben
+  a munkamenetben, a Hibák/Gyanús/Szándékos fejléc-csempék "0" helyett "n/a"
+  értéket mutatnak "nincs audit" caption-nel (a Takarítható csempe
+  változatlan — az független forrásból töltődik); a Takarítható szegmens
+  tetején egy diszkrét info-sor jelenik meg ("Az audit még nem futott — a
+  Hibák/Gyanús listához futtasd le.") inline "Audit futtatása" gombbal.
 - **Audit-diff (R11-T8/F6)**: audit futás után az ELŐZŐ audit-run
   findings-ei és a mostani futás összevetése — új core `AuditDiff`
   (`AstroCore/Audit/AuditDiff.swift`, tiszta, DB-mentes függvény), a

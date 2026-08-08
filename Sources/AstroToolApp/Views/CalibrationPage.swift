@@ -49,10 +49,6 @@ struct CalibrationPage: View {
             .pickerStyle(.segmented)
             .frame(maxWidth: 360)
 
-            if let lastError = appState.lastError {
-                Text(lastError).foregroundStyle(.red)
-            }
-
             switch segment {
             case .coverage: coverageSegment
             case .health: healthSegment

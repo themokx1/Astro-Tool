@@ -278,8 +278,91 @@ private func inode(_ url: URL) throws -> UInt64 {
     #expect(ssfText.contains("convert light -out=."))
     #expect(ssfText.contains("register light"))
     #expect(ssfText.contains("stack r_light rej 3 3 -norm=addscale -out=result"))
-    #expect(ssfText.contains("cd \"\(stacklistDir.path)\""))
+    // R11-T17: the `cd` target must be the lights/ folder itself -- Siril's
+    // `convert` reads only the cwd, never a subfolder -- NOT stacklistDir
+    // (its parent), which was the actual bug the T11 agent flagged.
+    let lightsDir = stacklistDir.appendingPathComponent("lights", isDirectory: true)
+    #expect(ssfText.contains("cd \"\(lightsDir.path)\""))
+    #expect(!ssfText.contains("cd \"\(stacklistDir.path)\""))
     #expect(!ssfText.split(separator: "\n").contains { $0.trimmingCharacters(in: .whitespaces).hasPrefix("rm") })
+}
+
+// MARK: - 9b. .ssf `cd` target always matches the actual frame folder (R11-T17)
+
+/// The T11 agent flagged a suspected bug: the flat/single-filter `.ssf`'s
+/// `cd` line pointed at the stacklist root (`lights/`'s PARENT) instead of
+/// `lights/` itself, so Siril's `convert light -out=.` -- which only ever
+/// reads the current working directory -- would find zero frames. This test
+/// pins the fix by parsing the actual `cd "..."` line out of the generated
+/// script and asserting it is a directory that really exists AND really
+/// contains the hardlinked frames, for both the flat (single/no-filter) and
+/// the per-filter (R11-T11) export shapes -- a regression here would mean
+/// `convert` fails (or silently no-ops) the moment a user runs the script.
+@Test func ssfCdTargetIsTheActualFrameFolderForBothFlatAndPerFilterExports() throws {
+    func cdTarget(in ssfText: String) throws -> String {
+        let line = try #require(ssfText.split(separator: "\n").first { $0.hasPrefix("cd \"") })
+        var target = String(line.dropFirst("cd \"".count))
+        target = String(target.dropLast()) // trailing closing quote
+        return target
+    }
+
+    // -- Flat/no-filter session (single bucket, perFilter == nil) --
+    do {
+        let fixture = try StackListExportFixture.make()
+        defer { fixture.cleanup() }
+
+        try fixture.writeLight("sessions/T1/2026-01-10/lights/l1.fit")
+        try fixture.writeLight("sessions/T1/2026-01-10/lights/l2.fit")
+        try fixture.writeLight("sessions/T1/2026-01-10/lights/l3.fit")
+        try fixture.scan()
+
+        let selection = try StackList.select(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
+        #expect(selection.perFilter == nil)
+        let writeGuard = WriteGuard(root: fixture.libraryDir)
+        let stacklistDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard)
+
+        let ssfText = try String(contentsOf: stacklistDir.appendingPathComponent("stack.ssf"), encoding: .utf8)
+        let cdPath = try cdTarget(in: ssfText)
+
+        var isDir: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: cdPath, isDirectory: &isDir))
+        #expect(isDir.boolValue)
+        let frameNames = Set(try FileManager.default.contentsOfDirectory(atPath: cdPath))
+        #expect(frameNames == Set(["l1.fit", "l2.fit", "l3.fit"]))
+    }
+
+    // -- Per-filter session (regression: T11 already got this branch right) --
+    do {
+        let fixture = try StackListExportFixture.make()
+        defer { fixture.cleanup() }
+
+        try fixture.writeLight("sessions/T1/2026-01-11/lights/ha1.fit")
+        try fixture.writeLight("sessions/T1/2026-01-11/lights/oiii1.fit")
+        try fixture.scan()
+        let haID = try #require(try fixture.db.fileID(path: "sessions/T1/2026-01-11/lights/ha1.fit"))
+        try fixture.db.upsertFITSMeta(FITSMetaRecord(fileID: haID, filter: "Ha"))
+        let oiiiID = try #require(try fixture.db.fileID(path: "sessions/T1/2026-01-11/lights/oiii1.fit"))
+        try fixture.db.upsertFITSMeta(FITSMetaRecord(fileID: oiiiID, filter: "OIII"))
+
+        let selection = try StackList.select(target: "T1", date: "2026-01-11", db: fixture.db, config: fixture.config)
+        let perFilter = try #require(selection.perFilter)
+        #expect(perFilter.count == 2)
+        let writeGuard = WriteGuard(root: fixture.libraryDir)
+        let stacklistDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard)
+
+        for (filter, expectedFrame) in [("Ha", "ha1.fit"), ("OIII", "oiii1.fit")] {
+            let ssfText = try String(
+                contentsOf: stacklistDir.appendingPathComponent("T1-2026-01-11-\(filter).ssf"), encoding: .utf8
+            )
+            let cdPath = try cdTarget(in: ssfText)
+
+            var isDir: ObjCBool = false
+            #expect(FileManager.default.fileExists(atPath: cdPath, isDirectory: &isDir))
+            #expect(isDir.boolValue)
+            let frameNames = try FileManager.default.contentsOfDirectory(atPath: cdPath)
+            #expect(frameNames == [expectedFrame])
+        }
+    }
 }
 
 // MARK: - 10. Idempotent re-export
@@ -597,4 +680,34 @@ private func inode(_ url: URL) throws -> UInt64 {
     #expect(FileManager.default.fileExists(atPath: destDir.appendingPathComponent("T1-2026-01-10-OIII.ssf").path))
     #expect(FileManager.default.fileExists(atPath: destDir.appendingPathComponent("manifest.csv").path))
     #expect(!FileManager.default.fileExists(atPath: destDir.appendingPathComponent("stack.dssfilelist").path))
+}
+
+/// R11-T17: `exportToDirectory`'s flat/single-bucket branch had the exact
+/// same `cd`-target bug as `export`'s (both passed the export root instead of
+/// its own `lights/` subfolder) -- this pins the fix on the `--out PATH`
+/// code path too (CLI `stacklist --out`), not just the default
+/// `.astro_tool/stacklists/` location `export` writes to.
+@Test func exportToDirectoryFlatSsfCdTargetIsTheLightsFolderItself() throws {
+    let fixture = try StackListExportFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeLight("sessions/T1/2026-01-10/lights/l1.fit")
+    try fixture.writeLight("sessions/T1/2026-01-10/lights/l2.fit")
+    try fixture.writeLight("sessions/T1/2026-01-10/lights/l3.fit")
+    try fixture.scan()
+
+    let selection = try StackList.select(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
+    #expect(selection.perFilter == nil)
+
+    let destDir = try makeTempDir("out-flat")
+    defer { try? FileManager.default.removeItem(at: destDir) }
+    _ = try StackList.exportToDirectory(selection, destDir: destDir, sourceRoot: fixture.libraryDir)
+
+    let ssfText = try String(contentsOf: destDir.appendingPathComponent("stack.ssf"), encoding: .utf8)
+    let expectedLightsDir = destDir.appendingPathComponent("lights", isDirectory: true)
+    #expect(ssfText.contains("cd \"\(expectedLightsDir.path)\""))
+    #expect(!ssfText.contains("cd \"\(destDir.path)\""))
+
+    let frameNames = Set(try FileManager.default.contentsOfDirectory(atPath: expectedLightsDir.path))
+    #expect(frameNames == Set(["l1.fit", "l2.fit", "l3.fit"]))
 }

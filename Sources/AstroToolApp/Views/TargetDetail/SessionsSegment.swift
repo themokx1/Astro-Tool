@@ -43,7 +43,7 @@ struct SessionsSegment: View {
     private static let sessionMetricInfo: [MetricInfoButton.Metric] = [
         .init(
             title: "FWHM″",
-            explanation: "A session kerete(i) félértékszélessége ívmásodpercben (pixelméret+fókusz ismeretében) vagy pixelben. Mikor hazudik: pontozás nélkül „-”; \"Siril nélkül\" pontozásnál is mindig „-”. A színes pötty a könyvtárad saját eloszlásához mérve mutatja a session helyét (zöld = jobbik harmad, sárga = középső, narancs = leggyengébb) -- csak az Éjszakák oldal legalább egyszeri betöltése után jelenik meg, és 6 összehasonlítható session alatt akkor sincs pötty."
+            explanation: "A session kerete(i) félértékszélessége ívmásodpercben (pixelméret+fókusz ismeretében) vagy pixelben. Mikor hazudik: pontozás nélkül „-”; \"Siril nélkül\" pontozásnál is mindig „-”. A színes pötty a könyvtárad saját eloszlásához mérve mutatja a session helyét (zöld = jobbik harmad, sárga = középső, narancs = leggyengébb) -- 6 összehasonlítható session alatt nincs pötty, egyébként rövid háttér-betöltés után jelenik meg."
         ),
         .init(
             title: "Háttér e⁻/s/″²",
@@ -87,16 +87,18 @@ struct SessionsSegment: View {
 
     /// R11-T12/F11(e): this library's FULL arcsec-FWHM distribution, for the
     /// FWHM″ column's percentile dot -- same "library-wide, never just this
-    /// target" comparison `NightsPage`'s own dot uses. Deliberately reads
+    /// target" comparison `NightsPage`'s own dot uses. Prefers
     /// `appState.nights` (only ever populated once `NightsPage.loadNights()`
-    /// has run this session -- see that property's own doc comment for why
-    /// it's never eagerly loaded) rather than triggering a fresh whole-
-    /// library query from a per-target segment: `[]` (no dot at all, same
-    /// as "too few sessions") until the user has visited Éjszakák at least
-    /// once, a deliberate scope tradeoff over adding a second place that
-    /// kicks off that query.
+    /// has run this session -- see that property's own doc comment) since
+    /// it's the authoritative superset; R11-T17 added a fallback to
+    /// `appState.libraryFWHMArcsecBaseline` -- a cheap FWHM-only query
+    /// `loadTargetDetail` kicks off in the background the moment `nights`
+    /// is still `nil` (see that property's own doc comment) -- so the dot no
+    /// longer depends on the user having visited "Éjszakák" first. `[]` only
+    /// until THAT background fetch itself completes, or if it hasn't been
+    /// triggered at all (e.g. no `Database` yet).
     private var libraryFWHMArcsecValues: [Double] {
-        appState.nights?.compactMap(\.medianFWHMArcsec) ?? []
+        appState.nights?.compactMap(\.medianFWHMArcsec) ?? appState.libraryFWHMArcsecBaseline ?? []
     }
 
     private func fwhmPercentile(for date: String, libraryValues: [Double]) -> LibraryPercentileResult? {
