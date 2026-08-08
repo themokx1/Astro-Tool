@@ -211,13 +211,46 @@ private struct SessionStatsFixture {
     let withReadme = try #require(sessions.first { $0.dateRaw == "2026-01-10" })
     #expect(withReadme.notes["Camera"] == "ASI2600MC (readme)", "README must win a key collision with the note store")
     #expect(withReadme.notes["Bortle"] == "5", "a store-only key must still surface")
+    // R11-T13/F20: "Camera" disagrees between the two RAW sources -- the
+    // merge above hides that (README won), but `hasConflict` must still
+    // surface it.
+    #expect(withReadme.hasConflict == true, "a key present in both sources with different values must flag a conflict")
 
     let withoutReadme = try #require(sessions.first { $0.dateRaw == "2026-02-05" })
     #expect(withoutReadme.notes == ["SQM": "20.8"], "a session with no README at all still gets its store notes")
+    #expect(withoutReadme.hasConflict == false, "a store-only key (no README counterpart) is not a conflict")
 
     // The iron rule, once more, end to end through the query layer: the
     // README on disk must remain untouched by this whole flow.
     #expect(try String(contentsOf: readmeURL, encoding: .utf8) == readmeContent)
+}
+
+/// R11-T13/F20: `SessionDetail.hasConflict` stays `false` when the two RAW
+/// sources happen to agree on a shared key (merge and conflict-detection are
+/// two different questions -- "notes" always merges cleanly regardless, but
+/// only a DISAGREEING shared key should ever raise the flag).
+@Test func sessionDetailHasConflictFalseWhenReadmeAndStoreAgree() throws {
+    let fixture = try SessionStatsFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 1...2 {
+        try fixture.writeFITS("sessions/T1/2026-03-01/lights/l\(i).fit", exptime: 300.0)
+    }
+    let readmeURL = fixture.libraryDir.appendingPathComponent("sessions/T1/2026-03-01/README.txt")
+    try FileManager.default.createDirectory(at: readmeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "Camera: ASI2600MC\n".write(to: readmeURL, atomically: true, encoding: .utf8)
+
+    try fixture.scan()
+
+    try SessionNoteStore.save(
+        target: "T1", date: "2026-03-01",
+        notes: [("Camera", "ASI2600MC"), ("Bortle", "5")],
+        using: WriteGuard(root: fixture.libraryDir)
+    )
+
+    let sessions = try SessionStatsQueries.sessions(target: "T1", db: fixture.db, config: fixture.config)
+    let session = try #require(sessions.first { $0.dateRaw == "2026-03-01" })
+    #expect(session.hasConflict == false)
 }
 
 @Test func sessionDetailsCountsDarksAndBiasesSeparately() throws {

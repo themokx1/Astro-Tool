@@ -447,6 +447,39 @@ T3 — Settings csomag után.
     `AppState.firstStepsCardDismissed`) kártyaként amíg 4-nél kevesebb pipa
     van, és bármikor a Súgó menü "Első lépések…" pontjából. Core:
     `Database.hasAnyRating()` (teszttel) az "volt már pontozás?" tételhez.
+- **Valódi Naptár/Takarítás route-ok + README↔jegyzet ütközés-jelzés
+  (R11-T13/F13+F20)**:
+  - **Sidebar-hierarchia**: a "Naptár" sor a "Ma este" alá, a "Takarítás"
+    sor az "Audit" alá indentálva (bal-padding) — a sidebar mostantól
+    tükrözi, hogy ezek nem önálló testvér-oldalak, hanem a `TonightPage`/
+    `AuditPage` egy-egy szegmense. A ⌘-számozás (⌘1-⌘9) változatlan.
+  - **Kétirányú page↔szegmens szinkron**: `AppState.tonightSegment`/
+    `auditSegment` mostantól `currentPage`-ből SZÁRMAZTATOTT computed
+    property (nem külön tárolt állapot) — korábban csak a szegmens-picker
+    kattintása írta vissza `currentPage`-et, a FORDÍTOTT irány (sidebar-sor,
+    ⌘-billentyű vagy a menüsor közvetlen `currentPage`-írása) nem
+    szinkronizálta vissza a szegmenst, ami azt eredményezte, hogy pl. a
+    "Ma este" sor helyesen kijelölődött, miközben a Naptár-szegmens
+    tartalma maradt látszódóban. Egyetlen forrás (`currentPage`) — nincs
+    külön state, nincs végtelen ciklus, nincs render-közbeni írás.
+  - **Core**: új `NoteConflicts.detect(appNotes:readmeNotes:)` (tiszta
+    függvény, teszttel) — kulcsonkénti ütközés-detektálás a session-jegyzet
+    két forrása (`.astro_tool/notes/` és a README) között: ugyanaz a
+    normalizált (case-insensitive) kulcs mindkét oldalon, eltérő trimmelt
+    értékkel. `SessionDetail`/`NightRow` additív `hasConflict` mezőt kapott
+    (mindkettő teszttel).
+  - **SessionNoteSheet**: ütköző mezőnél sárga jelzés-sor a mező alatt —
+    "eltér a README-től: `<readme-érték>`" + "README-érték átvétele" gomb
+    (az app-jegyzet mezőbe másolja az értéket, a README-szekció
+    változatlanul érinthetetlen marad).
+  - **NotesSegment**: ütköző kulcs sorában sárga ⚠️ + tooltip mindkét
+    értékkel.
+  - **NightsPage**: a Jegyzet oszlop ✓-ja ütközés esetén sárga ⚠️-re vált
+    ("az app-jegyzet és a README eltér" tooltippel).
+  - **CLI**: `note show --target T --date D` jelzi az ütközést — human
+    kimenetben "⚠ eltér a README-től" a sor végén, `--json`-ban additív
+    `conflicts` blokk (a jegyzetek maguk változatlanul a gyökér-objektum
+    lapos kulcsai maradnak, nincs törésre változó séma).
 
 ### Changed
 

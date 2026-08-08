@@ -58,6 +58,12 @@ public struct NightRow: Codable, Sendable, Equatable {
     /// note editor (`SessionNoteStore`); see `SessionDetail.notes`, which
     /// already merges both sources (the README wins a key collision).
     public var hasNotes: Bool
+    /// R11-T13/F20: mirrors `SessionDetail.hasConflict` -- `true` when this
+    /// session has at least one key where the app-store note
+    /// (`SessionNoteStore`) and the README-parsed note disagree
+    /// (`NoteConflicts.detect`). Backs `NightsPage`'s Jegyzet column
+    /// (a yellow ⚠️ in place of the plain ✓ `hasNotes` already draws).
+    public var hasConflict: Bool
     /// Mirrors `SessionDetail.isExcludedFromTotals` -- this session is still
     /// listed here with its own real numbers (this is a browsing surface,
     /// not a stats roll-up), just flagged as excluded from its TARGET's own
@@ -95,6 +101,7 @@ public struct NightRow: Codable, Sendable, Equatable {
         backgroundEPerSecPerArcsec2: Double? = nil,
         dutyCyclePercent: Double? = nil,
         hasNotes: Bool = false,
+        hasConflict: Bool = false,
         isExcludedFromTotals: Bool = false,
         tags: [String] = [],
         filterBreakdown: [FilterIntegration] = []
@@ -112,6 +119,7 @@ public struct NightRow: Codable, Sendable, Equatable {
         self.backgroundEPerSecPerArcsec2 = backgroundEPerSecPerArcsec2
         self.dutyCyclePercent = dutyCyclePercent
         self.hasNotes = hasNotes
+        self.hasConflict = hasConflict
         self.isExcludedFromTotals = isExcludedFromTotals
         self.tags = tags
         self.filterBreakdown = filterBreakdown
@@ -187,6 +195,7 @@ public enum NightsQueries {
                     backgroundEPerSecPerArcsec2: quality?.backgroundEPerSecPerArcsec2,
                     dutyCyclePercent: timeline.dutyCycle.map { $0 * 100 },
                     hasNotes: !session.notes.isEmpty,
+                    hasConflict: session.hasConflict,
                     isExcludedFromTotals: session.isExcludedFromTotals,
                     tags: session.tags,
                     filterBreakdown: filterBreakdown

@@ -1728,8 +1728,93 @@ private func writeTrendLightFITS(
         "note", "show", "--target", "M45_Pleiades", "--date", "2026-01-10", "--root", root.path, "--json",
     ])
     #expect(show.exitCode == 0, "stderr: \(show.stderr)")
+    // R11-T13/F20: this collision is now ALSO a conflict, so the root object
+    // is no longer plain `[String: String]` (a "conflicts" sub-object is
+    // additive alongside it) -- cast to `[String: Any]` and reach into the
+    // "Camera" key specifically.
+    let json = try JSONSerialization.jsonObject(with: Data(show.stdout.utf8)) as? [String: Any]
+    #expect(json?["Camera"] as? String == "ZWO ASI2600MC Pro")
+}
+
+/// R11-T13/F20: `note show --json` adds an additive `conflicts` block
+/// whenever the app-store note and the README disagree on a key -- keyed by
+/// the exact (verbatim, un-mangled) key text, `app_value`/`readme_value`
+/// after `printJSON`'s snake_case conversion of the FIXED schema field
+/// names (never applied to the user's own arbitrary key text, see
+/// `NoteShowJSONValue`'s own doc comment for why that distinction matters).
+@Test func noteShowJSONIncludesConflictsBlockWhenReadmeAndStoreDisagree() throws {
+    let root = try makeTempRoot("note-show-conflicts-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let set = try runCLI([
+        "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
+        "--key", "Camera", "--value", "store-value-should-lose", "--root", root.path,
+    ])
+    #expect(set.exitCode == 0, "stderr: \(set.stderr)")
+
+    let show = try runCLI([
+        "note", "show", "--target", "M45_Pleiades", "--date", "2026-01-10", "--root", root.path, "--json",
+    ])
+    #expect(show.exitCode == 0, "stderr: \(show.stderr)")
+    let json = try JSONSerialization.jsonObject(with: Data(show.stdout.utf8)) as? [String: Any]
+    let conflicts = try #require(json?["conflicts"] as? [String: Any])
+    let camera = try #require(conflicts["Camera"] as? [String: String])
+    #expect(camera["app_value"] == "store-value-should-lose")
+    #expect(camera["readme_value"] == "ZWO ASI2600MC Pro")
+}
+
+/// The human-readable side of the same conflict: a "⚠ eltér a README-től"
+/// suffix on the disagreeing key's line, nothing extra on a non-conflicting
+/// one.
+@Test func noteShowHumanOutputFlagsConflictingKeyWithWarningSuffix() throws {
+    let root = try makeTempRoot("note-show-conflicts-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let set = try runCLI([
+        "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
+        "--key", "Camera", "--value", "store-value-should-lose", "--root", root.path,
+    ])
+    #expect(set.exitCode == 0, "stderr: \(set.stderr)")
+
+    let show = try runCLI([
+        "note", "show", "--target", "M45_Pleiades", "--date", "2026-01-10", "--root", root.path,
+    ])
+    #expect(show.exitCode == 0, "stderr: \(show.stderr)")
+    let cameraLine = show.stdout.split(separator: "\n").first { $0.hasPrefix("Camera:") }
+    #expect(cameraLine?.contains("⚠ eltér a README-től") == true)
+}
+
+/// No conflict at all -- `note show --json`'s root object stays the plain
+/// flat `[String: String]` it always was, with no "conflicts" key added.
+@Test func noteShowJSONHasNoConflictsKeyWhenNothingDisagrees() throws {
+    let root = try makeTempRoot("note-show-no-conflicts")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Fixtures.makeMessyLibrary(in: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let set = try runCLI([
+        "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
+        "--key", "Bortle", "--value", "5", "--root", root.path,
+    ])
+    #expect(set.exitCode == 0, "stderr: \(set.stderr)")
+
+    let show = try runCLI([
+        "note", "show", "--target", "M45_Pleiades", "--date", "2026-01-10", "--root", root.path, "--json",
+    ])
+    #expect(show.exitCode == 0, "stderr: \(show.stderr)")
     let json = try JSONSerialization.jsonObject(with: Data(show.stdout.utf8)) as? [String: String]
-    #expect(json?["Camera"] == "ZWO ASI2600MC Pro")
+    #expect(json?["Bortle"] == "5")
+    #expect(json?["conflicts"] == nil)
 }
 
 /// An empty (or omitted) `--value` removes that key -- `SessionNoteStore`

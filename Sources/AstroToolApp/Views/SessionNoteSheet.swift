@@ -1,3 +1,4 @@
+import AstroCore
 import SwiftUI
 
 /// R9-T6/B4's session note editor: `Kulcs: érték` rows written to
@@ -17,6 +18,13 @@ import SwiftUI
 /// and an example placeholder, since a first-time user staring at "Bortle"
 /// or "SQM" with no hint of what a plausible value even looks like was
 /// exactly the R11 persona review's own finding (spec F11 item 4).
+///
+/// R11-T13/F20: a field whose key also appears in the README section above
+/// with a DIFFERENT value (`NoteConflicts.detect`) gets a yellow warning row
+/// right under it -- "eltér a README-től: <readme-érték>" plus a
+/// "README-érték átvétele" button that copies the README's value into this
+/// (app-store) field. The README section itself stays exactly as read-only
+/// as ever; this only ever writes to the note-editor's own store.
 struct SessionNoteSheet: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -38,6 +46,17 @@ struct SessionNoteSheet: View {
     @State private var loaded = false
 
     private var editableKeys: [String] { Self.templateKeys + customKeys }
+
+    /// R11-T13/F20: recomputed on every access (no caching, same "cheap
+    /// derived read" stance the rest of this app takes for similar
+    /// comparisons) straight off the LIVE `values` the user is currently
+    /// editing -- so typing the README's own value into a conflicting field
+    /// clears its warning immediately, and "README-érték átvétele" below
+    /// resolves it the same way, with no extra state of its own to keep in
+    /// sync.
+    private var conflicts: [String: NoteConflicts.Conflict] {
+        NoteConflicts.detect(appNotes: values, readmeNotes: readmeNotes)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -97,19 +116,47 @@ struct SessionNoteSheet: View {
             Text("Jegyzetek").font(.subheadline).bold()
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(editableKeys, id: \.self) { key in
-                    HStack(spacing: 6) {
-                        HStack(spacing: 3) {
-                            Text(key)
-                            if Self.fieldInfo[key] != nil {
-                                FieldInfoButton(fieldKey: key)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            HStack(spacing: 3) {
+                                Text(key)
+                                if Self.fieldInfo[key] != nil {
+                                    FieldInfoButton(fieldKey: key)
+                                }
                             }
+                            .frame(width: 130, alignment: .leading)
+                            TextField(Self.examplePlaceholder(for: key), text: binding(for: key))
                         }
-                        .frame(width: 130, alignment: .leading)
-                        TextField(Self.examplePlaceholder(for: key), text: binding(for: key))
+                        // R11-T13/F20: this key disagrees with the README's
+                        // own value for it -- offered right here (rather than
+                        // only in the read-only section above) since this is
+                        // exactly where the user would fix it.
+                        if let conflict = conflicts[key] {
+                            conflictRow(key: key, conflict: conflict)
+                        }
                     }
                 }
             }
         }
+    }
+
+    /// One conflicting field's yellow warning row -- "README-érték átvétele"
+    /// copies the README's value into THIS app-store field (never the other
+    /// way around: the README stays permanently read-only, see this file's
+    /// own header doc comment).
+    private func conflictRow(key: String, conflict: NoteConflicts.Conflict) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+            Text("eltér a README-től: \(conflict.readmeValue)")
+                .foregroundStyle(.secondary)
+            Button("README-érték átvétele") {
+                values[key] = conflict.readmeValue
+            }
+            .buttonStyle(.link)
+        }
+        .font(.caption)
+        .padding(.leading, 136)
     }
 
     // MARK: - Field ⓘ (R11-T12/F11(b))

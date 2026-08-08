@@ -133,9 +133,17 @@ struct SidebarView: View {
                 // and navigated to `.tonight`, which meant this row never
                 // highlighted as selected) -- `Page.calendar` is now its own
                 // case, so `List(selection:)`'s tag-matching alone gives the
-                // correct highlight, and `MainShellView.page(for:)` is what
-                // preselects the calendar segment on that route.
-                navRow("Naptár", systemImage: "calendar", page: .calendar)
+                // correct highlight. R11-T13/F13: indented under "Ma este"
+                // (its real parent -- this row IS `TonightPage`'s "Következő
+                // 30 éjszaka" segment, just its own `Page` case so the
+                // sidebar highlight tracks it precisely) and, unlike before,
+                // the highlight now ALSO stays correct switching back the
+                // other way: `AppState.tonightSegment` derives itself from
+                // `currentPage`, so `TonightPage` always shows the segment
+                // matching whichever row is actually highlighted, no matter
+                // how `currentPage` got there (see that property's own doc
+                // comment for the bug this fixes).
+                navRow("Naptár", systemImage: "calendar", page: .calendar, indent: true)
                 // R10-B4: the catalog discovery sweep -- a night-planning
                 // tool like "Ma este"/"Naptár" above it (suggests targets
                 // for TONIGHT), not a library-browsing one, hence living
@@ -190,11 +198,15 @@ struct SidebarView: View {
                 // D25: same fix as "Naptár" above -- `Page.cleanup` is its
                 // own case now, so this is a normal tag-selectable row
                 // (was a plain `Button` that never highlighted as selected)
-                // routing the Audit page's "Takarítható" segment;
-                // `MainShellView.page(for:)` preselects it. The "Audit" row
-                // above still highlights whenever `currentPage == .audit`
-                // specifically, unaffected by this.
-                navRow("Takarítás", systemImage: "trash", page: .cleanup, badgeText: cleanupBadgeText)
+                // routing the Audit page's "Takarítható" segment. R11-T13/
+                // F13: indented under "Audit" (its real parent, same
+                // reasoning "Naptár" above documents) -- `AppState
+                // .auditSegment` derives itself from `currentPage`, so this
+                // row's highlight and `AuditPage`'s own segmented picker can
+                // never drift apart. The "Audit" row above still highlights
+                // whenever `currentPage == .audit` specifically, unaffected
+                // by this.
+                navRow("Takarítás", systemImage: "trash", page: .cleanup, badgeText: cleanupBadgeText, indent: true)
                 // R11-T10/F7: long-term time series across every target --
                 // no `⌘`-shortcut (same stance "Előző éjszaka" above already
                 // takes; the existing ⌘1-9 assignment doesn't change) and no
@@ -232,18 +244,24 @@ struct SidebarView: View {
         return formatter.string(fromByteCount: summary.grandTotalBytes)
     }
 
+    /// R11-T13/F13: `indent` visually nests a row under the sibling ABOVE it
+    /// in the same `Section` ("Naptár" under "Ma este", "Takarítás" under
+    /// "Audit") -- a plain leading padding on the whole label (icon + text
+    /// shift right together), the simplest nesting cue that fits this
+    /// sidebar's existing flat `List` (no `OutlineGroup`/disclosure
+    /// triangles anywhere else in it worth matching).
     @ViewBuilder
     private func navRow(
         _ title: String, systemImage: String, page: Page,
-        badgeCount: Int? = nil, badgeText: String? = nil, badgeRed: Bool = false
+        badgeCount: Int? = nil, badgeText: String? = nil, badgeRed: Bool = false, indent: Bool = false
     ) -> some View {
         navRowLabel(title, systemImage: systemImage, badgeCount: badgeCount, badgeText: badgeText, badgeRed: badgeRed)
+            .padding(.leading, indent ? 20 : 0)
             .tag(page)
     }
 
-    /// Just the label half of `navRow` -- factored out so the "Takarítás"
-    /// row (a plain `Button`, not a `.tag`-selectable row, since it needs a
-    /// tap side effect beyond routing) can reuse the exact same title/icon/
+    /// Just the label half of `navRow` -- factored out so `navRow` itself
+    /// stays a thin `.tag`/`.padding` wrapper around one shared title/icon/
     /// badge layout.
     @ViewBuilder
     private func navRowLabel(

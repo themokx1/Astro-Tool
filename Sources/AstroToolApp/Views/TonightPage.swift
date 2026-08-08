@@ -9,10 +9,10 @@ import SwiftUI
 /// (scan/audit/cleanup/projects boxes moved to `AuditPage`/the toolbar/the
 /// sidebar phase-dots/the plan table's own "Állapot" column) and the old
 /// `CalendarPage` (now `AppState.TonightSegment.calendar`, reached via the
-/// sidebar's "Naptár" row or ⌘2 preselecting the segment before navigating
-/// to `Page.tonight` -- the same "preselect a segment, don't add a page"
-/// pattern the sidebar's "Takarítás" row already established for
-/// `AppState.auditSegment`).
+/// sidebar's "Naptár" row or ⌘2 navigating to `Page.calendar` -- the segment
+/// itself is DERIVED from `currentPage`, see `AppState.tonightSegment`'s own
+/// doc comment; same "one page, no separate page for the sub-view" idea the
+/// sidebar's "Takarítás" row already established for `AppState.auditSegment`).
 struct TonightPage: View {
     @Environment(AppState.self) private var appState
     @Environment(\.openSettings) private var openSettings
@@ -34,27 +34,16 @@ struct TonightPage: View {
     /// anything in it without forcing it open.
     @State private var calibShoppingExpanded = false
 
-    /// N8 (R9 round 3): writes `currentPage` (`.tonight`/`.calendar`)
-    /// alongside `tonightSegment` -- without this, flipping the segmented
-    /// picker by hand (rather than via the sidebar's "Naptár" row) left
-    /// `currentPage` pointing at whichever page got here first, so the
-    /// sidebar's selection highlight drifted from what was actually on
-    /// screen.
-    private var segmentBinding: Binding<AppState.TonightSegment> {
-        Binding(
-            get: { appState.tonightSegment },
-            set: { newValue in
-                appState.tonightSegment = newValue
-                appState.currentPage = newValue == .calendar ? .calendar : .tonight
-            }
-        )
-    }
-
     var body: some View {
         @Bindable var appState = appState
 
         VStack(alignment: .leading, spacing: 12) {
-            Picker("", selection: segmentBinding) {
+            // R11-T13/F13: binds straight to `appState.tonightSegment`,
+            // which is itself now DERIVED from (and writes straight back to)
+            // `currentPage` -- see that property's own doc comment. No
+            // separate binding needed anymore to also keep `currentPage` in
+            // sync (N8, R9 round 3's original fix for this).
+            Picker("", selection: $appState.tonightSegment) {
                 Text("Ma este").tag(AppState.TonightSegment.tonight)
                 Text("Következő 30 éjszaka").tag(AppState.TonightSegment.calendar)
             }
@@ -507,7 +496,9 @@ struct TonightPage: View {
             Image(systemName: "cloud.fill").foregroundStyle(.orange)
             Text(cloudContextBannerText).font(.callout)
             Button("nézd meg a következő derült éjszakát") {
-                appState.tonightSegment = .calendar
+                // R11-T13/F13: `currentPage` alone is enough now --
+                // `tonightSegment` is derived from it, see that property's
+                // own doc comment.
                 appState.currentPage = .calendar
             }
             .buttonStyle(.link)
@@ -998,12 +989,11 @@ struct TonightPage: View {
 
     private func openPlanForNight(_ night: NightSummary) {
         guard let date = Self.isoDateFormatter.date(from: night.date) else { return }
-        appState.tonightSegment = .tonight
-        // N8 (R9 round 3): this jumps from the calendar segment (reached
-        // via `currentPage == .calendar`) back to the tonight segment --
-        // without also resetting `currentPage`, the sidebar kept
-        // highlighting "Naptár" while "Ma este"'s own plan table was on
-        // screen.
+        // R11-T13/F13: `currentPage` alone -- this jumps from the calendar
+        // segment (reached via `currentPage == .calendar`) back to the
+        // tonight segment, and `tonightSegment` is derived straight from
+        // `currentPage` now, so setting it separately would be redundant
+        // (see that property's own doc comment).
         appState.currentPage = .tonight
         appState.loadPlan(date: date)
     }

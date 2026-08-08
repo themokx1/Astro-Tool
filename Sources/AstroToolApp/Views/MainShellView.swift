@@ -179,16 +179,17 @@ private struct DetailContainerView: View {
     @ViewBuilder
     private func page(for page: Page) -> some View {
         switch page {
-        case .tonight: TonightPage()
-        // D25: `.calendar` is its own `Page` case now (so the sidebar's
-        // "Naptár" row / ⌘2 highlight correctly, distinct from "Ma este"),
-        // but there's still no standalone calendar view -- it renders the
-        // exact same `TonightPage`, just forcing its "Következő 30 éjszaka"
-        // segment via `.onAppear` before the page's own segmented picker
-        // gets a chance to show whatever it last had selected.
-        case .calendar:
-            TonightPage()
-                .onAppear { appState.tonightSegment = .calendar }
+        // D25: `.calendar` is its own `Page` case (so the sidebar's "Naptár"
+        // row / ⌘2 highlight correctly, distinct from "Ma este"), but there's
+        // still no standalone calendar view -- it renders the exact same
+        // `TonightPage`. R11-T13/F13: merged into the SAME switch arm as
+        // `.tonight` -- `TonightPage`'s own segment (`AppState
+        // .tonightSegment`) is now derived straight from `currentPage`
+        // (see that property's doc comment), so no `.onAppear` forcing is
+        // needed anymore, and giving both cases the identical view
+        // expression here keeps `TonightPage`'s identity (and `@State`)
+        // stable across a segment switch instead of recreating it.
+        case .tonight, .calendar: TonightPage()
         // R10-B4: the catalog discovery sweep -- its own page, no segment
         // to preselect (same shape as `.nights` below).
         case .discover: DiscoveryPage()
@@ -207,13 +208,12 @@ private struct DetailContainerView: View {
         // place, which triggers neither `onAppear` nor any `@State` reset.
         case .target(let name): TargetDetailPage(target: name).id(name)
         case .calibration: CalibrationPage()
-        case .audit: AuditPage()
-        // D25: same "own `Page` case, same underlying view, segment forced
-        // on appear" shape as `.calendar` above -- the sidebar's "Takarítás"
-        // row / ⌘6.
-        case .cleanup:
-            AuditPage()
-                .onAppear { appState.auditSegment = .cleanable }
+        // D25: same "own `Page` case, same underlying view" shape as
+        // `.calendar` above -- the sidebar's "Takarítás" row / ⌘8. R11-T13/
+        // F13: merged with `.audit` for the same reason `.tonight`/
+        // `.calendar` are merged above (`AppState.auditSegment` derives
+        // itself from `currentPage` now, no forcing needed).
+        case .audit, .cleanup: AuditPage()
         // R11-T10/F7: no segment to preselect (its own page, like `.nights`/
         // `.discover` above).
         case .trends: TrendsPage()

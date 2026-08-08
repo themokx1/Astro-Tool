@@ -82,11 +82,17 @@ struct AstroToolCommands: Commands {
             // Kalibráció/Audit/Takarítás, then ESZKÖZÖK's Szenzor) -- the
             // previous numbering had "Felfedezés" tacked on at the end
             // (⌘9) even though the sidebar already placed it third.
+            // R11-T13/F13: this order already mirrors the sidebar's
+            // "Naptár" (indented under "Ma este") / "Takarítás" (indented
+            // under "Audit") hierarchy one-for-one -- the ⌘-numbers
+            // themselves are unchanged by that ticket.
             Button("Ma este") { AppState.shared?.currentPage = .tonight }
                 .keyboardShortcut("1", modifiers: .command)
-            // D25: `Page.calendar` is its own case -- `MainShellView.page(for:)`
-            // is what preselects `tonightSegment`, same pattern `SidebarView`'s
-            // "Naptár" row now uses too.
+            // D25: `Page.calendar` is its own case. R11-T13/F13:
+            // `AppState.tonightSegment` now derives itself straight from
+            // `currentPage` (see that property's own doc comment), so
+            // setting `currentPage` here is all that's needed -- no separate
+            // preselection step.
             Button("Naptár") {
                 AppState.shared?.currentPage = .calendar
             }
@@ -101,9 +107,10 @@ struct AstroToolCommands: Commands {
                 .keyboardShortcut("6", modifiers: .command)
             Button("Audit") { AppState.shared?.currentPage = .audit }
                 .keyboardShortcut("7", modifiers: .command)
-            // D25: `Page.cleanup` is its own case -- same
-            // `MainShellView.page(for:)`-preselects-the-segment shape as
-            // "Naptár"/`.calendar` above.
+            // D25: `Page.cleanup` is its own case -- same "no separate
+            // preselection step needed" reasoning as "Naptár"/`.calendar`
+            // above (`AppState.auditSegment` derives itself from
+            // `currentPage`).
             Button("Takarítás") {
                 AppState.shared?.currentPage = .cleanup
             }

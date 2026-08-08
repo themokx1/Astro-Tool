@@ -23,13 +23,18 @@ enum RootStatus: Equatable {
 ///
 /// `.calendar` and `.cleanup` (D25/R9 round 2) don't get their own view --
 /// `MainShellView.page(for:)` renders `TonightPage()`/`AuditPage()` for them
-/// respectively, preselecting the right segment first. They exist as their
-/// OWN `Page` cases (rather than routing straight to `.tonight`/`.audit`
-/// with a segment set as a side effect of the tap, as the sidebar's
-/// "Naptár"/"Takarítás" rows used to) purely so `List(selection:)`'s
-/// tag-matching highlights the right sidebar row: `.tonight`/`.audit`'s own
-/// rows must NOT light up while the "calendar segment of tonight" or
-/// "cleanable segment of audit" is what's actually on screen.
+/// respectively. They exist as their OWN `Page` cases (rather than routing
+/// straight to `.tonight`/`.audit` with a segment set as a side effect of
+/// the tap, as the sidebar's "Naptár"/"Takarítás" rows used to) purely so
+/// `List(selection:)`'s tag-matching highlights the right sidebar row:
+/// `.tonight`/`.audit`'s own rows must NOT light up while the "calendar
+/// segment of tonight" or "cleanable segment of audit" is what's actually on
+/// screen. R11-T13/F13: `AppState.tonightSegment`/`auditSegment` are now
+/// DERIVED from this same `currentPage` (see their own doc comments) rather
+/// than separately preselected on appear, so the segment shown and the
+/// sidebar row highlighted can never drift apart regardless of how
+/// `currentPage` got here (sidebar tap, ⌘-shortcut, menu bar, or the page's
+/// own segmented picker).
 enum Page: Hashable {
     case tonight
     case calendar
@@ -461,11 +466,37 @@ final class AppState: @unchecked Sendable {
         case cleanable
         case intentional
     }
-    /// Which segment `AuditPage` shows -- preselected to `.cleanable` by
-    /// `MainShellView.page(for:)` when `currentPage == .cleanup` (the
-    /// sidebar's "Takarítás" row / ⌘6, D25), as well as settable from the
-    /// page's own segmented picker directly.
-    var auditSegment: AuditSegment = .errors
+    /// Which of the three non-cleanup segments (`.errors`/`.suspicious`/
+    /// `.intentional`) to show whenever `currentPage` is `.audit` --
+    /// `auditSegment`'s own backing memory for everything BUT `.cleanable`
+    /// (see that computed property's doc comment for why `.cleanable`
+    /// itself is never stored here).
+    private var lastNonCleanableAuditSegment: AuditSegment = .errors
+    /// Which segment `AuditPage` shows -- R11-T13/F13: DERIVED from
+    /// `currentPage` rather than kept as fully independent state, so the
+    /// sidebar's "Takarítás" row/⌘8 highlighting and this segment can never
+    /// drift apart (the bug this fixes: navigating straight to `.audit` from
+    /// `.cleanup` used to leave the picker stuck on "Takarítható" even
+    /// though the sidebar/title correctly said "Audit"). `Page` only
+    /// distinguishes `.cleanup` from `.audit` though -- not WHICH of the
+    /// other three segments -- so unlike `tonightSegment` below this isn't a
+    /// clean 1:1 mapping and still needs `lastNonCleanableAuditSegment` to
+    /// remember which of those three to come back to. The setter writes
+    /// `currentPage` right back (to `.cleanup` for `.cleanable`, to `.audit`
+    /// for anything else, but only when it was `.cleanup` before -- leaving
+    /// any OTHER current page alone), so `AuditPage`'s segmented `Picker` can
+    /// still bind straight to this like any other piece of state.
+    var auditSegment: AuditSegment {
+        get { currentPage == .cleanup ? .cleanable : lastNonCleanableAuditSegment }
+        set {
+            if newValue == .cleanable {
+                currentPage = .cleanup
+            } else {
+                lastNonCleanableAuditSegment = newValue
+                if currentPage == .cleanup { currentPage = .audit }
+            }
+        }
+    }
     /// R9-T2/A.5's toolbar toggle: when `false` (the default), any group
     /// whose ack key is in `ackedKeys` is hidden entirely from the Hibák/
     /// Gyanús list; when `true`, acked groups reappear, dimmed, with their
@@ -478,15 +509,29 @@ final class AppState: @unchecked Sendable {
     /// view never has to re-query the DB just to check one group's state.
     var ackedKeys: Set<String> = []
 
-    /// R9-T4/A.1's segmented picker on `TonightPage` -- preselected to
-    /// `.calendar` by `MainShellView.page(for:)` when
-    /// `currentPage == .calendar` (the sidebar's "Naptár" row / ⌘2, D25), as
-    /// well as settable from the page's own segmented picker directly.
+    /// R9-T4/A.1's segmented picker on `TonightPage`. R11-T13/F13: DERIVED
+    /// from `currentPage` rather than kept as independent state -- `.tonight`/
+    /// `.calendar` map onto this segment 1:1, so this is a plain computed
+    /// property with no backing storage of its own (unlike `auditSegment`
+    /// above, which needs one extra bit of memory since `Page` can't
+    /// distinguish between three of ITS four segments). Before this, the
+    /// segment was a fully independent stored property that only ever got
+    /// written FROM `currentPage` (via `MainShellView.page(for:)`'s
+    /// `.onAppear`) on the way IN to `.calendar` -- navigating back to
+    /// `.tonight` some other way (the sidebar's "Ma este" row, ⌘1, …) left
+    /// it stuck on `.calendar`, so the page kept showing the calendar
+    /// segment even though the sidebar/title both correctly said "Ma este".
+    /// The setter writes `currentPage` right back, so `TonightPage`'s
+    /// segmented `Picker` can still bind straight to this like any other
+    /// piece of state.
     enum TonightSegment: Hashable {
         case tonight
         case calendar
     }
-    var tonightSegment: TonightSegment = .tonight
+    var tonightSegment: TonightSegment {
+        get { currentPage == .calendar ? .calendar : .tonight }
+        set { currentPage = newValue == .calendar ? .calendar : .tonight }
+    }
     /// R11-T2: `TonightPage`'s cloud-context banner ("Ma este ~N% felhő
     /// várható…"), dismissed for the rest of THIS app run once the user
     /// closes it -- kept here (not a plain `@State` on `TonightPage` itself)

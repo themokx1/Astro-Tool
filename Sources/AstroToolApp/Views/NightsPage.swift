@@ -129,6 +129,10 @@ struct NightsPage: View {
         var backgroundEPerSecPerArcsec2: Double? { row.backgroundEPerSecPerArcsec2 }
         var dutyCyclePercent: Double? { row.dutyCyclePercent }
         var hasNotes: Bool { row.hasNotes }
+        /// R11-T13/F20: mirrors `NightRow.hasConflict` -- backs the Jegyzet
+        /// column's yellow ⚠️ (in place of the plain ✓) when the app-store
+        /// note and the README disagree on some key.
+        var hasConflict: Bool { row.hasConflict }
         var isExcludedFromTotals: Bool { row.isExcludedFromTotals }
         /// R11-T2: this session's own tags, backing `SessionActionMenu`'s
         /// "Címke eltávolítása" submenu.
@@ -422,11 +426,8 @@ struct NightsPage: View {
             Group {
                 TableColumn("Szűrők", value: \.filtersText) { row in filtersCell(row) }
                     .width(min: 80, ideal: 110)
-                TableColumn("Jegyzet", value: \.noteSortKey) { row in
-                    // R10 review (item 20): table CELLS use "-", not "—".
-                    Text(row.hasNotes ? "✓" : TDFormat.missingCell).foregroundStyle(.secondary)
-                }
-                .width(min: 50, ideal: 60)
+                TableColumn("Jegyzet", value: \.noteSortKey) { row in noteCell(row) }
+                    .width(min: 50, ideal: 60)
             }
             // R10-B7: visible row-actions -- mirrors `contextMenuItems(for:)`
             // exactly (same function, both call sites), so the right-click
@@ -526,6 +527,23 @@ struct NightsPage: View {
         } else {
             Text(row.filtersText).lineLimit(1).truncationMode(.tail)
                 .help(row.filtersTooltipText)
+        }
+    }
+
+    /// R11-T13/F20: the plain ✓/`-` this column always showed now yields to
+    /// a yellow ⚠️ (tooltipped) whenever the app-store note and the README
+    /// disagree on some key (`NightRow.hasConflict`) -- a conflicting
+    /// session still very much "has notes" (`hasNotes` stays `true`), this
+    /// is purely a stronger, separate signal on top of that same cell.
+    @ViewBuilder
+    private func noteCell(_ row: NightTableRow) -> some View {
+        if row.hasConflict {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+                .help("az app-jegyzet és a README eltér")
+        } else {
+            // R10 review (item 20): table CELLS use "-", not "—".
+            Text(row.hasNotes ? "✓" : TDFormat.missingCell).foregroundStyle(.secondary)
         }
     }
 

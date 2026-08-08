@@ -78,6 +78,17 @@ public struct SessionDetail: Codable, Sendable, Equatable {
     /// Count of this session's LIGHT frames the user marked unchecked
     /// (rejected) in a `.dssfilelist` -- see `dssAcceptedCount`.
     public var dssRejectedCount: Int?
+    /// R11-T13/F20: `true` when at least one key exists in BOTH the
+    /// README-parsed notes AND the note-editor store
+    /// (`NoteConflicts.detect`) with a differing (trimmed) value -- the
+    /// disagreement the README-wins `notes` merge above silently papers
+    /// over. Computed once, here, since `computeSessionDetail` is the one
+    /// place that already has both RAW sources on hand before merging them;
+    /// every other reader (`NightsQueries.allNights`, the app's
+    /// `NotesSegment`/`SessionNoteSheet`, the CLI's `note show`) either reads
+    /// this straight off or reruns the same detection with its own pair of
+    /// raw dictionaries.
+    public var hasConflict: Bool
 
     public init(
         target: String,
@@ -102,7 +113,8 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         setupDescriptor: String? = nil,
         notes: [String: String] = [:],
         dssAcceptedCount: Int? = nil,
-        dssRejectedCount: Int? = nil
+        dssRejectedCount: Int? = nil,
+        hasConflict: Bool = false
     ) {
         self.target = target
         self.dateRaw = dateRaw
@@ -127,13 +139,14 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         self.notes = notes
         self.dssAcceptedCount = dssAcceptedCount
         self.dssRejectedCount = dssRejectedCount
+        self.hasConflict = hasConflict
     }
 
     private enum CodingKeys: String, CodingKey {
         case target, dateRaw, lightCount, flatCount, darkCount, biasCount, integrationSeconds,
              exposureBreakdown, cameras, focalLengthsMM, gains, sensorTempsC, filters, hasReadme, tags,
              usableLightCount, rejectedCount, duplicateLinkCount, isExcludedFromTotals, setupDescriptor, notes,
-             dssAcceptedCount, dssRejectedCount
+             dssAcceptedCount, dssRejectedCount, hasConflict
     }
 
     public init(from decoder: Decoder) throws {
@@ -168,6 +181,9 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         // Additive R7-B2 fields: absent in pre-R7-B2 JSON, fall back to nil.
         dssAcceptedCount = try c.decodeIfPresent(Int.self, forKey: .dssAcceptedCount)
         dssRejectedCount = try c.decodeIfPresent(Int.self, forKey: .dssRejectedCount)
+        // Additive R11-T13/F20 field: absent in pre-F20 JSON, falls back to
+        // false (no conflict on record).
+        hasConflict = try c.decodeIfPresent(Bool.self, forKey: .hasConflict) ?? false
     }
 }
 
@@ -255,6 +271,11 @@ public enum SessionStatsQueries {
             target: target, date: date, root: URL(fileURLWithPath: config.rootPath, isDirectory: true)
         )
         let notes = storeNotes.merging(readmeNotes) { _, readmeValue in readmeValue }
+        // R11-T13/F20: computed off the same two RAW dictionaries, before
+        // they got merged above -- once merged, a conflicting key's
+        // app-store value is already gone (README won it), so this has to
+        // happen here, not as a later derived property.
+        let hasConflict = !NoteConflicts.detect(appNotes: storeNotes, readmeNotes: readmeNotes).isEmpty
 
         // `nil` together (not `0`) when the session has no recorded
         // verdicts at all, so a session never DSS-ingested doesn't show a
@@ -303,7 +324,8 @@ public enum SessionStatsQueries {
             setupDescriptor: setupDescriptor,
             notes: notes,
             dssAcceptedCount: dssAcceptedCount,
-            dssRejectedCount: dssRejectedCount
+            dssRejectedCount: dssRejectedCount,
+            hasConflict: hasConflict
         )
     }
 }

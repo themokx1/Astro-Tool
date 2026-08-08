@@ -275,6 +275,34 @@ private func insertSensorProfile(
     #expect(try #require(rows.first { $0.date == "2026-01-02" }).hasNotes == false)
 }
 
+/// R11-T13/F20: `NightRow.hasConflict` mirrors `SessionDetail.hasConflict`
+/// -- `true` only for a session where the README-sourced note (`db.
+/// upsertSessionNotes`, standing in for a real scanned `README.txt`) and the
+/// app-store note (`SessionNoteStore`, requiring a real on-disk root unlike
+/// every other fixture in this file) disagree on the SAME key.
+@Test func allNightsHasConflictTrueOnlyWhenReadmeAndStoreDisagree() throws {
+    let db = try makeMemoryDB()
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-nights-queries-conflict-tests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    var config = AstroConfig()
+    config.rootPath = root.path
+    let writeGuard = WriteGuard(root: root)
+
+    try insertLight(db: db, target: "T1", date: "2026-01-01", name: "a", exptime: 60)
+    try db.upsertSessionNotes(target: "T1", date: "2026-01-01", notes: ["Bortle": "7"])
+    try SessionNoteStore.save(target: "T1", date: "2026-01-01", notes: [("Bortle", "5")], using: writeGuard)
+
+    try insertLight(db: db, target: "T1", date: "2026-01-02", name: "b", exptime: 60)
+    try db.upsertSessionNotes(target: "T1", date: "2026-01-02", notes: ["Bortle": "5"])
+    try SessionNoteStore.save(target: "T1", date: "2026-01-02", notes: [("Bortle", "5")], using: writeGuard)
+
+    let rows = try NightsQueries.allNights(db: db, config: config)
+    #expect(try #require(rows.first { $0.date == "2026-01-01" }).hasConflict == true)
+    #expect(try #require(rows.first { $0.date == "2026-01-02" }).hasConflict == false)
+}
+
 // MARK: - Per-filter breakdown (R11-T5/F1)
 
 @Test func allNightsFilterBreakdownMatchesFilterBreakdownQueriesForThatDate() throws {

@@ -21,6 +21,18 @@ struct NotesSegment: View {
     /// The session currently shown in `SessionNoteSheet`, `nil` when closed.
     @State private var noteEditingSession: LinkingSession?
 
+    /// R11-T13/F20: this session's conflicting keys (`NoteConflicts.detect`),
+    /// computed straight off `AppState.storeNotes`/`readmeNotes` -- the two
+    /// RAW sources, not `session.notes`, which already merged them (README
+    /// winning) and so has thrown the disagreement away by the time it gets
+    /// here.
+    private func conflicts(forDate date: String) -> [String: NoteConflicts.Conflict] {
+        NoteConflicts.detect(
+            appNotes: appState.storeNotes(target: target, date: date),
+            readmeNotes: appState.readmeNotes(target: target, date: date)
+        )
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -57,11 +69,25 @@ struct NotesSegment: View {
                         if session.notes.isEmpty {
                             Text("Nincs jegyzet.").font(.caption).foregroundStyle(.secondary)
                         } else {
+                            let sessionConflicts = conflicts(forDate: session.dateRaw)
                             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
                                 ForEach(session.notes.keys.sorted(), id: \.self) { key in
                                     GridRow {
                                         Text(key).foregroundStyle(.secondary)
                                         Text(session.notes[key] ?? "")
+                                        // R11-T13/F20: this key's app-store
+                                        // value and README value disagree --
+                                        // a stronger signal than the merged
+                                        // cell above alone shows (that cell
+                                        // is always just the README's own
+                                        // winning value).
+                                        if let conflict = sessionConflicts[key] {
+                                            Image(systemName: "exclamationmark.triangle.fill")
+                                                .foregroundStyle(.yellow)
+                                                .help(
+                                                    "app-jegyzet: \(conflict.appValue) · README: \(conflict.readmeValue)"
+                                                )
+                                        }
                                     }
                                     .font(.caption)
                                 }

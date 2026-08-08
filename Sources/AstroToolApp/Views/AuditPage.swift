@@ -152,21 +152,6 @@ struct AuditPage: View {
         return parts.joined(separator: " · ")
     }
 
-    /// N8 (R9 round 3): writes `currentPage` (`.cleanup`/`.audit`) alongside
-    /// `auditSegment` -- without this, flipping the segmented picker by hand
-    /// (rather than via the sidebar's "Takarítás" row) left `currentPage`
-    /// pointing at whichever page got here first, so the sidebar's selection
-    /// highlight drifted from what was actually on screen.
-    private var segmentBinding: Binding<AppState.AuditSegment> {
-        Binding(
-            get: { appState.auditSegment },
-            set: { newValue in
-                appState.auditSegment = newValue
-                appState.currentPage = newValue == .cleanable ? .cleanup : .audit
-            }
-        )
-    }
-
     var body: some View {
         @Bindable var appState = appState
 
@@ -205,7 +190,12 @@ struct AuditPage: View {
             } else {
                 tiles
 
-                Picker("Szegmens", selection: segmentBinding) {
+                // R11-T13/F13: binds straight to `appState.auditSegment`,
+                // which is itself now DERIVED from (and writes back to)
+                // `currentPage` -- see that property's own doc comment. No
+                // separate binding needed anymore to also keep `currentPage`
+                // in sync (N8, R9 round 3's original fix for this).
+                Picker("Szegmens", selection: $appState.auditSegment) {
                     Text("Hibák (\(errorFindings.count))").tag(AppState.AuditSegment.errors)
                     Text("Gyanús (\(suspiciousFindings.count))").tag(AppState.AuditSegment.suspicious)
                     Text("Takarítható (\(cleanupFileCount) fájl · \(cleanupBytesText))").tag(AppState.AuditSegment.cleanable)

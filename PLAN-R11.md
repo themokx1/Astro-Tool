@@ -311,7 +311,7 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   sheet-finomhangolás).
 - **T12 [x] — Kezdő-csomag**: F11 + F12 (Fogalomtár, ⓘ-k, Siril-segéd linkek,
   VerdictChip-popover, percentilis-sávok, Első lépések checklist).
-- **T13 — Navigáció + jegyzet-híd**: F13 (Naptár/Takarítás valódi al-elem) +
+- **T13 [x] — Navigáció + jegyzet-híd**: F13 (Naptár/Takarítás valódi al-elem) +
   F20 README↔jegyzet ütközés.
 ### C-hullám — pro funkciók
 - **T14 — Verify**: F9.
@@ -322,6 +322,9 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   stacklist `.ssf` script `cd` célja a stacklist gyökerére mutat a `lights/`
   almappa helyett, így a Siril `convert` nem talál kereteket; ellenőrizni és
   javítani (teszt a cd-célra).
+  Ismert tétel 2 (T12-ből): a SessionsSegment FWHM percentilis-pöttye csak az
+  Éjszakák oldal betöltése után jelenik meg (appState.nights lustán töltődik) —
+  megfontolni egy könnyű háttér-betöltést a célpont-oldalról.
 
 ### Záró kör
 - Kód-review agent (funkcionális hibák) + UX-sweep agent (konzisztencia) +

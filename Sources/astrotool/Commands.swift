@@ -2129,6 +2129,15 @@ private func formatTimestamp(_ epochSeconds: Double) -> String {
 /// merges it with the README-sourced notes the exact way
 /// `SessionStatsQueries.computeSessionDetail` does (README wins any key
 /// collision), `set` only ever writes to `.astro_tool/notes/`.
+///
+/// R11-T13/F20: `show` also flags any key where the two RAW sources
+/// disagree (`NoteConflicts.detect`, computed from the same two
+/// dictionaries BEFORE the README-wins merge below throws that disagreement
+/// away) -- human output appends "⚠ eltér a README-től" to a conflicting
+/// key's line, `--json` adds an additive `conflicts` block alongside the
+/// existing flat notes object (see `NoteShowJSONPayload`'s own doc comment
+/// for why that stays a sibling key rather than nesting the notes
+/// themselves under a new key).
 func cmdNote(_ args: [String]) throws -> Int32 {
     guard let sub = args.first else {
         eprint("error: expected 'show' or 'set'")
@@ -2175,17 +2184,74 @@ private func cmdNoteShow(_ args: [String]) throws -> Int32 {
         target: target, date: date, root: URL(fileURLWithPath: config.rootPath, isDirectory: true)
     )
     let notes = storeNotes.merging(readmeNotes) { _, readmeValue in readmeValue }
+    let conflicts = NoteConflicts.detect(appNotes: storeNotes, readmeNotes: readmeNotes)
 
     if parsed.has("--json") {
-        try printJSON(notes)
+        var payload: [String: NoteShowJSONValue] = notes.mapValues { .string($0) }
+        // R11-T13/F20: `conflicts` is a purely additive sibling key, present
+        // only when there's at least one -- see `NoteShowJSONValue`'s own
+        // doc comment for why this can't just be a normal `Encodable`
+        // struct with `notes`/`conflicts` fields.
+        if !conflicts.isEmpty {
+            payload["conflicts"] = .conflicts(conflicts.mapValues(NoteConflictJSON.init))
+        }
+        try printJSON(payload)
     } else if notes.isEmpty {
         print("no notes for \(target) [\(date)]")
     } else {
         for key in notes.keys.sorted() {
-            print("\(key): \(notes[key] ?? "")")
+            let suffix = conflicts[key] != nil ? "  ⚠ eltér a README-től" : ""
+            print("\(key): \(notes[key] ?? "")\(suffix)")
         }
     }
     return 0
+}
+
+/// `note show --json`'s root value type -- the merged notes stay spread
+/// directly at the TOP level exactly as before this ticket
+/// (`{"Bortle": "5", ...}`, so any existing script/consumer keeps working
+/// unchanged), `conflicts` is a new, purely additive sibling key (R11-T13/
+/// F20). A user note literally keyed `"conflicts"` would collide with this
+/// reserved key, but no template field or observed real-world key has ever
+/// used that name.
+///
+/// This can't be a normal `Encodable` struct with `notes: [String: String]`/
+/// `conflicts: [...]` fields: `JSONEncoder.keyEncodingStrategy` here is
+/// `.convertToSnakeCase` (see `printJSON`'s own doc comment), which Swift's
+/// stdlib `Dictionary` is specially exempted from applying to ITS OWN keys
+/// when encoded directly (arbitrary string keys are DATA, not schema field
+/// names) -- but a hand-written `encode(to:)` going through a custom
+/// `CodingKey` type does NOT get that same exemption, so a user's literal
+/// `"Bortle"` key would silently come out mangled to `"bortle"`. Routing the
+/// whole payload through one more plain `[String: NoteShowJSONValue]`
+/// (`Dictionary` again, so the SAME exemption applies to its top-level keys
+/// -- both the real note keys AND the literal `"conflicts"` key) sidesteps
+/// that entirely, while the nested `NoteConflictJSON` struct's OWN field
+/// names still get properly snake_cased (`app_value`/`readme_value`), since
+/// those aren't user data.
+private enum NoteShowJSONValue: Encodable {
+    case string(String)
+    case conflicts([String: NoteConflictJSON])
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value): try container.encode(value)
+        case .conflicts(let value): try container.encode(value)
+        }
+    }
+}
+
+/// `NoteConflicts.Conflict` flattened for JSON (`app_value`/`readme_value`
+/// after `printJSON`'s snake_case conversion).
+private struct NoteConflictJSON: Encodable {
+    let appValue: String
+    let readmeValue: String
+
+    init(_ conflict: NoteConflicts.Conflict) {
+        appValue = conflict.appValue
+        readmeValue = conflict.readmeValue
+    }
 }
 
 private func cmdNoteSet(_ args: [String]) throws -> Int32 {
