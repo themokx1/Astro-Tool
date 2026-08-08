@@ -440,8 +440,8 @@ struct VerdictExplainPopover: View {
 /// A small color dot next to a FWHM″/Hatékonyság cell, showing where THIS
 /// library's own distribution places the value -- green (best third),
 /// yellow (middle third), orange (worst third), per `LibraryPercentiles
-/// .evaluate`. Renders nothing at all when `result` is `nil` (below the
-/// minimum sample size, or the row itself has no comparable value -- e.g. a
+/// .evaluate`. Low samples render neutral gray with an explicit count.
+/// Renders nothing at all when `result` is `nil` (the row itself has no comparable value -- e.g. a
 /// px-fallback-only FWHM never gets a dot, since it was never in the
 /// arcsec distribution to begin with).
 struct LibraryPercentileDot: View {
@@ -452,7 +452,7 @@ struct LibraryPercentileDot: View {
     var body: some View {
         if let result {
             Circle()
-                .fill(Self.color(for: result.band))
+                .fill(result.isLowSample ? Color.gray : Self.color(for: result.band))
                 .frame(width: 7, height: 7)
                 .help(Self.tooltipText(result, unit: unit))
         }
@@ -467,6 +467,9 @@ struct LibraryPercentileDot: View {
     }
 
     private static func tooltipText(_ result: LibraryPercentileResult, unit: String) -> String {
+        if result.isLowSample {
+            return "kevés adat (\(result.sampleCount)/\(LibraryPercentiles.minimumSampleSize))"
+        }
         let medianText = String(format: "%.1f", result.medianValue) + unit
         let prefix = "A könyvtárad mediánja \(medianText) — ez a session"
         switch result.band {

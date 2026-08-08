@@ -170,6 +170,16 @@ public enum NightsQueries {
     ) throws -> [NightRow] {
         let targets = Set(try db.allSessionPairs().map { $0.target }).sorted()
 
+        // One reusable library snapshot backs every per-session filter and
+        // site calculation below. This removes the former
+        // O(session-count × library-file-count) filter-breakdown scan.
+        let libraryFiles = try db.allFiles(includeMissing: false)
+        let allSessionFiles = libraryFiles.filter { $0.area == .sessions }
+        let snapshotMeta = try db.fitsMetaBatch(fileIDs: allSessionFiles.compactMap(\.id))
+        let filesBySession = Dictionary(grouping: allSessionFiles) { file in
+            SiteSessionKey(target: file.target ?? "", date: file.sessionDate ?? "")
+        }
+
         // R11-T15/F16: `NightRow.site` -- only ever computed when at least
         // one site is configured (an empty `config.sites` leaves every row's
         // `site` `nil`, same "FITS-median automatika, nincs site-lista"
@@ -179,17 +189,6 @@ public enum NightsQueries {
         // `SessionStatsQueries.sessions`/`SessionQuality.summaries` already
         // establish that "one full-library pass beats N per-session ones"
         // shape for this same loop.
-        var sessionLightsByKey: [SiteSessionKey: [FileRecord]] = [:]
-        var siteMetaByFileID: [Int64: FITSMetaRecord] = [:]
-        if !config.sites.isEmpty {
-            let siteLights = try db.allFiles(includeMissing: false).filter { $0.area == .sessions && $0.role == .light }
-            for file in siteLights {
-                guard let fileTarget = file.target, let fileDate = file.sessionDate else { continue }
-                sessionLightsByKey[SiteSessionKey(target: fileTarget, date: fileDate), default: []].append(file)
-            }
-            siteMetaByFileID = try db.fitsMetaBatch(fileIDs: siteLights.compactMap(\.id))
-        }
-
         var rows: [(row: NightRow, sortDate: String)] = []
         for target in targets {
             let sessions = try SessionStatsQueries.sessions(target: target, db: db, config: config)
@@ -214,14 +213,17 @@ public enum NightsQueries {
 
                 let quality = qualityByDate[session.dateRaw]
                 let timeline = try SessionTimeline.timeline(target: target, date: session.dateRaw, db: db, config: config)
-                let filterBreakdown = try FilterBreakdownQueries.breakdown(
-                    db: db, config: config, target: target, date: session.dateRaw
+                let sessionKey = SiteSessionKey(target: target, date: session.dateRaw)
+                let snapshotFiles = filesBySession[sessionKey] ?? []
+                let filterBreakdown = FilterBreakdownQueries.compute(
+                    target: target, date: session.dateRaw,
+                    files: snapshotFiles, meta: snapshotMeta, config: config
                 )
 
                 var resolvedSiteName: String?
                 if !config.sites.isEmpty {
-                    let sessionLights = sessionLightsByKey[SiteSessionKey(target: target, date: session.dateRaw)] ?? []
-                    let median = TargetCoordinates.medianSite(files: sessionLights, meta: siteMetaByFileID)
+                    let sessionLights = snapshotFiles.filter { $0.role == .light }
+                    let median = TargetCoordinates.medianSite(files: sessionLights, meta: snapshotMeta)
                     resolvedSiteName = SiteResolver.resolve(
                         sessionTags: session.tags,
                         medianLat: median.latitudeDeg,

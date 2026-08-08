@@ -16,6 +16,7 @@ struct CalibrationPage: View {
     }
 
     @Environment(AppState.self) private var appState
+    @Environment(\.openSettings) private var openSettings
     @State private var segment: Segment = .coverage
     @State private var selectedNeedID: CoverageRow.ID?
 
@@ -77,6 +78,10 @@ struct CalibrationPage: View {
                         appState.loadCalibrationData()
                     }
                     .disabled(appState.db == nil)
+                    Button("Kalibráció beállításai…") {
+                        appState.settingsTab = .calibration
+                        openSettings()
+                    }
                 }
             }
         }
@@ -160,14 +165,33 @@ struct CalibrationPage: View {
                 }
             }
             Spacer()
-            if !need.targets.isEmpty {
-                Button("Linkelés…") { appState.openCalibLinkSheet(forNeed: need) }
-                    .buttonStyle(.link)
-            }
+            calibLinkControl(need)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.10)))
+    }
+
+    @ViewBuilder
+    private func calibLinkControl(_ need: CalibNeed) -> some View {
+        if need.sessions.count == 1 {
+            Button("Linkelés…") { appState.openCalibLinkSheet(forNeed: need) }
+                .buttonStyle(.link)
+        } else if need.sessions.count > 1 {
+            Menu("Linkelés…") {
+                ForEach(need.sessions, id: \.self) { session in
+                    Button("\(session.date) · \(session.target)") {
+                        appState.openCalibLinkSheet(target: session.target, date: session.date)
+                    }
+                }
+            }
+            .menuStyle(.borderlessButton)
+        } else {
+            Text("Nincs azonosítható érintett session")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help("Futtass új beolvasást; régi mentett adatok nem tartalmaznak session-azonosítót.")
+        }
     }
 
     private var coverageRows: [CoverageRow] { needs.map(CoverageRow.init) }
@@ -246,8 +270,18 @@ struct CalibrationPage: View {
 
     @ViewBuilder
     private func coverageContextMenuItems(_ need: CalibNeed) -> some View {
-        Button("Kalibráció linkelése…") { appState.openCalibLinkSheet(forNeed: need) }
-            .disabled(need.targets.isEmpty)
+        if need.sessions.count == 1 {
+            Button("Kalibráció linkelése…") { appState.openCalibLinkSheet(forNeed: need) }
+        } else if !need.sessions.isEmpty {
+            ForEach(need.sessions, id: \.self) { session in
+                Button("Linkelés: \(session.date) · \(session.target)") {
+                    appState.openCalibLinkSheet(target: session.target, date: session.date)
+                }
+            }
+        } else {
+            Button("Nincs azonosítható érintett session") {}
+                .disabled(true)
+        }
         Button("Master mappa megnyitása Finderben") {
             if let path = need.matchedMasterPath { appState.revealPathInFinder(path) }
         }

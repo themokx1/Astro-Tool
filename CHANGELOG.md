@@ -13,6 +13,15 @@ Az R12 javítási hulláma a korábbi funkciók valós asztrofotós workflow sze
 
 ### Added
 
+- **R12-U5 — UX/CLI/teljesítmény sweep**: egységes hiány- és mértékegység-
+  formázás, metrikából célzott Fogalomtár-nyitás, feltételes Előző éjszaka
+  menüpont és egységes Szenzor-profilok név; új, dátum-/helyszínérzékeny
+  `calib --shopping`; pontos session-kulcsokkal működő kalibráció-linkelés;
+  midrank percentilis és semleges kevés-adat állapot; gépi night/filter/
+  hiány mezőkkel bővített terv-CSV; egyetlen snapshotból számolt Éjszakák
+  szűrőbontás; tranzakciós, megszakítás után folytatható v10 migráció; teljes
+  jegyzet/ütközés/akció támogatás a reggeli triage-kártyákon.
+
 - **R12-U4 — publikálás és szűrőcélok**: az AstroBin CSV minden
   `(session, szűrő, nominális expozíció)` csoportot külön sorba ír saját
   filter-ID-val; a ProjectStatus, Planner és cél/hiány UI végig kezeli a

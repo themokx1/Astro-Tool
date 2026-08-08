@@ -18,6 +18,16 @@ struct MetricInfoButton: View {
     struct Metric {
         let title: String
         let explanation: String
+        /// Exact `GlossarySheet.Term.name` to open from this metric row.
+        /// Kept optional so a plain-language metric does not grow a
+        /// misleading glossary link merely for visual symmetry.
+        let glossaryTerm: String?
+
+        init(title: String, explanation: String, glossaryTerm: String? = nil) {
+            self.title = title
+            self.explanation = explanation
+            self.glossaryTerm = glossaryTerm
+        }
     }
 
     let metrics: [Metric]
@@ -40,6 +50,17 @@ struct MetricInfoButton: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(metric.title).font(.subheadline).bold()
                                 Text(metric.explanation).font(.caption).foregroundStyle(.secondary)
+                                if let glossaryTerm = metric.glossaryTerm {
+                                    Button("Fogalomtárban") {
+                                        showPopover = false
+                                        NotificationCenter.default.post(
+                                            name: .showGlossary,
+                                            object: glossaryTerm
+                                        )
+                                    }
+                                    .buttonStyle(.link)
+                                    .font(.caption)
+                                }
                             }
                         }
                     }

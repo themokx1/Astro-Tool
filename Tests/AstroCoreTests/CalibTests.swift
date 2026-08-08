@@ -208,7 +208,8 @@ private struct CalibFixture {
     let missing = try #require(needs.first { $0.exposureSeconds == 120 })
     #expect(missing.matchedMasterPath == nil)
     #expect(missing.lightCount == 2)
-    #expect(missing.todo == "készíts 120 s / -10 °C darkot (2 light frame-hez)")
+    #expect(missing.todo == "Készíts 120 s / -10 °C darkot (2 light frame-hez)")
+    #expect(missing.sessions == [.init(target: "T1", date: "2026-01-10")])
 }
 
 @Test func darkCoverageAppliesTemperatureTolerance() throws {
@@ -624,7 +625,7 @@ private struct CalibFixture {
 
     let needs = try CalibAnalyzer.coverage(db: fixture.db, config: fixture.config)
     let need = try #require(needs.first)
-    #expect(need.todo == "készíts 120 s / -10 °C darkot (1 light frame-hez)")
+    #expect(need.todo == "Készíts 120 s / -10 °C darkot (1 light frame-hez)")
 }
 
 @Test func darkCoverageDSLRLightWithISOInGainColumnDoesNotMatchASIMasterOnCameraMismatch() throws {
@@ -702,7 +703,7 @@ private struct CalibFixture {
 
     let oiiiNeed = try #require(needs.first { $0.filter == "OIII" })
     #expect(oiiiNeed.matchedMasterPath == nil)
-    #expect(oiiiNeed.todo == "Hiányzó flat: OIII — 1 session érintett")
+    #expect(oiiiNeed.todo == "Készíts OIII flatet — 1 session érintett")
     #expect(oiiiNeed.lightCount == 2)
     #expect(oiiiNeed.targets == ["T1"])
 }
@@ -723,8 +724,13 @@ private struct CalibFixture {
     let need = try #require(needs.first)
     #expect(need.filter == "OIII")
     #expect(need.matchedMasterPath == nil)
-    #expect(need.todo == "Hiányzó flat: OIII — 3 session érintett")
+    #expect(need.todo == "Készíts OIII flatet — 3 session érintett")
     #expect(need.targets == ["T1", "T2"])
+    #expect(need.sessions == [
+        .init(target: "T1", date: "2026-01-10"),
+        .init(target: "T1", date: "2026-01-11"),
+        .init(target: "T2", date: "2026-01-12"),
+    ])
     #expect(need.mismatchReasons.isEmpty)
 }
 
@@ -753,7 +759,7 @@ private struct CalibFixture {
     #expect(need.matchedMasterPath == "calibration_library/flats")
     #expect((need.masterAgeDays ?? 0) >= 59)
     #expect(need.todo?.contains("napos") == true)
-    #expect(need.todo?.contains("készíts frisset") == true)
+    #expect(need.todo?.contains("Készíts friss") == true)
     #expect(need.todo?.contains("1 session érintett") == true)
 }
 
@@ -798,7 +804,21 @@ private struct CalibFixture {
     let need = try #require(needs.first)
     #expect(need.matchedMasterPath == nil)
     #expect(need.mismatchReasons.contains("gyújtótáv eltér: light 800mm, flat 500mm"))
-    #expect(need.todo == "Hiányzó flat: Ha — 1 session érintett")
+    #expect(need.todo == "Készíts Ha flatet — 1 session érintett")
+}
+
+@Test func calibNeedLegacyJSONWithoutSessionsDecodesToEmptyList() throws {
+    let original = CalibNeed(
+        kind: .dark, exposureSeconds: 300, tempC: -10, lightCount: 2,
+        targets: ["M31"], matchedMasterPath: nil, masterAgeDays: nil,
+        isStale: false, todo: "Készíts darkot"
+    )
+    let encoded = try JSONEncoder().encode(original)
+    var object = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    object.removeValue(forKey: "sessions")
+    let legacy = try JSONSerialization.data(withJSONObject: object)
+    let decoded = try JSONDecoder().decode(CalibNeed.self, from: legacy)
+    #expect(decoded.sessions.isEmpty)
 }
 
 @Test func flatCoveragePerSessionAPIReturnsCoveredFlagsSortedByFilter() throws {

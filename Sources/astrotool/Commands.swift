@@ -104,7 +104,10 @@ Commands:
                 quality (FWHM/duty cycle) alongside frame/integration
                 counts -- the counterpart to `stats --sessions`, which is
                 scoped to one target at a time.
-  calib         [--root R] [--json] [--health] [--flats]
+  calib         [--root R] [--json] [--health|--flats|--shopping [--date D] [--site NAME]]
+                Default: complete dark/flat coverage report. --shopping
+                narrows it to the selected night's observable targets and
+                preserves the resolved night/site in human and JSON output.
   match         [--root R] --target T --date D [--json]
   link-calib    --target T --date D [--dry-run] [--yes] [--root R] [--json]
   new-session   --catalog CAT --name NAME --date D [--root R] [--json]
@@ -140,15 +143,17 @@ Commands:
                 `stats --filters` with every `goal:<filter>=<hours>h` tag) --
                 a filter with a goal but no frames shot yet still appears,
                 with 0 usable.
-  plan          [--date YYYY-MM-DD] [--min-alt 30] [--root R] [--json]
+  plan          [--date YYYY-MM-DD] [--min-alt 30] [--site NAME] [--root R] [--json]
                 [--month [--nights 30]] [--out PATH|-]
                 Without --month: tonight's per-target observation plan.
                 With --month: a month-at-a-glance planning calendar (dark
                 hours, Moon%, top-3 targets per night) instead.
                 --out exports the plan as CSV instead (target/ra_deg/
                 dec_deg/window_start/window_end/max_alt_deg/moon_illum/
-                verdict/filter_suggestion); not supported with --month.
-  night-info    [--date YYYY-MM-DD] [--root R] [--json]
+                verdict/filter_suggestion plus night/filter/
+                filter_missing_hours/missing_hours); not supported with
+                --month.
+  night-info    [--date YYYY-MM-DD] [--site NAME] [--root R] [--json]
                 Tonight's dark-hours/Moon summary alone (no target
                 coordinate needed) -- illumination, rise/set label, and the
                 same site resolution `plan` uses.
@@ -1386,12 +1391,64 @@ func cmdCalib(_ args: [String]) throws -> Int32 {
         FlagSpec("--json", takesValue: false),
         FlagSpec("--health", takesValue: false),
         FlagSpec("--flats", takesValue: false),
+        FlagSpec("--shopping", takesValue: false),
+        FlagSpec("--date", takesValue: true),
+        FlagSpec("--site", takesValue: true),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
+
+    let selectedModes = ["--health", "--flats", "--shopping"].filter(parsed.has)
+    guard selectedModes.count <= 1 else {
+        eprint("error: --health, --flats és --shopping közül egyszerre csak egy választható")
+        return 1
+    }
+    guard parsed.has("--shopping") || (parsed.value("--date") == nil && parsed.value("--site") == nil) else {
+        eprint("error: --date és --site csak a --shopping móddal használható")
+        return 1
+    }
+
+    var shoppingDate: Date?
+    if let raw = parsed.value("--date") {
+        guard let parsedDate = parsePlanDate(raw) else {
+            eprint("error: invalid --date (expected YYYY-MM-DD): \(raw)")
+            return 1
+        }
+        shoppingDate = parsedDate
+    }
 
     let config = try resolveConfig(rootFlag: parsed.value("--root"))
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
+
+    if parsed.has("--shopping") {
+        let siteName = parsed.value("--site")
+        // Resolve first even for an empty library, so an unknown explicit
+        // site is a real usage error rather than an accidentally empty list.
+        _ = try Planner.resolveSite(db: db, config: config, siteName: siteName)
+        let plans = try Planner.plan(date: shoppingDate, siteName: siteName, db: db, config: config)
+        let coverage = try CalibAnalyzer.coverage(db: db, config: config)
+            + CalibAnalyzer.flatCoverage(db: db, config: config)
+        let items = CalibShoppingList.build(coverage: coverage, plans: plans)
+        let report = CalibShoppingList.Report(
+            night: planNightString(shoppingDate ?? Date()),
+            site: siteName.flatMap { requested in
+                config.sites.first { $0.name.caseInsensitiveCompare(requested) == .orderedSame }?.name
+            } ?? SiteProfile.defaultSite(in: config.sites)?.name,
+            items: items
+        )
+        if parsed.has("--json") {
+            try printJSON(report)
+        } else {
+            print("Kalibrációs bevásárlólista — \(report.night) éjszakájára")
+            if let site = report.site { print("Helyszín: \(site)") }
+            if items.isEmpty {
+                print("Nincs szükséges kalibrációs felvétel a ma látható célpontokhoz.")
+            } else {
+                for item in items { print("  - \(item.summary)") }
+            }
+        }
+        return 0
+    }
 
     if parsed.has("--health") {
         let report = try CalibHealth.report(db: db, config: config)
@@ -1425,6 +1482,14 @@ func cmdCalib(_ args: [String]) throws -> Int32 {
         printCalibReport(needs)
     }
     return 0
+}
+
+private func planNightString(_ date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone.current
+    formatter.dateFormat = "yyyy-MM-dd"
+    return formatter.string(from: date)
 }
 
 private func printCalibHealthReport(_ report: CalibHealthReport) {
@@ -2767,7 +2832,7 @@ func cmdPlan(_ args: [String]) throws -> Int32 {
     let plans = try Planner.plan(date: date, minAltitudeDeg: minAlt, siteName: siteName, db: db, config: config)
 
     if let out = parsed.value("--out") {
-        let csv = PlanExport.renderCSV(plans)
+        let csv = PlanExport.renderCSV(plans, night: planNightString(date ?? Date()))
         if out == "-" {
             print(csv, terminator: "")
             return 0
@@ -3597,7 +3662,7 @@ private enum TrendMetric: String {
     var label: String {
         switch self {
         case .fwhm: return "FWHM"
-        case .background: return "HÁTTÉR (e⁻/s/□″)"
+        case .background: return "HÁTTÉR (e⁻/s/″²)"
         case .efficiency: return "HATÉKONYSÁG%"
         }
     }

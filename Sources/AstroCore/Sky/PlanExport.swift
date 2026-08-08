@@ -8,10 +8,10 @@ import Foundation
 /// surfaces can never quietly disagree on columns/formatting.
 public enum PlanExport {
     /// CSV header -- exact column order/names the spec calls for:
-    /// `target, ra_deg, dec_deg, window_start, window_end, max_alt_deg,
-    /// moon_illum, verdict, filter_suggestion`.
+    /// Existing columns stay in place; R12-U5 appends machine-readable
+    /// night/filter/deficit fields without parsing the human chip.
     public static let csvHeader =
-        "target,ra_deg,dec_deg,window_start,window_end,max_alt_deg,moon_illum,verdict,filter_suggestion"
+        "target,ra_deg,dec_deg,window_start,window_end,max_alt_deg,moon_illum,verdict,filter_suggestion,night,filter,filter_missing_hours,missing_hours"
 
     /// One CSV row per plan, in `plans`' own order -- callers (`cmdPlan`:
     /// tonight's whole plan; `TonightPage`: the selected row, else the "ma
@@ -19,16 +19,18 @@ public enum PlanExport {
     /// subset/order to pass in. `target` is the raw library/folder name
     /// (not `displayName`) -- a script piping this back into e.g. `stats
     /// --target` needs the canonical key, not the human-facing label.
-    public static func renderCSV(_ plans: [TargetPlan]) -> String {
+    public static func renderCSV(_ plans: [TargetPlan], night: String = "") -> String {
         var lines = [csvHeader]
         for plan in plans {
-            lines.append(csvRow(plan).map(csvField).joined(separator: ","))
+            lines.append(csvRow(plan, night: night).map(csvField).joined(separator: ","))
         }
         return lines.joined(separator: "\n") + "\n"
     }
 
-    private static func csvRow(_ plan: TargetPlan) -> [String] {
+    private static func csvRow(_ plan: TargetPlan, night: String) -> [String] {
         let (start, end) = windowParts(plan.visibleWindowLocal)
+        let recommended = plan.filterAdvice?.recommendedFilter
+        let overallMissing = plan.goalSeconds.map { max(0, $0 - plan.usableIntegrationSeconds) }
         return [
             plan.target,
             plan.raDeg.map { String($0) } ?? "",
@@ -39,7 +41,15 @@ public enum PlanExport {
             plan.moonIlluminationPercent.map { String(format: "%.1f", $0) } ?? "",
             plan.verdict,
             filterSuggestion(plan) ?? "",
+            night,
+            recommended?.filter ?? "",
+            recommended?.missingSeconds.map(hours) ?? "",
+            overallMissing.map(hours) ?? "",
         ]
+    }
+
+    private static func hours(_ seconds: Double) -> String {
+        String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), seconds / 3600)
     }
 
     // MARK: - Clipboard (app-only "Vágólapra" menu item)

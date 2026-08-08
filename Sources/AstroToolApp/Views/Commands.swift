@@ -79,7 +79,7 @@ struct AstroToolCommands: Commands {
             // R10 review: renumbered ⌘1-⌘9 to match `SidebarView`'s actual
             // top-to-bottom row order exactly (Ma este, Naptár, Felfedezés,
             // then KÖNYVTÁR's Minden célpont/Éjszakák, then ÁLLAPOT's
-            // Kalibráció/Audit/Takarítás, then ESZKÖZÖK's Szenzor) -- the
+            // Kalibráció/Audit/Takarítás, then ESZKÖZÖK's Szenzor-profilok) -- the
             // previous numbering had "Felfedezés" tacked on at the end
             // (⌘9) even though the sidebar already placed it third.
             // R11-T13/F13: this order already mirrors the sidebar's
@@ -99,6 +99,11 @@ struct AstroToolCommands: Commands {
             .keyboardShortcut("2", modifiers: .command)
             Button("Felfedezés") { AppState.shared?.currentPage = .discover }
                 .keyboardShortcut("3", modifiers: .command)
+            // Session-only morning triage: match the sidebar's visibility
+            // rule, and deliberately do not consume a ⌘-number shortcut.
+            if !(AppState.shared?.freshSessionKeys.isEmpty ?? true) {
+                Button("Előző éjszaka") { AppState.shared?.currentPage = .previousNight }
+            }
             Button("Minden célpont") { AppState.shared?.currentPage = .allTargets }
                 .keyboardShortcut("4", modifiers: .command)
             Button("Éjszakák") { AppState.shared?.currentPage = .nights }
@@ -118,7 +123,7 @@ struct AstroToolCommands: Commands {
             // R11-T10/F7: no keyboard shortcut -- ⌘1-9 stays exactly as
             // documented above, unchanged by this new page.
             Button("Trendek") { AppState.shared?.currentPage = .trends }
-            Button("Szenzor") { AppState.shared?.currentPage = .sensor }
+            Button("Szenzor-profilok") { AppState.shared?.currentPage = .sensor }
                 .keyboardShortcut("9", modifiers: .command)
 
             Divider()

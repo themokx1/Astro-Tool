@@ -469,11 +469,13 @@ struct QualitySegment: View {
         ),
         .init(
             title: "FWHM (px)",
-            explanation: "Csillagok félértékszélessége pixelben -- a fókusz élességének mérőszáma, kisebb = élesebb. Mikor hazudik: \"Siril nélkül\" méréskor ez mindig „-”, natív statisztika nem ad FWHM-et."
+            explanation: "Csillagok félértékszélessége pixelben -- a fókusz élességének mérőszáma, kisebb = élesebb. Mikor hazudik: „Siril nélkül” méréskor ez mindig „-”, natív statisztika nem ad FWHM-et.",
+            glossaryTerm: "FWHM"
         ),
         .init(
             title: "Háttér",
-            explanation: "Az égi háttér nyers ADU-szintje a keret medián pixelértékéből. Mikor hazudik: mért szenzor-profil nélkül (Szenzor-profilok oldal) ez csak nyers ADU, nem valódi e⁻/s/″² -- két különböző gain/setup között nem összehasonlítható."
+            explanation: "Az égi háttér nyers ADU-szintje a keret medián pixelértékéből. Mikor hazudik: mért szenzor-profil nélkül (Szenzor-profilok oldal) ez csak nyers ADU, nem valódi e⁻/s/″² -- két különböző gain/setup között nem összehasonlítható.",
+            glossaryTerm: "ADU"
         ),
         .init(
             title: "Szat. %",
@@ -1213,7 +1215,7 @@ fileprivate struct BatchRejectOutliersConfirmSheet: View {
         guard let breakdown = row.breakdown,
               let dominant = breakdown.dominantMetric,
               let entry = breakdown.entries.first(where: { $0.metric == dominant })
-        else { return "n/a" }
+        else { return TDFormat.missingTile }
         return "\(dominant.displayName) (z = \(String(format: "%.1f", entry.zScore)))"
     }
 

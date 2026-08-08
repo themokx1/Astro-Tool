@@ -723,9 +723,9 @@ struct OverviewSegment: View {
         }
     }
 
-    /// R11-T16/F17: per-filter flat status, e.g. "flat: Ha ✓ · OIII —" for a
+    /// R11-T16/F17: per-filter flat status, e.g. "flat: Ha ✓ · OIII ✗" for a
     /// multi-filter mono session -- a filterless (OSC/DSLR) session with
-    /// exactly one bucket collapses to a bare "flat: ✓"/"flat: —" (no
+    /// exactly one bucket collapses to a bare "flat: ✓"/"flat: ✗" (no
     /// invented "(nincs szűrő)" label, same "don't generate fake noise"
     /// rule `CalibAnalyzer.flatCoverage` itself follows). Falls back to the
     /// old raw flat-file count when `flatsByFilter` is empty (no usable
@@ -733,7 +733,7 @@ struct OverviewSegment: View {
     private func flatSummaryText(_ calib: SessionCalibration) -> String {
         guard !calib.flatsByFilter.isEmpty else { return "flat: \(calib.flats.count)" }
         let parts = calib.flatsByFilter.map { entry -> String in
-            let mark = entry.covered ? "✓" : "—"
+            let mark = entry.covered ? "✓" : "✗"
             guard let filter = entry.filter else { return mark }
             return "\(filter) \(mark)"
         }

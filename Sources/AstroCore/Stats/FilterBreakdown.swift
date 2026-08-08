@@ -104,19 +104,25 @@ public enum FilterBreakdownQueries {
         db: Database, config: AstroConfig, target: String, date: String?
     ) throws -> [FilterIntegration] {
         let files = try db.allFiles(includeMissing: false)
+        let lightIDs = files.lazy
+            .filter { $0.target == target && $0.area == .sessions && $0.role == .light }
+            .compactMap(\.id)
+        let meta = try db.fitsMetaBatch(fileIDs: Array(lightIDs))
+        return compute(target: target, date: date, files: files, meta: meta, config: config)
+    }
+
+    /// Snapshot overload used by whole-library aggregators. It preserves
+    /// the public query's filtering/dedup semantics while avoiding another
+    /// `allFiles` + N metadata lookup round-trip for every session.
+    static func compute(
+        target: String, date: String?, files: [FileRecord],
+        meta metaByFileID: [Int64: FITSMetaRecord], config: AstroConfig
+    ) -> [FilterIntegration] {
         var sessionFiles = files.filter { $0.target == target && $0.area == .sessions }
         if let date {
             sessionFiles = sessionFiles.filter { $0.sessionDate == date }
         }
         let sessionLights = sessionFiles.filter { $0.role == .light }
-
-        var metaByFileID: [Int64: FITSMetaRecord] = [:]
-        for file in sessionLights {
-            guard let id = file.id else { continue }
-            if let meta = try db.fitsMeta(fileID: id) {
-                metaByFileID[id] = meta
-            }
-        }
 
         let frameBuckets = FrameSet.lightBuckets(files: sessionLights, meta: metaByFileID, config: config)
         var usable = frameBuckets.usable

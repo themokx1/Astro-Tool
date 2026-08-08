@@ -13,6 +13,10 @@ import SwiftUI
 struct PreviousNightPage: View {
     @Environment(AppState.self) private var appState
     @State private var reviewingSession: ReviewSessionID?
+    @State private var linkingSession: LinkingSession?
+    @State private var stackListingSession: LinkingSession?
+    @State private var noteEditingSession: LinkingSession?
+    @State private var addingTag: AddTagTarget?
 
     private struct ReviewSessionID: Identifiable {
         let target: String
@@ -43,6 +47,18 @@ struct PreviousNightPage: View {
         .sheet(item: $reviewingSession) { session in
             PreviousNightReviewSheet(target: session.target, date: session.date)
         }
+        .sheet(item: $linkingSession) { session in
+            CalibLinkSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $stackListingSession) { session in
+            StackListSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $noteEditingSession) { session in
+            SessionNoteSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $addingTag) { target in
+            AddTagSheet(target: target.target, date: target.date)
+        }
     }
 
     // MARK: - Content
@@ -64,7 +80,7 @@ struct PreviousNightPage: View {
 
     private var header: some View {
         HStack {
-            Text("\(appState.freshSessionKeys.count) friss session az utolsó beolvasás óta")
+            Text("\(appState.previousNightCards.count) friss session az utolsó beolvasás óta")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Spacer()
@@ -89,24 +105,54 @@ struct PreviousNightPage: View {
 
     private func cardView(_ card: PreviousNightCard) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Button {
-                appState.pendingTargetSegment = .sessions
-                appState.pendingSessionSelection = card.date
-                appState.currentPage = .target(card.target)
-            } label: {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(card.displayName).font(.headline)
-                    Text(card.date).font(.subheadline).foregroundStyle(.secondary)
-                    Spacer()
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Button {
+                    appState.pendingTargetSegment = .sessions
+                    appState.pendingSessionSelection = card.date
+                    appState.currentPage = .target(card.target)
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(card.displayName).font(.headline)
+                        Text(card.date).font(.subheadline).foregroundStyle(.secondary)
+                        if card.hasConflict {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.yellow)
+                                .help("az app-jegyzet és a README eltér")
+                        } else if card.hasNotes {
+                            Image(systemName: "note.text")
+                                .foregroundStyle(.secondary)
+                                .help("van session-jegyzet")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+
+                Menu {
+                    SessionActionMenu(
+                        target: card.target, date: card.date, tags: card.tags,
+                        linkingSession: $linkingSession,
+                        stackListingSession: $stackListingSession,
+                        noteEditingSession: $noteEditingSession,
+                        addingTag: $addingTag
+                    )
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
             }
-            .buttonStyle(.plain)
 
             HStack(spacing: 20) {
                 labeledStat("Keretek", "\(card.usableLightCount)")
                 labeledStat("Integráció", TDFormat.hm(card.integrationSeconds))
-                labeledStat("FWHM″", fwhmText(card))
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text(fwhmText(card)).font(.subheadline).bold()
+                        LibraryPercentileDot(result: fwhmPercentile(card), unit: "″")
+                    }
+                    Text("FWHM″").font(.caption2).foregroundStyle(.secondary)
+                }
             }
 
             if let filterText = TDFormat.filterBreakdownSummary(card.filterBreakdown) {
@@ -125,6 +171,11 @@ struct PreviousNightPage: View {
                 Button("Átnézés…") { reviewingSession = ReviewSessionID(target: card.target, date: card.date) }
                     .disabled(appState.isBusy || card.ratedFrameCount == 0)
                     .help(card.ratedFrameCount == 0 ? "Előbb pontozd a sessiont" : "")
+                if card.ratedFrameCount == 0 {
+                    Text("Előbb pontozd a session light frame-jeit.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Button("Éjszaka-riport") { appState.exportNightReport(target: card.target, date: card.date) }
                     .disabled(appState.isBusy)
             }
@@ -145,6 +196,14 @@ struct PreviousNightPage: View {
         if let arcsec = card.medianFWHMArcsec { return String(format: "%.2f", arcsec) }
         if let px = card.medianFWHMPixels { return String(format: "%.2f px", px) }
         return TDFormat.missingTile
+    }
+
+    private func fwhmPercentile(_ card: PreviousNightCard) -> LibraryPercentileResult? {
+        guard let value = card.medianFWHMArcsec else { return nil }
+        let values = appState.nights?.compactMap(\.medianFWHMArcsec)
+            ?? appState.libraryFWHMArcsecBaseline
+            ?? []
+        return LibraryPercentiles.evaluate(value: value, allValues: values, higherIsBetter: false)
     }
 
     @ViewBuilder

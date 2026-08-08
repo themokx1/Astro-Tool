@@ -13,6 +13,21 @@ import Foundation
 /// reuses that verbatim rather than guessing at a dark-frame count of its
 /// own that no query here actually computes.
 public enum CalibShoppingList {
+    /// Stable JSON envelope for the date/site-specific CLI report. Keeping
+    /// the context beside `items` makes an empty result useful too: it says
+    /// which night and observing site were actually evaluated.
+    public struct Report: Codable, Sendable, Equatable {
+        public var night: String
+        public var site: String?
+        public var items: [Item]
+
+        public init(night: String, site: String?, items: [Item]) {
+            self.night = night
+            self.site = site
+            self.items = items
+        }
+    }
+
     /// One shopping-list line: the combo (dark exposure/temp), which of
     /// tonight's targets would actually use it, and the existing
     /// `CalibNeed.todo` instruction text.

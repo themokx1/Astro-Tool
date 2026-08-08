@@ -337,15 +337,18 @@ struct NightsPage: View {
             // already has -- this column falls back to a pixel value (see
             // `fwhmText`) exactly when there's no pixel-scale metadata to
             // convert with, i.e. "nincs pixelskála".
-            explanation: "A session kerete(i) félértékszélessége ívmásodpercben (pixelméret+fókusz ismeretében) vagy pixelben, ha nincs pixelskála a konverzióhoz. Mikor hazudik: pontozás nélkül „-”; „Siril nélkül” pontozásnál is mindig „-”. A színes pötty a könyvtárad saját eloszlásához mérve mutatja a session helyét (zöld = jobbik harmad, sárga = középső, narancs = leggyengébb) -- 6 összehasonlítható session alatt nincs pötty."
+            explanation: "A session kerete(i) félértékszélessége ívmásodpercben (pixelméret+fókusz ismeretében) vagy pixelben, ha nincs pixelskála a konverzióhoz. Mikor hazudik: pontozás nélkül „-”; „Siril nélkül” pontozásnál is mindig „-”. A pötty a könyvtárad saját eloszlásához méri a sessiont (zöld = jobbik harmad, sárga = középső, narancs = leggyengébb); 6 összehasonlítható session alatt semleges szürke és kiírja a mintaszámot.",
+            glossaryTerm: "FWHM"
         ),
         .init(
             title: "Háttér e⁻/s/″²",
-            explanation: "A session égi hátterének valódi elektron/másodperc/ívmásodperc² rátája. Mikor hazudik: mért szenzor-profil nélkül (Szenzor-profilok oldal) ez nem számolható, „-” marad."
+            explanation: "A session égi hátterének valódi elektron/másodperc/ívmásodperc² rátája. Mikor hazudik: mért szenzor-profil nélkül (Szenzor-profilok oldal) ez nem számolható, „-” marad.",
+            glossaryTerm: "e⁻/s/″²"
         ),
         .init(
             title: "Hatékonyság",
-            explanation: "A session tényleges integrációs ideje a light-keretek első és utolsó felvétele közti ablakhoz mérve, százalékban. Mikor hazudik: „-” marad, ha nincs elég értelmezhető DATE-OBS időbélyeg a keretek fejléceiben. Ugyanaz a percentilis-pötty, mint a FWHM″ oszlopnál."
+            explanation: "A session tényleges integrációs ideje a light-keretek első és utolsó felvétele közti ablakhoz mérve, százalékban. Mikor hazudik: „-” marad, ha nincs elég értelmezhető DATE-OBS időbélyeg a keretek fejléceiben. Ugyanaz a percentilis-pötty, mint a FWHM″ oszlopnál.",
+            glossaryTerm: "Hatékonyság (duty cycle)"
         ),
     ]
 

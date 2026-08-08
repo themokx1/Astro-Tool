@@ -146,9 +146,9 @@
     <p class="tabname">Sidebar · feltételes (csak friss anyagnál), ⌘-gyorsbillentyű nélkül</p>
     <ul class="flist">
       <li><strong>Reggeli triage</strong> — csak akkor látszik a sidebarban, ha a legutóbbi beolvasás új vagy frissült light-fájlt talált; a jelvény a friss sessionök számát mutatja.</li>
-      <li><strong>Session-kártyák</strong> — célpont + dátum (kattintva a célpont Sessionök szegmensére ugrik), keretszám, integráció, szűrő-bontás, medián FWHM″, Hűtés/Fókusz verdikt, kiugró-arány (pontozatlan sessionnél "még nincs pontozva").</li>
-      <li><strong>Kártyánkénti gombok</strong> — Pontozás, Átnézés… (keret-átnéző csak erre a sessionre), Éjszaka-riport.</li>
-      <li><strong>"Új sessionök pontozása"</strong> — egy gombbal lefuttatja a pontozást minden friss sessionre, megerősítés nélkül.</li>
+      <li><strong>Session-kártyák</strong> — célpont + dátum (kattintva a célpont Sessionök szegmensére ugrik), jegyzet-/ütközésjelzés, keretszám, integráció, szűrő-bontás, medián FWHM″ saját-könyvtári percentilispöttyel, Hűtés/Fókusz verdikt, kiugró-arány (pontozatlan sessionnél "még nincs pontozva").</li>
+      <li><strong>Kártyánkénti gombok és közös session-menü</strong> — Pontozás, Átnézés… (keret-átnéző csak erre a sessionre), Éjszaka-riport; a ⋯ menü ugyanazt a kalibráció/stack/jegyzet/címke műveletsort adja, mint az Éjszakák és Sessionök táblák.</li>
+      <li><strong>"Új sessionök pontozása"</strong> — egy gombbal lefuttatja a pontozást minden friss sessionre, megerősítés nélkül; megszakítás után is újraolvassa a már ténylegesen elkészült eredményeket.</li>
       <li><strong>Opt-in automatikus beolvasás</strong> — a Beállítások Könyvtár fülén bekapcsolható, hogy a kötet csatlakozásakor magától elinduljon a beolvasás (alapból kikapcsolva).</li>
     </ul>
   </div>
@@ -195,9 +195,9 @@
     <p class="tabname">Sidebar · ⌘6 (ÁLLAPOT szakasz)</p>
     <ul class="flist">
       <li><strong>Lefedettség szegmens</strong> — mely expozíció/hőmérséklet/kamera/gain kombinációhoz van dark/flat/bias, és mihez kell még; stabil sor-azonosítókkal (kombináció-alapú, nem véletlen), így a jobb-klikk menü és a kiválasztás megbízható.</li>
-      <li><strong>Flat-lefedettség szűrőnként</strong> — a lefedettség-tábla "Szűrő" oszlopa mono/szűrőkerekes célpontnál session FILTER (+ gyújtótáv) kombinációnként jelzi, van-e friss flat (a session saját <code>flats/</code> mappájából vagy a kalibrációs könyvtárból); a Célpont-részletek kalibráció-kártyáján soronként "flat: Ha ✓ · OIII —"; hiányzó flat külön Teendő-kártyaként.</li>
+      <li><strong>Flat-lefedettség szűrőnként</strong> — a lefedettség-tábla "Szűrő" oszlopa mono/szűrőkerekes célpontnál session FILTER (+ gyújtótáv) kombinációnként jelzi, van-e friss flat (a session saját <code>flats/</code> mappájából vagy a kalibrációs könyvtárból); a Célpont-részletek kalibráció-kártyáján soronként "flat: Ha ✓ · OIII ✗"; hiányzó flat külön Teendő-kártyaként.</li>
       <li><strong>Egészség szegmens</strong> — flat-fegyelem (rotátor-állás egyezés), bias-készlet és dark-master frissesség egy átfogó jelentésben.</li>
-      <li><strong>Kalibráció-linkelés</strong> — a megfelelő mesterkereteket hardlinkeli a session mellé, előnézettel (dry-run) és jóváhagyással.</li>
+      <li><strong>Kalibráció-linkelés</strong> — a hiány hordozza a pontos érintett sessionöket; egyetlen session közvetlenül, több érintett explicit választóból nyitható. A megfelelő mesterkereteket előnézettel és jóváhagyással hardlinkeli, és innen közvetlenül megnyitható a Beállítások ▸ Kalibráció fül.</li>
     </ul>
   </div>
 
@@ -220,7 +220,7 @@
     <p class="tabname">Sidebar · ÁLLAPOT szakasz (Kalibráció/Audit/Takarítás után), ⌘-gyorsbillentyű nélkül</p>
     <ul class="flist">
       <li><strong>Időtartomány-picker</strong> — 6 hónap / 1 év / 3 év / Mind (segmented), a lap tetején azonnal.</li>
-      <li><strong>Három idősor-chart</strong> — medián FWHM″ (a képpont-alapú becslés eltérő jelöléssel — üres karika —, ha nincs képpont-skála), háttér e⁻/s/□″, hatékonyság% (duty cycle), session-önként pont + 5-pontos mozgóátlag-vonal.</li>
+      <li><strong>Három idősor-chart</strong> — medián FWHM″ (a képpont-alapú becslés eltérő jelöléssel — üres karika —, ha nincs képpont-skála), háttér e⁻/s/″², hatékonyság% (duty cycle), session-önként pont + 5-pontos mozgóátlag-vonal.</li>
       <li><strong>Pontra kattintás</strong> — az adott session megnyitása a célpont-oldal Sessionök szegmensén, előválasztva.</li>
       <li><strong>Toolbar szűrő-menü</strong> — setup-fingerprint (a meglévő EquipmentProfile-kombinációkból) és célpont-típus (wide-field/deep-sky/mind) szűrés.</li>
       <li><strong>Kevés adat jelzés</strong> — 5 session alatt a szűrt eredményben magyarázó üres állapot, szűrők törlésére felkínáló gombbal.</li>
@@ -254,7 +254,7 @@
       <li><strong>Kalibráció fül</strong> — a lefedettség-illesztés szabályai (gain/offset/kamera/binning egyezés, elévülési határ), magyarázó captionökkel.</li>
       <li><strong>Pontozás & expozíció fül</strong> — a pontozó metrika-súlyok, kiugró-küszöb, Siril útvonala, workerek száma; Siril-hiány esetén piros "Siril nem található" státusz + "Mi a Siril?" súgó-sheet (letöltés-link, mi megy nélküle) — ugyanez a Súgó menüből ("A Sirilről…") és a Minőség szegmens Siril-figyelmeztetéséből is elérhető.</li>
       <li><strong>Könyvtár-szabályok fül</strong> — a fájlnév/mappastruktúra-felismerés finomhangolása + célpontonkénti wide-field/deep-sky besorolás felülbírálás-lista (ugyanez jobb-klikkből is elérhető a célpont-táblázatokban).</li>
-      <li><strong>Súgó menü</strong> — Fogalomtár, Mappastruktúra súgó, "A Sirilről…", Tutorial, CLI-referencia.</li>
+      <li><strong>Súgó menü</strong> — Mappastruktúra súgó, Fogalomtár (a metrika-popoverekből konkrét szócikkre is nyitható), "A Sirilről…", "Első lépések…", Tutorial, CLI-referencia.</li>
     </ul>
   </div>
 
@@ -270,7 +270,8 @@
         <li><code>panels</code> — egy mozaik-célpont paneljeinek WCS-alapú integrációs követése.</li>
         <li><code>health</code> — éjszakai hardver-egészség (hűtő-stabilitás, fókusz-trend) egy session-re.</li>
         <li><code>solve</code> — koordináta nélküli (pl. wide-field CR3) célpontok plate-solve-olása Sirillel.</li>
-        <li><code>sensor</code> — mért szenzor-profilok mérése/listázása (a Kalibráció fül "Szenzor-profilok" táblázata ugyanezt olvassa).</li>
+        <li><code>sensor</code> — mért szenzor-profilok mérése/listázása (az önálló Szenzor-profilok oldal ugyanezt olvassa).</li>
+        <li><code>calib --shopping</code> — dátum- és helyszínérzékeny kalibrációs bevásárlólista a ténylegesen látható célpontokhoz.</li>
         <li><code>ingest-dss</code> — DeepSkyStacker metrikák/döntések beolvasása (az app-gomb ugyanezt hívja).</li>
         <li><code>config</code> — a jelenleg érvényes konfiguráció vagy a <code>config.json</code> útjának kiírása.</li>
       </ul>

@@ -4,7 +4,7 @@ import SwiftUI
 
 /// R11-T10/F7 "Trendek" page (sidebar ÁLLAPOT section, no `⌘`-shortcut):
 /// long-term session-level time series across every target -- median
-/// FWHM″ (px-fallback points marked distinctly), background e⁻/s/□″, and
+/// FWHM″ (px-fallback points marked distinctly), background e⁻/s/″², and
 /// hatékonyság% (duty cycle), each a point-plus-moving-average chart.
 /// Backed by `AppState.trendPoints` (`TrendQueries.points`, loaded
 /// UNFILTERED exactly once) -- every control below (time range, setup,
@@ -206,9 +206,9 @@ struct TrendsPage: View {
                         onSelect: openSession
                     )
                     TrendChartCard(
-                        title: "Háttér (e⁻/s/□″)",
+                        title: "Háttér (e⁻/s/″²)",
                         points: backgroundChartPoints,
-                        yAxisLabel: "e⁻/s/□″",
+                        yAxisLabel: "e⁻/s/″²",
                         valueFormat: { String(format: "%.4f", $0) },
                         onSelect: openSession
                     )

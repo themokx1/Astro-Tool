@@ -212,7 +212,8 @@ struct SensorProfileList: View {
         ),
         .init(
             title: "EGAIN",
-            explanation: "Elektron/ADU átváltási tényező, a FITS-fejlécből (EGAIN kulcs) vagy a BIAS-keretek szórásából becsülve. Mikor hazudik: „-” ha sem a fejléc, sem a becslés nem ad értéket; egy hibás gain-beállítás a kamerán ezt is elcsúsztatja."
+            explanation: "Elektron/ADU átváltási tényező, a FITS-fejlécből (EGAIN kulcs) vagy a BIAS-keretek szórásából becsülve. Mikor hazudik: „-” ha sem a fejléc, sem a becslés nem ad értéket; egy hibás gain-beállítás a kamerán ezt is elcsúsztatja.",
+            glossaryTerm: "EGAIN"
         ),
     ]
 

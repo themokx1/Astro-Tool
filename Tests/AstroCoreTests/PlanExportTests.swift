@@ -39,7 +39,7 @@ private func makePlan(
 
 @Test func renderCSVStartsWithTheSpecColumnHeader() throws {
     let csv = PlanExport.renderCSV([])
-    #expect(csv.hasPrefix("target,ra_deg,dec_deg,window_start,window_end,max_alt_deg,moon_illum,verdict,filter_suggestion\n"))
+    #expect(csv.hasPrefix("target,ra_deg,dec_deg,window_start,window_end,max_alt_deg,moon_illum,verdict,filter_suggestion,night,filter,filter_missing_hours,missing_hours\n"))
 }
 
 @Test func renderCSVUsesTheRawTargetNameNotDisplayName() throws {
@@ -76,6 +76,30 @@ private func makePlan(
     let plan = makePlan(filterGoals: goals, filterAdvice: advice)
     let csv = PlanExport.renderCSV([plan])
     #expect(csv.contains("Ha (-4,0h)"))
+}
+
+@Test func renderCSVAddsMachineReadableNightFilterAndDeficits() throws {
+    let goals = [
+        FilterIntegration(filter: "Ha", usableFrameCount: 10, integrationSeconds: 8 * 3600, goalSeconds: 12 * 3600, missingSeconds: 4 * 3600),
+    ]
+    let advice = FilterAdvisor.advice(
+        moonIlluminationPercent: 82, moonSeparationDeg: 90,
+        filterGoals: goals, narrowbandFilters: AstroConfig().plan.narrowbandFilters
+    )
+    var plan = makePlan(usableIntegrationSeconds: 3600, filterGoals: goals, filterAdvice: advice)
+    plan.goalSeconds = 3 * 3600
+
+    let csv = PlanExport.renderCSV([plan], night: "2026-08-10")
+    // The human suggestion contains a Hungarian decimal comma and is
+    // therefore correctly CSV-quoted; assert the additive raw tail without
+    // naively splitting inside that quoted field.
+    #expect(csv.contains("\"Ha (-4,0h)\",2026-08-10,Ha,4.00,2.00\n"))
+}
+
+@Test func renderCSVLeavesMachineDeficitsBlankWhenNoGoalsExist() throws {
+    let fields = PlanExport.renderCSV([makePlan()], night: "2026-08-10")
+        .components(separatedBy: "\n")[1].components(separatedBy: ",")
+    #expect(fields[10...12].allSatisfy { $0.isEmpty })
 }
 
 @Test func renderCSVLeavesFilterSuggestionEmptyWithoutFilterGoals() throws {

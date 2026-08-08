@@ -174,7 +174,7 @@
     </div>
     <div class="cmd">
       <div class="name">trends</div>
-      <div class="desc">Hosszú távú, session-szintű idősor célpontokon átívelve: medián FWHM (ívmásodperc, vagy képpont <code>is_pixel_fallback=true</code>-val, ha nincs képpont-skála), háttér e⁻/s/□″, vagy hatékonyság% (duty cycle) — <code>--metric</code>-kel választva, dátum+érték párokban, legrégebbi elöl. <code>--setup</code> egy konkrét EquipmentProfile setup-fingerprint leírásra szűkít; <code>--from</code>/<code>--to</code> a session kanonikus kezdő-dátumára.</div>
+      <div class="desc">Hosszú távú, session-szintű idősor célpontokon átívelve: medián FWHM (ívmásodperc, vagy képpont <code>is_pixel_fallback=true</code>-val, ha nincs képpont-skála), háttér e⁻/s/″², vagy hatékonyság% (duty cycle) — <code>--metric</code>-kel választva, dátum+érték párokban, legrégebbi elöl. <code>--setup</code> egy konkrét EquipmentProfile setup-fingerprint leírásra szűkít; <code>--from</code>/<code>--to</code> a session kanonikus kezdő-dátumára.</div>
       <pre class="example">astrotool trends --metric fwhm --from 2026-01-01 --json</pre>
     </div>
     <div class="cmd">
@@ -239,8 +239,8 @@ astrotool sensor --history --json</pre>
     <h2>Kalibráció</h2>
     <div class="cmd">
       <div class="name">calib</div>
-      <div class="desc">Kalibrációs lefedettség-hiánylista (mely expozíció/hőmérséklet kombinációhoz kell még dark, mely szűrőhöz kell még flat); <code>--health</code> a flat-higiénia riporthoz, <code>--flats</code> csak a szűrőnkénti flat-lefedettséghez (<code>--json</code> mindkettővel kombinálható).</div>
-      <pre class="example">astrotool calib --flats</pre>
+      <div class="desc">Kalibrációs lefedettség-hiánylista (mely expozíció/hőmérséklet kombinációhoz kell még dark, mely szűrőhöz kell még flat); <code>--health</code> a flat-higiénia riporthoz, <code>--flats</code> csak a szűrőnkénti flat-lefedettséghez. A <code>--shopping [--date YYYY-MM-DD] [--site NÉV]</code> kizárólag az adott éjszaka látható célpontjaihoz szükséges hiányokat adja; JSON-ban a <code>night</code>, <code>site</code> és <code>items</code> mezőket kapod. A három mód egymással nem kombinálható.</div>
+      <pre class="example">astrotool calib --shopping --date 2026-03-15 --site "Nyári ház" --json</pre>
     </div>
     <div class="cmd">
       <div class="name">match</div>
@@ -263,7 +263,7 @@ astrotool sensor --history --json</pre>
     <h2>Tervezés</h2>
     <div class="cmd">
       <div class="name">plan</div>
-      <div class="desc">Ma esti célpont-rangsor (kulmináció, max magasság, láthatósági ablak, Hold-zavarás, Hold-tudatos szűrő-ajánlás); <code>--month</code> a 30 éjszakás tervező-naptárhoz. <code>--out PATH|-</code> a napi tervet CSV-ként exportálja (target, ra_deg, dec_deg, window_start, window_end, max_alt_deg, moon_illum, verdict, filter_suggestion oszlopokkal); <code>--out -</code> stdoutra írja. Nem használható <code>--month</code>-tal együtt. <code>--site &lt;név&gt;</code> a <code>config.json</code> <code>sites</code> listájából választ helyszínt (a beállított alapértelmezett helyett) — ismeretlen névre hiba a konfigurált nevek felsorolásával; ha nincs <code>sites</code> konfigurálva, a régi <code>site</code>/FITS-medián automatika érvényes változatlanul.</div>
+      <div class="desc">Ma esti célpont-rangsor (kulmináció, max magasság, láthatósági ablak, Hold-zavarás, Hold-tudatos szűrő-ajánlás); <code>--month</code> a 30 éjszakás tervező-naptárhoz. <code>--out PATH|-</code> a napi tervet CSV-ként exportálja; a meglévő mezők mellett gépi <code>night</code>, nyers <code>filter</code>, <code>filter_missing_hours</code> és <code>missing_hours</code> oszlopokkal. <code>--out -</code> stdoutra írja, és nem használható <code>--month</code>-tal együtt. <code>--site &lt;név&gt;</code> a <code>config.json</code> <code>sites</code> listájából választ helyszínt (a beállított alapértelmezett helyett) — ismeretlen névre hiba a konfigurált nevek felsorolásával; ha nincs <code>sites</code> konfigurálva, a régi <code>site</code>/FITS-medián automatika érvényes változatlanul.</div>
       <pre class="example">astrotool plan --site "Nyári ház" --out plan.csv</pre>
     </div>
     <div class="cmd">

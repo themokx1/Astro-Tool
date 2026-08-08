@@ -1800,6 +1800,43 @@ private func sessionFile(
     #expect(profile.estimatorVersion == nil)
 }
 
+@Test func migrateV9ToV10ResumesAPartiallyAppliedSchemaAndReopensCleanly() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-migrate-v9-partial-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("partial.sqlite").path
+
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.exec(Database.schemaSQLv1)
+        try raw.exec(Database.schemaSQLv2)
+        try raw.exec(Database.schemaSQLv3)
+        try raw.exec(Database.schemaSQLv4)
+        try raw.exec(Database.schemaSQLv5)
+        try raw.exec(Database.schemaSQLv6)
+        try raw.exec(Database.schemaSQLv7)
+        try raw.exec(Database.schemaSQLv8)
+        try raw.exec(Database.schemaSQLv9)
+        try raw.run("INSERT INTO schema_version(version) VALUES (9);")
+        try raw.exec("ALTER TABLE sensor_profile ADD COLUMN estimator_version INTEGER;")
+        try raw.exec(
+            """
+            CREATE TABLE sensor_profile_history(
+              id INTEGER PRIMARY KEY, camera TEXT NOT NULL, gain REAL, offset REAL,
+              bias_level_adu REAL, read_noise_e REAL, dark_rate_e_per_s REAL, dark_temp_c REAL,
+              egain REAL, measured_at REAL NOT NULL, estimator_version INTEGER);
+            """
+        )
+    }
+
+    _ = try Database(path: path)
+    let reopened = try Database(path: path)
+    var version: Int64 = 0
+    try reopened.db.query("SELECT version FROM schema_version LIMIT 1;") { version = $0.int64(0) ?? 0 }
+    #expect(version == 10)
+}
+
 @Test func insertSensorProfileHistoryThenQueryReturnsAscendingByMeasuredAt() throws {
     let database = try Database(path: ":memory:")
     try database.insertSensorProfileHistory(

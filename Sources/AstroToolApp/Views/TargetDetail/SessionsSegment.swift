@@ -43,11 +43,13 @@ struct SessionsSegment: View {
     private static let sessionMetricInfo: [MetricInfoButton.Metric] = [
         .init(
             title: "FWHM″",
-            explanation: "A session kerete(i) félértékszélessége ívmásodpercben (pixelméret+fókusz ismeretében) vagy pixelben. Mikor hazudik: pontozás nélkül „-”; \"Siril nélkül\" pontozásnál is mindig „-”. A színes pötty a könyvtárad saját eloszlásához mérve mutatja a session helyét (zöld = jobbik harmad, sárga = középső, narancs = leggyengébb) -- 6 összehasonlítható session alatt nincs pötty, egyébként rövid háttér-betöltés után jelenik meg."
+            explanation: "A session kerete(i) félértékszélessége ívmásodpercben (pixelméret+fókusz ismeretében) vagy pixelben. Mikor hazudik: pontozás nélkül „-”; „Siril nélkül” pontozásnál is mindig „-”. A pötty a könyvtárad saját eloszlásához méri a sessiont (zöld = jobbik harmad, sárga = középső, narancs = leggyengébb); 6 összehasonlítható session alatt semleges szürke és kiírja a mintaszámot, egyébként rövid háttér-betöltés után jelenik meg.",
+            glossaryTerm: "FWHM"
         ),
         .init(
             title: "Háttér e⁻/s/″²",
-            explanation: "A session égi hátterének valódi elektron/másodperc/ívmásodperc² rátája. Mikor hazudik: mért szenzor-profil nélkül (Szenzor-profilok oldal) ez nem számolható, „-” marad."
+            explanation: "A session égi hátterének valódi elektron/másodperc/ívmásodperc² rátája. Mikor hazudik: mért szenzor-profil nélkül (Szenzor-profilok oldal) ez nem számolható, „-” marad.",
+            glossaryTerm: "e⁻/s/″²"
         ),
         .init(
             title: "Rang",
@@ -168,7 +170,7 @@ struct SessionsSegment: View {
                     .width(min: 80, ideal: 100)
             }
 
-            TableColumn("README") { row in Text(row.detail.hasReadme ? "✓" : TDFormat.missingCell).foregroundStyle(.secondary) }
+            TableColumn("README") { row in readmeCell(row.detail) }
                 .width(min: 50, ideal: 60)
 
             // R10-B7: visible row-actions -- mirrors `contextMenuItems(for:)`
@@ -257,6 +259,17 @@ struct SessionsSegment: View {
     private func backgroundText(for date: String) -> String {
         guard let value = qualityByDate[date]?.backgroundEPerSecPerArcsec2 else { return TDFormat.missingCell }
         return String(format: "%.4f", value)
+    }
+
+    @ViewBuilder
+    private func readmeCell(_ detail: SessionDetail) -> some View {
+        if detail.hasConflict {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+                .help("az app-jegyzet és a README eltér")
+        } else {
+            Text(detail.hasReadme ? "✓" : TDFormat.missingCell).foregroundStyle(.secondary)
+        }
     }
 
     @ViewBuilder

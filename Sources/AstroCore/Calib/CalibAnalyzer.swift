@@ -50,6 +50,9 @@ public struct CalibNeed: Codable, Sendable, Equatable {
     public var lightCount: Int
     /// Sorted, distinct targets whose lights need this combo.
     public var targets: [String]
+    /// Sorted, distinct target/date sessions affected by this exact need.
+    /// Legacy JSON predating R12-U5 decodes this as an empty list.
+    public var sessions: [ScanSummary.SessionKey]
     /// Directory path of the matched master, e.g.
     /// `"calibration_library/darks/300sec_-10deg"` -- `nil` when no master
     /// covers this combo at all.
@@ -99,7 +102,8 @@ public struct CalibNeed: Codable, Sendable, Equatable {
         requiredGain: Double? = nil,
         requiredCamera: String? = nil,
         mismatchReasons: [String] = [],
-        filter: String? = nil
+        filter: String? = nil,
+        sessions: [ScanSummary.SessionKey] = []
     ) {
         self.kind = kind
         self.exposureSeconds = exposureSeconds
@@ -114,6 +118,31 @@ public struct CalibNeed: Codable, Sendable, Equatable {
         self.requiredCamera = requiredCamera
         self.mismatchReasons = mismatchReasons
         self.filter = filter
+        self.sessions = sessions
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, exposureSeconds, tempC, lightCount, targets, sessions
+        case matchedMasterPath, masterAgeDays, isStale, todo, requiredGain
+        case requiredCamera, mismatchReasons, filter
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(FrameRole.self, forKey: .kind)
+        exposureSeconds = try c.decode(Double.self, forKey: .exposureSeconds)
+        tempC = try c.decodeIfPresent(Double.self, forKey: .tempC)
+        lightCount = try c.decode(Int.self, forKey: .lightCount)
+        targets = try c.decode([String].self, forKey: .targets)
+        sessions = try c.decodeIfPresent([ScanSummary.SessionKey].self, forKey: .sessions) ?? []
+        matchedMasterPath = try c.decodeIfPresent(String.self, forKey: .matchedMasterPath)
+        masterAgeDays = try c.decodeIfPresent(Int.self, forKey: .masterAgeDays)
+        isStale = try c.decode(Bool.self, forKey: .isStale)
+        todo = try c.decodeIfPresent(String.self, forKey: .todo)
+        requiredGain = try c.decodeIfPresent(Double.self, forKey: .requiredGain)
+        requiredCamera = try c.decodeIfPresent(String.self, forKey: .requiredCamera)
+        mismatchReasons = try c.decodeIfPresent([String].self, forKey: .mismatchReasons) ?? []
+        filter = try c.decodeIfPresent(String.self, forKey: .filter)
     }
 }
 
@@ -256,7 +285,8 @@ public enum CalibAnalyzer {
                     todo: todo,
                     requiredGain: hasMismatch ? key.gain : nil,
                     requiredCamera: hasMismatch ? key.camera : nil,
-                    mismatchReasons: outcome.mismatchReasons
+                    mismatchReasons: outcome.mismatchReasons,
+                    sessions: info.sessions.sorted { ($0.date, $0.target) < ($1.date, $1.target) }
                 )
             )
         }
@@ -435,6 +465,7 @@ public enum CalibAnalyzer {
     private struct GroupInfo {
         var count = 0
         var targets = Set<String>()
+        var sessions = Set<ScanSummary.SessionKey>()
     }
 
     /// Groups scanned session lights by rounded (exptime, setTemp, gain,
@@ -477,6 +508,9 @@ public enum CalibAnalyzer {
             info.count += 1
             if let target = file.target {
                 info.targets.insert(target)
+                if let date = file.sessionDate {
+                    info.sessions.insert(.init(target: target, date: date))
+                }
             }
             groups[key] = info
         }
@@ -697,13 +731,13 @@ public enum CalibAnalyzer {
             }
 
             if let tempC {
-                return "készíts \(expStr) s / \(formatted(tempC)) °C darkot (\(detail))"
+                return "Készíts \(expStr) s / \(formatted(tempC)) °C darkot (\(detail))"
             }
-            return "készíts \(expStr) s darkot (\(detail))"
+            return "Készíts \(expStr) s darkot (\(detail))"
         }
 
         guard isStale, let ageDays else { return nil }
-        return "a(z) \(matched.dirName) dark \(ageDays) napos — készíts frisset"
+        return "Készíts friss \(matched.dirName) darkot (a jelenlegi \(ageDays) napos)"
     }
 
     /// Trims a `Double` to its shortest decimal form for display: `300.0` ->
@@ -1072,6 +1106,9 @@ public enum CalibAnalyzer {
 
         let affected = sorted.filter { flatRank($0.result.status) == worstRank && worstRank != 2 }
         let affectedTargets = Set(affected.map(\.cell.target)).sorted()
+        let affectedSessions = Set(affected.map {
+            ScanSummary.SessionKey(target: $0.cell.target, date: $0.cell.date)
+        }).sorted { ($0.date, $0.target) < ($1.date, $1.target) }
         let affectedSessionCount = affected.count
 
         var mismatchReasons: [String] = []
@@ -1143,7 +1180,8 @@ public enum CalibAnalyzer {
             requiredGain: nil,
             requiredCamera: nil,
             mismatchReasons: mismatchReasons,
-            filter: filterDisplay
+            filter: filterDisplay,
+            sessions: affectedSessions
         )
     }
 
@@ -1161,15 +1199,15 @@ public enum CalibAnalyzer {
         switch worstRank {
         case 0:
             if let filterDisplay {
-                return "Hiányzó flat: \(filterDisplay) — \(affectedSessionCount) session érintett"
+                return "Készíts \(filterDisplay) flatet — \(affectedSessionCount) session érintett"
             }
-            return "Hiányzó flat — \(affectedSessionCount) session érintett"
+            return "Készíts flatet — \(affectedSessionCount) session érintett"
         case 1:
             let ageText = ageDays.map(String.init) ?? "?"
             if let filterDisplay {
-                return "a(z) \(filterDisplay) flat \(ageText) napos — készíts frisset (\(affectedSessionCount) session érintett)"
+                return "Készíts friss \(filterDisplay) flatet (a jelenlegi \(ageText) napos; \(affectedSessionCount) session érintett)"
             }
-            return "a flat \(ageText) napos — készíts frisset (\(affectedSessionCount) session érintett)"
+            return "Készíts friss flatet (a jelenlegi \(ageText) napos; \(affectedSessionCount) session érintett)"
         default:
             return nil
         }

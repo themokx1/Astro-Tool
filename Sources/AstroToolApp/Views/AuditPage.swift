@@ -67,7 +67,7 @@ struct AuditPage: View {
     }
 
     private var cleanupBytesText: String {
-        Self.formatBytes(appState.cleanupSummary?.grandTotalBytes ?? 0)
+        TDFormat.bytes(appState.cleanupSummary?.grandTotalBytes ?? 0)
     }
 
     /// R11-T14/F9: whether EITHER a full audit OR a standalone
@@ -206,6 +206,7 @@ struct AuditPage: View {
                     // the cross-segment counts entirely just because no
                     // audit has run yet.
                     tiles
+                    segmentPicker
                     cleanableSegment
                 } else {
                     noAuditYetState
@@ -220,19 +221,7 @@ struct AuditPage: View {
                 // `currentPage` -- see that property's own doc comment. No
                 // separate binding needed anymore to also keep `currentPage`
                 // in sync (N8, R9 round 3's original fix for this).
-                Picker("Szegmens", selection: $appState.auditSegment) {
-                    Text("Hibák (\(errorFindings.count))").tag(AppState.AuditSegment.errors)
-                    Text("Gyanús (\(suspiciousFindings.count))").tag(AppState.AuditSegment.suspicious)
-                    Text("Takarítható (\(cleanupFileCount) fájl · \(cleanupBytesText))").tag(AppState.AuditSegment.cleanable)
-                    Text("Szándékos (\(intentionalFindings.count))").tag(AppState.AuditSegment.intentional)
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 620)
-                .onChange(of: appState.auditSegment) {
-                    // Categories differ per segment -- a leftover selection
-                    // from Hibák would silently empty out Gyanús.
-                    selectedCategories = []
-                }
+                segmentPicker
 
                 // R11-T8/F6: "+3 új · 5 megoldódott · 12 változatlan" --
                 // absent entirely when there's no previous run to compare
@@ -340,6 +329,19 @@ struct AuditPage: View {
         .sheet(isPresented: $showVerifyConfirmation) {
             VerifyConfirmationSheet(coverage: verifyCoverage)
         }
+    }
+
+    private var segmentPicker: some View {
+        @Bindable var appState = appState
+        return Picker("Szegmens", selection: $appState.auditSegment) {
+            Text("Hibák (\(errorFindings.count))").tag(AppState.AuditSegment.errors)
+            Text("Gyanús (\(suspiciousFindings.count))").tag(AppState.AuditSegment.suspicious)
+            Text("Takarítható (\(cleanupFileCount) fájl · \(cleanupBytesText))").tag(AppState.AuditSegment.cleanable)
+            Text("Szándékos (\(intentionalFindings.count))").tag(AppState.AuditSegment.intentional)
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 620)
+        .onChange(of: appState.auditSegment) { selectedCategories = [] }
     }
 
     // MARK: - Empty states (A.5)
@@ -764,7 +766,7 @@ struct AuditPage: View {
 
             Spacer()
 
-            Text(Self.formatBytes(row.totalBytes))
+            Text(TDFormat.bytes(row.totalBytes))
                 .foregroundStyle(.secondary)
                 .frame(width: 90, alignment: .trailing)
 
@@ -829,10 +831,10 @@ struct AuditPage: View {
 
     private static func storageAreaCaption(_ row: TargetStorage) -> String {
         var parts: [String] = []
-        if row.sessionsBytes > 0 { parts.append("sessions \(formatBytes(row.sessionsBytes))") }
-        if row.stacksBytes > 0 { parts.append("stacks \(formatBytes(row.stacksBytes))") }
-        if row.processedBytes > 0 { parts.append("processed \(formatBytes(row.processedBytes))") }
-        if row.otherBytes > 0 { parts.append("egyéb \(formatBytes(row.otherBytes))") }
+        if row.sessionsBytes > 0 { parts.append("sessions \(TDFormat.bytes(row.sessionsBytes))") }
+        if row.stacksBytes > 0 { parts.append("stacks \(TDFormat.bytes(row.stacksBytes))") }
+        if row.processedBytes > 0 { parts.append("processed \(TDFormat.bytes(row.processedBytes))") }
+        if row.otherBytes > 0 { parts.append("egyéb \(TDFormat.bytes(row.otherBytes))") }
         return parts.joined(separator: " · ")
     }
 
@@ -876,7 +878,7 @@ struct AuditPage: View {
                 HStack(spacing: 8) {
                     Text(
                         "Karanténban: \(state.fileCount) fájl · \(state.batchCount) csomag · "
-                            + "\(Self.formatBytes(state.totalBytes))"
+                            + "\(TDFormat.bytes(state.totalBytes))"
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -923,7 +925,7 @@ struct AuditPage: View {
 
     private func cleanupSizeText(_ row: CleanupRow) -> String {
         guard case .category(let group) = row.kind else { return "" }
-        return Self.formatBytes(group.totalBytes)
+        return TDFormat.bytes(group.totalBytes)
     }
 
     /// Hungarian display label for a `CleanupReport`/audit finding category
@@ -942,9 +944,4 @@ struct AuditPage: View {
         }
     }
 
-    private static func formatBytes(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
-    }
 }

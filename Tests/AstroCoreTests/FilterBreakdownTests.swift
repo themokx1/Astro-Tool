@@ -184,3 +184,21 @@ private struct FilterFixture {
     let breakdown = try FilterBreakdownQueries.breakdown(db: fixture.db, config: fixture.config, target: "DoesNotExist")
     #expect(breakdown.isEmpty)
 }
+
+@Test func snapshotComputeMatchesPublicDateScopedBreakdown() throws {
+    let fixture = try FilterFixture.make()
+    defer { fixture.cleanup() }
+    try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/ha.fit", exptime: 300, filter: "Ha")
+    try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/o.fit", exptime: 60, filter: "OIII")
+    try fixture.scan()
+
+    let files = try fixture.db.allFiles(includeMissing: false)
+    let meta = try fixture.db.fitsMetaBatch(fileIDs: files.compactMap(\.id))
+    let snapshot = FilterBreakdownQueries.compute(
+        target: "T1", date: "2026-01-10", files: files, meta: meta, config: fixture.config
+    )
+    let queried = try FilterBreakdownQueries.breakdown(
+        db: fixture.db, config: fixture.config, target: "T1", date: "2026-01-10"
+    )
+    #expect(snapshot == queried)
+}

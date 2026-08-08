@@ -2545,7 +2545,50 @@ private func writeTrendLightFITS(
     let result = try runCLI(["calib", "--root", root.path])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("flat)"))
-    #expect(result.stdout.contains("Hiányzó flat: OIII"))
+    #expect(result.stdout.contains("Készíts OIII flatet"))
+}
+
+// MARK: - calib --shopping (R12-U5)
+
+@Test func calibShoppingJSONCarriesNightSiteAndEmptyItems() throws {
+    let root = try makeTempRoot("calib-shopping-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
+
+    let result = try runCLI([
+        "calib", "--root", root.path, "--shopping", "--date", "2026-08-10",
+        "--site", "Del", "--json",
+    ])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    let json = try #require(try jsonObject(result.stdout))
+    #expect(json["night"] as? String == "2026-08-10")
+    #expect(json["site"] as? String == "Del")
+    #expect((json["items"] as? [[String: Any]])?.isEmpty == true)
+}
+
+@Test func calibShoppingRejectsUnknownSiteAndConflictingModes() throws {
+    let root = try makeTempRoot("calib-shopping-errors")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
+
+    let unknown = try runCLI(["calib", "--root", root.path, "--shopping", "--site", "Sehol"])
+    #expect(unknown.exitCode == 1)
+    #expect(unknown.stderr.contains("ismeretlen helyszín"))
+
+    let conflict = try runCLI(["calib", "--root", root.path, "--shopping", "--health"])
+    #expect(conflict.exitCode == 1)
+    #expect(conflict.stderr.contains("egyszerre csak egy"))
+}
+
+@Test func calibShoppingHumanHeaderNamesTheRequestedNight() throws {
+    let root = try makeTempRoot("calib-shopping-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
+
+    let result = try runCLI(["calib", "--root", root.path, "--shopping", "--date", "2026-08-10"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("Kalibrációs bevásárlólista — 2026-08-10 éjszakájára"))
+    #expect(result.stdout.contains("Helyszín: Otthon"))
 }
 
 // MARK: - permission errors -> exit 2
@@ -2816,7 +2859,7 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
 
     let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--out", "-"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
-    #expect(result.stdout.hasPrefix("target,ra_deg,dec_deg,window_start,window_end,max_alt_deg,moon_illum,verdict,filter_suggestion\n"))
+    #expect(result.stdout.hasPrefix(PlanExport.csvHeader + "\n"))
     #expect(result.stdout.contains("M31_Andromeda"))
 }
 

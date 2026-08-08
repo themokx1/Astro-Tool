@@ -801,11 +801,51 @@ public final class Database: @unchecked Sendable {
         }
 
         if version < 10 {
-            try db.exec(Self.schemaSQLv10)
-            try backfillSensorProfileHistoryFromExistingProfiles()
-            try db.run("UPDATE schema_version SET version = ?;", bind: [.int(10)])
+            try db.exec("BEGIN IMMEDIATE;")
+            do {
+                if try !columnExists(table: "sensor_profile", column: "estimator_version") {
+                    try db.exec("ALTER TABLE sensor_profile ADD COLUMN estimator_version INTEGER;")
+                }
+                if try !tableExists("sensor_profile_history") {
+                    try db.exec(
+                        """
+                        CREATE TABLE sensor_profile_history(
+                          id INTEGER PRIMARY KEY,
+                          camera TEXT NOT NULL, gain REAL, offset REAL,
+                          bias_level_adu REAL, read_noise_e REAL, dark_rate_e_per_s REAL, dark_temp_c REAL,
+                          egain REAL, measured_at REAL NOT NULL, estimator_version INTEGER);
+                        """
+                    )
+                }
+                try db.exec("CREATE INDEX IF NOT EXISTS idx_sensor_profile_history_combo ON sensor_profile_history(camera, gain, offset);")
+                try backfillSensorProfileHistoryFromExistingProfiles()
+                // Version stamp is deliberately last: every visible v10
+                // schema/data step must have succeeded before this changes.
+                try db.run("UPDATE schema_version SET version = ?;", bind: [.int(10)])
+                try db.exec("COMMIT;")
+            } catch {
+                try? db.exec("ROLLBACK;")
+                throw error
+            }
             version = 10
         }
+    }
+
+    private func tableExists(_ name: String) throws -> Bool {
+        var exists = false
+        try db.query(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1;",
+            bind: [.text(name)]
+        ) { _ in exists = true }
+        return exists
+    }
+
+    private func columnExists(table: String, column: String) throws -> Bool {
+        var exists = false
+        try db.query("PRAGMA table_info(\(table));") { row in
+            if row.string(1) == column { exists = true }
+        }
+        return exists
     }
 
     /// One-time v9->v10 upgrade step: seeds `sensor_profile_history` with
@@ -824,6 +864,19 @@ public final class Database: @unchecked Sendable {
         }
 
         for r in rows {
+            var alreadyBackfilled = false
+            try db.query(
+                """
+                SELECT 1 FROM sensor_profile_history
+                WHERE camera = ? AND gain IS ? AND offset IS ? AND measured_at = ?
+                LIMIT 1;
+                """,
+                bind: [
+                    .text(r.camera), r.gain.map(SQLiteValue.real) ?? .null,
+                    r.offset.map(SQLiteValue.real) ?? .null, .real(r.measuredAt),
+                ]
+            ) { _ in alreadyBackfilled = true }
+            if alreadyBackfilled { continue }
             try db.run(
                 """
                 INSERT INTO sensor_profile_history(camera, gain, offset, bias_level_adu, read_noise_e, dark_rate_e_per_s, dark_temp_c, egain, measured_at, estimator_version)

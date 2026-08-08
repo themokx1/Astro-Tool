@@ -115,6 +115,9 @@ struct PreviousNightCard: Identifiable, Equatable {
     /// `nil` exactly when `ratedFrameCount == 0` -- the card shows "még
     /// nincs pontozva" in that case rather than a fake "0%".
     var outlierRatio: Double?
+    var hasNotes: Bool
+    var hasConflict: Bool
+    var tags: [String]
 
     var id: String { "\(target)|\(date)" }
 }
@@ -995,9 +998,8 @@ final class AppState: @unchecked Sendable {
 
     /// R9-T5/A.4: the session `CalibLinkSheet` is currently open for from
     /// `CalibrationPage`'s Lefedettség action cards / row context menu.
-    /// `CalibNeed` only records which TARGETS need a combo, not which
-    /// session -- `openCalibLinkSheet(forNeed:)` resolves this pragmatically
-    /// (first target, most recent session date) and sets this, which drives
+    /// `CalibNeed.sessions` identifies the exact affected session; the
+    /// Calibration page selects one explicitly and sets this, which drives
     /// `CalibrationPage`'s `.sheet(item:)`. Separate from `AllTargetsPage`'s/
     /// `TargetDetailPage`'s own `linkingSession` `@State` so the three call
     /// sites never fight over one shared trigger.
@@ -2192,7 +2194,10 @@ final class AppState: @unchecked Sendable {
                 coolerVerdict: health.cooler.verdict,
                 focusVerdict: health.focus.verdict,
                 ratedFrameCount: scores.count,
-                outlierRatio: outlierRatio
+                outlierRatio: outlierRatio,
+                hasNotes: row.hasNotes,
+                hasConflict: row.hasConflict,
+                tags: row.tags
             ))
         }
         // Most-recent-night-first -- the whole point of a MORNING triage
@@ -2306,36 +2311,70 @@ final class AppState: @unchecked Sendable {
         let opID = beginOperation("Új sessionök pontozása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
-            do {
-                try await Task.detached(priority: .userInitiated) { [weak self] in
-                    var provider: StarMetricsProvider?
-                    if FileManager.default.isExecutableFile(atPath: cfg.rating.sirilPath) {
-                        provider = try? SirilCLI(path: cfg.rating.sirilPath)
-                    }
-                    let rater = Rater(db: db, config: cfg, provider: provider)
-                    for (index, key) in keys.enumerated() {
-                        _ = try rater.rate(target: key.target, date: key.date, force: false) { done, total in
-                            Task { @MainActor in
-                                self?.progressText =
-                                    "Pontozás: \(key.target) \(key.date) (\(index + 1)/\(keys.count)) — \(done)/\(total)"
-                            }
+            var ratingSucceeded = false
+            var ratingWasCancelled = false
+            let ratingTask = Task.detached(priority: .userInitiated) { [weak self] in
+                var provider: StarMetricsProvider?
+                if FileManager.default.isExecutableFile(atPath: cfg.rating.sirilPath) {
+                    provider = try? SirilCLI(path: cfg.rating.sirilPath)
+                }
+                let rater = Rater(db: db, config: cfg, provider: provider)
+                for (index, key) in keys.enumerated() {
+                    // `Rater.rate` is synchronous, so an in-progress
+                    // session finishes safely; cancellation prevents the
+                    // next session from starting.
+                    try Task.checkCancellation()
+                    _ = try rater.rate(target: key.target, date: key.date, force: false) { done, total in
+                        Task { @MainActor in
+                            guard let self,
+                                  self.currentOperationID == opID,
+                                  self.db === db
+                            else { return }
+                            self.progressText =
+                                "Pontozás: \(key.target) \(key.date) (\(index + 1)/\(keys.count)) — \(done)/\(total)"
                         }
                     }
-                }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
+                }
+            }
+            do {
+                try await withTaskCancellationHandler {
+                    try await ratingTask.value
+                } onCancel: {
+                    ratingTask.cancel()
+                }
+                ratingSucceeded = !Task.isCancelled
+            } catch is CancellationError {
+                ratingWasCancelled = true
+            } catch {
+                self.handle(error)
+            }
 
+            // Always rebuild from what reached the DB. Rater may have
+            // completed some sessions before cancellation; stale cards are
+            // worse than an intentionally partial, truthful result. A newer
+            // operation or root switch, however, owns the UI now and must
+            // never receive this old database's snapshot.
+            guard self.currentOperationID == opID, self.db === db else {
+                self.endOperation(opID)
+                return
+            }
+            do {
                 let cards = try await Task.detached(priority: .userInitiated) {
                     try Self.buildPreviousNightCards(keys: keys, db: db, config: cfg)
                 }.value
-                guard !Task.isCancelled else { self.endOperation(opID); return }
+                guard self.currentOperationID == opID, self.db === db else {
+                    self.endOperation(opID)
+                    return
+                }
                 self.previousNightCards = cards
-                self.progressText = "Pontozás kész: \(keys.count) session"
-                // R12-U1 item 5: same invalidation `runScan`/
-                // `runRateFreshSession` apply -- these sessions' metrics
-                // just changed.
                 self.trendPoints = nil
+                if ratingSucceeded && !Task.isCancelled {
+                    self.progressText = "Pontozás kész: \(keys.count) session"
+                } else if ratingWasCancelled || Task.isCancelled {
+                    self.progressText = "Pontozás megszakítva — a részleges eredmények frissítve"
+                }
             } catch {
-                self.handle(error)
+                if !(error is CancellationError) { self.handle(error) }
             }
             self.endOperation(opID)
         }
@@ -2769,17 +2808,25 @@ final class AppState: @unchecked Sendable {
     /// `--out`) -- cancel leaves no trace and shows nothing.
     func exportPlanToCSV(_ plans: [TargetPlan]) {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "terv.csv"
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        let night = formatter.string(from: planDate ?? Date())
+        panel.nameFieldStringValue = "terv-\(night).csv"
         panel.allowedContentTypes = [.commaSeparatedText]
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
+        let opID = beginOperation("Terv exportálása…")
         do {
-            let csv = PlanExport.renderCSV(plans)
+            let csv = PlanExport.renderCSV(plans, night: night)
             try Data(csv.utf8).write(to: url)
+            progressText = "Terv exportálva: \(url.lastPathComponent)"
             pushToast(.success, "Terv exportálva: \(url.lastPathComponent)")
         } catch {
-            pushToast(.error, "Terv exportálása — \(error.localizedDescription)")
+            handle(error)
         }
+        endOperation(opID)
     }
 
     /// Copies tonight's calibration shopping list (`CalibShoppingList.
@@ -3778,38 +3825,16 @@ final class AppState: @unchecked Sendable {
         calibLinkResult = nil
     }
 
-    /// R9-T5/A.4: resolves a `CalibNeed` (from the Lefedettség coverage
-    /// table/action cards) to a concrete `(target, date)` pair and opens
-    /// `CalibLinkSheet` for it -- pragmatic per spec ("map CalibNeed.targets
-    /// to a session picker or link the first"): the need's first target, at
-    /// its most recent session date. Uses `sessionDetailsByTarget` if
-    /// already cached (from `loadStats()`), otherwise fetches it via
-    /// `SessionStatsQueries.sessions` on demand -- the Kalibráció page never
-    /// requires visiting "Minden célpont" first just to make "Linkelés…"
-    /// work.
+    /// Opens the exact affected session when a need has only one. Multiple
+    /// sessions are selected by `CalibrationPage` before this is called;
+    /// legacy decoded needs without session identity remain non-actionable.
     func openCalibLinkSheet(forNeed need: CalibNeed) {
-        guard let target = need.targets.first else { return }
-        if let date = sessionDetailsByTarget[target]?.map(\.dateRaw).max() {
-            calibNeedLinkSession = LinkingSession(target: target, date: date)
-            return
-        }
-        guard let db else { return }
-        let cfg = config
-        Task { [weak self] in
-            guard let self else { return }
-            let sessions: [SessionDetail]
-            do {
-                sessions = try await Task.detached(priority: .userInitiated) {
-                    try SessionStatsQueries.sessions(target: target, db: db, config: cfg)
-                }.value
-            } catch {
-                return
-            }
-            self.sessionDetailsByTarget[target] = sessions
-            if let date = sessions.map(\.dateRaw).max() {
-                self.calibNeedLinkSession = LinkingSession(target: target, date: date)
-            }
-        }
+        guard need.sessions.count == 1, let session = need.sessions.first else { return }
+        openCalibLinkSheet(target: session.target, date: session.date)
+    }
+
+    func openCalibLinkSheet(target: String, date: String) {
+        calibNeedLinkSession = LinkingSession(target: target, date: date)
     }
 
     // MARK: - Stack-list export (R7-B4)

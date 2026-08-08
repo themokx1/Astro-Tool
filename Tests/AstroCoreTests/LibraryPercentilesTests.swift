@@ -4,9 +4,23 @@ import Testing
 
 // MARK: - LibraryPercentiles.evaluate
 
-@Test func evaluateReturnsNilBelowMinimumSampleSize() throws {
+@Test func evaluateMarksLowSampleBelowMinimumSampleSize() throws {
     let values: [Double] = [1, 2, 3, 4, 5]
-    #expect(LibraryPercentiles.evaluate(value: 1, allValues: values, higherIsBetter: false) == nil)
+    let result = try #require(LibraryPercentiles.evaluate(value: 1, allValues: values, higherIsBetter: false))
+    #expect(result.isLowSample)
+    #expect(result.sampleCount == 5)
+}
+
+@Test func equalValuesReceiveTheSameMidrankBand() throws {
+    let values = [1.0, 1.0, 1.0, 4.0, 5.0, 6.0]
+    let result = try #require(LibraryPercentiles.evaluate(value: 1, allValues: values, higherIsBetter: false))
+    #expect(result.percentile == 20)
+    #expect(result.band != .worst)
+}
+
+@Test func fewerThanSixValuesIsLowSample() throws {
+    let result = try #require(LibraryPercentiles.evaluate(value: 1, allValues: [1, 2, 3], higherIsBetter: false))
+    #expect(result.isLowSample)
 }
 
 @Test func evaluateAtMinimumSampleSizeComputesABand() throws {
@@ -44,13 +58,10 @@ import Testing
     #expect(result.medianValue == 3.5)
 }
 
-@Test func evaluateBetterThanFractionCountsStrictlyBetterValuesOnly() throws {
-    // Ties: a value equal to itself elsewhere in the distribution never
-    // counts as "worse than" -- so a repeated WORST value (tied with
-    // another 5, nothing bigger in the array) beats nobody.
+@Test func evaluateBetterThanFractionUsesSharedMidrankForTies() throws {
     let values: [Double] = [1, 2, 3, 4, 5, 5]
     let result = try #require(LibraryPercentiles.evaluate(value: 5, allValues: values, higherIsBetter: false))
-    #expect(result.betterThanFraction == 0)
+    #expect(result.betterThanFraction == 0.5 / 6.0)
 }
 
 @Test func evaluateBestPossibleValueBeatsEveryoneElse() throws {
