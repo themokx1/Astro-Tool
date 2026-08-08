@@ -19,8 +19,23 @@ struct QualitySegment: View {
     /// the old free-text field's "empty means all sessions" convention.
     @State private var selectedDate: String?
     @State private var sortOrder = [KeyPathComparator(\Row.score, order: .reverse)]
-    /// Drives the "Átnézés…" (blink review) sheet -- R10-B1.
+    /// Drives the "Átnézés…" (blink review) sheet -- R10-B1. R11-T7 widened
+    /// this from always-`rows.map(\.frameScore)` to a caller-chosen subset
+    /// (`reviewFrames`) -- the whole table's "Átnézés…" button, the ⚠️
+    /// popover's own "Átnézés" (this ONE frame), and the "Kiugrók átnézése
+    /// (N)" control-bar button (every still-undecided outlier) all open the
+    /// SAME sheet, just with a different `frames`/`subsetLabel` pair --
+    /// see `openReview(for:label:)`.
     @State private var showingReview = false
+    @State private var reviewFrames: [FrameScore] = []
+    /// `nil` for the whole-table review (the sheet's header then shows a
+    /// bare "3 / 7"); a Hungarian label like `"Kiugrók"` for a narrowed
+    /// subset, so the sheet's header instead reads "Kiugrók: 3 / 7" -- F4
+    /// spec's "látszódjon, hogy szűkített készletet nézel" requirement.
+    @State private var reviewSubsetLabel: String?
+    /// Drives the "Összes kiugró elvetésre jelölése… (N)" confirm sheet --
+    /// R11-T7 (F4, item 4).
+    @State private var showingBatchReject = false
     /// R10 review (item 5): row-scoped selection for `frameTable`'s
     /// `.contextMenu(forSelectionType:)` -- previously the context menu was
     /// attached to just the "Fájl" cell's own `HStack`, so right-clicking or
@@ -70,8 +85,13 @@ struct QualitySegment: View {
     }
 
     /// Flattened, display-ready view of a `FrameScore` -- ported verbatim
-    /// from the deleted `QualityView.Row`.
-    private struct Row: Identifiable {
+    /// from the deleted `QualityView.Row`. `fileprivate` (not `private`) so
+    /// the R11-T7 sibling views below (`OutlierCell`/`OutlierPopoverContent`/
+    /// `BatchRejectOutliersConfirmSheet`), which live in this same file but
+    /// aren't nested inside `QualitySegment` itself (they each need their
+    /// OWN `@State`, which a plain cell-building function can't hold), can
+    /// still read it.
+    fileprivate struct Row: Identifiable {
         let id = UUID()
         /// Kept around (not just flattened into the fields below) so
         /// `FrameReviewSheet` can be handed the table's current sort/filter
@@ -93,6 +113,13 @@ struct QualitySegment: View {
         /// DSS import; `AppState.frameVerdicts` is the single source both
         /// this column and `FrameReviewSheet` read from.
         let verdict: Bool?
+        /// R11-T7 (F4): per-metric z-score breakdown -- `Rater.score`/
+        /// `Rater.cachedScores` (AstroCore) both populate `FrameScore
+        /// .outlierBreakdown` directly, so this is just carried through
+        /// unchanged, never recomputed in the app layer. `nil` for a frame
+        /// with no metric values at all (extremely rare -- background alone
+        /// is present for nearly every rated frame).
+        let breakdown: OutlierBreakdown?
 
         init(_ frameScore: FrameScore, verdict: Bool?) {
             self.frameScore = frameScore
@@ -108,6 +135,7 @@ struct QualitySegment: View {
             exptime = frameScore.exptime
             isOutlier = frameScore.isOutlier
             self.verdict = verdict
+            breakdown = frameScore.outlierBreakdown
         }
 
         var sessionSubdirSortKey: String { sessionSubdir ?? "" }
@@ -126,6 +154,28 @@ struct QualitySegment: View {
             .sorted(using: sortOrder)
     }
     private var sirilAvailable: Bool { FileManager.default.isExecutableFile(atPath: appState.config.rating.sirilPath) }
+
+    /// R11-T7 (F4, items 3-4): outlier frames with NO manual verdict yet,
+    /// in the table's current sort/filter order -- both the "Kiugrók
+    /// átnézése (N)" review button and the "Összes kiugró elvetésre
+    /// jelölése… (N)" batch action work over exactly this set, so their
+    /// counts (and the batch sheet's own listing) can never disagree with
+    /// each other. A frame already accepted OR rejected is excluded either
+    /// way: reviewing/re-rejecting an already-judged frame isn't this
+    /// feature's job.
+    private var undecidedOutlierRows: [Row] {
+        rows.filter { $0.isOutlier && $0.verdict == nil }
+    }
+
+    /// Opens the "Átnézés" (blink review) sheet over exactly `frames`, in
+    /// the order given -- shared by the control bar's whole-table button,
+    /// the "Kiugrók átnézése (N)" subset button, and the ⚠️ popover's own
+    /// per-frame "Átnézés" (R11-T7).
+    private func openReview(frames: [FrameScore], label: String?) {
+        reviewFrames = frames
+        reviewSubsetLabel = label
+        showingReview = true
+    }
 
     /// R10-A5: `selectedDate` used to only ever affect the NEXT "Keretek
     /// pontozása"/`loadFrameScores` call -- picking a date from the Menu
@@ -247,12 +297,16 @@ struct QualitySegment: View {
             }
         }
         .sheet(isPresented: $showingReview) {
-            // R10-B1: hands the sheet the table's CURRENT sort/filter order
-            // (`rows` already applies both `filteredFrameScores`'s date
-            // filter and the user's own column sort) -- blinking through
-            // frames must never silently show them in a different order
-            // than what's on screen behind the sheet.
-            FrameReviewSheet(frames: rows.map(\.frameScore))
+            // R11-T7: `reviewFrames`/`reviewSubsetLabel` are set by
+            // `openReview(frames:label:)`, called from three places -- the
+            // control bar's whole-table "Átnézés…" (the table's CURRENT
+            // sort/filter order, same as before R11-T7), the "Kiugrók
+            // átnézése (N)" subset button, and the ⚠️ popover's own
+            // per-frame "Átnézés".
+            FrameReviewSheet(frames: reviewFrames, subsetLabel: reviewSubsetLabel)
+        }
+        .sheet(isPresented: $showingBatchReject) {
+            BatchRejectOutliersConfirmSheet(rows: undecidedOutlierRows)
         }
     }
 
@@ -315,13 +369,31 @@ struct QualitySegment: View {
             // applied) -- disabled rather than hidden when there's nothing
             // to review, same convention every other conditionally-useless
             // control bar button in this app already follows.
-            Button("Átnézés…") { showingReview = true }
+            Button("Átnézés…") { openReview(frames: rows.map(\.frameScore), label: nil) }
                 .disabled(filteredFrameScores.isEmpty)
                 .help(
                     filteredFrameScores.isEmpty
                         ? "Nincs megjeleníthető keret"
                         : "Keretek egyenkénti átnézése, elfogadása/elvetése"
                 )
+
+            // R11-T7 (F4, item 3): scoped to exactly the still-undecided
+            // outliers, in the table's current order -- hidden entirely
+            // (not just disabled) when there are none, since "review 0
+            // outliers" isn't a meaningful action to offer at all.
+            if !undecidedOutlierRows.isEmpty {
+                Button("Kiugrók átnézése (\(undecidedOutlierRows.count))") {
+                    openReview(frames: undecidedOutlierRows.map(\.frameScore), label: "Kiugrók")
+                }
+                .help("A még el nem bírált kiugró keretek egyenkénti átnézése")
+
+                // R11-T7 (F4, item 4): batch reject-marking, gated behind its
+                // own confirm sheet -- never writes anything directly from
+                // this button.
+                Button("Összes kiugró elvetésre jelölése… (\(undecidedOutlierRows.count))") {
+                    showingBatchReject = true
+                }
+            }
 
             MetricInfoButton(metrics: Self.frameMetricInfo)
 
@@ -860,14 +932,24 @@ struct QualitySegment: View {
     @TableColumnBuilder<Row, Never>
     private var outlierAndVerdictColumns: some TableColumnContent<Row, Never> {
         Group {
-            TableColumn("Kiugró") { (row: Row) in Text(outlierText(row)) }
-                .width(50)
+            // R11-T7 (F4): the ⚠️ is now a clickable button (`OutlierCell`)
+            // opening a "why is this an outlier" popover, not just a static
+            // glyph -- see `OutlierCell`'s own doc comment below.
+            TableColumn("Kiugró") { (row: Row) in
+                OutlierCell(
+                    row: row,
+                    onReview: { openReview(frames: [row.frameScore], label: nil) },
+                    onReject: { appState.setFrameVerdict(path: row.path, accepted: false) }
+                )
+            }
+            .width(50)
 
-            // R10-B1: ✓/✗/— for the user's own manual verdict -- see
+            // R10-B1: ✓/✗/— for the user's own manual verdict, PLUS (R11-T7)
+            // a "javasolt: elvetés" hint for a still-undecided outlier -- see
             // `verdictCell(_:)` below. Not sortable (no `value:` binding),
             // same convention "Kiugró" right above already uses for a
             // glance-only signal column.
-            TableColumn("Saját döntés") { (row: Row) in verdictCell(row.verdict) }
+            TableColumn("Saját döntés") { (row: Row) in verdictCell(row) }
                 .width(90)
         }
     }
@@ -893,10 +975,6 @@ struct QualitySegment: View {
 
     private func row(withID id: Row.ID) -> Row? {
         rows.first { $0.id == id }
-    }
-
-    private func outlierText(_ row: Row) -> String {
-        row.isOutlier ? "⚠️" : ""
     }
 
     @ViewBuilder
@@ -935,16 +1013,23 @@ struct QualitySegment: View {
     /// R11-T1: was the one em-dash holdout in a table cell -- see
     /// `TDFormat`'s own doc comment) -- the "Saját döntés" column's cell,
     /// and the same three states `FrameReviewSheet`'s verdict chip shows in
-    /// its header (R10-B1).
+    /// its header (R10-B1). R11-T7 (F4, item 5): the no-verdict case now
+    /// distinguishes a still-undecided OUTLIER (a halvány "javasolt:
+    /// elvetés" hint, since the machine's own z-scores already lean toward
+    /// rejecting it) from a genuinely neutral frame (the plain "-").
     @ViewBuilder
-    private func verdictCell(_ verdict: Bool?) -> some View {
-        switch verdict {
+    private func verdictCell(_ row: Row) -> some View {
+        switch row.verdict {
         case .some(true):
             Text("✓").bold().foregroundStyle(.green)
         case .some(false):
             Text("✗").bold().foregroundStyle(.red)
         case .none:
-            Text(TDFormat.missingCell).foregroundStyle(.secondary)
+            if row.isOutlier {
+                Text("javasolt: elvetés").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text(TDFormat.missingCell).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -955,5 +1040,192 @@ struct QualitySegment: View {
     private static func formatExptime(_ value: Double) -> String {
         if value == value.rounded() { return "\(Int(value)) s" }
         return String(format: "%.1f s", value)
+    }
+}
+
+// MARK: - R11-T7 (F4): the ⚠️ "why is this an outlier" popover
+
+/// The "Kiugró" column's cell -- a clickable ⚠️ button rather than a static
+/// glyph. A dedicated `View` (not another `@ViewBuilder` cell function like
+/// this table's other secondary-column cells) because it needs its OWN
+/// per-row `showingPopover` state -- a plain `@State` on `QualitySegment`
+/// itself couldn't tell which row's popover should be open.
+fileprivate struct OutlierCell: View {
+    let row: QualitySegment.Row
+    let onReview: () -> Void
+    let onReject: () -> Void
+
+    @State private var showingPopover = false
+
+    var body: some View {
+        if row.isOutlier {
+            Button {
+                showingPopover = true
+            } label: {
+                Text("⚠️")
+            }
+            .buttonStyle(.plain)
+            .help("Miért kiugró? -- kattints a részletekért")
+            .popover(isPresented: $showingPopover, arrowEdge: .trailing) {
+                OutlierPopoverContent(
+                    row: row,
+                    onReview: { showingPopover = false; onReview() },
+                    onReject: { showingPopover = false; onReject() }
+                )
+            }
+        } else {
+            Text("")
+        }
+    }
+}
+
+/// The ⚠️ popover's content (F4 spec): a per-metric z-score breakdown
+/// (dominant metric highlighted in red/bold), a hedged "valószínű ok"
+/// sentence, and the two F4 actions -- "Átnézés" opens `FrameReviewSheet` on
+/// just this one frame, "Elvetés" records the reject verdict directly
+/// without opening anything.
+fileprivate struct OutlierPopoverContent: View {
+    let row: QualitySegment.Row
+    let onReview: () -> Void
+    let onReject: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("⚠️ Kiugró").font(.headline)
+                if row.verdict == nil {
+                    Text("javasolt: elvetés").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            if let breakdown = row.breakdown, !breakdown.entries.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(breakdown.entries, id: \.metric) { entry in
+                        Text(Self.lineText(entry))
+                            .font(.callout)
+                            .fontWeight(entry.metric == breakdown.dominantMetric ? .bold : .regular)
+                            .foregroundStyle(entry.metric == breakdown.dominantMetric ? .red : .primary)
+                    }
+                }
+
+                if let cause = breakdown.likelyCauseText {
+                    Text(cause)
+                        .font(.callout.bold())
+                        .padding(.top, 2)
+                }
+            } else {
+                Text("Nincs metrika-bontás ehhez a kerethez.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Divider()
+
+            HStack {
+                Button("Átnézés") { onReview() }
+                Button("Elvetés") { onReject() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(14)
+        .frame(width: 320)
+    }
+
+    /// `"FWHM 4.20 px — session-medián 2.90 px · z = -2.4"` -- F4 spec's
+    /// exact wording, one line per metric the frame actually has a value
+    /// for.
+    private static func lineText(_ entry: OutlierBreakdown.MetricEntry) -> String {
+        let (valueText, medianText): (String, String)
+        switch entry.metric {
+        case .fwhm:
+            valueText = String(format: "%.2f px", entry.value)
+            medianText = String(format: "%.2f px", entry.groupMedian)
+        case .roundness:
+            valueText = String(format: "%.2f", entry.value)
+            medianText = String(format: "%.2f", entry.groupMedian)
+        case .starCount:
+            valueText = String(Int(entry.value.rounded()))
+            medianText = String(Int(entry.groupMedian.rounded()))
+        case .background:
+            valueText = String(format: "%.0f", entry.value)
+            medianText = String(format: "%.0f", entry.groupMedian)
+        }
+        let zText = String(format: "%.1f", entry.zScore)
+        return "\(entry.metric.displayName) \(valueText) — session-medián \(medianText) · z = \(zText)"
+    }
+}
+
+// MARK: - R11-T7 (F4, item 4): batch reject-marking confirm sheet
+
+/// "Összes kiugró elvetésre jelölése… (N)" -- lists every still-undecided
+/// outlier (filename + its dominant metric/z, the "fő ok") before writing
+/// anything, with an explicit "this is a marking, not a file operation"
+/// disclaimer (same trust-philosophy wording this app uses everywhere a
+/// batch action could otherwise look scarier than it is). Confirming writes
+/// a plain `reject` `user_verdict` for each row through the SAME
+/// `AppState.setFrameVerdict` path the single-frame "Elvetés" actions
+/// already use (`source == "app"`), then toasts and dismisses -- the table
+/// behind it updates on its own since `frameVerdicts` is patched in place.
+fileprivate struct BatchRejectOutliersConfirmSheet: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+
+    let rows: [QualitySegment.Row]
+
+    private func causeSummary(_ row: QualitySegment.Row) -> String {
+        guard let breakdown = row.breakdown,
+              let dominant = breakdown.dominantMetric,
+              let entry = breakdown.entries.first(where: { $0.metric == dominant })
+        else { return "n/a" }
+        return "\(dominant.displayName) (z = \(String(format: "%.1f", entry.zScore)))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Összes kiugró elvetésre jelölése").font(.headline)
+
+            Text("Ez csak jelölés a stack-válogatáshoz — fájlt nem érint.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            Text("\(rows.count) keret kerül elvetésre jelölésre:")
+                .font(.callout)
+
+            if rows.isEmpty {
+                Text("Nincs még el nem bírált kiugró keret.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(rows) { row in
+                            HStack {
+                                Text(row.fileName).lineLimit(1).truncationMode(.middle)
+                                Spacer(minLength: 12)
+                                Text(causeSummary(row)).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .frame(maxHeight: 280)
+            }
+
+            HStack {
+                Spacer()
+                Button("Mégse") { dismiss() }
+                Button("Elvetés (\(rows.count))") {
+                    for row in rows {
+                        appState.setFrameVerdict(path: row.path, accepted: false)
+                    }
+                    appState.pushToast(.success, "\(rows.count) kiugró keret elvetésre jelölve")
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(rows.isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 480, minHeight: 320)
     }
 }

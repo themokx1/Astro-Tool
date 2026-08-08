@@ -21,9 +21,18 @@ struct FrameReviewSheet: View {
 
     /// The exact order to blink through -- the Quality table's current
     /// sort column + date filter, already applied by the caller
-    /// (`QualitySegment` passes `rows.map(\.frameScore)`). This sheet never
-    /// re-sorts or re-filters it.
+    /// (`QualitySegment` passes `rows.map(\.frameScore)`), OR a narrower
+    /// subset the caller picked (every still-undecided outlier, or a single
+    /// frame opened from the ⚠️ popover -- R11-T7/F4). This sheet never
+    /// re-sorts or re-filters it either way.
     let frames: [FrameScore]
+    /// `nil` for a whole-table review (header shows a bare "3 / 7");
+    /// otherwise a short Hungarian label (e.g. `"Kiugrók"`) prefixed onto
+    /// the position counter so it reads "Kiugrók: 3 / 7" -- R11-T7/F4's
+    /// "látszódjon, hogy szűkített készletet nézel" requirement, so blinking
+    /// through a narrowed subset can never be mistaken for the whole
+    /// session.
+    var subsetLabel: String? = nil
 
     @State private var index = 0
     @State private var image: NSImage?
@@ -95,7 +104,12 @@ struct FrameReviewSheet: View {
                         .font(.headline)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Text("\(index + 1) / \(frames.count)")
+                    // R11-T7/F4: prefixed with `subsetLabel` (e.g.
+                    // "Kiugrók: 3 / 7") when this sheet is showing a
+                    // narrowed subset rather than the whole table, so the
+                    // position counter can never be mistaken for "3rd of 7
+                    // frames in this whole session".
+                    Text(subsetLabel.map { "\($0): \(index + 1) / \(frames.count)" } ?? "\(index + 1) / \(frames.count)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -112,7 +126,16 @@ struct FrameReviewSheet: View {
                 statTile("Csillagok", TDFormat.tile((frame.metrics?.starCount).map(String.init)))
 
                 if frame.isOutlier {
-                    Text("⚠️ Kiugró").font(.callout).foregroundStyle(.red)
+                    HStack(spacing: 6) {
+                        Text("⚠️ Kiugró").font(.callout).foregroundStyle(.red)
+                        // R11-T7/F4 (item 5): the same "javasolt: elvetés"
+                        // hint the Minőség táblázat's "Saját döntés" cell
+                        // shows for a still-undecided outlier, mirrored here
+                        // right next to the badge.
+                        if appState.frameVerdicts[frame.path] == nil {
+                            Text("javasolt: elvetés").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
                 }
 
                 verdictChip(appState.frameVerdicts[frame.path])

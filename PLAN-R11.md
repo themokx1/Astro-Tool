@@ -22,7 +22,7 @@
 - [x] 2. Persona-review (4 agent) — kész
 - [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
 - [x] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [x]
-- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [ ] T8 [ ] T9 [ ] T10 [ ] T11 [ ] T12 [ ] T13 [ ]
+- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [ ] T9 [ ] T10 [ ] T11 [ ] T12 [ ] T13 [ ]
 - [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [ ] T15 [ ] T16 [ ] T17 [ ]
 - [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
 - [ ] 8. Release v0.13.0
@@ -356,3 +356,16 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   appban) — "kijelölt sorok" a kijelölt EGY sort jelenti, kijelölés nélkül a
   megszokott "ma jó"/minden-sor eshez folyamodik. Következő: T7
   (Kiugró-híd).
+- 2026-08-08: T7 (Kiugró-híd) kész — F4 teljes: core `OutlierBreakdown` +
+  a `Rater`-ből kiemelt, mostantól közösen használt `RatingGroupMath`
+  (grouping + z-score, teszt determinisztikus bemenetekkel), `FrameScore
+  .outlierBreakdown` additív mező (`Rater.rate`/`Rater.cachedScores`
+  töltik ki) — ez a `rate --json` CLI-kimenetet is automatikusan bővíti
+  metrikánkénti z-score-okkal (F4 CLI-tétel), Commands.swift-módosítás
+  nélkül. Minőség-tábla: kattintható ⚠️ popover (metrikánkénti bontás,
+  domináns metrika kiemelve, valószínű-ok mondat, "Átnézés"/"Elvetés"),
+  "Kiugrók átnézése (N)" gomb (`FrameReviewSheet` új `subsetLabel`
+  paraméterével, "Kiugrók: 3/7" fejléc), "Összes kiugró elvetésre
+  jelölése… (N)" megerősítő sheet, "javasolt: elvetés" jelzés a Saját
+  döntés cellában és a review-sheet fejlécében. Következő: T8
+  (Audit-diff + Tárhely).

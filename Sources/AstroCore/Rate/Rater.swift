@@ -31,6 +31,16 @@ public struct FrameScore: Codable, Sendable {
     /// parseDateObs`, the same shared parser every OTHER DATE-OBS consumer
     /// in this package already uses, rather than hand-rolling a second one.
     public var dateObs: String?
+    /// Per-metric z-score breakdown -- R11-T7 (F4), added the same
+    /// additive-`Optional` way every other post-release field on this
+    /// struct was (see this struct's own doc comment): `nil` for JSON
+    /// captured before this field existed, and for any `FrameScore` built
+    /// somewhere other than `Rater.score`/`Rater.cachedScores` (the only two
+    /// producers that populate it, right before their own final sort).
+    /// `OutlierBreakdown.breakdowns(for:)` is what actually computes this --
+    /// see its own doc comment for why re-deriving it at query time (rather
+    /// than persisting new DB columns) was the chosen approach.
+    public var outlierBreakdown: OutlierBreakdown?
 
     /// The filename only (last path component) -- computed, not stored, so
     /// it never affects `Codable` (old JSON without it still decodes, and
@@ -48,7 +58,8 @@ public struct FrameScore: Codable, Sendable {
         saturatedFraction: Double? = nil,
         exptime: Double? = nil,
         sessionSubdir: String? = nil,
-        dateObs: String? = nil
+        dateObs: String? = nil,
+        outlierBreakdown: OutlierBreakdown? = nil
     ) {
         self.path = path
         self.score = score
@@ -59,6 +70,7 @@ public struct FrameScore: Codable, Sendable {
         self.exptime = exptime
         self.sessionSubdir = sessionSubdir
         self.dateObs = dateObs
+        self.outlierBreakdown = outlierBreakdown
     }
 }
 
@@ -318,6 +330,15 @@ public final class Rater {
                 )
             )
         }
+
+        // R11-T7: per-metric z-score breakdown, re-derived from the batch
+        // that was just assembled -- see `OutlierBreakdown`'s own doc
+        // comment for why this is computed at query time instead of read
+        // back from a persisted column.
+        let breakdowns = OutlierBreakdown.breakdowns(for: results)
+        for i in results.indices {
+            results[i].outlierBreakdown = breakdowns[results[i].path]
+        }
         return results.sorted { $0.score > $1.score }
     }
 
@@ -363,28 +384,18 @@ public final class Rater {
 
     // MARK: - Scoring
 
-    private struct MetricStats {
-        var mean: Double
-        var std: Double
-    }
-
-    /// Which exposure group a frame belongs to for scoring purposes: the
-    /// frame's session date (so rating a whole target across many nights
-    /// without `--date` never pools different nights' sky conditions into
-    /// one z-score population) crossed with its nominal exptime (see
-    /// `NominalExposure`, which absorbs float noise like 29.9s vs. 30.0s) --
-    /// or `nominalTenths == nil` for every frame with no `exptime` at all,
-    /// one single shared group per date (not one singleton group each, which
-    /// would force every such frame's z-score to 0).
-    private struct ExposureGroupKey: Hashable {
-        var sessionDate: String?
-        var nominalTenths: Int?
-    }
+    /// R11-T7: the grouping key + mean/std/z-score math used below is now
+    /// shared with `OutlierBreakdown` (`RatingGroupMath`, `AstroCore/Rate/
+    /// OutlierBreakdown.swift`) rather than kept as a private copy here --
+    /// these two `typealias`es plus the thin forwarding functions right
+    /// below keep every call site in this file unchanged, while guaranteeing
+    /// the popover's "why is this an outlier" breakdown can never silently
+    /// drift from the actual scoring formula.
+    private typealias MetricStats = RatingGroupMath.MetricStats
+    private typealias ExposureGroupKey = RatingGroupMath.GroupKey
 
     private static func exposureGroupKey(sessionDate: String?, exptime: Double?) -> ExposureGroupKey {
-        guard let exptime else { return ExposureGroupKey(sessionDate: sessionDate, nominalTenths: nil) }
-        let nominal = NominalExposure.nominal(exptime)
-        return ExposureGroupKey(sessionDate: sessionDate, nominalTenths: Int((nominal * 10).rounded()))
+        RatingGroupMath.groupKey(sessionDate: sessionDate, exptime: exptime)
     }
 
     /// Splits `rated` into exposure groups (see `ExposureGroupKey`) and
@@ -404,6 +415,14 @@ public final class Rater {
             results.append(contentsOf: try scoreGroup(groupRated))
         }
 
+        // R11-T7: per-metric z-score breakdown, computed once over the
+        // WHOLE concatenated batch (re-grouping internally the same way --
+        // see `OutlierBreakdown.breakdowns(for:)`), not per exposure group
+        // above -- `scoreGroup` itself stays focused on the combined score.
+        let breakdowns = OutlierBreakdown.breakdowns(for: results)
+        for i in results.indices {
+            results[i].outlierBreakdown = breakdowns[results[i].path]
+        }
         return results.sorted { $0.score > $1.score }
     }
 
@@ -492,20 +511,14 @@ public final class Rater {
         return middle.joined(separator: "/")
     }
 
-    /// Mean/std over whichever frames in the batch have a value for this
-    /// metric. `std == 0` (a single sample, or every value identical) is
-    /// the div-by-zero guard `zScore` checks for.
+    /// Forwards to `RatingGroupMath` -- see the `typealias`es above this
+    /// file's own doc comment on `MetricStats`/`ExposureGroupKey` for why.
     private static func metricStats(_ values: [Double]) -> MetricStats {
-        guard !values.isEmpty else { return MetricStats(mean: 0, std: 0) }
-        guard values.count > 1 else { return MetricStats(mean: values[0], std: 0) }
-        let mean = values.reduce(0, +) / Double(values.count)
-        let variance = values.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(values.count)
-        return MetricStats(mean: mean, std: variance.squareRoot())
+        RatingGroupMath.metricStats(values)
     }
 
     private static func zScore(_ value: Double, stats: MetricStats) -> Double {
-        guard stats.std > 0 else { return 0 }
-        return (value - stats.mean) / stats.std
+        RatingGroupMath.zScore(value, stats: stats)
     }
 
     // MARK: - Silent-failure guard (item D.3)

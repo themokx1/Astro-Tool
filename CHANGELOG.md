@@ -199,6 +199,38 @@ T3 — Settings csomag után.
   (`- [ ]` checklist a vágólapra). Üres állapot: "Minden szükséges
   kalibráció friss — nincs teendő ma estére." Új core `CalibShoppingList`
   (tiszta függvény, `CalibAnalyzer.coverage()` + `Planner.plan()` felett).
+- **Kiugró-híd (R11-T7/F4)**: a gépi "Kiugró" z-score jelzés és a
+  felhasználó "Saját döntés"-e eddig két néma, össze nem kötött rendszer
+  volt. Új core `OutlierBreakdown` (`AstroCore/Rate/OutlierBreakdown.swift`)
+  a keret metrikánkénti z-score-bontását adja vissza (session-csoport
+  mediánja + oda-vissza orientált z minden metrikára), a `Rater`-ből
+  kiemelt, mostantól közösen használt `RatingGroupMath` grouping/z-score
+  logikára építve — így a popover "z = -2,4"-je garantáltan ugyanaz a
+  számítás, ami a keret tényleges `score`/`isOutlier`-jét is adta. Az
+  eredmény re-derive-olt lekérdezéskor (nincs séma-migráció): `FrameScore`
+  új, additív `outlierBreakdown` mezőt kapott, amit `Rater.rate` és
+  `Rater.cachedScores` is kitölt a saját végső listájára — ez a `rate
+  --json` CLI-kimenetet is automatikusan bővíti metrikánkénti
+  z-score-okkal, minden Commands.swift-módosítás nélkül.
+  - Minőség-tábla "Kiugró" cellája kattintható ⚠️ gomb → popover
+    metrikánkénti sorokkal ("FWHM 4.20 px — session-medián 2.90 px · z =
+    -2.4", a legrosszabb metrika félkövér pirossal kiemelve) + egy
+    valószínű-ok mondat (FWHM-domináns → fókuszcsúszás/szél/felhő;
+    roundness → vezetési hiba/szél; starCount/background → felhő/párásodás)
+    + "Átnézés" (a `FrameReviewSheet`-et erre az EGY keretre nyitja) és
+    "Elvetés" gomb (közvetlen `user_verdict` reject-írás popover-bezárással).
+  - "Kiugrók átnézése (N)" gomb a kontroll-sávban (csak N>0-nál) — a
+    táblázat aktuális sorrendjében, csak a még saját döntés nélküli kiugró
+    kereteket adja a `FrameReviewSheet`-nek; a sheet fejléce ekkor
+    "Kiugrók: 3 / 7" formában jelzi a szűkített készletet (új
+    `FrameReviewSheet.subsetLabel` paraméter).
+  - "Összes kiugró elvetésre jelölése… (N)" gomb → megerősítő sheet
+    (fájlnév + fő ok minden sorban, explicit "ez csak jelölés a
+    stack-válogatáshoz — fájlt nem érint" szöveg) → megerősítésre minden
+    még el nem bírált kiugróra `user_verdict` reject + záró toast.
+  - Saját döntés cellában, ha a keret kiugró és nincs még döntés, halvány
+    "javasolt: elvetés" felirat a "-" helyett; ugyanez a jelvény a
+    `FrameReviewSheet` fejlécében a ⚠️ Kiugró jelvény mellett.
 
 ### Changed
 

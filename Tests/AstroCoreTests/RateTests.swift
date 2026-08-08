@@ -1751,3 +1751,159 @@ private func buildSyntheticStarFieldFITS(
     #expect(metrics.starCount >= 1)
     #expect(metrics.fwhm > 0)
 }
+
+// MARK: - OutlierBreakdown (R11-T7/F4) -- pure function, deterministic inputs
+
+/// Three evenly-spaced frames in one exposure group (same session date +
+/// exptime): fwhm 2, 3, 4 -- median 3, and (since evenly spaced) the worst
+/// frame's oriented z-score must come out negative (lower fwhm is better,
+/// so the HIGHEST fwhm in the group drags the score down).
+@Test func outlierBreakdownComputesGroupMedianAndOrientedZScoreForFWHM() throws {
+    let frames = [
+        FrameScore(
+            path: "sessions/M31/2026-01-01/lights/a.fit", score: 0, isOutlier: false,
+            metrics: StarMetrics(fwhm: 2.0, roundness: nil, starCount: 0), background: nil, exptime: 60
+        ),
+        FrameScore(
+            path: "sessions/M31/2026-01-01/lights/b.fit", score: 0, isOutlier: false,
+            metrics: StarMetrics(fwhm: 3.0, roundness: nil, starCount: 0), background: nil, exptime: 60
+        ),
+        FrameScore(
+            path: "sessions/M31/2026-01-01/lights/c.fit", score: 0, isOutlier: true,
+            metrics: StarMetrics(fwhm: 4.0, roundness: nil, starCount: 0), background: nil, exptime: 60
+        ),
+    ]
+
+    let breakdowns = OutlierBreakdown.breakdowns(for: frames)
+    let c = try #require(breakdowns["sessions/M31/2026-01-01/lights/c.fit"])
+    let fwhmEntry = try #require(c.entries.first { $0.metric == .fwhm })
+
+    #expect(fwhmEntry.value == 4.0)
+    #expect(fwhmEntry.groupMedian == 3.0) // median of 2, 3, 4
+    #expect(fwhmEntry.zScore < 0, "c has the group's WORST (highest) fwhm -- oriented z must be negative")
+
+    let a = try #require(breakdowns["sessions/M31/2026-01-01/lights/a.fit"])
+    let aFwhmEntry = try #require(a.entries.first { $0.metric == .fwhm })
+    #expect(aFwhmEntry.zScore > 0, "a has the group's BEST (lowest) fwhm -- oriented z must be positive")
+}
+
+/// Two exposure groups on the same date (5s vs. 50s, same grouping `Rater`
+/// itself uses -- session date crossed with nominal exptime) must never be
+/// pooled: each group's own median stays anchored to ITS values only, even
+/// though the two groups sit on wildly different absolute scales.
+@Test func outlierBreakdownGroupsByExptimeSeparatelyLikeRaterDoes() throws {
+    func frame(_ name: String, fwhm: Double, exptime: Double) -> FrameScore {
+        FrameScore(
+            path: "sessions/M1/2026-01-01/lights/\(name).fit", score: 0, isOutlier: false,
+            metrics: StarMetrics(fwhm: fwhm, roundness: nil, starCount: 0), background: nil, exptime: exptime
+        )
+    }
+
+    let frames = [
+        frame("a5", fwhm: 2, exptime: 5), frame("b5", fwhm: 3, exptime: 5), frame("c5", fwhm: 4, exptime: 5),
+        frame("a50", fwhm: 20, exptime: 50), frame("b50", fwhm: 30, exptime: 50), frame("c50", fwhm: 40, exptime: 50),
+    ]
+
+    let breakdowns = OutlierBreakdown.breakdowns(for: frames)
+    let shortMedian = try #require(breakdowns["sessions/M1/2026-01-01/lights/a5.fit"]?.entries.first { $0.metric == .fwhm }?.groupMedian)
+    let longMedian = try #require(breakdowns["sessions/M1/2026-01-01/lights/a50.fit"]?.entries.first { $0.metric == .fwhm }?.groupMedian)
+    #expect(shortMedian == 3, "the 5s group's median must be computed from ONLY the 5s frames")
+    #expect(longMedian == 30, "the 50s group's median must be computed from ONLY the 50s frames, not pooled with the 5s group")
+}
+
+/// A frame that's bad on ONLY one metric (fwhm), with every other metric
+/// identical across the whole group (std == 0 -> z == 0 for those) -- the
+/// dominant metric must be unambiguously fwhm, and the likely-cause text
+/// must match F4's FWHM-dominant wording.
+@Test func outlierBreakdownDominantMetricAndLikelyCauseTextForFWHMDominantFrame() throws {
+    func normalFrame(_ name: String) -> FrameScore {
+        FrameScore(
+            path: "sessions/M1/2026-01-01/lights/\(name).fit", score: 0, isOutlier: false,
+            metrics: StarMetrics(fwhm: 2.0, roundness: 0.9, starCount: 200), background: 100, exptime: 60
+        )
+    }
+    let badFrame = FrameScore(
+        path: "sessions/M1/2026-01-01/lights/bad.fit", score: 0, isOutlier: true,
+        metrics: StarMetrics(fwhm: 5.0, roundness: 0.9, starCount: 200), background: 100, exptime: 60
+    )
+    let frames = [normalFrame("n1"), normalFrame("n2"), normalFrame("n3"), badFrame]
+
+    let breakdowns = OutlierBreakdown.breakdowns(for: frames)
+    let bad = try #require(breakdowns["sessions/M1/2026-01-01/lights/bad.fit"])
+
+    #expect(bad.dominantMetric == .fwhm)
+    #expect(bad.likelyCauseText == "valószínű ok: fókuszcsúszás, szél vagy felhő")
+
+    let roundnessEntry = try #require(bad.entries.first { $0.metric == .roundness })
+    let starCountEntry = try #require(bad.entries.first { $0.metric == .starCount })
+    let backgroundEntry = try #require(bad.entries.first { $0.metric == .background })
+    #expect(roundnessEntry.zScore == 0, "identical roundness across the whole group -- std is 0, z must be 0")
+    #expect(starCountEntry.zScore == 0)
+    #expect(backgroundEntry.zScore == 0)
+}
+
+@Test func outlierBreakdownLikelyCauseTextMapsRoundnessDominantToGuidingOrWind() {
+    let breakdown = OutlierBreakdown(entries: [
+        OutlierBreakdown.MetricEntry(metric: .roundness, value: 0.5, groupMedian: 0.9, zScore: -2.0),
+        OutlierBreakdown.MetricEntry(metric: .fwhm, value: 3, groupMedian: 3, zScore: 0),
+    ])
+    #expect(breakdown.dominantMetric == .roundness)
+    #expect(breakdown.likelyCauseText == "valószínű ok: vezetési hiba vagy szél")
+}
+
+@Test func outlierBreakdownLikelyCauseTextMapsStarCountOrBackgroundDominantToCloudOrHaze() {
+    let starCountBreakdown = OutlierBreakdown(entries: [
+        OutlierBreakdown.MetricEntry(metric: .starCount, value: 20, groupMedian: 200, zScore: -3.0),
+    ])
+    #expect(starCountBreakdown.likelyCauseText == "valószínű ok: felhő vagy párásodás")
+
+    let backgroundBreakdown = OutlierBreakdown(entries: [
+        OutlierBreakdown.MetricEntry(metric: .background, value: 5000, groupMedian: 100, zScore: -3.0),
+    ])
+    #expect(backgroundBreakdown.likelyCauseText == "valószínű ok: felhő vagy párásodás")
+}
+
+@Test func outlierBreakdownDominantMetricAndLikelyCauseTextAreNilWhenNoEntries() {
+    let breakdown = OutlierBreakdown(entries: [])
+    #expect(breakdown.dominantMetric == nil)
+    #expect(breakdown.likelyCauseText == nil)
+}
+
+/// End-to-end guard: `Rater.rate` itself must populate `FrameScore
+/// .outlierBreakdown` (not just the standalone pure function above) --
+/// R11-T7 wires `OutlierBreakdown.breakdowns(for:)` into both `Rater.score`
+/// and `Rater.cachedScores` right before their own final sort.
+@Test func rateEndToEndPopulatesOutlierBreakdownOnEveryFrameScore() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.addLightFrame(
+        relativePath: "sessions/M70/2026-07-01/lights/A.fit",
+        target: "M70", pixels: Array(repeating: 50, count: 4), width: 2, height: 2
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/M70/2026-07-01/lights/B.fit",
+        target: "M70", pixels: Array(repeating: 100, count: 4), width: 2, height: 2
+    )
+    try fixture.addLightFrame(
+        relativePath: "sessions/M70/2026-07-01/lights/C.fit",
+        target: "M70", pixels: Array(repeating: 150, count: 4), width: 2, height: 2
+    )
+
+    let rater = Rater(db: fixture.db, config: fixture.config, provider: nil)
+    let results = try rater.rate(target: "M70")
+
+    #expect(results.count == 3)
+    for result in results {
+        let breakdown = try #require(result.outlierBreakdown)
+        #expect(!breakdown.entries.isEmpty, "background is always available even with no Siril provider")
+    }
+
+    // `cachedScores` (the read-only "load without re-rating" path) must
+    // populate the exact same field from what's already persisted.
+    let cached = try Rater.cachedScores(target: "M70", db: fixture.db, config: fixture.config)
+    #expect(cached.count == 3)
+    for result in cached {
+        #expect(result.outlierBreakdown != nil)
+    }
+}
