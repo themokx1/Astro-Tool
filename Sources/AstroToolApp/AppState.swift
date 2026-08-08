@@ -76,8 +76,8 @@ enum Page: Hashable {
     case searchResults
 }
 
-/// `FieldGeometry.dominantFOV`'s bare tuple result, wrapped for
-/// `@Observable`/SwiftUI `Equatable` diffing -- a plain
+/// The resolved manual-setup or WCS-fallback FOV, wrapped for
+/// `@Observable`/SwiftUI `Equatable` diffing -- the core layer's plain
 /// `(widthDeg: Double, heightDeg: Double)` tuple can't itself be compared
 /// with `==` (`@Observable`'s change tracking, and any `.onChange(of:)`
 /// watching this property, need a concrete `Equatable` type). See
@@ -893,16 +893,46 @@ final class AppState: @unchecked Sendable {
     /// page. The effective fallback keeps the selection valid after deletes.
     func selectImagingSetup(_ id: String) {
         guard config.imagingSetups.contains(where: { $0.id == id }) else { return }
+        let shouldReload = discovery != nil
         selectedImagingSetupID = id
-        if discovery != nil, !isBusy { loadDiscovery() }
+        guard shouldReload else { return }
+        invalidateDiscoveryForSetupChange()
+        if isBusy {
+            pendingDiscoveryRefreshAfterEquipmentChange = true
+        } else {
+            loadDiscovery()
+        }
     }
 
-    /// Stores one zoom planning value without starting a load itself. The
-    /// Slider calls this continuously and triggers exactly one load when the
-    /// editing gesture finishes, avoiding a cancellation storm per pixel.
+    /// Stores one applied zoom planning value without starting a load itself.
+    /// The view keeps slider/text edits in a local draft and calls this only
+    /// on Apply, then starts exactly one reload.
     func setDiscoveryFocalLengthMM(_ focalLengthMM: Double) {
         guard let setup = effectiveImagingSetup else { return }
         discoveryFocalLengthsBySetup[setup.id] = setup.clampedFocalLengthMM(focalLengthMM)
+        if discovery != nil { invalidateDiscoveryForSetupChange() }
+    }
+
+    /// Recomputes an already-open (or currently loading) Discovery page
+    /// after the saved equipment config changes. If another operation owns
+    /// the shared task slot, exactly one refresh runs as soon as it ends.
+    func refreshDiscoveryAfterEquipmentChange() {
+        let discoveryIsLoading = isBusy && currentOperationID == discoveryOperationID
+        guard discovery != nil || discoveryIsLoading else { return }
+        invalidateDiscoveryForSetupChange()
+        if isBusy {
+            pendingDiscoveryRefreshAfterEquipmentChange = true
+        } else {
+            loadDiscovery()
+        }
+    }
+
+    /// A setup and its FOV-fit rows form one snapshot. Clearing both before
+    /// a new calculation prevents an old numeric FOV/table from appearing
+    /// under the newly selected setup or focal-length caption.
+    private func invalidateDiscoveryForSetupChange() {
+        discovery = nil
+        discoveryFOV = nil
     }
 
     var resolvedSite: SiteRule = SiteRule()
@@ -974,16 +1004,14 @@ final class AppState: @unchecked Sendable {
     /// loaded automatically, same "lazily loaded on the page's own
     /// `onAppear`" stance `nights`/`monthPlan` already take.
     var discovery: [DiscoveryRow]?
-    /// The library's dominant equipment setup's median field of view
-    /// (`FieldGeometry.dominantFOV`, R10-B4), computed alongside
+    /// The active manual imaging setup's calculated field of view, or --
+    /// when no manual profiles exist -- the library's dominant WCS-derived
+    /// field of view (`FieldGeometry.discoveryFOV`). It is computed alongside
     /// `discovery` by the SAME `loadDiscovery()` call and handed to
-    /// `DiscoveryPlanner.discover` as its `setupFOVDeg` -- kept as its own
-    /// property (not folded into a per-row field) since every row's FOV-fit
-    /// column judges against this ONE shared value, not something
-    /// per-target. `nil` exactly when `FieldGeometry.dominantFOV` itself
-    /// returns `nil` (no usable, WCS-resolved light in the whole library
-    /// shares the dominant setup's fingerprint) -- `DiscoveryPage` shows
-    /// "n/a" for the FOV tile/column in that case, never a guess.
+    /// `DiscoveryPlanner.discover` as its `setupFOVDeg`. It stays separate
+    /// from the rows because every target's fit is judged against this ONE
+    /// shared value. `nil` means neither a valid manual profile nor usable
+    /// WCS data exists; `DiscoveryPage` then shows `n/a`, never a guess.
     var discoveryFOV: DiscoveryFOV?
 
     // MARK: - Weather (R10-B6)
@@ -1102,6 +1130,14 @@ final class AppState: @unchecked Sendable {
     /// behavior for this whole class of quick, idempotent re-fetches.
     @ObservationIgnored
     private var currentTask: Task<Void, Never>?
+
+    /// Equipment edits can happen while a read-only operation is finishing.
+    /// Queueing one Discovery refresh prevents an older calculation from
+    /// publishing rows/FOV captured from the pre-save config.
+    @ObservationIgnored
+    private var pendingDiscoveryRefreshAfterEquipmentChange = false
+    @ObservationIgnored
+    private var discoveryOperationID: UUID?
 
     /// R12-U1 item 2: `runScan`'s OWN task slot, deliberately independent of
     /// `currentTask`. Before this, `runScan` shared `currentTask` like every
@@ -2532,6 +2568,7 @@ final class AppState: @unchecked Sendable {
         let focalLengthMM = effectiveDiscoveryFocalLengthMM
 
         let opID = beginOperation("Felfedezés számítása…")
+        discoveryOperationID = opID
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -2591,6 +2628,7 @@ final class AppState: @unchecked Sendable {
         let focalLengthMM = effectiveDiscoveryFocalLengthMM
 
         let opID = beginOperation("Helyszín felismerése a képek fejléceiből…")
+        discoveryOperationID = opID
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -2802,6 +2840,7 @@ final class AppState: @unchecked Sendable {
         let focalLengthMM = effectiveDiscoveryFocalLengthMM
 
         let opID = beginOperation("Helyszín-adatok frissítése…")
+        if wantsDiscovery { discoveryOperationID = opID }
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -4923,6 +4962,17 @@ final class AppState: @unchecked Sendable {
                 }
             }
         }
+        flushPendingDiscoveryRefresh()
+    }
+
+    /// Runs at the very end of `endOperation`: cancelling that just-finished
+    /// wrapper is harmless, while beginning the queued load immediately
+    /// avoids exposing an intermediate stale or unloaded Discovery state.
+    private func flushPendingDiscoveryRefresh() {
+        guard pendingDiscoveryRefreshAfterEquipmentChange else { return }
+        pendingDiscoveryRefreshAfterEquipmentChange = false
+        invalidateDiscoveryForSetupChange()
+        loadDiscovery()
     }
 
     /// `beginOperation` titles whose SUCCESSFUL completion is worth a toast

@@ -18,7 +18,7 @@
 - Create: `Tests/AstroCoreTests/ImagingSetupTests.swift`
 - Modify: `Tests/AstroCoreTests/ConfigTests.swift`
 
-- [ ] **Step 1: Write the failing model tests**
+- [x] **Step 1: Write the failing model tests**
 
 Add tests that construct fixed and zoom profiles, assert `clampedFocalLengthMM`, `fieldOfView(at:)`, `isZoom`, and `defaultSetup(in:)`. Use these numeric fixtures:
 
@@ -34,13 +34,13 @@ let apsc = ImagingSetupProfile(
 #expect(apsc.clampedFocalLengthMM(50) == 100)
 ```
 
-- [ ] **Step 2: Run the model tests and verify RED**
+- [x] **Step 2: Run the model tests and verify RED**
 
 Run: `swift test --filter ImagingSetupTests`
 
 Expected: compilation failure because `ImagingSetupProfile` and `CameraKind` do not exist.
 
-- [ ] **Step 3: Implement the minimal setup model**
+- [x] **Step 3: Implement the minimal setup model**
 
 Create public Codable/Equatable/Sendable types with:
 
@@ -86,7 +86,7 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
 
 Add a deterministic `defaultSetup(in:)` helper: flagged setup first, otherwise first list element.
 
-- [ ] **Step 4: Add config decode/round-trip tests and verify RED**
+- [x] **Step 4: Add config decode/round-trip tests and verify RED**
 
 Assert that `{}` decodes to `imagingSetups == []`, and that an encoded/decode config preserves a three-profile list including camera kind and zoom bounds.
 
@@ -94,7 +94,7 @@ Run: `swift test --filter ConfigTests`
 
 Expected: compilation failure because `AstroConfig.imagingSetups` does not exist.
 
-- [ ] **Step 5: Add `imagingSetups` to AstroConfig and verify GREEN**
+- [x] **Step 5: Add `imagingSetups` to AstroConfig and verify GREEN**
 
 Add the property, initializer parameter, CodingKey, assignment, and backward-compatible `decodeIfPresent(... ) ?? []` decode.
 
@@ -102,7 +102,7 @@ Run: `swift test --filter 'ImagingSetupTests|ConfigTests'`
 
 Expected: all selected tests pass.
 
-- [ ] **Step 6: Commit Task 1**
+- [x] **Step 6: Commit Task 1**
 
 ```bash
 git add Sources/AstroCore/Sky/ImagingSetup.swift Sources/AstroCore/Config/AstroConfig.swift Tests/AstroCoreTests/ImagingSetupTests.swift Tests/AstroCoreTests/ConfigTests.swift
@@ -115,7 +115,7 @@ git commit -m "feat: add configurable imaging setup model"
 - Modify: `Sources/AstroCore/Sky/FieldGeometry.swift`
 - Modify: `Tests/AstroCoreTests/FieldGeometryTests.swift`
 
-- [ ] **Step 1: Write failing selection tests**
+- [x] **Step 1: Write failing selection tests**
 
 Add tests for a new resolver:
 
@@ -129,13 +129,13 @@ let fov = try #require(try FieldGeometry.discoveryFOV(
 
 Cover selected profile, missing ID falling back to configured default, and empty `imagingSetups` falling back to the existing `dominantFOV` result.
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `swift test --filter FieldGeometryTests`
 
 Expected: compilation failure because `discoveryFOV` does not exist.
 
-- [ ] **Step 3: Implement the resolver**
+- [x] **Step 3: Implement the resolver**
 
 Add:
 
@@ -150,13 +150,13 @@ public static func discoveryFOV(
 
 Resolve exact ID, then configured default/first. If a configured profile exists, return its calculated FOV; only call `dominantFOV` when the config list is empty.
 
-- [ ] **Step 4: Verify GREEN and regression**
+- [x] **Step 4: Verify GREEN and regression**
 
 Run: `swift test --filter FieldGeometryTests`
 
 Expected: all FieldGeometry tests pass, including the old dominant-WCS tests.
 
-- [ ] **Step 5: Commit Task 2**
+- [x] **Step 5: Commit Task 2**
 
 ```bash
 git add Sources/AstroCore/Sky/FieldGeometry.swift Tests/AstroCoreTests/FieldGeometryTests.swift
@@ -168,7 +168,7 @@ git commit -m "feat: resolve discovery FOV from configured setup"
 **Files:**
 - Modify: `Sources/AstroToolApp/AppState.swift`
 
-- [ ] **Step 1: Add observable persisted selection state**
+- [x] **Step 1: Add observable persisted selection state**
 
 Add UserDefaults keys and stored observable properties for the selected setup ID and a JSON-encoded `[String: Double]` map of last planning focal lengths. Add computed values:
 
@@ -184,21 +184,21 @@ var effectiveDiscoveryFocalLengthMM: Double? {
 }
 ```
 
-- [ ] **Step 2: Route every discovery calculation through the resolver**
+- [x] **Step 2: Route every discovery calculation through the resolver**
 
 Capture the effective setup ID and focal length on the main actor, then replace all three direct `dominantFOV` calls used for Discovery with `FieldGeometry.discoveryFOV`.
 
-- [ ] **Step 3: Add selection mutation methods**
+- [x] **Step 3: Add selection mutation methods**
 
-`selectImagingSetup(_:)` validates the ID, persists it, and reloads Discovery. `setDiscoveryFocalLengthMM(_:)` clamps and persists the value for the active setup; the caller triggers one reload after slider editing ends.
+`selectImagingSetup(_:)` validates the ID, persists it, and reloads Discovery. `setDiscoveryFocalLengthMM(_:)` clamps and persists the applied value for the active setup; the popover keeps slider/text edits in a local draft and triggers one reload only on explicit Apply.
 
-- [ ] **Step 4: Compile the app target**
+- [x] **Step 4: Compile the app target**
 
 Run: `swift build --target AstroToolApp`
 
 Expected: build succeeds.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```bash
 git add Sources/AstroToolApp/AppState.swift
@@ -212,25 +212,25 @@ git commit -m "feat(app): persist discovery setup selection"
 - Modify: `Sources/AstroToolApp/Views/SettingsWindow.swift`
 - Modify: `Sources/AstroToolApp/AppState.swift`
 
-- [ ] **Step 1: Add the settings route and tab shell**
+- [x] **Step 1: Add the settings route and tab shell**
 
 Add `.equipment` to `SettingsTab`, then insert `EquipmentSettingsView()` with tab label `Felszerelés`. Increase the settings window only as much as the native form needs.
 
-- [ ] **Step 2: Implement draft list and editor**
+- [x] **Step 2: Implement draft list and editor**
 
 Use draft UUID identity, a list summary, add/edit/delete/default controls, and a sheet editor. Provide sensor presets for 23.5×15.7, 22.3×14.9, 36×24, and custom. Fixed mode writes min=max=default; zoom mode exposes min/max/default fields.
 
-- [ ] **Step 3: Implement concrete validation and save**
+- [x] **Step 3: Implement concrete validation and save**
 
 Reject empty/duplicate names, empty camera, non-positive dimensions/focal lengths, inverted zoom bounds, and default focal length outside the range. Normalize exactly one default, save with `WriteGuard`, update `appState.config`, reconcile deleted selections, and reload Discovery if it was already loaded.
 
-- [ ] **Step 4: Build the app**
+- [x] **Step 4: Build the app**
 
 Run: `swift build --target AstroToolApp`
 
 Expected: build succeeds with no SwiftUI generic or concurrency errors.
 
-- [ ] **Step 5: Commit Task 4**
+- [x] **Step 5: Commit Task 4**
 
 ```bash
 git add Sources/AstroToolApp/Views/Settings/EquipmentSettingsView.swift Sources/AstroToolApp/Views/SettingsWindow.swift Sources/AstroToolApp/AppState.swift
@@ -242,25 +242,25 @@ git commit -m "feat(app): add imaging setup settings"
 **Files:**
 - Modify: `Sources/AstroToolApp/Views/DiscoveryPage.swift`
 
-- [ ] **Step 1: Add the setup Picker**
+- [x] **Step 1: Add the setup Picker**
 
 When profiles exist, show a compact Picker bound through `appState.selectImagingSetup`. Its labels use the profile name and camera, while the control label stays short enough for the existing toolbar.
 
-- [ ] **Step 2: Add zoom planning control**
+- [x] **Step 2: Add zoom planning control**
 
-For `effectiveImagingSetup.isZoom`, show a compact popover/menu containing a bounded Slider, numeric mm field/Stepper, min/max labels, and an explicit `Újraszámítás` action. Fix lenses show only the focal length in the setup caption.
+For `effectiveImagingSetup.isZoom`, show a compact popover/menu containing a bounded Slider, numeric mm field/Stepper, min/max labels, and an explicit `Alkalmazás és újraszámítás` action. Fix lenses show only the focal length in the setup caption.
 
-- [ ] **Step 3: Make the FOV tile actionable and truthful**
+- [x] **Step 3: Make the FOV tile actionable and truthful**
 
 Show the manual setup name plus current mm as caption. If neither manual nor WCS FOV exists, show `n/a`, „nincs kézi setup vagy WCS-adat”, and a `Setup beállítása…` action that routes to `.equipment` before opening Settings. Update metric help to describe manual-first/WCS-fallback behavior.
 
-- [ ] **Step 4: Build and smoke-test**
+- [x] **Step 4: Build and smoke-test**
 
 Run: `swift build --target AstroToolApp`
 
 Expected: build succeeds.
 
-- [ ] **Step 5: Commit Task 5**
+- [x] **Step 5: Commit Task 5**
 
 ```bash
 git add Sources/AstroToolApp/Views/DiscoveryPage.swift
@@ -273,19 +273,19 @@ git commit -m "feat(app): select setup and focal length in discovery"
 - Modify: `README.md` if it has a user-facing feature list/config example section
 - Modify: `docs/superpowers/plans/2026-08-08-multi-setup-fov.md`
 
-- [ ] **Step 1: Run format/static diff checks**
+- [x] **Step 1: Run format/static diff checks**
 
 Run: `git diff --check`
 
 Expected: no output.
 
-- [ ] **Step 2: Run the full test suite**
+- [x] **Step 2: Run the full test suite**
 
 Run: `swift test`
 
 Expected: all tests pass.
 
-- [ ] **Step 3: Run debug and release builds**
+- [x] **Step 3: Run debug and release builds**
 
 Run: `swift build --target AstroToolApp`
 
@@ -293,15 +293,15 @@ Run: `swift build -c release --target AstroToolApp`
 
 Expected: both builds succeed.
 
-- [ ] **Step 4: Update user documentation and plan checkboxes**
+- [x] **Step 4: Update user documentation and plan checkboxes**
 
 Document the Felszerelés setup workflow and examples without changing the user's existing config automatically. Mark completed plan items.
 
-- [ ] **Step 5: Request code review, fix findings, and re-run verification**
+- [x] **Step 5: Request code review, fix findings, and re-run verification**
 
 Review model validation, config compatibility, every Discovery load path, selection fallback, SwiftUI bindings, and accidental changes to the untracked audit report.
 
-- [ ] **Step 6: Commit verification/docs**
+- [x] **Step 6: Commit verification/docs**
 
 ```bash
 git add README.md docs/superpowers/plans/2026-08-08-multi-setup-fov.md

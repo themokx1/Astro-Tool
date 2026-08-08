@@ -78,7 +78,10 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
     }
 
     public var isZoom: Bool {
-        abs(focalLengthMaxMM - focalLengthMinMM) > 0.000_001
+        guard focalLengthMinMM.isFinite, focalLengthMaxMM.isFinite,
+              focalLengthMinMM > 0, focalLengthMaxMM >= focalLengthMinMM
+        else { return false }
+        return focalLengthMaxMM - focalLengthMinMM > 0.000_001
     }
 
     public func validate() throws {
@@ -113,8 +116,10 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
     /// Invalid hand-edited profile values yield `nil`, never a fabricated FOV.
     public func fieldOfView(at proposed: Double? = nil) -> SetupFieldOfView? {
         let focalLengthMM = clampedFocalLengthMM(proposed)
-        guard sensorWidthMM > 0,
-              sensorHeightMM > 0,
+        guard sensorWidthMM.isFinite, sensorHeightMM.isFinite,
+              sensorWidthMM > 0, sensorHeightMM > 0,
+              focalLengthMinMM.isFinite, focalLengthMaxMM.isFinite,
+              defaultFocalLengthMM.isFinite, focalLengthMM.isFinite,
               focalLengthMinMM > 0,
               focalLengthMaxMM >= focalLengthMinMM,
               defaultFocalLengthMM >= focalLengthMinMM,

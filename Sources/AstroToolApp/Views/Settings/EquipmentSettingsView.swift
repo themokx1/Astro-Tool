@@ -392,7 +392,7 @@ struct EquipmentSettingsView: View {
             }
             drafts = profiles.map(Self.draft(from:))
             saveMessage = profiles.isEmpty ? "Mentve — automatikus WCS mód." : "Mentve."
-            if appState.discovery != nil, !appState.isBusy { appState.loadDiscovery() }
+            appState.refreshDiscoveryAfterEquipmentChange()
         } catch let error as ImagingSetupValidationError {
             saveError = Self.validationMessage(error)
         } catch let error as EquipmentSettingsError {

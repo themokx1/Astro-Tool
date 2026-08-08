@@ -69,6 +69,20 @@ private let apscZoom = ImagingSetupProfile(
     #expect(setup.fieldOfView() == nil)
 }
 
+@Test func malformedFocalRangesAreNeverExposedAsZoomControls() {
+    var setup = apscZoom
+    setup.focalLengthMinMM = 500
+    setup.focalLengthMaxMM = 100
+
+    #expect(!setup.isZoom)
+    #expect(setup.fieldOfView() == nil)
+
+    setup = apscZoom
+    setup.focalLengthMaxMM = .infinity
+    #expect(!setup.isZoom)
+    #expect(setup.fieldOfView() == nil)
+}
+
 @Test func defaultImagingSetupPrefersFlaggedThenFallsBackToFirst() {
     let first = ImagingSetupProfile(
         id: "first", name: "Első", cameraName: "A", cameraKind: .dedicatedAstro,

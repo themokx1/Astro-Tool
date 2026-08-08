@@ -134,8 +134,9 @@ Minden sablon szabadon átírható. A szenzorpresetek: tipikus APS-C
 illetve tetszőleges egyedi méret.
 
 A **Felfedezés** felső sorában választható ki az aktív setup. Zoomobjektívnél
-a mellette lévő mm-gombbal állítható be a konkrét tervezési fókusztáv; a FOV
-és minden „befér / mozaik kellene / túl kicsi” címke ehhez számolódik újra.
+a mellette lévő mm-gombbal állítható be a konkrét tervezési fókusztáv, majd az
+„Alkalmazás és újraszámítás” gomb frissíti a FOV-ot; minden
+„befér / mozaik kellene / túl kicsi” címke ehhez számolódik újra.
 A választott setup és a legutóbbi zoomállás setup-onként megmarad.
 
 Ha nincs kézi setup, a korábbi működés változatlan: a program a könyvtár

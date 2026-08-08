@@ -25,6 +25,7 @@ struct DiscoveryPage: View {
     @State private var skyArcItem: SkyArcItem?
     @State private var newSessionPrefill: NewSessionPrefillItem?
     @State private var showFocalLengthPopover = false
+    @State private var focalLengthDraftMM: Double?
 
     // MARK: - Body
 
@@ -91,8 +92,13 @@ struct DiscoveryPage: View {
             Spacer()
             if !appState.config.imagingSetups.isEmpty {
                 setupPicker
-                if appState.effectiveImagingSetup?.isZoom == true {
+                if activeManualSetupIsValid,
+                   appState.effectiveImagingSetup?.isZoom == true {
                     focalLengthButton
+                }
+                if !activeManualSetupIsValid {
+                    Button("Érvénytelen setup javítása…") { openEquipmentSettings() }
+                        .buttonStyle(.link)
                 }
             } else if appState.discoveryFOV == nil, appState.discovery != nil {
                 Button("Setup beállítása…") { openEquipmentSettings() }
@@ -120,16 +126,17 @@ struct DiscoveryPage: View {
             set: { appState.selectImagingSetup($0) }
         )) {
             ForEach(appState.config.imagingSetups) { setup in
-                Text(setup.name).tag(setup.id)
+                Text("\(setup.name) — \(setup.cameraName)").tag(setup.id)
             }
         }
-        .frame(width: 230)
+        .frame(width: 280)
         .disabled(appState.isBusy)
         .help("A FOV és a FOV-illeszkedés ehhez a setuphoz készül")
     }
 
     private var focalLengthButton: some View {
         Button {
+            focalLengthDraftMM = appState.effectiveDiscoveryFocalLengthMM
             showFocalLengthPopover = true
         } label: {
             Label(focalLengthText, systemImage: "viewfinder")
@@ -147,10 +154,14 @@ struct DiscoveryPage: View {
         return String(format: "%.0f mm", focal)
     }
 
-    private var discoveryFocalLengthBinding: Binding<Double> {
+    private func focalLengthDraftBinding(for setup: ImagingSetupProfile) -> Binding<Double> {
         Binding(
-            get: { appState.effectiveDiscoveryFocalLengthMM ?? 1 },
-            set: { appState.setDiscoveryFocalLengthMM($0) }
+            get: {
+                setup.clampedFocalLengthMM(
+                    focalLengthDraftMM ?? appState.effectiveDiscoveryFocalLengthMM
+                )
+            },
+            set: { focalLengthDraftMM = setup.clampedFocalLengthMM($0) }
         )
     }
 
@@ -163,30 +174,61 @@ struct DiscoveryPage: View {
             HStack(spacing: 8) {
                 Text(String(format: "%.0f", setup.focalLengthMinMM))
                     .font(.caption).monospacedDigit()
-                Slider(value: discoveryFocalLengthBinding, in: setup.focalLengthMinMM...setup.focalLengthMaxMM, step: 1)
+                Slider(
+                    value: focalLengthDraftBinding(for: setup),
+                    in: setup.focalLengthMinMM...setup.focalLengthMaxMM,
+                    step: 1
+                )
                 Text(String(format: "%.0f mm", setup.focalLengthMaxMM))
                     .font(.caption).monospacedDigit()
             }
-            LabeledContent("Aktuális", value: focalLengthText)
-                .monospacedDigit()
+            LabeledContent("Konkrét fókusztáv") {
+                HStack(spacing: 4) {
+                    TextField(
+                        "mm",
+                        value: focalLengthDraftBinding(for: setup),
+                        format: .number.precision(.fractionLength(0))
+                    )
+                    .frame(width: 64)
+                    Stepper(
+                        "",
+                        value: focalLengthDraftBinding(for: setup),
+                        in: setup.focalLengthMinMM...setup.focalLengthMaxMM,
+                        step: 1
+                    )
+                    .labelsHidden()
+                    Text("mm").foregroundStyle(.secondary)
+                }
+            }
+            .monospacedDigit()
             Text("A FOV mindig ehhez az egy konkrét zoomálláshoz számolódik.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
                 Button("Alapérték") {
-                    appState.setDiscoveryFocalLengthMM(setup.defaultFocalLengthMM)
+                    focalLengthDraftMM = setup.defaultFocalLengthMM
                 }
                 Spacer()
-                Button("Újraszámítás") {
-                    showFocalLengthPopover = false
-                    appState.loadDiscovery()
-                }
+                Button("Alkalmazás és újraszámítás") { applyFocalLength(for: setup) }
                 .keyboardShortcut(.defaultAction)
                 .disabled(appState.isBusy || appState.db == nil)
             }
         }
         .padding()
         .frame(width: 330)
+    }
+
+    private func applyFocalLength(for setup: ImagingSetupProfile) {
+        let focalLengthMM = setup.clampedFocalLengthMM(focalLengthDraftMM)
+        appState.setDiscoveryFocalLengthMM(focalLengthMM)
+        showFocalLengthPopover = false
+        focalLengthDraftMM = nil
+        appState.loadDiscovery()
+    }
+
+    private var activeManualSetupIsValid: Bool {
+        guard let setup = appState.effectiveImagingSetup else { return false }
+        return setup.fieldOfView(at: appState.effectiveDiscoveryFocalLengthMM) != nil
     }
 
     private func openEquipmentSettings() {
@@ -345,14 +387,21 @@ struct DiscoveryPage: View {
     }
 
     private var fovTileValueText: String {
+        if appState.effectiveImagingSetup != nil, !activeManualSetupIsValid {
+            return TDFormat.missingTile
+        }
         guard let fov = appState.discoveryFOV else { return TDFormat.missingTile }
         return String(format: "%.1f° × %.1f°", fov.widthDeg, fov.heightDeg)
     }
 
     private var fovTileCaptionText: String? {
         if let setup = appState.effectiveImagingSetup,
+           activeManualSetupIsValid,
            let focal = appState.effectiveDiscoveryFocalLengthMM {
             return "\(setup.name) · \(String(format: "%.0f mm", focal))"
+        }
+        if appState.effectiveImagingSetup != nil {
+            return "érvénytelen kézi setup · javítás szükséges"
         }
         return appState.discoveryFOV == nil
             ? "nincs kézi setup vagy WCS-adat"

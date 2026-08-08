@@ -87,7 +87,44 @@ private func detachedTaskBodies(in source: String) -> [Substring] {
     let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
     #expect(source.contains("setupPicker"))
-    #expect(source.contains("Slider(value: discoveryFocalLengthBinding"))
+    #expect(source.contains("focalLengthDraftBinding(for: setup)"))
     #expect(source.contains("appState.settingsTab = .equipment"))
     #expect(source.contains("nincs kézi setup vagy WCS-adat"))
+}
+
+@Test func discoveryZoomEditingUsesAnAppliedDraftAndInvalidSetupsRemainRecoverable() throws {
+    let sourceURL = repositoryRoot()
+        .appendingPathComponent("Sources/AstroToolApp/Views/DiscoveryPage.swift")
+    let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+    #expect(source.contains("@State private var focalLengthDraftMM"))
+    #expect(source.contains("applyFocalLength"))
+    #expect(source.contains("activeManualSetupIsValid"))
+    #expect(source.contains("Érvénytelen setup javítása…"))
+    #expect(source.contains("setup.name) — \\(setup.cameraName"))
+}
+
+@Test func equipmentChangesQueueDiscoveryRefreshAcrossBusyOperations() throws {
+    let appStateURL = repositoryRoot()
+        .appendingPathComponent("Sources/AstroToolApp/AppState.swift")
+    let settingsURL = repositoryRoot()
+        .appendingPathComponent("Sources/AstroToolApp/Views/Settings/EquipmentSettingsView.swift")
+    let appStateSource = try String(contentsOf: appStateURL, encoding: .utf8)
+    let settingsSource = try String(contentsOf: settingsURL, encoding: .utf8)
+
+    #expect(appStateSource.contains("pendingDiscoveryRefreshAfterEquipmentChange"))
+    #expect(appStateSource.contains("refreshDiscoveryAfterEquipmentChange"))
+    #expect(appStateSource.contains("flushPendingDiscoveryRefresh"))
+    #expect(settingsSource.contains("appState.refreshDiscoveryAfterEquipmentChange()"))
+    #expect(!settingsSource.contains("appState.discovery != nil, !appState.isBusy"))
+}
+
+@Test func setupAndFocalChangesInvalidateTheOldDiscoveryResultBeforeReloading() throws {
+    let sourceURL = repositoryRoot()
+        .appendingPathComponent("Sources/AstroToolApp/AppState.swift")
+    let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+    #expect(source.contains("invalidateDiscoveryForSetupChange"))
+    #expect(source.contains("let shouldReload = discovery != nil"))
+    #expect(source.contains("discovery = nil\n        discoveryFOV = nil"))
 }
