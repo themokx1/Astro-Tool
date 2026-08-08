@@ -158,6 +158,47 @@ T3 — Settings csomag után.
     törlendő régi taget — ez a szűrőnkénti `goal:F=Xh` tageket is törölte
     volna egy összcél-mentésnél. Mostantól `GoalTag.isOverallGoalTag`
     szűr, ami csak a saját (nem szűrő-scope-olt) taget találja meg.
+- **Hold-tudatos szűrő-ajánlás (R11-T6/F3)**: új `plan.narrowbandFilters`
+  config-kulcs (alapértelmezés: Ha, OIII, SII, L-eXtreme, L-Ultimate,
+  L-Enhance, Dual-band) + új core `FilterAdvisor` (tiszta, DB-mentes):
+  egy éjszaka Hold-állapotát (illumináció > 40% VAGY célponti szeparáció <
+  60° → "keskenysáv-éjszaka", egyébként "sötét ég") veti össze a célpont
+  szűrőnkénti céljaival (R11-T5/F2 `filterGoals`) — keskenysáv-éjszakán a
+  legnagyobb deficitű keskenysáv-szűrőt, sötét égen a legnagyobb deficitű
+  szélessáv-szűrőt ajánlja; szűrő-cél nélkül csak az általános címke marad.
+  `TargetPlan` új `filterAdvice` mezőt kap (additív, `Planner.plan`
+  tölti ki, `nil` ugyanott, ahol `moonSeparationDeg` is az).
+  - TonightPage planTable új "Szűrő ma" oszlopa chippel ("Ha (-6,2h)" konkrét
+    deficittel, vagy "Ha/SII" ha a kategóriának nincs kiugró hiánya) +
+    tooltip az indoklással ("Hold 82%, szeparáció 41° — keskenysáv
+    ajánlott"); szűrő-cél nélküli célpontnál a cella "-".
+  - Naptár szegmens: az éjszaka-sorok Hold-oszlopa mellett kis "NB"/"sötét"
+    címke (csak illumináció > 40% alapján, célponti szeparáció nélkül).
+  - Verdikt-integráció: keskenysáv-éjszakán, kiugró NB-deficittel a "ma jó"
+    verdikt "ma jó — Ha-ra"-ra bővül (helyes -ra/-re toldalékkal) — a
+    `VerdictChip` zöld színezése `hasPrefix("ma jó")`-ra vált (eddig pontos
+    egyezés volt), hogy ez a bővített verdikt is zöld maradjon.
+- **Terv-export (R11-T6/F18a)**: TonightPage toolbar "Terv exportálása…"
+  menüje — "Vágólapra" (célpont, RA/Dec óra/fok formátumban, láthatósági
+  ablak, javasolt szűrő, tabulátorral tagolva) és "CSV-fájlba…"
+  (`NSSavePanel`, oszlopok: target, ra_deg, dec_deg, window_start,
+  window_end, max_alt_deg, moon_illum, verdict, filter_suggestion). A
+  kijelölt sor megy, kijelölés nélkül a "ma jó" verdiktűek, ha az sincs,
+  minden sor; sikeres exportnál toast. Új core `PlanExport` (tiszta
+  string-renderelés) mindkét felületet + a CLI-t kiszolgálja. CLI:
+  `plan --out PATH|-` ugyanazokkal az oszlopokkal (nem használható
+  `--month`-tal együtt).
+- **Kalibrációs bevásárlólista (R11-T6/F18b)**: TonightPage lap alján
+  lenyitható "Kalibrációs teendők ma estére" (`DisclosureGroup`, badge a
+  tétel-számmal, alapból csukva) — a hiányzó/elavult dark-kombók közül azok,
+  amelyeket a ma esti (a Hold-tól függetlenül megfigyelhető, azaz "ma jó"
+  vagy "Hold zavar" verdiktű) célpontok session-története ténylegesen
+  használna, a meglévő `CalibNeed.todo` szöveggel + az érintett célpontok
+  listájával ("…készíts 300 s / -10 °C darkot (5 light frame-hez) — M31,
+  M42 használná") — darabszám sosem kitalálva. "Másolás Markdownként" gomb
+  (`- [ ]` checklist a vágólapra). Üres állapot: "Minden szükséges
+  kalibráció friss — nincs teendő ma estére." Új core `CalibShoppingList`
+  (tiszta függvény, `CalibAnalyzer.coverage()` + `Planner.plan()` felett).
 
 ### Changed
 

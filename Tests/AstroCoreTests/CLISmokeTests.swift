@@ -2127,6 +2127,54 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
     #expect(result.exitCode == 1)
 }
 
+// MARK: - plan --out (R11-T6/F18a)
+
+@Test func planOutDashPrintsCSVToStdout() throws {
+    let root = try makeTempRoot("plan-out-dash")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writePlanFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, crval1: 10.6847, crval2: 41.2687, dateObs: "2026-08-01T22:00:00")
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--out", "-"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.hasPrefix("target,ra_deg,dec_deg,window_start,window_end,max_alt_deg,moon_illum,verdict,filter_suggestion\n"))
+    #expect(result.stdout.contains("M31_Andromeda"))
+}
+
+@Test func planOutPathWritesCSVToCustomPathOutsideRoot() throws {
+    let root = try makeTempRoot("plan-out-path")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writePlanFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, crval1: 10.6847, crval2: 41.2687, dateObs: "2026-08-01T22:00:00")
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let outDir = try makeTempRoot("plan-out-path-dest")
+    defer { try? FileManager.default.removeItem(at: outDir) }
+    let outPath = outDir.appendingPathComponent("plan.csv").path
+
+    let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--out", outPath])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(FileManager.default.fileExists(atPath: outPath))
+
+    let content = try String(contentsOfFile: outPath, encoding: .utf8)
+    #expect(content.contains("M31_Andromeda"))
+}
+
+@Test func planOutWithMonthExitsWithUsageError() throws {
+    let root = try makeTempRoot("plan-out-month")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try runCLI(["plan", "--root", root.path, "--month", "--out", "-"])
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("--out is not supported together with --month"))
+}
+
 // MARK: - night-info (R10-B8)
 
 @Test func nightInfoJSONReportsDarkHoursAndMoonWhenSiteResolvable() throws {

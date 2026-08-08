@@ -334,6 +334,35 @@ public struct WeatherRule: Codable, Equatable, Sendable {
     }
 }
 
+/// R11-T6/F3: Hold-tudatos szűrő-ajánlás config -- which FITS `FILTER`
+/// values count as "narrowband" (Ha/OIII/SII/dual-/tri-band light-pollution
+/// filters) vs. everything else ("broadband", including a plain OSC/DSLR
+/// session shooting no filter at all) for `FilterAdvisor.advice`'s NB/BB
+/// category split. Matched case-insensitively against real FITS `FILTER`
+/// values (same convention `GoalTag.isFilterGoalTag` already uses for its
+/// own filter-name comparisons). Config-only for now -- no dedicated
+/// Settings field, same "plumbed through, editable via config.json" stance
+/// `WeatherRule`/`ExposeRule` started with before their own UI landed.
+public struct PlanRule: Codable, Equatable, Sendable {
+    public var narrowbandFilters: [String]
+
+    public init(narrowbandFilters: [String] = [
+        "Ha", "OIII", "SII", "L-eXtreme", "L-Ultimate", "L-Enhance", "Dual-band",
+    ]) {
+        self.narrowbandFilters = narrowbandFilters
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case narrowbandFilters
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = PlanRule()
+        self.narrowbandFilters = try container.decodeIfPresent([String].self, forKey: .narrowbandFilters) ?? defaults.narrowbandFilters
+    }
+}
+
 /// Top-level, user-editable configuration for Astro-Tool. Every field falls
 /// back to a sensible default when missing from the on-disk JSON, so old
 /// config files stay valid after new fields are added, and unknown keys in
@@ -362,6 +391,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var site: SiteRule
     public var expose: ExposeRule
     public var weather: WeatherRule
+    public var plan: PlanRule
 
     public init(
         rootPath: String = "/Volumes/images/Astro",
@@ -377,7 +407,8 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         stats: StatsRule = StatsRule(),
         site: SiteRule = SiteRule(),
         expose: ExposeRule = ExposeRule(),
-        weather: WeatherRule = WeatherRule()
+        weather: WeatherRule = WeatherRule(),
+        plan: PlanRule = PlanRule()
     ) {
         self.rootPath = rootPath
         self.excludedDirNames = excludedDirNames
@@ -393,11 +424,12 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.site = site
         self.expose = expose
         self.weather = weather
+        self.plan = plan
     }
 
     private enum CodingKeys: String, CodingKey {
         case rootPath, excludedDirNames, excludedPaths, residuePatterns, residueDirNames, toolOutputDirNames
-        case intentional, wideField, calib, rating, stats, site, expose, weather
+        case intentional, wideField, calib, rating, stats, site, expose, weather, plan
     }
 
     public init(from decoder: any Decoder) throws {
@@ -417,6 +449,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.site = try container.decodeIfPresent(SiteRule.self, forKey: .site) ?? defaults.site
         self.expose = try container.decodeIfPresent(ExposeRule.self, forKey: .expose) ?? defaults.expose
         self.weather = try container.decodeIfPresent(WeatherRule.self, forKey: .weather) ?? defaults.weather
+        self.plan = try container.decodeIfPresent(PlanRule.self, forKey: .plan) ?? defaults.plan
     }
 
     /// Loads and decodes the config from `url`. Throws on I/O failure

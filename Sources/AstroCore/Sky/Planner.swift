@@ -46,6 +46,12 @@ public struct TargetPlan: Codable, Sendable, Equatable {
     /// having a filter goal tag to keep the common (no filter goals) case
     /// cheap.
     public var filterGoals: [FilterIntegration]
+    /// R11-T6/F3: tonight's Hold-tudatos szűrő-ajánlás for this target --
+    /// `nil` under the exact same conditions `moonSeparationDeg` is (no
+    /// coordinate/site/night to evaluate the Moon against at all: comet,
+    /// missing coordinate, or unresolvable site). Absent in JSON produced
+    /// before this field existed; decodes to `nil` in that case.
+    public var filterAdvice: FilterAdvisor.Advice?
 
     public init(
         target: String,
@@ -63,7 +69,8 @@ public struct TargetPlan: Codable, Sendable, Equatable {
         moonSeparationDeg: Double? = nil,
         verdict: String,
         score: Double,
-        filterGoals: [FilterIntegration] = []
+        filterGoals: [FilterIntegration] = [],
+        filterAdvice: FilterAdvisor.Advice? = nil
     ) {
         self.target = target
         self.displayName = displayName ?? target.replacingOccurrences(of: "_", with: " ")
@@ -81,12 +88,13 @@ public struct TargetPlan: Codable, Sendable, Equatable {
         self.verdict = verdict
         self.score = score
         self.filterGoals = filterGoals
+        self.filterAdvice = filterAdvice
     }
 
     private enum CodingKeys: String, CodingKey {
         case target, displayName, raDeg, decDeg, usableIntegrationSeconds, goalSeconds,
              culminationUTC, culminationLocal, maxAltitudeDeg, visibleWindowLocal, visibleHours,
-             moonIlluminationPercent, moonSeparationDeg, verdict, score, filterGoals
+             moonIlluminationPercent, moonSeparationDeg, verdict, score, filterGoals, filterAdvice
     }
 
     public init(from decoder: Decoder) throws {
@@ -111,6 +119,7 @@ public struct TargetPlan: Codable, Sendable, Equatable {
         // Absent in JSON produced before this field existed -- falls back to
         // "no filter goals", same default the memberwise `init` uses.
         filterGoals = try c.decodeIfPresent([FilterIntegration].self, forKey: .filterGoals) ?? []
+        filterAdvice = try c.decodeIfPresent(FilterAdvisor.Advice.self, forKey: .filterAdvice)
     }
 }
 
@@ -527,7 +536,8 @@ public enum Planner {
                 siteLat: siteLat,
                 siteLon: siteLon,
                 night: night,
-                timeZone: timeZone
+                timeZone: timeZone,
+                narrowbandFilters: config.plan.narrowbandFilters
             ))
         }
 
@@ -603,7 +613,8 @@ public enum Planner {
         siteLat: Double?,
         siteLon: Double?,
         night: SunMoon.TwilightResult?,
-        timeZone: TimeZone
+        timeZone: TimeZone,
+        narrowbandFilters: [String]
     ) -> TargetPlan {
         guard !isComet else {
             return TargetPlan(
@@ -648,7 +659,7 @@ public enum Planner {
         let visibleWindowLocal = NightSweep.visibleWindowLocal(sweep, timeZone: timeZone)
 
         let moonInterferes = moonIllum > 60 && moonSeparation < 40
-        let verdict: String
+        var verdict: String
         if sweep.maxAltitudeDeg < minAltitudeDeg {
             verdict = Verdict.tooLow(sweep.maxAltitudeDeg)
         } else if visibleHours < 0.5 {
@@ -658,6 +669,19 @@ public enum Planner {
         } else {
             verdict = Verdict.good
         }
+
+        // R11-T6/F3: Hold-tudatos szűrő-ajánlás -- computed regardless of
+        // which verdict branch fired above (a "Hold zavar"/"alacsony" night
+        // can still be worth a filter suggestion), then folded ADDITIVELY
+        // into the verdict text only for the plain "ma jó" case (see
+        // `FilterAdvisor.augmentedVerdict`'s own doc comment).
+        let filterAdvice = FilterAdvisor.advice(
+            moonIlluminationPercent: moonIllum,
+            moonSeparationDeg: moonSeparation,
+            filterGoals: filterGoals,
+            narrowbandFilters: narrowbandFilters
+        )
+        verdict = FilterAdvisor.augmentedVerdict(baseVerdict: verdict, advice: filterAdvice)
 
         let score = self.score(
             usableIntegrationSeconds: usableIntegrationSeconds,
@@ -682,7 +706,8 @@ public enum Planner {
             moonSeparationDeg: moonSeparation,
             verdict: verdict,
             score: score,
-            filterGoals: filterGoals
+            filterGoals: filterGoals,
+            filterAdvice: filterAdvice
         )
     }
 

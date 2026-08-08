@@ -405,3 +405,83 @@ private struct PlannerFixture {
     #expect(info.darkHours == nil)
     #expect(info.note != nil)
 }
+
+// MARK: - R11-T6/F3: Hold-tudatos szűrő-ajánlás wiring
+
+@Test func plannerLeavesFilterAdviceNilWithoutACoordinate() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    try fixture.addLight(target: "T_NoCoordAdvice", extraCards: [:])
+
+    let plans = try Planner.plan(db: fixture.db, config: fixture.config)
+    let plan = try #require(plans.first { $0.target == "T_NoCoordAdvice" })
+    #expect(plan.filterAdvice == nil)
+}
+
+/// Places the target at exactly 50° declination away from the Moon (same
+/// RA, so the angular separation reduces to the plain declination
+/// difference -- see `SunMoon.angularSeparationDeg`'s spherical law of
+/// cosines) and the site latitude at the target's own declination (zenith
+/// transit, same "High altitude" trick `plannerComputesHighMaxAltitudeWhenDeclinationMatchesLatitude`
+/// already uses). A 50° separation is `>= 40` (never trips the HARD "Hold
+/// zavar" veto, regardless of illumination) but `< 60` (ALWAYS trips
+/// `FilterAdvisor`'s soft narrowband nudge) -- deterministic regardless of
+/// the real Moon phase on this date, unlike a test that also needed to
+/// control illumination.
+@Test func plannerAugmentsAGoodVerdictWithTheBiggestNBDeficitOnANarrowbandNight() throws {
+    var fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+
+    let referenceDate = utc(2026, 8, 27)
+    let lon = 19.0
+    let night = SunMoon.astronomicalTwilight(nightOf: referenceDate, latDeg: 47.5, lonDeg: lon, timeZone: TimeZone.current)
+    let dusk = try #require(night.duskUTC)
+    let dawn = try #require(night.dawnUTC)
+    let midNight = dusk.addingTimeInterval(dawn.timeIntervalSince(dusk) / 2)
+    let moon = SunMoon.moonPosition(julianDay: JulianDate.julianDay(midNight))
+
+    let targetDec = moon.decDeg + 50 // safely < 90 for any real lunar declination (±~28°)
+    fixture.config.site = SiteRule(latitudeDeg: targetDec, longitudeDeg: lon)
+
+    try fixture.addLight(
+        target: "T_NBAdvice", exptime: 3600 * 8,
+        extraCards: ["CRVAL1": "\(moon.raDeg)", "CRVAL2": "\(targetDec)"], filter: "Ha"
+    )
+    try fixture.db.addTag(TagRecord(kind: "target", target: "T_NBAdvice", sessionDate: nil, tag: "goal:Ha=12h"))
+
+    let plans = try Planner.plan(date: referenceDate, db: fixture.db, config: fixture.config)
+    let plan = try #require(plans.first { $0.target == "T_NBAdvice" })
+
+    let advice = try #require(plan.filterAdvice, "verdict=\(plan.verdict) sep=\(plan.moonSeparationDeg ?? -1) alt=\(plan.maxAltitudeDeg ?? -1)")
+    #expect(advice.skyState == .narrowband)
+    #expect(advice.recommendedFilter?.filter == "Ha")
+    #expect(plan.verdict == "ma jó — Ha-ra", "verdict=\(plan.verdict)")
+}
+
+/// Same narrowband-night setup as above, but without any `goal:Ha=...` tag
+/// at all -- the verdict must stay the plain "ma jó" (nothing to
+/// recommend), even though `filterAdvice.skyState` is still `.narrowband`.
+@Test func plannerLeavesAGoodVerdictUnaugmentedWithoutAnyFilterGoalTag() throws {
+    var fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+
+    let referenceDate = utc(2026, 8, 27)
+    let lon = 19.0
+    let night = SunMoon.astronomicalTwilight(nightOf: referenceDate, latDeg: 47.5, lonDeg: lon, timeZone: TimeZone.current)
+    let dusk = try #require(night.duskUTC)
+    let dawn = try #require(night.dawnUTC)
+    let midNight = dusk.addingTimeInterval(dawn.timeIntervalSince(dusk) / 2)
+    let moon = SunMoon.moonPosition(julianDay: JulianDate.julianDay(midNight))
+
+    let targetDec = moon.decDeg + 50
+    fixture.config.site = SiteRule(latitudeDeg: targetDec, longitudeDeg: lon)
+
+    try fixture.addLight(target: "T_NBNoGoal", extraCards: ["CRVAL1": "\(moon.raDeg)", "CRVAL2": "\(targetDec)"])
+
+    let plans = try Planner.plan(date: referenceDate, db: fixture.db, config: fixture.config)
+    let plan = try #require(plans.first { $0.target == "T_NBNoGoal" })
+
+    let advice = try #require(plan.filterAdvice)
+    #expect(advice.skyState == .narrowband)
+    #expect(plan.verdict == "ma jó", "verdict=\(plan.verdict)")
+}

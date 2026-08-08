@@ -2,6 +2,7 @@ import AppKit
 import AstroCore
 import Foundation
 import Observation
+import UniformTypeIdentifiers
 
 /// What we currently know about the configured library root: whether it's
 /// reachable, and if not, why -- drives whether the app shows the normal
@@ -1444,6 +1445,55 @@ final class AppState: @unchecked Sendable {
             }
             self.endOperation(opID)
         }
+    }
+
+    // MARK: - Plan export (R11-T6/F18a)
+
+    /// Copies `plans` to the general pasteboard as tab-separated text
+    /// (`PlanExport.renderClipboardText`) -- "Terv exportálása… ▸ Vágólapra".
+    /// Synchronous (pasteboard-only, no `Database`/filesystem access), so
+    /// unlike `exportStackList`/`exportTargetReport` this skips
+    /// `beginOperation` entirely and just toasts directly.
+    func copyPlanToClipboard(_ plans: [TargetPlan]) {
+        let text = PlanExport.renderClipboardText(plans)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        pushToast(.success, "Terv vágólapra másolva (\(plans.count) célpont)")
+    }
+
+    /// Prompts an `NSSavePanel` and writes `plans` as CSV (`PlanExport.
+    /// renderCSV`) to the chosen path -- "Terv exportálása… ▸ CSV-fájlba…".
+    /// Writes to an arbitrary user-chosen destination via plain
+    /// `FileManager` (same "outside the library, no `WriteGuard` needed"
+    /// reasoning `cmdExport --out PATH` already documents for the CLI's own
+    /// `--out`) -- cancel leaves no trace and shows nothing.
+    func exportPlanToCSV(_ plans: [TargetPlan]) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "terv.csv"
+        panel.allowedContentTypes = [.commaSeparatedText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let csv = PlanExport.renderCSV(plans)
+            try Data(csv.utf8).write(to: url)
+            pushToast(.success, "Terv exportálva: \(url.lastPathComponent)")
+        } catch {
+            pushToast(.error, "Terv exportálása — \(error.localizedDescription)")
+        }
+    }
+
+    /// Copies tonight's calibration shopping list (`CalibShoppingList.
+    /// markdown`) to the general pasteboard -- `TonightPage`'s "Kalibrációs
+    /// teendők ma estére" section's "Másolás Markdownként" button
+    /// (R11-T6/F18b). Same synchronous, direct-toast shape as
+    /// `copyPlanToClipboard` above.
+    func copyCalibShoppingListToClipboard(_ items: [CalibShoppingList.Item]) {
+        let text = CalibShoppingList.markdown(items)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        pushToast(.success, "Kalibrációs teendők vágólapra másolva (\(items.count) tétel)")
     }
 
     // MARK: - Project pipeline status

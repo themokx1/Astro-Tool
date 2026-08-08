@@ -27,6 +27,12 @@ struct TonightPage: View {
     @State private var selectedPlanTarget: String?
     /// Same idea for `calendarTable`.
     @State private var selectedCalendarNight: String?
+    /// R11-T6/F18b: "Kalibrációs teendők ma estére" DisclosureGroup at the
+    /// bottom of the "Ma este" segment -- always starts collapsed (spec:
+    /// "Alapból csukva... akkor is csukva indulhat, de a badge látszódjon"),
+    /// the item-count badge on its label is what surfaces whether there's
+    /// anything in it without forcing it open.
+    @State private var calibShoppingExpanded = false
 
     /// N8 (R9 round 3): writes `currentPage` (`.tonight`/`.calendar`)
     /// alongside `tonightSegment` -- without this, flipping the segmented
@@ -87,6 +93,20 @@ struct TonightPage: View {
         .sheet(item: $solvingTarget) { solving in
             PlateSolveSheet(target: solving.target)
         }
+        .toolbar {
+            // R11-T6/F18a: only meaningful for the "Ma este" plan table
+            // itself, not the "Következő 30 éjszaka" calendar segment (which
+            // has no per-target RA/Dec/window/verdict to export at all).
+            if appState.tonightSegment == .tonight {
+                ToolbarItem {
+                    Menu("Terv exportálása…") {
+                        Button("Vágólapra") { appState.copyPlanToClipboard(rowsToExport) }
+                        Button("CSV-fájlba…") { appState.exportPlanToCSV(rowsToExport) }
+                    }
+                    .disabled(rowsToExport.isEmpty)
+                }
+            }
+        }
     }
 
     // MARK: - "Ma este" segment
@@ -144,7 +164,26 @@ struct TonightPage: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            // R11-T6/F18b: lap alján, mindig -- akkor is renderelődik, ha
+            // épp nincs tétel (az üres állapot szövege a "minden friss"
+            // visszajelzés).
+            calibShoppingSection
         }
+    }
+
+    /// R11-T6/F18a: rows the "Terv exportálása…" toolbar menu hands to
+    /// `PlanExport` -- the selected row when there is one (`planTable`'s
+    /// selection is single-row only, so "kijelölt sorok" here means "the one
+    /// currently selected row"), else every "ma jó"-verdict row, else every
+    /// row on the table.
+    private var rowsToExport: [TargetPlan] {
+        guard let plan = appState.plan else { return [] }
+        if let selectedPlanTarget, let selected = plan.first(where: { $0.target == selectedPlanTarget }) {
+            return [selected]
+        }
+        let recommended = plan.filter { $0.verdict.hasPrefix("ma jó") }
+        return recommended.isEmpty ? plan : recommended
     }
 
     private var dateScopedCaption: some View {
@@ -178,6 +217,59 @@ struct TonightPage: View {
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.yellow.opacity(0.15)))
+    }
+
+    // MARK: - Calibration shopping list (R11-T6/F18b)
+
+    /// Tonight's actionable dark-calibration items (`CalibShoppingList.
+    /// build`) -- purely derived from data `loadDashboardData()` already
+    /// loads (`calibNeeds`/`plan`), so this needs no state of its own.
+    private var tonightCalibShoppingList: [CalibShoppingList.Item] {
+        CalibShoppingList.build(coverage: appState.calibNeeds, plans: appState.plan ?? [])
+    }
+
+    /// "Kalibrációs teendők ma estére" -- always starts collapsed (see
+    /// `calibShoppingExpanded`'s own doc comment); the badge on the label is
+    /// what tells the user there's something inside without opening it.
+    private var calibShoppingSection: some View {
+        DisclosureGroup(isExpanded: $calibShoppingExpanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                if tonightCalibShoppingList.isEmpty {
+                    Text("Minden szükséges kalibráció friss — nincs teendő ma estére.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(tonightCalibShoppingList.enumerated()), id: \.offset) { _, item in
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "square").foregroundStyle(.secondary)
+                            Text(item.summary).font(.callout)
+                        }
+                    }
+                    HStack {
+                        Spacer()
+                        Button("Másolás Markdownként") {
+                            appState.copyCalibShoppingListToClipboard(tonightCalibShoppingList)
+                        }
+                        .buttonStyle(.link)
+                    }
+                }
+            }
+            .padding(.top, 8)
+        } label: {
+            HStack(spacing: 6) {
+                Text("Kalibrációs teendők ma estére")
+                if !tonightCalibShoppingList.isEmpty {
+                    Text("\(tonightCalibShoppingList.count)")
+                        .font(.caption.bold())
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.orange.opacity(0.2), in: Capsule())
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.05)))
     }
 
     // MARK: - Empty states (A.1)
@@ -230,7 +322,9 @@ struct TonightPage: View {
     }
 
     private var recommendedCount: Int {
-        appState.plan?.count { $0.verdict == "ma jó" } ?? 0
+        // R11-T6/F3: `hasPrefix`, not `==` -- an NB-augmented verdict
+        // ("ma jó — Ha-ra") is still a "shoot this tonight" recommendation.
+        appState.plan?.count { $0.verdict.hasPrefix("ma jó") } ?? 0
     }
 
     private var locationValueText: String {
@@ -428,6 +522,13 @@ struct TonightPage: View {
         var moonSortKey: Double { plan.moonIlluminationPercent ?? -1 }
         var verdictSortKey: String { plan.verdict }
         var score: Double { plan.score }
+        /// R11-T6/F3: same chip text `filterAdviceCell` shows -- `""` sorts
+        /// first, same "-" cell convention every other missing-value column
+        /// already sorts before real values.
+        var filterAdviceSortKey: String {
+            guard let advice = plan.filterAdvice else { return "" }
+            return FilterAdvisor.chipText(advice: advice, filterGoals: plan.filterGoals) ?? ""
+        }
     }
 
     private var planRows: [PlanRow] {
@@ -472,6 +573,10 @@ struct TonightPage: View {
             // (correct) copy of this same explanation.
             explanation: "Összesítő ajánlás („ma jó” / „Hold zavar (…)” / „nem látszik ma éjjel” / „alacsony (max N°)” / „nincs koordináta”) a magasság, a láthatósági ablak és a Hold-közelség alapján. Mikor hazudik: csak MA éjjelre szól, egy korábban jó célpont holnap már más döntést kaphat."
         ),
+        .init(
+            title: "Szűrő ma",
+            explanation: "Hold-tudatos szűrő-ajánlás: a Hold megvilágítottsága (>40%) vagy a célponttól mért kis szögtávolság (<60°) esetén keskenysáv-éjszakát javasol, egyébként sötét eget — szűrőnkénti célok (T5) esetén a legnagyobb hiányú, kategóriába illő szűrőt nevezi meg óraszámmal. Mikor hazudik: csak ajánlás, sosem kényszerítő szabály; szűrőnkénti cél nélkül „-”."
+        ),
     ]
 
     private var planTable: some View {
@@ -491,8 +596,13 @@ struct TonightPage: View {
             // R10-B7: grouped so the table stays AT (not over) `Table`'s
             // 10-top-level-column cap once the trailing "⋯" actions column
             // below needs its own slot -- same `Group { }` workaround
-            // `QualitySegment.frameTable` already established.
+            // `QualitySegment.frameTable` already established. R11-T6/F3
+            // added "Szűrő ma" into the same group for the same reason
+            // (adding it as its own top-level column would push the table
+            // past the cap).
             Group {
+                TableColumn("Szűrő ma", value: \.filterAdviceSortKey) { row in filterAdviceCell(row) }
+                    .width(110)
                 TableColumn("Kulminál", value: \.culminationSortKey) { row in
                     Text(culminationText(row))
                 }
@@ -641,6 +751,30 @@ struct TonightPage: View {
         }
     }
 
+    /// R11-T6/F3: the "Szűrő ma" chip -- `FilterAdvisor.chipText` off this
+    /// row's own `filterAdvice`/`filterGoals`, tooltipped with the Moon-based
+    /// justification (`Advice.reason`). A target with no filter goal at all
+    /// (a plain OSC/broadband project) gets the plain missing-cell glyph,
+    /// same as `missingCell` above -- there's no per-filter recommendation
+    /// to show for it.
+    @ViewBuilder
+    private func filterAdviceCell(_ row: PlanRow) -> some View {
+        if let advice = row.plan.filterAdvice,
+           let text = FilterAdvisor.chipText(advice: advice, filterGoals: row.plan.filterGoals)
+        {
+            Text(text)
+                .font(.caption.bold())
+                .lineLimit(1)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.purple.opacity(0.15), in: Capsule())
+                .foregroundStyle(.purple)
+                .help(advice.reason)
+        } else {
+            Text(TDFormat.missingCell).foregroundStyle(.secondary)
+        }
+    }
+
     /// R10-B7: pulled out of the "Kulminál" column's cell closure -- inlined
     /// directly (`Text(row.plan.culminationLocal ?? "-")`) inside the
     /// `Group { }` above, the type-checker couldn't resolve the whole
@@ -745,6 +879,10 @@ struct TonightPage: View {
             title: "Felhő",
             explanation: "Az adott éjszaka 20:00-04:00 közti óránkénti Open-Meteo mintáinak átlagos felhőzete, százalékban. Mikor hazudik: a 7 napos előrejelzésen túl „-”; ha az előrejelzés ki van kapcsolva, „ki” (kattintható link a Beállítások ▸ Helyszín laphoz)."
         ),
+        .init(
+            title: "NB / sötét",
+            explanation: "Hold-tudatos ajánlás a Hold megvilágítottsága alapján (>40% esetén „NB” — keskenysáv-éjszaka —, egyébként „sötét”). Mikor hazudik: itt nincs konkrét célpont, csak az illumináció számít — a `planTable`-ben a szögtávolság is beleszámít."
+        ),
     ]
 
     /// `Table`'s non-`Identifiable`-data initializer (`id:` keypath) isn't
@@ -836,7 +974,21 @@ struct TonightPage: View {
         HStack(spacing: 6) {
             MoonGlyph(percent: night.moonIlluminationPercent)
             Text(TDFormat.percent(night.moonIlluminationPercent))
+            // R11-T6/F3: illumination-only NB/sötét label -- no target
+            // coordinate here to fold a separation into, unlike `planTable`'s
+            // own per-target "Szűrő ma" chip.
+            skyStateLabel(night)
         }
+    }
+
+    private func skyStateLabel(_ night: NightSummary) -> some View {
+        let isNarrowband = FilterAdvisor.isNarrowbandByIlluminationAlone(moonIlluminationPercent: night.moonIlluminationPercent)
+        return Text(isNarrowband ? "NB" : "sötét")
+            .font(.caption2.bold())
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background((isNarrowband ? Color.purple : Color.blue).opacity(0.15), in: Capsule())
+            .foregroundStyle(isNarrowband ? .purple : .blue)
     }
 
     /// R10-B6/R10 review (item 16): `night.date` having no entry in

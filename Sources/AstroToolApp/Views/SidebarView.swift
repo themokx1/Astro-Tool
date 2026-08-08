@@ -94,7 +94,9 @@ struct SidebarView: View {
     }
 
     private var tonightBadgeCount: Int {
-        appState.plan?.count { $0.verdict == "ma jó" } ?? 0
+        // R11-T6/F3: `hasPrefix`, not `==` -- an NB-augmented verdict
+        // ("ma jó — Ha-ra") is still a "shoot this tonight" recommendation.
+        appState.plan?.count { $0.verdict.hasPrefix("ma jó") } ?? 0
     }
 
     private var missingCalibCount: Int {

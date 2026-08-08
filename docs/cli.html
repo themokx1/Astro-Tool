@@ -252,8 +252,8 @@ astrotool goal list --target M31 --json</pre>
     <h2>Tervezés</h2>
     <div class="cmd">
       <div class="name">plan</div>
-      <div class="desc">Ma esti célpont-rangsor (kulmináció, max magasság, láthatósági ablak, Hold-zavarás); <code>--month</code> a 30 éjszakás tervező-naptárhoz.</div>
-      <pre class="example">astrotool plan --min-alt 25</pre>
+      <div class="desc">Ma esti célpont-rangsor (kulmináció, max magasság, láthatósági ablak, Hold-zavarás, Hold-tudatos szűrő-ajánlás); <code>--month</code> a 30 éjszakás tervező-naptárhoz. <code>--out PATH|-</code> a napi tervet CSV-ként exportálja (target, ra_deg, dec_deg, window_start, window_end, max_alt_deg, moon_illum, verdict, filter_suggestion oszlopokkal); <code>--out -</code> stdoutra írja. Nem használható <code>--month</code>-tal együtt.</div>
+      <pre class="example">astrotool plan --out plan.csv</pre>
     </div>
     <div class="cmd">
       <div class="name">night-info</div>

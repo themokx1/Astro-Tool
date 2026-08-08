@@ -117,10 +117,13 @@ Commands:
                 a filter with a goal but no frames shot yet still appears,
                 with 0 usable.
   plan          [--date YYYY-MM-DD] [--min-alt 30] [--root R] [--json]
-                [--month [--nights 30]]
+                [--month [--nights 30]] [--out PATH|-]
                 Without --month: tonight's per-target observation plan.
                 With --month: a month-at-a-glance planning calendar (dark
                 hours, Moon%, top-3 targets per night) instead.
+                --out exports the plan as CSV instead (target/ra_deg/
+                dec_deg/window_start/window_end/max_alt_deg/moon_illum/
+                verdict/filter_suggestion); not supported with --month.
   night-info    [--date YYYY-MM-DD] [--root R] [--json]
                 Tonight's dark-hours/Moon summary alone (no target
                 coordinate needed) -- illumination, rise/set label, and the
@@ -1541,6 +1544,10 @@ private func printConfigHumanReadable(_ config: AstroConfig) {
     print("")
     print("Időjárás (weather)")
     print("  enabled: \(config.weather.enabled)")
+
+    print("")
+    print("Tervező (plan)")
+    print("  narrowbandFilters: \(joinedOrDash(config.plan.narrowbandFilters))")
 }
 
 private func joinedOrDash(_ values: [String]) -> String {
@@ -2271,10 +2278,16 @@ private func printGoalList(_ result: GoalListResult) {
 
 // MARK: - plan
 
-/// `astrotool plan [--date YYYY-MM-DD] [--min-alt 30] [--json]` -- tonight's
-/// observation plan for every target on record (see `Planner.plan`).
-/// `astrotool plan --month [--nights 30] [--json]` -- a month-at-a-glance
-/// planning calendar instead (see `Planner.month`, R7-B5).
+/// `astrotool plan [--date YYYY-MM-DD] [--min-alt 30] [--json] [--out
+/// PATH|-]` -- tonight's observation plan for every target on record (see
+/// `Planner.plan`). `--out` exports the SAME plan as a CSV
+/// (`PlanExport.renderCSV`, R11-T6/F18a) instead of the usual human/JSON
+/// table -- `-` prints it to stdout, any other value writes to that path
+/// (same "outside the library root" convention `export --out`/`cleanup
+/// --suggest --out` already use). Not supported together with `--month`
+/// (there's no CSV shape for the calendar view). `astrotool plan --month
+/// [--nights 30] [--json]` -- a month-at-a-glance planning calendar instead
+/// (see `Planner.month`, R7-B5).
 func cmdPlan(_ args: [String]) throws -> Int32 {
     let specs = [
         FlagSpec("--root", takesValue: true),
@@ -2283,6 +2296,7 @@ func cmdPlan(_ args: [String]) throws -> Int32 {
         FlagSpec("--json", takesValue: false),
         FlagSpec("--month", takesValue: false),
         FlagSpec("--nights", takesValue: true),
+        FlagSpec("--out", takesValue: true),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
 
@@ -2309,6 +2323,11 @@ func cmdPlan(_ args: [String]) throws -> Int32 {
     try hintIfEmpty(db)
 
     if parsed.has("--month") {
+        guard parsed.value("--out") == nil else {
+            eprint("error: --out is not supported together with --month")
+            return 1
+        }
+
         var nights = 30
         if let raw = parsed.value("--nights") {
             guard let value = Int(raw), value > 0 else {
@@ -2328,6 +2347,21 @@ func cmdPlan(_ args: [String]) throws -> Int32 {
     }
 
     let plans = try Planner.plan(date: date, minAltitudeDeg: minAlt, db: db, config: config)
+
+    if let out = parsed.value("--out") {
+        let csv = PlanExport.renderCSV(plans)
+        if out == "-" {
+            print(csv, terminator: "")
+            return 0
+        }
+        guard let resolvedOut = resolveOutPathOutsideRoot(out, rootPath: config.rootPath) else {
+            return 1
+        }
+        try FileManager.default.createDirectory(at: resolvedOut.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(csv.utf8).write(to: resolvedOut)
+        print(resolvedOut.path)
+        return 0
+    }
 
     if parsed.has("--json") {
         try printJSON(plans)

@@ -22,7 +22,7 @@
 - [x] 2. Persona-review (4 agent) — kész
 - [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
 - [x] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [x]
-- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [ ] T7 [ ] T8 [ ] T9 [ ] T10 [ ] T11 [ ] T12 [ ] T13 [ ]
+- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [ ] T8 [ ] T9 [ ] T10 [ ] T11 [ ] T12 [ ] T13 [ ]
 - [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [ ] T15 [ ] T16 [ ] T17 [ ]
 - [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
 - [ ] 8. Release v0.13.0
@@ -300,7 +300,7 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
 ### B-hullám — fő funkciók
 - **T5 — Szűrő-dimenzió alapok**: F1 + F2 (FilterBreakdown UI + goal:Ha=12h +
   GoalEditSheet + CLI goal --filter).
-- **T6 — Tervező-bővítés**: F3 (Szűrő ma oszlop + NB/sötét címkék) + F18
+- **T6 [x] — Tervező-bővítés**: F3 (Szűrő ma oszlop + NB/sötét címkék) + F18
   (terv-export + kalibrációs bevásárlólista).
 - **T7 — Kiugró-híd**: F4 teljes (miért-popover, kiugrók átnézése, batch
   elvetés-jelölés, "javasolt: elvetés").
@@ -344,3 +344,15 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   --filters --json` cél/hiány mezők). Mellékesen javítva: `AppState.setGoal`/
   CLI `goal set/clear` (összcél) eddig egy bare `hasPrefix("goal:")`-tal
   törölte volna a szűrőnkénti tageket is. Következő: T6 (Tervező-bővítés).
+- 2026-08-08: T6 (Tervező-bővítés) kész — F3 teljes (`plan.narrowbandFilters`
+  config, core `FilterAdvisor.advice`/`chipText`/`augmentedVerdict`,
+  TonightPage "Szűrő ma" oszlop + tooltip, Naptár NB/sötét címke,
+  "ma jó — Ha-ra" verdikt-bővítés + `VerdictChip` `hasPrefix` javítás) és F18
+  teljes (core `PlanExport` CSV/vágólap-renderelés, TonightPage "Terv
+  exportálása…" toolbar-menü + toast, CLI `plan --out PATH|-`; core
+  `CalibShoppingList` + TonightPage "Kalibrációs teendők ma estére"
+  DisclosureGroup + Markdown-másolás). Tudatos eltérés: a planTable
+  egysoros kijelölés marad (nincs multi-select a Table-ökben sehol az
+  appban) — "kijelölt sorok" a kijelölt EGY sort jelenti, kijelölés nélkül a
+  megszokott "ma jó"/minden-sor eshez folyamodik. Következő: T7
+  (Kiugró-híd).

@@ -303,7 +303,11 @@ struct VerdictChip: View {
     }
 
     static func color(for verdict: String) -> Color {
-        if verdict == "ma jó" { return .green }
+        // R11-T6/F3: `hasPrefix`, not `==` -- `FilterAdvisor.augmentedVerdict`
+        // appends " — Ha-ra"-style filter suggestions onto a plain "ma jó"
+        // verdict, which must still read green, not fall through to the
+        // catch-all gray below.
+        if verdict.hasPrefix("ma jó") { return .green }
         if verdict.hasPrefix("Hold zavar") { return .yellow }
         if verdict.hasPrefix("alacsony") || verdict == "nem látszik ma éjjel" { return .orange }
         // R11-T1: `NightHealth` cooler/focus verdicts (`SessionsSegment`'s
