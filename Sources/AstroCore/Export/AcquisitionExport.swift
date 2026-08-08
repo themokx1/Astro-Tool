@@ -84,7 +84,11 @@ public enum AcquisitionExport {
             guard !equipment.isEmpty else { continue }
 
             let dateText = SessionDateParser.parse(session.dateRaw, patterns: config.intentional)?.start ?? session.dateRaw
-            let filterText = mode(equipment.compactMap(\.filter)) ?? ""
+            let rawFilterText = mode(equipment.compactMap(\.filter)) ?? ""
+            // R11-T16/F20: an AstroBin filter-ID mapping entry wins over the
+            // bare name -- `unmappedAstrobinFilters` is what tells a caller
+            // (CLI stderr, app toast) when this fell back to the name.
+            let filterText = astrobinFilterID(rawFilterText, config: config).map(String.init) ?? rawFilterText
             let gainText = mode(equipment.compactMap(\.gain)).map(formatTrimmed) ?? ""
             let coolingText = median(equipment.compactMap(\.cooling)).map { String(Int($0.rounded())) } ?? ""
             let flatDarks = try flatDarksCount(sessionFiles: sessionFiles, date: session.dateRaw, db: db)
@@ -115,6 +119,47 @@ public enum AcquisitionExport {
         }
 
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    // MARK: - R11-T16/F20: AstroBin filter-ID mapping
+
+    /// `config.astrobin.filterIds`, case-insensitively/trimmed keyed --
+    /// matches a scanned raw FITS `FILTER` value against a mapping entry
+    /// however it was cased/spaced when the user typed it in Settings.
+    /// `nil` for a blank `rawFilter` (nothing to look up) or no matching
+    /// entry at all.
+    private static func astrobinFilterID(_ rawFilter: String, config: AstroConfig) -> Int? {
+        let key = rawFilter.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !key.isEmpty else { return nil }
+        for (name, id) in config.astrobin.filterIds where name.trimmingCharacters(in: .whitespaces).lowercased() == key {
+            return id
+        }
+        return nil
+    }
+
+    /// Distinct filter names `target`'s AstroBin export would actually use
+    /// (same per-session dominant-filter grouping `renderAstrobin` itself
+    /// does) that have NO entry in `config.astrobin.filterIds` -- the
+    /// export-time warning both the CLI (stderr) and the app (a post-export
+    /// toast) surface, so a gap in the mapping is visible instead of
+    /// silently exporting a bare name every time. Sorted, `[]` when every
+    /// used filter is mapped, or the target's rows never carry a filter
+    /// name at all (e.g. every light is unfiltered mono/OSC).
+    public static func unmappedAstrobinFilters(target: String, db: Database, config: AstroConfig) throws -> [String] {
+        let sessions = try SessionStatsQueries.sessions(target: target, db: db, config: config)
+        let allFiles = try db.allFiles(includeMissing: false)
+        let sessionFiles = allFiles.filter { $0.target == target && $0.area == .sessions }
+
+        var usedFilters = Set<String>()
+        for session in sessions where !session.isExcludedFromTotals {
+            let equipment = try usableFrameEquipment(date: session.dateRaw, sessionFiles: sessionFiles, db: db, config: config)
+            guard !equipment.isEmpty else { continue }
+            if let filterText = mode(equipment.compactMap(\.filter)), !filterText.isEmpty {
+                usedFilters.insert(filterText)
+            }
+        }
+
+        return usedFilters.filter { astrobinFilterID($0, config: config) == nil }.sorted()
     }
 
     // MARK: - csv (generic)

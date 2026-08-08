@@ -79,6 +79,12 @@ public struct CalibNeed: Codable, Sendable, Equatable {
     /// `matchCamera`). `matchedMasterPath` stays `nil` whenever this is
     /// non-empty.
     public var mismatchReasons: [String]
+    /// R11-T16/F17: the FILTER this need's coverage is keyed on -- always
+    /// `nil` for `kind == .dark` (darks have no filter dimension; the
+    /// coverage table shows `TDFormat.missingCell` for those rows), and for
+    /// `kind == .flat` either the dominant raw FITS `FILTER` value across
+    /// the affected lights, or `nil` for a filterless (OSC/DSLR) group.
+    public var filter: String?
 
     public init(
         kind: FrameRole,
@@ -92,7 +98,8 @@ public struct CalibNeed: Codable, Sendable, Equatable {
         todo: String?,
         requiredGain: Double? = nil,
         requiredCamera: String? = nil,
-        mismatchReasons: [String] = []
+        mismatchReasons: [String] = [],
+        filter: String? = nil
     ) {
         self.kind = kind
         self.exposureSeconds = exposureSeconds
@@ -106,6 +113,7 @@ public struct CalibNeed: Codable, Sendable, Equatable {
         self.requiredGain = requiredGain
         self.requiredCamera = requiredCamera
         self.mismatchReasons = mismatchReasons
+        self.filter = filter
     }
 }
 
@@ -113,12 +121,24 @@ public struct CalibNeed: Codable, Sendable, Equatable {
 /// masters and produces a per-combo coverage report with ready-to-show
 /// Hungarian todo strings.
 ///
-/// v1 scope: only DARKS are analyzed. `calibration_library/flats/` and
-/// `calibration_library/biases/` have no exposure/temperature subdirectory
+/// v1 scope (`coverage()` itself): only DARKS are analyzed. `calibration_
+/// library/biases/` still has no exposure/temperature subdirectory
 /// breakdown on disk today (see the top-level design doc), so there is no
-/// (exposure, temp) combo to match a light against for those roles yet --
-/// that's left for a future task once the library layout grows per-exposure
-/// / per-temp subdirs for flats/biases too.
+/// (exposure, temp) combo to match a light against for that role yet.
+///
+/// R11-T16/F17 added a SEPARATE `flatCoverage()` (kind == `.flat`
+/// `CalibNeed`s) for flats -- a filter-keyed coverage report, not an
+/// (exposure, temp) one, since flats' own shared pool
+/// (`calibration_library/flats/`) has no subdirectory breakdown either, and
+/// a flat's relevant "match" dimension is FILTER (+FOCALLEN), not exposure/
+/// temperature. Kept as its own function (not merged into `coverage()`)
+/// deliberately: `coverage()` has ~25 existing callers/tests that assert
+/// dark-only counts/rows, and darks vs. flats have genuinely different
+/// matching rules (a flat can ALSO be covered by the session's own local
+/// `flats/` folder, always "fresh" to that session -- a dark never has that
+/// per-session fallback inside this analyzer). Callers that want ONE merged
+/// list for display (`AppState.loadCalibBundle`, the CLI's plain `calib`)
+/// simply concatenate both.
 public enum CalibAnalyzer {
     /// Parses a master-dark directory name of the form `<exp>sec_<temp>deg`
     /// (e.g. `"60sec_-10deg"`, `"6.8sec_-10deg"`, `"300sec_0deg"`) into its
@@ -700,5 +720,458 @@ public enum CalibAnalyzer {
         if need.matchedMasterPath == nil { return 0 } // missing
         if need.isStale { return 1 } // stale
         return 2 // covered + fresh
+    }
+
+    // MARK: - R11-T16/F17: flat coverage
+
+    /// One (session, filter) cell: usable session lights sharing one
+    /// normalized FILTER value (case-insensitive, trimmed; `nil` for a light
+    /// with no `FILTER` header at all -- OSC/DSLR), plus what `evaluateFlat
+    /// Coverage` needs to judge whether a flat actually covers them.
+    private struct FlatCell {
+        var target: String
+        var date: String
+        var filterKey: String?
+        /// Original-case FILTER text for display (the dominant raw value
+        /// among this cell's lights) -- `nil` exactly when `filterKey` is.
+        var filterDisplay: String?
+        var lightCount: Int
+        var focalLenMM: Double?
+        /// Median DATE-OBS instant among this cell's lights, `nil` when none
+        /// parsed -- nothing to compare a library flat's own age against
+        /// then (same "nothing to compare" convention as `CalibRule`'s other
+        /// tolerances).
+        var medianInstant: Double?
+    }
+
+    /// The pooled `calibration_library/flats/` frames sharing one normalized
+    /// filter -- v1 has no per-filter subdirectory breakdown on disk for
+    /// flats (same as biases; see this file's own top-level doc comment), so
+    /// this is the finest grouping available for library flats.
+    private struct FlatPool {
+        var focalLenMM: Double?
+        var medianInstant: Double?
+    }
+
+    private enum FlatCoverageStatus {
+        /// `ageDays` is `nil` for a session's own flat (always "fresh" to
+        /// its own session -- dust/rotation can't have moved in the time
+        /// between a session's own lights and its own flats) OR a library
+        /// flat with nothing to compare its date against.
+        case fresh(path: String, ageDays: Int?)
+        case stale(path: String, ageDays: Int)
+        case missing
+    }
+
+    private struct FlatCoverageResult {
+        var status: FlatCoverageStatus
+        var mismatchReasons: [String]
+    }
+
+    /// One evaluated `FlatCell` -- shared shape between `flatCoverage(db:
+    /// config:)`'s per-session-per-filter loop and `buildFlatNeed`'s own
+    /// aggregation, so the latter doesn't need a second, tuple-typed
+    /// parameter shape.
+    private struct FlatCellResult {
+        var cell: FlatCell
+        var result: FlatCoverageResult
+    }
+
+    private static func flatRank(_ status: FlatCoverageStatus) -> Int {
+        switch status {
+        case .missing: return 0
+        case .stale: return 1
+        case .fresh: return 2
+        }
+    }
+
+    /// Normalizes a raw FITS `FILTER` value for matching: trimmed and
+    /// lower-cased, `nil` for `nil`/blank (an OSC/DSLR light with no filter
+    /// wheel at all) -- two differently-cased spellings of the same filter
+    /// (`"Ha"` vs. `"HA"`) must land in the same cell/pool, and a blank
+    /// string must be treated exactly like a missing header, not its own
+    /// bogus "filter" group.
+    private static func normalizedFilterKey(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : trimmed.lowercased()
+    }
+
+    /// Same phrasing `CalibHealth.flatMismatchReasons` uses for its own
+    /// per-session focal-length check -- kept textually identical so a user
+    /// never sees two different wordings for the same underlying problem.
+    private static func focalMismatchReason(lightFocal: Double, flatFocal: Double) -> String {
+        "gyújtótáv eltér: light \(formatted(lightFocal))mm, flat \(formatted(flatFocal))mm"
+    }
+
+    private static func medianInstant(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let mid = sorted.count / 2
+        return sorted.count % 2 == 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+    }
+
+    /// Judges one `FlatCell` against its session's own matching flats (own
+    /// `sessionFlatMetas`, filtered by the caller to the cell's own
+    /// `filterKey` already) and the shared library pool for that same
+    /// filter. Session-own coverage is tried FIRST (it's always "fresh");
+    /// the library pool is only consulted when the session has none of its
+    /// own for this filter, OR its own fails the FOCALLEN check -- matching
+    /// `findMatch`'s own "coarse match, then reject on a secondary
+    /// dimension" shape for darks, just with FILTER as the coarse key and
+    /// FOCALLEN as the secondary one instead of (exposure, temp) + gain/
+    /// offset/camera.
+    private static func evaluateFlatCoverage(
+        cell: FlatCell,
+        sessionFlatMetas: [FITSMetaRecord],
+        libraryPool: FlatPool?,
+        calib: CalibRule,
+        sessionFlatsPath: String
+    ) -> FlatCoverageResult {
+        var reasons: [String] = []
+
+        if !sessionFlatMetas.isEmpty {
+            let flatFocal = mode(sessionFlatMetas.compactMap(\.focallen))
+            if let lightFocal = cell.focalLenMM, let flatFocal, abs(lightFocal - flatFocal) > 2.0 {
+                reasons.append(focalMismatchReason(lightFocal: lightFocal, flatFocal: flatFocal))
+            } else {
+                return FlatCoverageResult(status: .fresh(path: sessionFlatsPath, ageDays: nil), mismatchReasons: [])
+            }
+        }
+
+        if let libraryPool {
+            if let lightFocal = cell.focalLenMM, let flatFocal = libraryPool.focalLenMM, abs(lightFocal - flatFocal) > 2.0 {
+                reasons.append(focalMismatchReason(lightFocal: lightFocal, flatFocal: flatFocal))
+            } else if let lightInstant = cell.medianInstant, let poolInstant = libraryPool.medianInstant {
+                let ageDays = Int(abs(lightInstant - poolInstant) / 86400)
+                if ageDays > calib.flatMaxAgeDays {
+                    return FlatCoverageResult(status: .stale(path: "calibration_library/flats", ageDays: ageDays), mismatchReasons: [])
+                }
+                return FlatCoverageResult(status: .fresh(path: "calibration_library/flats", ageDays: ageDays), mismatchReasons: [])
+            } else {
+                // Nothing to compare either side's date against -- same
+                // "nothing to compare never rejects" rule the electronic
+                // dimensions above already follow.
+                return FlatCoverageResult(status: .fresh(path: "calibration_library/flats", ageDays: nil), mismatchReasons: [])
+            }
+        }
+
+        return FlatCoverageResult(status: .missing, mismatchReasons: reasons)
+    }
+
+    /// Builds the `calibration_library/flats/` pools, one per normalized
+    /// filter -- shared by `flatCoverage(db:config:)` (the library-wide
+    /// aggregate) and `flatCoverage(target:date:files:db:config:)` (a single
+    /// session's view), so both answer "is there a library flat for this
+    /// filter" against the exact same underlying data.
+    private static func libraryFlatPools(files: [FileRecord], db: Database) throws -> [String?: FlatPool] {
+        var focalLensByKey: [String?: [Double]] = [:]
+        var instantsByKey: [String?: [Double]] = [:]
+
+        for file in files where file.area == .calibration && file.role == .flat {
+            guard let id = file.id, let meta = try db.fitsMeta(fileID: id) else { continue }
+            let key = normalizedFilterKey(meta.filter)
+            if let focallen = meta.focallen { focalLensByKey[key, default: []].append(focallen) }
+            if let instant = meta.dateObs.flatMap(SessionTimeline.parseDateObs)?.timeIntervalSince1970 {
+                instantsByKey[key, default: []].append(instant)
+            }
+        }
+
+        var pools: [String?: FlatPool] = [:]
+        for key in Set(focalLensByKey.keys).union(instantsByKey.keys) {
+            pools[key] = FlatPool(
+                focalLenMM: mode(focalLensByKey[key] ?? []),
+                medianInstant: medianInstant(instantsByKey[key] ?? [])
+            )
+        }
+        return pools
+    }
+
+    /// This session's own usable lights, grouped into `FlatCell`s by
+    /// normalized filter -- shared by both flat-coverage entry points below.
+    private static func flatCells(
+        target: String,
+        date: String,
+        sessionFiles: [FileRecord],
+        db: Database,
+        config: AstroConfig
+    ) throws -> [FlatCell] {
+        let lightFiles = sessionFiles.filter { $0.role == .light }
+        guard !lightFiles.isEmpty else { return [] }
+
+        var lightMetaByID: [Int64: FITSMetaRecord] = [:]
+        for file in lightFiles {
+            guard let id = file.id, let meta = try db.fitsMeta(fileID: id) else { continue }
+            lightMetaByID[id] = meta
+        }
+        let usableLights = FrameSet.lightBuckets(files: lightFiles, meta: lightMetaByID, config: config).usable
+        guard !usableLights.isEmpty else { return [] }
+
+        struct CellBuilder {
+            var count = 0
+            var focalLens: [Double] = []
+            var instants: [Double] = []
+            var displays: [String] = []
+        }
+        var builders: [String?: CellBuilder] = [:]
+        for file in usableLights {
+            guard let id = file.id, let meta = lightMetaByID[id] else { continue }
+            let filterKey = normalizedFilterKey(meta.filter)
+            var builder = builders[filterKey] ?? CellBuilder()
+            builder.count += 1
+            if let focallen = meta.focallen { builder.focalLens.append(focallen) }
+            if let instant = meta.dateObs.flatMap(SessionTimeline.parseDateObs)?.timeIntervalSince1970 {
+                builder.instants.append(instant)
+            }
+            if let filter = meta.filter { builder.displays.append(filter) }
+            builders[filterKey] = builder
+        }
+
+        return builders.map { filterKey, builder in
+            FlatCell(
+                target: target,
+                date: date,
+                filterKey: filterKey,
+                filterDisplay: mode(builder.displays),
+                lightCount: builder.count,
+                focalLenMM: mode(builder.focalLens),
+                medianInstant: medianInstant(builder.instants)
+            )
+        }
+    }
+
+    /// This session's own flat metas, grouped by normalized filter.
+    private static func sessionFlatMetasByFilterKey(sessionFiles: [FileRecord], db: Database) throws -> [String?: [FITSMetaRecord]] {
+        var result: [String?: [FITSMetaRecord]] = [:]
+        for file in sessionFiles where file.role == .flat {
+            guard let id = file.id, let meta = try db.fitsMeta(fileID: id) else { continue }
+            result[normalizedFilterKey(meta.filter), default: []].append(meta)
+        }
+        return result
+    }
+
+    /// Per-filter flat coverage for ONE session (target/date) -- the
+    /// TargetDetail Áttekintés kalibráció-kártya's per-session "flat: Ha ✓ ·
+    /// OIII —" line (`SessionMatcher.match`'s `flatsByFilter`). `covered` is
+    /// `true` for BOTH `.fresh` and `.stale` (this compact view has no room
+    /// for staleness -- that nuance belongs to the coverage-table/Teendők
+    /// view via `flatCoverage(db:config:)` instead), `false` only for
+    /// `.missing`. `[]` when the session has no usable lights at all.
+    public struct FlatFilterCoverage: Codable, Sendable, Equatable {
+        public var filter: String?
+        public var covered: Bool
+
+        public init(filter: String?, covered: Bool) {
+            self.filter = filter
+            self.covered = covered
+        }
+    }
+
+    /// `files` is expected to already be `db.allFiles(includeMissing: false)`
+    /// -- callers that already fetched it (`SessionMatcher.match`) pass it
+    /// straight through instead of paying for a second read.
+    public static func flatCoverage(
+        target: String,
+        date: String,
+        files: [FileRecord],
+        db: Database,
+        config: AstroConfig
+    ) throws -> [FlatFilterCoverage] {
+        let sessionFiles = files.filter { $0.area == .sessions && $0.target == target && $0.sessionDate == date }
+        let cells = try flatCells(target: target, date: date, sessionFiles: sessionFiles, db: db, config: config)
+        guard !cells.isEmpty else { return [] }
+
+        let sessionFlatsByKey = try sessionFlatMetasByFilterKey(sessionFiles: sessionFiles, db: db)
+        let pools = try libraryFlatPools(files: files, db: db)
+        let sessionFlatsPath = "sessions/\(target)/\(date)/flats"
+
+        return cells
+            .map { cell -> FlatFilterCoverage in
+                let result = evaluateFlatCoverage(
+                    cell: cell,
+                    sessionFlatMetas: sessionFlatsByKey[cell.filterKey] ?? [],
+                    libraryPool: pools[cell.filterKey],
+                    calib: config.calib,
+                    sessionFlatsPath: sessionFlatsPath
+                )
+                let covered: Bool
+                if case .missing = result.status { covered = false } else { covered = true }
+                return FlatFilterCoverage(filter: cell.filterDisplay, covered: covered)
+            }
+            .sorted { ($0.filter ?? "\u{FFFF}") < ($1.filter ?? "\u{FFFF}") }
+    }
+
+    /// Library-wide flat coverage, aggregated per normalized filter across
+    /// EVERY scanned session with usable lights -- `kind == .flat`
+    /// `CalibNeed`s, the flat counterpart to `coverage()`'s dark rows. Kept
+    /// as its own function rather than merged into `coverage()` -- see this
+    /// file's own top-level doc comment for why.
+    ///
+    /// One `CalibNeed` per distinct filter (case-insensitive, trimmed;
+    /// `nil` for OSC/DSLR lights with no `FILTER` header at all). A filter's
+    /// row is "missing" the moment ANY session using it has no covering
+    /// flat at all (own session flat, or a library one within
+    /// `calib.flatMaxAgeDays` of that session's own lights); "stale" when
+    /// none are missing but at least one session's only coverage is a
+    /// library flat past that age threshold; "fresh" (`todo == nil`) only
+    /// when every affected session is covered. `targets`/the todo's session
+    /// count only ever name the AFFECTED sessions (missing, or stale in a
+    /// stale-overall row) -- a session already covered by its own flat
+    /// contributes to `lightCount` but never shows up as something to fix.
+    public static func flatCoverage(db: Database, config: AstroConfig) throws -> [CalibNeed] {
+        let files = try db.allFiles(includeMissing: false)
+        let calib = config.calib
+
+        var sessionKeys = Set<SessionDateKey>()
+        for file in files where file.area == .sessions {
+            guard let target = file.target, let date = file.sessionDate else { continue }
+            sessionKeys.insert(SessionDateKey(target: target, date: date))
+        }
+
+        let pools = try libraryFlatPools(files: files, db: db)
+
+        var byFilterKey: [String?: [FlatCellResult]] = [:]
+
+        for key in sessionKeys {
+            let sessionFiles = files.filter { $0.area == .sessions && $0.target == key.target && $0.sessionDate == key.date }
+            let cells = try flatCells(target: key.target, date: key.date, sessionFiles: sessionFiles, db: db, config: config)
+            guard !cells.isEmpty else { continue }
+
+            let sessionFlatsByKey = try sessionFlatMetasByFilterKey(sessionFiles: sessionFiles, db: db)
+            let sessionFlatsPath = "sessions/\(key.target)/\(key.date)/flats"
+
+            for cell in cells {
+                let result = evaluateFlatCoverage(
+                    cell: cell,
+                    sessionFlatMetas: sessionFlatsByKey[cell.filterKey] ?? [],
+                    libraryPool: pools[cell.filterKey],
+                    calib: calib,
+                    sessionFlatsPath: sessionFlatsPath
+                )
+                byFilterKey[cell.filterKey, default: []].append(FlatCellResult(cell: cell, result: result))
+            }
+        }
+
+        return byFilterKey.map { _, results in buildFlatNeed(results: results) }
+            .sorted { ($0.filter ?? "\u{FFFF}") < ($1.filter ?? "\u{FFFF}") }
+    }
+
+    /// A (target, date) session key -- distinct nested type from
+    /// `CalibHealth`'s own private `SessionKey` (different enum, no name
+    /// collision), same shape.
+    private struct SessionDateKey: Hashable {
+        var target: String
+        var date: String
+    }
+
+    private static func buildFlatNeed(results: [FlatCellResult]) -> CalibNeed {
+        let sorted = results.sorted { ($0.cell.target, $0.cell.date) < ($1.cell.target, $1.cell.date) }
+        let filterDisplay = sorted.compactMap(\.cell.filterDisplay).first
+        let lightCount = sorted.reduce(0) { $0 + $1.cell.lightCount }
+        let worstRank = sorted.map { flatRank($0.result.status) }.min() ?? 2
+
+        let affected = sorted.filter { flatRank($0.result.status) == worstRank && worstRank != 2 }
+        let affectedTargets = Set(affected.map(\.cell.target)).sorted()
+        let affectedSessionCount = affected.count
+
+        var mismatchReasons: [String] = []
+        var seenReasons = Set<String>()
+        for reason in affected.flatMap({ $0.result.mismatchReasons }) where seenReasons.insert(reason).inserted {
+            mismatchReasons.append(reason)
+        }
+
+        let matchedPath: String?
+        let ageDays: Int?
+        let isStale: Bool
+
+        switch worstRank {
+        case 0:
+            matchedPath = nil
+            ageDays = nil
+            isStale = false
+        case 1:
+            isStale = true
+            matchedPath = "calibration_library/flats"
+            ageDays = affected.compactMap { entry -> Int? in
+                if case .stale(_, let a) = entry.result.status { return a }
+                return nil
+            }.max()
+        default:
+            isStale = false
+            if let libraryFresh = sorted.first(where: { entry in
+                if case .fresh(let path, _) = entry.result.status { return path == "calibration_library/flats" }
+                return false
+            }) {
+                if case .fresh(let path, let a) = libraryFresh.result.status {
+                    matchedPath = path
+                    ageDays = a
+                } else {
+                    matchedPath = nil
+                    ageDays = nil
+                }
+            } else if let sessionFresh = sorted.first(where: { if case .fresh = $0.result.status { return true }; return false }) {
+                if case .fresh(let path, let a) = sessionFresh.result.status {
+                    matchedPath = path
+                    ageDays = a
+                } else {
+                    matchedPath = nil
+                    ageDays = nil
+                }
+            } else {
+                matchedPath = nil
+                ageDays = nil
+            }
+        }
+
+        let todo = flatTodoString(
+            filterDisplay: filterDisplay,
+            worstRank: worstRank,
+            affectedSessionCount: affectedSessionCount,
+            ageDays: ageDays
+        )
+
+        return CalibNeed(
+            kind: .flat,
+            exposureSeconds: 0,
+            tempC: nil,
+            lightCount: lightCount,
+            targets: affectedTargets,
+            matchedMasterPath: matchedPath,
+            masterAgeDays: ageDays,
+            isStale: isStale,
+            todo: todo,
+            requiredGain: nil,
+            requiredCamera: nil,
+            mismatchReasons: mismatchReasons,
+            filter: filterDisplay
+        )
+    }
+
+    /// Hungarian todo text for one filter's aggregate flat need -- deliberately
+    /// omits any "(nincs szűrő)" qualifier for a filterless (OSC/DSLR) group
+    /// (`filterDisplay == nil`): the spec's own words are "don't generate
+    /// fake noise" for that case, so the sentence just reads without naming
+    /// a filter at all rather than inventing a placeholder label for one.
+    private static func flatTodoString(
+        filterDisplay: String?,
+        worstRank: Int,
+        affectedSessionCount: Int,
+        ageDays: Int?
+    ) -> String? {
+        switch worstRank {
+        case 0:
+            if let filterDisplay {
+                return "Hiányzó flat: \(filterDisplay) — \(affectedSessionCount) session érintett"
+            }
+            return "Hiányzó flat — \(affectedSessionCount) session érintett"
+        case 1:
+            let ageText = ageDays.map(String.init) ?? "?"
+            if let filterDisplay {
+                return "a(z) \(filterDisplay) flat \(ageText) napos — készíts frisset (\(affectedSessionCount) session érintett)"
+            }
+            return "a flat \(ageText) napos — készíts frisset (\(affectedSessionCount) session érintett)"
+        default:
+            return nil
+        }
     }
 }

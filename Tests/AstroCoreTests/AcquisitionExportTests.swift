@@ -246,6 +246,96 @@ private struct AcquisitionExportFixture {
     #expect(rowsByDate["2026-01-12"]?[12] == "")
 }
 
+// MARK: - R11-T16/F20: AstroBin filter-ID mapping
+
+@Test func astrobinWritesTheMappedFilterIDInsteadOfTheName() throws {
+    let fixture = try AcquisitionExportFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, filter: "Ha")
+    try fixture.scan()
+
+    var config = fixture.config
+    config.astrobin.filterIds = ["Ha": 4663]
+
+    let output = try AcquisitionExport.render(target: "T1", format: .astrobin, db: fixture.db, config: config)
+    let dataLine = try #require(output.components(separatedBy: "\n").filter { !$0.isEmpty }.dropFirst().first)
+    let fields = dataLine.components(separatedBy: ",")
+    #expect(fields[1] == "4663")
+}
+
+@Test func astrobinLookupIsCaseInsensitiveAndTrimmed() throws {
+    let fixture = try AcquisitionExportFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, filter: "Ha")
+    try fixture.scan()
+
+    var config = fixture.config
+    // Mapping entered as "  HA  " in Settings -- must still match the
+    // scanned "Ha" header value.
+    config.astrobin.filterIds = ["  HA  ": 4663]
+
+    let output = try AcquisitionExport.render(target: "T1", format: .astrobin, db: fixture.db, config: config)
+    let dataLine = try #require(output.components(separatedBy: "\n").filter { !$0.isEmpty }.dropFirst().first)
+    let fields = dataLine.components(separatedBy: ",")
+    #expect(fields[1] == "4663")
+}
+
+@Test func astrobinKeepsTheRawNameWhenUnmapped() throws {
+    let fixture = try AcquisitionExportFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, filter: "OIII")
+    try fixture.scan()
+
+    // No mapping at all -- the raw name must still export, unchanged.
+    let output = try AcquisitionExport.render(target: "T1", format: .astrobin, db: fixture.db, config: fixture.config)
+    let dataLine = try #require(output.components(separatedBy: "\n").filter { !$0.isEmpty }.dropFirst().first)
+    let fields = dataLine.components(separatedBy: ",")
+    #expect(fields[1] == "OIII")
+}
+
+@Test func unmappedAstrobinFiltersReturnsOnlyTheFiltersWithNoMappingEntry() throws {
+    let fixture = try AcquisitionExportFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, filter: "Ha")
+    try fixture.writeFITS("sessions/T1/2026-01-11/lights/l1.fit", exptime: 300.0, filter: "OIII")
+    try fixture.scan()
+
+    var config = fixture.config
+    config.astrobin.filterIds = ["Ha": 4663]
+
+    let unmapped = try AcquisitionExport.unmappedAstrobinFilters(target: "T1", db: fixture.db, config: config)
+    #expect(unmapped == ["OIII"])
+}
+
+@Test func unmappedAstrobinFiltersIsEmptyWhenEveryUsedFilterIsMapped() throws {
+    let fixture = try AcquisitionExportFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, filter: "Ha")
+    try fixture.scan()
+
+    var config = fixture.config
+    config.astrobin.filterIds = ["Ha": 4663]
+
+    let unmapped = try AcquisitionExport.unmappedAstrobinFilters(target: "T1", db: fixture.db, config: config)
+    #expect(unmapped.isEmpty)
+}
+
+@Test func unmappedAstrobinFiltersIsEmptyForFilterlessOSCFrames() throws {
+    let fixture = try AcquisitionExportFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, instrume: "ZWO ASI2600MC Pro")
+    try fixture.scan()
+
+    let unmapped = try AcquisitionExport.unmappedAstrobinFilters(target: "T1", db: fixture.db, config: fixture.config)
+    #expect(unmapped.isEmpty)
+}
+
 @Test func astrobinSkipsHibasExcludedSessions() throws {
     let fixture = try AcquisitionExportFixture.make()
     defer { fixture.cleanup() }

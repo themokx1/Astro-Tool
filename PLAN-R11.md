@@ -23,7 +23,7 @@
 - [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
 - [x] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [x]
 - [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [x] T10 [x] T11 [x] T12 [x] T13 [ ]
-- [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [x] T15 [x] T16 [ ] T17 [ ]
+- [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [x] T15 [x] T16 [x] T17 [ ]
 - [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
 - [ ] 8. Release v0.13.0
 
@@ -316,7 +316,7 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
 ### C-hullám — pro funkciók
 - **T14 — Verify**: F9.
 - **T15 — Több helyszín**: F16.
-- **T16 — Kalibráció v2 + AstroBin ID**: F17 + F20 AstroBin filter-ID.
+- **T16 [x] — Kalibráció v2 + AstroBin ID**: F17 + F20 AstroBin filter-ID.
 - **T17 — (tartalék/összefésülő)**: az előzőekből kimaradt apróságok, review-találatok.
   Ismert tétel: a T11 agent által jelzett valószínű bug — az EGYSZŰRŐS/lapos
   stacklist `.ssf` script `cd` célja a stacklist gyökerére mutat a `lights/`
@@ -565,3 +565,33 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   soronként saját gomb — ugyanaz a funkció (adott sor koordinátáinak
   vágólapról töltése), egyszerűbb állapotkezeléssel. Következő: T16
   (Kalibráció v2 + AstroBin ID).
+- 2026-08-08: T16 (Kalibráció v2 + AstroBin ID) kész — F17 + F20 AstroBin
+  teljes. Core: új `CalibAnalyzer.flatCoverage` (könyvtár-szintű `[CalibNeed]`,
+  `kind == .flat` + session-szintű `[FlatFilterCoverage]`) — FILTER (+
+  FOCALLEN) szerinti illesztés session saját `flats/` mappája (mindig friss)
+  és `calibration_library/flats/` ellen (kor: `flatMaxAgeDays`, light↔flat
+  DATE-OBS gap), FOCALLEN-mismatch `mismatchReasons`-ban, OSC/DSLR-nél
+  szűrő-dimenzió nélkül fut. Szándékosan KÜLÖN függvény maradt a dark-only
+  `coverage()`-től (annak ~25 tesztje dark-only számot feltételez) — app/CLI
+  konkatenálja megjelenítéshez. `CalibNeed.filter` új mező.
+  `SessionMatcher.SessionCalibration.flatsByFilter` ugyanezt hívja. App:
+  coverage-tábla "Szűrő" oszlop, "Hiányzó" csempe dark/flat bontással,
+  TargetDetail session-soronkénti flat-per-szűrő ("flat: Ha ✓ · OIII —"),
+  a Ma esti bevásárlólista automatikusan felveszi a flat-teendőket (közös
+  `calibNeeds` darkok+flatok). CLI: `calib --flats`, plain `calib`
+  humán-összegzés "N teendő (M dark, K flat)" sorral. AstroBin: új
+  `AstroConfig.astrobin.filterIds: [String: Int]`, `AcquisitionExport`
+  astrobin CSV `filter` oszlopa leképezett ID-t ír (case-insensitive
+  illesztés), le nem képezettnél a név marad + figyelmeztetés (CLI stderr /
+  app toast export után). Settings ▸ Könyvtár "AstroBin export" szekció
+  (kulcs-érték lista-szerkesztő, "+ sor", equipment-böngésző link). 30 új
+  teszt (`CalibTests` flat-eseteket lefedve: mono több szűrős, OSC-zajmentesség,
+  hiányzó, elavult, FOCALLEN-mismatch, dark-coverage érintetlensége;
+  `SessionMatcherTests`; `CalibShoppingListTests`; `AcquisitionExportTests`
+  mapped/unmapped/case-insensitive; `ConfigTests` astrobin decode/round-trip;
+  `CLISmokeTests` `calib --flats` + humán-összegzés + export-warning),
+  `swift test` zöld (1287). Tudatos eltérés: a flat-todo "Linkelés…" gombja
+  a meglévő, darkokra épülő `CalibLinkSheet`-et nyitja meg (nincs saját
+  flat-linkelő mechanizmus — `CalibLinker` flatokat sosem "linkel" a
+  calibration_library-ból, csak a hozzájuk tartozó flat-darkot), ez
+  T16-on kívül esik. Következő: T17 (tartalék/összefésülő).

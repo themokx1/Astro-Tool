@@ -13,6 +13,10 @@ struct LibrarySettingsView: View {
 
     @State private var excludedDirNames: [String] = []
     @State private var excludedPaths: [String] = []
+    /// R11-T16/F20: `astrobin.filterIds` draft -- see `astrobinExportSection`.
+    @State private var astrobinFilterIds: [String: Int] = [:]
+    @State private var newAstrobinFilterName: String = ""
+    @State private var newAstrobinFilterID: String = ""
 
     @State private var saveMessage: String?
     @State private var saveError: String?
@@ -71,6 +75,16 @@ struct LibrarySettingsView: View {
                 }
             }
 
+            Section("AstroBin export") {
+                SettingsResetRow(
+                    isModified: astrobinFilterIds != defaults.astrobin.filterIds,
+                    caption: "Szűrőnév → AstroBin equipment-adatbázis filter-ID. Leképezett szűrőnél az export ID-t ír, egyébként a szűrő neve marad (+ figyelmeztetés).",
+                    reset: { astrobinFilterIds = defaults.astrobin.filterIds }
+                ) {
+                    astrobinFilterIdsList
+                }
+            }
+
             Section {
                 HStack {
                     Button("Alaphelyzetbe állítás…") { showResetConfirm = true }
@@ -107,8 +121,69 @@ struct LibrarySettingsView: View {
             Button("Alaphelyzetbe állítás", role: .destructive) {
                 excludedDirNames = defaults.excludedDirNames
                 excludedPaths = defaults.excludedPaths
+                astrobinFilterIds = defaults.astrobin.filterIds
             }
         }
+    }
+
+    // MARK: - AstroBin export (R11-T16/F20)
+
+    /// Key-value list-editor for `astrobin.filterIds` -- szűrőnév + numerikus
+    /// ID soronként, törlés gombbal, "+ sor" az új sorhoz. Sorted by filter
+    /// name so the list doesn't reorder itself as entries are added/removed
+    /// (a `[String: Int]` has no order of its own) -- same convention
+    /// `LibraryRulesSettingsView.wideFieldOverridesList` already uses for
+    /// its own dictionary-backed list.
+    private var astrobinFilterIdsList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Link("Az ID-t az AstroBin equipment-adatbázisából keresd ki →", destination: astrobinEquipmentExplorerURL)
+                .font(.caption)
+
+            if astrobinFilterIds.isEmpty {
+                Text("Nincs leképezett szűrő -- az export minden szűrőnevet nyersen ír ki.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(astrobinFilterIds.keys.sorted(), id: \.self) { filterName in
+                    HStack {
+                        Text(filterName)
+                        Spacer()
+                        Text("\(astrobinFilterIds[filterName] ?? 0)")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                        Button {
+                            astrobinFilterIds.removeValue(forKey: filterName)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            HStack {
+                TextField("Szűrő neve (pl. Ha)", text: $newAstrobinFilterName)
+                TextField("ID", text: $newAstrobinFilterID)
+                    .frame(width: 70)
+                Button("+ sor", action: addAstrobinFilterRow)
+                    .disabled(
+                        newAstrobinFilterName.trimmingCharacters(in: .whitespaces).isEmpty
+                            || Int(newAstrobinFilterID.trimmingCharacters(in: .whitespaces)) == nil
+                    )
+            }
+        }
+    }
+
+    private var astrobinEquipmentExplorerURL: URL {
+        URL(string: "https://app.astrobin.com/equipment/explorer/filter")!
+    }
+
+    private func addAstrobinFilterRow() {
+        let name = newAstrobinFilterName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, let id = Int(newAstrobinFilterID.trimmingCharacters(in: .whitespaces)) else { return }
+        astrobinFilterIds[name] = id
+        newAstrobinFilterName = ""
+        newAstrobinFilterID = ""
     }
 
     /// R10-B7: "Nem mentett módosítások" indicator next to Mentés -- true
@@ -118,12 +193,15 @@ struct LibrarySettingsView: View {
     /// -- a different question: "did I change this from factory" vs. "do I
     /// have unsaved edits right now").
     private var isDirty: Bool {
-        excludedDirNames != appState.config.excludedDirNames || excludedPaths != appState.config.excludedPaths
+        excludedDirNames != appState.config.excludedDirNames
+            || excludedPaths != appState.config.excludedPaths
+            || astrobinFilterIds != appState.config.astrobin.filterIds
     }
 
     private func loadFromConfig() {
         excludedDirNames = appState.config.excludedDirNames
         excludedPaths = appState.config.excludedPaths
+        astrobinFilterIds = appState.config.astrobin.filterIds
     }
 
     private func save() {
@@ -133,6 +211,7 @@ struct LibrarySettingsView: View {
         var newConfig = appState.config
         newConfig.excludedDirNames = excludedDirNames
         newConfig.excludedPaths = excludedPaths
+        newConfig.astrobin.filterIds = astrobinFilterIds
 
         do {
             let writeGuard = WriteGuard(root: URL(fileURLWithPath: newConfig.rootPath, isDirectory: true))

@@ -11,10 +11,12 @@ private func makeNeed(
     targets: [String] = ["M31"],
     matchedMasterPath: String? = nil,
     isStale: Bool = false,
-    todo: String? = "készíts 300 s / -10 °C darkot (5 light frame-hez)"
+    todo: String? = "készíts 300 s / -10 °C darkot (5 light frame-hez)",
+    kind: FrameRole = .dark,
+    filter: String? = nil
 ) -> CalibNeed {
     CalibNeed(
-        kind: .dark,
+        kind: kind,
         exposureSeconds: exposureSeconds,
         tempC: tempC,
         lightCount: 5,
@@ -22,7 +24,8 @@ private func makeNeed(
         matchedMasterPath: matchedMasterPath,
         masterAgeDays: matchedMasterPath == nil ? nil : 45,
         isStale: isStale,
-        todo: todo
+        todo: todo,
+        filter: filter
     )
 }
 
@@ -129,4 +132,19 @@ private func makePlan(target: String, verdict: String) -> TargetPlan {
 
 @Test func markdownIsEmptyForAnEmptyList() throws {
     #expect(CalibShoppingList.markdown([]).isEmpty)
+}
+
+// MARK: - R11-T16/F17: flat needs flow through the shopping list too
+
+@Test func buildIncludesAMissingFlatNeedUsedByATonightObservableTarget() throws {
+    let need = makeNeed(
+        exposureSeconds: 0, tempC: nil, targets: ["M31"], matchedMasterPath: nil,
+        todo: "Hiányzó flat: OIII — 1 session érintett", kind: .flat, filter: "OIII"
+    )
+    let plans = [makePlan(target: "M31", verdict: "ma jó")]
+    let items = CalibShoppingList.build(coverage: [need], plans: plans)
+
+    #expect(items.count == 1)
+    #expect(items[0].kind == .flat)
+    #expect(items[0].summary == "Hiányzó flat: OIII — 1 session érintett — M31 használná")
 }

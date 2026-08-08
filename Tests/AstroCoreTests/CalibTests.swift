@@ -46,16 +46,20 @@ private struct CalibFixture {
     }
 
     /// Writes a generated light frame with the given EXPTIME/SET-TEMP/GAIN/
-    /// OFFSET/INSTRUME cards -- any card is omitted entirely when its value
-    /// is `nil`, e.g. to simulate a DSLR with no cooler telemetry, or a
-    /// corrupt/incomplete header with no exposure time at all.
+    /// OFFSET/INSTRUME/FILTER/FOCALLEN/DATE-OBS cards -- any card is omitted
+    /// entirely when its value is `nil`, e.g. to simulate a DSLR with no
+    /// cooler telemetry, or a corrupt/incomplete header with no exposure
+    /// time at all.
     func writeFITSLight(
         _ relativePath: String,
         exptime: Double?,
         setTemp: Double?,
         gain: Double? = nil,
         offset: Double? = nil,
-        instrume: String? = nil
+        instrume: String? = nil,
+        filter: String? = nil,
+        focallen: Double? = nil,
+        dateObs: String? = nil
     ) throws {
         let url = libraryDir.appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -65,6 +69,29 @@ private struct CalibFixture {
         if let gain { cards.append("GAIN    =                \(gain)") }
         if let offset { cards.append("OFFSET  =                \(offset)") }
         if let instrume { cards.append("INSTRUME= '\(instrume)'") }
+        if let filter { cards.append("FILTER  = '\(filter)'") }
+        if let focallen { cards.append("FOCALLEN=                \(focallen)") }
+        if let dateObs { cards.append("DATE-OBS= '\(dateObs)'") }
+        cards.append("END")
+        try buildHeaderData(cards).write(to: url)
+    }
+
+    /// Writes a flat frame (session-local `flats/` dir, or
+    /// `calibration_library/flats/`) with the given FILTER/FOCALLEN/
+    /// DATE-OBS cards -- any card omitted entirely when its value is `nil`,
+    /// e.g. to simulate an OSC/DSLR flat with no filter wheel at all.
+    func writeFITSFlat(
+        _ relativePath: String,
+        filter: String? = nil,
+        focallen: Double? = nil,
+        dateObs: String? = nil
+    ) throws {
+        let url = libraryDir.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var cards = ["SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2"]
+        if let filter { cards.append("FILTER  = '\(filter)'") }
+        if let focallen { cards.append("FOCALLEN=                \(focallen)") }
+        if let dateObs { cards.append("DATE-OBS= '\(dateObs)'") }
         cards.append("END")
         try buildHeaderData(cards).write(to: url)
     }
@@ -624,4 +651,193 @@ private struct CalibFixture {
     #expect(need.matchedMasterPath == nil)
     #expect(need.mismatchReasons.contains("másik kamera: ZWO ASI2600MC Pro"))
     #expect(need.requiredCamera == "Canon EOS Ra")
+}
+
+// MARK: - R11-T16/F17: flat coverage
+
+@Test func flatCoverageOSCSessionOwnFlatCoversFilterlessLightsWithoutNoise() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    // An OSC/DSLR light with no FILTER header at all, covered by a
+    // filterless session flat -- must read as fully covered, no
+    // "(nincs szűrő)" placeholder anywhere in the output.
+    try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, setTemp: -10.0)
+    try fixture.writeFITSFlat("sessions/T1/2026-01-10/flats/f1.fit")
+
+    try fixture.scan()
+
+    let needs = try CalibAnalyzer.flatCoverage(db: fixture.db, config: fixture.config)
+    #expect(needs.count == 1)
+    let need = try #require(needs.first)
+    #expect(need.kind == .flat)
+    #expect(need.filter == nil)
+    #expect(need.todo == nil)
+    #expect(need.matchedMasterPath == "sessions/T1/2026-01-10/flats")
+    #expect(!(need.todo ?? "").contains("nincs szűrő"))
+}
+
+@Test func flatCoverageMonoMultiFilterFlagsOnlyTheUncoveredFilter() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 1...3 {
+        try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/ha\(i).fit", exptime: 300.0, setTemp: -10.0, filter: "Ha")
+    }
+    for i in 1...2 {
+        try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/oiii\(i).fit", exptime: 300.0, setTemp: -10.0, filter: "OIII")
+    }
+    // Own flat only for Ha -- OIII has no covering flat anywhere.
+    try fixture.writeFITSFlat("sessions/T1/2026-01-10/flats/haflat.fit", filter: "Ha")
+
+    try fixture.scan()
+
+    let needs = try CalibAnalyzer.flatCoverage(db: fixture.db, config: fixture.config)
+    #expect(needs.count == 2)
+
+    let haNeed = try #require(needs.first { $0.filter == "Ha" })
+    #expect(haNeed.todo == nil)
+    #expect(haNeed.matchedMasterPath == "sessions/T1/2026-01-10/flats")
+    #expect(haNeed.lightCount == 3)
+
+    let oiiiNeed = try #require(needs.first { $0.filter == "OIII" })
+    #expect(oiiiNeed.matchedMasterPath == nil)
+    #expect(oiiiNeed.todo == "Hiányzó flat: OIII — 1 session érintett")
+    #expect(oiiiNeed.lightCount == 2)
+    #expect(oiiiNeed.targets == ["T1"])
+}
+
+@Test func flatCoverageMissingAcrossThreeSessionsNamesSessionCountInTodo() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, setTemp: -10.0, filter: "OIII")
+    try fixture.writeFITSLight("sessions/T1/2026-01-11/lights/l1.fit", exptime: 300.0, setTemp: -10.0, filter: "OIII")
+    try fixture.writeFITSLight("sessions/T2/2026-01-12/lights/l1.fit", exptime: 300.0, setTemp: -10.0, filter: "OIII")
+    // No flats anywhere -- neither session-local nor library.
+
+    try fixture.scan()
+
+    let needs = try CalibAnalyzer.flatCoverage(db: fixture.db, config: fixture.config)
+    #expect(needs.count == 1)
+    let need = try #require(needs.first)
+    #expect(need.filter == "OIII")
+    #expect(need.matchedMasterPath == nil)
+    #expect(need.todo == "Hiányzó flat: OIII — 3 session érintett")
+    #expect(need.targets == ["T1", "T2"])
+    #expect(need.mismatchReasons.isEmpty)
+}
+
+@Test func flatCoverageStaleLibraryFlatFlagsRefreshTodoWithAgeAndSessionCount() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/l1.fit",
+        exptime: 300.0, setTemp: -10.0, filter: "Ha", dateObs: dateObsDaysAgo(0)
+    )
+    // No session-own flat -- only a stale library flat, 60 days away from
+    // the light's own DATE-OBS (default flatMaxAgeDays is 30).
+    try fixture.writeFITSFlat(
+        "calibration_library/flats/libflat.fit",
+        filter: "Ha", dateObs: dateObsDaysAgo(60)
+    )
+
+    try fixture.scan()
+
+    let needs = try CalibAnalyzer.flatCoverage(db: fixture.db, config: fixture.config)
+    #expect(needs.count == 1)
+    let need = try #require(needs.first)
+    #expect(need.filter == "Ha")
+    #expect(need.isStale == true)
+    #expect(need.matchedMasterPath == "calibration_library/flats")
+    #expect((need.masterAgeDays ?? 0) >= 59)
+    #expect(need.todo?.contains("napos") == true)
+    #expect(need.todo?.contains("készíts frisset") == true)
+    #expect(need.todo?.contains("1 session érintett") == true)
+}
+
+@Test func flatCoverageFreshLibraryFlatCoversAFilterWithNoSessionFlatAtAll() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/l1.fit",
+        exptime: 300.0, setTemp: -10.0, filter: "Ha", dateObs: dateObsDaysAgo(0)
+    )
+    try fixture.writeFITSFlat(
+        "calibration_library/flats/libflat.fit",
+        filter: "Ha", dateObs: dateObsDaysAgo(2)
+    )
+
+    try fixture.scan()
+
+    let needs = try CalibAnalyzer.flatCoverage(db: fixture.db, config: fixture.config)
+    let need = try #require(needs.first)
+    #expect(need.todo == nil)
+    #expect(need.isStale == false)
+    #expect(need.matchedMasterPath == "calibration_library/flats")
+}
+
+@Test func flatCoverageFocalLengthMismatchIsReportedAndCountsAsMissing() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/l1.fit",
+        exptime: 300.0, setTemp: -10.0, filter: "Ha", focallen: 800
+    )
+    // Session's own flat matches the filter but not the focal length --
+    // must be REJECTED (not silently accepted), same "coarse match, reject
+    // on secondary dimension" shape darks use for gain/offset/camera.
+    try fixture.writeFITSFlat("sessions/T1/2026-01-10/flats/f1.fit", filter: "Ha", focallen: 500)
+
+    try fixture.scan()
+
+    let needs = try CalibAnalyzer.flatCoverage(db: fixture.db, config: fixture.config)
+    let need = try #require(needs.first)
+    #expect(need.matchedMasterPath == nil)
+    #expect(need.mismatchReasons.contains("gyújtótáv eltér: light 800mm, flat 500mm"))
+    #expect(need.todo == "Hiányzó flat: Ha — 1 session érintett")
+}
+
+@Test func flatCoveragePerSessionAPIReturnsCoveredFlagsSortedByFilter() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 1...3 {
+        try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/ha\(i).fit", exptime: 300.0, setTemp: -10.0, filter: "Ha")
+    }
+    try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/oiii1.fit", exptime: 300.0, setTemp: -10.0, filter: "OIII")
+    try fixture.writeFITSFlat("sessions/T1/2026-01-10/flats/haflat.fit", filter: "Ha")
+
+    try fixture.scan()
+
+    let files = try fixture.db.allFiles(includeMissing: false)
+    let result = try CalibAnalyzer.flatCoverage(target: "T1", date: "2026-01-10", files: files, db: fixture.db, config: fixture.config)
+
+    #expect(result.count == 2)
+    #expect(result[0].filter == "Ha")
+    #expect(result[0].covered == true)
+    #expect(result[1].filter == "OIII")
+    #expect(result[1].covered == false)
+}
+
+@Test func flatCoverageDoesNotAffectExistingDarkCoverageFunction() throws {
+    // R11-T16/F17: `coverage()` (darks) must stay exactly as it was --
+    // flats live in their own separate `flatCoverage` function. A library
+    // with BOTH a dark master and a flat combo must have `coverage()`
+    // return ONLY the dark row.
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeMasterFile("calibration_library/darks/300sec_-10deg/master.fit")
+    try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, setTemp: -10.0, filter: "Ha")
+    try fixture.writeFITSFlat("sessions/T1/2026-01-10/flats/f1.fit", filter: "Ha")
+
+    try fixture.scan()
+
+    let darkNeeds = try CalibAnalyzer.coverage(db: fixture.db, config: fixture.config)
+    #expect(darkNeeds.count == 1)
+    #expect(darkNeeds[0].kind == .dark)
 }

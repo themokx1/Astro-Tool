@@ -239,8 +239,8 @@ astrotool sensor --history --json</pre>
     <h2>Kalibráció</h2>
     <div class="cmd">
       <div class="name">calib</div>
-      <div class="desc">Kalibrációs lefedettség-hiánylista (mely expozíció/hőmérséklet kombinációhoz kell még dark/flat/bias); <code>--health</code> a flat-higiénia riporthoz.</div>
-      <pre class="example">astrotool calib --health</pre>
+      <div class="desc">Kalibrációs lefedettség-hiánylista (mely expozíció/hőmérséklet kombinációhoz kell még dark, mely szűrőhöz kell még flat); <code>--health</code> a flat-higiénia riporthoz, <code>--flats</code> csak a szűrőnkénti flat-lefedettséghez (<code>--json</code> mindkettővel kombinálható).</div>
+      <pre class="example">astrotool calib --flats</pre>
     </div>
     <div class="cmd">
       <div class="name">match</div>
@@ -292,7 +292,7 @@ astrotool sensor --history --json</pre>
     <h2>Export</h2>
     <div class="cmd">
       <div class="name">export</div>
-      <div class="desc">AstroBin bulk-import CSV, gazdagabb session-CSV vagy emberi Markdown napló egy célponthoz.</div>
+      <div class="desc">AstroBin bulk-import CSV, gazdagabb session-CSV vagy emberi Markdown napló egy célponthoz. AstroBin formátumnál a <code>filter</code> oszlop a <code>config astrobin.filterIds</code> leképezés szerinti numerikus ID-t írja, ha van hozzá; le nem képezett szűrőnél a név marad + stderr-figyelmeztetés.</div>
       <pre class="example">astrotool export --target M31 --format astrobin</pre>
     </div>
     <div class="cmd">

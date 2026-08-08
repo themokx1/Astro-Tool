@@ -636,7 +636,7 @@ struct OverviewSegment: View {
     private func calibrationLine(_ calib: SessionCalibration) -> some View {
         HStack(spacing: 8) {
             Text(calib.date).font(.caption).frame(width: 90, alignment: .leading)
-            Text("flat: \(calib.flats.count)").font(.caption).foregroundStyle(.secondary)
+            Text(flatSummaryText(calib)).font(.caption).foregroundStyle(.secondary)
             if calib.darks.isEmpty, let libraryDark = calib.libraryDark {
                 Text("dark: library (\((libraryDark as NSString).lastPathComponent))")
                     .font(.caption).foregroundStyle(.secondary)
@@ -650,6 +650,23 @@ struct OverviewSegment: View {
                     .foregroundStyle(.orange)
             }
         }
+    }
+
+    /// R11-T16/F17: per-filter flat status, e.g. "flat: Ha ✓ · OIII —" for a
+    /// multi-filter mono session -- a filterless (OSC/DSLR) session with
+    /// exactly one bucket collapses to a bare "flat: ✓"/"flat: —" (no
+    /// invented "(nincs szűrő)" label, same "don't generate fake noise"
+    /// rule `CalibAnalyzer.flatCoverage` itself follows). Falls back to the
+    /// old raw flat-file count when `flatsByFilter` is empty (no usable
+    /// lights this session, e.g. every frame was rejected).
+    private func flatSummaryText(_ calib: SessionCalibration) -> String {
+        guard !calib.flatsByFilter.isEmpty else { return "flat: \(calib.flats.count)" }
+        let parts = calib.flatsByFilter.map { entry -> String in
+            let mark = entry.covered ? "✓" : "—"
+            guard let filter = entry.filter else { return mark }
+            return "\(filter) \(mark)"
+        }
+        return "flat: " + parts.joined(separator: " · ")
     }
 
     // MARK: - Shared block chrome

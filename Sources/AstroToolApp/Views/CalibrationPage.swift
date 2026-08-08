@@ -28,6 +28,12 @@ struct CalibrationPage: View {
     private var masterDarkCountText: String {
         TDFormat.tile(appState.calibHealth.map { "\($0.darkMasters.count)" })
     }
+    /// R11-T16/F17: the "Hiányzó" tile's caption breaks the total down by
+    /// kind ("3 dark · 2 flat") -- a bare missing-count no longer says
+    /// whether it's a dark or a flat gap now that both kinds share this
+    /// tile.
+    private var missingDarkCount: Int { needs.filter { $0.kind == .dark && $0.matchedMasterPath == nil }.count }
+    private var missingFlatCount: Int { needs.filter { $0.kind == .flat && $0.matchedMasterPath == nil }.count }
 
     var body: some View {
         @Bindable var appState = appState
@@ -93,7 +99,10 @@ struct CalibrationPage: View {
 
     private var tiles: some View {
         HStack(spacing: 12) {
-            StatTile(title: "Hiányzó", value: "\(missingCount)", color: .red)
+            StatTile(
+                title: "Hiányzó", value: "\(missingCount)", color: .red,
+                caption: "\(missingDarkCount) dark · \(missingFlatCount) flat"
+            )
             StatTile(title: "Elavult", value: "\(staleCount)", color: .orange)
             StatTile(title: "Friss", value: "\(freshCount)", color: .green)
             StatTile(title: "Master darkok", value: masterDarkCountText, color: .gray)
@@ -176,6 +185,11 @@ struct CalibrationPage: View {
             Group {
                 TableColumn("Típus") { row in Text(kindText(row)) }
                     .width(60)
+                // R11-T16/F17: darks have no filter dimension at all --
+                // `TDFormat.missingCell` there, same "-" every other
+                // inapplicable cell in this app shows.
+                TableColumn("Szűrő") { row in Text(TDFormat.cell(row.need.filter)) }
+                    .width(70)
                 TableColumn("Exp. (s)") { row in Text(formattedExposure(row.need.exposureSeconds)) }
                     .width(60)
             }
@@ -300,7 +314,12 @@ struct CoverageRow: Identifiable {
         let temp = TDFormat.cell(need.tempC.map { "\($0)" })
         let gain = TDFormat.cell(need.requiredGain.map { "\($0)" })
         let camera = TDFormat.cell(need.requiredCamera)
-        return "\(need.kind.rawValue)|\(need.exposureSeconds)|\(temp)|\(gain)|\(camera)"
+        // R11-T16/F17: `filter` disambiguates flat rows from each other --
+        // every flat `CalibNeed` shares the same `exposureSeconds` (0)/
+        // `tempC`/`requiredGain`/`requiredCamera` (`nil`), so without it
+        // every flat row would collide onto the same id.
+        let filter = TDFormat.cell(need.filter)
+        return "\(need.kind.rawValue)|\(need.exposureSeconds)|\(temp)|\(gain)|\(camera)|\(filter)"
     }
     let need: CalibNeed
 }

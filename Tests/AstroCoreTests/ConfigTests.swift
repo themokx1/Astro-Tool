@@ -220,6 +220,48 @@ import Testing
     #expect(config.site.longitudeDeg == nil)
 }
 
+// MARK: - R11-T16/F20: AstroBinRule
+
+@Test func defaultAstroBinRuleHasEmptyFilterIds() {
+    let rule = AstroBinRule()
+    #expect(rule.filterIds == [:])
+}
+
+@Test func defaultConfigHasEmptyAstroBinFilterIds() {
+    #expect(AstroConfig().astrobin.filterIds == [:])
+}
+
+@Test func decodingPartialAstroBinRuleFillsMissingKeyWithDefault() throws {
+    let json = """
+    { "astrobin": { "filterIds": { "Ha": 4663 } } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.astrobin.filterIds == ["Ha": 4663])
+}
+
+@Test func decodingConfigWithoutAstroBinKeyStillDecodes() throws {
+    let json = """
+    { "rootPath": "/Volumes/images/OldConfig" }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.astrobin == AstroBinRule())
+}
+
+@Test func astroBinFilterIdsRoundTripsThroughEncodeDecode() throws {
+    var config = AstroConfig()
+    config.astrobin.filterIds = ["Ha": 4663, "OIII": 4664]
+
+    let data = try JSONEncoder().encode(config)
+    let decoded = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(decoded == config)
+    #expect(decoded.astrobin.filterIds == ["Ha": 4663, "OIII": 4664])
+}
+
 @Test func defaultStatsRuleHasExpectedValues() {
     let rule = StatsRule()
     #expect(rule.excludeLabels == ["hibas"])
@@ -309,6 +351,7 @@ import Testing
     #expect(config.stats == StatsRule())
     #expect(config.site == SiteRule())
     #expect(config.weather == WeatherRule())
+    #expect(config.astrobin == AstroBinRule())
 
     #expect(config.rating.workers == 8)
     #expect(config.rating.outlierZScore == 2.0)

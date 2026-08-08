@@ -27,6 +27,14 @@ public struct SessionCalibration: Codable, Sendable, Equatable {
     /// (`CalibRule.matchGain`/`matchOffset`/`matchBinning`/`matchCamera`).
     /// `libraryDark` stays `nil` whenever this is non-empty.
     public var libraryDarkMismatchReasons: [String]
+    /// R11-T16/F17: this session's own usable lights, grouped by FILTER,
+    /// each with whether a flat currently covers it -- own session flat or
+    /// the shared `calibration_library/flats/` pool, either counting as
+    /// covered (`CalibAnalyzer.flatCoverage(target:date:files:db:config:)`'s
+    /// own doc comment covers the exact rule). `[]` when the session has no
+    /// usable lights at all. Feeds `OverviewSegment`'s compact "flat: Ha ✓ ·
+    /// OIII —" per-session line.
+    public var flatsByFilter: [CalibAnalyzer.FlatFilterCoverage]
     public var problems: [Finding]
 
     public init(
@@ -38,6 +46,7 @@ public struct SessionCalibration: Codable, Sendable, Equatable {
         biases: [String],
         libraryDark: String?,
         libraryDarkMismatchReasons: [String] = [],
+        flatsByFilter: [CalibAnalyzer.FlatFilterCoverage] = [],
         problems: [Finding]
     ) {
         self.target = target
@@ -48,6 +57,7 @@ public struct SessionCalibration: Codable, Sendable, Equatable {
         self.biases = biases
         self.libraryDark = libraryDark
         self.libraryDarkMismatchReasons = libraryDarkMismatchReasons
+        self.flatsByFilter = flatsByFilter
         self.problems = problems
     }
 }
@@ -136,6 +146,10 @@ public enum SessionMatcher {
             )
         }
 
+        // (d) R11-T16/F17: per-filter flat coverage -- reuses `allFiles`
+        // already fetched above, no second `db.allFiles` read.
+        let flatsByFilter = try CalibAnalyzer.flatCoverage(target: target, date: date, files: allFiles, db: db, config: config)
+
         return SessionCalibration(
             target: target,
             date: date,
@@ -145,6 +159,7 @@ public enum SessionMatcher {
             biases: biases,
             libraryDark: libraryDark,
             libraryDarkMismatchReasons: libraryDarkMismatchReasons,
+            flatsByFilter: flatsByFilter,
             problems: problems
         )
     }

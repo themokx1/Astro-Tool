@@ -421,6 +421,35 @@ public struct PlanRule: Codable, Equatable, Sendable {
     }
 }
 
+/// R11-T16/F20: AstroBin's own numeric equipment-database filter IDs, keyed
+/// by the FITS `FILTER` name Astro-Tool already reads off scanned lights.
+/// When present, `AcquisitionExport`'s AstroBin CSV writes the numeric ID
+/// AstroBin's bulk importer expects for that filter's column instead of the
+/// bare name -- looked up case-insensitively/trimmed at export time (same
+/// convention `CalibAnalyzer`'s own filter matching uses), so `"Ha"` in the
+/// mapping still matches a scanned `"HA"`/`" Ha "` header value. A filter
+/// with no entry here still exports fine (the raw name goes out as-is, a
+/// perfectly valid CSV cell) -- just not LINKED to AstroBin's equipment
+/// database, which is what the export-time warning (CLI stderr / app toast)
+/// surfaces.
+public struct AstroBinRule: Codable, Equatable, Sendable {
+    public var filterIds: [String: Int]
+
+    public init(filterIds: [String: Int] = [:]) {
+        self.filterIds = filterIds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case filterIds
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = AstroBinRule()
+        self.filterIds = try container.decodeIfPresent([String: Int].self, forKey: .filterIds) ?? defaults.filterIds
+    }
+}
+
 /// Top-level, user-editable configuration for Astro-Tool. Every field falls
 /// back to a sensible default when missing from the on-disk JSON, so old
 /// config files stay valid after new fields are added, and unknown keys in
@@ -471,6 +500,9 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var expose: ExposeRule
     public var weather: WeatherRule
     public var plan: PlanRule
+    /// R11-T16/F20: AstroBin filter-ID mapping. Additive, empty by default --
+    /// see `AstroBinRule`'s own doc comment.
+    public var astrobin: AstroBinRule
 
     public init(
         rootPath: String = "/Volumes/images/Astro",
@@ -488,7 +520,8 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         sites: [SiteProfile] = [],
         expose: ExposeRule = ExposeRule(),
         weather: WeatherRule = WeatherRule(),
-        plan: PlanRule = PlanRule()
+        plan: PlanRule = PlanRule(),
+        astrobin: AstroBinRule = AstroBinRule()
     ) {
         self.rootPath = rootPath
         self.excludedDirNames = excludedDirNames
@@ -506,11 +539,12 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.expose = expose
         self.weather = weather
         self.plan = plan
+        self.astrobin = astrobin
     }
 
     private enum CodingKeys: String, CodingKey {
         case rootPath, excludedDirNames, excludedPaths, residuePatterns, residueDirNames, toolOutputDirNames
-        case intentional, wideField, calib, rating, stats, site, sites, expose, weather, plan
+        case intentional, wideField, calib, rating, stats, site, sites, expose, weather, plan, astrobin
     }
 
     public init(from decoder: any Decoder) throws {
@@ -545,6 +579,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.expose = try container.decodeIfPresent(ExposeRule.self, forKey: .expose) ?? defaults.expose
         self.weather = try container.decodeIfPresent(WeatherRule.self, forKey: .weather) ?? defaults.weather
         self.plan = try container.decodeIfPresent(PlanRule.self, forKey: .plan) ?? defaults.plan
+        self.astrobin = try container.decodeIfPresent(AstroBinRule.self, forKey: .astrobin) ?? defaults.astrobin
     }
 
     /// Loads and decodes the config from `url`. Throws on I/O failure

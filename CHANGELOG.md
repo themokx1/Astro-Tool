@@ -573,6 +573,60 @@ T3 — Settings csomag után.
     `Table`-korlát alatt maradva egy külön nem-feltételes/feltételes
     oszloplista-párral, elkerülve a `TableColumnBuilder` feltételes ágának
     macOS 14.4+ korlátozását).
+- **Kalibráció v2 — flat-lefedettség szűrőnként + AstroBin filter-ID
+  leképezés (R11-T16/F17+F20)**: eddig `CalibAnalyzer` csak a
+  dark-lefedettséget elemezte ("v1 scope") — a flat oldal a session-szintű
+  `FlatDiscipline`-re (`CalibHealth`) korlátozódott, könyvtár-szintű
+  áttekintés nélkül.
+  - **Core**: új `CalibAnalyzer.flatCoverage` (két aláírással: a teljes
+    könyvtárra `[CalibNeed]`-et ad vissza, `kind == .flat`, ÉS egyetlen
+    session-re `[FlatFilterCoverage]`-t) — session lightok FILTER-e (+
+    FOCALLEN-je, ha van) szerint csoportosítva, (a) a session saját
+    `flats/` mappája (mindig "friss" a saját sessionjéhez, kor-ellenőrzés
+    nélkül) és (b) a `calibration_library/flats/` készlete ellen
+    illesztve (kor: `flatMaxAgeDays`, a light/flat DATE-OBS közti
+    eltérés — nem "mostantól számítva", mint a darkoknál). FOCALLEN-eltérés
+    (`> 2mm`, ugyanaz a tolerancia, mint `CalibHealth.flatMismatchReasons`)
+    elutasítja a jelöltet, `mismatchReasons`-ban jelezve, nem hamis
+    egyezésként. Szűrő nélküli (OSC/DSLR) lightoknál a szűrő-dimenzió
+    kimarad az illesztésből, nincs hamis "(nincs szűrő)" zaj egy
+    illeszkedő flatnál. `CalibNeed` új opcionális `filter` mezőt kapott
+    (`nil` darkoknál). Szándékosan KÜLÖN függvény maradt (nem olvad a
+    dark-only `coverage()`-be) — annak ~25 meglévő tesztje/hívója
+    dark-only számot feltételez, és a session-saját-flat fallback a
+    darkoknál nincs meg; az app (`AppState.loadCalibBundle`) és a CLI
+    plain `calib` a kettőt konkatenálja megjelenítéshez. Új
+    `SessionMatcher.SessionCalibration.flatsByFilter` ugyanezt a
+    session-szintű API-t hívja. Teszt (mono több szűrős, OSC-zajmentesség,
+    hiányzó, elavult library-flat, FOCALLEN-mismatch, a dark-only
+    `coverage()` érintetlensége).
+  - **App**: Kalibráció-oldal coverage-tábla új "Szűrő" oszloppal
+    (darkoknál `TDFormat.missingCell`); a Teendők akciókártyák
+    automatikusan megkapják a flat-hiány tételeket is (a meglévő
+    todo+targets+"Linkelés…" minta, kind-független); a "Hiányzó" csempe
+    captionje szétbontva ("3 dark · 2 flat"). TargetDetail Áttekintés
+    kalibráció-kártyáján session-soronként szűrőnkénti flat-bontás
+    ("flat: Ha ✓ · OIII —", egyetlen szűrő nélküli bucket esetén csupasz
+    "flat: ✓"/"flat: —"). A Ma esti kalibrációs bevásárlólista
+    (`CalibShoppingList`, R11-T6) automatikusan felveszi a flat-teendőket
+    is, mivel a `calibNeeds` immár darkokat ÉS flatokat is tartalmaz.
+  - **CLI**: `calib --flats` (csak a szűrőnkénti flat-lefedettség,
+    `--json` additív); a sima `calib` humán-összegzés első sora mostantól
+    "N teendő (M dark, K flat)" bontást ad.
+  - **AstroBin filter-ID leképezés (F20)**: új `AstroConfig.astrobin.
+    filterIds: [String: Int]` (üres alapértelmezett) — a szűrőnevet
+    AstroBin equipment-adatbázis numerikus ID-jára fordítja. Az AstroBin
+    CSV export `filter` oszlopa a leképezett ID-t írja (case-insensitive/
+    trimmelt névillesztés), le nem képezett szűrőnél a név marad + a
+    hiányt jelző figyelmeztetés (`AcquisitionExport.
+    unmappedAstrobinFilters`): CLI-n `export --format astrobin` stderr
+    warningje, appban egy toast az export után ("N szűrő nincs leképezve
+    AstroBin ID-ra — Beállítások ▸ Könyvtár"). Settings ▸ Könyvtár fülön
+    új "AstroBin export" szekció: kulcs-érték lista-szerkesztő (szűrőnév +
+    numerikus ID + törlés, "+ sor"), link az AstroBin equipment-
+    böngészőhöz, a meglévő fülszintű dirty/reset/mentés mintával. Teszt
+    (mapped/unmapped/vegyes export-sorok, case-insensitive illesztés,
+    config decode/round-trip).
 
 ### Changed
 

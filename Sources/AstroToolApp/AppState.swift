@@ -1280,7 +1280,8 @@ final class AppState: @unchecked Sendable {
                     self.stats = statsResult
                 }
                 let calibTask = Task.detached(priority: .userInitiated) {
-                    try CalibAnalyzer.coverage(db: db, config: cfg)
+                    // R11-T16/F17: darks + flats, same merge `loadCalibBundle` uses.
+                    try CalibAnalyzer.coverage(db: db, config: cfg) + CalibAnalyzer.flatCoverage(db: db, config: cfg)
                 }
                 if let calibResult = try? await calibTask.value {
                     self.calibNeeds = calibResult
@@ -1534,13 +1535,27 @@ final class AppState: @unchecked Sendable {
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let url = try await Task.detached(priority: .userInitiated) {
-                    try AcquisitionExport.write(
+                // R11-T16/F20: for an `astrobin` export, also check for
+                // filters with no `config.astrobin.filterIds` entry -- the
+                // toast below surfaces the gap instead of a bare name
+                // silently going out unmapped every time.
+                let (url, unmappedFilters) = try await Task.detached(priority: .userInitiated) {
+                    let url = try AcquisitionExport.write(
                         target: target, format: format, timestamp: Date(), db: db, config: cfg, using: writeGuard
                     )
+                    let unmapped = format == .astrobin
+                        ? try AcquisitionExport.unmappedAstrobinFilters(target: target, db: db, config: cfg)
+                        : []
+                    return (url, unmapped)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.progressText = "Exportálva: \(url.lastPathComponent)"
+                if !unmappedFilters.isEmpty {
+                    self.pushToast(
+                        .info,
+                        "\(unmappedFilters.count) szűrő nincs leképezve AstroBin ID-ra — Beállítások ▸ Könyvtár"
+                    )
+                }
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             } catch {
                 self.handle(error)
@@ -2225,8 +2240,15 @@ final class AppState: @unchecked Sendable {
     /// `Task.detached` closure -- same "no `self` capture needed" shape as
     /// `resolveCoordinateInfo`.
     private static nonisolated func loadCalibBundle(db: Database, config: AstroConfig) throws -> CalibBundle {
-        CalibBundle(
-            needs: try CalibAnalyzer.coverage(db: db, config: config),
+        // R11-T16/F17: darks + flats concatenated into ONE list for display
+        // (coverage table, Teendők action cards, sidebar badge, the Tonight
+        // shopping list) -- `CalibAnalyzer.coverage`/`flatCoverage` stay
+        // separate functions (see `CalibAnalyzer`'s own top-level doc
+        // comment for why), this is the one place their results merge for
+        // the app layer.
+        let needs = try CalibAnalyzer.coverage(db: db, config: config) + CalibAnalyzer.flatCoverage(db: db, config: config)
+        return CalibBundle(
+            needs: needs,
             health: try CalibHealth.report(db: db, config: config),
             sensorProfiles: try db.allSensorProfiles()
         )

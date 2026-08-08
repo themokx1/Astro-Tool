@@ -2427,6 +2427,42 @@ private func writeTrendLightFITS(
     #expect(needs.contains { $0["exposure_seconds"] as? Double == 300 })
 }
 
+// MARK: - calib --flats (R11-T16/F17)
+
+@Test func calibFlatsFlagListsOnlyFlatCoverageRows() throws {
+    let root = try makeTempRoot("calib-flats-json")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0, filter: "OIII")
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["calib", "--root", root.path, "--flats", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let json = try jsonItems(result.stdout)
+    let needs = try #require(json)
+    #expect(needs.allSatisfy { $0["kind"] as? String == "flat" })
+    #expect(needs.contains { $0["filter"] as? String == "OIII" })
+}
+
+@Test func calibPlainHumanSummaryMentionsFlatTodoCount() throws {
+    let root = try makeTempRoot("calib-plain-human")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    // No flat anywhere for this OIII light -- one flat todo.
+    try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0, filter: "OIII")
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["calib", "--root", root.path])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("flat)"))
+    #expect(result.stdout.contains("Hiányzó flat: OIII"))
+}
+
 // MARK: - permission errors -> exit 2
 
 @Test func scanOnReadOnlyRootExitsWithTCCGuidance() throws {
@@ -2457,13 +2493,15 @@ private func writeTrendLightFITS(
 /// `Fixtures.makeMessyLibrary` uses) so `link-calib`'s underlying
 /// `CalibLinker.plan` -- which needs actual EXPTIME/SET-TEMP meta -- has
 /// something to match against.
-private func writeLinkCalibFITS(_ relativePath: String, root: URL, exptime: Double, setTemp: Double) throws {
+private func writeLinkCalibFITS(_ relativePath: String, root: URL, exptime: Double, setTemp: Double, filter: String? = nil) throws {
     let url = root.appendingPathComponent(relativePath)
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    let cards = [
+    var cards = [
         "SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2",
-        "EXPTIME =                \(exptime)", "SET-TEMP=                \(setTemp)", "END",
+        "EXPTIME =                \(exptime)", "SET-TEMP=                \(setTemp)",
     ]
+    if let filter { cards.append("FILTER  = '\(filter)'") }
+    cards.append("END")
     try buildHeaderData(cards).write(to: url)
 }
 
@@ -2911,13 +2949,15 @@ private let twoSitesConfigJSON = """
 
 // MARK: - projects
 
-private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Double) throws {
+private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Double, filter: String? = nil) throws {
     let url = root.appendingPathComponent(relativePath)
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    let cards = [
+    var cards = [
         "SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2",
-        "EXPTIME =                \(exptime)", "END",
+        "EXPTIME =                \(exptime)",
     ]
+    if let filter { cards.append("FILTER  = '\(filter)'") }
+    cards.append("END")
     try buildHeaderData(cards).write(to: url)
 }
 
@@ -2996,6 +3036,22 @@ private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Doubl
     #expect(printedPath.hasPrefix(root.appendingPathComponent(".astro_tool/exports").path))
     #expect(printedPath.hasSuffix(".md"))
     #expect(FileManager.default.fileExists(atPath: printedPath))
+}
+
+@Test func exportAstrobinWarnsOnStderrAboutAnUnmappedFilter() throws {
+    let root = try makeTempRoot("export-astrobin-unmapped-filter")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    // No `astrobin.filterIds` mapping configured at all -- OIII must warn.
+    try writeProjectsFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, exptime: 300.0, filter: "OIII")
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["export", "--root", root.path, "--target", "M31_Andromeda", "--format", "astrobin", "--out", "-"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stderr.contains("OIII"))
+    #expect(result.stderr.contains("AstroBin filter-ID"))
 }
 
 @Test func exportMissingTargetOrFormatExitsWithError() throws {

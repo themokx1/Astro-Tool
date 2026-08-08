@@ -31,15 +31,25 @@ private struct SessionMatcherFixture {
         try? FileManager.default.removeItem(at: dbDir)
     }
 
-    /// Writes a generated FITS file with the given EXPTIME/SET-TEMP/IMAGETYP
-    /// cards -- any `nil` parameter omits that card entirely.
-    func writeFITS(_ relativePath: String, exptime: Double? = nil, setTemp: Double? = nil, imagetyp: String? = nil) throws {
+    /// Writes a generated FITS file with the given EXPTIME/SET-TEMP/
+    /// IMAGETYP/FILTER/FOCALLEN cards -- any `nil` parameter omits that card
+    /// entirely.
+    func writeFITS(
+        _ relativePath: String,
+        exptime: Double? = nil,
+        setTemp: Double? = nil,
+        imagetyp: String? = nil,
+        filter: String? = nil,
+        focallen: Double? = nil
+    ) throws {
         let url = libraryDir.appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         var cards = ["SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2"]
         if let exptime { cards.append("EXPTIME =                \(exptime)") }
         if let setTemp { cards.append("SET-TEMP=                \(setTemp)") }
         if let imagetyp { cards.append("IMAGETYP= '\(imagetyp)'") }
+        if let filter { cards.append("FILTER  = '\(filter)'") }
+        if let focallen { cards.append("FOCALLEN=                \(focallen)") }
         cards.append("END")
         try buildHeaderData(cards).write(to: url)
     }
@@ -238,4 +248,31 @@ private struct SessionMatcherFixture {
 
     #expect(result.lights == 4)
     #expect(result.libraryDark == "calibration_library/darks/300sec_-10deg")
+}
+
+// MARK: - 9. R11-T16/F17: per-filter flat coverage
+
+@Test func sessionMatcherPopulatesFlatsByFilterForAMultiFilterSession() throws {
+    let fixture = try SessionMatcherFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 1...3 {
+        try fixture.writeFITS("sessions/T1/2026-01-10/lights/ha\(i).fit", exptime: 300.0, setTemp: -10.0, filter: "Ha")
+    }
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/oiii1.fit", exptime: 300.0, setTemp: -10.0, filter: "OIII")
+    // Own flat only for Ha -- OIII has no covering flat anywhere.
+    try fixture.writeFITS("sessions/T1/2026-01-10/flats/haflat.fit", filter: "Ha")
+    try fixture.writeDummy("sessions/T1/2026-01-10/darks/d1.fit")
+    try fixture.writeDummy("sessions/T1/2026-01-10/biases/b1.fit")
+
+    try fixture.scan()
+
+    let result = try SessionMatcher.match(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
+
+    let sorted = result.flatsByFilter.sorted { ($0.filter ?? "") < ($1.filter ?? "") }
+    #expect(sorted.count == 2)
+    #expect(sorted[0].filter == "Ha")
+    #expect(sorted[0].covered == true)
+    #expect(sorted[1].filter == "OIII")
+    #expect(sorted[1].covered == false)
 }

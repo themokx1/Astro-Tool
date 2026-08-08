@@ -100,7 +100,7 @@ Commands:
                 quality (FWHM/duty cycle) alongside frame/integration
                 counts -- the counterpart to `stats --sessions`, which is
                 scoped to one target at a time.
-  calib         [--root R] [--json] [--health]
+  calib         [--root R] [--json] [--health] [--flats]
   match         [--root R] --target T --date D [--json]
   link-calib    --target T --date D [--dry-run] [--yes] [--root R] [--json]
   new-session   --catalog CAT --name NAME --date D [--root R] [--json]
@@ -1298,6 +1298,7 @@ func cmdCalib(_ args: [String]) throws -> Int32 {
         FlagSpec("--root", takesValue: true),
         FlagSpec("--json", takesValue: false),
         FlagSpec("--health", takesValue: false),
+        FlagSpec("--flats", takesValue: false),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
 
@@ -1315,7 +1316,22 @@ func cmdCalib(_ args: [String]) throws -> Int32 {
         return 0
     }
 
-    let needs = try CalibAnalyzer.coverage(db: db, config: config)
+    // R11-T16/F17: `--flats` narrows to the filter-keyed flat-coverage
+    // report alone -- `--json` composes with it exactly like it already
+    // does with the plain/`--health` paths above.
+    if parsed.has("--flats") {
+        let flatNeeds = try CalibAnalyzer.flatCoverage(db: db, config: config)
+        if parsed.has("--json") {
+            try printJSON(flatNeeds)
+        } else {
+            printFlatCoverageReport(flatNeeds)
+        }
+        return 0
+    }
+
+    // Darks + flats merged -- same concatenation `AppState.loadCalibBundle`
+    // uses for the app's own coverage table.
+    let needs = try CalibAnalyzer.coverage(db: db, config: config) + CalibAnalyzer.flatCoverage(db: db, config: config)
     if parsed.has("--json") {
         try printJSON(needs)
     } else {
@@ -1376,6 +1392,13 @@ private func printCalibReport(_ needs: [CalibNeed]) {
     let todos = needs.filter { $0.todo != nil }
     let covered = needs.filter { $0.todo == nil }
 
+    // R11-T16/F17: one-line dark/flat breakdown so a plain `calib` run
+    // surfaces the flat-gap count too, not just darks.
+    let darkTodoCount = todos.filter { $0.kind == .dark }.count
+    let flatTodoCount = todos.filter { $0.kind == .flat }.count
+    print("\(todos.count) teendő (\(darkTodoCount) dark, \(flatTodoCount) flat)")
+    print("")
+
     if todos.isEmpty {
         print("no pending calibration todos")
     } else {
@@ -1393,6 +1416,34 @@ private func printCalibReport(_ needs: [CalibNeed]) {
     for need in covered {
         let tempStr = need.tempC.map { String(format: "%.1f°C", $0) } ?? "n/a"
         print("  \(formatted(need.exposureSeconds))s / \(tempStr) -> \(need.matchedMasterPath ?? "-")")
+    }
+}
+
+/// R11-T16/F17: `calib --flats`' own human report -- a flat `CalibNeed` has
+/// no exposure/temp identity worth printing (`kind == .flat` rows are keyed
+/// on FILTER instead), so this is deliberately its own function rather than
+/// reusing `printCalibReport`'s exposure/temp-shaped "covered combos" lines.
+private func printFlatCoverageReport(_ needs: [CalibNeed]) {
+    let todos = needs.filter { $0.todo != nil }
+    let covered = needs.filter { $0.todo == nil }
+
+    if todos.isEmpty {
+        print("no pending flat todos")
+    } else {
+        print("todo:")
+        for need in todos {
+            print("  - \(need.todo ?? "")")
+            if !need.mismatchReasons.isEmpty {
+                print("    ⚠️ nem illeszkedő flat: \(need.mismatchReasons.joined(separator: ", "))")
+            }
+        }
+    }
+
+    print("")
+    print("covered filters: \(covered.count)")
+    for need in covered {
+        let filterText = need.filter ?? "(nincs szűrő)"
+        print("  \(filterText) -> \(need.matchedMasterPath ?? "-")")
     }
 }
 
@@ -2907,6 +2958,17 @@ func cmdExport(_ args: [String]) throws -> Int32 {
     let config = try resolveConfig(rootFlag: parsed.value("--root"))
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
+
+    // R11-T16/F20: an unmapped filter still exports fine (the bare name
+    // goes out), just not linked to an AstroBin equipment-database ID --
+    // surfaced as a stderr warning rather than silently exporting a gap
+    // every time. Only meaningful for the `astrobin` format itself.
+    if format == .astrobin {
+        let unmapped = try AcquisitionExport.unmappedAstrobinFilters(target: target, db: db, config: config)
+        if !unmapped.isEmpty {
+            eprint("warning: nincs AstroBin filter-ID leképezve ehhez: \(unmapped.joined(separator: ", ")) -- a szűrő neve marad a CSV-ben (config astrobin.filterIds)")
+        }
+    }
 
     if let out = parsed.value("--out") {
         if out == "-" {
