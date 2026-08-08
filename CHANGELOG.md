@@ -8,6 +8,15 @@ történik.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-08-08
+
+### Fixed
+
+- Az előnézeti háttérfeladatok már csak `CGImage` vagy `Data` értéket adnak
+  vissza, az `NSImage` példányosítása pedig a fő actoron történik. Ez javítja
+  a macOS 15 GitHub Actions runner szigorú Swift concurrency-ellenőrzésén
+  elbukó release buildet.
+
 ## [0.13.0] - 2026-08-08
 
 A v0.13.0 az R11 teljes workflow-bővítését és az R12 javítási hullámát adja

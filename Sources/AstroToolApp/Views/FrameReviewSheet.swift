@@ -347,27 +347,26 @@ struct FrameReviewSheet: View {
         }
     }
 
-    /// Renders one frame's large preview off the main thread. FITS/FIT/.fz
-    /// go through `FITSImageRenderer` -- the same fallback `ThumbnailCell`
-    /// uses for the table's own small thumbnails, just at review size
-    /// rather than thumbnail size; every other extension (a DSS-exported
-    /// `.tif`/`.jpg`/`.png` stack, a Canon `.cr3`) falls back to plain
-    /// `NSImage(contentsOf:)`, which already decodes those natively without
-    /// any FITS involvement. `nil` on any failure (missing file,
-    /// corrupt/unsupported FITS layout) -- the caller shows an empty-state
-    /// message rather than a raw error for one bad preview.
+    /// Loads one frame's large preview without moving a non-Sendable AppKit
+    /// object across the detached-task boundary. FITS/FIT/.fz workers
+    /// return a `CGImage`; every other extension (a DSS-exported
+    /// `.tif`/`.jpg`/`.png` stack, a Canon `.cr3`) returns its `Data`.
+    /// `NSImage` creation stays on the main actor. `nil` on any failure
+    /// (missing file, corrupt/unsupported FITS layout) -- the caller shows
+    /// an empty-state message rather than a raw error for one bad preview.
     private static func renderPreview(path: String, rootPath: String, maxDimension: Int) async -> NSImage? {
         let url = URL(fileURLWithPath: rootPath, isDirectory: true).appendingPathComponent(path)
         if fitsFallbackExtensions.contains(url.pathExtension.lowercased()) {
-            return await Task.detached(priority: .userInitiated) {
-                guard let cgImage = try? FITSImageRenderer.render(url: url, maxDimension: maxDimension) else {
-                    return nil
-                }
-                return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+            let cgImage = await Task.detached(priority: .userInitiated) {
+                try? FITSImageRenderer.render(url: url, maxDimension: maxDimension)
             }.value
+            guard let cgImage else { return nil }
+            return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
         }
-        return await Task.detached(priority: .userInitiated) {
-            NSImage(contentsOf: url)
+        let data = await Task.detached(priority: .userInitiated) {
+            try? Data(contentsOf: url, options: .mappedIfSafe)
         }.value
+        guard let data else { return nil }
+        return NSImage(data: data)
     }
 }

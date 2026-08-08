@@ -10,7 +10,7 @@
 
 - [x] 0. Újra-átnézés lefutott, eredmények feldolgozva
 - [x] 1. U-hullám (javítások): U1 [x] U2 [x] U3 [x] U4 [x] U5 [x]
-- [x] 2. Release v0.13.0 (R11 + javítások)
+- [x] 2. Release v0.13.0 (R11 + javítások; CI-kompatibilitási patch: v0.13.1)
 - [ ] 3. V-hullám (új funkciók): V1 [ ] V2 [ ] V3 [ ] V4 [ ] V5 [ ] V6 [ ] V7 [ ]
 - [ ] 4. Záró review + release v0.14.0
 
@@ -213,7 +213,8 @@ nem zavarna") a meglévő config/Planner konstansokból.
 ## 4. Ticket-sorrend
 
 U1→U2→U3→U4→U5 (javítások, egyenként commit+push, teszt-kapuval) →
-**release v0.13.0** (bevált recept) → V1→V2→V3→V4→V5→V6→V7 → záró review →
+**release v0.13.0 + CI-kompatibilitási patch v0.13.1** (bevált recept) →
+V1→V2→V3→V4→V5→V6→V7 → záró review →
 **release v0.14.0**.
 
 ## 5. Iterációs napló

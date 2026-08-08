@@ -127,19 +127,19 @@ struct ThumbnailCell: View {
     }
 
     /// Renders a FITS/FIT/.fz frame's primary HDU into a small `NSImage` via
-    /// `FITSImageRenderer`, off the main thread (that renderer is
-    /// documented thread-safe/safe-to-call-there). `nil` for anything it
+    /// `FITSImageRenderer`. The detached worker returns only the immutable,
+    /// Sendable `CGImage`; AppKit object creation stays on the main actor.
+    /// `nil` for anything it
     /// declines to render (`.fz`, unsupported `BITPIX`/`NAXIS`) or a
     /// genuinely corrupt file (`try?` swallows `FITSImageRenderer`'s thrown
     /// `AstroError.corruptFITS` the same "never surface an error, just show
     /// the placeholder" way a QuickLook failure already didn't either).
     private static func renderFITSThumbnail(url: URL, maxDimension: Int) async -> NSImage? {
-        await Task.detached(priority: .utility) {
-            guard let cgImage = try? FITSImageRenderer.render(url: url, maxDimension: maxDimension) else {
-                return nil
-            }
-            return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        let cgImage = await Task.detached(priority: .utility) {
+            try? FITSImageRenderer.render(url: url, maxDimension: maxDimension)
         }.value
+        guard let cgImage else { return nil }
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }
 
     /// `"<path>|<mtime>"` -- the mtime component means a file that's been
