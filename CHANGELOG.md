@@ -8,8 +8,11 @@ történik.
 
 ## [Unreleased]
 
-Az R12 javítási hulláma a korábbi funkciók valós asztrofotós workflow szerinti
-újraellenőrzését és következetes összekötését végzi.
+## [0.13.0] - 2026-08-08
+
+A v0.13.0 az R11 teljes workflow-bővítését és az R12 javítási hullámát adja
+ki: a korábbi funkciók valós asztrofotós használat szerinti újraellenőrzését,
+összekötését és megbízhatósági javításait.
 
 ### Added
 
@@ -46,8 +49,8 @@ Az R12 javítási hulláma a korábbi funkciók valós asztrofotós workflow sze
   parancsok target/date-lookupja, ahol korábban ez is a generikus 1-es
   kódba esett) és **4** = külső eszköz hiba (`AstroError.sirilNotFound` —
   `solve` Siril-init-hibája) — a meglévő 0/1/2 szemantika változatlan. **5**
-  fenntartva egy jövőbeli `verify` parancsnak, ma nem használt. A pontos
-  táblázat a `docs/cli.html`-ben.
+  **5** = a `verify` megerősített tartalomeltérést talált. A pontos táblázat
+  a `docs/cli.html`-ben.
 - **`schema_version` minden `--json` kimenetben** (F10-b): a közös
   `printJSON` encoder (Commands.swift) mostantól minden gyökér-objektumba
   beszúrja a `"schema_version": "1"` mezőt.
@@ -339,7 +342,7 @@ Az R12 javítási hulláma a korábbi funkciók valós asztrofotós workflow sze
 - **Trendek oldal (R11-T10/F7)**: hosszú távú, session-szintű idősorok
   célpontokon átívelve. Új core `TrendQueries.points` (`Sources/AstroCore/
   Stats/TrendQueries.swift`) — újrahasznosítja `NightsQueries.allNights`
-  már kiszámolt session-metrikáit (medián FWHM″/px, háttér e⁻/s/□″,
+  már kiszámolt session-metrikáit (medián FWHM″/px, háttér e⁻/s/″²,
   duty cycle), időrendi (legrégebbi elöl, a böngésző-nézettel ellentétes)
   sorrendbe rendezve, opcionális `setupFingerprint`/`from`/`to` szűréssel
   (`EquipmentProfile.dominant` per session); `TrendPoint.fwhmValue` adja
