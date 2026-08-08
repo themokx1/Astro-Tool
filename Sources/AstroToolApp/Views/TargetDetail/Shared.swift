@@ -344,6 +344,15 @@ struct PlateSolveSheet: View {
 /// state -- adjusting the slider just recomputes the (read-only) preview in
 /// place. Shared by `AllTargetsPage` and `TargetDetailPage`'s Sessionök/Stackek
 /// segments (R9-T3).
+///
+/// R11-T11 (F15): when the live preview's `selection.perFilter` is non-`nil`
+/// (more than one filter bucket in this session), the preview also shows a
+/// per-filter "Ha 45/52 · OIII 28/40" breakdown line and a "Szűrőnkénti
+/// finomhangolás" `DisclosureGroup` with one 50-100% slider per filter
+/// (`perFilterFractions`, keyed by filter name); moving the COMMON slider
+/// resets every per-filter override back to following it. A filter-less or
+/// single-filter session's sheet looks exactly like it did before this
+/// ticket -- no per-filter UI at all.
 struct StackListSheet: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -352,6 +361,13 @@ struct StackListSheet: View {
     let date: String
 
     @State private var keepFraction: Double = 0.8
+    /// Per-filter keepFraction overrides, keyed by the same filter name
+    /// `StackFilterSelection.filter` uses -- empty means "every filter
+    /// follows the common `keepFraction` slider". Reset to empty whenever
+    /// the common slider itself moves (R11-T11 spec: "a közös csúszka
+    /// mozgatása visszaállítja a szűrőnkéntieket").
+    @State private var perFilterFractions: [String: Double] = [:]
+    @State private var perFilterTuningExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -367,7 +383,8 @@ struct StackListSheet: View {
             }
             .disabled(appState.stackListExportDir != nil)
             .onChange(of: keepFraction) { _, newValue in
-                appState.loadStackListSelection(target: target, date: date, keepFraction: newValue)
+                perFilterFractions = [:]
+                reload(keepFraction: newValue)
             }
 
             if let exportDir = appState.stackListExportDir {
@@ -385,17 +402,26 @@ struct StackListSheet: View {
         .padding(20)
         .frame(minWidth: 480, minHeight: 320)
         .onAppear {
-            appState.loadStackListSelection(target: target, date: date, keepFraction: keepFraction)
+            reload(keepFraction: keepFraction)
         }
         .onDisappear {
             appState.clearStackListSelection()
         }
     }
 
+    private func reload(keepFraction: Double) {
+        appState.loadStackListSelection(
+            target: target, date: date, keepFraction: keepFraction, keepFractionPerFilter: perFilterFractions
+        )
+    }
+
     @ViewBuilder
     private func selectionView(_ selection: StackSelection) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Kiválasztva: \(selection.selectedFrames) / \(selection.totalFrames)").font(.callout)
+            if let perFilter = selection.perFilter, !perFilter.isEmpty {
+                Text(perFilterSummary(perFilter)).font(.caption).foregroundStyle(.secondary)
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(selection.criteria, id: \.self) { line in
@@ -405,6 +431,14 @@ struct StackListSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: 160)
+
+            if let perFilter = selection.perFilter, !perFilter.isEmpty {
+                perFilterTuningView(perFilter)
+            }
+
+            Text(exportDestinationCaption(selection))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
 
         HStack {
@@ -417,6 +451,50 @@ struct StackListSheet: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(selection.selectedFrames == 0 || appState.isBusy)
                 .help(selection.selectedFrames == 0 ? "Nincs kiválasztható keret" : "")
+        }
+    }
+
+    private func perFilterSummary(_ perFilter: [StackFilterSelection]) -> String {
+        perFilter.map { "\($0.filter) \($0.selectedFrames)/\($0.totalFrames)" }.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private func perFilterTuningView(_ perFilter: [StackFilterSelection]) -> some View {
+        DisclosureGroup("Szűrőnkénti finomhangolás", isExpanded: $perFilterTuningExpanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(perFilter, id: \.filter) { entry in
+                    let binding = Binding<Double>(
+                        get: { perFilterFractions[entry.filter] ?? keepFraction },
+                        set: { newValue in
+                            perFilterFractions[entry.filter] = newValue
+                            reload(keepFraction: keepFraction)
+                        }
+                    )
+                    HStack {
+                        Text(entry.filter)
+                            .font(.caption)
+                            .frame(width: 90, alignment: .leading)
+                            .lineLimit(1)
+                        Slider(value: binding, in: 0.5...1.0, step: 0.05)
+                        Text("\(Int((binding.wrappedValue * 100).rounded()))%")
+                            .font(.caption)
+                            .monospacedDigit()
+                            .frame(width: 40, alignment: .trailing)
+                    }
+                }
+            }
+            .padding(.top, 4)
+        }
+        .font(.caption)
+        .disabled(appState.stackListExportDir != nil)
+    }
+
+    private func exportDestinationCaption(_ selection: StackSelection) -> String {
+        let base = ".astro_tool/stacklists/\(target)-\(date)/"
+        if selection.perFilter != nil {
+            return "\(base) — lights/<szűrő>/ hardlinkek + dssfilelist szűrőnként + manifest.csv"
+        } else {
+            return "\(base) — lights/ hardlinkek + dssfilelist + manifest.csv"
         }
     }
 

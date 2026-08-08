@@ -440,3 +440,61 @@ private func inode(_ url: URL) throws -> UInt64 {
     #expect(FileManager.default.fileExists(atPath: destDirPath, isDirectory: &isDir))
     #expect(isDir.boolValue)
 }
+
+// MARK: - linkStackListFile per-filter subfolder (R11-T11 / F15)
+
+@Test func linkStackListFileAcceptsNestedFilterSubfolder() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+
+    let sourceDir = root.appendingPathComponent("sessions/T1/2026-01-10/lights", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+    let sourceURL = sourceDir.appendingPathComponent("ha_0001.fit")
+    try Data("ha frame content".utf8).write(to: sourceURL)
+
+    let destURL = try guardian.linkStackListFile(
+        sourceRelative: "sessions/T1/2026-01-10/lights/ha_0001.fit",
+        destDirRelative: ".astro_tool/stacklists/T1-2026-01-10/lights/Ha"
+    )
+
+    let unwrapped = try #require(destURL)
+    #expect(
+        unwrapped.standardizedFileURL.path
+            == root.appendingPathComponent(".astro_tool/stacklists/T1-2026-01-10/lights/Ha/ha_0001.fit").standardizedFileURL.path
+    )
+    #expect(try inode(unwrapped) == inode(sourceURL))
+}
+
+@Test func linkStackListFileRejectsInvalidNestedFilterComponent() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+
+    let sourceDir = root.appendingPathComponent("sessions/T1/2026-01-10/lights", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+    let sourceURL = sourceDir.appendingPathComponent("ha_0001.fit")
+    try Data("x".utf8).write(to: sourceURL)
+    let sourceRelative = "sessions/T1/2026-01-10/lights/ha_0001.fit"
+
+    // Traversal attempt inside the filter component.
+    #expect(throws: AstroError.self) {
+        try guardian.linkStackListFile(
+            sourceRelative: sourceRelative, destDirRelative: ".astro_tool/stacklists/T1-2026-01-10/lights/.."
+        )
+    }
+    // Empty filter component.
+    #expect(throws: AstroError.self) {
+        try guardian.linkStackListFile(
+            sourceRelative: sourceRelative, destDirRelative: ".astro_tool/stacklists/T1-2026-01-10/lights/"
+        )
+    }
+    // One component too many.
+    #expect(throws: AstroError.self) {
+        try guardian.linkStackListFile(
+            sourceRelative: sourceRelative, destDirRelative: ".astro_tool/stacklists/T1-2026-01-10/lights/Ha/extra"
+        )
+    }
+
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(".astro_tool/stacklists/T1-2026-01-10/lights/..").path))
+}

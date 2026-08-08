@@ -22,7 +22,7 @@
 - [x] 2. Persona-review (4 agent) — kész
 - [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
 - [x] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [x]
-- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [x] T10 [x] T11 [ ] T12 [ ] T13 [ ]
+- [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [x] T10 [x] T11 [x] T12 [ ] T13 [ ]
 - [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [ ] T15 [ ] T16 [ ] T17 [ ]
 - [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
 - [ ] 8. Release v0.13.0
@@ -433,3 +433,49 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   `.symbol { Circle().stroke(...) }` egyedi tartalom — vizuálisan
   ugyanaz, csak nem a `.symbol(_ shape:)` API-n át. Következő: T11
   (Stack-lista v2).
+- 2026-08-08: T11 (Stack-lista v2) kész — F15 teljes. Core:
+  `StackList.select` a usable lightokat FITS `FILTER` fejléc szerint
+  (`FilterBreakdownQueries.noFilterSentinel` a szűrő nélküli bucket)
+  csoportosítja, és a hard-drop + keepFraction pipeline-t SZŰRŐNKÉNT futtatja
+  (`selectWithinGroup`) — a "sosem kevesebb 3 keretnél" padló és az új
+  opcionális `keepFractionPerFilter: [String: Double]` felülbírálás is
+  szűrőnként érvényes; egyetlen bucket esetén (mono egy szűrő, vagy
+  szűrőtlen OSC) a kimenet bájtra ugyanaz, mint a szűrő-bontás előtt
+  (`StackSelection.perFilter` `nil` marad). Új `StackFilterSelection`
+  (szűrőnkénti kiválasztva/összes + útvonalak) és `StackManifestRow`
+  (file/filter/score/fwhm_px/session_date/verdict) típus; `StackSelection`
+  additív `perFilter`/`manifest` mezőkkel bővült. `StackList.export`/
+  `exportToDirectory`: több szűrős kiválasztásnál `lights/<SZŰRŐ>/`
+  almappánként hardlink + saját `<cél>-<dátum>-<SZŰRŐ>.dssfilelist`/`.ssf`
+  pár (a `.ssf` `cd`-je magába a szűrő-mappába megy, mert Siril `convert`-je
+  csak a cwd-et olvassa — ellenőrizve a Siril doksi ellen); szűrőtlen
+  anyagnál a lapos `lights/`+`stack.dssfilelist`+`stack.ssf` szerkezet
+  változatlan. Mindkét esetben `manifest.csv` a gyökérben, MINDEN usable
+  keretre (kiválasztva és elvetve is), `verdict` oszloppal
+  (`selected`/`rejected_verdict`/`rejected_outlier`/`rejected_keepfraction`).
+  `WriteGuard.linkStackListFile` a `.astro_tool/stacklists/<slug>/
+  lights/<szűrő>` (5 komponensű, validált) útvonalat is elfogadja a régi
+  4 komponensű `lights` mellett. `StackListSheet`: közös Megtartás%-csúszka
+  változatlan; több szűrős preview-nál "Ha 45/52 · OIII 28/40" bontás-sor +
+  "Szűrőnkénti finomhangolás" `DisclosureGroup` (csúszka szűrőnként, alapérték
+  a közös érték, a közös csúszka mozgatása visszaállítja őket) + export-cél
+  sor; szűrőtlen/egy szűrős anyagnál a sheet nézete változatlan. CLI:
+  `stacklist --keep-filter "Ha=0.9,OIII=0.7"` (vesszős lista — `ArgParser`-nek
+  nincs ismételhető-flag mechanizmusa, ez az egyszerűbb alak), emberi
+  kimenet + `--json` `per_filter` szűrőnkénti bontással (kiválasztva/összes),
+  `docs/cli.html` frissítve. 17 új teszt (core: 11 `StackListTests` — szűrőnkénti
+  csoportosítás/keepFraction/override/backward-compat/manifest tartalom/
+  export-fa; 2 `WriteGuardTests` — beágyazott szűrő-almappa elfogadása/
+  elutasítása; CLI: 4 `CLISmokeTests` — `--keep-filter` elfogadás/hibás érték/
+  szűrőnkénti felülbírálás/valódi többszűrős FITS-en át `scan`+`stacklist
+  --json` végpontig), `swift test` zöld (1163). Tudatos eltérés: a
+  `manifest.csv` `verdict`-értékei angolul vannak (nem magyarul), mert ez a
+  fájl külső eszköznek (WBPP/szkript) szól, ugyanaz a regiszter, mint a
+  `.dssfilelist`/`.ssf` már meglévő kulcsszavai, nem az app magyar UI-ja.
+  Mellékesen észrevétel (NEM javítva ebben a ticketben, külön feladatba
+  jelölve): a szűrőtlen/egy-szűrős `.ssf` `cd`-je a stacklist-könyvtárba megy
+  (a `lights/` SZÜLŐJÉBE), nem magába a `lights/`-ba, pedig Siril `convert`
+  parancsa csak a cwd-et olvassa — ez már R7-B4 óta így van, gyanús, hogy a
+  meglévő (lapos) `.ssf` valójában nem talál frame-eket futtatáskor; az új,
+  R11-T11-es szűrőnkénti `.ssf`-ek ezt már helyesen, közvetlenül a szűrő
+  mappájába cd-zve generálják. Következő: T12 (Kezdő-csomag).

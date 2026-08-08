@@ -3228,6 +3228,136 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
     #expect(!FileManager.default.fileExists(atPath: insideDir))
 }
 
+// MARK: - stacklist --keep-filter / multi-filter export (R11-T11 / F15)
+
+/// Writes a real (small, but well-formed) FITS light frame carrying a
+/// `FILTER` header card -- unlike `writeStackListLight`'s plain dummy text,
+/// this is needed so a real `scan` actually populates `fits_meta.filter`,
+/// which is what `StackList.select`'s per-filter grouping keys off.
+private func writeStackListFilteredLight(_ relativePath: String, root: URL, filter: String) throws {
+    let url = root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+    let paddedFilter = filter.padding(toLength: max(filter.count, 3), withPad: " ", startingAt: 0)
+    let cards = [
+        "SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2",
+        "NAXIS1  =                    4", "NAXIS2  =                    4",
+        "FILTER  = '\(paddedFilter)'",
+        "EXPTIME =                 60.0",
+        "END",
+    ]
+    var data = buildHeaderData(cards)
+    data.append(Data(repeating: 0, count: 4 * 4 * 2))
+    try data.write(to: url)
+}
+
+@Test func stackListKeepFilterFlagIsAcceptedAndIgnoredForBucketsItDoesNotName() throws {
+    let root = try makeTempRoot("stacklist-keep-filter-noop")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l2.fit", root: root)
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l3.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    // No filter data at all in this library -- "Ha=0.5" names a bucket that
+    // doesn't exist, so it's a harmless no-op, not an error.
+    let result = try runCLI([
+        "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
+        "--keep-filter", "Ha=0.5", "--json",
+    ])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let payload = try #require(try jsonObject(result.stdout))
+    let selection = try #require(payload["selection"] as? [String: Any])
+    #expect(selection["selected_frames"] as? Int == 3)
+    #expect(selection["per_filter"] == nil)
+}
+
+@Test func stackListKeepFilterRejectsMalformedValue() throws {
+    let root = try makeTempRoot("stacklist-keep-filter-bad")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI([
+        "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
+        "--keep-filter", "Ha=not-a-number",
+    ])
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("--keep-filter"))
+}
+
+@Test func stackListMultiFilterJSONAndExportTreeUseSeparateFilterSubfolders() throws {
+    let root = try makeTempRoot("stacklist-multi-filter")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/ha1.fit", root: root, filter: "Ha")
+    try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/ha2.fit", root: root, filter: "Ha")
+    try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/oiii1.fit", root: root, filter: "OIII")
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let payload = try #require(try jsonObject(result.stdout))
+    let selection = try #require(payload["selection"] as? [String: Any])
+    #expect(selection["selected_frames"] as? Int == 3)
+    let perFilter = try #require(selection["per_filter"] as? [[String: Any]])
+    #expect(perFilter.count == 2)
+    let filterNames = Set(perFilter.compactMap { $0["filter"] as? String })
+    #expect(filterNames == Set(["Ha", "OIII"]))
+
+    let stackListDirPath = try #require(payload["stack_list_dir"] as? String)
+    let stackListDir = URL(fileURLWithPath: stackListDirPath, isDirectory: true)
+
+    #expect(FileManager.default.fileExists(atPath: stackListDir.appendingPathComponent("lights/Ha/ha1.fit").path))
+    #expect(FileManager.default.fileExists(atPath: stackListDir.appendingPathComponent("lights/Ha/ha2.fit").path))
+    #expect(FileManager.default.fileExists(atPath: stackListDir.appendingPathComponent("lights/OIII/oiii1.fit").path))
+    #expect(FileManager.default.fileExists(atPath: stackListDir.appendingPathComponent("T1-2026-01-10-Ha.dssfilelist").path))
+    #expect(FileManager.default.fileExists(atPath: stackListDir.appendingPathComponent("T1-2026-01-10-OIII.dssfilelist").path))
+    #expect(FileManager.default.fileExists(atPath: stackListDir.appendingPathComponent("manifest.csv").path))
+    #expect(!FileManager.default.fileExists(atPath: stackListDir.appendingPathComponent("stack.dssfilelist").path))
+
+    let manifestText = try String(contentsOf: stackListDir.appendingPathComponent("manifest.csv"), encoding: .utf8)
+    #expect(manifestText.contains("Ha"))
+    #expect(manifestText.contains("OIII"))
+}
+
+@Test func stackListKeepFilterOverridesOneFilterOnly() throws {
+    let root = try makeTempRoot("stacklist-keep-filter-override")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    for i in 1...4 {
+        try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/ha\(i).fit", root: root, filter: "Ha")
+    }
+    for i in 1...4 {
+        try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/oiii\(i).fit", root: root, filter: "OIII")
+    }
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    // Neither filter has any rated/verdict data, so every frame is
+    // "unrated -- always kept" regardless of keepFraction; this only checks
+    // that the flag parses and threads through without affecting the
+    // (unrelated) unrated-frame floor.
+    let result = try runCLI([
+        "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
+        "--keep-filter", "Ha=0.5,OIII=1.0", "--json",
+    ])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+
+    let payload = try #require(try jsonObject(result.stdout))
+    let selection = try #require(payload["selection"] as? [String: Any])
+    #expect(selection["selected_frames"] as? Int == 8)
+}
+
 // MARK: - report (R7-B5)
 
 @Test func reportOutDashPrintsHTMLToStdoutWithoutWritingAFile() throws {

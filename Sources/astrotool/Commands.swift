@@ -170,15 +170,23 @@ Commands:
                 from measured sensor-profile + per-Bayer background data.
                 Without --target: one row per target. With --target: full
                 advice for that target.
-  stacklist     --target T --date D [--keep 0.8] [--json] [--root R] [--out PATH]
+  stacklist     --target T --date D [--keep 0.8] [--keep-filter "Ha=0.9,OIII=0.7"]
+                [--json] [--root R] [--out PATH]
                 Best-frame stack-list export: hardlinks the selected lights
                 into .astro_tool/stacklists/<target>-<date>/lights/ and
                 writes a .dssfilelist (DeepSkyStacker/Sirilic) and a .ssf
-                Siril script alongside it. Additive and idempotent -- never
-                touches your original files. --out PATH exports straight
-                into PATH instead (PATH becomes the stacklist dir itself,
-                may be outside the library root); --out - is rejected (this
-                exports a directory tree, not a single file).
+                Siril script alongside it, plus a manifest.csv (file, filter,
+                score, fwhm_px, session_date, verdict per usable light).
+                A session shot through more than one filter gets its own
+                lights/<FILTER>/ subfolder and its own .dssfilelist/.ssf per
+                filter instead (WBPP-friendly); --keep-filter overrides
+                --keep for one or more named filters (comma-separated
+                filter=fraction pairs, each in (0, 1]). Additive and
+                idempotent -- never touches your original files. --out PATH
+                exports straight into PATH instead (PATH becomes the
+                stacklist dir itself, may be outside the library root);
+                --out - is rejected (this exports a directory tree, not a
+                single file).
   stacks        [--target T] [--json] [--grouped] [--verbose] [--root R]
                 Stack-file felderítés: minden már létrejött stack/feldolgozott
                 kimenet célpontonként, bárhol is legyen a lemezen -- nem csak
@@ -3426,6 +3434,7 @@ func cmdStackList(_ args: [String]) throws -> Int32 {
         FlagSpec("--target", takesValue: true),
         FlagSpec("--date", takesValue: true),
         FlagSpec("--keep", takesValue: true),
+        FlagSpec("--keep-filter", takesValue: true),
         FlagSpec("--json", takesValue: false),
         FlagSpec("--out", takesValue: true),
     ]
@@ -3446,6 +3455,21 @@ func cmdStackList(_ args: [String]) throws -> Int32 {
         keepFraction = parsedKeep
     }
 
+    // R11-T11 (F15): a single flag taking a comma-separated `filter=fraction`
+    // list -- `ArgParser` has no repeated-flag accumulation at all (a
+    // repeated `--keep-filter` would just overwrite itself), so a
+    // comma-separated list is the simpler shape given what's already there,
+    // rather than teaching `ArgParser` a new repeatable-flag concept for
+    // this one command.
+    var keepFractionPerFilter: [String: Double] = [:]
+    if let keepFilterText = parsed.value("--keep-filter") {
+        guard let parsed = parseKeepFilterPerFilter(keepFilterText) else {
+            eprint("error: --keep-filter formátuma érvénytelen, pl. \"Ha=0.9,OIII=0.7\" (0 és 1 közötti törtek)")
+            return 1
+        }
+        keepFractionPerFilter = parsed
+    }
+
     // R11-T4 (F10-c): unlike `audit --suggest --out -`/`export --out -`,
     // `--out -` makes no sense here -- this exports a whole hardlink TREE
     // (a `lights/` folder plus two sibling files), not one piece of text
@@ -3460,7 +3484,10 @@ func cmdStackList(_ args: [String]) throws -> Int32 {
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
 
-    let selection = try StackList.select(target: target, date: date, keepFraction: keepFraction, db: db, config: config)
+    let selection = try StackList.select(
+        target: target, date: date, keepFraction: keepFraction,
+        keepFractionPerFilter: keepFractionPerFilter, db: db, config: config
+    )
     let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
 
     let stacklistDir: URL
@@ -3492,12 +3519,39 @@ private func printStackSelection(_ selection: StackSelection) {
     print("date: \(selection.date)")
     print("összes használható: \(selection.totalFrames)")
     print("kiválasztva: \(selection.selectedFrames)")
+    if let perFilter = selection.perFilter, !perFilter.isEmpty {
+        print("szűrőnként:")
+        for entry in perFilter {
+            print("  \(entry.filter): \(entry.selectedFrames) / \(entry.totalFrames)")
+        }
+    }
     if !selection.criteria.isEmpty {
         print("szempontok:")
         for line in selection.criteria {
             print("  - \(line)")
         }
     }
+}
+
+/// Parses `--keep-filter`'s `"Ha=0.9,OIII=0.7"` value into
+/// `StackList.select`'s `keepFractionPerFilter` dictionary. `nil` on any
+/// malformed pair (missing `=`, empty filter name, non-numeric or
+/// out-of-`(0, 1]` fraction) or an entirely empty result -- the caller turns
+/// that into a single, clear CLI error rather than silently ignoring the bad
+/// part of the list.
+func parseKeepFilterPerFilter(_ raw: String) -> [String: Double]? {
+    var result: [String: Double] = [:]
+    for pair in raw.split(separator: ",") {
+        let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 2 else { return nil }
+        let filterName = parts[0].trimmingCharacters(in: .whitespaces)
+        guard !filterName.isEmpty else { return nil }
+        guard let fraction = Double(parts[1].trimmingCharacters(in: .whitespaces)), fraction > 0, fraction <= 1 else {
+            return nil
+        }
+        result[filterName] = fraction
+    }
+    return result.isEmpty ? nil : result
 }
 
 // MARK: - stacks (R8-1)

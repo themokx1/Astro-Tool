@@ -373,6 +373,35 @@ T3 — Settings csomag után.
     érvényes".
   - **CLI**: `sensor --history [--json]` — kombónkénti csoportosításban a
     teljes mérés-történet (nem kombinálható `--measure`-rel).
+- **Stack-lista v2 — szűrő-tudatos válogatás + WBPP-barát export (R11-T11/
+  F15)**: `StackList.select` mostantól a session usable lightjait a FITS
+  `FILTER` fejléc szerint csoportosítva válogatja — a keepFraction (és az új
+  opcionális `keepFractionPerFilter: [String: Double]` felülbírálás) és a
+  "sosem kevesebb 3 keretnél, ha van elég" szabály is SZŰRŐNKÉNT érvényesül,
+  hogy egy ritkább szűrő gyengébb keretei ne essenek ki aránytalanul egy
+  nagyobb/jobb szűrő mellett. Egyetlen bucket esetén (egy mono szűrő, vagy
+  szűrőtlen OSC/DSLR session) a viselkedés bájtra ugyanaz, mint korábban
+  (`StackSelection.perFilter` `nil` marad — visszafele kompatibilis).
+  - **Export-fa**: több szűrős anyagnál `lights/<SZŰRŐ>/` almappánként
+    hardlink + saját `<cél>-<dátum>-<SZŰRŐ>.dssfilelist`/`.ssf` pár (a
+    fejléc-komment jelzi a szűrőt) — PixInsight WBPP (és más batch
+    preprocesszorok) a mappanévből ismerik fel a szűrőt. Szűrőtlen
+    anyagnál a lapos `lights/`+`stack.dssfilelist`+`stack.ssf` szerkezet
+    változatlan. Mindkét esetben új `manifest.csv` a stacklist-könyvtár
+    gyökerében — MINDEN usable keret (kiválasztva ÉS elvetve is), oszlopok:
+    file, filter, score, fwhm_px, session_date, verdict
+    (`selected`/`rejected_verdict`/`rejected_outlier`/`rejected_keepfraction`)
+    — WBPP-nek/utófeldolgozásnak szánt, angol nyelvű mező.
+  - **App**: `StackListSheet` közös Megtartás%-csúszkája változatlan; több
+    szűrős preview-nál "Ha 45/52 · OIII 28/40" szűrőnkénti darabszám-sor +
+    "Szűrőnkénti finomhangolás" lenyitható szekció (csúszka szűrőnként,
+    alapérték a közös érték — a közös csúszka mozgatása visszaállítja
+    őket) + egy sor az Exportálás gomb alatt: mit ír és hová. Szűrőtlen/
+    egy szűrős anyagnál a sheet nézete változatlan.
+  - **CLI**: `stacklist --keep-filter "Ha=0.9,OIII=0.7"` (vesszős
+    `filter=arány` lista) szűrőnként felülbírálja a `--keep`-et; a
+    `--json` kimenet additív `per_filter` tömbje szűrőnkénti kiválasztva/
+    összes bontást ad.
 
 ### Changed
 

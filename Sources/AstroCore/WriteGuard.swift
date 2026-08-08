@@ -246,7 +246,10 @@ public struct WriteGuard: Sendable {
     ///   literal `lights` role directory, no more and no fewer -- both as a
     ///   raw component check (rejecting empty/`.`/`..` segments outright)
     ///   and, again, via `standardizedFileURL` containment inside `toolDir`
-    ///   for defense in depth.
+    ///   for defense in depth. R11-T11 (F15): OR `.astro_tool/stacklists/
+    ///   <slug>/lights/<filter>` -- one extra, equally-validated component
+    ///   for a multi-filter export's own `lights/<FILTER>/` subfolder
+    ///   (`StackList.export`'s per-filter tree).
     ///
     /// Creates `destDirRelative` (mkdir -p semantics) if it doesn't exist
     /// yet. The destination file name is always the source file's own last
@@ -272,7 +275,7 @@ public struct WriteGuard: Sendable {
         }
 
         let destComponents = destDirRelative.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-        guard destComponents.count == 4,
+        guard destComponents.count == 4 || destComponents.count == 5,
               destComponents[0] == ".astro_tool",
               destComponents[1] == "stacklists",
               destComponents[3] == "lights"
@@ -280,6 +283,9 @@ public struct WriteGuard: Sendable {
             throw AstroError.writeForbidden(path: destDirRelative)
         }
         try Self.validatePathComponent(destComponents[2])
+        if destComponents.count == 5 {
+            try Self.validatePathComponent(destComponents[4])
+        }
 
         let toolBase = toolDir.standardizedFileURL
         let destDirCandidate = root.appendingPathComponent(destDirRelative, isDirectory: true).standardizedFileURL

@@ -29,7 +29,9 @@ private func insertLight(
     name: String,
     score: Double? = nil,
     hasRating: Bool = false,
-    accepted: Bool? = nil
+    accepted: Bool? = nil,
+    filter: String? = nil,
+    fwhm: Double? = nil
 ) throws -> Int64 {
     let path = "sessions/\(target)/\(date)/lights/\(name).fit"
     let fileID = try db.upsertFile(
@@ -41,15 +43,18 @@ private func insertLight(
     )
     try db.backfillInode(id: fileID, inode: fileID, nlink: 1)
 
-    if hasRating || score != nil {
+    if hasRating || score != nil || fwhm != nil {
         try db.upsertRating(
-            RatingRecord(fileID: fileID, score: score, ratedAt: 1_700_000_200, inputSig: "sig-\(name)")
+            RatingRecord(fileID: fileID, fwhm: fwhm, score: score, ratedAt: 1_700_000_200, inputSig: "sig-\(name)")
         )
     }
     if let accepted {
         try db.upsertUserVerdict(
             UserVerdictRecord(fileID: fileID, accepted: accepted, source: "dssfilelist", recordedAt: 1_700_000_300)
         )
+    }
+    if let filter {
+        try db.upsertFITSMeta(FITSMetaRecord(fileID: fileID, filter: filter))
     }
     return fileID
 }
@@ -305,4 +310,291 @@ private func inode(_ url: URL) throws -> UInt64 {
     let lightsDir = firstDir.appendingPathComponent("lights", isDirectory: true)
     let contents = try FileManager.default.contentsOfDirectory(atPath: lightsDir.path)
     #expect(Set(contents) == Set(["l1.fit", "l2.fit", "l3.fit"]))
+}
+
+// MARK: - 11. Per-filter grouping (R11-T11 / F15)
+
+@Test func selectGroupsByFilterSoARarerWeakerFilterIsNotSqueezedOutByABiggerBetterFilter() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+
+    // Ha: 10 frames, all scored HIGHER than every OIII frame below.
+    for i in 1...10 {
+        try insertLight(db: db, target: "T1", date: "2026-01-10", name: "ha\(i)", score: Double(i), filter: "Ha")
+    }
+    // OIII: only 4 frames, all scored far lower than any Ha frame -- a
+    // pooled, session-wide ranking at keepFraction 0.5 would drop nearly
+    // all of them in favor of Ha's better scores.
+    for i in 1...4 {
+        try insertLight(db: db, target: "T1", date: "2026-01-10", name: "oiii\(i)", score: Double(i) / 10, filter: "OIII")
+    }
+
+    let selection = try StackList.select(target: "T1", date: "2026-01-10", keepFraction: 0.5, db: db, config: config)
+
+    #expect(selection.totalFrames == 14)
+    let perFilter = try #require(selection.perFilter)
+    #expect(perFilter.count == 2)
+
+    let ha = try #require(perFilter.first { $0.filter == "Ha" })
+    #expect(ha.totalFrames == 10)
+    #expect(ha.selectedFrames == 5) // ceil(0.5 * 10) == 5
+
+    let oiii = try #require(perFilter.first { $0.filter == "OIII" })
+    #expect(oiii.totalFrames == 4)
+    // ceil(0.5 * 4) == 2, but the "never fewer than 3 when available" floor
+    // wins -- applied to OIII's OWN remaining count, not the session's.
+    #expect(oiii.selectedFrames == 3)
+
+    #expect(selection.selectedFrames == 8)
+    #expect(selection.criteria.contains { $0.hasPrefix("[Ha]") })
+    #expect(selection.criteria.contains { $0.hasPrefix("[OIII]") })
+}
+
+@Test func selectNeverKeepsFewerThanThreePerFilterWhenAvailable() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+
+    for i in 1...5 {
+        try insertLight(db: db, target: "T1", date: "2026-01-10", name: "ha\(i)", score: Double(i), filter: "Ha")
+    }
+    for i in 1...5 {
+        try insertLight(db: db, target: "T1", date: "2026-01-10", name: "oiii\(i)", score: Double(i), filter: "OIII")
+    }
+
+    // ceil(0.1 * 5) == 1 per filter, but each filter's own floor of 3 wins.
+    let selection = try StackList.select(target: "T1", date: "2026-01-10", keepFraction: 0.1, db: db, config: config)
+
+    let perFilter = try #require(selection.perFilter)
+    for entry in perFilter {
+        #expect(entry.selectedFrames == 3)
+    }
+    #expect(selection.selectedFrames == 6)
+}
+
+@Test func selectAppliesKeepFractionPerFilterOverride() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+
+    for i in 1...10 {
+        try insertLight(db: db, target: "T1", date: "2026-01-10", name: "ha\(i)", score: Double(i), filter: "Ha")
+    }
+    for i in 1...10 {
+        try insertLight(db: db, target: "T1", date: "2026-01-10", name: "oiii\(i)", score: Double(i), filter: "OIII")
+    }
+
+    let selection = try StackList.select(
+        target: "T1", date: "2026-01-10", keepFraction: 0.5,
+        keepFractionPerFilter: ["OIII": 1.0], db: db, config: config
+    )
+
+    let perFilter = try #require(selection.perFilter)
+    let ha = try #require(perFilter.first { $0.filter == "Ha" })
+    #expect(ha.selectedFrames == 5) // no override -- falls back to the common 0.5
+
+    let oiii = try #require(perFilter.first { $0.filter == "OIII" })
+    #expect(oiii.selectedFrames == 10) // overridden to 1.0 -- keeps everything
+}
+
+@Test func selectSingleNamedFilterSessionKeepsPerFilterNilAndCriteriaUnprefixed() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+
+    for i in 1...10 {
+        try insertLight(db: db, target: "T1", date: "2026-01-10", name: "s\(i)", score: Double(i), filter: "Ha")
+    }
+
+    let selection = try StackList.select(target: "T1", date: "2026-01-10", keepFraction: 0.5, db: db, config: config)
+
+    // Byte-identical-shape backward compatibility: a session shot entirely
+    // through one named filter behaves exactly like it did before per-filter
+    // grouping existed.
+    #expect(selection.perFilter == nil)
+    #expect(selection.selectedFrames == 5)
+    #expect(!selection.criteria.contains { $0.hasPrefix("[") })
+}
+
+@Test func selectFilterlessSessionKeepsPerFilterNil() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+
+    for i in 1...5 {
+        try insertLight(db: db, target: "T1", date: "2026-01-10", name: "u\(i)", score: Double(i))
+    }
+
+    let selection = try StackList.select(target: "T1", date: "2026-01-10", db: db, config: config)
+
+    #expect(selection.perFilter == nil)
+}
+
+@Test func selectBucketsFilterlessFramesSeparatelyFromNamedFilters() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+
+    for i in 1...5 {
+        try insertLight(db: db, target: "T1", date: "2026-01-10", name: "ha\(i)", score: Double(i), filter: "Ha")
+    }
+    for i in 1...5 {
+        try insertLight(db: db, target: "T1", date: "2026-01-10", name: "u\(i)", score: Double(i))
+    }
+
+    let selection = try StackList.select(target: "T1", date: "2026-01-10", db: db, config: config)
+
+    let perFilter = try #require(selection.perFilter)
+    #expect(Set(perFilter.map(\.filter)) == Set(["Ha", FilterBreakdownQueries.noFilterSentinel]))
+}
+
+// MARK: - 12. manifest.csv content (R11-T11 / F15)
+
+@Test func selectPopulatesManifestWithFilterScoreFwhmSessionDateAndVerdict() throws {
+    let db = try makeMemoryDB()
+    var config = AstroConfig()
+    config.rating.outlierZScore = 2.0
+
+    try insertLight(db: db, target: "T1", date: "2026-01-10", name: "good", score: 0.5, filter: "Ha", fwhm: 2.4)
+    try insertLight(db: db, target: "T1", date: "2026-01-10", name: "rejected", score: 0.3, accepted: false, filter: "Ha")
+    try insertLight(db: db, target: "T1", date: "2026-01-10", name: "outlier", score: -3.0, filter: "Ha")
+    try insertLight(db: db, target: "T1", date: "2026-01-10", name: "unrated", filter: "Ha")
+
+    let selection = try StackList.select(target: "T1", date: "2026-01-10", db: db, config: config)
+
+    #expect(selection.manifest.count == 4)
+    let byFile = Dictionary(uniqueKeysWithValues: selection.manifest.map { ($0.file, $0) })
+
+    let good = try #require(byFile["sessions/T1/2026-01-10/lights/good.fit"])
+    #expect(good.filter == "Ha")
+    #expect(good.score == 0.5)
+    #expect(good.fwhmPx == 2.4)
+    #expect(good.sessionDate == "2026-01-10")
+    #expect(good.verdict == "selected")
+
+    #expect(byFile["sessions/T1/2026-01-10/lights/rejected.fit"]?.verdict == "rejected_verdict")
+    #expect(byFile["sessions/T1/2026-01-10/lights/outlier.fit"]?.verdict == "rejected_outlier")
+    #expect(byFile["sessions/T1/2026-01-10/lights/unrated.fit"]?.verdict == "selected")
+}
+
+@Test func selectManifestMarksKeepFractionCutFramesAsRejectedKeepfraction() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+
+    for i in 1...10 {
+        try insertLight(db: db, target: "T1", date: "2026-01-10", name: "s\(i)", score: Double(i))
+    }
+
+    let selection = try StackList.select(target: "T1", date: "2026-01-10", keepFraction: 0.5, db: db, config: config)
+
+    let rejectedByKeepFraction = selection.manifest.filter { $0.verdict == "rejected_keepfraction" }
+    #expect(rejectedByKeepFraction.count == 5)
+    #expect(Set(rejectedByKeepFraction.map(\.file)) == Set(selection.rejectedPaths))
+}
+
+// MARK: - 13. Multi-filter export tree (R11-T11 / F15)
+
+@Test func exportMultiFilterCreatesPerFilterLightsSubfoldersDssfilelistAndSsf() throws {
+    let fixture = try StackListExportFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeLight("sessions/T1/2026-01-10/lights/ha1.fit")
+    try fixture.writeLight("sessions/T1/2026-01-10/lights/ha2.fit")
+    try fixture.writeLight("sessions/T1/2026-01-10/lights/oiii1.fit")
+    try fixture.scan()
+
+    for name in ["ha1", "ha2"] {
+        let id = try #require(try fixture.db.fileID(path: "sessions/T1/2026-01-10/lights/\(name).fit"))
+        try fixture.db.upsertFITSMeta(FITSMetaRecord(fileID: id, filter: "Ha"))
+    }
+    let oiiiID = try #require(try fixture.db.fileID(path: "sessions/T1/2026-01-10/lights/oiii1.fit"))
+    try fixture.db.upsertFITSMeta(FITSMetaRecord(fileID: oiiiID, filter: "OIII"))
+
+    let selection = try StackList.select(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
+    #expect(selection.perFilter != nil)
+
+    let writeGuard = WriteGuard(root: fixture.libraryDir)
+    let stacklistDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard)
+
+    for name in ["ha1", "ha2"] {
+        let linkedURL = stacklistDir.appendingPathComponent("lights/Ha/\(name).fit")
+        #expect(FileManager.default.fileExists(atPath: linkedURL.path))
+    }
+    let oiiiLinkedURL = stacklistDir.appendingPathComponent("lights/OIII/oiii1.fit")
+    #expect(FileManager.default.fileExists(atPath: oiiiLinkedURL.path))
+
+    // No shared flat stack.* pair when there's more than one filter bucket.
+    #expect(!FileManager.default.fileExists(atPath: stacklistDir.appendingPathComponent("stack.dssfilelist").path))
+    #expect(!FileManager.default.fileExists(atPath: stacklistDir.appendingPathComponent("stack.ssf").path))
+
+    let haDssURL = stacklistDir.appendingPathComponent("T1-2026-01-10-Ha.dssfilelist")
+    let haDssText = try String(contentsOf: haDssURL, encoding: .utf8)
+    #expect(haDssText.contains("lights/Ha/ha1.fit"))
+    #expect(haDssText.contains("lights/Ha/ha2.fit"))
+    #expect(!haDssText.contains("oiii1"))
+
+    let haSsfURL = stacklistDir.appendingPathComponent("T1-2026-01-10-Ha.ssf")
+    let haSsfText = try String(contentsOf: haSsfURL, encoding: .utf8)
+    #expect(haSsfText.contains("# Filter: Ha"))
+    #expect(haSsfText.contains("cd \"\(stacklistDir.appendingPathComponent("lights/Ha").path)\""))
+    #expect(haSsfText.contains("convert light -out=."))
+
+    let oiiiDssURL = stacklistDir.appendingPathComponent("T1-2026-01-10-OIII.dssfilelist")
+    #expect(FileManager.default.fileExists(atPath: oiiiDssURL.path))
+    let oiiiSsfURL = stacklistDir.appendingPathComponent("T1-2026-01-10-OIII.ssf")
+    let oiiiSsfText = try String(contentsOf: oiiiSsfURL, encoding: .utf8)
+    #expect(oiiiSsfText.contains("# Filter: OIII"))
+
+    let manifestURL = stacklistDir.appendingPathComponent("manifest.csv")
+    let manifestText = try String(contentsOf: manifestURL, encoding: .utf8)
+    let manifestLines = manifestText.split(separator: "\n", omittingEmptySubsequences: false).filter { !$0.isEmpty }
+    #expect(manifestLines[0] == "file,filter,score,fwhm_px,session_date,verdict")
+    #expect(manifestLines.count == 4) // header + 3 frames across both filters
+}
+
+@Test func exportWritesManifestCSVAlongsideFlatSingleBucketExport() throws {
+    let fixture = try StackListExportFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 1...3 {
+        try fixture.writeLight("sessions/T1/2026-01-10/lights/l\(i).fit")
+    }
+    try fixture.scan()
+
+    let selection = try StackList.select(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
+    let writeGuard = WriteGuard(root: fixture.libraryDir)
+    let stacklistDir = try StackList.export(selection, root: fixture.libraryDir, using: writeGuard)
+
+    let manifestURL = stacklistDir.appendingPathComponent("manifest.csv")
+    let manifestText = try String(contentsOf: manifestURL, encoding: .utf8)
+    let lines = manifestText.split(separator: "\n", omittingEmptySubsequences: false).filter { !$0.isEmpty }
+    #expect(lines.count == 4) // header + 3 frames
+    #expect(lines[0] == "file,filter,score,fwhm_px,session_date,verdict")
+    for i in 1...3 {
+        #expect(manifestText.contains("sessions/T1/2026-01-10/lights/l\(i).fit"))
+    }
+    #expect(manifestText.contains(FilterBreakdownQueries.noFilterSentinel))
+}
+
+@Test func exportToDirectoryMultiFilterMirrorsPerFilterTreeShape() throws {
+    let fixture = try StackListExportFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeLight("sessions/T1/2026-01-10/lights/ha1.fit")
+    try fixture.writeLight("sessions/T1/2026-01-10/lights/oiii1.fit")
+    try fixture.scan()
+
+    let haID = try #require(try fixture.db.fileID(path: "sessions/T1/2026-01-10/lights/ha1.fit"))
+    try fixture.db.upsertFITSMeta(FITSMetaRecord(fileID: haID, filter: "Ha"))
+    let oiiiID = try #require(try fixture.db.fileID(path: "sessions/T1/2026-01-10/lights/oiii1.fit"))
+    try fixture.db.upsertFITSMeta(FITSMetaRecord(fileID: oiiiID, filter: "OIII"))
+
+    let selection = try StackList.select(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
+
+    let destDir = try makeTempDir("out")
+    defer { try? FileManager.default.removeItem(at: destDir) }
+
+    _ = try StackList.exportToDirectory(selection, destDir: destDir, sourceRoot: fixture.libraryDir)
+
+    #expect(FileManager.default.fileExists(atPath: destDir.appendingPathComponent("lights/Ha/ha1.fit").path))
+    #expect(FileManager.default.fileExists(atPath: destDir.appendingPathComponent("lights/OIII/oiii1.fit").path))
+    #expect(FileManager.default.fileExists(atPath: destDir.appendingPathComponent("T1-2026-01-10-Ha.dssfilelist").path))
+    #expect(FileManager.default.fileExists(atPath: destDir.appendingPathComponent("T1-2026-01-10-OIII.ssf").path))
+    #expect(FileManager.default.fileExists(atPath: destDir.appendingPathComponent("manifest.csv").path))
+    #expect(!FileManager.default.fileExists(atPath: destDir.appendingPathComponent("stack.dssfilelist").path))
 }

@@ -2828,11 +2828,17 @@ final class AppState: @unchecked Sendable {
 
     /// Computes `StackList.select` for one session at the given keep
     /// fraction -- read-only, safe to call every time `StackListSheet`
-    /// appears AND every time its keep-slider settles on a new value.
-    /// `stackListExportDir` is reset too, so adjusting the slider after a
-    /// successful export goes back to showing the (now stale) selection
-    /// preview rather than the old export result.
-    func loadStackListSelection(target: String, date: String, keepFraction: Double) {
+    /// appears AND every time its keep-slider (common or per-filter,
+    /// R11-T11) settles on a new value. `stackListExportDir` is reset too,
+    /// so adjusting the slider after a successful export goes back to
+    /// showing the (now stale) selection preview rather than the old export
+    /// result. `keepFractionPerFilter` overrides `keepFraction` for the
+    /// named filter buckets only -- see `StackList.select`'s own doc; the
+    /// sheet passes `[:]` (no overrides) whenever the common slider itself
+    /// last moved.
+    func loadStackListSelection(
+        target: String, date: String, keepFraction: Double, keepFractionPerFilter: [String: Double] = [:]
+    ) {
         guard let db else { return }
         let cfg = config
         stackListSelection = nil
@@ -2843,7 +2849,10 @@ final class AppState: @unchecked Sendable {
             guard let self else { return }
             do {
                 let selection = try await Task.detached(priority: .userInitiated) {
-                    try StackList.select(target: target, date: date, keepFraction: keepFraction, db: db, config: cfg)
+                    try StackList.select(
+                        target: target, date: date, keepFraction: keepFraction,
+                        keepFractionPerFilter: keepFractionPerFilter, db: db, config: cfg
+                    )
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.stackListSelection = selection
