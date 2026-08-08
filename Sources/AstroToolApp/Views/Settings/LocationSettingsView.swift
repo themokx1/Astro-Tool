@@ -12,6 +12,15 @@ import SwiftUI
 /// `config.site`, holds the derived value) so that saving in "Automatikus"
 /// mode writes an honest EMPTY `site: {}`, never whatever happened to be
 /// derived from the library at the moment "Mentés" was pressed.
+///
+/// R11-T15/F16: "Kézi" is no longer a single lat/lon pair -- it's a named
+/// list (`config.sites: [SiteProfile]`), one of which is flagged "alapért."
+/// (the star toggle below) as the Planner's default absent a `--site`/
+/// site-Picker override. Saving still writes the legacy `config.site`
+/// mirror alongside the new list (the default entry's coordinate), so an
+/// older CLI build reading only `site` keeps working against a config.json
+/// this tab wrote (see `AstroConfig.sites`'s own doc comment for the full
+/// backward-compatibility contract).
 struct LocationSettingsView: View {
     @Environment(AppState.self) private var appState
 
@@ -20,12 +29,36 @@ struct LocationSettingsView: View {
         case manual
     }
 
+    /// One in-progress row of the "Kézi helyszínek" list editor. A stable
+    /// `UUID` (not `name`) backs `Identifiable` -- `SiteProfile.id` is the
+    /// name itself, but a DRAFT row's name is exactly the thing being
+    /// edited (and can transiently collide with another row's while typing),
+    /// so keying the list on it would make `ForEach` reorder/misidentify
+    /// rows mid-edit.
+    private struct SiteDraft: Identifiable {
+        let id = UUID()
+        var name: String
+        var latitudeText: String
+        var longitudeText: String
+        var isDefault: Bool
+    }
+
+    /// The comparable subset of `SiteDraft` -- `id` deliberately excluded,
+    /// so `isDirty` compares by CONTENT (what `loadFromConfig()` would
+    /// currently build from `appState.config.sites`) rather than by the
+    /// draft-only `UUID` identity that resets every time the tab reloads.
+    private struct SiteDraftSnapshot: Equatable {
+        let name: String
+        let latitudeText: String
+        let longitudeText: String
+        let isDefault: Bool
+    }
+
     @State private var mode: UseMode = .automatic
-    @State private var latitudeText: String = ""
-    @State private var longitudeText: String = ""
+    @State private var siteDrafts: [SiteDraft] = []
     /// R10-B6: bound to the "Időjárás-előrejelzés" section's toggle below;
     /// loaded from/saved to `config.weather.enabled` the same way `mode`/
-    /// `latitudeText`/`longitudeText` round-trip through `config.site`.
+    /// `siteDrafts` round-trip through `config.sites`/`config.site`.
     @State private var weatherEnabled: Bool = false
 
     @State private var saveMessage: String?
@@ -42,9 +75,19 @@ struct LocationSettingsView: View {
             Section {
                 Picker("Használat", selection: $mode) {
                     Text("Automatikus (FITS-fejlécekből)").tag(UseMode.automatic)
-                    Text("Kézi").tag(UseMode.manual)
+                    Text("Kézi helyszínek").tag(UseMode.manual)
                 }
                 .pickerStyle(.radioGroup)
+                .onChange(of: mode) { _, newValue in
+                    // Starts the list from a sensible value instead of
+                    // blank fields -- same "prefill from whatever's
+                    // currently RESOLVED" idea the pre-T15 single-pair form
+                    // used, just as this list's first row rather than the
+                    // only two text fields.
+                    if newValue == .manual && siteDrafts.isEmpty {
+                        siteDrafts = [starterDraft()]
+                    }
+                }
             }
 
             Section("Koordináták") {
@@ -55,10 +98,7 @@ struct LocationSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    TextField("Szélesség (°)", text: $latitudeText)
-                    TextField("Hosszúság (°)", text: $longitudeText)
-                    Button("Beillesztés a vágólapról") { pasteFromClipboard() }
-                        .help("Formátum: 47.5000, 19.0400")
+                    siteListEditor
                 }
             }
 
@@ -131,14 +171,122 @@ struct LocationSettingsView: View {
         }
     }
 
-    /// R11-T3: factory default -- automatikus mód, üres koordináták, kikapcsolt
-    /// időjárás-előrejelzés (matches `SiteRule()`/`WeatherRule()`'s own
-    /// defaults, same "reset the DRAFT, not the saved config" semantics as
-    /// every other tab's `resetAll()` -- still needs "Mentés" to persist).
+    // MARK: - Site list editor (R11-T15/F16)
+
+    private var siteListEditor: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(siteDrafts) { draft in
+                siteRow(for: draft)
+            }
+            Button("+ Új helyszín") { addSite() }
+            Text("A csillag jelöli az alapértelmezett helyszínt -- ez számít a Ma este/Naptár tervezőben, ha nincs másik kiválasztva.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func siteRow(for draft: SiteDraft) -> some View {
+        HStack(spacing: 6) {
+            TextField("Név", text: binding(for: draft.id, \.name))
+                .frame(minWidth: 100)
+            TextField("Szélesség (°)", text: binding(for: draft.id, \.latitudeText))
+                .frame(minWidth: 80)
+            TextField("Hosszúság (°)", text: binding(for: draft.id, \.longitudeText))
+                .frame(minWidth: 80)
+            Button {
+                pasteFromClipboard(into: draft.id)
+            } label: {
+                Image(systemName: "doc.on.clipboard")
+            }
+            .buttonStyle(.plain)
+            .help("Beillesztés a vágólapról (formátum: 47.5000, 19.0400)")
+            Button {
+                setDefault(draft.id)
+            } label: {
+                Image(systemName: draft.isDefault ? "star.fill" : "star")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(draft.isDefault ? .yellow : .secondary)
+            .help("Alapértelmezett helyszín")
+            Button {
+                removeSite(draft.id)
+            } label: {
+                Image(systemName: "minus.circle")
+            }
+            .buttonStyle(.plain)
+            .help("Helyszín törlése")
+        }
+    }
+
+    /// A plain `Binding` into one draft row's field, looked up by `id` each
+    /// time (rather than an `Int` index) -- safe against `siteDrafts`
+    /// reordering/mutating between the getter and setter firing, same
+    /// "look up by stable id, not position" the row buttons below already
+    /// need for `removeSite`/`setDefault`.
+    private func binding(for id: SiteDraft.ID, _ keyPath: WritableKeyPath<SiteDraft, String>) -> Binding<String> {
+        Binding(
+            get: { siteDrafts.first { $0.id == id }?[keyPath: keyPath] ?? "" },
+            set: { newValue in
+                guard let index = siteDrafts.firstIndex(where: { $0.id == id }) else { return }
+                siteDrafts[index][keyPath: keyPath] = newValue
+            }
+        )
+    }
+
+    private func addSite() {
+        // The very first row starts out as the (only, hence trivially
+        // default) site -- every subsequent addition starts unflagged, the
+        // user picks a new default explicitly via the star toggle.
+        siteDrafts.append(SiteDraft(name: "", latitudeText: "", longitudeText: "", isDefault: siteDrafts.isEmpty))
+    }
+
+    private func removeSite(_ id: SiteDraft.ID) {
+        let wasDefault = siteDrafts.first { $0.id == id }?.isDefault ?? false
+        siteDrafts.removeAll { $0.id == id }
+        // Never leave the list with zero `isDefault` rows while it's still
+        // non-empty -- promotes the new first entry, same fallback
+        // `SiteProfile.defaultSite(in:)` itself takes defensively.
+        if wasDefault, !siteDrafts.isEmpty, !siteDrafts.contains(where: \.isDefault) {
+            siteDrafts[0].isDefault = true
+        }
+    }
+
+    private func setDefault(_ id: SiteDraft.ID) {
+        for index in siteDrafts.indices {
+            siteDrafts[index].isDefault = siteDrafts[index].id == id
+        }
+    }
+
+    /// Same "47.5000, 19.0400" clipboard convention (spec A.7) as before --
+    /// two comma-separated decimal numbers, latitude first -- now filling
+    /// ONE specific row (`id`) instead of the form's only two fields. A
+    /// no-op (row left untouched) for anything else on the clipboard.
+    private func pasteFromClipboard(into id: SiteDraft.ID) {
+        guard let text = NSPasteboard.general.string(forType: .string) else { return }
+        let parts = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count == 2, let lat = Double(parts[0]), let lon = Double(parts[1]),
+              let index = siteDrafts.firstIndex(where: { $0.id == id })
+        else { return }
+        siteDrafts[index].latitudeText = String(format: "%.4f", lat)
+        siteDrafts[index].longitudeText = String(format: "%.4f", lon)
+    }
+
+    private func starterDraft() -> SiteDraft {
+        SiteDraft(
+            name: "Alapértelmezett",
+            latitudeText: appState.resolvedSite.latitudeDeg.map { String(format: "%.4f", $0) } ?? "",
+            longitudeText: appState.resolvedSite.longitudeDeg.map { String(format: "%.4f", $0) } ?? "",
+            isDefault: true
+        )
+    }
+
+    /// R11-T3: factory default -- automatikus mód, üres helyszín-lista,
+    /// kikapcsolt időjárás-előrejelzés (matches `SiteRule()`/`WeatherRule()`'s
+    /// own defaults, same "reset the DRAFT, not the saved config" semantics
+    /// as every other tab's `resetAll()` -- still needs "Mentés" to persist).
     private func resetAll() {
         mode = .automatic
-        latitudeText = ""
-        longitudeText = ""
+        siteDrafts = []
         weatherEnabled = false
     }
 
@@ -150,52 +298,53 @@ struct LocationSettingsView: View {
         TDFormat.cell(appState.resolvedSite.longitudeDeg.map { String(format: "%.4f", $0) })
     }
 
-    /// "Kézi" whenever `config.site` already carries an explicit value (a
-    /// previous manual save); otherwise "Automatikus", pre-filling the text
-    /// fields with whatever's currently RESOLVED so switching to "Kézi"
-    /// starts from a sensible value instead of blank `0.0000` fields.
+    /// "Kézi" whenever `config.sites` already carries at least one entry (a
+    /// previous manual save); otherwise "Automatikus", same "pre-fill from
+    /// whatever's currently resolved" idea as before -- only now applied to
+    /// the list's single starter row via `starterDraft()`.
     private func loadFromConfig() {
-        let site = appState.config.site
-        if let lat = site.latitudeDeg, let lon = site.longitudeDeg {
+        let sites = appState.config.sites
+        if !sites.isEmpty {
             mode = .manual
-            latitudeText = String(format: "%.4f", lat)
-            longitudeText = String(format: "%.4f", lon)
+            siteDrafts = sites.map(Self.draft(from:))
         } else {
             mode = .automatic
-            latitudeText = appState.resolvedSite.latitudeDeg.map { String(format: "%.4f", $0) } ?? ""
-            longitudeText = appState.resolvedSite.longitudeDeg.map { String(format: "%.4f", $0) } ?? ""
+            siteDrafts = []
         }
         weatherEnabled = appState.config.weather.enabled
     }
 
+    private static func draft(from profile: SiteProfile) -> SiteDraft {
+        SiteDraft(
+            name: profile.name,
+            latitudeText: String(format: "%.4f", profile.latitudeDeg),
+            longitudeText: String(format: "%.4f", profile.longitudeDeg),
+            isDefault: profile.isDefault
+        )
+    }
+
     /// R10-B7: "Nem mentett módosítások" indicator next to Mentés. `mode`/
     /// `weatherEnabled` compare directly against what `loadFromConfig()`
-    /// would set right now; `latitudeText`/`longitudeText` only get
-    /// compared in "Kézi" mode, since that's the only mode where they're
-    /// actually editable at all -- in "Automatikus" mode they're a
-    /// read-only mirror of `appState.resolvedSite` (via `LabeledContent`
-    /// above, not a `TextField`), so they can never hold an unsaved EDIT
-    /// while automatic no matter what they currently display.
+    /// would set right now; `siteDrafts` only gets compared in "Kézi" mode
+    /// (the only mode where it's actually editable), by CONTENT
+    /// (`SiteDraftSnapshot`, not the draft-only `UUID`s) against what
+    /// `appState.config.sites` would currently produce.
     private var isDirty: Bool {
-        let site = appState.config.site
-        let loadedMode: UseMode = (site.latitudeDeg != nil && site.longitudeDeg != nil) ? .manual : .automatic
+        let sites = appState.config.sites
+        let loadedMode: UseMode = sites.isEmpty ? .automatic : .manual
         if mode != loadedMode { return true }
         if weatherEnabled != appState.config.weather.enabled { return true }
         guard mode == .manual else { return false }
-        let loadedLat = site.latitudeDeg.map { String(format: "%.4f", $0) } ?? ""
-        let loadedLon = site.longitudeDeg.map { String(format: "%.4f", $0) } ?? ""
-        return latitudeText != loadedLat || longitudeText != loadedLon
+        let loadedSnapshots = sites.map(Self.draft(from:)).map(Self.snapshot)
+        let currentSnapshots = siteDrafts.map(Self.snapshot)
+        return currentSnapshots != loadedSnapshots
     }
 
-    /// Parses the "47.5000, 19.0400" clipboard convention (spec A.7) -- two
-    /// comma-separated decimal numbers, latitude first. A no-op (fields left
-    /// untouched) for anything else on the clipboard.
-    private func pasteFromClipboard() {
-        guard let text = NSPasteboard.general.string(forType: .string) else { return }
-        let parts = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-        guard parts.count == 2, let lat = Double(parts[0]), let lon = Double(parts[1]) else { return }
-        latitudeText = String(format: "%.4f", lat)
-        longitudeText = String(format: "%.4f", lon)
+    private static func snapshot(_ draft: SiteDraft) -> SiteDraftSnapshot {
+        SiteDraftSnapshot(
+            name: draft.name, latitudeText: draft.latitudeText,
+            longitudeText: draft.longitudeText, isDefault: draft.isDefault
+        )
     }
 
     private func save() {
@@ -204,15 +353,67 @@ struct LocationSettingsView: View {
 
         var newConfig = appState.config
         if mode == .automatic {
-            // The fix this task exists for: an empty `SiteRule()`, not
-            // whatever `resolvedSite` currently holds.
+            // The fix this task exists for (R9-T4/B10): an empty
+            // `SiteRule()`, not whatever `resolvedSite` currently holds --
+            // and, R11-T15/F16, an empty `sites` list too: "Automatikus"
+            // means no manual site configuration persists at all.
             newConfig.site = SiteRule()
+            newConfig.sites = []
         } else {
-            guard let lat = Double(latitudeText), let lon = Double(longitudeText) else {
-                saveError = "Érvénytelen koordináta."
+            guard !siteDrafts.isEmpty else {
+                saveError = "Legalább egy helyszín szükséges Kézi módban."
                 return
             }
-            newConfig.site = SiteRule(latitudeDeg: lat, longitudeDeg: lon)
+
+            var profiles: [SiteProfile] = []
+            var seenNames = Set<String>()
+            for draft in siteDrafts {
+                let trimmedName = draft.name.trimmingCharacters(in: .whitespaces)
+                guard !trimmedName.isEmpty else {
+                    saveError = "Minden helyszínnek nevet kell adni."
+                    return
+                }
+                guard let lat = Double(draft.latitudeText), let lon = Double(draft.longitudeText) else {
+                    saveError = "Érvénytelen koordináta: \(trimmedName.isEmpty ? "(névtelen)" : trimmedName)."
+                    return
+                }
+                let normalizedName = trimmedName.lowercased()
+                guard !seenNames.contains(normalizedName) else {
+                    saveError = "Kétszer szerepel ez a helyszín-név: \(trimmedName)."
+                    return
+                }
+                seenNames.insert(normalizedName)
+                profiles.append(SiteProfile(name: trimmedName, latitudeDeg: lat, longitudeDeg: lon, isDefault: draft.isDefault))
+            }
+
+            // Defensive -- the star toggle keeps exactly one `isDefault`
+            // true in normal use, but a save shouldn't depend on the UI
+            // state machine never having a gap (e.g. the very first typed
+            // row before any star click).
+            if !profiles.contains(where: \.isDefault) {
+                profiles[0].isDefault = true
+            } else {
+                // Exactly one -- `setDefault(_:)` already enforces this in
+                // the UI, but a defensive re-normalization here costs
+                // nothing and keeps `SiteProfile.defaultSite(in:)`'s own
+                // "expects exactly one" assumption honest even if `profiles`
+                // somehow arrived with more than one flagged.
+                var foundDefault = false
+                for index in profiles.indices {
+                    if profiles[index].isDefault {
+                        if foundDefault { profiles[index].isDefault = false } else { foundDefault = true }
+                    }
+                }
+            }
+
+            newConfig.sites = profiles
+            // R11-T15/F16: mirrors the DEFAULT site's coordinate into the
+            // legacy `site` field, kept "in sync" per the ticket's own
+            // backward-compatibility spec -- an older CLI build reading
+            // only `config.site` still gets a sensible single coordinate.
+            if let def = SiteProfile.defaultSite(in: profiles) {
+                newConfig.site = SiteRule(latitudeDeg: def.latitudeDeg, longitudeDeg: def.longitudeDeg)
+            }
         }
         newConfig.weather.enabled = weatherEnabled
 

@@ -52,6 +52,132 @@ import Testing
     #expect(rule.longitudeDeg == nil)
 }
 
+// MARK: - SiteProfile / config.sites (R11-T15/F16)
+
+@Test func defaultConfigHasEmptySites() {
+    #expect(AstroConfig().sites == [])
+}
+
+@Test func siteProfileDefaultsIsDefaultToFalse() {
+    let profile = SiteProfile(name: "Kert", latitudeDeg: 47.5, longitudeDeg: 19.0)
+    #expect(profile.isDefault == false)
+    #expect(profile.id == "Kert")
+}
+
+@Test func siteProfileDecodingMissingIsDefaultFillsFalse() throws {
+    let json = """
+    { "name": "Kert", "latitudeDeg": 47.5, "longitudeDeg": 19.0 }
+    """
+    let profile = try JSONDecoder().decode(SiteProfile.self, from: Data(json.utf8))
+    #expect(profile.isDefault == false)
+}
+
+@Test func defaultSiteInPicksTheFlaggedEntry() {
+    let sites = [
+        SiteProfile(name: "A", latitudeDeg: 1, longitudeDeg: 1),
+        SiteProfile(name: "B", latitudeDeg: 2, longitudeDeg: 2, isDefault: true),
+        SiteProfile(name: "C", latitudeDeg: 3, longitudeDeg: 3),
+    ]
+    #expect(SiteProfile.defaultSite(in: sites)?.name == "B")
+}
+
+@Test func defaultSiteInFallsBackToFirstWhenNoneFlagged() {
+    let sites = [
+        SiteProfile(name: "A", latitudeDeg: 1, longitudeDeg: 1),
+        SiteProfile(name: "B", latitudeDeg: 2, longitudeDeg: 2),
+    ]
+    #expect(SiteProfile.defaultSite(in: sites)?.name == "A")
+}
+
+@Test func defaultSiteInReturnsNilForEmptyList() {
+    #expect(SiteProfile.defaultSite(in: []) == nil)
+}
+
+/// Decode combo 1/4: only the OLD `site` key present (a config.json written
+/// before this task) -- `sites` synthesizes a one-element "Alapértelmezett"
+/// list from it in memory, WITHOUT rewriting the underlying `site` field.
+@Test func decodingOnlyLegacySiteSynthesizesOneElementSitesList() throws {
+    let json = """
+    { "site": { "latitudeDeg": 47.5, "longitudeDeg": 19.0 } }
+    """
+    let config = try JSONDecoder().decode(AstroConfig.self, from: Data(json.utf8))
+
+    #expect(config.site.latitudeDeg == 47.5)
+    #expect(config.site.longitudeDeg == 19.0)
+    #expect(config.sites.count == 1)
+    #expect(config.sites[0].name == "Alapértelmezett")
+    #expect(config.sites[0].latitudeDeg == 47.5)
+    #expect(config.sites[0].longitudeDeg == 19.0)
+    #expect(config.sites[0].isDefault == true)
+}
+
+/// Decode combo 2/4: only the NEW `sites` key present, no `site` at all --
+/// decodes straight through, `site` stays at its own empty default.
+@Test func decodingOnlyNewSitesListDecodesDirectly() throws {
+    let json = """
+    { "sites": [{ "name": "Kert", "latitudeDeg": 47.4, "longitudeDeg": 19.1, "isDefault": true }] }
+    """
+    let config = try JSONDecoder().decode(AstroConfig.self, from: Data(json.utf8))
+
+    #expect(config.sites == [SiteProfile(name: "Kert", latitudeDeg: 47.4, longitudeDeg: 19.1, isDefault: true)])
+    #expect(config.site == SiteRule())
+}
+
+/// Decode combo 3/4: BOTH keys present -- the explicit `sites` list wins
+/// outright (never merged with/overridden by the legacy `site` pair).
+@Test func decodingBothSiteAndSitesPrefersTheExplicitSitesList() throws {
+    let json = """
+    {
+      "site": { "latitudeDeg": 10.0, "longitudeDeg": 20.0 },
+      "sites": [
+        { "name": "Otthon", "latitudeDeg": 47.5, "longitudeDeg": 19.0, "isDefault": true },
+        { "name": "Hegy", "latitudeDeg": 46.0, "longitudeDeg": 18.0 }
+      ]
+    }
+    """
+    let config = try JSONDecoder().decode(AstroConfig.self, from: Data(json.utf8))
+
+    #expect(config.sites.count == 2)
+    #expect(config.sites.map(\.name) == ["Otthon", "Hegy"])
+    // The legacy `site` pair is decoded verbatim too (still readable by an
+    // older CLI build) -- just not used to DERIVE `sites` when the explicit
+    // list is already there.
+    #expect(config.site.latitudeDeg == 10.0)
+    #expect(config.site.longitudeDeg == 20.0)
+}
+
+/// Decode combo 4/4: NEITHER key present -- `sites` stays empty, the
+/// pre-T15 FITS-median automatika keeps working unchanged.
+@Test func decodingNeitherSiteNorSitesLeavesSitesEmpty() throws {
+    let config = try JSONDecoder().decode(AstroConfig.self, from: Data("{}".utf8))
+    #expect(config.sites == [])
+    #expect(config.site == SiteRule())
+}
+
+/// A `site` with only ONE coordinate filled in (the other still `nil`,
+/// `SiteRule`'s own partial-decode case) never synthesizes a `sites` entry
+/// -- `TargetCoordinates.resolveSite`'s own "both must be present" contract
+/// for a usable site pair.
+@Test func decodingPartialLegacySiteDoesNotSynthesizeSitesList() throws {
+    let json = """
+    { "site": { "latitudeDeg": 47.5 } }
+    """
+    let config = try JSONDecoder().decode(AstroConfig.self, from: Data(json.utf8))
+    #expect(config.sites == [])
+}
+
+@Test func sitesRoundTripsThroughEncodeDecode() throws {
+    var config = AstroConfig()
+    config.sites = [
+        SiteProfile(name: "Otthon", latitudeDeg: 47.5, longitudeDeg: 19.0, isDefault: true),
+        SiteProfile(name: "Hegy", latitudeDeg: 46.0, longitudeDeg: 18.0),
+    ]
+
+    let data = try JSONEncoder().encode(config)
+    let decoded = try JSONDecoder().decode(AstroConfig.self, from: data)
+    #expect(decoded == config)
+}
+
 @Test func defaultWeatherRuleIsDisabled() {
     let rule = WeatherRule()
     #expect(rule.enabled == false)

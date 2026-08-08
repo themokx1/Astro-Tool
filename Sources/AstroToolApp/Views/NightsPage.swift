@@ -137,6 +137,11 @@ struct NightsPage: View {
         /// R11-T2: this session's own tags, backing `SessionActionMenu`'s
         /// "Címke eltávolítása" submenu.
         var tags: [String] { row.tags }
+        /// R11-T15/F16: this session's resolved `SiteProfile.name`
+        /// (`NightRow.site`), or the missing-cell glyph -- backs the
+        /// optional "Helyszín" column, shown only once more than one site
+        /// is configured (see `NightsPage.table`'s own doc comment).
+        var siteText: String { row.site ?? TDFormat.missingCell }
 
         // Sentinel sort keys for the nullable metric columns -- missing
         // sorts first on an ascending sort, same "-1 sentinel" convention
@@ -380,6 +385,20 @@ struct NightsPage: View {
 
     // MARK: - Table
 
+    /// R11-T15/F16: the optional "Helyszín" column -- shown only once more
+    /// than one site is configured (a single/zero-site library has nothing
+    /// to disambiguate). Two textually SEPARATE `Table(...)` column lists,
+    /// picked by a plain `View`-level `if`/`else` (the ordinary
+    /// `ViewBuilder` one, available since macOS 10.15), rather than one
+    /// `Table` with a conditional `TableColumn` inside its own builder --
+    /// that conditional form (`buildIf`/`buildEither` on
+    /// `TableColumnBuilder` itself) is only available `@available(macOS
+    /// 14.4, *)` in the SDK even though this package's own deployment
+    /// target is macOS 14.0 (`QualitySegment.frameTable`'s own doc comment
+    /// documents the same gate for its column-picker), and duplicating the
+    /// column list twice sidesteps needing that availability split at all.
+    /// Every OTHER modifier (`.tableStyle`/`.contextMenu`/…) stays written
+    /// once, applied to the whole `if`/`else` result.
     private var table: some View {
         // R11-T12/F11(e): computed ONCE per table render (not per row/per
         // cell) -- `libraryFWHMArcsecValues`/`libraryDutyCycleValues` are
@@ -389,59 +408,120 @@ struct NightsPage: View {
         // an O(n) table into an O(n²) one.
         let fwhmLibraryValues = libraryFWHMArcsecValues
         let dutyLibraryValues = libraryDutyCycleValues
+        let showSite = appState.config.sites.count > 1
 
-        return Table(tableRows, selection: $selection, sortOrder: $sortOrder) {
-            TableColumn("Dátum", value: \.sortDateKey) { row in dateCell(row) }
-                .width(min: 110, ideal: 130)
-            TableColumn("Célpont", value: \.displayName) { row in targetCell(row) }
-                .width(min: 160, ideal: 200)
-            TableColumn("Keretek", value: \.usableLightCount) { row in Text("\(row.usableLightCount)") }
-                .width(min: 60, ideal: 70)
-            TableColumn("Integráció", value: \.integrationSeconds) { row in Text(TDFormat.hm(row.integrationSeconds)) }
-                .width(min: 80, ideal: 90)
-            TableColumn("Expozíciók", value: \.exposureSummary) { row in
-                Text(row.exposureSummary).lineLimit(1).truncationMode(.tail)
-            }
-            .width(min: 100, ideal: 140)
-            TableColumn("FWHM″", value: \.fwhmSortKey) { row in
-                HStack(spacing: 4) {
-                    Text(fwhmText(row))
-                    LibraryPercentileDot(result: fwhmPercentile(row, libraryValues: fwhmLibraryValues), unit: "″")
+        return Group {
+            if showSite {
+                Table(tableRows, selection: $selection, sortOrder: $sortOrder) {
+                    TableColumn("Dátum", value: \.sortDateKey) { row in dateCell(row) }
+                        .width(min: 110, ideal: 130)
+                    TableColumn("Célpont", value: \.displayName) { row in targetCell(row) }
+                        .width(min: 160, ideal: 200)
+                    TableColumn("Keretek", value: \.usableLightCount) { row in Text("\(row.usableLightCount)") }
+                        .width(min: 60, ideal: 70)
+                    TableColumn("Integráció", value: \.integrationSeconds) { row in Text(TDFormat.hm(row.integrationSeconds)) }
+                        .width(min: 80, ideal: 90)
+                    TableColumn("Expozíciók", value: \.exposureSummary) { row in
+                        Text(row.exposureSummary).lineLimit(1).truncationMode(.tail)
+                    }
+                    .width(min: 100, ideal: 140)
+                    TableColumn("FWHM″", value: \.fwhmSortKey) { row in
+                        HStack(spacing: 4) {
+                            Text(fwhmText(row))
+                            LibraryPercentileDot(result: fwhmPercentile(row, libraryValues: fwhmLibraryValues), unit: "″")
+                        }
+                    }
+                    .width(min: 60, ideal: 70)
+                    TableColumn("Háttér e⁻/s/″²", value: \.backgroundSortKey) { row in Text(backgroundText(row)) }
+                        .width(min: 90, ideal: 120)
+                    TableColumn("Hatékonyság", value: \.dutySortKey) { row in
+                        HStack(spacing: 4) {
+                            Text(dutyText(row))
+                            LibraryPercentileDot(result: dutyPercentile(row, libraryValues: dutyLibraryValues), unit: "%")
+                        }
+                    }
+                    .width(min: 80, ideal: 100)
+                    // R10-B7: grouped so the table stays AT (not over)
+                    // `Table`'s 10-top-level-column cap once the trailing
+                    // "⋯" actions column below needs its own slot -- same
+                    // `Group { }` workaround `QualitySegment.frameTable`
+                    // already established.
+                    Group {
+                        TableColumn("Szűrők", value: \.filtersText) { row in filtersCell(row) }
+                            .width(min: 80, ideal: 110)
+                        TableColumn("Helyszín", value: \.siteText) { row in Text(row.siteText) }
+                            .width(min: 70, ideal: 100)
+                        TableColumn("Jegyzet", value: \.noteSortKey) { row in noteCell(row) }
+                            .width(min: 50, ideal: 60)
+                    }
+                    // R10-B7: visible row-actions -- mirrors
+                    // `contextMenuItems(for:)` exactly (same function, both
+                    // call sites), so the right-click menu and this
+                    // borderless "⋯" button can never drift apart.
+                    TableColumn("") { row in
+                        Menu {
+                            contextMenuItems(for: row)
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .frame(width: 24)
+                    }
+                    .width(actionColumnWidth)
+                }
+            } else {
+                Table(tableRows, selection: $selection, sortOrder: $sortOrder) {
+                    TableColumn("Dátum", value: \.sortDateKey) { row in dateCell(row) }
+                        .width(min: 110, ideal: 130)
+                    TableColumn("Célpont", value: \.displayName) { row in targetCell(row) }
+                        .width(min: 160, ideal: 200)
+                    TableColumn("Keretek", value: \.usableLightCount) { row in Text("\(row.usableLightCount)") }
+                        .width(min: 60, ideal: 70)
+                    TableColumn("Integráció", value: \.integrationSeconds) { row in Text(TDFormat.hm(row.integrationSeconds)) }
+                        .width(min: 80, ideal: 90)
+                    TableColumn("Expozíciók", value: \.exposureSummary) { row in
+                        Text(row.exposureSummary).lineLimit(1).truncationMode(.tail)
+                    }
+                    .width(min: 100, ideal: 140)
+                    TableColumn("FWHM″", value: \.fwhmSortKey) { row in
+                        HStack(spacing: 4) {
+                            Text(fwhmText(row))
+                            LibraryPercentileDot(result: fwhmPercentile(row, libraryValues: fwhmLibraryValues), unit: "″")
+                        }
+                    }
+                    .width(min: 60, ideal: 70)
+                    TableColumn("Háttér e⁻/s/″²", value: \.backgroundSortKey) { row in Text(backgroundText(row)) }
+                        .width(min: 90, ideal: 120)
+                    TableColumn("Hatékonyság", value: \.dutySortKey) { row in
+                        HStack(spacing: 4) {
+                            Text(dutyText(row))
+                            LibraryPercentileDot(result: dutyPercentile(row, libraryValues: dutyLibraryValues), unit: "%")
+                        }
+                    }
+                    .width(min: 80, ideal: 100)
+                    // R10-B7: grouped so the table stays AT (not over)
+                    // `Table`'s 10-top-level-column cap once the trailing
+                    // "⋯" actions column below needs its own slot -- same
+                    // `Group { }` workaround `QualitySegment.frameTable`
+                    // already established.
+                    Group {
+                        TableColumn("Szűrők", value: \.filtersText) { row in filtersCell(row) }
+                            .width(min: 80, ideal: 110)
+                        TableColumn("Jegyzet", value: \.noteSortKey) { row in noteCell(row) }
+                            .width(min: 50, ideal: 60)
+                    }
+                    TableColumn("") { row in
+                        Menu {
+                            contextMenuItems(for: row)
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .frame(width: 24)
+                    }
+                    .width(actionColumnWidth)
                 }
             }
-            .width(min: 60, ideal: 70)
-            TableColumn("Háttér e⁻/s/″²", value: \.backgroundSortKey) { row in Text(backgroundText(row)) }
-                .width(min: 90, ideal: 120)
-            TableColumn("Hatékonyság", value: \.dutySortKey) { row in
-                HStack(spacing: 4) {
-                    Text(dutyText(row))
-                    LibraryPercentileDot(result: dutyPercentile(row, libraryValues: dutyLibraryValues), unit: "%")
-                }
-            }
-            .width(min: 80, ideal: 100)
-            // R10-B7: grouped so the table stays AT (not over) `Table`'s
-            // 10-top-level-column cap once the trailing "⋯" actions column
-            // below needs its own slot -- same `Group { }` workaround
-            // `QualitySegment.frameTable` already established.
-            Group {
-                TableColumn("Szűrők", value: \.filtersText) { row in filtersCell(row) }
-                    .width(min: 80, ideal: 110)
-                TableColumn("Jegyzet", value: \.noteSortKey) { row in noteCell(row) }
-                    .width(min: 50, ideal: 60)
-            }
-            // R10-B7: visible row-actions -- mirrors `contextMenuItems(for:)`
-            // exactly (same function, both call sites), so the right-click
-            // menu and this borderless "⋯" button can never drift apart.
-            TableColumn("") { row in
-                Menu {
-                    contextMenuItems(for: row)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .menuStyle(.borderlessButton)
-                .frame(width: 24)
-            }
-            .width(actionColumnWidth)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         // Row-scoped context menu + double-click-to-open, same pattern

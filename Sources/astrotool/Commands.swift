@@ -1730,6 +1730,20 @@ private func printConfigHumanReadable(_ config: AstroConfig) {
     print("  longitudeDeg: \(config.site.longitudeDeg.map { formatted($0) } ?? siteFallback)")
 
     print("")
+    // R11-T15/F16: PRIVACY exception, same as `site` right above -- `config
+    // show` is the one place a configured site's real coordinates may
+    // appear in the clear.
+    print("Helyszínek (sites)")
+    if config.sites.isEmpty {
+        print("  - (nincs konfigurált helyszín -- a fenti site/FITS-medián érvényes)")
+    } else {
+        for profile in config.sites {
+            let defaultMarker = profile.isDefault ? " [alapértelmezett]" : ""
+            print("  \(profile.name)\(defaultMarker): \(formatted(profile.latitudeDeg)), \(formatted(profile.longitudeDeg))")
+        }
+    }
+
+    print("")
     print("Expozíció-tanácsadó (expose)")
     print("  maxSubSeconds: \(formatted(config.expose.maxSubSeconds))")
     print("  noiseContributionC: \(formatted(config.expose.noiseContributionC))")
@@ -2556,8 +2570,15 @@ func cmdPlan(_ args: [String]) throws -> Int32 {
         FlagSpec("--month", takesValue: false),
         FlagSpec("--nights", takesValue: true),
         FlagSpec("--out", takesValue: true),
+        // R11-T15/F16: selects one of `config.sites` by name -- `nil`
+        // (the flag omitted) picks the configured default site, same
+        // priority `Planner.resolveSite` documents. Unknown-name/no-sites-
+        // configured errors surface as the usual `AstroError.invalidInput`
+        // -> exit 1, main.swift's generic handler.
+        FlagSpec("--site", takesValue: true),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
+    let siteName = parsed.value("--site")
 
     var date: Date?
     if let raw = parsed.value("--date") {
@@ -2596,7 +2617,7 @@ func cmdPlan(_ args: [String]) throws -> Int32 {
             nights = value
         }
 
-        let summaries = try Planner.month(from: date, nights: nights, minAltitudeDeg: minAlt, db: db, config: config)
+        let summaries = try Planner.month(from: date, nights: nights, minAltitudeDeg: minAlt, siteName: siteName, db: db, config: config)
         if parsed.has("--json") {
             try printJSON(summaries)
         } else {
@@ -2605,7 +2626,7 @@ func cmdPlan(_ args: [String]) throws -> Int32 {
         return 0
     }
 
-    let plans = try Planner.plan(date: date, minAltitudeDeg: minAlt, db: db, config: config)
+    let plans = try Planner.plan(date: date, minAltitudeDeg: minAlt, siteName: siteName, db: db, config: config)
 
     if let out = parsed.value("--out") {
         let csv = PlanExport.renderCSV(plans)
@@ -2625,7 +2646,7 @@ func cmdPlan(_ args: [String]) throws -> Int32 {
     if parsed.has("--json") {
         try printJSON(plans)
     } else {
-        try printPlanHeader(db: db, config: config, date: date)
+        try printPlanHeader(db: db, config: config, date: date, siteName: siteName)
         printPlanTable(plans)
     }
     return 0
@@ -2674,8 +2695,8 @@ private func parsePlanDate(_ raw: String) -> Date? {
 /// time) and the Moon's phase. PRIVACY: never prints the site's actual
 /// latitude/longitude -- only uses them to derive the times/phase shown
 /// (`config show` is the one place those coordinates may appear).
-private func printPlanHeader(db: Database, config: AstroConfig, date: Date?) throws {
-    let site = try Planner.resolveSite(db: db, config: config)
+private func printPlanHeader(db: Database, config: AstroConfig, date: Date?, siteName: String? = nil) throws {
+    let site = try Planner.resolveSite(db: db, config: config, siteName: siteName)
     guard let lat = site.latitudeDeg, let lon = site.longitudeDeg else {
         print("Ma este: helyszín ismeretlen (nincs SITELAT/SITELONG a könyvtárban, és a config sem ad meg helyszínt)")
         return
@@ -2754,6 +2775,8 @@ func cmdNightInfo(_ args: [String]) throws -> Int32 {
         FlagSpec("--root", takesValue: true),
         FlagSpec("--date", takesValue: true),
         FlagSpec("--json", takesValue: false),
+        // R11-T15/F16: same `--site <name>` convention `plan` uses.
+        FlagSpec("--site", takesValue: true),
     ]
     let parsed = try ArgParser.parse(args, specs: specs)
 
@@ -2770,7 +2793,7 @@ func cmdNightInfo(_ args: [String]) throws -> Int32 {
     let db = try makeDatabase(config: config)
     try hintIfEmpty(db)
 
-    let site = try Planner.resolveSite(db: db, config: config)
+    let site = try Planner.resolveSite(db: db, config: config, siteName: parsed.value("--site"))
     let info = Planner.nightInfo(date: date, site: site)
 
     if parsed.has("--json") {

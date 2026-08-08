@@ -485,3 +485,158 @@ private struct PlannerFixture {
     #expect(advice.skyState == .narrowband)
     #expect(plan.verdict == "ma jó", "verdict=\(plan.verdict)")
 }
+
+// MARK: - Named multi-site resolution (R11-T15/F16)
+
+@Test func resolveSitePicksNamedSiteFromConfiguredList() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    var config = fixture.config
+    config.sites = [
+        SiteProfile(name: "Otthon", latitudeDeg: 47.5, longitudeDeg: 19.0, isDefault: true),
+        SiteProfile(name: "Hegy", latitudeDeg: 46.0, longitudeDeg: 18.0),
+    ]
+
+    let site = try Planner.resolveSite(db: fixture.db, config: config, siteName: "Hegy")
+    #expect(site.latitudeDeg == 46.0)
+    #expect(site.longitudeDeg == 18.0)
+}
+
+@Test func resolveSiteMatchesNameCaseInsensitively() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    var config = fixture.config
+    config.sites = [SiteProfile(name: "Hegy", latitudeDeg: 46.0, longitudeDeg: 18.0)]
+
+    let site = try Planner.resolveSite(db: fixture.db, config: config, siteName: "HEGY")
+    #expect(site.latitudeDeg == 46.0)
+}
+
+@Test func resolveSiteDefaultsToFlaggedDefaultWhenNoNameGiven() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    var config = fixture.config
+    config.sites = [
+        SiteProfile(name: "Otthon", latitudeDeg: 47.5, longitudeDeg: 19.0, isDefault: true),
+        SiteProfile(name: "Hegy", latitudeDeg: 46.0, longitudeDeg: 18.0),
+    ]
+
+    let site = try Planner.resolveSite(db: fixture.db, config: config)
+    #expect(site.latitudeDeg == 47.5)
+    #expect(site.longitudeDeg == 19.0)
+}
+
+@Test func resolveSiteDefaultsToSoleSiteWhenOnlyOneConfigured() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    var config = fixture.config
+    config.sites = [SiteProfile(name: "Csak Ez", latitudeDeg: 45.0, longitudeDeg: 20.0)]
+
+    let site = try Planner.resolveSite(db: fixture.db, config: config)
+    #expect(site.latitudeDeg == 45.0)
+    #expect(site.longitudeDeg == 20.0)
+}
+
+@Test func resolveSiteThrowsWithConfiguredNamesForUnknownSiteName() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    var config = fixture.config
+    config.sites = [
+        SiteProfile(name: "Otthon", latitudeDeg: 47.5, longitudeDeg: 19.0, isDefault: true),
+        SiteProfile(name: "Hegy", latitudeDeg: 46.0, longitudeDeg: 18.0),
+    ]
+
+    do {
+        _ = try Planner.resolveSite(db: fixture.db, config: config, siteName: "Nemletezo")
+        Issue.record("expected AstroError.invalidInput to be thrown")
+    } catch AstroError.invalidInput(let message) {
+        #expect(message.contains("Otthon"))
+        #expect(message.contains("Hegy"))
+    }
+}
+
+@Test func resolveSiteThrowsWhenSiteNameGivenButNoSitesConfigured() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+
+    #expect(throws: AstroError.self) {
+        _ = try Planner.resolveSite(db: fixture.db, config: fixture.config, siteName: "Bármi")
+    }
+}
+
+/// `config.sites` (once non-empty) is authoritative over the legacy
+/// `config.site` pair entirely -- even though `site` still carries an
+/// explicit coordinate, the configured list wins.
+@Test func resolveSiteIgnoresLegacySiteRuleWhenSitesConfigured() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    var config = fixture.config
+    config.site = SiteRule(latitudeDeg: 10.0, longitudeDeg: 20.0)
+    config.sites = [SiteProfile(name: "Otthon", latitudeDeg: 47.5, longitudeDeg: 19.0, isDefault: true)]
+
+    let site = try Planner.resolveSite(db: fixture.db, config: config)
+    #expect(site.latitudeDeg == 47.5)
+    #expect(site.longitudeDeg == 19.0)
+}
+
+/// `config.sites` empty (the pre-T15 default) still falls all the way back
+/// to the FITS-median automatika, completely unaffected by this feature.
+@Test func resolveSiteFallsBackToFITSMedianWhenSitesEmptyAndNoSiteNameGiven() throws {
+    let fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    try fixture.addLight(target: "T_Median", extraCards: ["SITELAT": "47.4", "SITELONG": "19.0"])
+
+    let site = try Planner.resolveSite(db: fixture.db, config: fixture.config)
+    #expect(site.latitudeDeg == 47.4)
+    #expect(site.longitudeDeg == 19.0)
+}
+
+/// `plan(...)`'s own `siteName` plumbing: the SAME target's plan differs
+/// (visibility-wise) depending on which configured site is selected -- proof
+/// the whole `Planner.plan` pipeline (not just `resolveSite` in isolation)
+/// actually uses the chosen site's coordinates for its altitude sweep.
+@Test func planUsesNamedSiteCoordinatesInsteadOfTheDefault() throws {
+    var fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    fixture.config.sites = [
+        SiteProfile(name: "Otthon", latitudeDeg: 47.5, longitudeDeg: 19.0, isDefault: true),
+        // A far-southern site sharing the same longitude -- the very same
+        // target/night that transits near zenith from Otthon barely clears
+        // the horizon (if at all) from here.
+        SiteProfile(name: "Del", latitudeDeg: -40.0, longitudeDeg: 19.0),
+    ]
+    // Same RA/Dec/date `plannerComputesHighMaxAltitudeWhenDeclinationMatchesLatitude`
+    // uses for a clean "transits at zenith from Otthon" fixture.
+    try fixture.addLight(target: "T_SitePick", extraCards: ["CRVAL1": "350.0", "CRVAL2": "47.5"])
+
+    let defaultPlans = try Planner.plan(date: utc(2026, 8, 10), db: fixture.db, config: fixture.config)
+    let defaultPlan = try #require(defaultPlans.first { $0.target == "T_SitePick" })
+    #expect((defaultPlan.maxAltitudeDeg ?? 0) > 80)
+
+    let southPlans = try Planner.plan(date: utc(2026, 8, 10), siteName: "Del", db: fixture.db, config: fixture.config)
+    let southPlan = try #require(southPlans.first { $0.target == "T_SitePick" })
+    #expect((southPlan.maxAltitudeDeg ?? 90) < 15)
+}
+
+/// `month(...)`'s own `siteName` plumbing -- the dark-hours/best-targets
+/// calendar also switches to the named site's coordinates, not silently
+/// staying on the default.
+@Test func monthUsesNamedSiteCoordinatesInsteadOfTheDefault() throws {
+    var fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    fixture.config.sites = [
+        SiteProfile(name: "Otthon", latitudeDeg: 47.5, longitudeDeg: 19.0, isDefault: true),
+        SiteProfile(name: "Del", latitudeDeg: -40.0, longitudeDeg: 19.0),
+    ]
+    try fixture.addLight(target: "T_MonthSitePick", extraCards: ["CRVAL1": "350.0", "CRVAL2": "47.5"])
+
+    let defaultSummaries = try Planner.month(from: utc(2026, 8, 10), nights: 1, db: fixture.db, config: fixture.config)
+    let defaultBest = try #require(defaultSummaries.first)
+    #expect(defaultBest.bestTargets.contains { $0.target == "T_MonthSitePick" })
+
+    let southSummaries = try Planner.month(
+        from: utc(2026, 8, 10), nights: 1, siteName: "Del", db: fixture.db, config: fixture.config
+    )
+    let southBest = try #require(southSummaries.first)
+    #expect(!southBest.bestTargets.contains { $0.target == "T_MonthSitePick" })
+}

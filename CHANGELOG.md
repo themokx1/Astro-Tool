@@ -520,6 +520,59 @@ T3 — Settings csomag után.
     hogy a lap akkor is mutassa az eredményt, ha ebben a munkamenetben csak
     integritás-ellenőrzés futott, teljes audit nem. Záró toast: "Integritás:
     N fájl rendben, M eltérés".
+- **Több helyszín — site-profilok (R11-T15/F16)**: eddig egyetlen (opcionális)
+  lat/lon pár volt a Tervező helyszíne (`config.site`, vagy annak hiányában a
+  könyvtár SITELAT/SITELONG mediánja) — mostantól **név szerint** több
+  helyszín is konfigurálható, és a Tervező/Naptár/Felfedezés/session-böngésző
+  mind tudja, melyik session melyik helyszínen készült.
+  - **Core**: új `AstroConfig.sites: [SiteProfile]` (`name`/`latitudeDeg`/
+    `longitudeDeg`/`isDefault`) a meglévő `site: SiteRule` mellett.
+    VISSZAFELÉ KOMPATIBILIS: egy régi, csak `site`-ot kitöltő config.json
+    egyelemű `sites` listává értelmeződik dekódoláskor ("Alapértelmezett"
+    névvel, `isDefault: true`) — memóriában, a fájl NEM íródik át
+    automatikusan; ha mindkét kulcs jelen van, az explicit `sites` az
+    irányadó (nem összefésülve a `site`-tal); ha egyik sincs, a régi
+    FITS-medián automatika változatlan. `SiteProfile.defaultSite(in:)`:
+    az `isDefault` jelölésű, vagy — hiányában — az egyetlen/első elem.
+    Új `SiteResolver` (tiszta függvény): egy session SITELAT/SITELONG
+    mediánjához a legközelebbi konfigurált site-ot rendeli (haversine,
+    50 km küszöb), felülbírálva a session-szintű `site:<név>` taggel (a
+    meglévő session-tag rendszerrel, `GoalTag`-hez hasonló lezser
+    parse-olással) — 50 km fölött vagy koordináta/tag nélkül nincs
+    hozzárendelés. `Planner.resolveSite`/`plan`/`month` új opcionális
+    `siteName` paramétert kapott: ha `config.sites` nem üres, az az
+    irányadó (`siteName` egy konkrét nevet választ ki, hiánya az
+    alapértelmezettet), ismeretlen névre `AstroError.invalidInput` a
+    konfigurált nevek felsorolásával; üres `sites` esetén a régi
+    `site`/FITS-medián útvonal fut, változatlanul. `NightsQueries.
+    allNights` additív `NightRow.site` mezőt kapott (a session hozzárendelt
+    site-neve, vagy `nil`). Teszt (config-dekódolás mind a 4 kombinációra,
+    `SiteResolver` haversine/tag-felülbírálás/küszöb, `Planner`
+    névszerinti/alapértelmezett/hiba-eset, `NightsQueries` hozzárendelés).
+  - **CLI**: `plan --site <név>` (napi terv ÉS `--month`), `night-info
+    --site <név>` — ismeretlen névre exit 1 a konfigurált nevek
+    felsorolásával. `config show` új "Helyszínek (sites)" szekció
+    (név, koordináta, `[alapértelmezett]` jelölés — ugyanaz a PRIVACY
+    kivétel, mint a meglévő `site` szekciónál).
+  - **App**: Settings ▸ Helyszín fül átalakítva — a mód-picker
+    (Automatikus/Kézi) megmaradt, "Kézi" módban lista-szerkesztő (név +
+    lat + lon soronként, csillag-jelölő az alapértelmezetthez, "+ Új
+    helyszín", "Beillesztés a vágólapról" soronként, törlés); a T3-as
+    fülszintű reset/dirty-jelzés az új listás formával is működik. Mentés:
+    "Automatikus" módban `sites`+`site` is üresre ürül; "Kézi" módban
+    `sites` írja a listát, `site` az alapértelmezett site koordinátáit
+    tükrözi (hogy egy régebbi CLI-build is működjön ugyanazon a
+    config.json-on). `TonightPage` tetején új helyszín-Picker a
+    szegmens-picker mellett — CSAK akkor jelenik meg, ha 1-nél több site
+    van konfigurálva; a választás perzisztens (`UserDefaults`,
+    `AppState.selectedSiteName`) és a Ma este csempék/planTable, a Naptár
+    és a Felfedezés mind az így kiválasztott site-ra számolnak (egy
+    törölt/érvénytelen mentett választás csendben visszaesik az
+    alapértelmezettre, sosem dob hibát a háttér-betöltésben). `NightsPage`
+    opcionális "Helyszín" oszlop (csak 1-nél több site esetén, a 10-oszlopos
+    `Table`-korlát alatt maradva egy külön nem-feltételes/feltételes
+    oszloplista-párral, elkerülve a `TableColumnBuilder` feltételes ágának
+    macOS 14.4+ korlátozását).
 
 ### Changed
 

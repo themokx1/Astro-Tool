@@ -86,6 +86,21 @@ public struct NightRow: Codable, Sendable, Equatable {
     /// `nil` here) -- a single NIGHT has no goal of its own, only the whole
     /// TARGET does (`TargetPlan.filterGoals`).
     public var filterBreakdown: [FilterIntegration]
+    /// R11-T15/F16: this session's resolved `SiteProfile.name`, via
+    /// `SiteResolver.resolve` (an explicit `site:<name>` tag on the session
+    /// wins outright; otherwise the nearest configured site to the
+    /// session's own median `SITELAT`/`SITELONG`, within 50 km). `nil`
+    /// whenever `config.sites` is empty (no multi-site config at all -- the
+    /// pre-T15 default, same "FITS-median automatika" stance the rest of
+    /// this feature takes), the session has no resolvable coordinate AND no
+    /// tag override, or nothing configured is close enough. Additive --
+    /// absent in JSON produced before this field existed, decodes to `nil`
+    /// there via the ordinary `Optional` decode-if-present the synthesized
+    /// `Codable` conformance already gives every other `nil`-by-default
+    /// field on this type. `NightsPage`'s optional "Helyszín" column (shown
+    /// only once more than one site is configured) is this field's only
+    /// consumer today.
+    public var site: String?
 
     public init(
         target: String,
@@ -104,7 +119,8 @@ public struct NightRow: Codable, Sendable, Equatable {
         hasConflict: Bool = false,
         isExcludedFromTotals: Bool = false,
         tags: [String] = [],
-        filterBreakdown: [FilterIntegration] = []
+        filterBreakdown: [FilterIntegration] = [],
+        site: String? = nil
     ) {
         self.target = target
         self.displayName = displayName
@@ -123,6 +139,7 @@ public struct NightRow: Codable, Sendable, Equatable {
         self.isExcludedFromTotals = isExcludedFromTotals
         self.tags = tags
         self.filterBreakdown = filterBreakdown
+        self.site = site
     }
 }
 
@@ -153,6 +170,26 @@ public enum NightsQueries {
     ) throws -> [NightRow] {
         let targets = Set(try db.allSessionPairs().map { $0.target }).sorted()
 
+        // R11-T15/F16: `NightRow.site` -- only ever computed when at least
+        // one site is configured (an empty `config.sites` leaves every row's
+        // `site` `nil`, same "FITS-median automatika, nincs site-lista"
+        // stance the rest of this feature takes). One upfront pass over
+        // every usable session light in the whole library, grouped by
+        // (target, date), rather than a per-session `db.allFiles` query --
+        // `SessionStatsQueries.sessions`/`SessionQuality.summaries` already
+        // establish that "one full-library pass beats N per-session ones"
+        // shape for this same loop.
+        var sessionLightsByKey: [SiteSessionKey: [FileRecord]] = [:]
+        var siteMetaByFileID: [Int64: FITSMetaRecord] = [:]
+        if !config.sites.isEmpty {
+            let siteLights = try db.allFiles(includeMissing: false).filter { $0.area == .sessions && $0.role == .light }
+            for file in siteLights {
+                guard let fileTarget = file.target, let fileDate = file.sessionDate else { continue }
+                sessionLightsByKey[SiteSessionKey(target: fileTarget, date: fileDate), default: []].append(file)
+            }
+            siteMetaByFileID = try db.fitsMetaBatch(fileIDs: siteLights.compactMap(\.id))
+        }
+
         var rows: [(row: NightRow, sortDate: String)] = []
         for target in targets {
             let sessions = try SessionStatsQueries.sessions(target: target, db: db, config: config)
@@ -181,6 +218,18 @@ public enum NightsQueries {
                     db: db, config: config, target: target, date: session.dateRaw
                 )
 
+                var resolvedSiteName: String?
+                if !config.sites.isEmpty {
+                    let sessionLights = sessionLightsByKey[SiteSessionKey(target: target, date: session.dateRaw)] ?? []
+                    let median = TargetCoordinates.medianSite(files: sessionLights, meta: siteMetaByFileID)
+                    resolvedSiteName = SiteResolver.resolve(
+                        sessionTags: session.tags,
+                        medianLat: median.latitudeDeg,
+                        medianLon: median.longitudeDeg,
+                        sites: config.sites
+                    )?.name
+                }
+
                 let row = NightRow(
                     target: target,
                     displayName: displayName,
@@ -198,7 +247,8 @@ public enum NightsQueries {
                     hasConflict: session.hasConflict,
                     isExcludedFromTotals: session.isExcludedFromTotals,
                     tags: session.tags,
-                    filterBreakdown: filterBreakdown
+                    filterBreakdown: filterBreakdown,
+                    site: resolvedSiteName
                 )
                 // Falls back to the raw text itself when it doesn't parse as
                 // a date at all, so the sort below still has SOME stable key
@@ -215,6 +265,17 @@ public enum NightsQueries {
             return lhs.row.date < rhs.row.date
         }
         return rows.map(\.row)
+    }
+
+    // MARK: - Site assignment (R11-T15/F16)
+
+    /// Groups a full-library light-frame pass by (target, raw session date)
+    /// -- the key `sessionLightsByKey` above is bucketed under, so
+    /// `NightRow.site`'s per-session median-coordinate lookup is a plain
+    /// dictionary read instead of a per-session filesystem/DB round trip.
+    private struct SiteSessionKey: Hashable {
+        let target: String
+        let date: String
     }
 
     // MARK: - Year/month filter

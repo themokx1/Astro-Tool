@@ -23,7 +23,7 @@
 - [x] 3. Szintetizált vélemény + spec + UI-terv (lásd lent)
 - [x] 4. Végrehajtás — A-hullám (konzisztencia): T1 [x] T2 [x] T3 [x] T4 [x]
 - [ ] 5. Végrehajtás — B-hullám (fő funkciók): T5 [x] T6 [x] T7 [x] T8 [x] T9 [x] T10 [x] T11 [x] T12 [x] T13 [ ]
-- [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [x] T15 [ ] T16 [ ] T17 [ ]
+- [ ] 6. Végrehajtás — C-hullám (pro funkciók): T14 [x] T15 [x] T16 [ ] T17 [ ]
 - [ ] 7. Záró review-kör (kód-review + UX-sweep + persona-újranézés), javítások
 - [ ] 8. Release v0.13.0
 
@@ -546,3 +546,22 @@ Minden task: implementáció + tesztek + `swift test` pipefail-lel + CHANGELOG
   audit nem. 25 új teszt (16 `FixityVerifierTests` + 4 `DatabaseTests` +
   5 `CLISmokeTests`), `swift test` zöld (1211). Következő: T15 (Több
   helyszín).
+- 2026-08-08: T15 (Több helyszín) kész — F16 teljes: core `AstroConfig.
+  sites: [SiteProfile]` (visszafelé kompatibilis dekódolással a régi
+  `site`-ból), új `SiteResolver` (haversine + `site:<név>` session-tag
+  felülbírálás), `Planner.resolveSite`/`plan`/`month` `siteName` paraméter
+  (`config.sites` az irányadó, ha nem üres), `NightsQueries.allNights`
+  additív `NightRow.site` mező. CLI `plan --site`/`night-info --site` +
+  `config show` "Helyszínek" szekció. App: Settings ▸ Helyszín lista-
+  szerkesztő (mód-picker megmaradt), `TonightPage` helyszín-Picker (csak
+  >1 site esetén, `UserDefaults`-perzisztens, Ma este/Naptár/Felfedezés
+  mind erre számol), `NightsPage` opcionális "Helyszín" oszlop. 79 új teszt
+  (16 `ConfigTests` + 18 `SiteResolverTests` + 9 `PlannerTests` +
+  6 `NightsQueriesTests` + 6 `CLISmokeTests`, valamint a meglévő
+  `PlannerTests`/`NightsQueriesTests` fájlokban módosított fixture-ök),
+  `swift test` zöld (1263). Tudatos eltérés: a helyszín-lista-editor
+  soronkénti "Beillesztés a vágólapról" gombja NEM egy külön "kijelölt sor"
+  állapotot követ (ahogy a specifikáció szó szerint sugallja), hanem
+  soronként saját gomb — ugyanaz a funkció (adott sor koordinátáinak
+  vágólapról töltése), egyszerűbb állapotkezeléssel. Következő: T16
+  (Kalibráció v2 + AstroBin ID).

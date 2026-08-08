@@ -38,18 +38,23 @@ struct TonightPage: View {
         @Bindable var appState = appState
 
         VStack(alignment: .leading, spacing: 12) {
-            // R11-T13/F13: binds straight to `appState.tonightSegment`,
-            // which is itself now DERIVED from (and writes straight back to)
-            // `currentPage` -- see that property's own doc comment. No
-            // separate binding needed anymore to also keep `currentPage` in
-            // sync (N8, R9 round 3's original fix for this).
-            Picker("", selection: $appState.tonightSegment) {
-                Text("Ma este").tag(AppState.TonightSegment.tonight)
-                Text("Következő 30 éjszaka").tag(AppState.TonightSegment.calendar)
+            HStack(spacing: 16) {
+                // R11-T13/F13: binds straight to `appState.tonightSegment`,
+                // which is itself now DERIVED from (and writes straight back
+                // to) `currentPage` -- see that property's own doc comment.
+                // No separate binding needed anymore to also keep
+                // `currentPage` in sync (N8, R9 round 3's original fix for
+                // this).
+                Picker("", selection: $appState.tonightSegment) {
+                    Text("Ma este").tag(AppState.TonightSegment.tonight)
+                    Text("Következő 30 éjszaka").tag(AppState.TonightSegment.calendar)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 420)
+
+                sitePickerIfNeeded
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 420)
 
             if let lastError = appState.lastError {
                 Text(lastError).foregroundStyle(.red)
@@ -96,6 +101,52 @@ struct TonightPage: View {
                 }
             }
         }
+    }
+
+    // MARK: - Site picker (R11-T15/F16)
+
+    /// Only appears once more than one site is configured -- a single (or
+    /// zero) configured site has nothing to disambiguate, so the picker
+    /// would just be permanently stuck on its one option. Selection is
+    /// always a concrete site NAME (never `nil`): `sitePickerSelection`'s
+    /// getter falls back to the configured default whenever `appState.
+    /// selectedSiteName` is unset or no longer names a real site (a
+    /// deleted-mid-session site, same forgiving stance `AppState.
+    /// effectiveSiteName` itself documents), so the control never shows a
+    /// blank/invalid selection.
+    @ViewBuilder
+    private var sitePickerIfNeeded: some View {
+        if appState.config.sites.count > 1 {
+            Picker("Helyszín", selection: sitePickerSelection) {
+                ForEach(appState.config.sites) { site in
+                    Text(site.name).tag(site.name)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(maxWidth: 240)
+        }
+    }
+
+    private var sitePickerSelection: Binding<String> {
+        Binding(
+            get: {
+                appState.effectiveSiteName ?? SiteProfile.defaultSite(in: appState.config.sites)?.name ?? ""
+            },
+            set: { newName in
+                appState.selectedSiteName = newName
+                // Every dataset that plans against a site recomputes --
+                // `plan`/`resolvedSite`/`nightInfo` always (this page's own
+                // tiles/table), `monthPlan`/`discovery` only if they were
+                // ever loaded this session (same "refresh what's already on
+                // screen, don't eagerly load what wasn't" stance
+                // `LocationSettingsView.save()` already takes for these same
+                // two datasets).
+                appState.loadPlan(date: appState.planDate)
+                if appState.monthPlan != nil { appState.loadMonthPlan() }
+                if appState.discovery != nil { appState.loadDiscovery() }
+                appState.loadWeather()
+            }
+        )
     }
 
     // MARK: - "Ma este" segment

@@ -163,6 +163,8 @@ final class AppState: @unchecked Sendable {
     private static let autoScanOnMountKey = "autoScanOnMount"
     /// R11-T12/F12: `firstStepsCardDismissed`'s `UserDefaults` key.
     private static let firstStepsCardDismissedKey = "firstStepsCardDismissed"
+    /// R11-T15/F16: `selectedSiteName`'s `UserDefaults` key.
+    private static let selectedSiteNameKey = "selectedSiteName"
 
     /// App-lifetime singleton reference, set from `init()`. The menu bar
     /// (`Views/Commands.swift`) needs to call into `AppState` from `.commands`
@@ -696,6 +698,41 @@ final class AppState: @unchecked Sendable {
     /// it in manually. `config.site` now only ever holds what a user
     /// actually saved from the Helyszín tab (or `SiteRule()`, i.e. "derive
     /// it"); this property holds today's actually-in-effect coordinate.
+    /// R11-T15/F16: `TonightPage`'s site-Picker persisted choice (shown only
+    /// once `config.sites.count > 1`) -- `nil` means "use the configured
+    /// default site" (`SiteProfile.defaultSite(in:)`). Raw `UserDefaults`
+    /// storage, same "app-behavior preference, not library-shape config"
+    /// reasoning `autoScanOnMount` documents -- this is a per-machine UI
+    /// choice, not something that belongs in `config.json`/the CLI's own
+    /// `--site` flag (which always defaults to the configured default site,
+    /// with no memory of any previous choice).
+    var selectedSiteName: String? {
+        get { UserDefaults.standard.string(forKey: Self.selectedSiteNameKey) }
+        set {
+            if let newValue {
+                UserDefaults.standard.set(newValue, forKey: Self.selectedSiteNameKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.selectedSiteNameKey)
+            }
+        }
+    }
+
+    /// `selectedSiteName`, but `nil` unless it actually names one of
+    /// `config.sites` right now -- what every planning loader below
+    /// actually passes as `Planner.resolveSite`/`plan`/`month`'s own
+    /// `siteName` argument. Validated here (rather than trusting
+    /// `selectedSiteName` directly) so a site deleted from Settings
+    /// mid-session, or a persisted choice left over from a config that no
+    /// longer defines it, never throws `AstroError.invalidInput` out of a
+    /// background load -- it just silently falls back to the configured
+    /// default site instead, the same forgiving stance the CLI's own
+    /// `--site` flag deliberately does NOT take (there, an unknown name is a
+    /// typo worth a hard error).
+    var effectiveSiteName: String? {
+        guard let name = selectedSiteName, config.sites.contains(where: { $0.name == name }) else { return nil }
+        return name
+    }
+
     var resolvedSite: SiteRule = SiteRule()
 
     /// Tonight's (or `planDate`'s) dark-time/Moon summary
@@ -1943,13 +1980,17 @@ final class AppState: @unchecked Sendable {
         guard let db else { return }
         let cfg = config
         let currentStats = stats
+        // R11-T15/F16: read on the main actor before the background hop --
+        // same "capture, don't touch `self` inside `Task.detached`" shape
+        // `cfg`/`currentStats` above already follow.
+        let siteName = effectiveSiteName
 
         let opID = beginOperation("Felfedezés számítása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let (rows, fov, site) = try await Task.detached(priority: .userInitiated) {
-                    let site = try Planner.resolveSite(db: db, config: cfg)
+                    let site = try Planner.resolveSite(db: db, config: cfg, siteName: siteName)
                     let existing = DiscoveryPlanner.existingDesignations(stats: currentStats)
                     let fov = try FieldGeometry.dominantFOV(db: db, config: cfg)
                     let rows = DiscoveryPlanner.discover(
@@ -1984,14 +2025,15 @@ final class AppState: @unchecked Sendable {
     func loadPlan(date: Date? = nil) {
         guard let db else { return }
         let cfg = config
+        let siteName = effectiveSiteName
 
         let opID = beginOperation("Terv számítása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let (result, resolvedSite, night) = try await Task.detached(priority: .userInitiated) {
-                    let plans = try Planner.plan(date: date, db: db, config: cfg)
-                    let site = try Planner.resolveSite(db: db, config: cfg)
+                    let plans = try Planner.plan(date: date, siteName: siteName, db: db, config: cfg)
+                    let site = try Planner.resolveSite(db: db, config: cfg, siteName: siteName)
                     let night = Planner.nightInfo(date: date, site: site)
                     return (plans, site, night)
                 }.value
@@ -2015,13 +2057,14 @@ final class AppState: @unchecked Sendable {
     func loadMonthPlan() {
         guard let db else { return }
         let cfg = config
+        let siteName = effectiveSiteName
 
         let opID = beginOperation("Havi terv számítása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    try Planner.month(db: db, config: cfg)
+                    try Planner.month(siteName: siteName, db: db, config: cfg)
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.monthPlan = result
@@ -2206,6 +2249,7 @@ final class AppState: @unchecked Sendable {
     func loadDashboardData(date: Date? = nil) {
         guard let db else { return }
         let cfg = config
+        let siteName = effectiveSiteName
 
         let opID = beginOperation("Áttekintés adatok betöltése…")
         currentTask = Task { [weak self] in
@@ -2231,8 +2275,8 @@ final class AppState: @unchecked Sendable {
                             )
                         }
                     }
-                    let plans = try Planner.plan(date: date, db: db, config: cfg)
-                    let site = try Planner.resolveSite(db: db, config: cfg)
+                    let plans = try Planner.plan(date: date, siteName: siteName, db: db, config: cfg)
+                    let site = try Planner.resolveSite(db: db, config: cfg, siteName: siteName)
                     let night = Planner.nightInfo(date: date, site: site)
                     let projects = try ProjectStatusQueries.projects(db: db, config: cfg)
                     let cleanup = try CleanupReport.build(db: db, config: cfg)
@@ -2432,8 +2476,9 @@ final class AppState: @unchecked Sendable {
                 // éjszakára"), a goal edit must refresh THAT night's plan,
                 // not silently snap the view back to tonight's.
                 let planDate = self.planDate
+                let siteName = self.effectiveSiteName
                 if self.plan != nil, let planResult = try? await Task.detached(priority: .userInitiated, operation: {
-                    try Planner.plan(date: planDate, db: db, config: cfg)
+                    try Planner.plan(date: planDate, siteName: siteName, db: db, config: cfg)
                 }).value {
                     self.plan = planResult
                 }
@@ -2563,8 +2608,9 @@ final class AppState: @unchecked Sendable {
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 await self.reloadStatsAfterTagChange(db: db, config: cfg, target: target)
                 let planDate = self.planDate
+                let siteName = self.effectiveSiteName
                 if self.plan != nil, let planResult = try? await Task.detached(priority: .userInitiated, operation: {
-                    try Planner.plan(date: planDate, db: db, config: cfg)
+                    try Planner.plan(date: planDate, siteName: siteName, db: db, config: cfg)
                 }).value {
                     self.plan = planResult
                 }
@@ -2731,6 +2777,7 @@ final class AppState: @unchecked Sendable {
     func loadTargetDetail(target: String) {
         guard let db else { return }
         let cfg = config
+        let siteName = effectiveSiteName
         targetCoordinateInfo = nil
         targetSetupDescriptors = []
         targetSessionCalibrations = []
@@ -2778,8 +2825,8 @@ final class AppState: @unchecked Sendable {
                         stackGroups = []
                     }
                     let projects = try ProjectStatusQueries.projects(db: db, config: cfg)
-                    let plan = try Planner.plan(db: db, config: cfg)
-                    let site = try Planner.resolveSite(db: db, config: cfg)
+                    let plan = try Planner.plan(siteName: siteName, db: db, config: cfg)
+                    let site = try Planner.resolveSite(db: db, config: cfg, siteName: siteName)
                     let calibHealth = try CalibHealth.report(db: db, config: cfg)
                     let coordInfo: TargetCoordinateInfo?
                     if let cachedCoordInfo {

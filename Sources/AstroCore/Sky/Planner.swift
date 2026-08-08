@@ -227,17 +227,63 @@ public enum Planner {
     /// the embedded catalog instead of the library.
     private typealias Verdict = SkyVerdict
 
-    /// Resolves the effective observing site: `config.site`'s explicit
-    /// values win; any `nil` component falls back to the median
-    /// `SITELAT`/`SITELONG` across every scanned session light. Exposed
-    /// separately from `plan(...)` so callers with a long-lived
-    /// `AstroConfig` (the App) can cache the resolved value back into their
-    /// in-memory config instance without ever writing it to disk.
-    public static func resolveSite(db: Database, config: AstroConfig) throws -> SiteRule {
+    /// Resolves the effective observing site.
+    ///
+    /// R11-T15/F16: when `config.sites` is non-empty, THAT list is
+    /// authoritative and `siteName` selects which entry -- `nil` (the
+    /// default) picks `SiteProfile.defaultSite(in:)`; an explicit name picks
+    /// that exact entry (case-insensitive), throwing `AstroError.
+    /// invalidInput` with the full list of configured names when it doesn't
+    /// match one (the CLI's `plan --site`/`night-info --site` surface this
+    /// directly; the app validates its own site-Picker selection against
+    /// `config.sites` before ever passing a name here, so it never hits this
+    /// branch with a stale/deleted name).
+    ///
+    /// `config.sites` empty is the pre-T15 path, completely unchanged:
+    /// `config.site`'s explicit values win; any `nil` component falls back
+    /// to the median `SITELAT`/`SITELONG` across every scanned session
+    /// light. Exposed separately from `plan(...)` so callers with a
+    /// long-lived `AstroConfig` (the App) can cache the resolved value back
+    /// into their in-memory config instance without ever writing it to disk.
+    public static func resolveSite(db: Database, config: AstroConfig, siteName: String? = nil) throws -> SiteRule {
+        if let configured = try resolveConfiguredSite(config: config, siteName: siteName) {
+            return configured
+        }
         let files = try db.allFiles(includeMissing: false)
         let lights = files.filter { $0.area == .sessions && $0.role == .light }
         let meta = try metaByFileID(for: lights, db: db)
         return TargetCoordinates.resolveSite(files: lights, meta: meta, config: config.site)
+    }
+
+    /// The `config.sites`-driven half of `resolveSite(db:config:siteName:)`,
+    /// factored out (DB-free) so `plan(...)`/`month(...)` can reuse it
+    /// against a `db.allFiles` pass they already had to make for their own
+    /// per-target coordinate work, instead of `resolveSite` repeating that
+    /// same query redundantly whenever `config.sites` is empty. `nil`
+    /// return means "`config.sites` isn't authoritative here -- fall back
+    /// to `config.site`/the FITS-median instead" (the only case this
+    /// itself never throws): every other case either returns a resolved
+    /// `SiteRule` or throws `AstroError.invalidInput` (an explicit
+    /// `siteName` that doesn't match anything configured, including "not a
+    /// single site is configured at all").
+    private static func resolveConfiguredSite(config: AstroConfig, siteName: String?) throws -> SiteRule? {
+        guard !config.sites.isEmpty else {
+            if let siteName {
+                throw AstroError.invalidInput(
+                    "nincs konfigurált helyszín (\"\(siteName)\" nem választható) -- Beállítások ▸ Helyszín, vagy config.json \"sites\" tömb"
+                )
+            }
+            return nil
+        }
+        if let siteName {
+            guard let match = config.sites.first(where: { $0.name.caseInsensitiveCompare(siteName) == .orderedSame }) else {
+                let names = config.sites.map(\.name).joined(separator: ", ")
+                throw AstroError.invalidInput("ismeretlen helyszín: \"\(siteName)\" -- elérhető helyszínek: \(names)")
+            }
+            return SiteRule(latitudeDeg: match.latitudeDeg, longitudeDeg: match.longitudeDeg)
+        }
+        guard let def = SiteProfile.defaultSite(in: config.sites) else { return nil }
+        return SiteRule(latitudeDeg: def.latitudeDeg, longitudeDeg: def.longitudeDeg)
     }
 
     /// Tonight's (or `date`'s) dark-time/Moon summary for the "Ma este" tile
@@ -349,6 +395,7 @@ public enum Planner {
         from date: Date? = nil,
         nights: Int = 30,
         minAltitudeDeg: Double = 30,
+        siteName: String? = nil,
         db: Database,
         config: AstroConfig
     ) throws -> [NightSummary] {
@@ -365,7 +412,17 @@ public enum Planner {
         let allFiles = try db.allFiles(includeMissing: false)
         let allLights = allFiles.filter { $0.area == .sessions && $0.role == .light }
         let allMeta = try metaByFileID(for: allLights, db: db)
-        let site = TargetCoordinates.resolveSite(files: allLights, meta: allMeta, config: config.site)
+        // R11-T15/F16: `config.sites`-aware priority (`resolveConfiguredSite`,
+        // shared with `resolveSite(db:config:siteName:)`/`plan(...)`) rather
+        // than calling `TargetCoordinates.resolveSite` unconditionally --
+        // otherwise a selected named site (or even just a configured
+        // DEFAULT site) would be silently ignored here while `plan(...)`/
+        // the app's own tiles correctly used it. Reuses the `allLights`/
+        // `allMeta` this function already fetched for its own per-target
+        // coordinate work instead of letting `resolveSite` redo that same
+        // `db.allFiles` pass whenever `config.sites` turns out to be empty.
+        let site = try resolveConfiguredSite(config: config, siteName: siteName)
+            ?? TargetCoordinates.resolveSite(files: allLights, meta: allMeta, config: config.site)
 
         var targetCoords: [(target: String, raDeg: Double, decDeg: Double)] = []
         if site.latitudeDeg != nil, site.longitudeDeg != nil {
@@ -484,6 +541,7 @@ public enum Planner {
     public static func plan(
         date: Date? = nil,
         minAltitudeDeg: Double = 30,
+        siteName: String? = nil,
         db: Database,
         config: AstroConfig
     ) throws -> [TargetPlan] {
@@ -494,7 +552,10 @@ public enum Planner {
         let allLights = allFiles.filter { $0.area == .sessions && $0.role == .light }
         let allMeta = try metaByFileID(for: allLights, db: db)
 
-        let site = TargetCoordinates.resolveSite(files: allLights, meta: allMeta, config: config.site)
+        // R11-T15/F16: see `month(...)`'s identical comment -- same
+        // `resolveConfiguredSite` reuse, same reason.
+        let site = try resolveConfiguredSite(config: config, siteName: siteName)
+            ?? TargetCoordinates.resolveSite(files: allLights, meta: allMeta, config: config.site)
         let timeZone = TimeZone.current
 
         var night: SunMoon.TwilightResult?

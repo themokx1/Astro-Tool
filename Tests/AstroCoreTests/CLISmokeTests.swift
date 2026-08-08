@@ -2797,6 +2797,118 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
     #expect(result.exitCode == 1)
 }
 
+// MARK: - plan/night-info --site (R11-T15/F16)
+
+private func writeSitesConfig(root: URL, sitesJSON: String) throws {
+    let toolDir = root.appendingPathComponent(".astro_tool", isDirectory: true)
+    try FileManager.default.createDirectory(at: toolDir, withIntermediateDirectories: true)
+    let configURL = toolDir.appendingPathComponent("config.json", isDirectory: false)
+    try Data(sitesJSON.utf8).write(to: configURL)
+}
+
+private let twoSitesConfigJSON = """
+{
+  "sites": [
+    { "name": "Otthon", "latitudeDeg": 47.5, "longitudeDeg": 19.0, "isDefault": true },
+    { "name": "Del", "latitudeDeg": -40.0, "longitudeDeg": 19.0, "isDefault": false }
+  ]
+}
+"""
+
+@Test func planSiteFlagSelectsNamedSiteOverDefault() throws {
+    let root = try makeTempRoot("plan-site-flag")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
+    try writePlanFITS(
+        "sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root,
+        crval1: 10.6847, crval2: 41.2687, dateObs: "2026-08-01T22:00:00"
+    )
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let defaultResult = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--json"])
+    #expect(defaultResult.exitCode == 0, "stderr: \(defaultResult.stderr)")
+    let defaultPlan = try #require(try jsonItems(defaultResult.stdout)?.first { $0["target"] as? String == "M31_Andromeda" })
+    let defaultAlt = try #require(defaultPlan["max_altitude_deg"] as? Double)
+
+    // "Del" is a far-southern site sharing the same longitude -- the very
+    // same target/night gives a dramatically lower max altitude from there.
+    let southResult = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--site", "Del", "--json"])
+    #expect(southResult.exitCode == 0, "stderr: \(southResult.stderr)")
+    let southPlan = try #require(try jsonItems(southResult.stdout)?.first { $0["target"] as? String == "M31_Andromeda" })
+    let southAlt = try #require(southPlan["max_altitude_deg"] as? Double)
+
+    #expect(abs(defaultAlt - southAlt) > 20)
+}
+
+@Test func planWithUnknownSiteNameExitsWithErrorListingConfiguredNames() throws {
+    let root = try makeTempRoot("plan-site-unknown")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--site", "Nemletezo"])
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("Otthon"))
+    #expect(result.stderr.contains("Del"))
+}
+
+@Test func planMonthSiteFlagSelectsNamedSite() throws {
+    let root = try makeTempRoot("plan-month-site-flag")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["plan", "--root", root.path, "--month", "--nights", "1", "--site", "Del", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+}
+
+@Test func nightInfoSiteFlagSelectsNamedSite() throws {
+    let root = try makeTempRoot("night-info-site-flag")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["night-info", "--root", root.path, "--date", "2026-08-10", "--site", "Del", "--json"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    let json = try #require(try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+    #expect(json["moon_illumination_percent"] != nil)
+}
+
+@Test func nightInfoWithUnknownSiteNameExitsWithError() throws {
+    let root = try makeTempRoot("night-info-site-unknown")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
+
+    let scan = try runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let result = try runCLI(["night-info", "--root", root.path, "--site", "Nemletezo"])
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("Otthon"))
+}
+
+@Test func configShowHumanReadablePrintsConfiguredSitesWithDefaultMarker() throws {
+    let root = try makeTempRoot("config-show-sites")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
+
+    let result = try runCLI(["config", "show", "--root", root.path])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("Helyszínek (sites)"))
+    #expect(result.stdout.contains("Otthon"))
+    #expect(result.stdout.contains("[alapértelmezett]"))
+    #expect(result.stdout.contains("Del"))
+}
+
 // MARK: - projects
 
 private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Double) throws {

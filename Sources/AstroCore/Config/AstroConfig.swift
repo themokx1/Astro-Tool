@@ -334,6 +334,64 @@ public struct WeatherRule: Codable, Equatable, Sendable {
     }
 }
 
+/// R11-T15/F16: one named observing site -- the "több helyszín" (multiple
+/// sites) config unit. Unlike `SiteRule` (a single optional lat/lon pair,
+/// still kept around unchanged for backward compatibility -- see
+/// `AstroConfig.sites`'s own doc comment), every field here is required:
+/// a site with no name or no coordinate isn't a usable entry at all, so
+/// there's nothing sensible to default it to the way `SiteRule`'s `nil`
+/// means "derive it from the library instead".
+public struct SiteProfile: Codable, Equatable, Sendable, Identifiable {
+    public var name: String
+    public var latitudeDeg: Double
+    public var longitudeDeg: Double
+    /// Exactly one entry across a whole `sites` list is expected to carry
+    /// `true` (the Settings list-editor's radio button enforces this) --
+    /// `defaultSite(in:)` is the single place that assumption gets consumed,
+    /// with a defensive fallback for a hand-edited config.json that breaks it.
+    public var isDefault: Bool
+
+    /// `SiteProfile` has no separate database identity -- `name` doubles as
+    /// `Identifiable`'s `id` (site names are the user-facing key everywhere
+    /// else too: the `site:<name>` session tag, `plan --site <name>`), which
+    /// is enough for `ForEach`/list-editor use in the app layer without a
+    /// synthetic UUID nobody else would ever see.
+    public var id: String { name }
+
+    public init(name: String, latitudeDeg: Double, longitudeDeg: Double, isDefault: Bool = false) {
+        self.name = name
+        self.latitudeDeg = latitudeDeg
+        self.longitudeDeg = longitudeDeg
+        self.isDefault = isDefault
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, latitudeDeg, longitudeDeg, isDefault
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.latitudeDeg = try container.decode(Double.self, forKey: .latitudeDeg)
+        self.longitudeDeg = try container.decode(Double.self, forKey: .longitudeDeg)
+        self.isDefault = try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+    }
+
+    /// The site to plan against absent an explicit `--site`/site-Picker
+    /// choice: the entry flagged `isDefault`, falling back to the first
+    /// entry when the list has exactly one (the ticket's own "isDefault
+    /// site (vagy az egyetlen)" rule -- a single-site list trivially IS its
+    /// own default even without the flag set) or, defensively, when a
+    /// hand-edited config.json has several sites with NONE flagged default
+    /// (the Settings list-editor's radio button always keeps exactly one
+    /// `isDefault == true`, but `AstroConfig` is loaded from whatever's
+    /// actually on disk, not just what the app itself ever wrote). `nil`
+    /// only when `sites` itself is empty.
+    public static func defaultSite(in sites: [SiteProfile]) -> SiteProfile? {
+        sites.first(where: \.isDefault) ?? sites.first
+    }
+}
+
 /// R11-T6/F3: Hold-tudatos szűrő-ajánlás config -- which FITS `FILTER`
 /// values count as "narrowband" (Ha/OIII/SII/dual-/tri-band light-pollution
 /// filters) vs. everything else ("broadband", including a plain OSC/DSLR
@@ -389,6 +447,27 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var rating: RatingRule
     public var stats: StatsRule
     public var site: SiteRule
+    /// R11-T15/F16: named multi-site profiles -- when non-empty, this list
+    /// (not `site`/the FITS-median fallback) is authoritative for the
+    /// planner (`Planner.resolveSite`'s own doc comment covers the exact
+    /// priority rule). `[]` (the default) leaves the pre-T15 single-site
+    /// behavior completely untouched: `site`'s explicit coordinate, else the
+    /// library-wide FITS `SITELAT`/`SITELONG` median.
+    ///
+    /// BACKWARD COMPATIBILITY (the ticket's own spec): an old config.json
+    /// that only ever set `site.latitudeDeg`/`site.longitudeDeg` has no
+    /// `"sites"` key at all -- `init(from:)` below synthesizes a one-element
+    /// list from it ("Alapértelmezett", `isDefault: true`) SO THAT existing
+    /// single-site configs immediately work with every `sites`-aware
+    /// feature (the site-Picker, `--site`, `NightsPage`'s Site column). This
+    /// happens ONLY in memory: the on-disk `config.json` is never rewritten
+    /// by this decode step, and a plain Settings "Mentés" from a tab that
+    /// never touches Helyszín leaves the file untouched -- only the Helyszín
+    /// tab's own save (`LocationSettingsView`) writes `sites` explicitly,
+    /// and it always mirrors the chosen default back into `site` too, so an
+    /// older CLI build (which only ever reads `site`, not `sites`) keeps
+    /// working unmodified against a config.json this app saved.
+    public var sites: [SiteProfile]
     public var expose: ExposeRule
     public var weather: WeatherRule
     public var plan: PlanRule
@@ -406,6 +485,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         rating: RatingRule = RatingRule(),
         stats: StatsRule = StatsRule(),
         site: SiteRule = SiteRule(),
+        sites: [SiteProfile] = [],
         expose: ExposeRule = ExposeRule(),
         weather: WeatherRule = WeatherRule(),
         plan: PlanRule = PlanRule()
@@ -422,6 +502,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.rating = rating
         self.stats = stats
         self.site = site
+        self.sites = sites
         self.expose = expose
         self.weather = weather
         self.plan = plan
@@ -429,7 +510,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case rootPath, excludedDirNames, excludedPaths, residuePatterns, residueDirNames, toolOutputDirNames
-        case intentional, wideField, calib, rating, stats, site, expose, weather, plan
+        case intentional, wideField, calib, rating, stats, site, sites, expose, weather, plan
     }
 
     public init(from decoder: any Decoder) throws {
@@ -447,6 +528,20 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.rating = try container.decodeIfPresent(RatingRule.self, forKey: .rating) ?? defaults.rating
         self.stats = try container.decodeIfPresent(StatsRule.self, forKey: .stats) ?? defaults.stats
         self.site = try container.decodeIfPresent(SiteRule.self, forKey: .site) ?? defaults.site
+        // R11-T15/F16: see `sites`'s own doc comment for the full backward-
+        // compatibility rationale -- an explicit `"sites"` key always wins
+        // (covers "only new", "both old and new" -- the new list is treated
+        // as authoritative rather than merged with `site`); missing
+        // entirely, a filled-in legacy `site` synthesizes a one-element
+        // default list; neither present leaves `sites` empty (the FITS-
+        // median automatika keeps working exactly as before T15).
+        if let decodedSites = try container.decodeIfPresent([SiteProfile].self, forKey: .sites) {
+            self.sites = decodedSites
+        } else if let lat = self.site.latitudeDeg, let lon = self.site.longitudeDeg {
+            self.sites = [SiteProfile(name: "Alapértelmezett", latitudeDeg: lat, longitudeDeg: lon, isDefault: true)]
+        } else {
+            self.sites = []
+        }
         self.expose = try container.decodeIfPresent(ExposeRule.self, forKey: .expose) ?? defaults.expose
         self.weather = try container.decodeIfPresent(WeatherRule.self, forKey: .weather) ?? defaults.weather
         self.plan = try container.decodeIfPresent(PlanRule.self, forKey: .plan) ?? defaults.plan

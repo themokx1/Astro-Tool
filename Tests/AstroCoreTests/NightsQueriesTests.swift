@@ -26,7 +26,9 @@ private func insertLight(
     egain: Double? = nil,
     gain: Double? = nil,
     offset: Double? = nil,
-    dateObs: String? = nil
+    dateObs: String? = nil,
+    siteLat: Double? = nil,
+    siteLon: Double? = nil
 ) throws -> Int64 {
     let path = "sessions/\(target)/\(date)/lights/\(name).fit"
     let fileID = try db.upsertFile(
@@ -43,11 +45,21 @@ private func insertLight(
     // "canonical" copy -- same fix `SessionQualityTests`' own
     // `insertRatedLight` applies, for the same reason.
     try db.backfillInode(id: fileID, inode: fileID, nlink: 1)
+    // R11-T15/F16: `SITELAT`/`SITELONG` only ever live in the raw
+    // `header_json` blob (`TargetCoordinates.medianSite`'s own source),
+    // never as a dedicated `FITSMetaRecord` column -- so a site-column test
+    // needs this encoded here rather than passed as one of the named
+    // parameters above.
+    var headerJSON: String?
+    if let siteLat, let siteLon {
+        let cards = ["SITELAT": "\(siteLat)", "SITELONG": "\(siteLon)"]
+        headerJSON = String(data: try JSONEncoder().encode(cards), encoding: .utf8)
+    }
     try db.upsertFITSMeta(
         FITSMetaRecord(
             fileID: fileID, exptime: exptime, gain: gain, offset: offset,
             instrume: instrume, focallen: focallen, filter: filter, dateObs: dateObs,
-            xpixsz: xpixsz, egain: egain
+            xpixsz: xpixsz, egain: egain, headerJSON: headerJSON
         )
     )
     return fileID
@@ -376,4 +388,84 @@ private func insertSensorProfile(
     let rows = try NightsQueries.allNights(db: db, config: AstroConfig())
     let row = try #require(rows.first)
     #expect(row.displayName.hasPrefix("NGC 7000"))
+}
+
+// MARK: - Site assignment (R11-T15/F16)
+
+private let otthon = SiteProfile(name: "Otthon", latitudeDeg: 47.5, longitudeDeg: 19.0, isDefault: true)
+private let hegy = SiteProfile(name: "Hegy", latitudeDeg: 46.0, longitudeDeg: 18.0)
+
+@Test func allNightsLeavesSiteNilWhenNoSitesConfigured() throws {
+    let db = try makeMemoryDB()
+    try insertLight(db: db, target: "T1", date: "2026-01-01", name: "a", exptime: 60, siteLat: 47.5, siteLon: 19.0)
+
+    let rows = try NightsQueries.allNights(db: db, config: AstroConfig())
+    #expect(try #require(rows.first).site == nil)
+}
+
+@Test func allNightsResolvesSiteFromMedianSITELATSITELONG() throws {
+    let db = try makeMemoryDB()
+    var config = AstroConfig()
+    config.sites = [otthon, hegy]
+
+    try insertLight(db: db, target: "T1", date: "2026-01-01", name: "a", exptime: 60, siteLat: 47.51, siteLon: 19.01)
+    try insertLight(db: db, target: "T1", date: "2026-02-01", name: "b", exptime: 60, siteLat: 46.02, siteLon: 18.01)
+
+    let rows = try NightsQueries.allNights(db: db, config: config)
+    #expect(try #require(rows.first { $0.date == "2026-01-01" }).site == "Otthon")
+    #expect(try #require(rows.first { $0.date == "2026-02-01" }).site == "Hegy")
+}
+
+@Test func allNightsSiteNilWhenCoordinateTooFarFromEveryConfiguredSite() throws {
+    let db = try makeMemoryDB()
+    var config = AstroConfig()
+    config.sites = [otthon, hegy]
+
+    try insertLight(db: db, target: "T1", date: "2026-01-01", name: "a", exptime: 60, siteLat: 10.0, siteLon: 10.0)
+
+    let rows = try NightsQueries.allNights(db: db, config: config)
+    #expect(try #require(rows.first).site == nil)
+}
+
+@Test func allNightsSiteNilWithoutAnyResolvableCoordinateOrTagOverride() throws {
+    let db = try makeMemoryDB()
+    var config = AstroConfig()
+    config.sites = [otthon, hegy]
+
+    try insertLight(db: db, target: "T1", date: "2026-01-01", name: "a", exptime: 60)
+
+    let rows = try NightsQueries.allNights(db: db, config: config)
+    #expect(try #require(rows.first).site == nil)
+}
+
+/// A session-level `site:<name>` tag overrides the coordinate-based
+/// nearest-match entirely -- even when the median coordinate sits right on
+/// top of a DIFFERENT configured site.
+@Test func allNightsSiteTagOverrideWinsOverNearestCoordinateMatch() throws {
+    let db = try makeMemoryDB()
+    var config = AstroConfig()
+    config.sites = [otthon, hegy]
+
+    // Coordinate is right on top of "Otthon", but the session is tagged
+    // explicitly for "Hegy".
+    try insertLight(db: db, target: "T1", date: "2026-01-01", name: "a", exptime: 60, siteLat: 47.5, siteLon: 19.0)
+    try db.addTag(TagRecord(kind: "session", target: "T1", sessionDate: "2026-01-01", tag: "site:Hegy"))
+
+    let rows = try NightsQueries.allNights(db: db, config: config)
+    #expect(try #require(rows.first).site == "Hegy")
+}
+
+/// Scoped strictly to its own (target, date) -- a sibling session's own
+/// coordinate/tag must never leak into this row's site assignment.
+@Test func allNightsSiteAssignmentIsScopedToItsOwnSessionOnly() throws {
+    let db = try makeMemoryDB()
+    var config = AstroConfig()
+    config.sites = [otthon, hegy]
+
+    try insertLight(db: db, target: "T1", date: "2026-01-01", name: "a", exptime: 60, siteLat: 47.5, siteLon: 19.0)
+    try insertLight(db: db, target: "T2", date: "2026-01-01", name: "b", exptime: 60, siteLat: 46.0, siteLon: 18.0)
+
+    let rows = try NightsQueries.allNights(db: db, config: config)
+    #expect(try #require(rows.first { $0.target == "T1" }).site == "Otthon")
+    #expect(try #require(rows.first { $0.target == "T2" }).site == "Hegy")
 }
