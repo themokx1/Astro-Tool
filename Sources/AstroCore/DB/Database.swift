@@ -1775,6 +1775,56 @@ public final class Database: @unchecked Sendable {
         }
     }
 
+    /// Replaces the complete current overall/per-filter goal set for one
+    /// target as a single locked SQLite transaction. Both discovery of the
+    /// old goal tags and their replacement happen after `BEGIN`, so two
+    /// overlapping saves cannot each act on a stale pre-transaction snapshot
+    /// and accidentally merge their independently desired sets.
+    public func replaceTargetGoalTagsAtomically(target: String, with newGoalTags: [String]) throws {
+        let additions = try Set(newGoalTags.map(Self.validatedTag)).sorted()
+        for tag in additions where !GoalTag.isOverallGoalTag(tag) && GoalTag.parseFilterGoals(tags: [tag]).isEmpty {
+            throw AstroError.invalidInput("not a goal tag: \(tag)")
+        }
+
+        try withLock {
+            try db.exec("BEGIN IMMEDIATE TRANSACTION;")
+            do {
+                var existingGoalTags: [String] = []
+                try db.query(
+                    "SELECT tag FROM tags WHERE target = ? AND session_date IS NULL;",
+                    bind: [.text(target)]
+                ) { row in
+                    guard let tag = row.string(0) else { return }
+                    if GoalTag.isOverallGoalTag(tag) || !GoalTag.parseFilterGoals(tags: [tag]).isEmpty {
+                        existingGoalTags.append(tag)
+                    }
+                }
+                for tag in existingGoalTags {
+                    try db.run(
+                        "DELETE FROM tags WHERE target = ? AND session_date IS NULL AND tag = ?;",
+                        bind: [.text(target), .text(tag)]
+                    )
+                }
+                for tag in additions {
+                    var exists = false
+                    try Self.queryTagRows(db, target: target, sessionDate: nil, tag: tag) { _ in
+                        exists = true
+                    }
+                    if !exists {
+                        try db.run(
+                            "INSERT INTO tags(kind, target, session_date, tag) VALUES (?, ?, NULL, ?);",
+                            bind: [.text("target"), .text(target), .text(tag)]
+                        )
+                    }
+                }
+                try db.exec("COMMIT;")
+            } catch {
+                try? db.exec("ROLLBACK;")
+                throw error
+            }
+        }
+    }
+
     /// The tags on one target (`sessionDate == nil`) or one of its sessions,
     /// sorted alphabetically.
     public func tags(target: String, sessionDate: String?) throws -> [String] {

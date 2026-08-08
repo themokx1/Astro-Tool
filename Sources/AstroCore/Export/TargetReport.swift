@@ -44,6 +44,10 @@ public enum TargetReport {
         let plan = try Planner.plan(db: db, config: config).first { $0.target == target }
         let calibHealth = try CalibHealth.report(db: db, config: config)
         let targetFlats = calibHealth.flats.filter { $0.target == target }
+        let filterRows = FilterGoalQueries.merge(
+            breakdown: try FilterBreakdownQueries.breakdown(db: db, config: config, target: target),
+            tags: stat.tags
+        )
 
         var sessionCalibrations: [SessionCalibration] = []
         for session in sessions {
@@ -69,6 +73,7 @@ public enum TargetReport {
             panelReport: panelReport,
             plan: plan,
             projectState: projectState,
+            filterRows: filterRows,
             config: config
         )
     }
@@ -170,11 +175,13 @@ public enum TargetReport {
         panelReport: PanelReport,
         plan: TargetPlan?,
         projectState: ProjectState?,
+        filterRows: [FilterIntegration],
         config: AstroConfig
     ) -> String {
         var body = ""
         body += renderHeader(target: target, stat: stat, resolved: resolved, coordinateInfo: coordinateInfo, setupDescriptors: setupDescriptors)
         body += renderOverview(stat: stat, sessions: sessions, projectState: projectState)
+        body += renderFilters(filterRows)
         body += renderSessionsTable(target: target, sessions: sessions, config: config)
         body += renderQuality(qualitySummaries: qualitySummaries, advice: advice)
         body += renderStacks(stacks: stacks)
@@ -298,6 +305,28 @@ public enum TargetReport {
 
     private static func phaseBadgeClass(_ phase: ProjectPhase) -> String {
         phase == .done ? "good" : "warn"
+    }
+
+    // MARK: - Szűrők
+
+    private static func renderFilters(_ rows: [FilterIntegration]) -> String {
+        var html = "<h2>Szűrők</h2>\n"
+        guard !rows.isEmpty else {
+            return html + "<p class=\"muted\">Nincs használható szűrőadat ehhez a célponthoz.</p>\n"
+        }
+        html += "<div class=\"table-wrap\">\n<table>\n"
+        html += "<tr><th>Szűrő</th><th>Keretek</th><th>Megvan</th><th>Cél</th><th>Hiányzik</th></tr>\n"
+        for row in rows.sorted(by: {
+            $0.filter.localizedCaseInsensitiveCompare($1.filter) == .orderedAscending
+        }) {
+            html += "<tr><td>\(escapeHTML(row.filter))</td>"
+            html += "<td>\(row.usableFrameCount)</td>"
+            html += "<td>\(formatHM(row.integrationSeconds))</td>"
+            html += "<td>\(row.goalSeconds.map(formatHM) ?? "n/a")</td>"
+            html += "<td>\(row.missingSeconds.map(formatHM) ?? "n/a")</td></tr>\n"
+        }
+        html += "</table>\n</div>\n"
+        return html
     }
 
     // MARK: - Sessionök táblázat

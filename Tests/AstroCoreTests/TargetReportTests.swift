@@ -167,6 +167,33 @@ private func makeRichFixture() throws -> (db: Database, config: AstroConfig) {
     #expect(html.contains("KIZÁRVA"))
 }
 
+@Test func targetReportRendersMergedFilterGoalTableWithEscapedNames() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+    let filter = "Ha <5nm> & test"
+    try insertLight(
+        db: db,
+        target: "FilterReport",
+        date: "2026-04-18",
+        name: "ha",
+        dateObs: "2026-04-18T21:00:00",
+        exptime: 3600,
+        withCoordinates: false,
+        filter: filter
+    )
+    try db.addTag(TagRecord(
+        kind: "target", target: "FilterReport", sessionDate: nil,
+        tag: GoalTag.formatFilter(filter: filter, hours: 2)
+    ))
+
+    let html = try TargetReport.render(target: "FilterReport", db: db, config: config)
+    #expect(html.contains("<h2>Szűrők</h2>"))
+    #expect(html.contains("Ha &lt;5nm&gt; &amp; test"))
+    #expect(html.contains("<th>Megvan</th><th>Cél</th><th>Hiányzik</th>"))
+    #expect(html.contains("1:00"))
+    #expect(html.contains("2:00"))
+}
+
 // MARK: - 5. Graceful note when no coordinate resolves
 
 @Test func targetReportRenderShowsNoteWhenNoCoordinateResolves() throws {

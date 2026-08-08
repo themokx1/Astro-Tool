@@ -17,6 +17,8 @@ struct OverviewSegment: View {
     /// same sheet the header/context menus use, rather than a second
     /// independent one.
     @Binding var solvingTarget: SolvingTarget?
+    let editGoals: () -> Void
+    let openStacks: () -> Void
 
     private var sessions: [SessionDetail] { appState.sessionDetailsByTarget[target] ?? [] }
     private var plan: TargetPlan? { appState.plan?.first { $0.target == target } }
@@ -41,6 +43,7 @@ struct OverviewSegment: View {
                 // R11-T5/F1: right after "Setup", ahead of "Láthatóság ma
                 // este" -- PLAN-R11's own UI-terv order.
                 filtersBlock
+                publishingReadinessBlock
                 visibilityBlock
                 // R11-T2: moved up from just before `calibrationBlock` -- for
                 // a mosaic target, panel coverage IS the project-status
@@ -215,6 +218,74 @@ struct OverviewSegment: View {
             }
         }
         .frame(height: 4)
+    }
+
+    // MARK: - Publikálásra kész
+
+    private var publishingReadinessBlock: some View {
+        section("Publikálásra kész") {
+            if let readiness = appState.targetPublishingReadiness {
+                if readiness.isReady {
+                    Label("Kész a publikálási exportra", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(readiness.issues, id: \.rawValue) { issue in
+                            HStack {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                Text(readinessLabel(issue))
+                                Spacer()
+                                Button(readinessActionLabel(issue)) {
+                                    performReadinessAction(issue)
+                                }
+                                .buttonStyle(.link)
+                            }
+                            .font(.callout)
+                        }
+                    }
+                }
+                Text("Figyelmeztetés, nem tiltás — az export bármikor használható.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("A publikálási állapot betöltése…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func readinessLabel(_ issue: PublishingReadiness.Issue) -> String {
+        switch issue {
+        case .projectNotComplete: return "A projekt munkafolyamata még nincs kész."
+        case .outstandingOverallGoal: return "Az összcélból még hiányzik integráció."
+        case .outstandingFilterGoal: return "Legalább egy szűrőcél még hiányos."
+        case .unmappedAstroBinFilter:
+            let names = appState.targetUnmappedAstroBinFilters.joined(separator: ", ")
+            return names.isEmpty ? "Van leképezetlen AstroBin-szűrő." : "Nincs AstroBin ID: \(names)."
+        case .missingProcessedOutput: return "Nincs feldolgozott kimenet a célponthoz."
+        }
+    }
+
+    private func readinessActionLabel(_ issue: PublishingReadiness.Issue) -> String {
+        switch issue {
+        case .outstandingOverallGoal, .outstandingFilterGoal: return "Célok…"
+        case .unmappedAstroBinFilter: return "Beállítások…"
+        case .projectNotComplete, .missingProcessedOutput: return "Stackek"
+        }
+    }
+
+    private func performReadinessAction(_ issue: PublishingReadiness.Issue) {
+        switch issue {
+        case .outstandingOverallGoal, .outstandingFilterGoal:
+            editGoals()
+        case .unmappedAstroBinFilter:
+            appState.settingsTab = .library
+            openSettings()
+        case .projectNotComplete, .missingProcessedOutput:
+            openStacks()
+        }
     }
 
     // MARK: - Mai láthatóság

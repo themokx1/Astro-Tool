@@ -4,7 +4,7 @@ import Foundation
 /// produces -- see each case's renderer for the exact column/section layout.
 public enum ExportFormat: String, Codable, Sendable {
     /// AstroBin's "long acquisition" bulk-import CSV: one row per (session,
-    /// nominal exposure) group of USABLE lights.
+    /// filter, nominal exposure) group of USABLE lights.
     case astrobin
     /// A richer, generic per-session CSV (target/date/frames/integration/
     /// equipment/quality/tags) -- not tied to any external tool's schema.
@@ -65,7 +65,7 @@ public enum AcquisitionExport {
     private static let astrobinHeader =
         "date,filter,number,duration,binning,gain,sensorCooling,darks,flats,flatDarks,bias,bortle,meanSqm"
 
-    /// One row per (session, nominal exposure) group of the session's USABLE
+    /// One row per (session, filter, nominal exposure) group of the session's USABLE
     /// lights. Excluded (`_hibas`-labeled) sessions are skipped entirely --
     /// their integration is never meant to be published, so listing them
     /// here would misreport what's actually going up on AstroBin. A session
@@ -84,26 +84,37 @@ public enum AcquisitionExport {
             guard !equipment.isEmpty else { continue }
 
             let dateText = SessionDateParser.parse(session.dateRaw, patterns: config.intentional)?.start ?? session.dateRaw
-            let rawFilterText = mode(equipment.compactMap(\.filter)) ?? ""
-            // R11-T16/F20: an AstroBin filter-ID mapping entry wins over the
-            // bare name -- `unmappedAstrobinFilters` is what tells a caller
-            // (CLI stderr, app toast) when this fell back to the name.
-            let filterText = astrobinFilterID(rawFilterText, config: config).map(String.init) ?? rawFilterText
-            let gainText = mode(equipment.compactMap(\.gain)).map(formatTrimmed) ?? ""
-            let coolingText = median(equipment.compactMap(\.cooling)).map { String(Int($0.rounded())) } ?? ""
             let flatDarks = try flatDarksCount(sessionFiles: sessionFiles, date: session.dateRaw, db: db)
             let bortleText = bortleValue(fromNotes: session.notes)
             let meanSqmText = meanSqmValue(fromNotes: session.notes)
 
-            var countsByExposure: [Double: Int] = [:]
-            for e in equipment { countsByExposure[e.nominalExptime, default: 0] += 1 }
+            var groups: [AstrobinGroupKey: [FrameEquipment]] = [:]
+            for frame in equipment {
+                let key = AstrobinGroupKey(
+                    rawFilter: frame.filter ?? "",
+                    nominalExptime: frame.nominalExptime
+                )
+                groups[key, default: []].append(frame)
+            }
 
-            for exposure in countsByExposure.keys.sorted() {
+            let sortedKeys = groups.keys.sorted {
+                if $0.nominalExptime != $1.nominalExptime {
+                    return $0.nominalExptime < $1.nominalExptime
+                }
+                return $0.rawFilter.localizedCaseInsensitiveCompare($1.rawFilter) == .orderedAscending
+            }
+            for key in sortedKeys {
+                let frames = groups[key] ?? []
+                // A configured AstroBin filter ID wins over the raw header
+                // value. The raw spelling remains intact when no mapping exists.
+                let filterText = astrobinFilterID(key.rawFilter, config: config).map(String.init) ?? key.rawFilter
+                let gainText = mode(frames.compactMap(\.gain)).map(formatTrimmed) ?? ""
+                let coolingText = median(frames.compactMap(\.cooling)).map { String(Int($0.rounded())) } ?? ""
                 let row: [String] = [
                     dateText,
                     filterText,
-                    String(countsByExposure[exposure] ?? 0),
-                    formatTrimmed(exposure),
+                    String(frames.count),
+                    formatTrimmed(key.nominalExptime),
                     "", // binning -- never captured per light frame, see CalibRule.matchBinning's doc.
                     gainText,
                     coolingText,
@@ -129,17 +140,11 @@ public enum AcquisitionExport {
     /// `nil` for a blank `rawFilter` (nothing to look up) or no matching
     /// entry at all.
     private static func astrobinFilterID(_ rawFilter: String, config: AstroConfig) -> Int? {
-        let key = rawFilter.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !key.isEmpty else { return nil }
-        for (name, id) in config.astrobin.filterIds where name.trimmingCharacters(in: .whitespaces).lowercased() == key {
-            return id
-        }
-        return nil
+        config.astrobin.filterID(for: rawFilter)
     }
 
     /// Distinct filter names `target`'s AstroBin export would actually use
-    /// (same per-session dominant-filter grouping `renderAstrobin` itself
-    /// does) that have NO entry in `config.astrobin.filterIds` -- the
+    /// that have NO entry in `config.astrobin.filterIds` -- the
     /// export-time warning both the CLI (stderr) and the app (a post-export
     /// toast) surface, so a gap in the mapping is visible instead of
     /// silently exporting a bare name every time. Sorted, `[]` when every
@@ -154,7 +159,7 @@ public enum AcquisitionExport {
         for session in sessions where !session.isExcludedFromTotals {
             let equipment = try usableFrameEquipment(date: session.dateRaw, sessionFiles: sessionFiles, db: db, config: config)
             guard !equipment.isEmpty else { continue }
-            if let filterText = mode(equipment.compactMap(\.filter)), !filterText.isEmpty {
+            for filterText in equipment.compactMap(\.filter) where !filterText.isEmpty {
                 usedFilters.insert(filterText)
             }
         }
@@ -368,10 +373,15 @@ public enum AcquisitionExport {
         var cooling: Double?
     }
 
+    private struct AstrobinGroupKey: Hashable {
+        var rawFilter: String
+        var nominalExptime: Double
+    }
+
     /// This session's USABLE (deduped, non-rejected) lights that have a
     /// parseable `exptime`, one `FrameEquipment` each -- the raw material
-    /// `renderAstrobin` groups by nominal exposure and reduces to a
-    /// dominant filter/gain and median cooling.
+    /// `renderAstrobin` groups by filter plus nominal exposure and reduces
+    /// gain/cooling inside each group.
     private static func usableFrameEquipment(
         date: String,
         sessionFiles: [FileRecord],

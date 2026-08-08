@@ -84,7 +84,17 @@ struct TargetDetailPage: View {
     private var segmentContent: some View {
         switch segment {
         case .overview:
-            OverviewSegment(target: target, solvingTarget: $solvingTarget)
+            OverviewSegment(
+                target: target,
+                solvingTarget: $solvingTarget,
+                editGoals: {
+                    goalEditingTarget = GoalEditingTarget(
+                        target: target,
+                        currentHours: projectState?.goalSeconds.map { $0 / 3600.0 }
+                    )
+                },
+                openStacks: { segment = .stacks }
+            )
         case .sessions:
             SessionsSegment(target: target, linkingSession: $linkingSession, stackListingSession: $stackListingSession)
         case .quality:
@@ -163,7 +173,7 @@ struct TargetDetailPage: View {
             StatTile(
                 title: "Hiányzik",
                 value: missingValueText,
-                color: (projectState?.missingSeconds ?? 0) > 0 ? .orange : .primary,
+                color: (effectiveMissingSeconds ?? 0) > 0 ? .orange : .primary,
                 caption: missingFilterDeficitCaptionText,
                 compact: true,
                 tintsBackground: false
@@ -188,8 +198,18 @@ struct TargetDetailPage: View {
     }
 
     private var missingValueText: String {
-        guard let missing = projectState?.missingSeconds else { return TDFormat.missingTile }
+        guard let missing = effectiveMissingSeconds else { return TDFormat.missingTile }
         return TDFormat.hm(missing)
+    }
+
+    /// An explicit overall goal remains authoritative. When it is absent,
+    /// the header mirrors Tonight's plan table and sums the independently
+    /// configured per-filter deficits instead of pretending there is no
+    /// measurable work left.
+    private var effectiveMissingSeconds: Double? {
+        if let missing = projectState?.missingSeconds { return missing }
+        let values = projectState?.filterGoals.compactMap(\.missingSeconds) ?? []
+        return values.isEmpty ? nil : values.reduce(0, +)
     }
 
     /// R11-T5/F1: "Valós integráció" tile caption -- top 3 filters
@@ -222,24 +242,33 @@ struct TargetDetailPage: View {
     /// R10-B7: the pencil/"Nincs cél" button now presents the app's single
     /// `GoalEditSheet` (via `goalEditingTarget`) instead of a private
     /// `popover`-based editor -- same sheet `TonightPage`'s plan table and
-    /// `AllTargetsPage`'s context menu already use, defaulting to 10h same
-    /// as those call sites' own "no goal yet" default.
+    /// `AllTargetsPage`'s context menu already use. A target with only
+    /// per-filter goals shows their clearly labelled sum here; a truly
+    /// goalless target stays empty and opens without a fabricated default.
     private var goalTile: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Cél").font(.caption).foregroundStyle(.secondary)
-            if let goalSeconds = projectState?.goalSeconds {
+            if let goalSeconds = projectState?.effectiveGoalSeconds {
                 HStack(spacing: 4) {
                     Text(TDFormat.hm(goalSeconds)).font(.title3).bold()
                     Button {
-                        goalEditingTarget = GoalEditingTarget(target: target, currentHours: goalSeconds / 3600.0)
+                        goalEditingTarget = GoalEditingTarget(
+                            target: target,
+                            currentHours: projectState?.goalSeconds.map { $0 / 3600.0 }
+                        )
                     } label: {
                         Image(systemName: "pencil.circle").font(.caption)
                     }
                     .buttonStyle(.plain)
                 }
+                if projectState?.goalSeconds == nil {
+                    Text("szűrőcélok összege")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 Button {
-                    goalEditingTarget = GoalEditingTarget(target: target, currentHours: 10)
+                    goalEditingTarget = GoalEditingTarget(target: target, currentHours: nil)
                 } label: {
                     Text("Nincs cél · Beállítás").font(.callout)
                 }

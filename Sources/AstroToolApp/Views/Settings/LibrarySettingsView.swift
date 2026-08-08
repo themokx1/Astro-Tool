@@ -103,7 +103,10 @@ struct LibrarySettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { loadFromConfig() }
+        .onAppear {
+            loadFromConfig()
+            appState.loadUsedUnmappedAstroBinFilters()
+        }
         // R10 review (item 17): clears stale save feedback the moment a
         // fresh edit re-dirties the draft -- see `LocationSettingsView`'s
         // identical modifier for the full "only false -> true" reasoning.
@@ -138,6 +141,23 @@ struct LibrarySettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             Link("Az ID-t az AstroBin equipment-adatbázisából keresd ki →", destination: astrobinEquipmentExplorerURL)
                 .font(.caption)
+
+            if !appState.usedUnmappedAstroBinFilters.isEmpty {
+                Text("Használt, még nem leképezett szűrők")
+                    .font(.caption.bold())
+                    .padding(.top, 4)
+                ForEach(appState.usedUnmappedAstroBinFilters, id: \.self) { filter in
+                    HStack {
+                        Text(filter)
+                        Spacer()
+                        Button("ID megadása") {
+                            newAstrobinFilterName = filter
+                            newAstrobinFilterID = ""
+                        }
+                        .buttonStyle(.link)
+                    }
+                }
+            }
 
             if astrobinFilterIds.isEmpty {
                 Text("Nincs leképezett szűrő -- az export minden szűrőnevet nyersen ír ki.")
@@ -181,7 +201,9 @@ struct LibrarySettingsView: View {
     private func addAstrobinFilterRow() {
         let name = newAstrobinFilterName.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty, let id = Int(newAstrobinFilterID.trimmingCharacters(in: .whitespaces)) else { return }
-        astrobinFilterIds[name] = id
+        var rule = AstroBinRule(filterIds: astrobinFilterIds)
+        rule.setFilterID(id, for: name)
+        astrobinFilterIds = rule.filterIds
         newAstrobinFilterName = ""
         newAstrobinFilterID = ""
     }
@@ -211,12 +233,17 @@ struct LibrarySettingsView: View {
         var newConfig = appState.config
         newConfig.excludedDirNames = excludedDirNames
         newConfig.excludedPaths = excludedPaths
-        newConfig.astrobin.filterIds = astrobinFilterIds
+        var normalizedRule = AstroBinRule()
+        for key in astrobinFilterIds.keys.sorted() where normalizedRule.filterID(for: key) == nil {
+            normalizedRule.setFilterID(astrobinFilterIds[key] ?? 0, for: key)
+        }
+        newConfig.astrobin = normalizedRule
 
         do {
             let writeGuard = WriteGuard(root: URL(fileURLWithPath: newConfig.rootPath, isDirectory: true))
             try newConfig.save(using: writeGuard)
             appState.config = newConfig
+            appState.loadUsedUnmappedAstroBinFilters()
             saveMessage = "Mentve."
         } catch let error as AstroError {
             saveError = describeSettingsError(error)

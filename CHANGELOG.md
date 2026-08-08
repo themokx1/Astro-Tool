@@ -8,11 +8,22 @@ történik.
 
 ## [Unreleased]
 
-Az R11-es kör A-hullámának negyedik (utolsó) tétele (T4 — CLI/automatizálás +
-docs), a T1 — UI-konzisztencia csomag, a T2 — Akció-paritás + apró UX és a
-T3 — Settings csomag után.
+Az R12 javítási hulláma a korábbi funkciók valós asztrofotós workflow szerinti
+újraellenőrzését és következetes összekötését végzi.
 
 ### Added
+
+- **R12-U4 — publikálás és szűrőcélok**: az AstroBin CSV minden
+  `(session, szűrő, nominális expozíció)` csoportot külön sorba ír saját
+  filter-ID-val; a ProjectStatus, Planner és cél/hiány UI végig kezeli a
+  szűrőcélokat; a biztonságos GoalEdit kézi szűrőfelvételt és kétszintű
+  törlést ad; a riportok szűrőtáblát és működő `--out PATH|-` útvonalat
+  kaptak; a Settings előajánlja a használt, le nem képezett szűrőket; a
+  célpont Áttekintésen új, nem blokkoló „Publikálásra kész” ellenőrzés vezet
+  közvetlenül a hiányzó cél-, mapping-, stack- vagy feldolgozási lépéshez.
+  A célkészlet cseréje egy lockolt SQLite-tranzakció (átfedő mentéseknél sem
+  olvad össze), a közös `--out` őr pedig parent- és dangling symlinken át sem
+  enged írni a védett könyvtárba.
 
 - **R12-U3 — verify/audit konzisztencia**: külön `modified-in-place`
   suspicious állapot; suspicious olvasási hiba; explicit, idempotens

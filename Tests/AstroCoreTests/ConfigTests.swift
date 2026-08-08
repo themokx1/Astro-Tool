@@ -262,6 +262,28 @@ import Testing
     #expect(decoded.astrobin.filterIds == ["Ha": 4663, "OIII": 4664])
 }
 
+@Test func astroBinMappingLookupIsTrimmedAndCaseInsensitive() {
+    let rule = AstroBinRule(filterIds: [" ha ": 4663])
+    #expect(rule.filterID(for: "Ha") == 4663)
+    #expect(rule.filterID(for: "  HA  ") == 4663)
+}
+
+@Test func astroBinDuplicateNormalizedKeysResolveDeterministically() throws {
+    let json = #"{"filterIds":{" ha ":11,"Ha":22}}"#
+    let rule = try JSONDecoder().decode(AstroBinRule.self, from: Data(json.utf8))
+    #expect(rule.filterID(for: "HA") == 11)
+    #expect(rule.filterID(for: "HA") == rule.filterID(for: " ha "))
+}
+
+@Test func astroBinSettingMappingReplacesNormalizedDuplicateAndKeepsDisplayName() {
+    var rule = AstroBinRule(filterIds: [" ha ": 11, "Ha": 22, "OIII": 33])
+    rule.setFilterID(44, for: "H-alpha")
+    #expect(rule.filterIds["H-alpha"] == 44)
+    rule.setFilterID(55, for: "HA")
+    #expect(rule.filterID(for: "ha") == 55)
+    #expect(rule.filterIds.keys.filter { AstroBinRule.normalizedFilterKey($0) == "ha" } == ["HA"])
+}
+
 @Test func defaultStatsRuleHasExpectedValues() {
     let rule = StatsRule()
     #expect(rule.excludeLabels == ["hibas"])

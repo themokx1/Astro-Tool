@@ -487,7 +487,7 @@ struct AllTargetsPage: View {
         Divider()
         Button("Cél beállítása…") {
             let current = appState.projectStates.first { $0.target == stats.target }?.goalSeconds
-            goalEditingTarget = GoalEditingTarget(target: stats.target, currentHours: (current ?? 36000) / 3600.0)
+            goalEditingTarget = GoalEditingTarget(target: stats.target, currentHours: current.map { $0 / 3600.0 })
         }
         if let report = appState.stackReportsByTarget[stats.target], !report.stacks.isEmpty {
             Button("Kész stackek…") {

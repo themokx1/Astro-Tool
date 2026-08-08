@@ -975,6 +975,56 @@ private func sampleSensorProfile(
     #expect(try database.tags(target: "M31", sessionDate: nil) == [])
 }
 
+@Test func replaceTargetTagsAtomicallyPreservesOldSetWhenNewTagIsInvalid() throws {
+    let database = try Database(path: ":memory:")
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "favorite"))
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "goal:10h"))
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "goal:Ha=6h"))
+
+    #expect(throws: AstroError.self) {
+        try database.replaceTargetGoalTagsAtomically(
+            target: "M31",
+            with: ["goal:12h", "   "]
+        )
+    }
+    #expect(try database.tags(target: "M31", sessionDate: nil) == ["favorite", "goal:10h", "goal:Ha=6h"])
+}
+
+@Test func replaceTargetTagsAtomicallyReplacesOnlyNamedTargetTags() throws {
+    let database = try Database(path: ":memory:")
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "favorite"))
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "goal:10h"))
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "goal:Ha=6h"))
+    try database.addTag(TagRecord(kind: "session", target: "M31", sessionDate: "2026-01-01", tag: "clouds"))
+
+    try database.replaceTargetGoalTagsAtomically(
+        target: "M31",
+        with: ["goal:12h", "goal:OIII=4h"]
+    )
+
+    #expect(try database.tags(target: "M31", sessionDate: nil) == ["favorite", "goal:12h", "goal:OIII=4h"])
+    #expect(try database.tags(target: "M31", sessionDate: "2026-01-01") == ["clouds"])
+}
+
+@Test func overlappingAtomicGoalReplacementsNeverMergeDesiredSets() async throws {
+    let database = try Database(path: ":memory:")
+    try database.addTag(TagRecord(kind: "target", target: "M31", sessionDate: nil, tag: "goal:10h"))
+    let first = Set(["goal:12h", "goal:Ha=6h"])
+    let second = Set(["goal:8h", "goal:OIII=4h"])
+
+    await withTaskGroup(of: Void.self) { group in
+        group.addTask {
+            try? database.replaceTargetGoalTagsAtomically(target: "M31", with: first.sorted())
+        }
+        group.addTask {
+            try? database.replaceTargetGoalTagsAtomically(target: "M31", with: second.sorted())
+        }
+    }
+
+    let final = Set(try database.tags(target: "M31", sessionDate: nil))
+    #expect(final == first || final == second)
+}
+
 @Test func allTagsReturnsEveryRowSortedByTargetThenDateThenTag() throws {
     let database = try Database(path: ":memory:")
     try database.addTag(TagRecord(kind: "target", target: "M42", sessionDate: nil, tag: "wide"))

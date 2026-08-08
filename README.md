@@ -200,7 +200,8 @@ astrotool export --target M31 --format md
 ```
 
 - `--format astrobin`: AstroBin "long acquisition" bulk-importjához pontos
-  fejléccel, session×nominális-expozíció csoportonként egy sorral. A
+  fejléccel, session×szűrő×nominális-expozíció csoportonként egy sorral és
+  soronként saját, normalizált név alapján feloldott filter-ID-val. A
   `_hibas`-kizárt session-ök teljesen kimaradnak (nem szabad publikálni
   őket); a `binning` oszlop mindig üres, mert a light-oldali binning ma
   nincs elmentve (sosem tippel `1`-et).

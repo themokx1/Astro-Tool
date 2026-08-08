@@ -181,6 +181,9 @@ final class AppState: @unchecked Sendable {
     var config: AstroConfig = AstroConfig()
     var db: Database?
     var rootStatus: RootStatus = .noRoot
+    /// Distinct filter names currently used by the library but missing from
+    /// the saved AstroBin mapping. Settings renders these as add suggestions.
+    var usedUnmappedAstroBinFilters: [String] = []
 
     /// The navigation shell's current page (R9-T1) -- drives both the
     /// sidebar's selection highlight and which detail view is shown.
@@ -1852,7 +1855,7 @@ final class AppState: @unchecked Sendable {
                 if !unmappedFilters.isEmpty {
                     self.pushToast(
                         .info,
-                        "\(unmappedFilters.count) szűrő nincs leképezve AstroBin ID-ra — Beállítások ▸ Könyvtár"
+                        "Nincs AstroBin ID: \(unmappedFilters.joined(separator: ", ")) — Beállítások ▸ Könyvtár"
                     )
                 }
                 NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -1860,6 +1863,39 @@ final class AppState: @unchecked Sendable {
                 self.handle(error)
             }
             self.endOperation(opID)
+        }
+    }
+
+    /// Refreshes Settings' library-wide list without occupying/cancelling the
+    /// app's global operation slot; this is a small read-only convenience
+    /// query and stale results are harmless until the next settings open.
+    func loadUsedUnmappedAstroBinFilters() {
+        guard let db else {
+            usedUnmappedAstroBinFilters = []
+            return
+        }
+        let cfg = config
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let names = try await Task.detached(priority: .utility) {
+                    let targets = try StatsQueries.perTarget(db: db, config: cfg).map(\.target)
+                    var result = Set<String>()
+                    for target in targets {
+                        result.formUnion(
+                            try AcquisitionExport.unmappedAstrobinFilters(
+                                target: target, db: db, config: cfg
+                            )
+                        )
+                    }
+                    return result.sorted {
+                        $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+                    }
+                }.value
+                self.usedUnmappedAstroBinFilters = names
+            } catch {
+                self.usedUnmappedAstroBinFilters = []
+            }
         }
     }
 
@@ -3078,6 +3114,71 @@ final class AppState: @unchecked Sendable {
         }
     }
 
+    /// Saves the overall goal and the complete desired per-filter goal set
+    /// as one user operation. All tag mutations run serially in one detached
+    /// task, followed by one stats/project/plan refresh, so the sheet cannot
+    /// cancel half of its own save by starting a second operation.
+    func saveGoals(
+        target: String,
+        overallHours: Double?,
+        filterRows: [FilterGoalEditRow]
+    ) {
+        guard let db else { return }
+        let cfg = config
+        let desiredRows = filterRows.map { row in
+            FilterGoalEditRow(
+                filter: GoalTag.normalizedFilterGoalName(row.filter),
+                usableSeconds: row.usableSeconds,
+                goalHours: row.goalHours
+            )
+        }
+        let desiredOverallTag = overallHours.flatMap { hours in
+            hours > 0 ? GoalTag.format(hours: hours) : nil
+        }
+        let desiredFilterTags = desiredRows.compactMap { row -> String? in
+            guard row.goalHours > 0, !row.filter.isEmpty else { return nil }
+            return GoalTag.formatFilter(filter: row.filter, hours: row.goalHours)
+        }
+        let desiredGoalTags = (desiredOverallTag.map { [$0] } ?? []) + desiredFilterTags
+
+        let opID = beginOperation("Célok mentése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try db.replaceTargetGoalTagsAtomically(target: target, with: desiredGoalTags)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                await self.reloadStatsAfterTagChange(db: db, config: cfg, target: target)
+                if let projectsResult = try? await Task.detached(priority: .userInitiated, operation: {
+                    try ProjectStatusQueries.projects(db: db, config: cfg)
+                }).value {
+                    self.projectStates = projectsResult
+                    if case .target(let visibleTarget) = self.currentPage,
+                       visibleTarget == target,
+                       let refreshedProject = projectsResult.first(where: { $0.target == target }) {
+                        self.targetPublishingReadiness = PublishingReadiness.evaluate(
+                            project: refreshedProject,
+                            unmappedFilters: self.targetUnmappedAstroBinFilters,
+                            hasProcessedOutput: refreshedProject.latestProcessedDate != nil
+                        )
+                    }
+                }
+                let planDate = self.planDate
+                let siteName = self.effectiveSiteName
+                if self.plan != nil, let planResult = try? await Task.detached(priority: .userInitiated, operation: {
+                    try Planner.plan(date: planDate, siteName: siteName, db: db, config: cfg)
+                }).value {
+                    self.plan = planResult
+                }
+                self.filterGoalEditorRows = desiredRows
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
     /// Same integral-hours-print-without-decimal convention
     /// `ProjectStatusQueries.formatGoalHours` uses for the todo sentence, so
     /// a `6`-hour goal round-trips as `"goal:6h"`, not `"goal:6.0h"`.
@@ -3321,6 +3422,8 @@ final class AppState: @unchecked Sendable {
     /// contribution to build the per-filter cumulative lines, the same way
     /// `targetNightHealthByDate` above is keyed for the Sessionök table.
     var targetFilterBreakdownByDate: [String: [FilterIntegration]] = [:]
+    var targetPublishingReadiness: PublishingReadiness?
+    var targetUnmappedAstroBinFilters: [String] = []
 
     /// Bundles every query `TargetDetailPage.onAppear` needs so they can all
     /// load inside ONE `Task`/`beginOperation` -- see the doc on `runRate`'s
@@ -3351,6 +3454,8 @@ final class AppState: @unchecked Sendable {
         var advice: ExposureAdvice
         var filterBreakdown: [FilterIntegration]
         var filterBreakdownByDate: [String: [FilterIntegration]]
+        var publishingReadiness: PublishingReadiness?
+        var unmappedAstroBinFilters: [String]
     }
 
     /// Loads everything the Célpont-részletek page's header + Áttekintés/
@@ -3376,6 +3481,8 @@ final class AppState: @unchecked Sendable {
         targetNightHealthByDate = [:]
         targetFilterBreakdown = []
         targetFilterBreakdownByDate = [:]
+        targetPublishingReadiness = nil
+        targetUnmappedAstroBinFilters = []
         qualitySummaries = []
         exposureAdvice = nil
         sessionTimeline = nil
@@ -3442,6 +3549,16 @@ final class AppState: @unchecked Sendable {
                         )
                     }
                     let filterBreakdown = try FilterBreakdownQueries.breakdown(db: db, config: cfg, target: target)
+                    let unmappedAstroBinFilters = try AcquisitionExport.unmappedAstrobinFilters(
+                        target: target, db: db, config: cfg
+                    )
+                    let publishingReadiness = projects.first(where: { $0.target == target }).map {
+                        PublishingReadiness.evaluate(
+                            project: $0,
+                            unmappedFilters: unmappedAstroBinFilters,
+                            hasProcessedOutput: $0.latestProcessedDate != nil
+                        )
+                    }
                     let qualitySummaries = try SessionQuality.summaries(target: target, db: db, config: cfg)
                     let advice = try ExposureAdvisor.advise(target: target, db: db, config: cfg)
                     return TargetDetailBundle(
@@ -3450,7 +3567,9 @@ final class AppState: @unchecked Sendable {
                         calibHealth: calibHealth, coordInfo: coordInfo, setupDescriptors: setupDescriptors,
                         calibs: calibs, nightHealthByDate: nightHealthByDate,
                         qualitySummaries: qualitySummaries, advice: advice,
-                        filterBreakdown: filterBreakdown, filterBreakdownByDate: filterBreakdownByDate
+                        filterBreakdown: filterBreakdown, filterBreakdownByDate: filterBreakdownByDate,
+                        publishingReadiness: publishingReadiness,
+                        unmappedAstroBinFilters: unmappedAstroBinFilters
                     )
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
@@ -3488,6 +3607,8 @@ final class AppState: @unchecked Sendable {
                 self.targetNightHealthByDate = bundle.nightHealthByDate
                 self.targetFilterBreakdown = bundle.filterBreakdown
                 self.targetFilterBreakdownByDate = bundle.filterBreakdownByDate
+                self.targetPublishingReadiness = bundle.publishingReadiness
+                self.targetUnmappedAstroBinFilters = bundle.unmappedAstroBinFilters
                 self.qualitySummaries = bundle.qualitySummaries
                 self.exposureAdvice = bundle.advice
                 self.progressText = "Célpont-részletek kész: \(target)"

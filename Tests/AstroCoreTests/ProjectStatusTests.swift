@@ -31,11 +31,12 @@ private struct ProjectStatusFixture {
         try? FileManager.default.removeItem(at: dbDir)
     }
 
-    func writeFITSLight(_ relativePath: String, exptime: Double?) throws {
+    func writeFITSLight(_ relativePath: String, exptime: Double?, filter: String? = nil) throws {
         let url = libraryDir.appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         var cards = ["SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2"]
         if let exptime { cards.append("EXPTIME =                \(exptime)") }
+        if let filter { cards.append("FILTER  = '\(filter)'") }
         cards.append("END")
         try buildHeaderData(cards).write(to: url)
     }
@@ -50,6 +51,39 @@ private struct ProjectStatusFixture {
         let scanner = LibraryScanner(config: config, db: db)
         _ = try scanner.scan()
     }
+}
+
+@Test func projectWithOnlyOutstandingFilterGoalIsCollecting() throws {
+    let fixture = try ProjectStatusFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/FilterTarget/2026-01-10/lights/ha.fit",
+        exptime: 3600,
+        filter: "Ha"
+    )
+    try fixture.writeReadme("sessions/FilterTarget/2026-01-10/README.txt")
+    try fixture.scan()
+    try fixture.db.addTag(TagRecord(
+        kind: "target", target: "FilterTarget", sessionDate: nil, tag: "goal:Ha=6h"
+    ))
+
+    let projects = try ProjectStatusQueries.projects(db: fixture.db, config: fixture.config)
+    let state = try #require(projects.first { $0.target == "FilterTarget" })
+    let ha = try #require(state.filterGoals.first { $0.filter == "Ha" })
+    #expect(state.phase == .collecting)
+    #expect(ha.missingSeconds == 18_000.0)
+    #expect(state.largestFilterDeficitSeconds == 18_000.0)
+    #expect(state.effectiveGoalSeconds == 21_600.0)
+    #expect(state.todos.contains { $0.contains("5.0") && $0.contains("Ha") })
+}
+
+@Test func oldProjectStateJSONDefaultsFilterGoalsToEmpty() throws {
+    let data = Data(#"{"target":"T1","displayName":"T1","phase":"gyujtes","usableIntegrationSeconds":0,"todos":[]}"#.utf8)
+    let state = try JSONDecoder().decode(ProjectState.self, from: data)
+    #expect(state.filterGoals.isEmpty)
+    #expect(state.effectiveGoalSeconds == nil)
+    #expect(state.largestFilterDeficitSeconds == nil)
 }
 
 // MARK: - Phase reachability

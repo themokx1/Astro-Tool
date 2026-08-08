@@ -32,7 +32,8 @@ private func insertLight(
     withCoordinates: Bool = true,
     fwhm: Double? = nil,
     background: Double? = nil,
-    score: Double? = nil
+    score: Double? = nil,
+    filter: String? = nil
 ) throws -> Int64 {
     let path = "sessions/\(target)/\(date)/lights/\(name).fit"
     let fileID = try db.upsertFile(
@@ -47,7 +48,8 @@ private func insertLight(
     let headerJSON: String? = withCoordinates ? "{\"CRVAL1\":\"180.0\",\"CRVAL2\":\"45.0\"}" : nil
     try db.upsertFITSMeta(
         FITSMetaRecord(
-            fileID: fileID, exptime: exptime, instrume: "TestCam", dateObs: dateObs, headerJSON: headerJSON
+            fileID: fileID, exptime: exptime, instrume: "TestCam", filter: filter,
+            dateObs: dateObs, headerJSON: headerJSON
         )
     )
 
@@ -127,6 +129,26 @@ private func makeRichFixture() throws -> (db: Database, config: AstroConfig) {
     #expect(timeline.windowSeconds == 2400)
     #expect(expectedPercent == 38)
     #expect(timeline.gaps.count == 1)
+}
+
+@Test func nightReportFilterTableIsStrictlyDateScopedAndEscaped() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+    try insertLight(
+        db: db, target: "T_FilterNight", date: "2026-04-18", name: "ha",
+        dateObs: "2026-04-18T21:00:00", withCoordinates: false, filter: "Ha <5nm>"
+    )
+    try insertLight(
+        db: db, target: "T_FilterNight", date: "2026-04-19", name: "oiii",
+        dateObs: "2026-04-19T21:00:00", withCoordinates: false, filter: "OIII & only tomorrow"
+    )
+
+    let html = try NightReport.render(
+        target: "T_FilterNight", date: "2026-04-18", db: db, config: config
+    )
+    #expect(html.contains("<h2>Szűrők</h2>"))
+    #expect(html.contains("Ha &lt;5nm&gt;"))
+    #expect(!html.contains("OIII &amp; only tomorrow"))
 }
 
 // MARK: - 3. Altitude section present when coordinates exist

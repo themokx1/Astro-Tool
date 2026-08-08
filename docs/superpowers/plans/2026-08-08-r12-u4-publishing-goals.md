@@ -29,7 +29,7 @@
 - Group key: `(sessionDate: String, filter: String, nominalExposure: Double)`
 - Preserves: `AcquisitionExport.unmappedAstrobinFilters(...)`
 
-- [ ] **Step 1: Add a failing multi-filter export test**
+- [x] **Step 1: Add a failing multi-filter export test**
 
 ```swift
 @Test func astrobinSeparatesSameExposureSessionByFilter() throws {
@@ -45,15 +45,15 @@
 }
 ```
 
-- [ ] **Step 2: Run and verify the dominant-filter behavior fails**
+- [x] **Step 2: Run and verify the dominant-filter behavior fails**
 
 Run: `swift test --filter AcquisitionExportTests`
 
-- [ ] **Step 3: Replace dominant-filter aggregation with filter-key aggregation**
+- [x] **Step 3: Replace dominant-filter aggregation with filter-key aggregation**
 
 Normalize only mapping lookup keys (`trimmed.lowercased()`); retain raw filter text in diagnostic output. Filterless frames stay in their existing blank/sentinel behavior.
 
-- [ ] **Step 4: Add CLI warning name assertions and run tests**
+- [x] **Step 4: Add CLI warning name assertions and run tests**
 
 Run: `swift test --filter AcquisitionExportTests && swift test --filter CLISmokeTests`
 
@@ -68,7 +68,7 @@ Run: `swift test --filter AcquisitionExportTests && swift test --filter CLISmoke
 - Produces: `ProjectState.filterGoals: [FilterIntegration]`
 - Produces helpers: `effectiveGoalSeconds`, `largestFilterDeficitSeconds`
 
-- [ ] **Step 1: Add failing compatibility and behavior tests**
+- [x] **Step 1: Add failing compatibility and behavior tests**
 
 ```swift
 @Test func projectWithOnlyOutstandingFilterGoalIsCollecting() throws {
@@ -84,15 +84,15 @@ Run: `swift test --filter AcquisitionExportTests && swift test --filter CLISmoke
 }
 ```
 
-- [ ] **Step 2: Run project tests and confirm failure**
+- [x] **Step 2: Run project tests and confirm failure**
 
 Run: `swift test --filter ProjectStatusTests`
 
-- [ ] **Step 3: Merge filter data once in `buildState`**
+- [x] **Step 3: Merge filter data once in `buildState`**
 
 Use existing stats filter breakdown + tag goals. Set collecting when overall goal is short, any filter goal is short, or the existing low/no-stack rule applies. Add one deterministic todo per outstanding filter, sorted case-insensitively.
 
-- [ ] **Step 4: Run project/filter tests**
+- [x] **Step 4: Run project/filter tests**
 
 Run: `swift test --filter ProjectStatusTests && swift test --filter FilterGoalQueriesTests`
 
@@ -107,15 +107,15 @@ Run: `swift test --filter ProjectStatusTests && swift test --filter FilterGoalQu
 - Consumes: `TargetPlan.filterGoals`
 - Score need: `max(overallMissingHours ?? 0, largestFilterMissingHours ?? 0)`; fallback `1.0` only when neither goal type exists.
 
-- [ ] **Step 1: Add failing ranking tests**
+- [x] **Step 1: Add failing ranking tests**
 
 Create two equally visible targets, one complete overall but missing 8h Ha, one with no goal. Assert the filter-deficit target ranks first and receives nonzero missing need.
 
-- [ ] **Step 2: Run planner tests**
+- [x] **Step 2: Run planner tests**
 
 Run: `swift test --filter PlannerTests`
 
-- [ ] **Step 3: Pass filter goals into `score` and expose fallback captions**
+- [x] **Step 3: Pass filter goals into `score` and expose fallback captions**
 
 ```swift
 private static func score(usableIntegrationSeconds: Double, goalSeconds: Double?,
@@ -125,7 +125,7 @@ private static func score(usableIntegrationSeconds: Double, goalSeconds: Double?
 
 The app `Cél`/`Hiányzik` cell falls back to filter-goal totals only when the overall value is nil and labels the popover/caption `szűrőcélok összege`.
 
-- [ ] **Step 4: Run planner tests and app build**
+- [x] **Step 4: Run planner tests and app build**
 
 Run: `swift test --filter PlannerTests && swift build --target AstroToolApp`
 
@@ -141,27 +141,27 @@ Run: `swift test --filter PlannerTests && swift build --target AstroToolApp`
 - Produces: normalized validation helper for one filter goal name
 - App action saves overall + filter goals in one Task/operation
 
-- [ ] **Step 1: Add failing domain validation tests**
+- [x] **Step 1: Add failing domain validation tests**
 
 Assert blank filter, case-insensitive duplicate (`Ha`/`ha`), nonpositive hours, and valid new `SII` behavior.
 
-- [ ] **Step 2: Run GoalTag tests**
+- [x] **Step 2: Run GoalTag tests**
 
 Run: `swift test --filter GoalTagTests`
 
-- [ ] **Step 3: Separate sheet draft state from persisted state**
+- [x] **Step 3: Separate sheet draft state from persisted state**
 
 Use `overallHours: Double?`, not an implicit 10h default. New filter rows have explicit name/hours and inline validation. Save button remains disabled while any row is invalid.
 
-- [ ] **Step 4: Add the two-level delete confirmation**
+- [x] **Step 4: Add the two-level delete confirmation**
 
 When filter goals exist, present `Csak az összcél törlése` and `Minden cél törlése`; without them, retain a single overall delete.
 
-- [ ] **Step 5: Bundle DB writes and refresh**
+- [x] **Step 5: Bundle DB writes and refresh**
 
 Avoid a public `beginOperation` call per row. One AppState method performs all tag changes serially in a detached task, then reloads project/filter/plan data once.
 
-- [ ] **Step 6: Run tests and app build**
+- [x] **Step 6: Run tests and app build**
 
 Run: `swift test --filter GoalTagTests && swift build --target AstroToolApp`
 
@@ -179,23 +179,23 @@ Run: `swift test --filter GoalTagTests && swift build --target AstroToolApp`
 - Target report uses project-wide merged filter goals.
 - Night report uses date-scoped `FilterBreakdownQueries` only.
 
-- [ ] **Step 1: Add failing report HTML tests**
+- [x] **Step 1: Add failing report HTML tests**
 
 Assert escaped filter names, target goal/missing columns, and that a different date's filter never appears in NightReport.
 
-- [ ] **Step 2: Run report tests**
+- [x] **Step 2: Run report tests**
 
 Run: `swift test --filter TargetReportTests && swift test --filter NightReportTests`
 
-- [ ] **Step 3: Render deterministic tables**
+- [x] **Step 3: Render deterministic tables**
 
 Sort filters case-insensitively, display `n/a` for absent goals, and use existing `ReportStyle`/HTML escaping helpers.
 
-- [ ] **Step 4: Add failing explicit output-path smoke tests**
+- [x] **Step 4: Add failing explicit output-path smoke tests**
 
 For both commands, pass a temp file path outside root and assert that exact file is written while the default reports directory remains unused.
 
-- [ ] **Step 5: Fix command output routing and run suites**
+- [x] **Step 5: Fix command output routing and run suites**
 
 Run: `swift test --filter TargetReportTests && swift test --filter NightReportTests && swift test --filter CLISmokeTests`
 
@@ -211,19 +211,19 @@ Run: `swift test --filter TargetReportTests && swift test --filter NightReportTe
 - Produces: `usedUnmappedAstroBinFilters: [String]`
 - Mapping lookup is trimmed/case-insensitive.
 
-- [ ] **Step 1: Add failing mapping normalization tests**
+- [x] **Step 1: Add failing mapping normalization tests**
 
 Assert config mapping key ` ha ` covers library filter `Ha`, and duplicate normalized keys decode deterministically.
 
-- [ ] **Step 2: Implement one normalization helper used by export/settings**
+- [x] **Step 2: Implement one normalization helper used by export/settings**
 
 Do not normalize persisted display text destructively; normalize at lookup/save uniqueness boundary.
 
-- [ ] **Step 3: Add settings suggestions and named toast**
+- [x] **Step 3: Add settings suggestions and named toast**
 
 Settings lists only currently used unmapped filters with an `ID megadása` row. App export success may proceed, but toast includes `Nincs AstroBin ID: Ha, OIII`.
 
-- [ ] **Step 4: Run config tests and app build**
+- [x] **Step 4: Run config tests and app build**
 
 Run: `swift test --filter ConfigTests && swift build --target AstroToolApp`
 
@@ -239,19 +239,19 @@ Run: `swift test --filter ConfigTests && swift build --target AstroToolApp`
 - Produces: `PublishingReadiness.evaluate(project:unmappedFilters:hasProcessedOutput:)`
 - Produces additive `Issue` enum cases with stable raw values.
 
-- [ ] **Step 1: Add failing pure-model tests**
+- [x] **Step 1: Add failing pure-model tests**
 
 Cover collecting, outstanding filter goal, unmapped filter, missing processed output, and fully ready. Assert multiple issues coexist and deterministic order.
 
-- [ ] **Step 2: Implement the pure readiness evaluator**
+- [x] **Step 2: Implement the pure readiness evaluator**
 
 No DB or filesystem access inside the evaluator. AppState gathers inputs from existing project state, stack discovery, and unmapped-filter query.
 
-- [ ] **Step 3: Render a nonblocking status row**
+- [x] **Step 3: Render a nonblocking status row**
 
 Each issue deep-links to the existing Goal, Settings, Stacks, or processing section. Keep Export enabled; caption explicitly says `Figyelmeztetés, nem tiltás`.
 
-- [ ] **Step 4: Run tests and app build**
+- [x] **Step 4: Run tests and app build**
 
 Run: `swift test --filter PublishingReadinessTests && swift build --target AstroToolApp`
 
@@ -263,19 +263,19 @@ Run: `swift test --filter PublishingReadinessTests && swift build --target Astro
 - Modify: `CHANGELOG.md`
 - Modify: `PLAN-R12.md`
 
-- [ ] **Step 1: Document per-filter AstroBin rows, goal fallback, reports, and readiness**
+- [x] **Step 1: Document per-filter AstroBin rows, goal fallback, reports, and readiness**
 
-- [ ] **Step 2: Search for dominant-filter and old goal wording**
+- [x] **Step 2: Search for dominant-filter and old goal wording**
 
 Run: `rg -n "domináns szűrő|filter goal|szűrőcél|AstroBin" Sources docs README.md`
 
-- [ ] **Step 3: Run the full test suite**
+- [x] **Step 3: Run the full test suite**
 
 Run: `swift test`
 
 Expected: 0 failures.
 
-- [ ] **Step 4: Verify diff and commit only U4 files**
+- [x] **Step 4: Verify diff and commit only U4 files**
 
 Run: `git diff --check && git status --short`
 

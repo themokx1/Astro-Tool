@@ -32,6 +32,21 @@ public struct ProjectState: Codable, Sendable, Equatable {
     public var goalSeconds: Double?
     /// `max(goal - usable, 0)`; `nil` if there's no goal tag.
     public var missingSeconds: Double?
+    /// Per-filter usable/goal/missing rows from `FilterGoalQueries.merge`.
+    /// Older serialized states decode this additive field as an empty list.
+    public var filterGoals: [FilterIntegration]
+    /// Explicit overall goal when present; otherwise the sum of the
+    /// independently configured filter goals. UI callers must label the
+    /// fallback as a filter-goal sum rather than an explicit overall goal.
+    public var effectiveGoalSeconds: Double? {
+        if let goalSeconds { return goalSeconds }
+        let values = filterGoals.compactMap(\.goalSeconds)
+        return values.isEmpty ? nil : values.reduce(0, +)
+    }
+    /// Largest currently outstanding per-filter deficit, if any.
+    public var largestFilterDeficitSeconds: Double? {
+        filterGoals.compactMap(\.missingSeconds).filter { $0 > 0 }.max()
+    }
     /// The latest (`SessionDate.start`) session date-dir on record for this
     /// target, across ALL session dates including excluded (`_hibas`) ones
     /// -- same convention as `TargetStats.lastSessionDate`.
@@ -52,6 +67,7 @@ public struct ProjectState: Codable, Sendable, Equatable {
         usableIntegrationSeconds: Double,
         goalSeconds: Double? = nil,
         missingSeconds: Double? = nil,
+        filterGoals: [FilterIntegration] = [],
         latestSessionDate: String? = nil,
         latestStackDate: String? = nil,
         latestProcessedDate: String? = nil,
@@ -63,6 +79,7 @@ public struct ProjectState: Codable, Sendable, Equatable {
         self.usableIntegrationSeconds = usableIntegrationSeconds
         self.goalSeconds = goalSeconds
         self.missingSeconds = missingSeconds
+        self.filterGoals = filterGoals
         self.latestSessionDate = latestSessionDate
         self.latestStackDate = latestStackDate
         self.latestProcessedDate = latestProcessedDate
@@ -70,7 +87,7 @@ public struct ProjectState: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case target, displayName, phase, usableIntegrationSeconds, goalSeconds, missingSeconds,
+        case target, displayName, phase, usableIntegrationSeconds, goalSeconds, missingSeconds, filterGoals,
              latestSessionDate, latestStackDate, latestProcessedDate, todos
     }
 
@@ -84,6 +101,7 @@ public struct ProjectState: Codable, Sendable, Equatable {
         usableIntegrationSeconds = try c.decode(Double.self, forKey: .usableIntegrationSeconds)
         goalSeconds = try c.decodeIfPresent(Double.self, forKey: .goalSeconds)
         missingSeconds = try c.decodeIfPresent(Double.self, forKey: .missingSeconds)
+        filterGoals = try c.decodeIfPresent([FilterIntegration].self, forKey: .filterGoals) ?? []
         latestSessionDate = try c.decodeIfPresent(String.self, forKey: .latestSessionDate)
         latestStackDate = try c.decodeIfPresent(String.self, forKey: .latestStackDate)
         latestProcessedDate = try c.decodeIfPresent(String.self, forKey: .latestProcessedDate)
@@ -117,15 +135,24 @@ public enum ProjectStatusQueries {
         let states = try stats.map { stat -> ProjectState in
             let sessions = try SessionStatsQueries.sessions(target: stat.target, db: db, config: config)
             let discoveredStacks = discoveredByTarget[stat.target] ?? []
-            return buildState(stat: stat, sessions: sessions, files: files, discoveredStacks: discoveredStacks, config: config)
+            let breakdown = try FilterBreakdownQueries.breakdown(db: db, config: config, target: stat.target)
+            let filterGoals = FilterGoalQueries.merge(breakdown: breakdown, tags: stat.tags)
+            return buildState(
+                stat: stat,
+                sessions: sessions,
+                files: files,
+                discoveredStacks: discoveredStacks,
+                filterGoals: filterGoals,
+                config: config
+            )
         }
 
         return states.sorted { a, b in
             let groupA = a.phase == .done ? 1 : 0
             let groupB = b.phase == .done ? 1 : 0
             if groupA != groupB { return groupA < groupB }
-            let missingA = a.missingSeconds ?? -Double.infinity
-            let missingB = b.missingSeconds ?? -Double.infinity
+            let missingA = max(a.missingSeconds ?? -Double.infinity, a.largestFilterDeficitSeconds ?? -Double.infinity)
+            let missingB = max(b.missingSeconds ?? -Double.infinity, b.largestFilterDeficitSeconds ?? -Double.infinity)
             if missingA != missingB { return missingA > missingB }
             return a.target < b.target
         }
@@ -163,6 +190,7 @@ public enum ProjectStatusQueries {
         sessions: [SessionDetail],
         files: [FileRecord],
         discoveredStacks: [StackFile],
+        filterGoals: [FilterIntegration],
         config: AstroConfig
     ) -> ProjectState {
         let target = stat.target
@@ -209,10 +237,11 @@ public enum ProjectStatusQueries {
         // MARK: Phase
         let hasAnyStack = !stackSpans.isEmpty
         let underGoal = goalSeconds.map { stat.usableIntegrationSeconds < $0 } ?? false
+        let underFilterGoal = filterGoals.contains { ($0.missingSeconds ?? 0) > 0 }
         let noStackAndLow = !hasAnyStack && stat.usableIntegrationSeconds < config.stats.collectingThresholdSeconds
 
         let phase: ProjectPhase
-        if underGoal || noStackAndLow {
+        if underGoal || underFilterGoal || noStackAndLow {
             phase = .collecting
         } else if !sessionsNeedingStack.isEmpty {
             phase = .readyToStack
@@ -235,6 +264,14 @@ public enum ProjectStatusQueries {
         if let goalSeconds, let missingSeconds, missingSeconds > 0 {
             todos.append("hiányzik még \(formatHours(missingSeconds)) óra a célhoz (goal:\(formatGoalHours(goalSeconds))h)")
         }
+        for entry in filterGoals
+            .filter({ ($0.missingSeconds ?? 0) > 0 })
+            .sorted(by: { $0.filter.localizedCaseInsensitiveCompare($1.filter) == .orderedAscending }) {
+            guard let missing = entry.missingSeconds, let goal = entry.goalSeconds else { continue }
+            todos.append(
+                "hiányzik még \(formatHours(missing)) óra \(entry.filter) szűrőből (goal:\(entry.filter)=\(formatGoalHours(goal))h)"
+            )
+        }
 
         let sessionDetailByDate = Dictionary(uniqueKeysWithValues: sessions.map { ($0.dateRaw, $0) })
         for session in actionableSessionSpans {
@@ -254,6 +291,7 @@ public enum ProjectStatusQueries {
             usableIntegrationSeconds: stat.usableIntegrationSeconds,
             goalSeconds: goalSeconds,
             missingSeconds: missingSeconds,
+            filterGoals: filterGoals,
             latestSessionDate: latestSessionDate,
             latestStackDate: latestStackDate,
             latestProcessedDate: latestProcessedDate,

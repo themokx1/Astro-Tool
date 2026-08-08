@@ -439,6 +439,36 @@ public struct AstroBinRule: Codable, Equatable, Sendable {
         self.filterIds = filterIds
     }
 
+    public static func normalizedFilterKey(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    /// Case/whitespace-insensitive lookup. If a legacy hand-edited config
+    /// contains duplicate normalized keys, raw-key lexical order makes the
+    /// selected value deterministic on every decode/platform.
+    public func filterID(for rawFilter: String) -> Int? {
+        let key = Self.normalizedFilterKey(rawFilter)
+        guard !key.isEmpty else { return nil }
+        guard let rawKey = filterIds.keys
+            .filter({ Self.normalizedFilterKey($0) == key })
+            .sorted()
+            .first
+        else { return nil }
+        return filterIds[rawKey]
+    }
+
+    /// Save-boundary mutation: removes every case/spacing variant of the
+    /// same key, then preserves the newly entered display spelling.
+    public mutating func setFilterID(_ id: Int, for name: String) {
+        let displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = Self.normalizedFilterKey(displayName)
+        guard !key.isEmpty else { return }
+        for existing in Array(filterIds.keys) where Self.normalizedFilterKey(existing) == key {
+            filterIds.removeValue(forKey: existing)
+        }
+        filterIds[displayName] = id
+    }
+
     private enum CodingKeys: String, CodingKey {
         case filterIds
     }

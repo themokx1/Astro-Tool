@@ -14,6 +14,35 @@ import Foundation
 /// `"goal:"` fail `Double(...)`, so the `for` loop just moves on to the next
 /// tag), so no change was needed there for backward compatibility.
 public enum GoalTag {
+    public enum FilterGoalValidationError: String, Sendable, Equatable {
+        case blankName
+        case duplicateName
+        case nonpositiveHours
+    }
+
+    /// Trims editor-only whitespace while preserving the user's display
+    /// casing. Matching and duplicate detection remain case-insensitive.
+    public static func normalizedFilterGoalName(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Shared validation boundary for manually entered per-filter goals.
+    /// `otherNames` excludes the row being validated.
+    public static func validateFilterGoal(
+        name: String,
+        hours: Double,
+        otherNames: [String]
+    ) -> FilterGoalValidationError? {
+        let normalized = normalizedFilterGoalName(name)
+        guard !normalized.isEmpty else { return .blankName }
+        guard hours > 0 else { return .nonpositiveHours }
+        let key = normalized.lowercased()
+        if otherNames.contains(where: { normalizedFilterGoalName($0).lowercased() == key }) {
+            return .duplicateName
+        }
+        return nil
+    }
+
     /// Scans `tags` for the first one matching the `goal:<hours>h` shape
     /// (case-insensitive, leniently parsed -- the trailing `h` is optional).
     /// `nil` if none match. Never matches a `goal:<filter>=<hours>h` tag --

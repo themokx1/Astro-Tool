@@ -3091,13 +3091,72 @@ func cmdExport(_ args: [String]) throws -> Int32 {
 /// Returns the standardized absolute destination URL, or `nil` (having
 /// already `eprint`ed the reason) when `out` resolves inside `rootPath`.
 private func resolveOutPathOutsideRoot(_ out: String, rootPath: String) -> URL? {
-    let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true).standardizedFileURL
-    let resolvedOut = URL(fileURLWithPath: out).standardizedFileURL
-    guard resolvedOut.path != rootURL.path, !resolvedOut.path.hasPrefix(rootURL.path + "/") else {
+    let requestedOut = URL(fileURLWithPath: out).standardizedFileURL
+    guard let rootURL = canonicalURLResolvingSymlinkComponents(
+        URL(fileURLWithPath: rootPath, isDirectory: true)
+    ), let resolvedOut = canonicalURLResolvingSymlinkComponents(requestedOut) else {
+        eprint("error: --out path contains an unresolvable symbolic-link chain")
+        return nil
+    }
+    let descendantPrefix = rootURL.path == "/" ? "/" : rootURL.path + "/"
+    guard resolvedOut.path != rootURL.path, !resolvedOut.path.hasPrefix(descendantPrefix) else {
         eprint("error: --out path is inside the library root; only the tool's own default location (omit --out) may be written there")
         return nil
     }
-    return resolvedOut
+    // Canonical form is only for the security decision. Preserve the
+    // caller's normalized spelling for the actual write and printed path.
+    return requestedOut
+}
+
+/// Resolves symbolic links component by component without requiring their
+/// destination to exist. `fileExists`/`resolvingSymlinksInPath` miss a
+/// dangling final link (`outside.html -> <library>/new.html`), even though a
+/// later write follows it. `destinationOfSymbolicLink` reads the link inode
+/// itself, so the containment check sees both existing-parent and dangling
+/// file links before any bytes are written.
+private func canonicalURLResolvingSymlinkComponents(_ url: URL) -> URL? {
+    let fileManager = FileManager.default
+    var pending = lexicallyNormalizedPathComponents(url)
+    var canonical = URL(fileURLWithPath: "/", isDirectory: true)
+    var followedLinks = 0
+
+    while !pending.isEmpty {
+        let parent = canonical
+        canonical.appendPathComponent(pending.removeFirst())
+        guard let destination = try? fileManager.destinationOfSymbolicLink(atPath: canonical.path) else {
+            continue
+        }
+
+        followedLinks += 1
+        guard followedLinks <= 64 else { return nil }
+        let destinationURL: URL
+        if destination.hasPrefix("/") {
+            destinationURL = URL(fileURLWithPath: destination)
+        } else {
+            destinationURL = parent.appendingPathComponent(destination)
+        }
+        pending = lexicallyNormalizedPathComponents(destinationURL) + pending
+        canonical = URL(fileURLWithPath: "/", isDirectory: true)
+    }
+    return canonical
+}
+
+/// Removes `.`/`..` lexically without Foundation's `standardizedFileURL`,
+/// which on macOS aliases `/private/tmp` back to the `/tmp` symlink and
+/// would make a component-wise resolver follow that same link forever.
+private func lexicallyNormalizedPathComponents(_ url: URL) -> [String] {
+    var result: [String] = []
+    for component in url.pathComponents.dropFirst() {
+        switch component {
+        case ".", "":
+            continue
+        case "..":
+            if !result.isEmpty { result.removeLast() }
+        default:
+            result.append(component)
+        }
+    }
+    return result
 }
 
 // MARK: - health
@@ -4094,9 +4153,20 @@ func cmdReport(_ args: [String]) throws -> Int32 {
     // here so this specific target/session lookup exits 3, not the generic
     // 1 `main.swift`'s catch-all AstroError handler would give it.
     do {
-        if parsed.value("--out") == "-" {
+        if let out = parsed.value("--out") {
             let html = try NightReport.render(target: target, date: date, db: db, config: config)
-            print(html, terminator: "")
+            if out == "-" {
+                print(html, terminator: "")
+                return 0
+            }
+            guard let resolvedOut = resolveOutPathOutsideRoot(out, rootPath: config.rootPath) else {
+                return 1
+            }
+            try FileManager.default.createDirectory(
+                at: resolvedOut.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            try Data(html.utf8).write(to: resolvedOut)
+            print(resolvedOut.path)
             return 0
         }
 
@@ -4139,9 +4209,20 @@ func cmdTargetReport(_ args: [String]) throws -> Int32 {
     try hintIfEmpty(db)
 
     do {
-        if parsed.value("--out") == "-" {
+        if let out = parsed.value("--out") {
             let html = try TargetReport.render(target: target, db: db, config: config)
-            print(html, terminator: "")
+            if out == "-" {
+                print(html, terminator: "")
+                return 0
+            }
+            guard let resolvedOut = resolveOutPathOutsideRoot(out, rootPath: config.rootPath) else {
+                return 1
+            }
+            try FileManager.default.createDirectory(
+                at: resolvedOut.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            try Data(html.utf8).write(to: resolvedOut)
+            print(resolvedOut.path)
             return 0
         }
 

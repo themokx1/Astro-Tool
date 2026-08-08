@@ -129,6 +129,26 @@ private struct AcquisitionExportFixture {
     #expect(row60[2] == "2")
 }
 
+@Test func astrobinSeparatesSameExposureSessionByFilter() throws {
+    let fixture = try AcquisitionExportFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/ha.fit", exptime: 300.0, filter: "Ha")
+    try fixture.writeFITS("sessions/T1/2026-01-10/lights/oiii.fit", exptime: 300.0, filter: "OIII")
+    try fixture.scan()
+
+    var config = fixture.config
+    config.astrobin.filterIds = ["ha": 11, "oiii": 22]
+    let output = try AcquisitionExport.render(target: "T1", format: .astrobin, db: fixture.db, config: config)
+    let rows = output.components(separatedBy: "\n").filter { !$0.isEmpty }.dropFirst().map {
+        $0.components(separatedBy: ",")
+    }
+
+    #expect(rows.count == 2)
+    #expect(Set(rows.map { $0[1] }) == Set(["11", "22"]))
+    #expect(rows.allSatisfy { $0[2] == "1" && $0[3] == "300" })
+}
+
 @Test func astrobinLeavesFilterBlankForOSCFrames() throws {
     let fixture = try AcquisitionExportFixture.make()
     defer { fixture.cleanup() }

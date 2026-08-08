@@ -587,8 +587,19 @@ struct TonightPage: View {
             }
         }
         var integrationSeconds: Double { plan.usableIntegrationSeconds }
-        var goalSortKey: Double { plan.goalSeconds ?? -1 }
-        var missingSortKey: Double { missingSeconds ?? -1 }
+        var filterGoalTotalSeconds: Double? {
+            let values = plan.filterGoals.compactMap(\.goalSeconds)
+            return values.isEmpty ? nil : values.reduce(0, +)
+        }
+        var filterMissingTotalSeconds: Double? {
+            let values = plan.filterGoals.compactMap(\.missingSeconds)
+            return values.isEmpty ? nil : values.reduce(0, +)
+        }
+        var effectiveGoalSeconds: Double? { plan.goalSeconds ?? filterGoalTotalSeconds }
+        var effectiveMissingSeconds: Double? { missingSeconds ?? filterMissingTotalSeconds }
+        var usesFilterGoalFallback: Bool { plan.goalSeconds == nil && filterGoalTotalSeconds != nil }
+        var goalSortKey: Double { effectiveGoalSeconds ?? -1 }
+        var missingSortKey: Double { effectiveMissingSeconds ?? -1 }
         var culminationSortKey: String { plan.culminationLocal ?? "" }
         var maxAltSortKey: Double { plan.maxAltitudeDeg ?? -999 }
         var visibleHoursSortKey: Double { plan.visibleHours ?? -1 }
@@ -806,9 +817,14 @@ struct TonightPage: View {
     private func goalCell(_ row: PlanRow) -> some View {
         if let goal = row.plan.goalSeconds {
             Text(TDFormat.hm(goal)).foregroundStyle(.secondary)
+        } else if let goal = row.filterGoalTotalSeconds {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(TDFormat.hm(goal)).foregroundStyle(.secondary)
+                Text("szűrőcélok összege").font(.caption2).foregroundStyle(.tertiary)
+            }
         } else {
             Button("Cél beállítása…") {
-                goalEditingTarget = GoalEditingTarget(target: row.plan.target, currentHours: 10)
+                goalEditingTarget = GoalEditingTarget(target: row.plan.target, currentHours: nil)
             }
             .buttonStyle(.link)
             .font(.callout)
@@ -818,8 +834,13 @@ struct TonightPage: View {
     @ViewBuilder
     private func missingCell(_ row: PlanRow) -> some View {
         HStack(spacing: 4) {
-            if let missing = row.missingSeconds {
-                Text(TDFormat.hm(missing)).foregroundStyle(missing > 0 ? .red : .secondary)
+            if let missing = row.effectiveMissingSeconds {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(TDFormat.hm(missing)).foregroundStyle(missing > 0 ? .red : .secondary)
+                    if row.usesFilterGoalFallback {
+                        Text("szűrőcélok összege").font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
             } else {
                 // R10 review (item 20): table CELLS use "-", not "—" -- see
                 // `TDFormat`'s own doc comment for the full rule.
@@ -895,7 +916,7 @@ struct TonightPage: View {
         Button("Célpont megnyitása") { appState.currentPage = .target(row.plan.target) }
         Button("Cél beállítása…") {
             goalEditingTarget = GoalEditingTarget(
-                target: row.plan.target, currentHours: (row.plan.goalSeconds ?? 36000) / 3600.0
+                target: row.plan.target, currentHours: row.plan.goalSeconds.map { $0 / 3600.0 }
             )
         }
         if row.plan.raDeg == nil {

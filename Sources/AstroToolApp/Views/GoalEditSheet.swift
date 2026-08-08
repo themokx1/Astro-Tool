@@ -1,4 +1,5 @@
 import SwiftUI
+import AstroCore
 
 // MARK: - Goal-editing sheet (R10-B7: the app's ONE goal editor)
 
@@ -17,7 +18,7 @@ import SwiftUI
 /// duplicating it.
 struct GoalEditingTarget: Identifiable {
     let target: String
-    let currentHours: Double
+    let currentHours: Double?
     var id: String { target }
 }
 
@@ -32,104 +33,192 @@ struct GoalEditSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let target: String
-    @State private var hours: Double
-    /// R11-T5/F2: "Szűrőnként" section state -- overrides
-    /// `appState.filterGoalEditorRows`' own `goalHours` per filter as the
-    /// user moves each row's stepper, keyed by filter name (not the row
-    /// array itself, so a still-loading/absent row never blocks editing the
-    /// ones already on screen).
-    @State private var filterHoursByFilter: [String: Double] = [:]
+    @State private var overallHours: Double?
+    @State private var filterDrafts: [FilterDraft] = []
+    @State private var didLoadDrafts = false
     @State private var filtersExpanded = false
+    @State private var showDeleteChoices = false
 
-    init(target: String, initialHours: Double) {
+    private struct FilterDraft: Identifiable {
+        let id = UUID()
+        var name: String
+        var usableSeconds: Double
+        var hours: Double
+        var isNew: Bool
+    }
+
+    init(target: String, initialHours: Double?) {
         self.target = target
-        _hours = State(initialValue: initialHours)
+        _overallHours = State(initialValue: initialHours)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Cél (óra)").font(.headline)
             Text(target).foregroundStyle(.secondary)
-            Stepper(value: $hours, in: 0...300, step: 0.5) {
-                Text(String(format: "%.1f óra", hours))
+            Stepper(value: overallHoursBinding, in: 0...300, step: 0.5) {
+                if let overallHours {
+                    Text(String(format: "%.1f óra", overallHours))
+                } else {
+                    Text("Nincs összcél (0,0 óra)").foregroundStyle(.secondary)
+                }
             }
 
-            if let rows = appState.filterGoalEditorRows, !rows.isEmpty {
+            if appState.filterGoalEditorRows != nil {
                 DisclosureGroup("Szűrőnként", isExpanded: $filtersExpanded) {
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(rows) { row in
-                            filterRow(row)
+                        ForEach($filterDrafts) { $draft in
+                            filterRow($draft)
                         }
+                        Button("+ Szűrő") {
+                            filterDrafts.append(FilterDraft(name: "", usableSeconds: 0, hours: 1, isNew: true))
+                            filtersExpanded = true
+                        }
+                        .buttonStyle(.link)
                     }
                     .padding(.top, 6)
                 }
                 .font(.callout)
+            } else {
+                ProgressView("Szűrőcélok betöltése…")
+                    .controlSize(.small)
             }
 
             HStack {
                 Button("Cél törlése") {
-                    appState.setGoal(target: target, hours: nil)
-                    dismiss()
+                    if hasPersistedFilterGoals {
+                        showDeleteChoices = true
+                    } else {
+                        save(overallHours: nil, rows: persistedRows)
+                    }
                 }
+                .disabled(overallHours == nil && !hasPersistedFilterGoals)
                 Spacer()
                 Button("Mégse") { dismiss() }
                 Button("Mentés") {
-                    appState.setGoal(target: target, hours: hours)
-                    saveFilterGoalsIfAny()
-                    dismiss()
+                    save(overallHours: overallHours, rows: editableRows)
                 }
+                .disabled(hasValidationError || appState.filterGoalEditorRows == nil)
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)
-        .frame(width: 340)
+        .frame(width: 460)
         .onAppear {
             appState.loadFilterGoalEditor(target: target)
         }
         .onDisappear {
             appState.clearFilterGoalEditor()
         }
+        .onChange(of: appState.filterGoalEditorRows) { _, rows in
+            guard !didLoadDrafts, let rows else { return }
+            didLoadDrafts = true
+            filterDrafts = rows.map {
+                FilterDraft(name: $0.filter, usableSeconds: $0.usableSeconds, hours: $0.goalHours, isNew: false)
+            }
+            filtersExpanded = rows.contains { $0.goalHours > 0 }
+        }
+        .confirmationDialog("Melyik célokat töröljem?", isPresented: $showDeleteChoices) {
+            Button("Csak az összcél törlése") {
+                save(overallHours: nil, rows: persistedRows)
+            }
+            Button("Minden cél törlése", role: .destructive) {
+                save(overallHours: nil, rows: persistedRows.map {
+                    AppState.FilterGoalEditRow(filter: $0.filter, usableSeconds: $0.usableSeconds, goalHours: 0)
+                })
+            }
+            Button("Mégse", role: .cancel) {}
+        } message: {
+            Text("A célponthoz szűrőnkénti célok is tartoznak.")
+        }
     }
 
     // MARK: - Szűrőnként (R11-T5/F2)
 
-    private func filterRow(_ row: AppState.FilterGoalEditRow) -> some View {
-        let binding = filterHoursBinding(row.filter, default: row.goalHours)
-        return HStack {
-            Text(row.filter).frame(width: 56, alignment: .leading)
-            Text("megvan \(TDFormat.hm(row.usableSeconds))")
-                .font(.caption2)
+    private func filterRow(_ draft: Binding<FilterDraft>) -> some View {
+        let error = validationError(for: draft.wrappedValue)
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                TextField("Szűrő neve", text: draft.name)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 100)
+                Text("megvan \(TDFormat.hm(draft.wrappedValue.usableSeconds))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 100, alignment: .leading)
+                Spacer()
+                Stepper(value: draft.hours, in: 0...300, step: 0.5) {
+                    Text(draft.wrappedValue.hours > 0 ? String(format: "%.1f ó", draft.wrappedValue.hours) : "nincs cél")
+                        .font(.caption)
+                        .frame(width: 70, alignment: .trailing)
+                }
+                Button {
+                    filterDrafts.removeAll { $0.id == draft.wrappedValue.id }
+                } label: {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .frame(width: 96, alignment: .leading)
-            Spacer()
-            Stepper(value: binding, in: 0...300, step: 0.5) {
-                let value = binding.wrappedValue
-                Text(value > 0 ? String(format: "%.1f ó", value) : "nincs cél")
-                    .font(.caption)
-                    .frame(width: 70, alignment: .trailing)
+                .help("Szűrőcél eltávolítása")
+            }
+            if let error {
+                Text(validationMessage(error)).font(.caption2).foregroundStyle(.red)
             }
         }
     }
 
-    private func filterHoursBinding(_ filter: String, default defaultValue: Double) -> Binding<Double> {
+    private var overallHoursBinding: Binding<Double> {
         Binding(
-            get: { filterHoursByFilter[filter] ?? defaultValue },
-            set: { filterHoursByFilter[filter] = $0 }
+            get: { overallHours ?? 0 },
+            set: { overallHours = $0 > 0 ? $0 : nil }
         )
     }
 
-    /// Builds the final per-filter row set (each row's stepper override, if
-    /// any, else its loaded default) and hands it to `AppState.
-    /// setFilterGoals` -- a no-op when the editor never finished loading
-    /// (e.g. the user hit "Mentés" before `loadFilterGoalEditor` returned).
-    private func saveFilterGoalsIfAny() {
-        guard let rows = appState.filterGoalEditorRows, !rows.isEmpty else { return }
-        let updated = rows.map { row in
+    private var persistedRows: [AppState.FilterGoalEditRow] {
+        appState.filterGoalEditorRows ?? []
+    }
+
+    private var editableRows: [AppState.FilterGoalEditRow] {
+        filterDrafts.map {
             AppState.FilterGoalEditRow(
-                filter: row.filter, usableSeconds: row.usableSeconds,
-                goalHours: filterHoursByFilter[row.filter] ?? row.goalHours
+                filter: GoalTag.normalizedFilterGoalName($0.name),
+                usableSeconds: $0.usableSeconds,
+                goalHours: $0.hours
             )
         }
-        appState.setFilterGoals(target: target, rows: updated)
+    }
+
+    private var hasPersistedFilterGoals: Bool {
+        persistedRows.contains { $0.goalHours > 0 }
+    }
+
+    private var hasValidationError: Bool {
+        filterDrafts.contains { validationError(for: $0) != nil }
+    }
+
+    private func validationError(for draft: FilterDraft) -> GoalTag.FilterGoalValidationError? {
+        let others = filterDrafts.filter { $0.id != draft.id }.map(\.name)
+        if !draft.isNew && draft.hours == 0 {
+            let name = GoalTag.normalizedFilterGoalName(draft.name)
+            if name.isEmpty { return .blankName }
+            if others.contains(where: { GoalTag.normalizedFilterGoalName($0).caseInsensitiveCompare(name) == .orderedSame }) {
+                return .duplicateName
+            }
+            return nil
+        }
+        return GoalTag.validateFilterGoal(name: draft.name, hours: draft.hours, otherNames: others)
+    }
+
+    private func validationMessage(_ error: GoalTag.FilterGoalValidationError) -> String {
+        switch error {
+        case .blankName: return "Add meg a szűrő nevét."
+        case .duplicateName: return "Ez a szűrő már szerepel."
+        case .nonpositiveHours: return "A cél legyen nagyobb 0 óránál."
+        }
+    }
+
+    private func save(overallHours: Double?, rows: [AppState.FilterGoalEditRow]) {
+        appState.saveGoals(target: target, overallHours: overallHours, filterRows: rows)
+        dismiss()
     }
 }

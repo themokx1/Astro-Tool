@@ -772,6 +772,7 @@ public enum Planner {
         let score = self.score(
             usableIntegrationSeconds: usableIntegrationSeconds,
             goalSeconds: goalSeconds,
+            filterGoals: filterGoals,
             visibleHours: visibleHours,
             moonInterferes: moonInterferes
         )
@@ -800,8 +801,9 @@ public enum Planner {
     // MARK: - Score
 
     /// `missingNeed x visibilityFactor x moonPenalty`. `missingNeed` is 1.0
-    /// when there's no goal (every target with data is equally "worth
-    /// finishing"), otherwise the outstanding fraction of the goal, capped
+    /// when there's no overall or filter goal (every target with data is
+    /// equally "worth finishing"). Otherwise it is the larger of the
+    /// overall missing hours and the largest per-filter deficit, capped
     /// at 99 (so a wildly under-shot goal doesn't dwarf everything else)
     /// and floored at a small positive value once the goal is already met
     /// (still shootable, just deprioritized under anything still missing
@@ -810,13 +812,23 @@ public enum Planner {
     private static func score(
         usableIntegrationSeconds: Double,
         goalSeconds: Double?,
+        filterGoals: [FilterIntegration],
         visibleHours: Double,
         moonInterferes: Bool
     ) -> Double {
+        let overallMissingHours = goalSeconds.map {
+            max(0, ($0 - usableIntegrationSeconds) / 3600.0)
+        }
+        let largestFilterMissingHours = filterGoals
+            .compactMap(\.missingSeconds)
+            .map { $0 / 3600.0 }
+            .max()
+        let relevantMissingHours = max(overallMissingHours ?? 0, largestFilterMissingHours ?? 0)
+        let hasAnyGoal = goalSeconds != nil || filterGoals.contains { $0.goalSeconds != nil }
+
         let missingNeed: Double
-        if let goalSeconds {
-            let missingHours = max(0, (goalSeconds - usableIntegrationSeconds) / 3600.0)
-            missingNeed = missingHours > 0 ? min(missingHours, 99) : 0.1
+        if hasAnyGoal {
+            missingNeed = relevantMissingHours > 0 ? min(relevantMissingHours, 99) : 0.1
         } else {
             missingNeed = 1.0
         }

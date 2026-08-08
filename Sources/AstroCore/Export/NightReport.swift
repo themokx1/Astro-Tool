@@ -48,6 +48,9 @@ public enum NightReport {
         let projectTodos = projectState?.todos ?? []
         let displayName = projectState?.displayName ?? target.replacingOccurrences(of: "_", with: " ")
         let sky = try computeSkySections(target: target, date: date, timeline: timeline, db: db, config: config)
+        let filterRows = try FilterBreakdownQueries.breakdown(
+            db: db, config: config, target: target, date: date
+        )
 
         return renderHTML(
             target: target,
@@ -60,6 +63,7 @@ public enum NightReport {
             calib: calib,
             advice: advice,
             projectTodos: projectTodos,
+            filterRows: filterRows,
             altitude: sky.altitude,
             moon: sky.moon
         )
@@ -241,12 +245,14 @@ public enum NightReport {
         calib: SessionCalibration,
         advice: ExposureAdvice,
         projectTodos: [String],
+        filterRows: [FilterIntegration],
         altitude: AltitudeTrack?,
         moon: MoonGeometry?
     ) -> String {
         var body = ""
         body += renderHeader(target: target, displayName: displayName, date: date, session: session)
         body += renderSummary(session: session, timeline: timeline)
+        body += renderFilters(filterRows)
         body += renderTimeline(timeline: timeline)
         body += renderQuality(quality: quality, advice: advice)
         body += renderAltitudeAndMoon(altitude: altitude, moon: moon)
@@ -321,6 +327,25 @@ public enum NightReport {
             html += "<div class=\"stat\"><div class=\"label\">\(escapeHTML(label))</div><div class=\"value\">\(escapeHTML(value))</div></div>\n"
         }
         html += "</div>\n"
+        return html
+    }
+
+    // MARK: - Szűrők
+
+    private static func renderFilters(_ rows: [FilterIntegration]) -> String {
+        var html = "<h2>Szűrők</h2>\n"
+        guard !rows.isEmpty else {
+            return html + "<p class=\"muted\">Nincs szűrőadat ebben a sessionben.</p>\n"
+        }
+        html += "<div class=\"table-wrap\">\n<table>\n"
+        html += "<tr><th>Szűrő</th><th>Keretek</th><th>Integráció</th></tr>\n"
+        for row in rows.sorted(by: {
+            $0.filter.localizedCaseInsensitiveCompare($1.filter) == .orderedAscending
+        }) {
+            html += "<tr><td>\(escapeHTML(row.filter))</td><td>\(row.usableFrameCount)</td>"
+            html += "<td>\(formatHM(row.integrationSeconds))</td></tr>\n"
+        }
+        html += "</table>\n</div>\n"
         return html
     }
 

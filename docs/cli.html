@@ -292,7 +292,7 @@ astrotool sensor --history --json</pre>
     <h2>Export</h2>
     <div class="cmd">
       <div class="name">export</div>
-      <div class="desc">AstroBin bulk-import CSV, gazdagabb session-CSV vagy emberi Markdown napló egy célponthoz. AstroBin formátumnál a <code>filter</code> oszlop a <code>config astrobin.filterIds</code> leképezés szerinti numerikus ID-t írja, ha van hozzá; le nem képezett szűrőnél a név marad + stderr-figyelmeztetés.</div>
+      <div class="desc">AstroBin bulk-import CSV, gazdagabb session-CSV vagy emberi Markdown napló egy célponthoz. AstroBin formátumban külön sor készül minden <code>(session, szűrő, nominális expozíció)</code> csoporthoz, így az azonos éjszakán és expozícióval készült Ha/OIII/SII keretek sem mosódnak össze. Minden sor a saját, szóköz- és kis/nagybetű-függetlenül feloldott <code>config astrobin.filterIds</code> numerikus ID-ját kapja; le nem képezett szűrőnél a név marad, a stderr-figyelmeztetés pedig minden hiányzó nevet felsorol.</div>
       <pre class="example">astrotool export --target M31 --format astrobin</pre>
     </div>
     <div class="cmd">
@@ -307,13 +307,13 @@ astrotool sensor --history --json</pre>
     </div>
     <div class="cmd">
       <div class="name">report</div>
-      <div class="desc">Önmagában megnyitható HTML éjszaka-riport: idővonal, minőség, magasság &amp; Hold, kalibráció, teendők.</div>
-      <pre class="example">astrotool report --target M31 --date 2026-03-15</pre>
+      <div class="desc">Önmagában megnyitható HTML éjszaka-riport: idővonal, minőség, magasság &amp; Hold, kalibráció, teendők és kizárólag az adott session dátumára számolt szűrő-bontás. Alapból a riportkönyvtárba ír; <code>--out PATH</code> pontosan a megadott fájlba, <code>--out -</code> pedig stdoutra küldi a HTML-t.</div>
+      <pre class="example">astrotool report --target M31 --date 2026-03-15 --out ~/Desktop/M31-2026-03-15.html</pre>
     </div>
     <div class="cmd">
       <div class="name">target-report</div>
-      <div class="desc">Önmagában megnyitható HTML célpont-riport: minden session, stack, kalibráció-lefedettség és minőség-adat egy célponthoz, egy oldalon.</div>
-      <pre class="example">astrotool target-report --target M31</pre>
+      <div class="desc">Önmagában megnyitható HTML célpont-riport: minden session, stack, kalibráció-lefedettség és minőség-adat egy célponthoz, egy oldalon, projekt-szintű szűrőnkénti megvan/cél/hiányzik táblával. Alapból a riportkönyvtárba ír; <code>--out PATH</code> pontosan a megadott fájlba, <code>--out -</code> pedig stdoutra küldi a HTML-t.</div>
+      <pre class="example">astrotool target-report --target M31 --out -</pre>
     </div>
   </div>
 

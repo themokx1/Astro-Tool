@@ -179,6 +179,31 @@ private struct PlannerFixture {
     #expect(plan.goalSeconds == 6.5 * 3600)
 }
 
+@Test func plannerRanksOutstandingFilterDeficitAheadOfNoGoalTarget() throws {
+    var fixture = try PlannerFixture.make()
+    defer { fixture.cleanup() }
+    fixture.config.site = SiteRule(latitudeDeg: 47.5, longitudeDeg: 19.0)
+    let coordinates = ["CRVAL1": "350.0", "CRVAL2": "47.5"]
+
+    try fixture.addLight(
+        target: "T_FilterGap", exptime: 3600, extraCards: coordinates, filter: "Ha"
+    )
+    try fixture.db.addTag(TagRecord(
+        kind: "target", target: "T_FilterGap", sessionDate: nil, tag: "goal:1h"
+    ))
+    try fixture.db.addTag(TagRecord(
+        kind: "target", target: "T_FilterGap", sessionDate: nil, tag: "goal:Ha=9h"
+    ))
+    try fixture.addLight(target: "T_NoGoalPeer", exptime: 3600, extraCards: coordinates)
+
+    let plans = try Planner.plan(date: utc(2026, 8, 10), db: fixture.db, config: fixture.config)
+    let filterGap = try #require(plans.first { $0.target == "T_FilterGap" })
+    let noGoal = try #require(plans.first { $0.target == "T_NoGoalPeer" })
+    #expect(filterGap.filterGoals.first?.missingSeconds == 28_800.0)
+    #expect(filterGap.score > noGoal.score)
+    #expect(filterGap.score > 0)
+}
+
 // MARK: - Per-filter goals (R11-T5/F2)
 
 @Test func plannerLeavesFilterGoalsEmptyWithoutAnyFilterGoalTag() throws {

@@ -118,6 +118,31 @@ import Testing
     #expect(goals[0].seconds == 4.5 * 3600.0)
 }
 
+// MARK: - Filter-goal draft validation
+
+@Test func filterGoalValidationRejectsBlankName() {
+    #expect(
+        GoalTag.validateFilterGoal(name: "   ", hours: 2, otherNames: []) == .blankName
+    )
+}
+
+@Test func filterGoalValidationRejectsCaseInsensitiveDuplicate() {
+    #expect(
+        GoalTag.validateFilterGoal(name: "ha", hours: 2, otherNames: ["Ha"]) == .duplicateName
+    )
+}
+
+@Test func filterGoalValidationRejectsNonpositiveHours() {
+    #expect(
+        GoalTag.validateFilterGoal(name: "SII", hours: 0, otherNames: []) == .nonpositiveHours
+    )
+}
+
+@Test func filterGoalValidationAcceptsAndNormalizesNewFilter() {
+    #expect(GoalTag.normalizedFilterGoalName("  SII  ") == "SII")
+    #expect(GoalTag.validateFilterGoal(name: "  SII  ", hours: 4.5, otherNames: ["Ha"]) == nil)
+}
+
 // MARK: - isFilterGoalTag / isOverallGoalTag
 
 @Test func isFilterGoalTagMatchesCaseInsensitively() throws {

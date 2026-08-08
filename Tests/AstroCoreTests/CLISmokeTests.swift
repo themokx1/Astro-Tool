@@ -4038,6 +4038,66 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     #expect(FileManager.default.fileExists(atPath: printedPath))
 }
 
+@Test func reportExplicitOutPathWritesExactlyThereWithoutDefaultReport() throws {
+    let root = try makeTempRoot("report-explicit-out")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let out = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-report-out-\(UUID().uuidString).html")
+    defer { try? FileManager.default.removeItem(at: out) }
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+    #expect(try runCLI(["scan", "--root", root.path]).exitCode == 0)
+
+    let result = try runCLI([
+        "report", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--out", out.path,
+    ])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == out.path)
+    #expect(FileManager.default.fileExists(atPath: out.path))
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(".astro_tool/reports").path))
+}
+
+@Test func reportExplicitOutSymlinkIntoLibraryIsRejected() throws {
+    let root = try makeTempRoot("report-symlink-escape")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let link = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-report-link-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: link) }
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: root)
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+    #expect(try runCLI(["scan", "--root", root.path]).exitCode == 0)
+
+    let escapedDestination = link.appendingPathComponent("must-not-write.html")
+    let result = try runCLI([
+        "report", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
+        "--out", escapedDestination.path,
+    ])
+
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("inside the library root"))
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("must-not-write.html").path))
+}
+
+@Test func reportExplicitOutDanglingFileSymlinkIntoLibraryIsRejected() throws {
+    let root = try makeTempRoot("report-dangling-symlink-escape")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let link = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-report-file-link-\(UUID().uuidString).html")
+    defer { try? FileManager.default.removeItem(at: link) }
+    let insideDestination = root.appendingPathComponent("must-not-materialize.html")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: insideDestination)
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+    #expect(try runCLI(["scan", "--root", root.path]).exitCode == 0)
+
+    let result = try runCLI([
+        "report", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
+        "--out", link.path,
+    ])
+
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("inside the library root"))
+    #expect(!FileManager.default.fileExists(atPath: insideDestination.path))
+}
+
 @Test func reportWithoutTargetOrDateExitsWithError() throws {
     let root = try makeTempRoot("report-missing-args")
     defer { try? FileManager.default.removeItem(at: root) }
@@ -4097,6 +4157,24 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     let expectedPath = root.appendingPathComponent(".astro_tool/reports/target-T1.html").path
     #expect(printedPath == expectedPath)
     #expect(FileManager.default.fileExists(atPath: printedPath))
+}
+
+@Test func targetReportExplicitOutPathWritesExactlyThereWithoutDefaultReport() throws {
+    let root = try makeTempRoot("target-report-explicit-out")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let out = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-target-report-out-\(UUID().uuidString).html")
+    defer { try? FileManager.default.removeItem(at: out) }
+    try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
+    #expect(try runCLI(["scan", "--root", root.path]).exitCode == 0)
+
+    let result = try runCLI([
+        "target-report", "--root", root.path, "--target", "T1", "--out", out.path,
+    ])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == out.path)
+    #expect(FileManager.default.fileExists(atPath: out.path))
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(".astro_tool/reports").path))
 }
 
 @Test func targetReportWithUnknownTargetExitsWithError() throws {
