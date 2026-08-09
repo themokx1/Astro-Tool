@@ -238,18 +238,17 @@ struct SessionsSegment: View {
             showOpenTarget: false,
             onRateFrames: { appState.runRate(target: target, date: detail.dateRaw) },
             setupDescriptor: detail.setupDescriptor,
+            onCreateCapture: {
+                captureEditingSession = LinkingSession(target: target, date: detail.dateRaw)
+            },
+            onConvertSession: {
+                conversionSession = LinkingSession(target: target, date: detail.dateRaw)
+            },
             linkingSession: $linkingSession,
             stackListingSession: $stackListingSession,
             noteEditingSession: $noteEditingSession,
             addingTag: $addingTag
         )
-        Divider()
-        Button("Új capture-gyűjtés…") {
-            captureEditingSession = LinkingSession(target: target, date: detail.dateRaw)
-        }
-        Button("Session átalakítása gyűjtésekre…") {
-            conversionSession = LinkingSession(target: target, date: detail.dateRaw)
-        }
     }
 
     // MARK: - Cell text

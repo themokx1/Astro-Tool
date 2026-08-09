@@ -55,6 +55,10 @@ struct AllTargetsPage: View {
     /// "Stackelés előkészítése…"), `nil` when closed -- same row-scoped
     /// pattern as `linkingSession`.
     @State private var stackListingSession: LinkingSession?
+    /// The exact session being edited or converted into capture groups.
+    /// Both are row-scoped so a menu action can never leak to another date.
+    @State private var captureEditingSession: LinkingSession?
+    @State private var conversionSession: LinkingSession?
     /// The session currently shown in `SessionNoteSheet` (R9-T6/B4's
     /// "Éjszaka-jegyzet szerkesztése…"), `nil` when closed -- same
     /// row-scoped pattern as `linkingSession`.
@@ -243,6 +247,12 @@ struct AllTargetsPage: View {
         }
         .sheet(item: $stackListingSession) { session in
             StackListSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $captureEditingSession) { session in
+            CaptureGroupSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $conversionSession) { session in
+            SessionConversionSheet(target: session.target, date: session.date)
         }
         .sheet(item: $noteEditingSession) { session in
             SessionNoteSheet(target: session.target, date: session.date)
@@ -538,6 +548,12 @@ struct AllTargetsPage: View {
             date: detail.dateRaw,
             tags: detail.tags,
             setupDescriptor: detail.setupDescriptor,
+            onCreateCapture: {
+                captureEditingSession = LinkingSession(target: target, date: detail.dateRaw)
+            },
+            onConvertSession: {
+                conversionSession = LinkingSession(target: target, date: detail.dateRaw)
+            },
             linkingSession: $linkingSession,
             stackListingSession: $stackListingSession,
             noteEditingSession: $noteEditingSession,

@@ -36,6 +36,8 @@ struct NightsPage: View {
     @State private var linkingSession: LinkingSession?
     @State private var stackListingSession: LinkingSession?
     @State private var addingTag: AddTagTarget?
+    @State private var captureEditingSession: LinkingSession?
+    @State private var conversionSession: LinkingSession?
 
     private static let monthNames = [
         "Január", "Február", "Március", "Április", "Május", "Június",
@@ -261,6 +263,12 @@ struct NightsPage: View {
         }
         .sheet(item: $stackListingSession) { session in
             StackListSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $captureEditingSession) { session in
+            CaptureGroupSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $conversionSession) { session in
+            SessionConversionSheet(target: session.target, date: session.date)
         }
         .sheet(item: $addingTag) { info in
             AddTagSheet(target: info.target, date: info.date)
@@ -653,6 +661,12 @@ struct NightsPage: View {
             date: row.date,
             tags: row.tags,
             setupDescriptor: setupDescriptor(for: row),
+            onCreateCapture: {
+                captureEditingSession = LinkingSession(target: row.target, date: row.date)
+            },
+            onConvertSession: {
+                conversionSession = LinkingSession(target: row.target, date: row.date)
+            },
             linkingSession: $linkingSession,
             stackListingSession: $stackListingSession,
             noteEditingSession: $noteEditingSession,
