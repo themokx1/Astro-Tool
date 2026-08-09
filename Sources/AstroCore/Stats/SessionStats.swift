@@ -89,6 +89,9 @@ public struct SessionDetail: Codable, Sendable, Equatable {
     /// this straight off or reruns the same detection with its own pair of
     /// raw dictionaries.
     public var hasConflict: Bool
+    /// Operational sub-collections inside this date session. Empty only
+    /// when decoding data produced before capture summaries existed.
+    public var captureGroups: [CaptureGroupSummary]
 
     public init(
         target: String,
@@ -114,7 +117,8 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         notes: [String: String] = [:],
         dssAcceptedCount: Int? = nil,
         dssRejectedCount: Int? = nil,
-        hasConflict: Bool = false
+        hasConflict: Bool = false,
+        captureGroups: [CaptureGroupSummary] = []
     ) {
         self.target = target
         self.dateRaw = dateRaw
@@ -140,13 +144,14 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         self.dssAcceptedCount = dssAcceptedCount
         self.dssRejectedCount = dssRejectedCount
         self.hasConflict = hasConflict
+        self.captureGroups = captureGroups
     }
 
     private enum CodingKeys: String, CodingKey {
         case target, dateRaw, lightCount, flatCount, darkCount, biasCount, integrationSeconds,
              exposureBreakdown, cameras, focalLengthsMM, gains, sensorTempsC, filters, hasReadme, tags,
              usableLightCount, rejectedCount, duplicateLinkCount, isExcludedFromTotals, setupDescriptor, notes,
-             dssAcceptedCount, dssRejectedCount, hasConflict
+             dssAcceptedCount, dssRejectedCount, hasConflict, captureGroups
     }
 
     public init(from decoder: Decoder) throws {
@@ -184,6 +189,7 @@ public struct SessionDetail: Codable, Sendable, Equatable {
         // Additive R11-T13/F20 field: absent in pre-F20 JSON, falls back to
         // false (no conflict on record).
         hasConflict = try c.decodeIfPresent(Bool.self, forKey: .hasConflict) ?? false
+        captureGroups = try c.decodeIfPresent([CaptureGroupSummary].self, forKey: .captureGroups) ?? []
     }
 }
 
@@ -199,8 +205,22 @@ public enum SessionStatsQueries {
         guard !sessionFiles.isEmpty else { return [] }
 
         let dates = Set(sessionFiles.compactMap(\.sessionDate)).sorted()
+        let targetFiles = files.filter {
+            $0.target == target && ($0.area == .sessions || $0.area == .stacks || $0.area == .processed)
+        }
+        let metaByFileID = try db.fitsMetaBatch(fileIDs: targetFiles.compactMap(\.id))
+        let resolver = try CaptureResolver.load(db: db)
         return try dates.map { date in
-            try computeSessionDetail(target: target, date: date, files: sessionFiles, db: db, config: config)
+            try computeSessionDetail(
+                target: target,
+                date: date,
+                files: targetFiles,
+                metaByFileID: metaByFileID,
+                resolver: resolver,
+                captureGroups: db.captureGroups(target: target, date: date),
+                db: db,
+                config: config
+            )
         }
     }
 
@@ -208,6 +228,9 @@ public enum SessionStatsQueries {
         target: String,
         date: String,
         files: [FileRecord],
+        metaByFileID: [Int64: FITSMetaRecord],
+        resolver: CaptureResolver,
+        captureGroups: [CaptureGroupRecord],
         db: Database,
         config: AstroConfig
     ) throws -> SessionDetail {
@@ -220,15 +243,14 @@ public enum SessionStatsQueries {
             $0.kind == "text" && ($0.path as NSString).lastPathComponent == "README.txt"
         }
 
-        var metaByFileID: [Int64: FITSMetaRecord] = [:]
-        for file in lights {
-            guard let id = file.id else { continue }
-            if let meta = try db.fitsMeta(fileID: id) {
-                metaByFileID[id] = meta
-            }
-        }
-
         let frameBuckets = FrameSet.lightBuckets(files: lights, meta: metaByFileID, config: config)
+        let captureSummaries = CaptureQueries.summarize(
+            files: dayFiles,
+            meta: metaByFileID,
+            resolver: resolver,
+            groups: captureGroups,
+            config: config
+        )
 
         var totalSeconds: Double = 0
         var exposureBreakdown: [String: Int] = [:]
@@ -325,7 +347,8 @@ public enum SessionStatsQueries {
             notes: notes,
             dssAcceptedCount: dssAcceptedCount,
             dssRejectedCount: dssRejectedCount,
-            hasConflict: hasConflict
+            hasConflict: hasConflict,
+            captureGroups: captureSummaries
         )
     }
 }
