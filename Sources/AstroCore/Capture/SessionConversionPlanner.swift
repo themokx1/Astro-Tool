@@ -343,6 +343,7 @@ public enum SessionConversionPlanner {
         mode: SessionConversionMode
     ) throws -> SessionConversionPlan {
         let scope = SessionConversionScope(target: target, date: date)
+        try refreshScope(scope, db: db, config: config)
         let allFiles = try db.allFiles(includeMissing: false)
         let scopedFiles = allFiles.filter { file in
             file.target == target && file.sessionDate == date
@@ -360,6 +361,41 @@ public enum SessionConversionPlanner {
             occupiedPaths: Set(allFiles.map(\.path)),
             config: config
         )
+    }
+
+    /// Brings the three branches belonging to exactly one session up to
+    /// date before the preview fingerprint is calculated. This deliberately
+    /// avoids a whole-library scan while ensuring that removed and modified
+    /// files cannot make the freshly created plan stale immediately.
+    private static func refreshScope(
+        _ scope: SessionConversionScope,
+        db: Database,
+        config: AstroConfig
+    ) throws {
+        guard !scope.target.isEmpty,
+              !scope.date.isEmpty,
+              !scope.target.contains("/"),
+              !scope.date.contains("/"),
+              scope.target != ".",
+              scope.target != "..",
+              scope.date != ".",
+              scope.date != ".."
+        else {
+            throw AstroError.invalidInput("A konverterhez biztonságos célpont- és sessionmappanév szükséges.")
+        }
+
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        let scanner = LibraryScanner(config: config, db: db)
+        for area in ["sessions", "stacks", "processed"] {
+            let relativePath = "\(area)/\(scope.target)/\(scope.date)"
+            let url = root.appendingPathComponent(relativePath, isDirectory: true)
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
+                _ = try scanner.scan(subpath: relativePath)
+            } else {
+                try db.markMissing(pathsNotIn: [], underSubpath: relativePath)
+            }
+        }
     }
 
     public static func plan(

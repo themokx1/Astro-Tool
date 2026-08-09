@@ -103,7 +103,8 @@ public enum SessionConversionExecutor {
         let currentFingerprint = try filesystemFingerprint(root: root, scope: plan.scope)
         guard currentFingerprint == plan.sourceFingerprint else {
             throw AstroError.invalidInput(
-                "A session tartalma megváltozott az előnézet óta. Készíts új konverziós tervet."
+                "A session fájljai megváltoztak az előnézet óta (külső program, új scan vagy fájlművelet). "
+                    + "Frissítsd a konverziós előnézetet, majd ellenőrizd újra a döntéseket."
             )
         }
         for move in plan.moves {
