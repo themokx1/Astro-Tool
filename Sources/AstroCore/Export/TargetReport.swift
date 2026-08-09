@@ -371,6 +371,24 @@ public enum TargetReport {
             html += "<td>\(escapeHTML(session.filters.joined(separator: "/")))</td>"
             html += "<td>\(escapeHTML(flags.joined(separator: ", ")))</td>"
             html += "</tr>\n"
+
+            // Keep the date session as the aggregate parent, then show its
+            // operationally independent capture collections directly below.
+            for group in session.captureGroups where !group.isImplicit || session.captureGroups.count > 1 {
+                let groupFlags = [
+                    group.sensorModes.map(\.displayNameHU).joined(separator: "/"),
+                    group.signalModes.map(\.displayNameHU).joined(separator: "/")
+                ].filter { !$0.isEmpty }.joined(separator: " · ")
+                html += "<tr class=\"highlight\">"
+                html += "<td>↳ \(escapeHTML(group.displayName))</td>"
+                html += "<td>\(group.usableLightCount)</td>"
+                html += "<td>\(formatHM(group.integrationSeconds))</td>"
+                html += "<td>\(escapeHTML(formatExposureBreakdown(group.exposureBreakdown)))</td>"
+                html += "<td>\(escapeHTML(group.cameras.joined(separator: "/")))</td>"
+                html += "<td>–</td><td>–</td><td>–</td>"
+                html += "<td>\(escapeHTML(group.filters.joined(separator: "/")))</td>"
+                html += "<td>\(escapeHTML(groupFlags))</td></tr>\n"
+            }
         }
         html += "</table>\n</div>\n"
         return html

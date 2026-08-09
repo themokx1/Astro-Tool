@@ -136,13 +136,19 @@ public enum PathClassifier {
         case "stacks":
             let target = components.count >= 3 ? components[1] : nil
             let dateRaw = components.count >= 4 ? components[2] : nil
-            let captureSlug = components.count >= 5 ? components[3] : nil
+            let captureSlug: String? = {
+                if components.count >= 6, components[3].lowercased() == "captures" { return components[4] }
+                return components.count >= 5 ? components[3] : nil
+            }()
             return PathInfo(area: .stacks, target: target, dateRaw: dateRaw, role: .stack, captureSlug: captureSlug)
 
         case "processed":
             let target = components.count >= 3 ? components[1] : nil
             let dateRaw = components.count >= 4 ? components[2] : nil
-            let captureSlug = components.count >= 5 ? components[3] : nil
+            let captureSlug: String? = {
+                if components.count >= 6, components[3].lowercased() == "captures" { return components[4] }
+                return components.count >= 5 ? components[3] : nil
+            }()
             return PathInfo(area: .processed, target: target, dateRaw: dateRaw, role: .processed, captureSlug: captureSlug)
 
         case "calibration_library":

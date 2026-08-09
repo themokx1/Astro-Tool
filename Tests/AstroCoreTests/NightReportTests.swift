@@ -33,9 +33,11 @@ private func insertLight(
     fwhm: Double? = nil,
     background: Double? = nil,
     score: Double? = nil,
-    filter: String? = nil
+    filter: String? = nil,
+    captureSlug: String? = nil
 ) throws -> Int64 {
-    let path = "sessions/\(target)/\(date)/lights/\(name).fit"
+    let rolePath = captureSlug.map { "captures/\($0)/lights" } ?? "lights"
+    let path = "sessions/\(target)/\(date)/\(rolePath)/\(name).fit"
     let fileID = try db.upsertFile(
         FileRecord(
             path: path, size: 1024, mtime: 1_700_000_000, ext: "fit", kind: "fits",
@@ -59,6 +61,42 @@ private func insertLight(
         )
     }
     return fileID
+}
+
+@Test func nightReportShowsAggregateAndSeparateCaptureCollections() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+    let target = "IC_1396"
+    let date = "2026-08-08"
+    _ = try db.upsertCaptureGroup(
+        CaptureGroupRecord(
+            target: target, sessionDate: date, slug: "osc-30s", displayName: "OSC 30 s",
+            sensorMode: .osc, signalMode: .broadband
+        )
+    )
+    _ = try db.upsertCaptureGroup(
+        CaptureGroupRecord(
+            target: target, sessionDate: date, slug: "sv220-300s", displayName: "SV220 300 s",
+            sensorMode: .osc, signalMode: .dualBand,
+            filterManufacturer: "SVBONY", filterModel: "SV220"
+        )
+    )
+    try insertLight(
+        db: db, target: target, date: date, name: "osc", dateObs: "2026-08-08T20:00:00",
+        exptime: 30, withCoordinates: false, captureSlug: "osc-30s"
+    )
+    try insertLight(
+        db: db, target: target, date: date, name: "nb", dateObs: "2026-08-08T20:01:00",
+        exptime: 300, withCoordinates: false, captureSlug: "sv220-300s"
+    )
+
+    let html = try NightReport.render(target: target, date: date, db: db, config: config)
+
+    #expect(html.contains("Gyűjtések ebben a sessionben"))
+    #expect(html.contains("OSC 30 s"))
+    #expect(html.contains("SV220 300 s"))
+    #expect(html.contains("30 s × 1"))
+    #expect(html.contains("300 s × 1"))
 }
 
 /// Builds the "rich" fixture: a scanned-equivalent session with 3 usable

@@ -6,6 +6,8 @@ import Foundation
 public struct StackSelection: Codable, Sendable {
     public var target: String
     public var date: String
+    /// Optional first-class capture scope. `nil` keeps the historic whole-session behavior.
+    public var captureSlug: String?
     /// Usable lights in this session before any drop -- `FrameSet`'s deduped,
     /// non-`Reject/` bucket. NOT the raw file count under `lights/` (that
     /// would double-count triage hardlinks and non-frame noise -- see
@@ -59,6 +61,7 @@ public struct StackSelection: Codable, Sendable {
     public init(
         target: String,
         date: String,
+        captureSlug: String? = nil,
         totalFrames: Int,
         selectedFrames: Int,
         criteria: [String],
@@ -70,6 +73,7 @@ public struct StackSelection: Codable, Sendable {
     ) {
         self.target = target
         self.date = date
+        self.captureSlug = captureSlug
         self.totalFrames = totalFrames
         self.selectedFrames = selectedFrames
         self.criteria = criteria
@@ -223,13 +227,14 @@ public enum StackList {
     public static func select(
         target: String,
         date: String,
+        captureSlug: String? = nil,
         keepFraction: Double = 0.8,
         keepFractionPerFilter: [String: Double] = [:],
         db: Database,
         config: AstroConfig
     ) throws -> StackSelection {
         let allFiles = try db.allFiles(includeMissing: false)
-        let sessionLights = allFiles.filter {
+        var sessionLights = allFiles.filter {
             $0.area == .sessions && $0.role == .light && $0.target == target && $0.sessionDate == date
         }
 
@@ -237,6 +242,13 @@ public enum StackList {
         for file in sessionLights {
             guard let id = file.id else { continue }
             if let meta = try db.fitsMeta(fileID: id) { metaByFileID[id] = meta }
+        }
+
+        if let captureSlug {
+            let resolver = try CaptureResolver.load(db: db)
+            sessionLights = sessionLights.filter { file in
+                resolver.resolve(file: file, meta: file.id.flatMap { metaByFileID[$0] }).slug == captureSlug
+            }
         }
 
         let buckets = FrameSet.lightBuckets(files: sessionLights, meta: metaByFileID, config: config)
@@ -247,6 +259,7 @@ public enum StackList {
             return StackSelection(
                 target: target,
                 date: date,
+                captureSlug: captureSlug,
                 totalFrames: 0,
                 selectedFrames: 0,
                 criteria: ["nincs használható light frame ehhez a session-höz"],
@@ -339,6 +352,7 @@ public enum StackList {
         return StackSelection(
             target: target,
             date: date,
+            captureSlug: captureSlug,
             totalFrames: totalFrames,
             selectedFrames: selectedPaths.count,
             criteria: overallCriteria,
@@ -547,7 +561,7 @@ public enum StackList {
     /// selection.
     @discardableResult
     public static func export(_ selection: StackSelection, root: URL, using writeGuard: WriteGuard) throws -> StackExportResult {
-        let slug = slug(target: selection.target, date: selection.date)
+        let slug = exportSlug(for: selection)
         let stacklistDir = root
             .appendingPathComponent(".astro_tool", isDirectory: true)
             .appendingPathComponent("stacklists/\(slug)", isDirectory: true)
@@ -695,7 +709,7 @@ public enum StackList {
                     }
                 }
 
-                let baseName = "\(slug(target: selection.target, date: selection.date))-\(filterSlug)"
+                let baseName = "\(exportSlug(for: selection))-\(filterSlug)"
                 let dssContent = renderDSSFilelist(fileNames: fileNames, lightsRelativePath: "lights/\(filterSlug)")
                 try Data(dssContent.utf8).write(to: destDir.appendingPathComponent("\(baseName).dssfilelist"))
 
@@ -957,6 +971,13 @@ public enum StackList {
     /// character `Sanitizer` strips.
     public static func slug(target: String, date: String) -> String {
         "\(Sanitizer.sanitize(target))-\(date)"
+    }
+
+    /// Capture-scoped exports cannot overwrite the whole-session export.
+    public static func exportSlug(for selection: StackSelection) -> String {
+        let session = slug(target: selection.target, date: selection.date)
+        guard let captureSlug = selection.captureSlug else { return session }
+        return "\(session)-\(Sanitizer.sanitize(captureSlug))"
     }
 
     // MARK: - .dssfilelist

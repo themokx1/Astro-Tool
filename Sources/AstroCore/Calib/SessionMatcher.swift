@@ -7,6 +7,8 @@ import Foundation
 public struct SessionCalibration: Codable, Sendable, Equatable {
     public var target: String
     public var date: String
+    /// Optional capture-group scope; nil means the complete target/date session.
+    public var captureSlug: String?
     public var lights: Int
     /// Root-relative paths of this session's flat frames, sorted.
     public var flats: [String]
@@ -40,6 +42,7 @@ public struct SessionCalibration: Codable, Sendable, Equatable {
     public init(
         target: String,
         date: String,
+        captureSlug: String? = nil,
         lights: Int,
         flats: [String],
         darks: [String],
@@ -51,6 +54,7 @@ public struct SessionCalibration: Codable, Sendable, Equatable {
     ) {
         self.target = target
         self.date = date
+        self.captureSlug = captureSlug
         self.lights = lights
         self.flats = flats
         self.darks = darks
@@ -70,12 +74,34 @@ public enum SessionMatcher {
     /// Builds the `SessionCalibration` for `target`/`date`. Throws
     /// `AstroError.pathNotFound` when no scanned file at all matches this
     /// (target, date) pair under `sessions/`.
-    public static func match(target: String, date: String, db: Database, config: AstroConfig) throws -> SessionCalibration {
+    public static func match(
+        target: String,
+        date: String,
+        captureSlug: String? = nil,
+        db: Database,
+        config: AstroConfig
+    ) throws -> SessionCalibration {
         let allFiles = try db.allFiles(includeMissing: false)
-        let sessionFiles = allFiles.filter { $0.area == .sessions && $0.target == target && $0.sessionDate == date }
+        let wholeSessionFiles = allFiles.filter {
+            $0.area == .sessions && $0.target == target && $0.sessionDate == date
+        }
 
-        guard !sessionFiles.isEmpty else {
+        guard !wholeSessionFiles.isEmpty else {
             throw AstroError.pathNotFound(path: "sessions/\(target)/\(date)")
+        }
+
+        let sessionFiles: [FileRecord]
+        if let captureSlug {
+            guard try db.captureGroup(target: target, date: date, slug: captureSlug) != nil else {
+                throw AstroError.pathNotFound(path: "sessions/\(target)/\(date)/captures/\(captureSlug)")
+            }
+            let resolver = try CaptureResolver.load(db: db)
+            let metadata = try db.fitsMetaBatch(fileIDs: wholeSessionFiles.compactMap(\.id))
+            sessionFiles = wholeSessionFiles.filter { file in
+                resolver.resolve(file: file, meta: file.id.flatMap { metadata[$0] }).slug == captureSlug
+            }
+        } else {
+            sessionFiles = wholeSessionFiles
         }
 
         let rawLights = sessionFiles.filter { $0.role == .light }
@@ -111,7 +137,8 @@ public enum SessionMatcher {
         }
 
         // (b) no flats at all for a session that has lights.
-        let sessionPath = "sessions/\(target)/\(date)"
+        let sessionPath = captureSlug.map { "sessions/\(target)/\(date)/captures/\($0)" }
+            ?? "sessions/\(target)/\(date)"
         if !lights.isEmpty, flats.isEmpty {
             problems.append(
                 Finding(
@@ -153,6 +180,7 @@ public enum SessionMatcher {
         return SessionCalibration(
             target: target,
             date: date,
+            captureSlug: captureSlug,
             lights: lights.count,
             flats: flats,
             darks: darks,
