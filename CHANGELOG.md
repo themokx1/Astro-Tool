@@ -8,6 +8,31 @@ történik.
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-08-09
+
+### Changed
+
+- Az `Új capture-gyűjtés…` és `Session átalakítása gyűjtésekre…` művelet
+  egységesen elérhető a Minden célpont, Éjszakák, Előző éjszaka és a célpont
+  Sessionök nézetének soronkénti menüjében. Minden megnyitás az adott pontos
+  célpont/dátum sessionre zárt.
+- A session-konverter tervezés előtt csak a kiválasztott session
+  `sessions`, `stacks` és `processed` ágát olvassa újra; nincs szükség teljes
+  könyvtárscanre.
+
+### Fixed
+
+- A konverter előnézete már nem készülhet eleve elavult SQLite-pillanatképből.
+  A terv az új, módosított és eltűnt fájlok friss állapotából számolja a
+  fingerprintet, így a helyes kézi OSC/NB/SV220 döntések után nem jelent
+  hamis „megváltozott az előnézet óta” hibát.
+- A scanner nem indexeli session-frame-ként a Siril és más feldolgozók által
+  hátrahagyott szimbolikus linkeket. Ez megszünteti a planner és a regular
+  file-okat ellenőrző executor közötti fájlszám- és méreteltérést; a valódi
+  hard linkek és a kalibrációlinkelés változatlanul működnek.
+- Ha a session ténylegesen az előnézet elkészülte után változik, a biztonsági
+  blokkolás megmarad, és az üzenet egyértelműen friss előnézetet kér.
+
 ## [0.15.0] - 2026-08-09
 
 ### Added

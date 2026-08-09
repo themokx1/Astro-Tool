@@ -127,6 +127,21 @@ private struct ExecutorFixture {
     #expect(try fixture.db.captureGroups(target: "M31", date: "2026-01-01").isEmpty)
 }
 
+@Test func plannerRefreshesItsExactScopeBeforeFingerprinting() throws {
+    let fixture = try ExecutorFixture.make(frameCount: 2)
+    defer { fixture.cleanup() }
+    let lights = fixture.root.appendingPathComponent("sessions/M31/2026-01-01/lights")
+    try FileManager.default.removeItem(at: lights.appendingPathComponent("light2.fit"))
+    let handle = try FileHandle(forWritingTo: lights.appendingPathComponent("light1.fit"))
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data("changed-before-plan".utf8))
+    try handle.close()
+
+    let plan = try fixture.plan(mode: .logicalOnly)
+    #expect(plan.sourceFingerprint.fileCount == 1)
+    #expect(try SessionConversionExecutor.apply(plan: plan, root: fixture.root, db: fixture.db).status == .applied)
+}
+
 @Test func midApplyFailureAutomaticallyRollsBackMovesAndMetadata() throws {
     let fixture = try ExecutorFixture.make(frameCount: 2)
     defer { fixture.cleanup() }

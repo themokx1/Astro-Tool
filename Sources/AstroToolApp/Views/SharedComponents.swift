@@ -210,6 +210,8 @@ struct SessionActionMenu: View {
     var showOpenTarget: Bool = true
     var onRateFrames: (() -> Void)?
     var setupDescriptor: String? = nil
+    var onCreateCapture: (() -> Void)?
+    var onConvertSession: (() -> Void)?
 
     @Binding var linkingSession: LinkingSession?
     @Binding var stackListingSession: LinkingSession?
@@ -255,6 +257,15 @@ struct SessionActionMenu: View {
             }
         }
         Group {
+            if onCreateCapture != nil || onConvertSession != nil {
+                Divider()
+            }
+            if let onCreateCapture {
+                Button("Új capture-gyűjtés…") { onCreateCapture() }
+            }
+            if let onConvertSession {
+                Button("Session átalakítása gyűjtésekre…") { onConvertSession() }
+            }
             Divider()
             Button("Címke hozzáadása…") { addingTag = AddTagTarget(target: target, date: date) }
             if !tags.isEmpty {

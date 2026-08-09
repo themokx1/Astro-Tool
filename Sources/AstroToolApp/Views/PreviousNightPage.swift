@@ -17,6 +17,8 @@ struct PreviousNightPage: View {
     @State private var stackListingSession: LinkingSession?
     @State private var noteEditingSession: LinkingSession?
     @State private var addingTag: AddTagTarget?
+    @State private var captureEditingSession: LinkingSession?
+    @State private var conversionSession: LinkingSession?
 
     private struct ReviewSessionID: Identifiable {
         let target: String
@@ -52,6 +54,12 @@ struct PreviousNightPage: View {
         }
         .sheet(item: $stackListingSession) { session in
             StackListSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $captureEditingSession) { session in
+            CaptureGroupSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $conversionSession) { session in
+            SessionConversionSheet(target: session.target, date: session.date)
         }
         .sheet(item: $noteEditingSession) { session in
             SessionNoteSheet(target: session.target, date: session.date)
@@ -132,6 +140,12 @@ struct PreviousNightPage: View {
                 Menu {
                     SessionActionMenu(
                         target: card.target, date: card.date, tags: card.tags,
+                        onCreateCapture: {
+                            captureEditingSession = LinkingSession(target: card.target, date: card.date)
+                        },
+                        onConvertSession: {
+                            conversionSession = LinkingSession(target: card.target, date: card.date)
+                        },
                         linkingSession: $linkingSession,
                         stackListingSession: $stackListingSession,
                         noteEditingSession: $noteEditingSession,

@@ -252,7 +252,12 @@ public final class LibraryScanner {
         do {
             entries = try FileManager.default.contentsOfDirectory(
                 at: dirURL,
-                includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isDirectoryKey],
+                includingPropertiesForKeys: [
+                    .fileSizeKey,
+                    .contentModificationDateKey,
+                    .isDirectoryKey,
+                    .isSymbolicLinkKey,
+                ],
                 options: []
             )
         } catch {
@@ -268,7 +273,19 @@ public final class LibraryScanner {
             let name = entryURL.lastPathComponent
             let relativePath = relPrefix.isEmpty ? name : relPrefix + "/" + name
 
-            let values = try entryURL.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
+            let values = try entryURL.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+                .fileSizeKey,
+                .contentModificationDateKey,
+            ])
+            // A Siril/processing work tree can leave dangling sequence
+            // symlinks behind. They are references, not library frames;
+            // indexing the link's own byte length makes the planner's DB
+            // fingerprint disagree with the executor's regular-file-only
+            // filesystem fingerprint. Skip all symbolic links consistently
+            // (hard links remain ordinary files and are still indexed).
+            guard values.isSymbolicLink != true else { continue }
             let isDirectory = values.isDirectory ?? false
 
             if isDirectory {
