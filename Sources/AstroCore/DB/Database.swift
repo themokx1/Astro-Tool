@@ -723,6 +723,48 @@ public final class Database: @unchecked Sendable {
     CREATE INDEX IF NOT EXISTS idx_sensor_profile_history_combo ON sensor_profile_history(camera, gain, offset);
     """
 
+    /// Capture groups are additive tool metadata: they describe how files
+    /// in one target/date session belong together without modifying their
+    /// raw headers. Sources map whole folder prefixes; assignments handle
+    /// exceptional or mixed legacy folders at file granularity.
+    static let schemaSQLv11 = """
+    CREATE TABLE IF NOT EXISTS capture_groups(
+      id INTEGER PRIMARY KEY,
+      target TEXT NOT NULL,
+      session_date TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      sensor_mode TEXT NOT NULL DEFAULT 'unknown',
+      signal_mode TEXT NOT NULL DEFAULT 'unknown',
+      filter_manufacturer TEXT,
+      filter_model TEXT,
+      filter_name TEXT,
+      notes TEXT,
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL,
+      UNIQUE(target, session_date, slug));
+    CREATE INDEX IF NOT EXISTS idx_capture_groups_session ON capture_groups(target, session_date);
+
+    CREATE TABLE IF NOT EXISTS capture_sources(
+      id INTEGER PRIMARY KEY,
+      capture_group_id INTEGER NOT NULL REFERENCES capture_groups(id),
+      relative_path TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_capture_sources_group ON capture_sources(capture_group_id);
+
+    CREATE TABLE IF NOT EXISTS file_capture_assignments(
+      file_id INTEGER PRIMARY KEY REFERENCES files(id),
+      capture_group_id INTEGER NOT NULL REFERENCES capture_groups(id),
+      sensor_mode_override TEXT,
+      signal_mode_override TEXT,
+      filter_manufacturer_override TEXT,
+      filter_model_override TEXT,
+      filter_name_override TEXT,
+      assignment_source TEXT NOT NULL,
+      assigned_at REAL NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_file_capture_assignments_group ON file_capture_assignments(capture_group_id);
+    """
+
     public init(path: String) throws {
         self.db = try SQLiteDB(path: path)
         try migrate()
@@ -829,6 +871,19 @@ public final class Database: @unchecked Sendable {
             }
             version = 10
         }
+
+        if version < 11 {
+            try db.exec("BEGIN IMMEDIATE;")
+            do {
+                try db.exec(Self.schemaSQLv11)
+                try db.run("UPDATE schema_version SET version = ?;", bind: [.int(11)])
+                try db.exec("COMMIT;")
+            } catch {
+                try? db.exec("ROLLBACK;")
+                throw error
+            }
+            version = 11
+        }
     }
 
     private func tableExists(_ name: String) throws -> Bool {
@@ -926,6 +981,322 @@ public final class Database: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return try body()
+    }
+
+    // MARK: capture groups (schema v11)
+
+    /// Inserts a capture group, or updates the editable fields of the row
+    /// with the same `(target, sessionDate, slug)`. The original creation
+    /// timestamp and stable id survive an upsert.
+    @discardableResult
+    public func upsertCaptureGroup(_ record: CaptureGroupRecord) throws -> Int64 {
+        try withLock {
+            try db.run(
+                """
+                INSERT INTO capture_groups(
+                  target, session_date, slug, display_name, sensor_mode, signal_mode,
+                  filter_manufacturer, filter_model, filter_name, notes, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(target, session_date, slug) DO UPDATE SET
+                  display_name = excluded.display_name,
+                  sensor_mode = excluded.sensor_mode,
+                  signal_mode = excluded.signal_mode,
+                  filter_manufacturer = excluded.filter_manufacturer,
+                  filter_model = excluded.filter_model,
+                  filter_name = excluded.filter_name,
+                  notes = excluded.notes,
+                  updated_at = excluded.updated_at;
+                """,
+                bind: [
+                    .text(record.target), .text(record.sessionDate), .text(record.slug),
+                    .text(record.displayName), .text(record.sensorMode.rawValue), .text(record.signalMode.rawValue),
+                    record.filterManufacturer.map(SQLiteValue.text) ?? .null,
+                    record.filterModel.map(SQLiteValue.text) ?? .null,
+                    record.filterName.map(SQLiteValue.text) ?? .null,
+                    record.notes.map(SQLiteValue.text) ?? .null,
+                    .real(record.createdAt), .real(record.updatedAt),
+                ]
+            )
+
+            var id: Int64?
+            try db.query(
+                "SELECT id FROM capture_groups WHERE target = ? AND session_date = ? AND slug = ?;",
+                bind: [.text(record.target), .text(record.sessionDate), .text(record.slug)]
+            ) { id = $0.int64(0) }
+            guard let id else {
+                throw AstroError.databaseError("upsertCaptureGroup: no row after upsert")
+            }
+            return id
+        }
+    }
+
+    public func captureGroup(id: Int64) throws -> CaptureGroupRecord? {
+        try withLock {
+            var result: CaptureGroupRecord?
+            try db.query(
+                "SELECT \(Self.captureGroupColumns) FROM capture_groups WHERE id = ?;",
+                bind: [.int(id)]
+            ) { result = Self.captureGroupRecord(from: $0) }
+            return result
+        }
+    }
+
+    public func captureGroup(target: String, date: String, slug: String) throws -> CaptureGroupRecord? {
+        try withLock {
+            var result: CaptureGroupRecord?
+            try db.query(
+                "SELECT \(Self.captureGroupColumns) FROM capture_groups WHERE target = ? AND session_date = ? AND slug = ?;",
+                bind: [.text(target), .text(date), .text(slug)]
+            ) { result = Self.captureGroupRecord(from: $0) }
+            return result
+        }
+    }
+
+    public func captureGroups(target: String, date: String) throws -> [CaptureGroupRecord] {
+        try withLock {
+            var result: [CaptureGroupRecord] = []
+            try db.query(
+                "SELECT \(Self.captureGroupColumns) FROM capture_groups WHERE target = ? AND session_date = ? ORDER BY display_name COLLATE NOCASE, slug;",
+                bind: [.text(target), .text(date)]
+            ) { result.append(Self.captureGroupRecord(from: $0)) }
+            return result
+        }
+    }
+
+    public func allCaptureGroups() throws -> [CaptureGroupRecord] {
+        try withLock {
+            var result: [CaptureGroupRecord] = []
+            try db.query(
+                "SELECT \(Self.captureGroupColumns) FROM capture_groups ORDER BY target, session_date, display_name COLLATE NOCASE, slug;"
+            ) { result.append(Self.captureGroupRecord(from: $0)) }
+            return result
+        }
+    }
+
+    private static let captureGroupColumns = """
+    id, target, session_date, slug, display_name, sensor_mode, signal_mode,
+    filter_manufacturer, filter_model, filter_name, notes, created_at, updated_at
+    """
+
+    private static func captureGroupRecord(from row: SQLiteRow) -> CaptureGroupRecord {
+        CaptureGroupRecord(
+            id: row.int64(0),
+            target: row.string(1) ?? "",
+            sessionDate: row.string(2) ?? "",
+            slug: row.string(3) ?? "",
+            displayName: row.string(4) ?? "",
+            sensorMode: row.string(5).flatMap(SensorMode.init(rawValue:)) ?? .unknown,
+            signalMode: row.string(6).flatMap(SignalMode.init(rawValue:)) ?? .unknown,
+            filterManufacturer: row.string(7),
+            filterModel: row.string(8),
+            filterName: row.string(9),
+            notes: row.string(10),
+            createdAt: row.double(11) ?? 0,
+            updatedAt: row.double(12) ?? 0
+        )
+    }
+
+    /// Adds one folder-prefix mapping. A path already mapped to the same
+    /// group is updated idempotently; mapping it to a different group is an
+    /// explicit conflict rather than silently stealing the source.
+    @discardableResult
+    public func upsertCaptureSource(_ record: CaptureSourceRecord) throws -> Int64 {
+        try withLock {
+            var existingID: Int64?
+            var existingGroupID: Int64?
+            try db.query(
+                "SELECT id, capture_group_id FROM capture_sources WHERE relative_path = ?;",
+                bind: [.text(record.relativePath)]
+            ) { row in
+                existingID = row.int64(0)
+                existingGroupID = row.int64(1)
+            }
+            if let existingID, let existingGroupID {
+                guard existingGroupID == record.captureGroupID else {
+                    throw AstroError.invalidInput(
+                        "capture source \"\(record.relativePath)\" already belongs to group \(existingGroupID)"
+                    )
+                }
+                try db.run(
+                    "UPDATE capture_sources SET role = ? WHERE id = ?;",
+                    bind: [.text(record.role.rawValue), .int(existingID)]
+                )
+                return existingID
+            }
+
+            guard try captureGroupExistsUnlocked(record.captureGroupID) else {
+                throw AstroError.invalidInput("unknown capture group id \(record.captureGroupID)")
+            }
+            try db.run(
+                "INSERT INTO capture_sources(capture_group_id, relative_path, role) VALUES (?, ?, ?);",
+                bind: [.int(record.captureGroupID), .text(record.relativePath), .text(record.role.rawValue)]
+            )
+            return db.lastInsertRowID
+        }
+    }
+
+    public func captureSources(groupID: Int64) throws -> [CaptureSourceRecord] {
+        try withLock {
+            var result: [CaptureSourceRecord] = []
+            try db.query(
+                "SELECT id, capture_group_id, relative_path, role FROM capture_sources WHERE capture_group_id = ? ORDER BY relative_path;",
+                bind: [.int(groupID)]
+            ) { result.append(Self.captureSourceRecord(from: $0)) }
+            return result
+        }
+    }
+
+    public func allCaptureSources() throws -> [CaptureSourceRecord] {
+        try withLock {
+            var result: [CaptureSourceRecord] = []
+            try db.query(
+                "SELECT id, capture_group_id, relative_path, role FROM capture_sources ORDER BY relative_path;"
+            ) { result.append(Self.captureSourceRecord(from: $0)) }
+            return result
+        }
+    }
+
+    private static func captureSourceRecord(from row: SQLiteRow) -> CaptureSourceRecord {
+        CaptureSourceRecord(
+            id: row.int64(0),
+            captureGroupID: row.int64(1) ?? 0,
+            relativePath: row.string(2) ?? "",
+            role: row.string(3).flatMap(FrameRole.init(rawValue:)) ?? .other
+        )
+    }
+
+    public func upsertFileCaptureAssignment(_ record: FileCaptureAssignmentRecord) throws {
+        try withLock {
+            guard try captureGroupExistsUnlocked(record.captureGroupID) else {
+                throw AstroError.invalidInput("unknown capture group id \(record.captureGroupID)")
+            }
+            var fileExists = false
+            try db.query("SELECT 1 FROM files WHERE id = ? LIMIT 1;", bind: [.int(record.fileID)]) { _ in
+                fileExists = true
+            }
+            guard fileExists else {
+                throw AstroError.invalidInput("unknown file id \(record.fileID)")
+            }
+
+            try db.run(
+                """
+                INSERT INTO file_capture_assignments(
+                  file_id, capture_group_id, sensor_mode_override, signal_mode_override,
+                  filter_manufacturer_override, filter_model_override, filter_name_override,
+                  assignment_source, assigned_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(file_id) DO UPDATE SET
+                  capture_group_id = excluded.capture_group_id,
+                  sensor_mode_override = excluded.sensor_mode_override,
+                  signal_mode_override = excluded.signal_mode_override,
+                  filter_manufacturer_override = excluded.filter_manufacturer_override,
+                  filter_model_override = excluded.filter_model_override,
+                  filter_name_override = excluded.filter_name_override,
+                  assignment_source = excluded.assignment_source,
+                  assigned_at = excluded.assigned_at;
+                """,
+                bind: [
+                    .int(record.fileID), .int(record.captureGroupID),
+                    record.sensorModeOverride.map { .text($0.rawValue) } ?? .null,
+                    record.signalModeOverride.map { .text($0.rawValue) } ?? .null,
+                    record.filterManufacturerOverride.map(SQLiteValue.text) ?? .null,
+                    record.filterModelOverride.map(SQLiteValue.text) ?? .null,
+                    record.filterNameOverride.map(SQLiteValue.text) ?? .null,
+                    .text(record.assignmentSource), .real(record.assignedAt),
+                ]
+            )
+        }
+    }
+
+    public func fileCaptureAssignment(fileID: Int64) throws -> FileCaptureAssignmentRecord? {
+        try withLock {
+            var result: FileCaptureAssignmentRecord?
+            try db.query(
+                "SELECT \(Self.fileCaptureAssignmentColumns) FROM file_capture_assignments WHERE file_id = ?;",
+                bind: [.int(fileID)]
+            ) { result = Self.fileCaptureAssignmentRecord(from: $0) }
+            return result
+        }
+    }
+
+    public func fileCaptureAssignments(fileIDs: [Int64]) throws -> [Int64: FileCaptureAssignmentRecord] {
+        guard !fileIDs.isEmpty else { return [:] }
+        return try withLock {
+            var result: [Int64: FileCaptureAssignmentRecord] = [:]
+            for chunk in fileIDs.chunked(into: 500) {
+                let placeholders = chunk.map { _ in "?" }.joined(separator: ", ")
+                try db.query(
+                    "SELECT \(Self.fileCaptureAssignmentColumns) FROM file_capture_assignments WHERE file_id IN (\(placeholders));",
+                    bind: chunk.map(SQLiteValue.int)
+                ) { row in
+                    let record = Self.fileCaptureAssignmentRecord(from: row)
+                    result[record.fileID] = record
+                }
+            }
+            return result
+        }
+    }
+
+    public func allFileCaptureAssignments() throws -> [Int64: FileCaptureAssignmentRecord] {
+        try withLock {
+            var result: [Int64: FileCaptureAssignmentRecord] = [:]
+            try db.query("SELECT \(Self.fileCaptureAssignmentColumns) FROM file_capture_assignments;") { row in
+                let record = Self.fileCaptureAssignmentRecord(from: row)
+                result[record.fileID] = record
+            }
+            return result
+        }
+    }
+
+    public func clearFileCaptureAssignment(fileID: Int64) throws {
+        try withLock {
+            try db.run("DELETE FROM file_capture_assignments WHERE file_id = ?;", bind: [.int(fileID)])
+        }
+    }
+
+    private static let fileCaptureAssignmentColumns = """
+    file_id, capture_group_id, sensor_mode_override, signal_mode_override,
+    filter_manufacturer_override, filter_model_override, filter_name_override,
+    assignment_source, assigned_at
+    """
+
+    private static func fileCaptureAssignmentRecord(from row: SQLiteRow) -> FileCaptureAssignmentRecord {
+        FileCaptureAssignmentRecord(
+            fileID: row.int64(0) ?? 0,
+            captureGroupID: row.int64(1) ?? 0,
+            sensorModeOverride: row.string(2).flatMap(SensorMode.init(rawValue:)),
+            signalModeOverride: row.string(3).flatMap(SignalMode.init(rawValue:)),
+            filterManufacturerOverride: row.string(4),
+            filterModelOverride: row.string(5),
+            filterNameOverride: row.string(6),
+            assignmentSource: row.string(7) ?? "",
+            assignedAt: row.double(8) ?? 0
+        )
+    }
+
+    /// Removes one group and only its tool-owned mapping/assignment rows.
+    /// The indexed `files` rows and every library file remain untouched.
+    public func deleteCaptureGroup(id: Int64) throws {
+        try withLock {
+            try db.exec("BEGIN IMMEDIATE;")
+            do {
+                try db.run("DELETE FROM file_capture_assignments WHERE capture_group_id = ?;", bind: [.int(id)])
+                try db.run("DELETE FROM capture_sources WHERE capture_group_id = ?;", bind: [.int(id)])
+                try db.run("DELETE FROM capture_groups WHERE id = ?;", bind: [.int(id)])
+                try db.exec("COMMIT;")
+            } catch {
+                try? db.exec("ROLLBACK;")
+                throw error
+            }
+        }
+    }
+
+    private func captureGroupExistsUnlocked(_ id: Int64) throws -> Bool {
+        var exists = false
+        try db.query("SELECT 1 FROM capture_groups WHERE id = ? LIMIT 1;", bind: [.int(id)]) { _ in
+            exists = true
+        }
+        return exists
     }
 
     // MARK: files
