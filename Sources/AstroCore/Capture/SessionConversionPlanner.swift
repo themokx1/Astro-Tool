@@ -31,6 +31,22 @@ public struct ConversionSourceMapping: Codable, Equatable, Sendable {
     }
 }
 
+public struct ConversionSourceRemoval: Codable, Equatable, Sendable, Identifiable {
+    public var relativePath: String
+    public var role: FrameRole
+    public var expectedGroupID: Int64
+    public var reason: String
+
+    public var id: String { relativePath }
+
+    public init(relativePath: String, role: FrameRole, expectedGroupID: Int64, reason: String) {
+        self.relativePath = relativePath
+        self.role = role
+        self.expectedGroupID = expectedGroupID
+        self.reason = reason
+    }
+}
+
 public struct DetectedCaptureCluster: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var title: String
@@ -72,6 +88,9 @@ public struct DetectedCaptureCluster: Codable, Equatable, Sendable, Identifiable
 }
 
 public struct ProposedCaptureGroup: Codable, Equatable, Sendable, Identifiable {
+    /// When present, the draft updates this exact existing group instead of
+    /// inserting a new row. Optional keeps older serialized plans decodable.
+    public var existingGroupID: Int64?
     public var draft: CaptureGroupDraft
     public var sourceMappings: [ConversionSourceMapping]
     public var evidence: [String]
@@ -80,11 +99,13 @@ public struct ProposedCaptureGroup: Codable, Equatable, Sendable, Identifiable {
     public var id: String { draft.slug }
 
     public init(
+        existingGroupID: Int64? = nil,
         draft: CaptureGroupDraft,
         sourceMappings: [ConversionSourceMapping] = [],
         evidence: [String] = [],
         confidence: ConversionConfidence = .review
     ) {
+        self.existingGroupID = existingGroupID
         self.draft = draft
         self.sourceMappings = sourceMappings
         self.evidence = evidence
@@ -258,6 +279,9 @@ public struct SessionConversionPlan: Codable, Equatable, Sendable, Identifiable 
     public var mode: SessionConversionMode
     public var detectedClusters: [DetectedCaptureCluster]
     public var proposedGroups: [ProposedCaptureGroup]
+    /// Optional for backward-compatible decoding of plans saved before the
+    /// v0.15.2 exposure-aware converter.
+    public var sourceRemovals: [ConversionSourceRemoval]?
     public var assignments: [ConversionAssignment]
     public var directoryCreations: [ConversionDirectoryCreation]
     public var moves: [ConversionMove]
@@ -287,7 +311,8 @@ public struct SessionConversionPlan: Codable, Equatable, Sendable, Identifiable 
         conflicts: [ConversionConflict],
         summary: SessionConversionSummary,
         sourceFingerprint: ConversionSourceFingerprint,
-        humanSummaryHU: String
+        humanSummaryHU: String,
+        sourceRemovals: [ConversionSourceRemoval]? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
@@ -295,6 +320,7 @@ public struct SessionConversionPlan: Codable, Equatable, Sendable, Identifiable 
         self.mode = mode
         self.detectedClusters = detectedClusters
         self.proposedGroups = proposedGroups
+        self.sourceRemovals = sourceRemovals
         self.assignments = assignments
         self.directoryCreations = directoryCreations
         self.moves = moves
@@ -322,6 +348,8 @@ private struct LightSeed {
     var sourcePrefix: String
     var label: String?
     var existingGroup: CaptureGroupRecord?
+    var reusesExistingGroup: Bool
+    var wasExposureSplit: Bool
     var files: [FileRecord]
 }
 
@@ -455,6 +483,8 @@ public enum SessionConversionPlanner {
                     sourcePrefix: prefix,
                     label: group.slug,
                     existingGroup: group,
+                    reusesExistingGroup: true,
+                    wasExposureSplit: false,
                     files: []
                 )
             } else if let slug = info.captureSlug {
@@ -464,6 +494,8 @@ public enum SessionConversionPlanner {
                     sourcePrefix: prefix,
                     label: slug,
                     existingGroup: groupsBySlug[slug],
+                    reusesExistingGroup: groupsBySlug[slug] != nil,
+                    wasExposureSplit: false,
                     files: []
                 )
             } else if let label = info.legacyCaptureLabel {
@@ -473,6 +505,8 @@ public enum SessionConversionPlanner {
                     sourcePrefix: prefix,
                     label: label,
                     existingGroup: nil,
+                    reusesExistingGroup: false,
+                    wasExposureSplit: false,
                     files: []
                 )
             } else {
@@ -482,6 +516,8 @@ public enum SessionConversionPlanner {
                     sourcePrefix: prefix,
                     label: nil,
                     existingGroup: nil,
+                    reusesExistingGroup: false,
+                    wasExposureSplit: false,
                     files: []
                 )
             }
@@ -489,16 +525,28 @@ public enum SessionConversionPlanner {
             seedsByKey[seed.key]?.files.append(file)
         }
 
-        let sortedSeeds = seedsByKey.values.sorted {
+        let sourceSeeds = seedsByKey.values.sorted {
             if $0.kind != $1.kind { return $0.kind < $1.kind }
             return $0.sourcePrefix.localizedStandardCompare($1.sourcePrefix) == .orderedAscending
         }
+        let sortedSeeds = sourceSeeds.flatMap {
+            exposureSeparatedSeeds($0, meta: meta, config: config)
+        }
+        let splitSourcePrefixes = Set(sortedSeeds.filter(\.wasExposureSplit).map(\.sourcePrefix))
+        let sourceRemovals = existingSources.compactMap { source -> ConversionSourceRemoval? in
+            guard source.role == .light, splitSourcePrefixes.contains(source.relativePath) else { return nil }
+            return ConversionSourceRemoval(
+                relativePath: source.relativePath,
+                role: source.role,
+                expectedGroupID: source.captureGroupID,
+                reason: "A forrásmappa több expozíciós gyűjtést tartalmaz; az egzakt fájlhozzárendelés veszi át a helyét."
+            )
+        }.sorted { $0.relativePath < $1.relativePath }
         var usedSlugs = Set(existingGroups.map(\.slug))
         var clusters: [DetectedCaptureCluster] = []
         var proposed: [ProposedCaptureGroup] = []
         var assignmentsOut: [ConversionAssignment] = []
         var options: [GroupOption] = []
-        var groupSlugBySeed: [String: String] = [:]
         var stackedArtifactCount = 0
 
         for seed in sortedSeeds {
@@ -530,11 +578,28 @@ public enum SessionConversionPlanner {
             let displayName: String
             let confidence: ConversionConfidence
             var evidence: [String] = []
-            if let existing = seed.existingGroup {
+            if seed.reusesExistingGroup, let existing = seed.existingGroup {
                 groupSlug = existing.slug
-                displayName = existing.displayName
+                displayName = seed.wasExposureSplit
+                    ? splitDisplayName(existing: existing, exposureLabel: exposureLabel)
+                    : existing.displayName
                 confidence = .strong
-                evidence.append("Már létező gyűjtés és hozzárendelés.")
+                evidence.append(
+                    seed.wasExposureSplit
+                        ? "A domináns expozíciós csomag megtartja a meglévő gyűjtés azonosságát."
+                        : "Már létező gyűjtés és hozzárendelés."
+                )
+            } else if seed.wasExposureSplit {
+                let base = splitSlugBase(seed)
+                groupSlug = uniqueSlug("\(base)-\(slugExposureLabel(exposureBreakdown))", used: &usedSlugs)
+                displayName = splitDisplayName(
+                    existing: seed.existingGroup,
+                    seed: seed,
+                    inferredSensor: inferred.sensor,
+                    exposureLabel: exposureLabel
+                )
+                confidence = seed.existingGroup == nil ? .suggested : .strong
+                evidence.append("A vegyes forrás névleges expozíció szerint külön gyűjtésre bomlik.")
             } else if seed.kind == .canonical, let label = seed.label {
                 groupSlug = uniqueSlug(label, used: &usedSlugs)
                 displayName = label.replacingOccurrences(of: "-", with: " ")
@@ -552,19 +617,17 @@ public enum SessionConversionPlanner {
                 let sensorLabel = inferred.sensor == .osc ? "OSC · " : ""
                 displayName = "\(sensorLabel)filter ismeretlen · \(exposureLabel)"
                 confidence = .review
-                evidence.append("Klasszikus lights mappa; a 120/300 s expók egy forráscsomagban maradnak.")
+                evidence.append("Klasszikus lights mappa egy névleges expozícióval.")
             }
-            groupSlugBySeed[seed.key] = groupSlug
             evidence.append("Expozíció: \(exposureLabel), \(rawFiles.count) valódi frame.")
             if !artifacts.isEmpty {
                 evidence.append("\(artifacts.count) feldolgozott/stack artifact nem számít nyers lightnak.")
             }
 
-            let title = seed.existingGroup?.displayName ?? displayName
             clusters.append(
                 DetectedCaptureCluster(
                     id: stableIdentifier(seed.key),
-                    title: title,
+                    title: displayName,
                     proposedGroupSlug: groupSlug,
                     sourcePrefixes: [seed.sourcePrefix],
                     rawFramePaths: rawFiles.map(\.path),
@@ -577,18 +640,23 @@ public enum SessionConversionPlanner {
                 )
             )
 
-            if seed.existingGroup == nil {
-                let sourceMappings: [ConversionSourceMapping] = seed.kind == .canonical
+            if seed.existingGroup == nil || seed.wasExposureSplit {
+                let sourceMappings: [ConversionSourceMapping] = seed.kind == .canonical || seed.wasExposureSplit
                     ? []
                     : [ConversionSourceMapping(relativePath: seed.sourcePrefix, role: .light)]
+                let existing = seed.existingGroup
                 proposed.append(
                     ProposedCaptureGroup(
+                        existingGroupID: seed.reusesExistingGroup ? existing?.id : nil,
                         draft: CaptureGroupDraft(
                             slug: groupSlug,
                             displayName: displayName,
-                            sensorMode: inferred.sensor,
-                            signalMode: inferred.signal,
-                            filterName: inferred.filter
+                            sensorMode: existing?.sensorMode ?? inferred.sensor,
+                            signalMode: existing?.signalMode ?? inferred.signal,
+                            filterManufacturer: existing?.filterManufacturer,
+                            filterModel: existing?.filterModel,
+                            filterName: existing?.filterName ?? inferred.filter,
+                            notes: seed.reusesExistingGroup ? existing?.notes : nil
                         ),
                         sourceMappings: sourceMappings,
                         evidence: evidence,
@@ -795,7 +863,8 @@ public enum SessionConversionPlanner {
             conflicts: conflicts,
             summary: summary,
             sourceFingerprint: fingerprint,
-            humanSummaryHU: humanSummary
+            humanSummaryHU: humanSummary,
+            sourceRemovals: sourceRemovals
         )
     }
 
@@ -900,6 +969,145 @@ public enum SessionConversionPlanner {
         plan.summary.unchangedCount = plan.unchangedItems.count
         plan.humanSummaryHU += " Kézi döntés rögzítve: \(ambiguity.affectedPaths.count) fájl → \(groupSlug)."
         return plan
+    }
+
+    /// Splits one path/group-derived seed only when its deduplicated raw
+    /// frames contain multiple nominal exposures. Every physical/triage copy
+    /// follows its own exposure; a stack derivative follows its FITS exposure
+    /// when available. Unclassifiable sidecars stay with the dominant bucket.
+    private static func exposureSeparatedSeeds(
+        _ seed: LightSeed,
+        meta: [Int64: FITSMetaRecord],
+        config: AstroConfig
+    ) -> [LightSeed] {
+        let buckets = FrameSet.lightBuckets(files: seed.files, meta: meta, config: config)
+        let rawFiles = buckets.usable + buckets.rejected
+        let rawByExposure = Dictionary(grouping: rawFiles) { nominalExposureKey($0, meta: meta) }
+        guard rawByExposure.count > 1 else { return [seed] }
+
+        let counts = rawByExposure.mapValues(\.count)
+        let orderedKeys = sortedExposureKeys(counts)
+        guard let primaryKey = orderedKeys.max(by: { lhs, rhs in
+            let lhsCount = rawByExposure[lhs]?.count ?? 0
+            let rhsCount = rawByExposure[rhs]?.count ?? 0
+            if lhsCount != rhsCount { return lhsCount < rhsCount }
+            return (Double(lhs) ?? -1) < (Double(rhs) ?? -1)
+        }) else { return [seed] }
+
+        var filesByExposure: [String: [FileRecord]] = [:]
+        for key in orderedKeys { filesByExposure[key] = [] }
+        for file in seed.files {
+            let ownKey = nominalExposureKey(file, meta: meta)
+            let destinationKey = filesByExposure[ownKey] == nil ? primaryKey : ownKey
+            filesByExposure[destinationKey, default: []].append(file)
+        }
+
+        return orderedKeys.compactMap { key in
+            guard let partitionFiles = filesByExposure[key], !partitionFiles.isEmpty else { return nil }
+            return LightSeed(
+                key: "\(seed.key):exposure:\(key)",
+                kind: seed.kind,
+                sourcePrefix: seed.sourcePrefix,
+                label: seed.label,
+                existingGroup: seed.existingGroup,
+                reusesExistingGroup: seed.reusesExistingGroup && key == primaryKey,
+                wasExposureSplit: true,
+                files: partitionFiles
+            )
+        }
+    }
+
+    private static func nominalExposureKey(
+        _ file: FileRecord,
+        meta: [Int64: FITSMetaRecord]
+    ) -> String {
+        guard let exposure = file.id.flatMap({ meta[$0]?.exptime }) else { return "unknown" }
+        return NominalExposure.nominal(exposure).description
+    }
+
+    private static func splitSlugBase(_ seed: LightSeed) -> String {
+        if seed.kind == .legacy, let label = seed.label {
+            return label.localizedCaseInsensitiveContains("osc")
+                ? "osc"
+                : nonEmptySlug(CaptureGroupDraft.suggestedSlug(for: label))
+        }
+        if let existing = seed.existingGroup {
+            return slugWithoutTrailingExposures(existing.slug)
+        }
+        if let label = seed.label {
+            return slugWithoutTrailingExposures(label)
+        }
+        return "capture"
+    }
+
+    private static func slugWithoutTrailingExposures(_ slug: String) -> String {
+        var components = slug.split(separator: "-").map(String.init)
+        while let last = components.last, isExposureSlugComponent(last) {
+            components.removeLast()
+        }
+        return nonEmptySlug(components.joined(separator: "-"))
+    }
+
+    private static func isExposureSlugComponent(_ value: String) -> Bool {
+        guard value.hasSuffix("s") else { return false }
+        let number = value.dropLast().replacingOccurrences(of: "p", with: ".")
+        return Double(number) != nil
+    }
+
+    private static func nonEmptySlug(_ slug: String) -> String {
+        slug.isEmpty ? "capture" : slug
+    }
+
+    private static func splitDisplayName(
+        existing: CaptureGroupRecord,
+        exposureLabel: String
+    ) -> String {
+        var originalParts = existing.displayName.components(separatedBy: " · ")
+        if let last = originalParts.last, isExposureDisplayComponent(last) {
+            originalParts.removeLast()
+        }
+        let originalBase = originalParts.joined(separator: " · ")
+
+        var parts: [String]
+        if originalBase.isEmpty || originalBase.localizedCaseInsensitiveContains("filter ismeretlen") {
+            parts = []
+            if existing.sensorMode != .unknown { parts.append(existing.sensorMode.displayNameHU) }
+            if existing.signalMode != .unknown { parts.append(existing.signalMode.displayNameHU) }
+            if let filter = existing.filterLabel { parts.append(filter) }
+        } else {
+            parts = originalParts
+        }
+        parts.append(exposureLabel)
+        return parts.joined(separator: " · ")
+    }
+
+    private static func isExposureDisplayComponent(_ value: String) -> Bool {
+        let exposures = value.split(separator: "/")
+        guard !exposures.isEmpty else { return false }
+        return exposures.allSatisfy { part in
+            let trimmed = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.hasSuffix("s") else { return false }
+            return Double(trimmed.dropLast().trimmingCharacters(in: .whitespaces)) != nil
+        }
+    }
+
+    private static func splitDisplayName(
+        existing: CaptureGroupRecord?,
+        seed: LightSeed,
+        inferredSensor: SensorMode,
+        exposureLabel: String
+    ) -> String {
+        if let existing { return splitDisplayName(existing: existing, exposureLabel: exposureLabel) }
+        if seed.kind == .legacy, let label = seed.label {
+            return label.localizedCaseInsensitiveContains("osc")
+                ? "OSC \(exposureLabel)"
+                : "\(label) · \(exposureLabel)"
+        }
+        if seed.kind == .canonical, let label = seed.label {
+            return "\(label.replacingOccurrences(of: "-", with: " ")) · \(exposureLabel)"
+        }
+        let sensorLabel = inferredSensor == .osc ? "OSC · " : ""
+        return "\(sensorLabel)filter ismeretlen · \(exposureLabel)"
     }
 
     private static func validateScope(_ scope: SessionConversionScope, files: [FileRecord]) throws {

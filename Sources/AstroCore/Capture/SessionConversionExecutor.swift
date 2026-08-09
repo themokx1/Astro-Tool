@@ -28,17 +28,21 @@ public struct ConversionSourceBackup: Codable, Equatable, Sendable {
 public struct ConversionMetadataBackup: Codable, Equatable, Sendable {
     public var createdGroupIDs: [Int64]
     public var createdGroupSlugs: [String]
+    /// Optional for backward-compatible decoding of pre-v0.15.2 receipts.
+    public var updatedGroupBackups: [CaptureGroupRecord]?
     public var assignmentBackups: [ConversionAssignmentBackup]
     public var sourceBackups: [ConversionSourceBackup]
 
     public init(
         createdGroupIDs: [Int64] = [],
         createdGroupSlugs: [String] = [],
+        updatedGroupBackups: [CaptureGroupRecord]? = [],
         assignmentBackups: [ConversionAssignmentBackup] = [],
         sourceBackups: [ConversionSourceBackup] = []
     ) {
         self.createdGroupIDs = createdGroupIDs
         self.createdGroupSlugs = createdGroupSlugs
+        self.updatedGroupBackups = updatedGroupBackups
         self.assignmentBackups = assignmentBackups
         self.sourceBackups = sourceBackups
     }

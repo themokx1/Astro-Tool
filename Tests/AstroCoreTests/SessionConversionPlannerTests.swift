@@ -112,7 +112,7 @@ private func ic1396ConversionFixture() -> (files: [FileRecord], meta: [Int64: FI
     }
 }
 
-@Test func ic1396PreviewSeparatesOSCAndUnknownFilteredCaptureAndFlagsAmbiguousFlats() throws {
+@Test func ic1396PreviewSeparatesEveryNominalExposureAndFlagsAmbiguousFlats() throws {
     let fixture = ic1396ConversionFixture()
     let plan = try SessionConversionPlanner.plan(
         scope: conversionScope,
@@ -124,17 +124,22 @@ private func ic1396ConversionFixture() -> (files: [FileRecord], meta: [Int64: FI
         mode: .logicalOnly
     )
 
-    #expect(plan.proposedGroups.count == 2)
+    #expect(plan.proposedGroups.count == 3)
     let osc = try #require(plan.detectedClusters.first { $0.proposedGroupSlug == "osc-30s" })
     #expect(osc.rawFramePaths.count == 32)
     #expect(osc.exposureBreakdown == ["30.0": 32])
     #expect(osc.artifactPaths.isEmpty)
 
-    let unknown = try #require(plan.detectedClusters.first { $0.proposedGroupSlug != "osc-30s" })
-    #expect(unknown.rawFramePaths.count == 49)
-    #expect(unknown.exposureBreakdown == ["120.0": 3, "300.0": 46])
-    #expect(unknown.artifactPaths.count == 2)
-    #expect(unknown.artifactPaths.allSatisfy { $0.contains("/Stacked") })
+    let shortNB = try #require(plan.detectedClusters.first { $0.proposedGroupSlug == "capture-120s" })
+    #expect(shortNB.rawFramePaths.count == 3)
+    #expect(shortNB.exposureBreakdown == ["120.0": 3])
+    #expect(shortNB.artifactPaths.isEmpty)
+
+    let longNB = try #require(plan.detectedClusters.first { $0.proposedGroupSlug == "capture-300s" })
+    #expect(longNB.rawFramePaths.count == 46)
+    #expect(longNB.exposureBreakdown == ["300.0": 46])
+    #expect(longNB.artifactPaths.count == 2)
+    #expect(longNB.artifactPaths.allSatisfy { $0.contains("/Stacked") })
 
     #expect(plan.summary.rawFrameCount == 81)
     #expect(plan.summary.artifactCount == 4) // 2 Stacked + stack output + processed output
@@ -150,6 +155,116 @@ private func ic1396ConversionFixture() -> (files: [FileRecord], meta: [Int64: FI
     #expect(plan.humanSummaryHU.contains("81 nyers expozíció"))
     #expect(plan.humanSummaryHU.contains("2 Stacked"))
     #expect(!plan.canApply)
+}
+
+@Test func alreadyConvertedMixedExposureGroupIsRepairableWithoutLosingCaptureMetadata() throws {
+    let fixture = ic1396ConversionFixture()
+    let osc = CaptureGroupRecord(
+        id: 41,
+        target: conversionScope.target,
+        sessionDate: conversionScope.date,
+        slug: "osc-30s",
+        displayName: "OSC 30 s",
+        sensorMode: .osc,
+        signalMode: .broadband
+    )
+    let mixed = CaptureGroupRecord(
+        id: 42,
+        target: conversionScope.target,
+        sessionDate: conversionScope.date,
+        slug: "capture-120s-300s",
+        displayName: "Elephant HDR · 120 s/300 s",
+        sensorMode: .osc,
+        signalMode: .dualBand,
+        filterModel: "SV220"
+    )
+    let assignmentPairs: [(Int64, FileCaptureAssignmentRecord)] = fixture.files.compactMap { file in
+        guard let id = file.id, file.area == .sessions, file.role == .light else { return nil }
+        let groupID: Int64 = file.path.contains("/lights_osc/") ? 41 : 42
+        return (id, FileCaptureAssignmentRecord(fileID: id, captureGroupID: groupID))
+    }
+    let assignments: [Int64: FileCaptureAssignmentRecord] = Dictionary(uniqueKeysWithValues: assignmentPairs)
+    let sources = [
+        CaptureSourceRecord(
+            captureGroupID: 41,
+            relativePath: "sessions/IC_1396/2026-08-08/lights_osc",
+            role: .light
+        ),
+        CaptureSourceRecord(
+            captureGroupID: 42,
+            relativePath: "sessions/IC_1396/2026-08-08/lights",
+            role: .light
+        ),
+    ]
+
+    let plan = try SessionConversionPlanner.plan(
+        scope: conversionScope,
+        files: fixture.files,
+        meta: fixture.meta,
+        existingGroups: [osc, mixed],
+        existingSources: sources,
+        assignments: assignments,
+        mode: .logicalOnly
+    )
+
+    #expect(plan.detectedClusters.count == 3)
+    #expect(plan.proposedGroups.count == 2)
+    let retained = try #require(plan.proposedGroups.first { $0.draft.slug == mixed.slug })
+    #expect(retained.draft.displayName.hasPrefix("Elephant HDR"))
+    #expect(retained.draft.displayName.hasSuffix("300 s"))
+    #expect(retained.draft.sensorMode == SensorMode.osc)
+    #expect(retained.draft.signalMode == SignalMode.dualBand)
+    #expect(retained.draft.filterModel == "SV220")
+
+    let separated = try #require(plan.proposedGroups.first { $0.draft.slug == "capture-120s" })
+    #expect(separated.draft.displayName.hasPrefix("Elephant HDR"))
+    #expect(separated.draft.displayName.hasSuffix("120 s"))
+    #expect(separated.draft.sensorMode == SensorMode.osc)
+    #expect(separated.draft.signalMode == SignalMode.dualBand)
+    #expect(separated.draft.filterModel == "SV220")
+    #expect(plan.proposedGroups.allSatisfy { $0.sourceMappings.isEmpty })
+    #expect(plan.sourceRemovals == [
+        ConversionSourceRemoval(
+            relativePath: "sessions/IC_1396/2026-08-08/lights",
+            role: .light,
+            expectedGroupID: 42,
+            reason: "A forrásmappa több expozíciós gyűjtést tartalmaz; az egzakt fájlhozzárendelés veszi át a helyét."
+        ),
+    ])
+    let separatedLightCount = plan.assignments.filter {
+        $0.role == FrameRole.light && $0.groupSlug == "capture-120s"
+    }.count
+    let retainedLightCount = plan.assignments.filter {
+        $0.role == FrameRole.light && $0.groupSlug == mixed.slug
+    }.count
+    #expect(separatedLightCount == 3)
+    #expect(retainedLightCount == 46)
+    #expect(plan.moves.isEmpty)
+}
+
+@Test func exposureSplitUsesNominalBucketsInsteadOfRawFloatNoise() throws {
+    let files = [
+        conversionFile("sessions/M31/2026-01-01/lights/a.fit", id: 1),
+        conversionFile("sessions/M31/2026-01-01/lights/b.fit", id: 2),
+        conversionFile("sessions/M31/2026-01-01/lights/c.fit", id: 3),
+    ]
+    let plan = try SessionConversionPlanner.plan(
+        scope: SessionConversionScope(target: "M31", date: "2026-01-01"),
+        files: files,
+        meta: [
+            1: bayerMeta(fileID: 1, exposure: 119.9),
+            2: bayerMeta(fileID: 2, exposure: 120),
+            3: bayerMeta(fileID: 3, exposure: 300),
+        ],
+        existingGroups: [],
+        existingSources: [],
+        assignments: [:],
+        mode: .logicalOnly
+    )
+
+    #expect(plan.detectedClusters.count == 2)
+    #expect(plan.detectedClusters.first { $0.proposedGroupSlug == "capture-120s" }?.rawFramePaths.count == 2)
+    #expect(plan.detectedClusters.first { $0.proposedGroupSlug == "capture-300s" }?.rawFramePaths.count == 1)
 }
 
 @Test func ambiguityDecisionProducesAnApplyableExactPlan() throws {

@@ -616,7 +616,7 @@ struct SessionConversionSheet: View {
                 Label("Minden gyűjtés már létezik; nincs új név vagy filteradat.", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             } else {
-                Text("A gyűjtések adatai a mentés előtt javíthatók. A slug rögzített, mert erre hivatkozik minden előnézeti művelet.")
+                Text("Az új és meglévő gyűjtések adatai a mentés előtt javíthatók. A slug rögzített, mert erre hivatkozik minden előnézeti művelet.")
                     .font(.callout).foregroundStyle(.secondary)
                 ForEach(plan.proposedGroups.indices, id: \.self) { index in
                     GroupBox {
@@ -631,6 +631,15 @@ struct SessionConversionSheet: View {
                             }
                             TextField("Szűrő gyártó/modell", text: proposedFilterBinding(index))
                         }
+                    } label: {
+                        Label(
+                            plan.proposedGroups[index].existingGroupID == nil
+                                ? "Új gyűjtés"
+                                : "Meglévő gyűjtés frissítése",
+                            systemImage: plan.proposedGroups[index].existingGroupID == nil
+                                ? "plus.circle"
+                                : "arrow.triangle.2.circlepath.circle"
+                        )
                     }
                 }
             }
@@ -657,6 +666,11 @@ struct SessionConversionSheet: View {
             summaryStrip(plan)
             DisclosureGroup("Adatbázis-hozzárendelések (\(plan.assignments.count))", isExpanded: .constant(true)) {
                 operationRows(plan.assignments.map { "\($0.path)  →  \($0.groupSlug) [\($0.role.rawValue)]" })
+            }
+            if let removals = plan.sourceRemovals, !removals.isEmpty {
+                DisclosureGroup("Túl tág mappaforrások leválasztása (\(removals.count))", isExpanded: .constant(true)) {
+                    operationRows(removals.map { "\($0.relativePath) — \($0.reason)" })
+                }
             }
             if plan.mode == .physical {
                 DisclosureGroup("Létrehozandó mappák (\(plan.directoryCreations.count))") {
@@ -759,6 +773,9 @@ struct SessionConversionSheet: View {
 
     private func proposedGroupCard(_ proposed: ProposedCaptureGroup) -> some View {
         VStack(alignment: .leading, spacing: 6) {
+            Text(proposed.existingGroupID == nil ? "Új gyűjtés" : "Meglévő gyűjtés frissítése")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
             HStack {
                 Text(proposed.draft.displayName).font(.subheadline.weight(.semibold))
                 Spacer()
