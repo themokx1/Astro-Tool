@@ -737,6 +737,20 @@ final class AppState: @unchecked Sendable {
     /// this dictionary simply has no history rows on record yet.
     var sensorProfileHistoryByCombo: [String: [SensorProfileHistoryRecord]] = [:]
     var frameScores: [FrameScore] = []
+    /// Capture membership, exact filter metadata and provenance for the
+    /// quality table's currently loaded frames. This deliberately lives
+    /// beside `frameScores`: both are replaced from the same database
+    /// snapshot, so a row can never show another target's capture label.
+    var frameCaptureMetadata: [String: ResolvedCaptureMetadata] = [:]
+    /// Exact records for whichever target/date capture editor is open.
+    /// Session summaries intentionally omit editable manufacturer/model
+    /// fields, so sheets load these records directly instead of guessing.
+    var editableCaptureGroups: [CaptureGroupRecord] = []
+    /// One deliberately scoped conversion preview and its last receipt.
+    /// The sheet always shows `scope` prominently and never creates an
+    /// implicit "all sessions" operation.
+    var sessionConversionPlan: SessionConversionPlan?
+    var sessionConversionReceipt: SessionConversionReceipt?
     /// The user's own manual accept/reject verdict for each frame currently
     /// in `frameScores`, keyed by `FrameScore.path` (R10-B1) -- `FrameScore`
     /// itself carries no file id, only a path, so this is path-keyed rather
@@ -3651,6 +3665,7 @@ final class AppState: @unchecked Sendable {
         // any) happened to load -- a target with no rated frames at all
         // would show A's table forever.
         frameScores = []
+        frameCaptureMetadata = [:]
         // R10-B1: same staleness class as `frameScores` immediately above --
         // without this, switching targets could leave A's verdicts showing
         // against B's (path-keyed, so a same-named file under a different
@@ -4328,11 +4343,15 @@ final class AppState: @unchecked Sendable {
                 // R10-B1: `frameVerdicts` alongside `frameScores` -- same
                 // "extend the bundle, don't leave it stale" shape as the
                 // `qualitySummaries`/`exposureAdvice` reload just above.
-                let verdicts = try await Task.detached(priority: .userInitiated) {
-                    try Self.loadVerdicts(forScores: results, db: db)
+                let (verdicts, captureMetadata) = try await Task.detached(priority: .userInitiated) {
+                    (
+                        try Self.loadVerdicts(forScores: results, db: db),
+                        try Self.loadCaptureMetadata(forScores: results, db: db)
+                    )
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.frameVerdicts = verdicts
+                self.frameCaptureMetadata = captureMetadata
                 // R12-U1 item 5: see `runScan`'s own `trendPoints = nil`
                 // comment -- this session's rated metrics just changed.
                 self.trendPoints = nil
@@ -4370,11 +4389,15 @@ final class AppState: @unchecked Sendable {
                 // `runRate` above -- opening the Minőség segment (this is
                 // its own on-appear load, see the doc comment above) must
                 // show manual verdicts too, not just scores.
-                let verdicts = try await Task.detached(priority: .userInitiated) {
-                    try Self.loadVerdicts(forScores: results, db: db)
+                let (verdicts, captureMetadata) = try await Task.detached(priority: .userInitiated) {
+                    (
+                        try Self.loadVerdicts(forScores: results, db: db),
+                        try Self.loadCaptureMetadata(forScores: results, db: db)
+                    )
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.frameVerdicts = verdicts
+                self.frameCaptureMetadata = captureMetadata
             } catch {
                 self.handle(error)
             }
@@ -4412,6 +4435,24 @@ final class AppState: @unchecked Sendable {
             if let verdict = verdictsByID[id] { result[path] = verdict }
         }
         return result
+    }
+
+    /// Batch-resolves the capture group, OSC/NB mode, filter and source of
+    /// truth for the exact score rows currently visible in the quality UI.
+    private nonisolated static func loadCaptureMetadata(
+        forScores scores: [FrameScore], db: Database
+    ) throws -> [String: ResolvedCaptureMetadata] {
+        guard !scores.isEmpty else { return [:] }
+        let wanted = Set(scores.map(\.path))
+        let files = try db.allFiles(includeMissing: false).filter { wanted.contains($0.path) }
+        let meta = try db.fitsMetaBatch(fileIDs: files.compactMap(\.id))
+        let resolver = try CaptureResolver.load(db: db)
+        return Dictionary(uniqueKeysWithValues: files.map { file in
+            (
+                file.path,
+                resolver.resolve(file: file, meta: file.id.flatMap { meta[$0] })
+            )
+        })
     }
 
     /// Sets (`accepted` non-`nil`) or clears (`nil`) one frame's manual
@@ -4806,7 +4847,7 @@ final class AppState: @unchecked Sendable {
                 }()
                 let (newStats, targetReload) = try await Task.detached(priority: .userInitiated) {
                     let newStats = try StatsQueries.perTarget(db: db, config: cfg)
-                    var targetReload: ([FrameScore], [SessionQualitySummary], [String: Bool])?
+                    var targetReload: ([FrameScore], [SessionQualitySummary], [String: Bool], [String: ResolvedCaptureMetadata])?
                     if let openTarget {
                         let scores = try Rater.cachedScores(target: openTarget, date: nil, db: db, config: cfg)
                         let summaries = try SessionQuality.summaries(target: openTarget, db: db, config: cfg)
@@ -4815,7 +4856,8 @@ final class AppState: @unchecked Sendable {
                         // target left the open target's "Saját döntés"
                         // column showing whatever it held before the run.
                         let verdicts = try Self.loadVerdicts(forScores: scores, db: db)
-                        targetReload = (scores, summaries, verdicts)
+                        let captureMetadata = try Self.loadCaptureMetadata(forScores: scores, db: db)
+                        targetReload = (scores, summaries, verdicts, captureMetadata)
                     }
                     return (newStats, targetReload)
                 }.value
@@ -4825,6 +4867,7 @@ final class AppState: @unchecked Sendable {
                     self.frameScores = targetReload.0
                     self.qualitySummaries = targetReload.1
                     self.frameVerdicts = targetReload.2
+                    self.frameCaptureMetadata = targetReload.3
                 }
                 self.progressText = "Pontozás kész: \(targets.count) célpont"
                 // R12-U1 item 5: every target's metrics may have changed.
@@ -4860,6 +4903,301 @@ final class AppState: @unchecked Sendable {
         }
     }
 
+    // MARK: - Capture groups and single-session conversion
+
+    func loadEditableCaptureGroups(target: String, date: String) {
+        guard let db else { return }
+        do {
+            editableCaptureGroups = try db.captureGroups(target: target, date: date)
+        } catch {
+            handle(error)
+        }
+    }
+
+    func createCaptureGroup(target: String, date: String, draft: CaptureGroupDraft) {
+        guard let db else { return }
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        let cfg = config
+        let opID = beginOperation("Gyűjtés létrehozása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let refreshed = try await Task.detached(priority: .userInitiated) {
+                    _ = try CaptureManager.create(
+                        root: root, db: db, target: target, date: date, draft: draft
+                    )
+                    return (
+                        try db.captureGroups(target: target, date: date),
+                        try SessionStatsQueries.sessions(target: target, db: db, config: cfg)
+                    )
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.editableCaptureGroups = refreshed.0
+                self.sessionDetailsByTarget[target] = refreshed.1
+                self.progressText = "Gyűjtés létrehozva: \(draft.displayName)"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    func updateCaptureGroup(_ group: CaptureGroupRecord) {
+        guard let db, group.id != nil else { return }
+        let cfg = config
+        let opID = beginOperation("Gyűjtés mentése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let refreshed = try await Task.detached(priority: .userInitiated) {
+                    var updated = group
+                    updated.updatedAt = Date().timeIntervalSince1970
+                    _ = try db.upsertCaptureGroup(updated)
+                    return (
+                        try db.captureGroups(target: group.target, date: group.sessionDate),
+                        try SessionStatsQueries.sessions(target: group.target, db: db, config: cfg)
+                    )
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.editableCaptureGroups = refreshed.0
+                self.sessionDetailsByTarget[group.target] = refreshed.1
+                self.progressText = "Gyűjtés mentve: \(group.displayName)"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Deletes tool-owned capture metadata only. Raw/stack/processed files
+    /// and every directory remain untouched and can be reclassified later.
+    func deleteCaptureGroup(_ group: CaptureGroupRecord) {
+        guard let db, let id = group.id else { return }
+        let cfg = config
+        let opID = beginOperation("Gyűjtés törlése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let refreshed = try await Task.detached(priority: .userInitiated) {
+                    try db.deleteCaptureGroup(id: id)
+                    return (
+                        try db.captureGroups(target: group.target, date: group.sessionDate),
+                        try SessionStatsQueries.sessions(target: group.target, db: db, config: cfg)
+                    )
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.editableCaptureGroups = refreshed.0
+                self.sessionDetailsByTarget[group.target] = refreshed.1
+                self.progressText = "Gyűjtés metadata törölve: \(group.displayName); fájl nem lett törölve"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    /// Assigns exactly the paths shown in the classification sheet's
+    /// before/after preview. No implicit folder expansion happens here.
+    func assignCaptureMetadata(
+        target: String,
+        date: String,
+        paths: [String],
+        groupID: Int64,
+        sensorOverride: SensorMode? = nil,
+        signalOverride: SignalMode? = nil,
+        filterManufacturerOverride: String? = nil,
+        filterModelOverride: String? = nil,
+        filterNameOverride: String? = nil
+    ) {
+        guard let db, !paths.isEmpty else { return }
+        let cfg = config
+        let opID = beginOperation("Capture-besorolás mentése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let bundle = try await Task.detached(priority: .userInitiated) {
+                    guard let group = try db.captureGroup(id: groupID),
+                          group.target == target, group.sessionDate == date
+                    else {
+                        throw AstroError.invalidInput("A kiválasztott gyűjtés nem ehhez a sessionhöz tartozik.")
+                    }
+                    for path in Array(Set(paths)).sorted() {
+                        guard let file = try db.file(path: path),
+                              let fileID = file.id,
+                              file.target == target,
+                              file.sessionDate == date
+                        else {
+                            throw AstroError.invalidInput("A(z) \(path) kívül esik a kiválasztott sessionön.")
+                        }
+                        try db.upsertFileCaptureAssignment(
+                            FileCaptureAssignmentRecord(
+                                fileID: fileID,
+                                captureGroupID: groupID,
+                                sensorModeOverride: sensorOverride,
+                                signalModeOverride: signalOverride,
+                                filterManufacturerOverride: Self.nonBlankCaptureField(filterManufacturerOverride),
+                                filterModelOverride: Self.nonBlankCaptureField(filterModelOverride),
+                                filterNameOverride: Self.nonBlankCaptureField(filterNameOverride),
+                                assignmentSource: "app",
+                                assignedAt: Date().timeIntervalSince1970
+                            )
+                        )
+                    }
+                    let scores = try Rater.cachedScores(target: target, date: nil, db: db, config: cfg)
+                    return (
+                        try SessionStatsQueries.sessions(target: target, db: db, config: cfg),
+                        try SessionQuality.summaries(target: target, db: db, config: cfg),
+                        scores,
+                        try Self.loadCaptureMetadata(forScores: scores, db: db)
+                    )
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.sessionDetailsByTarget[target] = bundle.0
+                self.qualitySummaries = bundle.1
+                self.frameScores = bundle.2
+                self.frameCaptureMetadata = bundle.3
+                self.progressText = "Capture-besorolás kész: \(Set(paths).count) fájl"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    private nonisolated static func nonBlankCaptureField(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    func clearCaptureMetadata(target: String, date: String, paths: [String]) {
+        guard let db, !paths.isEmpty else { return }
+        let cfg = config
+        let opID = beginOperation("Capture-besorolás törlése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let bundle = try await Task.detached(priority: .userInitiated) {
+                    for path in Array(Set(paths)).sorted() {
+                        guard let file = try db.file(path: path), let id = file.id,
+                              file.target == target, file.sessionDate == date
+                        else { continue }
+                        try db.clearFileCaptureAssignment(fileID: id)
+                    }
+                    let scores = try Rater.cachedScores(target: target, date: nil, db: db, config: cfg)
+                    return (
+                        try SessionStatsQueries.sessions(target: target, db: db, config: cfg),
+                        scores,
+                        try Self.loadCaptureMetadata(forScores: scores, db: db)
+                    )
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.sessionDetailsByTarget[target] = bundle.0
+                self.frameScores = bundle.1
+                self.frameCaptureMetadata = bundle.2
+                self.progressText = "Capture-besorolás törölve: \(Set(paths).count) fájl"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    func resetSessionConversion() {
+        sessionConversionPlan = nil
+        sessionConversionReceipt = nil
+    }
+
+    func planSessionConversion(target: String, date: String, mode: SessionConversionMode) {
+        guard let db else { return }
+        let cfg = config
+        sessionConversionPlan = nil
+        sessionConversionReceipt = nil
+        let opID = beginOperation("Session-konverzió elemzése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let plan = try await Task.detached(priority: .userInitiated) {
+                    try SessionConversionPlanner.plan(
+                        target: target, date: date, db: db, config: cfg, mode: mode
+                    )
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.sessionConversionPlan = plan
+                self.progressText = "Konverziós előnézet kész: \(plan.summary.rawFrameCount) nyers frame"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    func replaceSessionConversionPlan(_ plan: SessionConversionPlan) {
+        sessionConversionPlan = plan
+    }
+
+    func resolveSessionConversionAmbiguity(id: String, groupSlug: String) {
+        guard let db, let plan = sessionConversionPlan else { return }
+        do {
+            let files = try db.allFiles(includeMissing: false).filter {
+                $0.target == plan.scope.target && $0.sessionDate == plan.scope.date
+                    && ($0.area == .sessions || $0.area == .stacks || $0.area == .processed)
+            }
+            sessionConversionPlan = try SessionConversionPlanner.resolving(
+                ambiguityID: id, withGroupSlug: groupSlug, in: plan, files: files
+            )
+        } catch {
+            handle(error)
+        }
+    }
+
+    func applySessionConversion(_ plan: SessionConversionPlan) {
+        guard let db else { return }
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        sessionConversionPlan = plan
+        let opID = beginOperation("Session-konverzió alkalmazása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let receipt = try await Task.detached(priority: .userInitiated) {
+                    try SessionConversionExecutor.apply(plan: plan, root: root, db: db)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.sessionConversionReceipt = receipt
+                self.progressText = "Session-konverzió kész: \(receipt.id)"
+                self.endOperation(opID)
+                self.loadTargetDetail(target: plan.scope.target)
+                return
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    func rollbackSessionConversion(_ receipt: SessionConversionReceipt) {
+        guard let db else { return }
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        let opID = beginOperation("Session-konverzió visszaállítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let updated = try await Task.detached(priority: .userInitiated) {
+                    try SessionConversionExecutor.rollback(receipt: receipt, root: root, db: db)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.sessionConversionReceipt = updated
+                self.progressText = "Session visszaállítva: \(updated.id)"
+                self.endOperation(opID)
+                self.loadTargetDetail(target: receipt.scope.target)
+                return
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
     // MARK: - New session
 
     /// Creates `sessions/<sanitize(catalog)_sanitize(name)>/<date>/...` (plus
@@ -4868,7 +5206,12 @@ final class AppState: @unchecked Sendable {
     /// string -- callers (`NewSessionSheet`) are expected to validate via
     /// `SessionDateParser` before enabling the "Létrehozás" button, but this
     /// re-validates so the guard holds even if called from elsewhere.
-    func createSession(catalog: String, name: String, date: String) {
+    func createSession(
+        catalog: String,
+        name: String,
+        date: String,
+        initialCapture: CaptureGroupDraft? = nil
+    ) {
         guard let parsedDate = SessionDateParser.parse(date), parsedDate.isCanonical else {
             lastError = "Érvénytelen dátum: \(date) (YYYY-MM-DD formátum szükséges)"
             return
@@ -4879,13 +5222,29 @@ final class AppState: @unchecked Sendable {
         }
 
         let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        let database = db
 
         let opID = beginOperation("Session létrehozása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    try SessionCreator.create(root: root, catalogRaw: catalog, nameRaw: name, date: date)
+                    if let initialCapture {
+                        guard let database else {
+                            throw AstroError.databaseError("A könyvtár-adatbázis nem érhető el.")
+                        }
+                        return try SessionCreator.create(
+                            root: root,
+                            catalogRaw: catalog,
+                            nameRaw: name,
+                            date: date,
+                            initialCapture: initialCapture,
+                            db: database
+                        )
+                    }
+                    return try SessionCreator.create(
+                        root: root, catalogRaw: catalog, nameRaw: name, date: date
+                    )
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
                 self.progressText = "Session létrehozva: \(result.targetFolder)/\(date)"

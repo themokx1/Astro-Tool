@@ -111,6 +111,17 @@ Commands:
   match         [--root R] --target T --date D [--json]
   link-calib    --target T --date D [--dry-run] [--yes] [--root R] [--json]
   new-session   --catalog CAT --name NAME --date D [--root R] [--json]
+  capture list  --target T --date D [--root R] [--json]
+  capture create --target T --date D --name N --slug S
+                [--sensor osc|mono] [--signal broadband|narrowband|dual_band]
+                [--filter-maker M] [--filter-model M] [--filter-name N] [--notes N]
+                [--root R] [--json]
+  capture assign --target T --date D --group SLUG --path ROOT_RELATIVE_PATH
+                [--filter-maker M] [--filter-model M] [--filter-name N] [--root R] [--json]
+  session-convert plan --target T --date D [--physical] [--out PLAN.json] [--root R] [--json]
+  session-convert apply --plan PLAN.json --yes [--root R] [--json]
+  session-convert rollback --id CONVERSION_ID --yes [--root R] [--json]
+                Mindig pontosan egy célpont/dátum sessionre korlátozott.
   config        (show|path) [--root R] [--json]
   tag add       --target T [--date D] <tag> [--root R] [--json]
   tag remove    --target T [--date D] <tag> [--root R] [--json]
@@ -193,7 +204,7 @@ Commands:
                 from measured sensor-profile + per-Bayer background data.
                 Without --target: one row per target. With --target: full
                 advice for that target.
-  stacklist     --target T --date D [--keep 0.8] [--keep-filter "Ha=0.9,OIII=0.7"]
+  stacklist     --target T --date D [--capture SLUG] [--keep 0.8] [--keep-filter "Ha=0.9,OIII=0.7"]
                 [--json] [--root R] [--out PATH]
                 Best-frame stack-list export: hardlinks the selected lights
                 into .astro_tool/stacklists/<target>-<date>/lights/ and
@@ -3888,6 +3899,7 @@ func cmdStackList(_ args: [String]) throws -> Int32 {
         FlagSpec("--root", takesValue: true),
         FlagSpec("--target", takesValue: true),
         FlagSpec("--date", takesValue: true),
+        FlagSpec("--capture", takesValue: true),
         FlagSpec("--keep", takesValue: true),
         FlagSpec("--keep-filter", takesValue: true),
         FlagSpec("--json", takesValue: false),
@@ -3940,7 +3952,7 @@ func cmdStackList(_ args: [String]) throws -> Int32 {
     try hintIfEmpty(db)
 
     let selection = try StackList.select(
-        target: target, date: date, keepFraction: keepFraction,
+        target: target, date: date, captureSlug: parsed.value("--capture"), keepFraction: keepFraction,
         keepFractionPerFilter: keepFractionPerFilter, db: db, config: config
     )
 
@@ -4299,4 +4311,217 @@ func cmdTargetReport(_ args: [String]) throws -> Int32 {
         eprint("error: target not found: \(target)")
         return 3
     }
+}
+
+// MARK: - capture groups + single-session conversion
+
+func cmdCapture(_ args: [String]) throws -> Int32 {
+    guard let subcommand = args.first else {
+        eprint("error: expected capture list, create, or assign")
+        return 1
+    }
+    let rest = Array(args.dropFirst())
+    switch subcommand {
+    case "list": return try cmdCaptureList(rest)
+    case "create": return try cmdCaptureCreate(rest)
+    case "assign": return try cmdCaptureAssign(rest)
+    default:
+        eprint("error: expected capture list, create, or assign")
+        return 1
+    }
+}
+
+private func cmdCaptureList(_ args: [String]) throws -> Int32 {
+    let parsed = try ArgParser.parse(args, specs: [
+        FlagSpec("--root", takesValue: true), FlagSpec("--target", takesValue: true),
+        FlagSpec("--date", takesValue: true), FlagSpec("--json", takesValue: false),
+    ])
+    guard let target = parsed.value("--target"), let date = parsed.value("--date") else {
+        eprint("error: --target and --date are required")
+        return 1
+    }
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let groups = try makeDatabase(config: config).captureGroups(target: target, date: date)
+    if parsed.has("--json") {
+        try printJSON(groups)
+    } else if groups.isEmpty {
+        print("nincs gyűjtés: \(target) / \(date)")
+    } else {
+        for group in groups {
+            print("\(group.slug)  \(group.displayName)  \(group.quickLabel)")
+        }
+    }
+    return 0
+}
+
+private func cmdCaptureCreate(_ args: [String]) throws -> Int32 {
+    let parsed = try ArgParser.parse(args, specs: [
+        FlagSpec("--root", takesValue: true), FlagSpec("--target", takesValue: true),
+        FlagSpec("--date", takesValue: true), FlagSpec("--name", takesValue: true),
+        FlagSpec("--slug", takesValue: true), FlagSpec("--sensor", takesValue: true),
+        FlagSpec("--signal", takesValue: true), FlagSpec("--filter-maker", takesValue: true),
+        FlagSpec("--filter-model", takesValue: true), FlagSpec("--filter-name", takesValue: true),
+        FlagSpec("--notes", takesValue: true), FlagSpec("--json", takesValue: false),
+    ])
+    guard let target = parsed.value("--target"), let date = parsed.value("--date"),
+          let name = parsed.value("--name"), let slug = parsed.value("--slug")
+    else {
+        eprint("error: --target, --date, --name, and --slug are required")
+        return 1
+    }
+    if let raw = parsed.value("--sensor"), SensorMode(rawValue: raw) == nil {
+        eprint("error: invalid --sensor (osc|mono)")
+        return 1
+    }
+    let sensor = parsed.value("--sensor").flatMap(SensorMode.init(rawValue:)) ?? .unknown
+    let signal = parsed.value("--signal").flatMap(SignalMode.init(rawValue:)) ?? .unknown
+    if let raw = parsed.value("--signal"), SignalMode(rawValue: raw) == nil {
+        eprint("error: invalid --signal")
+        return 1
+    }
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    let result = try CaptureManager.create(
+        root: URL(fileURLWithPath: config.rootPath, isDirectory: true), db: db,
+        target: target, date: date,
+        draft: CaptureGroupDraft(
+            slug: slug, displayName: name, sensorMode: sensor, signalMode: signal,
+            filterManufacturer: parsed.value("--filter-maker"), filterModel: parsed.value("--filter-model"),
+            filterName: parsed.value("--filter-name"), notes: parsed.value("--notes")
+        )
+    )
+    if parsed.has("--json") { try printJSON(result.group) }
+    else { print("created: \(result.group.displayName) [\(result.group.slug)]") }
+    return 0
+}
+
+private func cmdCaptureAssign(_ args: [String]) throws -> Int32 {
+    let parsed = try ArgParser.parse(args, specs: [
+        FlagSpec("--root", takesValue: true), FlagSpec("--target", takesValue: true),
+        FlagSpec("--date", takesValue: true), FlagSpec("--group", takesValue: true),
+        FlagSpec("--path", takesValue: true), FlagSpec("--filter-maker", takesValue: true),
+        FlagSpec("--filter-model", takesValue: true), FlagSpec("--filter-name", takesValue: true),
+        FlagSpec("--json", takesValue: false),
+    ])
+    guard let target = parsed.value("--target"), let date = parsed.value("--date"),
+          let slug = parsed.value("--group"), let path = parsed.value("--path")
+    else {
+        eprint("error: --target, --date, --group, and --path are required")
+        return 1
+    }
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let db = try makeDatabase(config: config)
+    guard let group = try db.captureGroup(target: target, date: date, slug: slug), let groupID = group.id else {
+        eprint("error: capture group not found: \(slug)")
+        return 3
+    }
+    guard let file = try db.file(path: path), file.target == target, file.sessionDate == date, let fileID = file.id else {
+        eprint("error: file not found in exact session scope: \(path)")
+        return 3
+    }
+    let assignment = FileCaptureAssignmentRecord(
+        fileID: fileID, captureGroupID: groupID,
+        filterManufacturerOverride: parsed.value("--filter-maker"),
+        filterModelOverride: parsed.value("--filter-model"),
+        filterNameOverride: parsed.value("--filter-name"),
+        assignmentSource: "cli", assignedAt: Date().timeIntervalSince1970
+    )
+    try db.upsertFileCaptureAssignment(assignment)
+    if parsed.has("--json") { try printJSON(assignment) }
+    else { print("assigned: \(path) → \(slug)") }
+    return 0
+}
+
+func cmdSessionConvert(_ args: [String]) throws -> Int32 {
+    guard let subcommand = args.first else {
+        eprint("error: expected session-convert plan, apply, or rollback")
+        return 1
+    }
+    let rest = Array(args.dropFirst())
+    switch subcommand {
+    case "plan": return try cmdSessionConvertPlan(rest)
+    case "apply": return try cmdSessionConvertApply(rest)
+    case "rollback": return try cmdSessionConvertRollback(rest)
+    default:
+        eprint("error: expected session-convert plan, apply, or rollback")
+        return 1
+    }
+}
+
+private func cmdSessionConvertPlan(_ args: [String]) throws -> Int32 {
+    let parsed = try ArgParser.parse(args, specs: [
+        FlagSpec("--root", takesValue: true), FlagSpec("--target", takesValue: true),
+        FlagSpec("--date", takesValue: true), FlagSpec("--physical", takesValue: false),
+        FlagSpec("--out", takesValue: true), FlagSpec("--json", takesValue: false),
+    ])
+    guard let target = parsed.value("--target"), let date = parsed.value("--date") else {
+        eprint("error: --target and --date are required")
+        return 1
+    }
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let plan = try SessionConversionPlanner.plan(
+        target: target, date: date, db: makeDatabase(config: config), config: config,
+        mode: parsed.has("--physical") ? .physical : .logicalOnly
+    )
+    if let out = parsed.value("--out") {
+        let url = URL(fileURLWithPath: out)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try encoder.encode(plan).write(to: url)
+        eprint("plan saved: \(url.path)")
+    }
+    if parsed.has("--json") {
+        try printJSON(plan)
+    } else {
+        print(plan.humanSummaryHU)
+        print("Mód: \(plan.mode == .physical ? "fizikai rendezés" : "csak logikai besorolás")")
+        print("Nyers képek: \(plan.summary.rawFrameCount), műtermékek: \(plan.summary.artifactCount), kalibráció: \(plan.summary.calibrationFrameCount)")
+        for move in plan.moves { print("MOVE  \(move.sourceRelative) → \(move.destinationRelative)") }
+        for ambiguity in plan.ambiguities { print("REVIEW  \(ambiguity.title): \(ambiguity.explanation)") }
+        for conflict in plan.conflicts { print("BLOCK  \(conflict.path): \(conflict.message)") }
+    }
+    return 0
+}
+
+private func cmdSessionConvertApply(_ args: [String]) throws -> Int32 {
+    let parsed = try ArgParser.parse(args, specs: [
+        FlagSpec("--root", takesValue: true), FlagSpec("--plan", takesValue: true),
+        FlagSpec("--yes", takesValue: false), FlagSpec("--json", takesValue: false),
+    ])
+    guard let path = parsed.value("--plan"), parsed.has("--yes") else {
+        eprint("error: --plan and --yes are required")
+        return 1
+    }
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let plan = try JSONDecoder().decode(
+        SessionConversionPlan.self, from: Data(contentsOf: URL(fileURLWithPath: path))
+    )
+    let receipt = try SessionConversionExecutor.apply(
+        plan: plan, root: URL(fileURLWithPath: config.rootPath, isDirectory: true),
+        db: makeDatabase(config: config)
+    )
+    if parsed.has("--json") { try printJSON(receipt) }
+    else { print("applied: \(receipt.id) · receipt: \(receipt.receiptRelativePath)") }
+    return 0
+}
+
+private func cmdSessionConvertRollback(_ args: [String]) throws -> Int32 {
+    let parsed = try ArgParser.parse(args, specs: [
+        FlagSpec("--root", takesValue: true), FlagSpec("--id", takesValue: true),
+        FlagSpec("--yes", takesValue: false), FlagSpec("--json", takesValue: false),
+    ])
+    guard let id = parsed.value("--id"), parsed.has("--yes") else {
+        eprint("error: --id and --yes are required")
+        return 1
+    }
+    let config = try resolveConfig(rootFlag: parsed.value("--root"))
+    let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+    let updated = try SessionConversionExecutor.rollback(
+        receipt: SessionConversionExecutor.loadReceipt(id: id, root: root),
+        root: root, db: makeDatabase(config: config)
+    )
+    if parsed.has("--json") { try printJSON(updated) }
+    else { print("rolled back: \(updated.id)") }
+    return 0
 }

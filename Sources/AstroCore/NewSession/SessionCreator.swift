@@ -11,10 +11,12 @@ public enum SessionCreator {
     public struct Result: Sendable {
         public var createdURLs: [URL]
         public var targetFolder: String
+        public var captureGroup: CaptureGroupRecord?
 
-        public init(createdURLs: [URL], targetFolder: String) {
+        public init(createdURLs: [URL], targetFolder: String, captureGroup: CaptureGroupRecord? = nil) {
             self.createdURLs = createdURLs
             self.targetFolder = targetFolder
+            self.captureGroup = captureGroup
         }
     }
 
@@ -52,13 +54,68 @@ public enum SessionCreator {
 
         let readme = Self.readmeText(
             root: root, targetFolder: targetFolder, catalogRaw: catalogRaw,
-            nameRaw: nameRaw, date: date, now: now
+            nameRaw: nameRaw, date: date, now: now, initialCapture: nil
         )
 
         let writeGuard = WriteGuard(root: root)
         let created = try writeGuard.createSessionTree(target: targetFolder, dateDir: date, readme: readme)
 
         return Result(createdURLs: created, targetFolder: targetFolder)
+    }
+
+    /// Capture-aware new-session variant. The old overload above stays
+    /// source-compatible and creates the unchanged classic tree; this one
+    /// additionally creates and persists the explicitly requested first
+    /// capture, and may therefore mention it in this brand-new README.
+    public static func create(
+        root: URL,
+        catalogRaw: String,
+        nameRaw: String,
+        date: String,
+        initialCapture: CaptureGroupDraft,
+        db: Database,
+        now: Date = Date()
+    ) throws -> Result {
+        let targetFolder = Sanitizer.makeTarget(catalog: catalogRaw, name: nameRaw)
+        guard !targetFolder.isEmpty else {
+            throw AstroError.invalidInput(
+                "catalog \"\(catalogRaw)\" and name \"\(nameRaw)\" sanitize to an empty target folder name"
+            )
+        }
+        guard let parsedDate = SessionDateParser.parse(date), parsedDate.isCanonical else {
+            throw AstroError.invalidInput("date \"\(date)\" is not a canonical YYYY-MM-DD date")
+        }
+        try CaptureManager.validate(draft: initialCapture)
+
+        let readme = Self.readmeText(
+            root: root,
+            targetFolder: targetFolder,
+            catalogRaw: catalogRaw,
+            nameRaw: nameRaw,
+            date: date,
+            now: now,
+            initialCapture: initialCapture
+        )
+        let writeGuard = WriteGuard(root: root)
+        var created = try writeGuard.createSessionTree(
+            target: targetFolder,
+            dateDir: date,
+            readme: readme
+        )
+        let captureResult = try CaptureManager.create(
+            root: root,
+            db: db,
+            target: targetFolder,
+            date: date,
+            draft: initialCapture,
+            now: now
+        )
+        created.append(contentsOf: captureResult.createdURLs)
+        return Result(
+            createdURLs: created,
+            targetFolder: targetFolder,
+            captureGroup: captureResult.group
+        )
     }
 
     /// Exact README.txt template ground-truthed against the real
@@ -69,10 +126,25 @@ public enum SessionCreator {
         catalogRaw: String,
         nameRaw: String,
         date: String,
-        now: Date
+        now: Date,
+        initialCapture: CaptureGroupDraft?
     ) -> String {
         let formatter = ISO8601DateFormatter()
         let createdAt = formatter.string(from: now)
+
+        let initialCaptureSection: String
+        if let initialCapture {
+            initialCaptureSection = """
+
+            Initial capture
+            ---------------
+            - Name: \(initialCapture.displayName)
+            - Type: \(initialCapture.sensorMode.displayNameHU) · \(initialCapture.signalMode.displayNameHU)
+            - Folder: sessions/\(targetFolder)/\(date)/captures/\(initialCapture.slug)
+            """
+        } else {
+            initialCaptureSection = ""
+        }
 
         return """
         Astro Session Notes
@@ -92,6 +164,7 @@ public enum SessionCreator {
         - sessions/\(targetFolder)/\(date)/biases   : RAW biases (if used)
         - stacks/\(targetFolder)/\(date)          : stacking outputs
         - processed/\(targetFolder)/\(date)       : final edits/exports
+        \(initialCaptureSection)
 
         Fill in metadata (recommended)
         ------------------------------

@@ -30,9 +30,15 @@ private func insertRatedLight(
     background: Double? = nil,
     starCount: Int? = nil,
     score: Double? = nil,
-    withRating: Bool = true
+    withRating: Bool = true,
+    captureSlug: String? = nil
 ) throws -> Int64 {
-    let path = "sessions/\(target)/\(date)/lights/\(name).fit"
+    let path: String
+    if let captureSlug {
+        path = "sessions/\(target)/\(date)/captures/\(captureSlug)/lights/\(name).fit"
+    } else {
+        path = "sessions/\(target)/\(date)/lights/\(name).fit"
+    }
     let fileID = try db.upsertFile(
         FileRecord(
             path: path, size: 1024, mtime: 1_700_000_000, ext: "fit", kind: "fits",
@@ -305,4 +311,48 @@ private func insertSensorProfile(
     let db = try makeMemoryDB()
     let summaries = try SessionQuality.summaries(target: "DoesNotExist", db: db, config: AstroConfig())
     #expect(summaries.isEmpty)
+}
+
+@Test func heterogeneousSessionReportsQualityPerCaptureWithoutFalseAggregateFWHM() throws {
+    let db = try makeMemoryDB()
+    _ = try db.upsertCaptureGroup(
+        CaptureGroupRecord(
+            target: "MIX", sessionDate: "2026-01-01", slug: "osc",
+            displayName: "OSC 30 s", sensorMode: .osc, signalMode: .broadband
+        )
+    )
+    _ = try db.upsertCaptureGroup(
+        CaptureGroupRecord(
+            target: "MIX", sessionDate: "2026-01-01", slug: "sv220",
+            displayName: "SV220 dual-band", sensorMode: .osc, signalMode: .dualBand,
+            filterManufacturer: "SVBONY", filterModel: "SV220"
+        )
+    )
+    try insertRatedLight(
+        db: db, target: "MIX", date: "2026-01-01", name: "o1", exptime: 60,
+        fwhm: 2, background: 100, starCount: 100, score: 0.5, captureSlug: "osc"
+    )
+    try insertRatedLight(
+        db: db, target: "MIX", date: "2026-01-01", name: "o2", exptime: 60,
+        fwhm: 4, background: 120, starCount: 90, score: -0.5, captureSlug: "osc"
+    )
+    try insertRatedLight(
+        db: db, target: "MIX", date: "2026-01-01", name: "n1", exptime: 60,
+        fwhm: 10, background: 900, starCount: 40, score: 0.5, captureSlug: "sv220"
+    )
+    try insertRatedLight(
+        db: db, target: "MIX", date: "2026-01-01", name: "n2", exptime: 60,
+        fwhm: 14, background: 1_100, starCount: 30, score: -0.5, captureSlug: "sv220"
+    )
+
+    let summary = try #require(
+        try SessionQuality.summaries(target: "MIX", db: db, config: AstroConfig()).first
+    )
+    #expect(summary.frameCount == 4)
+    #expect(summary.hasHeterogeneousCaptureGroups)
+    #expect(summary.medianFWHMPixels == nil)
+    #expect(summary.medianFWHMArcsec == nil)
+    #expect(summary.captureGroups.map(\.displayName) == ["OSC 30 s", "SV220 dual-band"])
+    #expect(summary.captureGroups[0].medianFWHMPixels == 3)
+    #expect(summary.captureGroups[1].medianFWHMPixels == 12)
 }

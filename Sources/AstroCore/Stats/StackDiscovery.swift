@@ -16,6 +16,8 @@ public struct StackFile: Codable, Sendable, Equatable {
     /// variant like `"2026-06-06-2"`) when derivable from the path or the
     /// filename; `nil` otherwise.
     public var sessionDate: String?
+    /// Canonical capture-group slug from mirrored stack/processed paths.
+    public var captureSlug: String?
     public var sizeBytes: Int64
     /// ISO-8601 UTC timestamp derived from the file's `mtime`, `nil` only if
     /// `mtime` itself was `0` (never actually scanned).
@@ -48,6 +50,7 @@ public struct StackFile: Codable, Sendable, Equatable {
         path: String,
         target: String? = nil,
         sessionDate: String? = nil,
+        captureSlug: String? = nil,
         sizeBytes: Int64,
         modifiedISO: String? = nil,
         kind: String,
@@ -60,6 +63,7 @@ public struct StackFile: Codable, Sendable, Equatable {
         self.path = path
         self.target = target
         self.sessionDate = sessionDate
+        self.captureSlug = captureSlug
         self.sizeBytes = sizeBytes
         self.modifiedISO = modifiedISO
         self.kind = kind
@@ -362,7 +366,7 @@ public enum StackDiscovery {
 
     /// ASIAIR's own live-stack numbered-capture naming: `"Stacked"` followed
     /// by one or more digits, then `"_"` -- e.g. `"Stacked112_NGC 7000_..."`.
-    private static func hasASIAirStackedPrefix(_ lower: String) -> Bool {
+    static func hasASIAirStackedPrefix(_ lower: String) -> Bool {
         guard lower.hasPrefix("stacked") else { return false }
         let rest = lower.dropFirst("stacked".count)
         guard let firstNonDigitIndex = rest.firstIndex(where: { !$0.isNumber }) else { return false }
@@ -432,6 +436,7 @@ public enum StackDiscovery {
             path: file.path,
             target: target,
             sessionDate: sessionDate,
+            captureSlug: PathClassifier.classify(relativePath: file.path).captureSlug,
             sizeBytes: file.size,
             modifiedISO: file.mtime > 0 ? isoString(file.mtime) : nil,
             kind: kind(baseNameLower: baseName.lowercased(), area: file.area, ext: file.ext, sizeBytes: file.size),

@@ -8,6 +8,12 @@ struct NewSessionSheet: View {
     @State private var catalog: String
     @State private var name: String
     @State private var dateText: String = NewSessionSheet.today()
+    @State private var createsInitialCapture = true
+    @State private var captureName = "OSC · szűrő nélkül"
+    @State private var captureSensor: SensorMode = .osc
+    @State private var captureSignal: SignalMode = .unfiltered
+    @State private var captureManufacturer = ""
+    @State private var captureModel = ""
 
     /// `prefillDesignation` (R10-B4): "Felfedezés"'s row-scoped "Új session
     /// létrehozása…" action opens this sheet already primed with the
@@ -65,6 +71,18 @@ struct NewSessionSheet: View {
         return parsed.isCanonical
     }
 
+    private var initialCapture: CaptureGroupDraft? {
+        guard createsInitialCapture else { return nil }
+        return CaptureGroupDraft(
+            slug: CaptureGroupDraft.suggestedSlug(for: captureName),
+            displayName: captureName,
+            sensorMode: captureSensor,
+            signalMode: captureSignal,
+            filterManufacturer: captureManufacturer,
+            filterModel: captureModel
+        )
+    }
+
     private var matchingTargets: [String] {
         guard !previewTarget.isEmpty else { return [] }
         return appState.stats
@@ -88,6 +106,48 @@ struct NewSessionSheet: View {
                 Text("Érvénytelen dátum — YYYY-MM-DD formátum szükséges.")
                     .font(.caption)
                     .foregroundStyle(.red)
+            }
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 9) {
+                    Toggle("Első capture-gyűjtés létrehozása", isOn: $createsInitialCapture)
+                        .font(.subheadline.weight(.semibold))
+                    if createsInitialCapture {
+                        HStack {
+                            Button("OSC · szűrő nélkül") {
+                                captureName = "OSC · szűrő nélkül"
+                                captureSensor = .osc
+                                captureSignal = .unfiltered
+                                captureManufacturer = ""
+                                captureModel = ""
+                            }
+                            Button("OSC · SV220") {
+                                captureName = "SV220 · dual-band"
+                                captureSensor = .osc
+                                captureSignal = .dualBand
+                                captureManufacturer = "SVBONY"
+                                captureModel = "SV220"
+                            }
+                        }
+                        TextField("Gyűjtés neve", text: $captureName)
+                        HStack {
+                            Picker("Szenzor", selection: $captureSensor) {
+                                ForEach(SensorMode.allCases, id: \.self) { Text($0.displayNameHU).tag($0) }
+                            }
+                            Picker("Fénysáv", selection: $captureSignal) {
+                                ForEach(SignalMode.allCases, id: \.self) { Text($0.displayNameHU).tag($0) }
+                            }
+                        }
+                        if captureSignal == .dualBand || captureSignal == .narrowband {
+                            HStack {
+                                TextField("Szűrő gyártó", text: $captureManufacturer)
+                                TextField("Modell", text: $captureModel)
+                            }
+                        }
+                        Text("A sessionön belül külön lights/flats/darks/biases ág, valamint külön stack és process hely készül.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
 
             if !matchingTargets.isEmpty {
@@ -114,14 +174,22 @@ struct NewSessionSheet: View {
                 }
                 Button("Mégse") { dismiss() }
                 Button("Létrehozás") {
-                    appState.createSession(catalog: catalog, name: name, date: dateText)
+                    appState.createSession(
+                        catalog: catalog,
+                        name: name,
+                        date: dateText,
+                        initialCapture: initialCapture
+                    )
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(catalog.isEmpty || name.isEmpty || !dateIsValid || appState.isBusy)
+                .disabled(
+                    catalog.isEmpty || name.isEmpty || !dateIsValid || appState.isBusy
+                        || (createsInitialCapture && captureName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                )
             }
         }
         .padding(20)
-        .frame(minWidth: 440)
+        .frame(minWidth: 540)
         .onAppear {
             // Existing-target autocomplete reads `appState.stats`; make sure
             // it's populated even if the user never visited the Stats tab.

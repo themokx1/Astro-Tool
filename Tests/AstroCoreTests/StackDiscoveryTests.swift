@@ -141,6 +141,20 @@ private func insertFile(
     #expect(stack.kind == "stack")
 }
 
+@Test func discoverKeepsCanonicalCaptureAssignmentOnStackOutput() throws {
+    let db = try makeMemoryDB()
+    try insertFile(
+        db: db,
+        path: "stacks/IC_1396/2026-08-08/sv220-300s/IC_1396_46x300sec_13800s_stacked.fit",
+        ext: "fit", area: .stacks, target: "IC_1396", sessionDate: "2026-08-08", role: .stack
+    )
+
+    let stack = try #require(
+        StackDiscovery.stacks(target: "IC_1396", db: db, config: AstroConfig()).first
+    )
+    #expect(stack.captureSlug == "sv220-300s")
+}
+
 @Test func discoverMarksPathOnlyMatchWhenFilenameDoesNotMentionTarget() throws {
     // Real on-disk shape: IC1805-1848_Heart-and-Soul_Nebula's ASIAIR stack
     // is named after the guide star ("Sadr"), not the target itself.

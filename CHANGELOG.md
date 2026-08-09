@@ -8,6 +8,65 @@ történik.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-08-09
+
+### Added
+
+- Első osztályú **capture-gyűjtések** egyetlen célpont/dátum session alatt,
+  külön OSC/monó szenzormóddal, szélessáv/dual-band/keskenysáv jelleggel,
+  pontos szűrőgyártó–modell–név adatokkal és saját forrás-, kalibráció-,
+  stack- és processed-ágakkal.
+- Új sessionnél választható első gyűjtés és kész OSC/SVBONY SV220 preset;
+  meglévő sessionben gyűjtés létrehozása, szerkesztése és biztonságos,
+  kizárólag metadata-szintű törlése.
+- Többkijelöléses képkocka-besorolás a Minőség oldalon. Hatókörei: egy fájl,
+  kijelölt fájlok, azonos mappa, azonos névleges expozíció vagy teljes
+  session; mentés előtt tételes „jelenleg → mentés után” előnézettel.
+- Capture-, szűrő- és metadata-forrás oszlopok, capture-szűrés, fájlszintű
+  OSC/NB/filter felülírás és felülírás-törlés; az Átnézés ablak is mutatja a
+  képkocka feloldott capture-adatait.
+- Háromlépcsős, pontosan egy célpont/dátum sessionre zárt **session-
+  konverter**. Logikai módja fájlmozgatás nélkül rendez, a külön engedélyezett
+  fizikai mód pontos forrás→cél listát mutat, felülírást tilt, bizonylatot ír
+  és visszavonható.
+- `capture list/create/assign`, `session-convert plan/apply/rollback` CLI
+  parancsok és `stacklist --capture SLUG` egyetlen gyűjtés önálló
+  stack-előkészítéséhez.
+- Capture-szintű session-, minőség-, kalibráció-, audit-, éjszaka-riport és
+  célpont-riport összesítések, miközben a session teljes aggregált nézete is
+  megmarad.
+
+### Changed
+
+- A pontozás és a kiugróértékelés cohortja már a dátum/expozíció mellett a
+  capture-t, feloldott szűrőt, setupot és binninget is figyelembe veszi. Az
+  OSC és SV220/NB frame-ek FWHM-eloszlása ezért nem torzítja egymást.
+- Heterogén sessionnél az app nem közöl egy félrevezető közös FWHM-et:
+  gyűjtésenként mutat mediánt és kiugróarányt.
+- A stacklista, kalibrációillesztés és HTML-riportok egy gyűjtésre is
+  szűkíthetők; a target-riport a session alatt behúzva mutatja a capture-
+  sorokat.
+- Az új kanonikus struktúra:
+  `sessions/<cél>/<dátum>/captures/<slug>/{lights,flats,darks,biases}`,
+  tükrözött `stacks/<cél>/<dátum>/<slug>` és
+  `processed/<cél>/<dátum>/<slug>` ágakkal. A régi `lights_osc`-szerű
+  sessionök továbbra is olvashatók és logikailag, mozgatás nélkül is
+  besorolhatók.
+
+### Fixed
+
+- Az ASIAIR `Stacked2_...fit`, `Stacked12_...fit` és más számozott
+  `Stacked*` eredményei többé nem számítanak nyers light frame-nek és nem
+  növelik hamisan az integrációt.
+- A konverter nem kezeli capture-adatként a `.DS_Store`, preset JSON és más
+  oldalkocsi/reziduum fájlokat.
+- Fizikai konverzió előtt újraellenőrződik a teljes session-fingerprint; az
+  előnézet óta változott forrásnál új tervet kér, részleges hiba esetén pedig
+  automatikus fordított sorrendű rollback fut.
+- A metadata-feloldás egyértelmű prioritást és konfliktusjelzést használ:
+  fájlszintű felülírás → gyűjtés → FITS fejléc → útvonal-következtetés →
+  ismeretlen.
+
 ## [0.14.0] - 2026-08-08
 
 ### Added

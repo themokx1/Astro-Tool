@@ -183,6 +183,26 @@
       <pre class="example">astrotool new-session --catalog M --name 31 --date 2026-03-15</pre>
     </div>
     <div class="cmd">
+      <div class="name">capture list | create | assign</div>
+      <div class="desc">Egy célpont/dátum sessionön belüli önálló capture-gyűjtések kezelése. A gyűjtés külön rögzíti a szenzormódot (<code>osc</code>/<code>mono</code>), a jellegét (<code>broadband</code>/<code>narrowband</code>/<code>dual_band</code>) és a pontos szűrőgyártó–modell–név adatot. Az <code>assign</code> pontosan egy, már indexelt fájlt rendel a kiválasztott gyűjtéshez, és csak a megadott target/date sessionben fogad el útvonalat.</div>
+      <pre class="example">astrotool capture create --target IC_1396 --date 2026-08-08 \
+  --name "OSC · SV220 · 300 s" --slug sv220-300s --sensor osc \
+  --signal dual_band --filter-maker SVBONY --filter-model SV220
+
+astrotool capture assign --target IC_1396 --date 2026-08-08 \
+  --group sv220-300s --path sessions/IC_1396/2026-08-08/light_0001.fit</pre>
+    </div>
+    <div class="cmd">
+      <div class="name">session-convert plan | apply | rollback</div>
+      <div class="desc">Átlátható, pontosan egy kiválasztott target/date sessionre zárt konverter. A <code>plan</code> alapértelmezetten csak logikai besorolást tervez: felsorolja a felismert capture-öket, nyers képeket, kalibrációs frame-eket, műtermékeket, bizonytalan döntéseket és konfliktusokat, de semmit nem mozgat. A külön megadott <code>--physical</code> tételes forrás→cél mozgatási tervet készít. Az <code>apply</code> csak elmentett tervvel és <code>--yes</code> megerősítéssel fut; felülírást tilt, a session változását fingerprinttel ellenőrzi, bizonylatot ment, és a bizonylat azonosítójával visszavonható.</div>
+      <pre class="example">astrotool session-convert plan --target IC_1396 --date 2026-08-08 \
+  --out ~/Desktop/ic1396-plan.json
+
+# Csak a teljes előnézet átnézése után:
+astrotool session-convert apply --plan ~/Desktop/ic1396-plan.json --yes
+astrotool session-convert rollback --id &lt;conversion-id&gt; --yes</pre>
+    </div>
+    <div class="cmd">
       <div class="name">config</div>
       <div class="desc">A jelenleg érvényes konfiguráció (<code>show</code>) vagy a <code>config.json</code> elérési útja (<code>path</code>). <code>config show</code> alapból ember-olvasható, szekciónkénti kulcs-érték kimenetet ad; <code>--json</code>-nal a teljes struktúrát.</div>
       <pre class="example">astrotool config show --json</pre>
@@ -297,8 +317,9 @@ astrotool sensor --history --json</pre>
     </div>
     <div class="cmd">
       <div class="name">stacklist</div>
-      <div class="desc">A session legjobb frame-jeinek kiválasztása és exportálása (hardlink + <code>.dssfilelist</code> + Siril <code>.ssf</code> + <code>manifest.csv</code>) a DSS/Siril/WBPP munkafolyamathoz. Több szűrős anyagnál szűrőnként külön <code>lights/&lt;SZŰRŐ&gt;/</code> almappa és szűrőnként külön <code>.dssfilelist</code>/<code>.ssf</code> pár (PixInsight WBPP-barát; üres vagy két szűrő közti azonos szlugnál <code>filter_1</code>/<code>_2</code>-szerű utótag védi az ütközést); a <code>manifest.csv</code> mindig egy, a gyökérben, első sora <code>#&nbsp;library_root:&nbsp;&lt;abszolút&nbsp;út&gt;</code> komment, utána oszlopok: file, filter, score, fwhm_px, session_date, verdict, linked_name (a ténylegesen linkelt fájlnév — bucketen belüli fájlnév-ütközésnél ez eltér a forrás-fájlnévtől, pl. <code>part2__img_0001.fit</code>). A <code>--keep</code> a közös megtartási arány; <code>--keep-filter "Ha=0.9,OIII=0.7"</code> szűrőnként felülbírálja (vesszős lista, mindegyik (0, 1] tartományban, a szűrőnév kis-nagybetű-független; a <code>none</code> kulcs a szűrő nélküli keretek csoportjára vonatkozik; ismeretlen szűrőnévre stderr-figyelmeztetés, nem hiba). Re-export a MEGLÉVŐ exportot szinkronba hozza a friss kiválasztással: a kiválasztásban már nem szereplő korábbi hardlinkek eltűnnek a <code>lights/</code> fából (szigorúan csak onnan — a könyvtár eredeti fájljai érintetlenek), a kimenet jelzi ("N elavult link eltávolítva"). Alapból a <code>.astro_tool/stacklists/&lt;cél&gt;-&lt;dátum&gt;/</code> alá exportál; <code>--out PATH</code> helyette közvetlenül PATH-ba exportál (PATH lesz maga a stacklist-könyvtár, lehet a könyvtáron kívül is — más kötetre hardlink helyett másolat készül, a kimenet ezt is jelzi). <code>--out -</code> nem támogatott (ez egy egész könyvtárfát exportál, nem egyetlen fájlt) — világos hibával leáll.</div>
-      <pre class="example">astrotool stacklist --target M31 --date 2026-03-15 --keep 0.8 --keep-filter "Ha=0.9,OIII=0.7,none=0.8" --out ~/Desktop/M31-stack</pre>
+      <div class="desc">A session legjobb frame-jeinek kiválasztása és exportálása (hardlink + <code>.dssfilelist</code> + Siril <code>.ssf</code> + <code>manifest.csv</code>) a DSS/Siril/WBPP munkafolyamathoz. A <code>--capture SLUG</code> egyetlen capture-gyűjtésre szűkíti a minőségi kiválasztást és az exportot, így például az OSC rövid tesztsor és az SV220 többórás sorozat külön stackelhető. Több szűrős anyagnál szűrőnként külön <code>lights/&lt;SZŰRŐ&gt;/</code> almappa és szűrőnként külön <code>.dssfilelist</code>/<code>.ssf</code> pár (PixInsight WBPP-barát; üres vagy két szűrő közti azonos szlugnál <code>filter_1</code>/<code>_2</code>-szerű utótag védi az ütközést); a <code>manifest.csv</code> mindig egy, a gyökérben, első sora <code>#&nbsp;library_root:&nbsp;&lt;abszolút&nbsp;út&gt;</code> komment, utána oszlopok: file, filter, score, fwhm_px, session_date, verdict, linked_name (a ténylegesen linkelt fájlnév — bucketen belüli fájlnév-ütközésnél ez eltér a forrás-fájlnévtől, pl. <code>part2__img_0001.fit</code>). A <code>--keep</code> a közös megtartási arány; <code>--keep-filter "Ha=0.9,OIII=0.7"</code> szűrőnként felülbírálja (vesszős lista, mindegyik (0, 1] tartományban, a szűrőnév kis-nagybetű-független; a <code>none</code> kulcs a szűrő nélküli keretek csoportjára vonatkozik; ismeretlen szűrőnévre stderr-figyelmeztetés, nem hiba). Re-export a MEGLÉVŐ exportot szinkronba hozza a friss kiválasztással: a kiválasztásban már nem szereplő korábbi hardlinkek eltűnnek a <code>lights/</code> fából (szigorúan csak onnan — a könyvtár eredeti fájljai érintetlenek), a kimenet jelzi ("N elavult link eltávolítva"). Alapból a <code>.astro_tool/stacklists/&lt;cél&gt;-&lt;dátum&gt;/</code> alá exportál; <code>--out PATH</code> helyette közvetlenül PATH-ba exportál (PATH lesz maga a stacklist-könyvtár, lehet a könyvtáron kívül is — más kötetre hardlink helyett másolat készül, a kimenet ezt is jelzi). <code>--out -</code> nem támogatott (ez egy egész könyvtárfát exportál, nem egyetlen fájlt) — világos hibával leáll.</div>
+      <pre class="example">astrotool stacklist --target IC_1396 --date 2026-08-08 --capture sv220-300s \
+  --keep 0.8 --out ~/Desktop/IC1396-SV220-stack</pre>
     </div>
     <div class="cmd">
       <div class="name">stacks</div>

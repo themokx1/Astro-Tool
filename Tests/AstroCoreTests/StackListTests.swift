@@ -31,9 +31,11 @@ private func insertLight(
     hasRating: Bool = false,
     accepted: Bool? = nil,
     filter: String? = nil,
-    fwhm: Double? = nil
+    fwhm: Double? = nil,
+    captureSlug: String? = nil
 ) throws -> Int64 {
-    let path = "sessions/\(target)/\(date)/lights/\(name).fit"
+    let rolePath = captureSlug.map { "captures/\($0)/lights" } ?? "lights"
+    let path = "sessions/\(target)/\(date)/\(rolePath)/\(name).fit"
     let fileID = try db.upsertFile(
         FileRecord(
             path: path, size: 1024, mtime: 1_700_000_000, ext: "fit", kind: "fits",
@@ -57,6 +59,36 @@ private func insertLight(
         try db.upsertFITSMeta(FITSMetaRecord(fileID: fileID, filter: filter))
     }
     return fileID
+}
+
+@Test func selectCanScopeOneCaptureWithoutMixingTheRestOfTheSession() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+    _ = try db.upsertCaptureGroup(
+        CaptureGroupRecord(
+            target: "T1", sessionDate: "2026-01-10", slug: "osc-30s",
+            displayName: "OSC 30 s", sensorMode: .osc, signalMode: .broadband
+        )
+    )
+    _ = try db.upsertCaptureGroup(
+        CaptureGroupRecord(
+            target: "T1", sessionDate: "2026-01-10", slug: "sv220-300s",
+            displayName: "SV220 300 s", sensorMode: .osc, signalMode: .dualBand,
+            filterManufacturer: "SVBONY", filterModel: "SV220"
+        )
+    )
+    try insertLight(db: db, target: "T1", date: "2026-01-10", name: "osc-a", captureSlug: "osc-30s")
+    try insertLight(db: db, target: "T1", date: "2026-01-10", name: "osc-b", captureSlug: "osc-30s")
+    try insertLight(db: db, target: "T1", date: "2026-01-10", name: "nb-a", captureSlug: "sv220-300s")
+
+    let selection = try StackList.select(
+        target: "T1", date: "2026-01-10", captureSlug: "osc-30s", db: db, config: config
+    )
+
+    #expect(selection.captureSlug == "osc-30s")
+    #expect(selection.totalFrames == 2)
+    #expect(selection.selectedPaths.allSatisfy { $0.contains("/captures/osc-30s/") })
+    #expect(StackList.exportSlug(for: selection) == "T1-2026-01-10-osc-30s")
 }
 
 // MARK: - 1. No usable frames -> empty selection

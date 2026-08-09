@@ -32,12 +32,32 @@ enum RatingGroupMath {
     struct GroupKey: Hashable {
         var sessionDate: String?
         var nominalTenths: Int?
+        var captureIdentity: String?
+        var resolvedFilter: String?
+        var setupDescriptor: String?
+        var binning: String?
     }
 
-    static func groupKey(sessionDate: String?, exptime: Double?) -> GroupKey {
-        guard let exptime else { return GroupKey(sessionDate: sessionDate, nominalTenths: nil) }
-        let nominal = NominalExposure.nominal(exptime)
-        return GroupKey(sessionDate: sessionDate, nominalTenths: Int((nominal * 10).rounded()))
+    static func groupKey(
+        sessionDate: String?,
+        exptime: Double?,
+        cohort: RatingCohortDescriptor? = nil
+    ) -> GroupKey {
+        let effectiveDate = cohort?.sessionDate ?? sessionDate
+        let effectiveExposure = cohort?.nominalExposureSeconds ?? exptime.map(NominalExposure.nominal)
+        let captureIdentity: String? = {
+            if let id = cohort?.captureGroupID { return "id:\(id)" }
+            if let slug = cohort?.captureSlug { return "slug:\(slug.lowercased())" }
+            return nil
+        }()
+        return GroupKey(
+            sessionDate: effectiveDate,
+            nominalTenths: effectiveExposure.map { Int(($0 * 10).rounded()) },
+            captureIdentity: captureIdentity,
+            resolvedFilter: cohort?.resolvedFilter?.lowercased(),
+            setupDescriptor: cohort?.setupDescriptor,
+            binning: cohort?.binning
+        )
     }
 
     /// Mean/std/median over whichever frames in the group have a value for
@@ -154,7 +174,11 @@ public struct OutlierBreakdown: Codable, Sendable, Equatable {
     public static func breakdowns(for frames: [FrameScore]) -> [String: OutlierBreakdown] {
         var groups: [RatingGroupMath.GroupKey: [FrameScore]] = [:]
         for frame in frames {
-            let key = RatingGroupMath.groupKey(sessionDate: sessionDate(ofPath: frame.path), exptime: frame.exptime)
+            let key = RatingGroupMath.groupKey(
+                sessionDate: sessionDate(ofPath: frame.path),
+                exptime: frame.exptime,
+                cohort: frame.cohort
+            )
             groups[key, default: []].append(frame)
         }
 

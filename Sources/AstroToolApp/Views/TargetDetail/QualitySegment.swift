@@ -40,7 +40,16 @@ struct QualitySegment: View {
     /// `.contextMenu(forSelectionType:)` -- previously the context menu was
     /// attached to just the "Fájl" cell's own `HStack`, so right-clicking or
     /// double-clicking anywhere else in a row did nothing.
-    @State private var selectedFrame: Row.ID?
+    @State private var selectedFrames: Set<Row.ID> = []
+    @State private var selectedCaptureSlug: String?
+    @State private var captureAssignment: AssignmentContext?
+
+    private struct AssignmentContext: Identifiable {
+        let id = UUID()
+        let date: String
+        let anchorPath: String
+        let selectedPaths: [String]
+    }
     /// R12-U2 (point 5): the session currently shown in `StackListSheet` --
     /// `nil` when the sheet is closed. Set directly from the control bar's
     /// "Stackelés előkészítése…" button (using `selectedDate` when one's
@@ -61,10 +70,13 @@ struct QualitySegment: View {
     /// "alapból ennyi látszódjon: Fájl, Pontszám, FWHM, Kiugró, Saját
     /// döntés").
     private enum QualityColumn: String, CaseIterable {
-        case folder, roundness, starCount, background, saturatedFraction, exptime
+        case capture, filter, provenance, folder, roundness, starCount, background, saturatedFraction, exptime
 
         var title: String {
             switch self {
+            case .capture: return "Gyűjtés"
+            case .filter: return "Szűrő"
+            case .provenance: return "Forrás"
             case .folder: return "Mappa"
             case .roundness: return "Kerekség"
             case .starCount: return "Csillagok"
@@ -76,7 +88,8 @@ struct QualitySegment: View {
     }
 
     @AppStorage("qualityTable.hiddenColumns") private var hiddenColumnsRaw: String =
-        QualityColumn.allCases.map(\.rawValue).joined(separator: ",")
+        [QualityColumn.folder, .roundness, .starCount, .background, .saturatedFraction, .exptime]
+            .map(\.rawValue).joined(separator: ",")
 
     private var hiddenColumns: Set<String> {
         Set(hiddenColumnsRaw.split(separator: ",").map(String.init))
@@ -98,7 +111,7 @@ struct QualitySegment: View {
     /// OWN `@State`, which a plain cell-building function can't hold), can
     /// still read it.
     fileprivate struct Row: Identifiable {
-        let id = UUID()
+        var id: String { path }
         /// Kept around (not just flattened into the fields below) so
         /// `FrameReviewSheet` can be handed the table's current sort/filter
         /// order by simply mapping `rows` back to `FrameScore` -- R10-B1.
@@ -126,8 +139,13 @@ struct QualitySegment: View {
         /// with no metric values at all (extremely rare -- background alone
         /// is present for nearly every rated frame).
         let breakdown: OutlierBreakdown?
+        let captureSlug: String?
+        let captureName: String?
+        let resolvedFilter: String?
+        let metadataOrigin: String
+        let captureConflict: Bool
 
-        init(_ frameScore: FrameScore, verdict: Bool?) {
+        init(_ frameScore: FrameScore, verdict: Bool?, metadata: ResolvedCaptureMetadata?) {
             self.frameScore = frameScore
             path = frameScore.path
             fileName = frameScore.fileName
@@ -142,6 +160,13 @@ struct QualitySegment: View {
             isOutlier = frameScore.isOutlier
             self.verdict = verdict
             breakdown = frameScore.outlierBreakdown
+            captureSlug = metadata?.slug ?? frameScore.cohort?.captureSlug
+            captureName = metadata?.displayName ?? frameScore.cohort?.captureSlug
+            resolvedFilter = CaptureVisuals.filterLabel(metadata) ?? frameScore.cohort?.resolvedFilter
+            metadataOrigin = metadata.map {
+                "\($0.sensorOrigin.displayNameHU) / \($0.signalOrigin.displayNameHU) / \($0.filterOrigin.displayNameHU)"
+            } ?? "Ismeretlen"
+            captureConflict = metadata?.hasConflict == true
         }
 
         var sessionSubdirSortKey: String { sessionSubdir ?? "" }
@@ -151,12 +176,15 @@ struct QualitySegment: View {
         var backgroundSortKey: Double { background ?? -.infinity }
         var saturatedFractionSortKey: Double { saturatedFraction ?? -.infinity }
         var exptimeSortKey: Double { exptime ?? -.infinity }
+        var captureSortKey: String { captureName ?? "" }
+        var filterSortKey: String { resolvedFilter ?? "" }
+        var provenanceSortKey: String { metadataOrigin }
     }
 
     private var sessionDates: [String] { appState.stats.first { $0.target == target }?.sessionDates ?? [] }
     private var rows: [Row] {
         filteredFrameScores
-            .map { Row($0, verdict: appState.frameVerdicts[$0.path]) }
+            .map { Row($0, verdict: appState.frameVerdicts[$0.path], metadata: appState.frameCaptureMetadata[$0.path]) }
             .sorted(using: sortOrder)
     }
     private var sirilAvailable: Bool { FileManager.default.isExecutableFile(atPath: appState.config.rating.sirilPath) }
@@ -183,6 +211,20 @@ struct QualitySegment: View {
         showingReview = true
     }
 
+    private func openCaptureAssignment(anchorPath: String? = nil) {
+        let selectedRows = rows.filter { selectedFrames.contains($0.id) }
+        guard let anchor = anchorPath.flatMap({ path in rows.first { $0.path == path } })
+                ?? selectedRows.first,
+              let date = Self.sessionDate(ofPath: anchor.path)
+        else { return }
+        let selected = selectedRows.isEmpty ? [anchor.path] : selectedRows.map(\.path)
+        captureAssignment = AssignmentContext(
+            date: date,
+            anchorPath: anchor.path,
+            selectedPaths: selected
+        )
+    }
+
     /// R10-A5: `selectedDate` used to only ever affect the NEXT "Keretek
     /// pontozása"/`loadFrameScores` call -- picking a date from the Menu
     /// visibly did nothing until the user re-ran one of those. `nil`
@@ -193,8 +235,14 @@ struct QualitySegment: View {
     /// (table, histogram, and the "N frame · kiugró: …" line) reflects the
     /// filtered set.
     private var filteredFrameScores: [FrameScore] {
-        guard let selectedDate else { return appState.frameScores }
-        return appState.frameScores.filter { Self.sessionDate(ofPath: $0.path) == selectedDate }
+        appState.frameScores.filter { frame in
+            (selectedDate == nil || Self.sessionDate(ofPath: frame.path) == selectedDate)
+                && (selectedCaptureSlug == nil || frame.cohort?.captureSlug == selectedCaptureSlug)
+        }
+    }
+
+    private var availableCaptureSlugs: [String] {
+        Array(Set(appState.frameScores.compactMap { $0.cohort?.captureSlug })).sorted()
     }
 
     /// The `<date>` component of a `sessions/<target>/<date>/…` path -- the
@@ -269,6 +317,11 @@ struct QualitySegment: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
+                if let selectedDate,
+                   let quality = appState.qualitySummaries.first(where: { $0.date == selectedDate }),
+                   !quality.captureGroups.isEmpty {
+                    captureQualityStrip(quality)
+                }
                 histogram
                 if showsFWHMOverNightCard {
                     fwhmOverNightCard
@@ -317,6 +370,15 @@ struct QualitySegment: View {
         .sheet(item: $stackListingSession) { session in
             StackListSheet(target: session.target, date: session.date)
         }
+        .sheet(item: $captureAssignment) { context in
+            CaptureAssignmentSheet(
+                target: target,
+                date: context.date,
+                frames: appState.frameScores,
+                anchorPath: context.anchorPath,
+                selectedPaths: context.selectedPaths
+            )
+        }
     }
 
     // MARK: - Control bar (rebuilt per A.3)
@@ -358,6 +420,16 @@ struct QualitySegment: View {
             }
             .frame(width: 200)
 
+            if !availableCaptureSlugs.isEmpty {
+                Menu(selectedCaptureSlug.map { "Gyűjtés: \($0)" } ?? "Minden gyűjtés") {
+                    Button("Minden gyűjtés") { selectedCaptureSlug = nil }
+                    Divider()
+                    ForEach(availableCaptureSlugs, id: \.self) { slug in
+                        Button(slug) { selectedCaptureSlug = slug }
+                    }
+                }
+            }
+
             Menu {
                 Button("Újra minden keret mérése (lassú)") {
                     appState.runRate(target: target, date: selectedDate, force: true)
@@ -385,6 +457,12 @@ struct QualitySegment: View {
                         ? "Nincs megjeleníthető keret"
                         : "Keretek egyenkénti átnézése, elfogadása/elvetése"
                 )
+
+            Button("Capture-besorolás…") {
+                openCaptureAssignment()
+            }
+            .disabled(selectedFrames.isEmpty)
+            .help("A kijelölt frame-ek OSC/NB gyűjtésének és pontos szűrőjének beállítása")
 
             // R11-T7 (F4, item 3): scoped to exactly the still-undecided
             // outliers, in the table's current order -- hidden entirely
@@ -524,6 +602,46 @@ struct QualitySegment: View {
         }
         .frame(height: 44)
         .padding(.vertical, 4)
+    }
+
+    private func captureQualityStrip(_ summary: SessionQualitySummary) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if summary.hasHeterogeneousCaptureGroups {
+                Label(
+                    "Eltérő capture-populációk: az összesített FWHM szándékosan nincs összemosva.",
+                    systemImage: "square.split.2x1"
+                )
+                .font(.callout).foregroundStyle(.secondary)
+            }
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(summary.captureGroups) { capture in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(capture.displayName).font(.subheadline.weight(.semibold))
+                            Text("\(capture.frameCount) frame")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text(captureFWHM(capture)).font(.headline.monospacedDigit())
+                            Text("FWHM-medián").font(.caption2).foregroundStyle(.secondary)
+                            if let outliers = capture.outlierFraction {
+                                Text("kiugró \(TDFormat.percent(outliers * 100))")
+                                    .font(.caption2).foregroundStyle(outliers > 0.15 ? .orange : .secondary)
+                            }
+                        }
+                        .padding(10)
+                        .frame(width: 180, alignment: .leading)
+                        .overlay(alignment: .leading) { Rectangle().fill(Color.purple).frame(width: 3) }
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.purple.opacity(0.07)))
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+        }
+    }
+
+    private func captureFWHM(_ capture: CaptureQualitySummary) -> String {
+        if let arcsec = capture.medianFWHMArcsec { return String(format: "%.2f″", arcsec) }
+        if let pixels = capture.medianFWHMPixels { return String(format: "%.2f px", pixels) }
+        return TDFormat.missingCell
     }
 
     // MARK: - FWHM over the night (R10-B5)
@@ -772,6 +890,28 @@ struct QualitySegment: View {
         Text(TDFormat.cell(row.exptime.map(Self.formatExptime))).monospacedDigit().foregroundColor(tint(row))
     }
 
+    @ViewBuilder
+    private func captureCell(_ row: Row) -> some View {
+        HStack(spacing: 4) {
+            Text(TDFormat.cell(row.captureName)).lineLimit(1)
+            if row.captureConflict {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            }
+        }
+        .foregroundColor(tint(row))
+    }
+
+    @ViewBuilder
+    private func filterCell(_ row: Row) -> some View {
+        Text(TDFormat.cell(row.resolvedFilter)).lineLimit(1).foregroundColor(tint(row))
+    }
+
+    @ViewBuilder
+    private func provenanceCell(_ row: Row) -> some View {
+        Text(row.metadataOrigin).font(.caption).lineLimit(1).foregroundStyle(.secondary)
+            .help(row.metadataOrigin)
+    }
+
     /// R11-T1: `TableColumnBuilder`'s conditional support (`buildIf`/
     /// `buildEither`, what `modernFrameTable`'s per-column `if isVisible(…)`
     /// below needs) is gated `@available(macOS 14.4, *)` in the SDK even
@@ -791,7 +931,7 @@ struct QualitySegment: View {
 
     @available(macOS 14.4, *)
     private var modernFrameTable: some View {
-        Table(rows, selection: $selectedFrame, sortOrder: $sortOrder) {
+        Table(rows, selection: $selectedFrames, sortOrder: $sortOrder) {
             // R9-T6/B7: the thumbnail rides along in the "Fájl" column
             // itself rather than as its own `TableColumn` -- `Table`'s
             // column-builder overloads top out at 10 top-level items.
@@ -806,9 +946,13 @@ struct QualitySegment: View {
             TableColumn("Fájl", value: \.fileName) { row in
                 HStack(spacing: 6) {
                     ThumbnailCell(url: fileURL(row), size: 22)
-                    Text(row.fileName)
-                        .lineLimit(1).truncationMode(.middle)
-                        .foregroundColor(tint(row))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(row.fileName)
+                            .lineLimit(1).truncationMode(.middle)
+                            .foregroundColor(tint(row))
+                        Text(row.captureName ?? "nincs capture-besorolás")
+                            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
                 }
                 .help(row.path)
             }
@@ -836,6 +980,21 @@ struct QualitySegment: View {
             // `Group { }`s already worked around, per their own doc
             // comments); a plain function call is a cheap anchor either way.
             Group {
+                if isVisible(.capture) {
+                    TableColumn("Gyűjtés", value: \Row.captureSortKey) { row in captureCell(row) }
+                        .width(min: 100, ideal: 145)
+                }
+
+                if isVisible(.filter) {
+                    TableColumn("Szűrő", value: \Row.filterSortKey) { row in filterCell(row) }
+                        .width(min: 90, ideal: 130)
+                }
+
+                if isVisible(.provenance) {
+                    TableColumn("Forrás", value: \Row.provenanceSortKey) { row in provenanceCell(row) }
+                        .width(min: 100, ideal: 150)
+                }
+
                 if isVisible(.folder) {
                     TableColumn("Mappa", value: \Row.sessionSubdirSortKey) { row in folderCell(row) }
                         .width(min: 90, ideal: 140)
@@ -892,13 +1051,17 @@ struct QualitySegment: View {
     /// column always shown, no toggle, `legacyFrameTable`'s own doc comment
     /// on `frameTable` explains why this still exists at all.
     private var legacyFrameTable: some View {
-        Table(rows, selection: $selectedFrame, sortOrder: $sortOrder) {
+        Table(rows, selection: $selectedFrames, sortOrder: $sortOrder) {
             TableColumn("Fájl", value: \.fileName) { row in
                 HStack(spacing: 6) {
                     ThumbnailCell(url: fileURL(row), size: 22)
-                    Text(row.fileName)
-                        .lineLimit(1).truncationMode(.middle)
-                        .foregroundColor(tint(row))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(row.fileName)
+                            .lineLimit(1).truncationMode(.middle)
+                            .foregroundColor(tint(row))
+                        Text(row.captureName ?? "nincs capture-besorolás")
+                            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
                 }
                 .help(row.path)
             }
@@ -1032,6 +1195,10 @@ struct QualitySegment: View {
         // the convention every OTHER call site (`StacksSegment`) already
         // followed; this was the one holdout.
         Button("Nagy előnézet") { QuickLookController.shared.preview(fileURL(row)) }
+        Button("Capture-besorolás…") {
+            if !selectedFrames.contains(row.id) { selectedFrames = Set([row.id]) }
+            openCaptureAssignment(anchorPath: row.path)
+        }
         Divider()
         // R10-B1: shown CONTEXTUALLY -- whichever action would just repeat
         // the frame's current verdict is hidden rather than shown-but-inert,

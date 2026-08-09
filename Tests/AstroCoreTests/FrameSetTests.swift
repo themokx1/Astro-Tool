@@ -52,6 +52,30 @@ private func lightFile(
     #expect(buckets.nonFrameFileCount == 5)
 }
 
+@Test func asiairNumberedStackOutputsUnderLightsAreNotRawFrames() {
+    let files = [
+        lightFile("sessions/IC_1396/2026-08-08/lights/Light_Mu_Cephei_300.0s_0001.fit", id: 1, ext: "fit", inode: 1),
+        lightFile("sessions/IC_1396/2026-08-08/lights/Stacked2_Mu_Cephei_300.0s.fit", id: 2, ext: "fit", inode: 2),
+        lightFile("sessions/IC_1396/2026-08-08/lights/Stacked12_Mu_Cephei_300.0s.fit", id: 3, ext: "fit", inode: 3),
+    ]
+
+    let buckets = FrameSet.lightBuckets(files: files, meta: [:], config: AstroConfig())
+
+    #expect(buckets.usable.map(\.id) == [1])
+    #expect(buckets.nonFrameFileCount == 2)
+}
+
+@Test func ordinaryFilenameStartingWithStackedWordButNoNumberIsNotMistakenForASIAirPrefix() {
+    let files = [
+        lightFile("sessions/M31/2026-01-01/lights/StackedField_001.fit", id: 1, ext: "fit", inode: 1),
+    ]
+
+    let buckets = FrameSet.lightBuckets(files: files, meta: [:], config: AstroConfig())
+
+    #expect(buckets.usable.map(\.id) == [1])
+    #expect(buckets.nonFrameFileCount == 0)
+}
+
 @Test func hardlinkedTriageCopiesDedupToOneCanonicalKeepingDirectLightsChild() {
     let files = [
         lightFile("sessions/M31/2026-01-01/lights/l1.fit", id: 1, ext: "fit", inode: 100, nlink: 3),

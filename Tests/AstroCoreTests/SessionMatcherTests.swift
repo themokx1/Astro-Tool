@@ -9,6 +9,45 @@ private func makeTempDir(_ label: String) throws -> URL {
     return dir
 }
 
+@Test func sessionMatcherCanAuditOneCaptureGroupInsideAMixedSession() throws {
+    let fixture = try SessionMatcherFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITS(
+        "sessions/T1/2026-01-10/captures/osc-30s/lights/osc.fit",
+        exptime: 30, imagetyp: "Light Frame"
+    )
+    try fixture.writeDummy("sessions/T1/2026-01-10/captures/osc-30s/flats/flat.fit")
+    try fixture.writeFITS(
+        "sessions/T1/2026-01-10/captures/sv220-300s/lights/nb.fit",
+        exptime: 300, imagetyp: "Light Frame"
+    )
+    try fixture.scan()
+    _ = try fixture.db.upsertCaptureGroup(
+        CaptureGroupRecord(
+            target: "T1", sessionDate: "2026-01-10", slug: "osc-30s",
+            displayName: "OSC 30 s", sensorMode: .osc, signalMode: .broadband
+        )
+    )
+    _ = try fixture.db.upsertCaptureGroup(
+        CaptureGroupRecord(
+            target: "T1", sessionDate: "2026-01-10", slug: "sv220-300s",
+            displayName: "SV220 300 s", sensorMode: .osc, signalMode: .dualBand,
+            filterManufacturer: "SVBONY", filterModel: "SV220"
+        )
+    )
+
+    let result = try SessionMatcher.match(
+        target: "T1", date: "2026-01-10", captureSlug: "osc-30s",
+        db: fixture.db, config: fixture.config
+    )
+
+    #expect(result.captureSlug == "osc-30s")
+    #expect(result.lights == 1)
+    #expect(result.flats == ["sessions/T1/2026-01-10/captures/osc-30s/flats/flat.fit"])
+    #expect(!result.problems.contains { $0.category == "missing-flats" })
+}
+
 /// A fresh fixture library + fresh sqlite-backed `Database`, minimal like
 /// `CalibFixture` -- each test builds only the small tree it cares about.
 private struct SessionMatcherFixture {

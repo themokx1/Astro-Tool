@@ -36,9 +36,11 @@ private func insertLight(
     focallen: Double? = 750,
     fwhm: Double? = nil,
     background: Double? = nil,
-    score: Double? = nil
+    score: Double? = nil,
+    captureSlug: String? = nil
 ) throws -> Int64 {
-    let path = "sessions/\(target)/\(date)/lights/\(name).fit"
+    let rolePath = captureSlug.map { "captures/\($0)/lights" } ?? "lights"
+    let path = "sessions/\(target)/\(date)/\(rolePath)/\(name).fit"
     let fileID = try db.upsertFile(
         FileRecord(
             path: path, size: 1024, mtime: 1_700_000_000, ext: "fit", kind: "fits",
@@ -62,6 +64,41 @@ private func insertLight(
         )
     }
     return fileID
+}
+
+@Test func targetReportNestsCaptureRowsUnderTheirParentSession() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+    let target = "IC_1396"
+    let date = "2026-08-08"
+    _ = try db.upsertCaptureGroup(
+        CaptureGroupRecord(
+            target: target, sessionDate: date, slug: "osc-30s", displayName: "OSC rövid sorozat",
+            sensorMode: .osc, signalMode: .broadband
+        )
+    )
+    _ = try db.upsertCaptureGroup(
+        CaptureGroupRecord(
+            target: target, sessionDate: date, slug: "sv220-300s", displayName: "SV220 köd sorozat",
+            sensorMode: .osc, signalMode: .dualBand,
+            filterManufacturer: "SVBONY", filterModel: "SV220"
+        )
+    )
+    try insertLight(
+        db: db, target: target, date: date, name: "osc", dateObs: "2026-08-08T20:00:00",
+        exptime: 30, filter: nil, captureSlug: "osc-30s"
+    )
+    try insertLight(
+        db: db, target: target, date: date, name: "nb", dateObs: "2026-08-08T20:01:00",
+        exptime: 300, filter: nil, captureSlug: "sv220-300s"
+    )
+
+    let html = try TargetReport.render(target: target, db: db, config: config)
+
+    #expect(html.contains("↳ OSC rövid sorozat"))
+    #expect(html.contains("↳ SV220 köd sorozat"))
+    #expect(html.contains("1×30s"))
+    #expect(html.contains("1×300s"))
 }
 
 /// A stack-looking file (ASIAIR autosave naming, so `StackDiscovery` picks

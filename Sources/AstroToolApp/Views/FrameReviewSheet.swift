@@ -143,6 +143,18 @@ struct FrameReviewSheet: View {
                 statTile("FWHM", TDFormat.tile((frame.metrics?.fwhm).map { String(format: "%.2f", $0) }))
                 statTile("Csillagok", TDFormat.tile((frame.metrics?.starCount).map(String.init)))
 
+                if let capture = appState.frameCaptureMetadata[frame.path] {
+                    VStack(alignment: .trailing, spacing: 3) {
+                        CaptureBadge(
+                            text: capture.displayName ?? "nincs gyűjtés",
+                            color: CaptureVisuals.color(sensor: capture.sensorMode, signal: capture.signalMode)
+                        )
+                        Text("\(capture.sensorMode.displayNameHU) · \(capture.signalMode.displayNameHU) · \(CaptureVisuals.filterLabel(capture) ?? "szűrő ismeretlen")")
+                            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                            .help("Forrás: \(capture.filterOrigin.displayNameHU)")
+                    }
+                }
+
                 if frame.isOutlier {
                     HStack(spacing: 6) {
                         Text("⚠️ Kiugró").font(.callout).foregroundStyle(.red)

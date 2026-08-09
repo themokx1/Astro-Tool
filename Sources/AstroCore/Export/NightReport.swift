@@ -252,6 +252,7 @@ public enum NightReport {
         var body = ""
         body += renderHeader(target: target, displayName: displayName, date: date, session: session)
         body += renderSummary(session: session, timeline: timeline)
+        body += renderCaptureGroups(session.captureGroups, quality: quality)
         body += renderFilters(filterRows)
         body += renderTimeline(timeline: timeline)
         body += renderQuality(quality: quality, advice: advice)
@@ -282,6 +283,43 @@ public enum NightReport {
         </body>
         </html>
         """
+    }
+
+    // MARK: - Capture groups
+
+    private static func renderCaptureGroups(
+        _ groups: [CaptureGroupSummary],
+        quality: SessionQualitySummary?
+    ) -> String {
+        guard !groups.isEmpty else { return "" }
+        let qualityByID = Dictionary(uniqueKeysWithValues: (quality?.captureGroups ?? []).map { ($0.id, $0) })
+        var html = "<h2>Gyűjtések ebben a sessionben</h2>\n"
+        for group in groups {
+            let modes = (group.sensorModes.map(\.displayNameHU) + group.signalModes.map(\.displayNameHU))
+                .joined(separator: " · ")
+            let filters = group.filters.isEmpty ? "nincs megadva" : group.filters.joined(separator: ", ")
+            let exposure = group.exposureBreakdown.sorted { lhs, rhs in
+                (Double(lhs.key) ?? .infinity) < (Double(rhs.key) ?? .infinity)
+            }.map { key, count -> String in
+                guard key != "unknown", let seconds = Double(key) else { return "ismeretlen × \(count)" }
+                let value = seconds == seconds.rounded() ? String(Int(seconds)) : String(format: "%.1f", seconds)
+                return "\(value) s × \(count)"
+            }.joined(separator: ", ")
+            html += "<div class=\"card\">\n"
+            html += "<strong>\(escapeHTML(group.displayName))</strong>"
+            if let slug = group.slug { html += " <code>\(escapeHTML(slug))</code>" }
+            html += "<p class=\"muted\">\(escapeHTML(modes)) · Filter: \(escapeHTML(filters))</p>\n"
+            html += "<p>\(group.usableLightCount) használható light · \(formatHM(group.integrationSeconds))"
+            if !exposure.isEmpty { html += " · \(escapeHTML(exposure))" }
+            html += "</p>\n"
+            html += "<p class=\"muted\">Kalibráció: \(group.flatCount) flat · \(group.darkCount) dark · \(group.biasCount) bias"
+            if let q = qualityByID[group.id] {
+                if let fwhm = q.medianFWHMArcsec { html += " · FWHM \(String(format: "%.2f\"", fwhm))" }
+                else if let fwhm = q.medianFWHMPixels { html += " · FWHM \(String(format: "%.2f px", fwhm))" }
+            }
+            html += "</p>\n</div>\n"
+        }
+        return html
     }
 
     // MARK: - Header

@@ -32,17 +32,26 @@ public struct AuditContext {
     public let files: [FileRecord]
     public let directories: [String]
     public let fitsMetaByFileID: [Int64: FITSMetaRecord]
+    public let captureGroups: [CaptureGroupRecord]
+    public let captureSources: [CaptureSourceRecord]
+    public let fileCaptureAssignments: [Int64: FileCaptureAssignmentRecord]
 
     public init(
         config: AstroConfig,
         files: [FileRecord],
         directories: [String],
-        fitsMetaByFileID: [Int64: FITSMetaRecord]
+        fitsMetaByFileID: [Int64: FITSMetaRecord],
+        captureGroups: [CaptureGroupRecord] = [],
+        captureSources: [CaptureSourceRecord] = [],
+        fileCaptureAssignments: [Int64: FileCaptureAssignmentRecord] = [:]
     ) {
         self.config = config
         self.files = files
         self.directories = directories
         self.fitsMetaByFileID = fitsMetaByFileID
+        self.captureGroups = captureGroups
+        self.captureSources = captureSources
+        self.fileCaptureAssignments = fileCaptureAssignments
     }
 }
 
@@ -83,6 +92,7 @@ public final class AuditEngine {
             MixedSetupInSessionRule(),
             MixedSetupInTargetRule(),
             CorruptFITSRule(),
+            CaptureClassificationRule(),
         ]
     }
 
@@ -133,7 +143,15 @@ public final class AuditEngine {
 
         let runID = try db.beginRun(kind: "audit", root: config.rootPath, configJSON: configJSON)
 
-        let ctx = AuditContext(config: config, files: files, directories: directories, fitsMetaByFileID: fitsMetaByFileID)
+        let ctx = try AuditContext(
+            config: config,
+            files: files,
+            directories: directories,
+            fitsMetaByFileID: fitsMetaByFileID,
+            captureGroups: db.allCaptureGroups(),
+            captureSources: db.allCaptureSources(),
+            fileCaptureAssignments: db.allFileCaptureAssignments()
+        )
         var findings: [Finding] = []
         for rule in rules {
             findings.append(contentsOf: rule.evaluate(ctx))
