@@ -8,6 +8,37 @@ történik.
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-08-09
+
+### Changed
+
+- A session-konverter a forrásmappa és a meglévő capture-hozzárendelés után
+  névleges expozíció szerint is külön gyűjtési csomagokat képez. A
+  `NominalExposure` közös kerekítése miatt a 119,9 és 120,0 s ugyanaz a
+  valós 120 s-es sorozat marad, a 120 és 300 s viszont különválik.
+- Már konvertált vegyes gyűjtés újratervezésekor a legnagyobb frame-számú
+  expozíciós csomag megtartja a stabil group ID-t, a többi új gyűjtést kap.
+  Az előnézet külön jelöli az új gyűjtést és a meglévő gyűjtés frissítését.
+- A szétválasztott új gyűjtések öröklik a meglévő szenzor-, fénysáv- és
+  filtermetaadatokat, például az `OSC / Dual-band / SV220` beállítást.
+
+### Fixed
+
+- Az egy `lights` mappában található eltérő expozíciók többé nem ragadnak egy
+  `capture-120s-300s` jellegű gyűjtésben. Az IC 1396 valós sessionjén a 32×30
+  s, 3×120 s és 46×300 s frame most három külön capture-egységként jelenik
+  meg, változatlan 4:12 összintegrációval.
+- A már alkalmazott összevont session is javítható ugyanazzal az átlátható
+  konverterrel: logikai módban nulla fájlmozgatással külön 120 s-es gyűjtést
+  hoz létre és a 300 s-es megtartott gyűjtés nevét pontosítja.
+- A vegyes `lights` mappa korábbi, túl tág mappaszintű source mappingje
+  eltávolításra kerül, így egy később odaérkező 120 s-es frame nem örökli
+  automatikusan a 300 s-es gyűjtést. A pontos fájlhozzárendelések maradnak az
+  igazság forrásai, rollbackkor pedig a régi mapping is visszaáll.
+- A meglévő gyűjtés metadatafrissítése és az új fájlhozzárendelések egyetlen
+  SQLite-tranzakció részei. Automatikus vagy kézi rollback az eredeti nevet,
+  filteradatokat és minden korábbi hozzárendelést pontosan visszaállít.
+
 ## [0.15.1] - 2026-08-09
 
 ### Changed

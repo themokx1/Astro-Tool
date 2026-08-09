@@ -8,20 +8,24 @@ private struct ExecutorFixture {
     let config: AstroConfig
 
     static func make(frameCount: Int = 1) throws -> ExecutorFixture {
+        try make(exposures: Array(repeating: 60, count: frameCount))
+    }
+
+    static func make(exposures: [Double]) throws -> ExecutorFixture {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("astro-conversion-executor-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let lights = root.appendingPathComponent("sessions/M31/2026-01-01/lights", isDirectory: true)
         try FileManager.default.createDirectory(at: lights, withIntermediateDirectories: true)
-        for index in 1...frameCount {
+        for (offset, exposure) in exposures.enumerated() {
             try buildHeaderData([
                 "SIMPLE  =                    T",
                 "BITPIX  =                   16",
                 "NAXIS   =                    2",
-                "EXPTIME =                 60.0",
+                "EXPTIME = \(exposure)",
                 "BAYERPAT= 'RGGB'",
                 "END",
-            ]).write(to: lights.appendingPathComponent("light\(index).fit"))
+            ]).write(to: lights.appendingPathComponent("light\(offset + 1).fit"))
         }
         let db = try Database(path: root.appendingPathComponent("index.sqlite").path)
         var config = AstroConfig()
@@ -41,6 +45,74 @@ private struct ExecutorFixture {
             mode: mode
         )
     }
+}
+
+@Test func existingMixedGroupSplitApplyAndRollbackRestoresOriginalMetadataAndAssignments() throws {
+    let fixture = try ExecutorFixture.make(exposures: [120, 300, 300])
+    defer { fixture.cleanup() }
+    let mixedGroupID = try fixture.db.upsertCaptureGroup(
+        CaptureGroupRecord(
+            target: "M31",
+            sessionDate: "2026-01-01",
+            slug: "capture-120s-300s",
+            displayName: "OSC · filter ismeretlen · 120 s/300 s",
+            sensorMode: .osc,
+            signalMode: .dualBand,
+            filterModel: "SV220"
+        )
+    )
+    _ = try fixture.db.upsertCaptureSource(
+        CaptureSourceRecord(
+            captureGroupID: mixedGroupID,
+            relativePath: "sessions/M31/2026-01-01/lights",
+            role: .light
+        )
+    )
+    for file in try fixture.db.allFiles(includeMissing: false) where file.role == .light {
+        let fileID = try #require(file.id)
+        try fixture.db.upsertFileCaptureAssignment(
+            FileCaptureAssignmentRecord(fileID: fileID, captureGroupID: mixedGroupID)
+        )
+    }
+
+    let plan = try fixture.plan(mode: .logicalOnly)
+    let retained = try #require(plan.proposedGroups.first { $0.existingGroupID == mixedGroupID })
+    #expect(retained.draft.slug == "capture-120s-300s")
+    #expect(retained.draft.displayName.hasSuffix("300 s"))
+    let separated = try #require(plan.proposedGroups.first { $0.existingGroupID == nil })
+    #expect(separated.draft.slug == "capture-120s")
+    #expect(separated.draft.filterModel == "SV220")
+
+    let receipt = try SessionConversionExecutor.apply(plan: plan, root: fixture.root, db: fixture.db)
+    let appliedGroups = try fixture.db.captureGroups(target: "M31", date: "2026-01-01")
+    #expect(appliedGroups.count == 2)
+    #expect(appliedGroups.first { $0.id == mixedGroupID }?.displayName.hasSuffix("300 s") == true)
+    let separatedID = try #require(appliedGroups.first { $0.slug == "capture-120s" }?.id)
+    let appliedAssignments = try fixture.db.allFileCaptureAssignments()
+    #expect(appliedAssignments.values.filter { $0.captureGroupID == separatedID }.count == 1)
+    #expect(appliedAssignments.values.filter { $0.captureGroupID == mixedGroupID }.count == 2)
+    #expect(try fixture.db.allCaptureSources().contains { $0.relativePath == "sessions/M31/2026-01-01/lights" } == false)
+
+    _ = try SessionConversionExecutor.rollback(receipt: receipt, root: fixture.root, db: fixture.db)
+    let restoredGroups = try fixture.db.captureGroups(target: "M31", date: "2026-01-01")
+    #expect(restoredGroups.count == 1)
+    #expect(restoredGroups[0].id == mixedGroupID)
+    #expect(restoredGroups[0].displayName == "OSC · filter ismeretlen · 120 s/300 s")
+    #expect(try fixture.db.allFileCaptureAssignments().values.allSatisfy { $0.captureGroupID == mixedGroupID })
+    #expect(try fixture.db.allCaptureSources().contains { source in
+        source.relativePath == "sessions/M31/2026-01-01/lights"
+            && source.captureGroupID == mixedGroupID
+    })
+}
+
+@Test func preV0152MetadataBackupJSONStillDecodesWithoutUpdatedGroups() throws {
+    let data = Data(
+        #"{"createdGroupIDs":[],"createdGroupSlugs":[],"assignmentBackups":[],"sourceBackups":[]}"#.utf8
+    )
+
+    let backup = try JSONDecoder().decode(ConversionMetadataBackup.self, from: data)
+
+    #expect(backup.updatedGroupBackups == nil)
 }
 
 @Test func logicalApplyPersistsMetadataPlanAndReceiptWithoutMovingLibraryFiles() throws {

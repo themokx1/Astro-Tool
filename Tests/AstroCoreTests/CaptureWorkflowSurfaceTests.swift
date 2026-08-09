@@ -28,4 +28,11 @@ import Testing
         #expect(shared.components(separatedBy: "Új capture-gyűjtés…").count == 2)
         #expect(shared.components(separatedBy: "Session átalakítása gyűjtésekre…").count == 2)
     }
+
+    @Test func conversionPreviewDistinguishesNewAndUpdatedCaptureGroups() throws {
+        let sheet = try source("Sources/AstroToolApp/Views/CaptureWorkflowSheets.swift")
+        #expect(sheet.contains("Meglévő gyűjtés frissítése"))
+        #expect(sheet.contains("Új gyűjtés"))
+        #expect(sheet.contains("új és meglévő gyűjtések adatai"))
+    }
 }

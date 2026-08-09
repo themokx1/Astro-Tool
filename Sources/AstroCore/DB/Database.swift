@@ -1321,8 +1321,78 @@ public final class Database: @unchecked Sendable {
                     }
                 }
 
+                for removal in plan.sourceRemovals ?? [] {
+                    let requiredPrefix = "sessions/\(plan.scope.target)/\(plan.scope.date)/"
+                    guard removal.relativePath.hasPrefix(requiredPrefix) else {
+                        throw AstroError.invalidInput(
+                            "Az eltávolítandó forrásmappa kívül esik a konverzió sessionjén: \(removal.relativePath)"
+                        )
+                    }
+                    var previous: CaptureSourceRecord?
+                    try db.query(
+                        "SELECT id, capture_group_id, relative_path, role FROM capture_sources WHERE relative_path = ?;",
+                        bind: [.text(removal.relativePath)]
+                    ) { previous = Self.captureSourceRecord(from: $0) }
+                    guard let previous else { continue }
+                    guard previous.captureGroupID == removal.expectedGroupID,
+                          previous.role == removal.role
+                    else {
+                        throw AstroError.invalidInput(
+                            "A(z) \(removal.relativePath) forrás-hozzárendelése megváltozott az előnézet óta."
+                        )
+                    }
+                    backup.sourceBackups.append(
+                        ConversionSourceBackup(relativePath: removal.relativePath, previous: previous)
+                    )
+                    try db.run(
+                        "DELETE FROM capture_sources WHERE relative_path = ?;",
+                        bind: [.text(removal.relativePath)]
+                    )
+                }
+
                 for proposed in plan.proposedGroups {
                     let draft = proposed.draft
+                    if let existingGroupID = proposed.existingGroupID {
+                        guard groupIDsBySlug[draft.slug] == existingGroupID else {
+                            throw AstroError.invalidInput(
+                                "A(z) \(draft.slug) meglévő gyűjtés azonossága megváltozott az előnézet óta."
+                            )
+                        }
+                        var previous: CaptureGroupRecord?
+                        try db.query(
+                            "SELECT \(Self.captureGroupColumns) FROM capture_groups WHERE id = ?;",
+                            bind: [.int(existingGroupID)]
+                        ) { previous = Self.captureGroupRecord(from: $0) }
+                        guard let previous,
+                              previous.target == plan.scope.target,
+                              previous.sessionDate == plan.scope.date,
+                              previous.slug == draft.slug
+                        else {
+                            throw AstroError.invalidInput(
+                                "A frissítendő gyűjtés már nem része a kiválasztott sessionnek."
+                            )
+                        }
+                        backup.updatedGroupBackups?.append(previous)
+                        try db.run(
+                            """
+                            UPDATE capture_groups SET
+                              display_name = ?, sensor_mode = ?, signal_mode = ?,
+                              filter_manufacturer = ?, filter_model = ?, filter_name = ?,
+                              notes = ?, updated_at = ?
+                            WHERE id = ?;
+                            """,
+                            bind: [
+                                .text(draft.displayName), .text(draft.sensorMode.rawValue),
+                                .text(draft.signalMode.rawValue),
+                                draft.filterManufacturer.map(SQLiteValue.text) ?? .null,
+                                draft.filterModel.map(SQLiteValue.text) ?? .null,
+                                draft.filterName.map(SQLiteValue.text) ?? .null,
+                                draft.notes.map(SQLiteValue.text) ?? .null,
+                                .real(now), .int(existingGroupID),
+                            ]
+                        )
+                        continue
+                    }
                     guard groupIDsBySlug[draft.slug] == nil else {
                         throw AstroError.invalidInput(
                             "A(z) \(draft.slug) gyűjtés az előnézet óta már létrejött. Készíts új tervet."
@@ -1532,6 +1602,30 @@ public final class Database: @unchecked Sendable {
                             bind: [.int(assignmentBackup.fileID)]
                         )
                     }
+                }
+
+                for previous in backup.updatedGroupBackups ?? [] {
+                    guard let id = previous.id else { continue }
+                    try db.run(
+                        """
+                        UPDATE capture_groups SET
+                          target = ?, session_date = ?, slug = ?, display_name = ?,
+                          sensor_mode = ?, signal_mode = ?, filter_manufacturer = ?,
+                          filter_model = ?, filter_name = ?, notes = ?,
+                          created_at = ?, updated_at = ?
+                        WHERE id = ?;
+                        """,
+                        bind: [
+                            .text(previous.target), .text(previous.sessionDate), .text(previous.slug),
+                            .text(previous.displayName), .text(previous.sensorMode.rawValue),
+                            .text(previous.signalMode.rawValue),
+                            previous.filterManufacturer.map(SQLiteValue.text) ?? .null,
+                            previous.filterModel.map(SQLiteValue.text) ?? .null,
+                            previous.filterName.map(SQLiteValue.text) ?? .null,
+                            previous.notes.map(SQLiteValue.text) ?? .null,
+                            .real(previous.createdAt), .real(previous.updatedAt), .int(id),
+                        ]
+                    )
                 }
                 try db.exec("COMMIT;")
             } catch {
