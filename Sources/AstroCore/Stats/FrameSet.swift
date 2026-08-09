@@ -142,7 +142,8 @@ public enum FrameSet {
 
     private static func isDerivativeName(_ path: String) -> Bool {
         let name = (path as NSString).lastPathComponent.lowercased()
-        return derivativeMarkers.contains { name.contains($0) }
+        return StackDiscovery.hasASIAirStackedPrefix(name)
+            || derivativeMarkers.contains { name.contains($0) }
     }
 
     // MARK: - Dedup keys

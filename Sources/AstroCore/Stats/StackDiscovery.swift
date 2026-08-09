@@ -362,7 +362,7 @@ public enum StackDiscovery {
 
     /// ASIAIR's own live-stack numbered-capture naming: `"Stacked"` followed
     /// by one or more digits, then `"_"` -- e.g. `"Stacked112_NGC 7000_..."`.
-    private static func hasASIAirStackedPrefix(_ lower: String) -> Bool {
+    static func hasASIAirStackedPrefix(_ lower: String) -> Bool {
         guard lower.hasPrefix("stacked") else { return false }
         let rest = lower.dropFirst("stacked".count)
         guard let firstNonDigitIndex = rest.firstIndex(where: { !$0.isNumber }) else { return false }
