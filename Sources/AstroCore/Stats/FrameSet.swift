@@ -81,11 +81,7 @@ public enum FrameSet {
         var frameFiles: [FileRecord] = []
 
         for file in files {
-            guard frameExtensions.contains(file.ext.lowercased()) else {
-                nonFrameCount += 1
-                continue
-            }
-            guard !isDerivativeName(file.path) else {
+            guard isFrameCandidate(file) else {
                 nonFrameCount += 1
                 continue
             }
@@ -140,7 +136,11 @@ public enum FrameSet {
 
     // MARK: - Non-frame / derivative detection
 
-    private static func isDerivativeName(_ path: String) -> Bool {
+    static func isFrameCandidate(_ file: FileRecord) -> Bool {
+        frameExtensions.contains(file.ext.lowercased()) && !isDerivativeName(file.path)
+    }
+
+    static func isDerivativeName(_ path: String) -> Bool {
         let name = (path as NSString).lastPathComponent.lowercased()
         return StackDiscovery.hasASIAirStackedPrefix(name)
             || derivativeMarkers.contains { name.contains($0) }
