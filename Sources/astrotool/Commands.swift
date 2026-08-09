@@ -204,7 +204,7 @@ Commands:
                 from measured sensor-profile + per-Bayer background data.
                 Without --target: one row per target. With --target: full
                 advice for that target.
-  stacklist     --target T --date D [--keep 0.8] [--keep-filter "Ha=0.9,OIII=0.7"]
+  stacklist     --target T --date D [--capture SLUG] [--keep 0.8] [--keep-filter "Ha=0.9,OIII=0.7"]
                 [--json] [--root R] [--out PATH]
                 Best-frame stack-list export: hardlinks the selected lights
                 into .astro_tool/stacklists/<target>-<date>/lights/ and

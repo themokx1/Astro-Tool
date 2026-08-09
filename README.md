@@ -17,6 +17,12 @@ Asztrofotó-könyvtár auditálása, minőség-pontozás és kalibráció-követ
 - **Kalibráció-hiánylista (calib)** — mely expozíciós idő/hőmérséklet kombinációkhoz van lefedettség (dark/flat/bias), és mihez kell még kalibrációs keretet készíteni.
 - **Session-párosítás (match)** — egy adott célpont+dátum session-höz tartozó kalibrációs keretek és light frame-ek összerendelése, problémákkal.
 - **Új session létrehozás (new-session)** — kanonikus `YYYY-MM-DD` könyvtárstruktúra és README-sablon létrehozása egy célponthoz.
+- **Capture-gyűjtések** — egyetlen célpont/dátum session alatt külön OSC,
+  dual-band/NB, expozíciós vagy felszerelés-csomagok saját minőség-,
+  kalibráció-, stack- és feldolgozási összesítéssel.
+- **Egy-session konverter** — régi `lights_osc`/`lights` struktúra előnézettel
+  történő logikai besorolása vagy külön engedélyezett fizikai rendezése,
+  pontos fájllistával és visszavonási bizonylattal.
 - **Észlelés-tervező (plan)** — ma esti kulmináció, max magasság, láthatósági ablak és Hold-zavarás célpontonként, pontszám szerint rendezve.
 - **Kézi setup-látómező (Felfedezés)** — több kamera+optika profil, APS-C/full-frame/egyedi szenzorméret, fix vagy zoom fókusztáv; a célpontok FOV-illeszkedése az éppen kiválasztott valós setupból számolódik.
 - **Kereshető éjszaka-napló (search)** — a session `README.txt`-jébe kézzel beírt Bortle/SQM/seeing/megjegyzés szöveg indexelve, kulcs vagy érték szerint kereshetően.
@@ -24,9 +30,15 @@ Asztrofotó-könyvtár auditálása, minőség-pontozás és kalibráció-követ
 - **Expozíció-tanácsadó (expose)** — mért szenzor-zajból és per-Bayer égháttérből számolt ideális sub-hossz + relatív SNR-tanács ("mennyivel javul a jel, ha még N órát integrálok").
 - **Stack-lista export (stacklist)** — egy session legjobb frame-jeinek kiválasztása (pontszám + DSS-verdikt alapján) és exportálása hardlinkek + `.dssfilelist` + Siril `.ssf` script formájában, közvetlenül a DeepSkyStacker/Siril/Sirilic munkafolyamathoz.
 
-## ⛔ Vasszabály
+## ⛔ Biztonsági vasszabály
 
-**Az eszköz a képkönyvtárban SOHA nem töröl és nem mozgat semmit.** Az audit és a hozzá kapcsolódó parancsok kizárólag *jelölnek* (találatok listája) és — kérésre — egy `.sh` **javaslat-scriptet** generálnak a `<ROOT>/.astro_tool/suggestions/` mappába. Ezt a scriptet a felhasználó nézi át és futtatja le saját belátása szerint; az eszköz maga soha nem hajt végre fájlműveletet a könyvtáron kívül a saját `.astro_tool/` munkakönyvtárán.
+**Az audit, pontozás, riport és normál könyvtárműveletek nem törlik és nem
+mozgatják a képfájlokat.** Az audit kizárólag jelöl, és kérésre átnézhető
+javaslat-scriptet készít. Az egyetlen szándékos kivétel a v0.15.0 explicit
+**Session átalakítása gyűjtésekre** műveletének fizikai módja: ez mindig egy
+konkrét célpont+dátum sessionre zárt, előbb tételes forrás→cél előnézetet
+mutat, felülírást nem enged, külön megerősítést kér, bizonylatot készít és
+visszavonható. Az alapértelmezett logikai mód egyetlen képfájlt sem mozgat.
 
 ## Telepítés
 
@@ -86,6 +98,15 @@ astrotool match --target M31 --date 2026-03-15
 astrotool new-session --catalog M --name 31 --date 2026-03-15
 # Új session könyvtár létrehozása (YYYY-MM-DD) README sablonnal a célponthoz.
 
+astrotool capture create --target IC_1396 --date 2026-08-08 \
+  --name "SV220 · 300 s" --slug sv220-300s --sensor osc \
+  --signal dual_band --filter-maker SVBONY --filter-model SV220
+# Első osztályú capture-gyűjtés létrehozása egy meglévő sessionben.
+
+astrotool session-convert plan --target IC_1396 --date 2026-08-08
+# Csak előnézet: felismerés, bizonytalanságok és pontos műveleti összegzés;
+# alapból nincs fájlmozgatás.
+
 astrotool config show
 # A jelenleg érvényes (fájlból betöltött + alapértelmezésekkel kiegészített) konfiguráció kiírása.
 
@@ -106,6 +127,9 @@ astrotool solve --all --json
 
 astrotool stacklist --target M31 --date 2026-03-15
 # A session legjobb frame-jeinek kiválasztása és exportálása (hardlinkek + .dssfilelist + .ssf) DSS/Sirilbe töltéshez.
+
+astrotool stacklist --target IC_1396 --date 2026-08-08 --capture sv220-300s
+# Csak egy capture-gyűjtés külön stacklistája.
 
 astrotool report --target M31 --date 2026-03-15
 # Önmagában megnyitható HTML éjszaka-riport (.astro_tool/reports/ alá írva).
@@ -138,6 +162,42 @@ a mellette lévő mm-gombbal állítható be a konkrét tervezési fókusztáv, 
 „Alkalmazás és újraszámítás” gomb frissíti a FOV-ot; minden
 „befér / mozaik kellene / túl kicsi” címke ehhez számolódik újra.
 A választott setup és a legutóbbi zoomállás setup-onként megmarad.
+
+## Több capture egy sessionben
+
+A session továbbra is a célpont+dátum pár: például
+`IC_1396/2026-08-08`. Alatta tetszőleges számú, beszédes **capture-gyűjtés**
+élhet, így ugyanazon az éjszakán külön kezelhető például:
+
+- `OSC · 30 s · szűrő nélkül`;
+- `OSC · SVBONY SV220 · 300 s · dual-band`;
+- egy másik kamera, binning, optika vagy expozíciós stratégia.
+
+Az új kanonikus fa:
+
+```text
+sessions/<cél>/<dátum>/captures/<slug>/lights
+sessions/<cél>/<dátum>/captures/<slug>/flats
+sessions/<cél>/<dátum>/captures/<slug>/darks
+sessions/<cél>/<dátum>/captures/<slug>/biases
+stacks/<cél>/<dátum>/<slug>
+processed/<cél>/<dátum>/<slug>
+```
+
+Az alkalmazásban a Célpont-részletek ▸ Sessionök sor alatt capture-kártyák
+mutatják a külön keretszámot, integrációt, expozíciókat, filtert,
+kalibrációt, stackeket és process eredményeket, miközben a session teljes
+összesítése is megmarad. A Minőség táblában több frame kijelölhető, majd az
+**Capture-besorolás…** ablakban egy fájlra, kijelölésre, mappára, azonos
+expozícióra vagy a teljes sessionre alkalmazható a gyűjtés és a pontos
+OSC/NB/filter metadata. A mentés előtti nézet tételesen megmutatja, mi
+változik és honnan származik az érték.
+
+A session sor **Átalakítás…** gombja egy pontosan erre a sessionre zárt
+háromlépcsős konvertert nyit. A logikai mód a régi mappákat a helyükön
+hagyja; a fizikai mód csak az előnézetben felsorolt fájlokat mozgatja. A
+bizonytalan flat/stack besorolást kötelező feloldani, az alkalmazás után
+pedig a bizonylatból visszaállítható az eredeti állapot.
 
 Ha nincs kézi setup, a korábbi működés változatlan: a program a könyvtár
 domináns felszerelésének WCS/pixelskála adataiból próbál medián FOV-ot

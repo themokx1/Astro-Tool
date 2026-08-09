@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run tests
-        run: swift test
+        run: swift test --no-parallel
 
       - name: Build app + CLI
         env:
@@ -27,7 +27,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          notes_file="docs/releases/$GITHUB_REF_NAME.md"
+          if [[ -f "$notes_file" ]]; then
+            notes_args=(--notes-file "$notes_file")
+          else
+            notes_args=(--generate-notes)
+          fi
           gh release create "$GITHUB_REF_NAME" \
             build/AstroTool.dmg \
             build/astrotool.zip \
-            --generate-notes
+            "${notes_args[@]}"

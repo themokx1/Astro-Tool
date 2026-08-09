@@ -1,8 +1,8 @@
 # Capture groups és egy-sessionös konvertáló – jóváhagyott terv
 
-**Dátum:** 2026-08-09  
-**Állapot:** jóváhagyott  
-**Célverzió:** v0.15.0  
+**Dátum:** 2026-08-09
+**Állapot:** jóváhagyott
+**Célverzió:** v0.15.0
 **Referencia:** `/Volumes/images/Astro/sessions/IC_1396_Elephants_Trunk_Nebula/2026-08-08`
 
 ## 1. Probléma és valós bizonyíték

@@ -15,7 +15,7 @@ APP_EXECUTABLE_TARGET="AstroToolApp"  # SwiftPM product name, distinct from
                                       # silently resolve to the CLI binary
                                       # "astrotool" (same file, different case).
 BUNDLE_ID="com.zoltanpalotai.astrotool"
-SHORT_VERSION="0.14.0"
+SHORT_VERSION="0.15.0"
 BUILD_VERSION="1"
 
 BUILD="build"
