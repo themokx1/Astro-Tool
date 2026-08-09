@@ -109,6 +109,58 @@ public struct WriteGuard: Sendable {
         return created
     }
 
+    /// Adds one canonical capture tree below an already existing exact
+    /// target/date session. It creates no README and never touches classic
+    /// role folders or files. All six leaf destinations must be absent, so
+    /// this cannot silently adopt or alter a pre-existing user directory.
+    @discardableResult
+    public func createCaptureTree(
+        target: String,
+        dateDir: String,
+        slug: String
+    ) throws -> [URL] {
+        try Self.validatePathComponent(target)
+        try Self.validatePathComponent(dateDir)
+        try Self.validatePathComponent(slug)
+
+        let fm = FileManager.default
+        let sessionDir = root
+            .appendingPathComponent("sessions", isDirectory: true)
+            .appendingPathComponent(target, isDirectory: true)
+            .appendingPathComponent(dateDir, isDirectory: true)
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: sessionDir.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw AstroError.pathNotFound(path: sessionDir.path)
+        }
+
+        let captureDir = sessionDir
+            .appendingPathComponent("captures", isDirectory: true)
+            .appendingPathComponent(slug, isDirectory: true)
+        let destinations = ["lights", "flats", "darks", "biases"].map {
+            captureDir.appendingPathComponent($0, isDirectory: true)
+        } + [
+            root.appendingPathComponent("stacks", isDirectory: true)
+                .appendingPathComponent(target, isDirectory: true)
+                .appendingPathComponent(dateDir, isDirectory: true)
+                .appendingPathComponent(slug, isDirectory: true),
+            root.appendingPathComponent("processed", isDirectory: true)
+                .appendingPathComponent(target, isDirectory: true)
+                .appendingPathComponent(dateDir, isDirectory: true)
+                .appendingPathComponent(slug, isDirectory: true),
+        ]
+
+        if let existing = destinations.first(where: { fm.fileExists(atPath: $0.path) }) {
+            throw AstroError.writeForbidden(path: existing.path)
+        }
+
+        for destination in destinations {
+            try Self.classifyingPermissionErrors(path: destination.path) {
+                try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+            }
+        }
+        return destinations
+    }
+
     /// Writes `data` to `relativePath` resolved under `toolDir`, creating
     /// intermediate directories as needed. Overwriting an existing file
     /// under `.astro_tool/` is allowed — that's the tool's own state, not

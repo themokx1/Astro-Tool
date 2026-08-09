@@ -128,6 +128,43 @@ public struct CaptureGroupRecord: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// User-entered fields for creating a capture group before its target/date,
+/// database id, and timestamps are known.
+public struct CaptureGroupDraft: Codable, Equatable, Sendable {
+    public var slug: String
+    public var displayName: String
+    public var sensorMode: SensorMode
+    public var signalMode: SignalMode
+    public var filterManufacturer: String?
+    public var filterModel: String?
+    public var filterName: String?
+    public var notes: String?
+
+    public init(
+        slug: String,
+        displayName: String,
+        sensorMode: SensorMode = .unknown,
+        signalMode: SignalMode = .unknown,
+        filterManufacturer: String? = nil,
+        filterModel: String? = nil,
+        filterName: String? = nil,
+        notes: String? = nil
+    ) {
+        self.slug = slug
+        self.displayName = displayName
+        self.sensorMode = sensorMode
+        self.signalMode = signalMode
+        self.filterManufacturer = filterManufacturer
+        self.filterModel = filterModel
+        self.filterName = filterName
+        self.notes = notes
+    }
+
+    public static func suggestedSlug(for displayName: String) -> String {
+        Sanitizer.sanitize(displayName.lowercased())
+    }
+}
+
 /// A directory prefix mapped to one capture group. Canonical groups normally
 /// have one source per frame role, while legacy sessions can map `lights_osc`
 /// without moving anything.

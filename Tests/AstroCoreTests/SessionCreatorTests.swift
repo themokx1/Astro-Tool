@@ -105,3 +105,44 @@ private func makeTempRoot() throws -> URL {
         Issue.record("expected AstroError.invalidInput, got \(error)")
     }
 }
+
+@Test func sessionCreatorCanAddAndPersistAnOptionalInitialCapture() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let db = try Database(path: ":memory:")
+    let draft = CaptureGroupDraft(
+        slug: "sv220-nb",
+        displayName: "SV220 dual-band",
+        sensorMode: .osc,
+        signalMode: .dualBand,
+        filterManufacturer: "SVBONY",
+        filterModel: "SV220"
+    )
+
+    let result = try SessionCreator.create(
+        root: root,
+        catalogRaw: "IC 1396",
+        nameRaw: "Elephant's Trunk",
+        date: "2026-08-08",
+        initialCapture: draft,
+        db: db
+    )
+
+    let group = try #require(result.captureGroup)
+    #expect(group.id != nil)
+    #expect(group.target == result.targetFolder)
+    #expect(group.sessionDate == "2026-08-08")
+    #expect(group.filterLabel == "SVBONY SV220")
+    #expect(try db.captureGroups(target: result.targetFolder, date: "2026-08-08") == [group])
+    #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(
+        "sessions/\(result.targetFolder)/2026-08-08/captures/sv220-nb/lights"
+    ).path))
+
+    let readme = try String(
+        contentsOf: root.appendingPathComponent("sessions/\(result.targetFolder)/2026-08-08/README.txt"),
+        encoding: .utf8
+    )
+    #expect(readme.contains("Initial capture"))
+    #expect(readme.contains("SV220 dual-band"))
+    #expect(readme.contains("captures/sv220-nb"))
+}

@@ -87,6 +87,74 @@ private func makeTempRoot() throws -> URL {
     }
 }
 
+@Test func createCaptureTreeAddsOnlyCanonicalCaptureDirectoriesToExistingSession() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+    _ = try guardian.createSessionTree(target: "IC_1396", dateDir: "2026-08-08", readme: "original")
+    let originalLight = root.appendingPathComponent("sessions/IC_1396/2026-08-08/lights/keep.fit")
+    try Data("raw".utf8).write(to: originalLight)
+
+    let created = try guardian.createCaptureTree(
+        target: "IC_1396",
+        dateDir: "2026-08-08",
+        slug: "sv220-nb"
+    )
+
+    let expected = [
+        "sessions/IC_1396/2026-08-08/captures/sv220-nb/lights",
+        "sessions/IC_1396/2026-08-08/captures/sv220-nb/flats",
+        "sessions/IC_1396/2026-08-08/captures/sv220-nb/darks",
+        "sessions/IC_1396/2026-08-08/captures/sv220-nb/biases",
+        "stacks/IC_1396/2026-08-08/sv220-nb",
+        "processed/IC_1396/2026-08-08/sv220-nb",
+    ]
+    #expect(created.map { $0.standardizedFileURL.path } == expected.map {
+        root.appendingPathComponent($0).standardizedFileURL.path
+    })
+    for relative in expected {
+        var isDirectory: ObjCBool = false
+        #expect(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent(relative).path,
+            isDirectory: &isDirectory
+        ))
+        #expect(isDirectory.boolValue)
+    }
+    #expect(try Data(contentsOf: originalLight) == Data("raw".utf8))
+    #expect(try String(
+        contentsOf: root.appendingPathComponent("sessions/IC_1396/2026-08-08/README.txt"),
+        encoding: .utf8
+    ) == "original")
+}
+
+@Test func createCaptureTreeRequiresExactExistingSessionAndRejectsInvalidOrExistingScope() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+
+    #expect(throws: AstroError.self) {
+        try guardian.createCaptureTree(target: "IC_1396", dateDir: "2026-08-08", slug: "osc")
+    }
+
+    _ = try guardian.createSessionTree(target: "IC_1396", dateDir: "2026-08-08", readme: "x")
+    #expect(throws: AstroError.self) {
+        try guardian.createCaptureTree(target: "../IC_1396", dateDir: "2026-08-08", slug: "osc")
+    }
+    #expect(throws: AstroError.self) {
+        try guardian.createCaptureTree(target: "IC_1396", dateDir: "2026-08-08", slug: "../osc")
+    }
+
+    _ = try guardian.createCaptureTree(target: "IC_1396", dateDir: "2026-08-08", slug: "osc")
+    let sentinel = root.appendingPathComponent(
+        "sessions/IC_1396/2026-08-08/captures/osc/lights/existing.fit"
+    )
+    try Data("keep".utf8).write(to: sentinel)
+    #expect(throws: AstroError.self) {
+        try guardian.createCaptureTree(target: "IC_1396", dateDir: "2026-08-08", slug: "osc")
+    }
+    #expect(try Data(contentsOf: sentinel) == Data("keep".utf8))
+}
+
 @Test func writeToolFileWritesUnderAstroToolDir() throws {
     let root = try makeTempRoot()
     defer { try? FileManager.default.removeItem(at: root) }
