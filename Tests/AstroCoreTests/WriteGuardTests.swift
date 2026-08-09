@@ -155,6 +155,74 @@ private func makeTempRoot() throws -> URL {
     #expect(try Data(contentsOf: sentinel) == Data("keep".utf8))
 }
 
+@Test func conversionMoveIsRestrictedToOneExactSessionAndNeverOverwrites() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+    let scope = SessionConversionScope(target: "M31", date: "2026-01-01")
+    let source = root.appendingPathComponent("sessions/M31/2026-01-01/lights/a.fit")
+    try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("raw".utf8).write(to: source)
+
+    #expect(throws: AstroError.self) {
+        try guardian.moveConversionFile(
+            sourceRelative: "sessions/M31/2026-01-01/lights/a.fit",
+            destinationRelative: "sessions/M31/2026-01-02/captures/x/lights/a.fit",
+            scope: scope
+        )
+    }
+    #expect(throws: AstroError.self) {
+        try guardian.moveConversionFile(
+            sourceRelative: "sessions/M31/2026-01-01/lights/a.fit",
+            destinationRelative: "sessions/M31/2026-01-01/../../M42/a.fit",
+            scope: scope
+        )
+    }
+
+    let destination = root.appendingPathComponent(
+        "sessions/M31/2026-01-01/captures/x/lights/a.fit"
+    )
+    try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("existing".utf8).write(to: destination)
+    #expect(throws: AstroError.self) {
+        try guardian.moveConversionFile(
+            sourceRelative: "sessions/M31/2026-01-01/lights/a.fit",
+            destinationRelative: "sessions/M31/2026-01-01/captures/x/lights/a.fit",
+            scope: scope
+        )
+    }
+    #expect(try Data(contentsOf: source) == Data("raw".utf8))
+    #expect(try Data(contentsOf: destination) == Data("existing".utf8))
+}
+
+@Test func conversionDirectoryCreationAcceptsOnlyCanonicalLeaves() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+    let scope = SessionConversionScope(target: "M31", date: "2026-01-01")
+
+    _ = try guardian.ensureConversionDirectory(
+        relativePath: "sessions/M31/2026-01-01/captures/osc/lights",
+        scope: scope
+    )
+    _ = try guardian.ensureConversionDirectory(
+        relativePath: "stacks/M31/2026-01-01/osc",
+        scope: scope
+    )
+    #expect(throws: AstroError.self) {
+        try guardian.ensureConversionDirectory(
+            relativePath: "sessions/M31/2026-01-01/captures/osc/arbitrary",
+            scope: scope
+        )
+    }
+    #expect(throws: AstroError.self) {
+        try guardian.ensureConversionDirectory(
+            relativePath: "processed/M31/2026-01-02/osc",
+            scope: scope
+        )
+    }
+}
+
 @Test func writeToolFileWritesUnderAstroToolDir() throws {
     let root = try makeTempRoot()
     defer { try? FileManager.default.removeItem(at: root) }

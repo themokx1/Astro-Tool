@@ -20,11 +20,11 @@ public struct LinkResult: Codable, Equatable, Sendable {
 /// The sole filesystem-writing component of Astro-Tool. Nothing else in
 /// AstroCore may create, write, or delete anything under the library root —
 /// every write in the package goes through here so the two allowed
-/// operations (creating new session directory trees, and writing the tool's
-/// own files under `.astro_tool/`) stay auditable in one place. WriteGuard
-/// never overwrites or deletes anything the user's library already has;
-/// `FileManager.removeItem` is never called here or anywhere else in the
-/// package.
+/// operations (creating new session/capture trees, writing the tool's own
+/// files under `.astro_tool/`, and executing a user-confirmed, exact-scope
+/// session conversion) stay auditable in one place. WriteGuard never
+/// overwrites or deletes a library file; conversion uses reversible moves
+/// and leaves emptied source directories in place.
 public struct WriteGuard: Sendable {
     public let root: URL
 
@@ -161,6 +161,96 @@ public struct WriteGuard: Sendable {
         return destinations
     }
 
+    /// Creates one planner-approved canonical conversion directory with
+    /// mkdir-p semantics. Only the four capture role leaves and their
+    /// mirrored stack/processed leaves for this exact scope are accepted.
+    @discardableResult
+    public func ensureConversionDirectory(
+        relativePath: String,
+        scope: SessionConversionScope
+    ) throws -> URL {
+        let components = try Self.validatedRelativeComponents(relativePath)
+        let validSession = components.count == 6
+            && components[0] == "sessions"
+            && components[1] == scope.target
+            && components[2] == scope.date
+            && components[3] == "captures"
+            && ["lights", "flats", "darks", "biases"].contains(components[5])
+        let validOutput = components.count == 4
+            && (components[0] == "stacks" || components[0] == "processed")
+            && components[1] == scope.target
+            && components[2] == scope.date
+        guard validSession || validOutput else {
+            throw AstroError.writeForbidden(path: relativePath)
+        }
+        let slug = validSession ? components[4] : components[3]
+        try Self.validatePathComponent(slug)
+        let url = try conversionURL(relativePath: relativePath, scope: scope)
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) {
+            guard isDirectory.boolValue else { throw AstroError.writeForbidden(path: relativePath) }
+            return url
+        }
+        try Self.classifyingPermissionErrors(path: url.path) {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        return url
+    }
+
+    /// Read-only validation used before the first move. Both paths must be
+    /// inside this one target/date's session, stack, or processed branch;
+    /// the source must exist and the destination must not.
+    public func preflightConversionMove(
+        sourceRelative: String,
+        destinationRelative: String,
+        scope: SessionConversionScope
+    ) throws {
+        let source = try conversionURL(relativePath: sourceRelative, scope: scope)
+        let destination = try conversionURL(relativePath: destinationRelative, scope: scope)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: source.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            throw AstroError.pathNotFound(path: source.path)
+        }
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            throw AstroError.writeForbidden(path: destination.path)
+        }
+    }
+
+    /// Executes one already-preflighted exact-scope move. No overwrite and
+    /// no source-directory deletion are possible.
+    public func moveConversionFile(
+        sourceRelative: String,
+        destinationRelative: String,
+        scope: SessionConversionScope
+    ) throws {
+        try preflightConversionMove(
+            sourceRelative: sourceRelative,
+            destinationRelative: destinationRelative,
+            scope: scope
+        )
+        let source = try conversionURL(relativePath: sourceRelative, scope: scope)
+        let destination = try conversionURL(relativePath: destinationRelative, scope: scope)
+        try Self.classifyingPermissionErrors(path: destination.path) {
+            try FileManager.default.createDirectory(
+                at: destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.moveItem(at: source, to: destination)
+        }
+    }
+
+    /// Reverses one conversion move under the same no-overwrite rules.
+    public func rollbackConversionMove(
+        _ move: ConversionMove,
+        scope: SessionConversionScope
+    ) throws {
+        try moveConversionFile(
+            sourceRelative: move.destinationRelative,
+            destinationRelative: move.sourceRelative,
+            scope: scope
+        )
+    }
+
     /// Writes `data` to `relativePath` resolved under `toolDir`, creating
     /// intermediate directories as needed. Overwriting an existing file
     /// under `.astro_tool/` is allowed — that's the tool's own state, not
@@ -195,6 +285,37 @@ public struct WriteGuard: Sendable {
         guard !component.isEmpty, !component.contains("/"), component != ".", component != ".." else {
             throw AstroError.writeForbidden(path: component)
         }
+    }
+
+    private static func validatedRelativeComponents(_ relativePath: String) throws -> [String] {
+        guard !relativePath.hasPrefix("/") else {
+            throw AstroError.writeForbidden(path: relativePath)
+        }
+        let components = relativePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard !components.isEmpty,
+              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." })
+        else {
+            throw AstroError.writeForbidden(path: relativePath)
+        }
+        return components
+    }
+
+    private func conversionURL(relativePath: String, scope: SessionConversionScope) throws -> URL {
+        try Self.validatePathComponent(scope.target)
+        try Self.validatePathComponent(scope.date)
+        let components = try Self.validatedRelativeComponents(relativePath)
+        let allowedPrefix = components.count >= 4
+            && (components[0] == "sessions" || components[0] == "stacks" || components[0] == "processed")
+            && components[1] == scope.target
+            && components[2] == scope.date
+        guard allowedPrefix else { throw AstroError.writeForbidden(path: relativePath) }
+
+        let candidate = root.appendingPathComponent(relativePath).standardizedFileURL
+        let rootURL = root.standardizedFileURL
+        guard candidate.path.hasPrefix(rootURL.path + "/") else {
+            throw AstroError.writeForbidden(path: relativePath)
+        }
+        return candidate
     }
 
     /// Hard-links one file from the shared `calibration_library/` into a

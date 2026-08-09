@@ -1299,6 +1299,248 @@ public final class Database: @unchecked Sendable {
         return exists
     }
 
+    /// Applies all metadata mutations for one session conversion in a
+    /// single SQLite transaction and returns the exact prior state required
+    /// for rollback. No filesystem operation occurs here.
+    func applySessionConversionMetadata(
+        plan: SessionConversionPlan,
+        now: Double
+    ) throws -> ConversionMetadataBackup {
+        try withLock {
+            try db.exec("BEGIN IMMEDIATE;")
+            do {
+                var backup = ConversionMetadataBackup()
+                var groupIDsBySlug: [String: Int64] = [:]
+
+                try db.query(
+                    "SELECT id, slug FROM capture_groups WHERE target = ? AND session_date = ?;",
+                    bind: [.text(plan.scope.target), .text(plan.scope.date)]
+                ) { row in
+                    if let id = row.int64(0), let slug = row.string(1) {
+                        groupIDsBySlug[slug] = id
+                    }
+                }
+
+                for proposed in plan.proposedGroups {
+                    let draft = proposed.draft
+                    guard groupIDsBySlug[draft.slug] == nil else {
+                        throw AstroError.invalidInput(
+                            "A(z) \(draft.slug) gyűjtés az előnézet óta már létrejött. Készíts új tervet."
+                        )
+                    }
+                    try db.run(
+                        """
+                        INSERT INTO capture_groups(
+                          target, session_date, slug, display_name, sensor_mode, signal_mode,
+                          filter_manufacturer, filter_model, filter_name, notes, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                        """,
+                        bind: [
+                            .text(plan.scope.target), .text(plan.scope.date), .text(draft.slug),
+                            .text(draft.displayName), .text(draft.sensorMode.rawValue), .text(draft.signalMode.rawValue),
+                            draft.filterManufacturer.map(SQLiteValue.text) ?? .null,
+                            draft.filterModel.map(SQLiteValue.text) ?? .null,
+                            draft.filterName.map(SQLiteValue.text) ?? .null,
+                            draft.notes.map(SQLiteValue.text) ?? .null,
+                            .real(now), .real(now),
+                        ]
+                    )
+                    let id = db.lastInsertRowID
+                    groupIDsBySlug[draft.slug] = id
+                    backup.createdGroupIDs.append(id)
+                    backup.createdGroupSlugs.append(draft.slug)
+                }
+
+                for proposed in plan.proposedGroups {
+                    guard let groupID = groupIDsBySlug[proposed.draft.slug] else {
+                        throw AstroError.databaseError("Hiányzó gyűjtésazonosító: \(proposed.draft.slug)")
+                    }
+                    for mapping in proposed.sourceMappings {
+                        let requiredPrefix = "sessions/\(plan.scope.target)/\(plan.scope.date)/"
+                        guard mapping.relativePath.hasPrefix(requiredPrefix) else {
+                            throw AstroError.invalidInput(
+                                "A forrásmappa kívül esik a konverzió sessionjén: \(mapping.relativePath)"
+                            )
+                        }
+                        var previous: CaptureSourceRecord?
+                        try db.query(
+                            "SELECT id, capture_group_id, relative_path, role FROM capture_sources WHERE relative_path = ?;",
+                            bind: [.text(mapping.relativePath)]
+                        ) { previous = Self.captureSourceRecord(from: $0) }
+                        if let previous {
+                            guard previous.captureGroupID == groupID else {
+                                throw AstroError.invalidInput(
+                                    "A(z) \(mapping.relativePath) forrás már másik gyűjtéshez tartozik."
+                                )
+                            }
+                            continue
+                        }
+                        backup.sourceBackups.append(
+                            ConversionSourceBackup(relativePath: mapping.relativePath, previous: nil)
+                        )
+                        try db.run(
+                            "INSERT INTO capture_sources(capture_group_id, relative_path, role) VALUES (?, ?, ?);",
+                            bind: [.int(groupID), .text(mapping.relativePath), .text(mapping.role.rawValue)]
+                        )
+                    }
+                }
+
+                var backedUpFileIDs = Set<Int64>()
+                for assignment in plan.assignments {
+                    guard let fileID = assignment.fileID else {
+                        throw AstroError.invalidInput(
+                            "A fájl nincs indexelve, ezért nem rendelhető biztonságosan gyűjtéshez: \(assignment.path)"
+                        )
+                    }
+                    guard let groupID = groupIDsBySlug[assignment.groupSlug] else {
+                        throw AstroError.invalidInput("Ismeretlen célgyűjtés: \(assignment.groupSlug)")
+                    }
+                    var indexedPath: String?
+                    var target: String?
+                    var date: String?
+                    try db.query(
+                        "SELECT path, target, session_date FROM files WHERE id = ? AND missing = 0;",
+                        bind: [.int(fileID)]
+                    ) { row in
+                        indexedPath = row.string(0)
+                        target = row.string(1)
+                        date = row.string(2)
+                    }
+                    guard indexedPath == assignment.path,
+                          target == plan.scope.target,
+                          date == plan.scope.date
+                    else {
+                        throw AstroError.invalidInput(
+                            "A fájl indexbejegyzése megváltozott az előnézet óta: \(assignment.path)"
+                        )
+                    }
+
+                    if backedUpFileIDs.insert(fileID).inserted {
+                        var previous: FileCaptureAssignmentRecord?
+                        try db.query(
+                            "SELECT \(Self.fileCaptureAssignmentColumns) FROM file_capture_assignments WHERE file_id = ?;",
+                            bind: [.int(fileID)]
+                        ) { previous = Self.fileCaptureAssignmentRecord(from: $0) }
+                        backup.assignmentBackups.append(
+                            ConversionAssignmentBackup(fileID: fileID, previous: previous)
+                        )
+                    }
+                    try db.run(
+                        """
+                        INSERT INTO file_capture_assignments(
+                          file_id, capture_group_id, sensor_mode_override, signal_mode_override,
+                          filter_manufacturer_override, filter_model_override, filter_name_override,
+                          assignment_source, assigned_at)
+                        VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?)
+                        ON CONFLICT(file_id) DO UPDATE SET
+                          capture_group_id = excluded.capture_group_id,
+                          sensor_mode_override = NULL,
+                          signal_mode_override = NULL,
+                          filter_manufacturer_override = NULL,
+                          filter_model_override = NULL,
+                          filter_name_override = NULL,
+                          assignment_source = excluded.assignment_source,
+                          assigned_at = excluded.assigned_at;
+                        """,
+                        bind: [
+                            .int(fileID), .int(groupID),
+                            .text("session-converter:\(plan.id)"), .real(now),
+                        ]
+                    )
+                }
+
+                try db.exec("COMMIT;")
+                return backup
+            } catch {
+                try? db.exec("ROLLBACK;")
+                throw error
+            }
+        }
+    }
+
+    /// Restores metadata captured by `applySessionConversionMetadata` in one
+    /// transaction. Created filesystem directories are intentionally not
+    /// removed; they are harmless and may contain later user files.
+    func rollbackSessionConversionMetadata(_ backup: ConversionMetadataBackup) throws {
+        try withLock {
+            try db.exec("BEGIN IMMEDIATE;")
+            do {
+                for groupID in backup.createdGroupIDs {
+                    try db.run(
+                        "DELETE FROM file_capture_assignments WHERE capture_group_id = ?;",
+                        bind: [.int(groupID)]
+                    )
+                    try db.run("DELETE FROM capture_sources WHERE capture_group_id = ?;", bind: [.int(groupID)])
+                    try db.run("DELETE FROM capture_groups WHERE id = ?;", bind: [.int(groupID)])
+                }
+
+                for sourceBackup in backup.sourceBackups {
+                    if let previous = sourceBackup.previous {
+                        try db.run(
+                            """
+                            INSERT INTO capture_sources(capture_group_id, relative_path, role)
+                            VALUES (?, ?, ?)
+                            ON CONFLICT(relative_path) DO UPDATE SET
+                              capture_group_id = excluded.capture_group_id,
+                              role = excluded.role;
+                            """,
+                            bind: [
+                                .int(previous.captureGroupID), .text(previous.relativePath),
+                                .text(previous.role.rawValue),
+                            ]
+                        )
+                    } else {
+                        try db.run(
+                            "DELETE FROM capture_sources WHERE relative_path = ?;",
+                            bind: [.text(sourceBackup.relativePath)]
+                        )
+                    }
+                }
+
+                for assignmentBackup in backup.assignmentBackups {
+                    if let previous = assignmentBackup.previous {
+                        try db.run(
+                            """
+                            INSERT INTO file_capture_assignments(
+                              file_id, capture_group_id, sensor_mode_override, signal_mode_override,
+                              filter_manufacturer_override, filter_model_override, filter_name_override,
+                              assignment_source, assigned_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(file_id) DO UPDATE SET
+                              capture_group_id = excluded.capture_group_id,
+                              sensor_mode_override = excluded.sensor_mode_override,
+                              signal_mode_override = excluded.signal_mode_override,
+                              filter_manufacturer_override = excluded.filter_manufacturer_override,
+                              filter_model_override = excluded.filter_model_override,
+                              filter_name_override = excluded.filter_name_override,
+                              assignment_source = excluded.assignment_source,
+                              assigned_at = excluded.assigned_at;
+                            """,
+                            bind: [
+                                .int(previous.fileID), .int(previous.captureGroupID),
+                                previous.sensorModeOverride.map { .text($0.rawValue) } ?? .null,
+                                previous.signalModeOverride.map { .text($0.rawValue) } ?? .null,
+                                previous.filterManufacturerOverride.map(SQLiteValue.text) ?? .null,
+                                previous.filterModelOverride.map(SQLiteValue.text) ?? .null,
+                                previous.filterNameOverride.map(SQLiteValue.text) ?? .null,
+                                .text(previous.assignmentSource), .real(previous.assignedAt),
+                            ]
+                        )
+                    } else {
+                        try db.run(
+                            "DELETE FROM file_capture_assignments WHERE file_id = ?;",
+                            bind: [.int(assignmentBackup.fileID)]
+                        )
+                    }
+                }
+                try db.exec("COMMIT;")
+            } catch {
+                try? db.exec("ROLLBACK;")
+                throw error
+            }
+        }
+    }
+
     // MARK: files
 
     @discardableResult

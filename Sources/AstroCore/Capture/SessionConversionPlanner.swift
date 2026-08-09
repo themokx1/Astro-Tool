@@ -919,7 +919,7 @@ public enum SessionConversionPlanner {
         ]
     }
 
-    private static func sourceFingerprint(_ files: [FileRecord]) -> ConversionSourceFingerprint {
+    static func sourceFingerprint(_ files: [FileRecord]) -> ConversionSourceFingerprint {
         let sorted = files.sorted { $0.path < $1.path }
         var hash: UInt64 = 14_695_981_039_346_656_037
         for file in sorted {
