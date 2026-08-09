@@ -21,6 +21,8 @@ struct SessionsSegment: View {
     /// segment had no tag add/remove of its own before (only
     /// `AllTargetsPage`'s session rows did).
     @State private var addingTag: AddTagTarget?
+    @State private var captureEditingSession: LinkingSession?
+    @State private var conversionSession: LinkingSession?
 
     private struct Row: Identifiable {
         let id: String
@@ -84,6 +86,12 @@ struct SessionsSegment: View {
         }
         .sheet(item: $addingTag) { info in
             AddTagSheet(target: info.target, date: info.date)
+        }
+        .sheet(item: $captureEditingSession) { session in
+            CaptureGroupSheet(target: session.target, date: session.date)
+        }
+        .sheet(item: $conversionSession) { session in
+            SessionConversionSheet(target: session.target, date: session.date)
         }
     }
 
@@ -221,6 +229,7 @@ struct SessionsSegment: View {
     /// place (there's a Minőség segment one tab over to see the result in),
     /// rather than `AllTargetsPage`/`NightsPage`'s "navigate to Minőség
     /// with this date preselected" (they have no frame table of their own).
+    @ViewBuilder
     private func contextMenuItems(for detail: SessionDetail) -> some View {
         SessionActionMenu(
             target: target,
@@ -234,6 +243,13 @@ struct SessionsSegment: View {
             noteEditingSession: $noteEditingSession,
             addingTag: $addingTag
         )
+        Divider()
+        Button("Új capture-gyűjtés…") {
+            captureEditingSession = LinkingSession(target: target, date: detail.dateRaw)
+        }
+        Button("Session átalakítása gyűjtésekre…") {
+            conversionSession = LinkingSession(target: target, date: detail.dateRaw)
+        }
     }
 
     // MARK: - Cell text
@@ -311,6 +327,8 @@ struct SessionsSegment: View {
 
     private func detailBand(for detail: SessionDetail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            captureHierarchy(detail)
+
             if let timeline = appState.sessionTimeline, timeline.date == detail.dateRaw {
                 Text(timelineSentence(timeline))
                     .font(.callout)
@@ -333,6 +351,82 @@ struct SessionsSegment: View {
         }
         .padding(12)
         .background(Color.secondary.opacity(0.06))
+    }
+
+    private func captureHierarchy(_ detail: SessionDetail) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Capture-gyűjtések").font(.subheadline.weight(.semibold))
+                    Text("A session összesen: \(detail.usableLightCount) használható frame · \(TDFormat.hm(detail.integrationSeconds))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Új gyűjtés…") {
+                    captureEditingSession = LinkingSession(target: target, date: detail.dateRaw)
+                }
+                Button("Átalakítás…") {
+                    conversionSession = LinkingSession(target: target, date: detail.dateRaw)
+                }
+            }
+
+            if detail.captureGroups.isEmpty {
+                Text("A régi session még nem tartalmaz capture-összesítést. Futtass frissítést vagy nyisd meg az Átalakítást.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(detail.captureGroups) { capture in
+                            captureCard(capture)
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.035)))
+    }
+
+    private func captureCard(_ capture: CaptureGroupSummary) -> some View {
+        let sensor = capture.sensorModes.first
+        let signal = capture.signalModes.first
+        let accent = CaptureVisuals.color(sensor: sensor, signal: signal)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(capture.displayName).font(.subheadline.weight(.semibold)).lineLimit(1)
+                if capture.isImplicit {
+                    CaptureBadge(text: "nincs besorolva", color: .orange)
+                }
+            }
+            HStack(spacing: 5) {
+                ForEach(capture.sensorModes, id: \.self) { CaptureBadge(text: $0.displayNameHU, color: accent) }
+                ForEach(capture.signalModes, id: \.self) { CaptureBadge(text: $0.displayNameHU, color: accent) }
+            }
+            if !capture.filters.isEmpty {
+                Text(capture.filters.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.purple).lineLimit(1)
+            }
+            Text("\(capture.usableLightCount) használható · \(TDFormat.hm(capture.integrationSeconds))")
+                .font(.callout.monospacedDigit())
+            Text(exposureSummary(capture.exposureBreakdown))
+                .font(.caption.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
+            HStack(spacing: 10) {
+                Text("flat \(capture.flatCount)")
+                Text("stack \(capture.stackCount)")
+                Text("process \(capture.processedCount)")
+                if capture.rejectedCount > 0 { Text("elvetve \(capture.rejectedCount)").foregroundStyle(.red) }
+            }
+            .font(.caption2)
+            if capture.metadataConflictCount > 0 {
+                Label("\(capture.metadataConflictCount) metadata-ütközés", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2).foregroundStyle(.orange)
+            }
+        }
+        .padding(10)
+        .frame(width: 290, alignment: .leading)
+        .overlay(alignment: .leading) { Rectangle().fill(accent).frame(width: 3) }
+        .background(RoundedRectangle(cornerRadius: 9).fill(accent.opacity(0.07)))
     }
 
     /// "Ablak 3:42 · integráció 2:11 · hatékonyság 59% · 2 kiesés (37m, 12m)"

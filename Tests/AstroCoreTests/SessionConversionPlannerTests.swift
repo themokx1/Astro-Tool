@@ -152,6 +152,62 @@ private func ic1396ConversionFixture() -> (files: [FileRecord], meta: [Int64: FI
     #expect(!plan.canApply)
 }
 
+@Test func ambiguityDecisionProducesAnApplyableExactPlan() throws {
+    let fixture = ic1396ConversionFixture()
+    let preview = try SessionConversionPlanner.plan(
+        scope: conversionScope,
+        files: fixture.files,
+        meta: fixture.meta,
+        existingGroups: [],
+        existingSources: [],
+        assignments: [:],
+        mode: .physical
+    )
+    let ambiguity = try #require(preview.ambiguities.first { $0.kind == .calibrationAssignment })
+    let slug = try #require(ambiguity.candidateGroupSlugs.first)
+
+    let resolved = try SessionConversionPlanner.resolving(
+        ambiguityID: ambiguity.id,
+        withGroupSlug: slug,
+        in: preview,
+        files: fixture.files
+    )
+
+    #expect(resolved.ambiguities.contains { $0.id == ambiguity.id } == false)
+    #expect(ambiguity.affectedPaths.allSatisfy { path in
+        resolved.assignments.contains { $0.path == path && $0.groupSlug == slug }
+    })
+    #expect(ambiguity.affectedPaths.allSatisfy { path in
+        resolved.moves.contains { $0.sourceRelative == path && $0.groupSlug == slug }
+    })
+    #expect(resolved.summary.fileAssignmentCount == resolved.assignments.count)
+    #expect(resolved.summary.moveCount == resolved.moves.count)
+    #expect(resolved.canApply)
+}
+
+@Test func converterNeverTreatsFinderResidueOrPresetJSONAsCaptureData() throws {
+    let light = conversionFile("sessions/M31/2026-01-01/lights/a.fit", id: 1)
+    let lightDSStore = conversionFile("sessions/M31/2026-01-01/lights/.DS_Store", id: 2)
+    let flatDSStore = conversionFile("sessions/M31/2026-01-01/flats/.DS_Store", id: 3)
+    let stackDSStore = conversionFile("stacks/M31/2026-01-01/.DS_Store", id: 4)
+    let preset = conversionFile("stacks/M31/2026-01-01/presets/example.json", id: 5)
+    let plan = try SessionConversionPlanner.plan(
+        scope: SessionConversionScope(target: "M31", date: "2026-01-01"),
+        files: [light, lightDSStore, flatDSStore, stackDSStore, preset],
+        meta: [1: bayerMeta(fileID: 1, exposure: 60)],
+        existingGroups: [],
+        existingSources: [],
+        assignments: [:],
+        mode: .logicalOnly
+    )
+
+    #expect(plan.summary.rawFrameCount == 1)
+    #expect(plan.summary.artifactCount == 0)
+    #expect(plan.summary.calibrationFrameCount == 0)
+    #expect(plan.ambiguities.isEmpty)
+    #expect(plan.assignments.map(\.path) == [light.path])
+}
+
 @Test func classicSingleCaptureSessionCanAssignItsFlatsWithoutAmbiguity() throws {
     let light = conversionFile("sessions/M31/2026-01-01/lights/a.fit", id: 1)
     let flat = conversionFile("sessions/M31/2026-01-01/flats/f.fit", id: 2)

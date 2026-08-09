@@ -468,7 +468,18 @@ public enum SessionConversionPlanner {
         for seed in sortedSeeds {
             let buckets = FrameSet.lightBuckets(files: seed.files, meta: meta, config: config)
             let rawFiles = (buckets.usable + buckets.rejected).sorted { $0.path < $1.path }
-            let artifacts = seed.files.filter { !FrameSet.isFrameCandidate($0) }.sorted { $0.path < $1.path }
+            // A role folder also contains Finder residue and acquisition
+            // sidecars (`.DS_Store`, preset JSON, logs). Only a filename
+            // positively recognized as a stack/derivative is an artifact;
+            // every other non-frame file stays outside capture metadata.
+            let artifacts = seed.files.filter {
+                !FrameSet.isFrameCandidate($0)
+                    && StackDiscovery.looksLikeStackOutput(
+                        fileName: ($0.path as NSString).lastPathComponent,
+                        ext: $0.ext,
+                        sizeBytes: $0.size
+                    )
+            }.sorted { $0.path < $1.path }
             stackedArtifactCount += artifacts.filter {
                 StackDiscovery.hasASIAirStackedPrefix(($0.path as NSString).lastPathComponent.lowercased())
             }.count
@@ -582,8 +593,15 @@ public enum SessionConversionPlanner {
         var unresolvedCalibration: [FrameRole: [FileRecord]] = [:]
         var unresolvedArtifacts: [FileRecord] = []
         let auxiliary = files.filter {
-            $0.role == .flat || $0.role == .dark || $0.role == .bias
+            let roleIsCaptureData = $0.role == .flat || $0.role == .dark || $0.role == .bias
                 || $0.role == .stack || $0.role == .processed
+            guard roleIsCaptureData else { return false }
+            return FrameSet.isFrameCandidate($0)
+                || StackDiscovery.looksLikeStackOutput(
+                    fileName: ($0.path as NSString).lastPathComponent,
+                    ext: $0.ext,
+                    sizeBytes: $0.size
+                )
         }.sorted { $0.path < $1.path }
 
         for file in auxiliary {
@@ -712,9 +730,8 @@ public enum SessionConversionPlanner {
 
         let rawCount = clusters.reduce(0) { $0 + $1.rawFramePaths.count }
         let integration = clusters.reduce(0.0) { $0 + $1.integrationSeconds }
-        let artifactCount = clusters.reduce(0) { $0 + $1.artifactPaths.count }
-            + files.filter { $0.role == .stack || $0.role == .processed }.count
-        let calibrationCount = files.filter { $0.role == .flat || $0.role == .dark || $0.role == .bias }.count
+        let artifactCount = assignmentsOut.filter { $0.role == .stack || $0.role == .processed }.count
+        let calibrationCount = auxiliary.filter { $0.role == .flat || $0.role == .dark || $0.role == .bias }.count
         let summary = SessionConversionSummary(
             rawFrameCount: rawCount,
             artifactCount: artifactCount,
@@ -744,6 +761,109 @@ public enum SessionConversionPlanner {
             sourceFingerprint: fingerprint,
             humanSummaryHU: humanSummary
         )
+    }
+
+    /// Applies one explicit human decision to an already generated preview
+    /// without touching the database or filesystem. The returned plan lists
+    /// the newly assigned files and, in physical mode, their exact moves;
+    /// it is therefore still a truthful preview suitable for the normal
+    /// executor and rollback receipt.
+    public static func resolving(
+        ambiguityID: String,
+        withGroupSlug groupSlug: String,
+        in original: SessionConversionPlan,
+        files: [FileRecord]
+    ) throws -> SessionConversionPlan {
+        guard let ambiguity = original.ambiguities.first(where: { $0.id == ambiguityID }) else {
+            throw AstroError.invalidInput("A kiválasztott bizonytalanság már nincs a tervben.")
+        }
+        guard ambiguity.candidateGroupSlugs.contains(groupSlug) else {
+            throw AstroError.invalidInput("A(z) \(groupSlug) nem választható ehhez a döntéshez.")
+        }
+        let filesByPath = Dictionary(uniqueKeysWithValues: files.map { ($0.path, $0) })
+        let affected = Set(ambiguity.affectedPaths)
+        guard affected.allSatisfy({ filesByPath[$0] != nil }) else {
+            throw AstroError.invalidInput("A döntés egyik fájlja már nem része a session előnézetének.")
+        }
+
+        var plan = original
+        plan.ambiguities.removeAll { $0.id == ambiguityID }
+        plan.unchangedItems.removeAll { affected.contains($0.path) && plan.mode == .physical }
+
+        let existingAssignmentPaths = Set(plan.assignments.map(\.path))
+        let occupiedSources = Set(files.map(\.path))
+        var occupiedDestinations = Set(plan.moves.map(\.destinationRelative))
+        var addedSlugs = Set<String>()
+
+        for path in ambiguity.affectedPaths.sorted() {
+            guard let file = filesByPath[path] else { continue }
+            if !existingAssignmentPaths.contains(path) {
+                plan.assignments.append(
+                    ConversionAssignment(
+                        fileID: file.id,
+                        path: path,
+                        role: file.role,
+                        groupSlug: groupSlug,
+                        reason: "Kézi döntés: \(ambiguity.title) → \(groupSlug)."
+                    )
+                )
+            }
+
+            guard plan.mode == .physical else { continue }
+            let destination = destinationPath(
+                scope: plan.scope,
+                file: file,
+                semanticRole: file.role,
+                slug: groupSlug
+            )
+            guard destination != path else { continue }
+            if occupiedSources.contains(destination) || !occupiedDestinations.insert(destination).inserted {
+                plan.conflicts.append(
+                    ConversionConflict(
+                        path: destination,
+                        message: "A kézi döntés célútvonala már foglalt; a konverter nem ír felül fájlt."
+                    )
+                )
+            }
+            plan.moves.append(
+                ConversionMove(
+                    sourceRelative: path,
+                    destinationRelative: destination,
+                    sizeBytes: file.size,
+                    role: file.role,
+                    groupSlug: groupSlug,
+                    reason: "Kézi döntés: \(ambiguity.title) → \(groupSlug)."
+                )
+            )
+            addedSlugs.insert(groupSlug)
+        }
+
+        if plan.mode == .physical {
+            var knownDirectories = Set(plan.directoryCreations.map(\.relativePath))
+            for slug in addedSlugs.sorted() {
+                for path in canonicalDirectories(scope: plan.scope, slug: slug)
+                    where knownDirectories.insert(path).inserted {
+                    plan.directoryCreations.append(
+                        ConversionDirectoryCreation(
+                            relativePath: path,
+                            reason: "A(z) \(slug) kanonikus gyűjtésfája."
+                        )
+                    )
+                }
+            }
+        }
+
+        plan.assignments.sort { $0.path < $1.path }
+        plan.moves.sort { $0.sourceRelative < $1.sourceRelative }
+        plan.directoryCreations.sort { $0.relativePath < $1.relativePath }
+        plan.conflicts.sort { $0.path < $1.path }
+        plan.summary.fileAssignmentCount = plan.assignments.count
+        plan.summary.directoryCount = plan.directoryCreations.count
+        plan.summary.moveCount = plan.moves.count
+        plan.summary.bytesToMove = plan.moves.reduce(0) { $0 + $1.sizeBytes }
+        plan.summary.unchangedCount = plan.unchangedItems.count
+        plan.humanSummaryHU += " Kézi döntés rögzítve: \(ambiguity.affectedPaths.count) fájl → \(groupSlug)."
+        return plan
     }
 
     private static func validateScope(_ scope: SessionConversionScope, files: [FileRecord]) throws {
