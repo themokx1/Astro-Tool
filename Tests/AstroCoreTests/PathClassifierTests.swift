@@ -145,3 +145,78 @@ import Testing
     #expect(PathClassifier.classify(relativePath: "sessions/T/2025-12-31/BIAS/x.fit").role == .bias)
     #expect(PathClassifier.classify(relativePath: "sessions/T/2025-12-31/Light/x.fit").role == .light)
 }
+
+// MARK: - Capture-group paths
+
+@Test func canonicalCapturePathExposesSlugAndRole() {
+    let info = PathClassifier.classify(
+        relativePath: "sessions/IC_1396/2026-08-08/captures/sv220-nb/lights/a.fit"
+    )
+
+    #expect(info.area == .sessions)
+    #expect(info.target == "IC_1396")
+    #expect(info.dateRaw == "2026-08-08")
+    #expect(info.role == .light)
+    #expect(info.captureSlug == "sv220-nb")
+    #expect(info.legacyCaptureLabel == nil)
+}
+
+@Test func canonicalCaptureCalibrationPathExposesSlugAndRole() {
+    let info = PathClassifier.classify(
+        relativePath: "sessions/IC_1396/2026-08-08/captures/sv220-nb/flats/a.fit"
+    )
+
+    #expect(info.role == .flat)
+    #expect(info.captureSlug == "sv220-nb")
+}
+
+@Test func legacyRoleSuffixIsRecognizedWithoutInventingCanonicalSlug() {
+    let light = PathClassifier.classify(
+        relativePath: "sessions/IC_1396/2026-08-08/lights_osc/a.fit"
+    )
+    let flat = PathClassifier.classify(
+        relativePath: "sessions/IC_1396/2026-08-08/flats_sv220/a.fit"
+    )
+
+    #expect(light.role == .light)
+    #expect(light.captureSlug == nil)
+    #expect(light.legacyCaptureLabel == "osc")
+    #expect(flat.role == .flat)
+    #expect(flat.legacyCaptureLabel == "sv220")
+}
+
+@Test func directClassicRoleDoesNotBecomeCaptureGroup() {
+    let info = PathClassifier.classify(
+        relativePath: "sessions/IC_1396/2026-08-08/lights/Review/a.fit"
+    )
+
+    #expect(info.role == .light)
+    #expect(info.captureSlug == nil)
+    #expect(info.legacyCaptureLabel == nil)
+}
+
+@Test func stackAndProcessedCaptureSubfoldersExposeSlug() {
+    let stack = PathClassifier.classify(
+        relativePath: "stacks/IC_1396/2026-08-08/sv220-nb/result.fit"
+    )
+    let processed = PathClassifier.classify(
+        relativePath: "processed/IC_1396/2026-08-08/osc-30s/final.tif"
+    )
+
+    #expect(stack.captureSlug == "sv220-nb")
+    #expect(processed.captureSlug == "osc-30s")
+}
+
+@Test func malformedCapturePathIsNotAssignedToGroupOrRole() {
+    let missingSlug = PathClassifier.classify(
+        relativePath: "sessions/IC_1396/2026-08-08/captures/file.fit"
+    )
+    let missingRole = PathClassifier.classify(
+        relativePath: "sessions/IC_1396/2026-08-08/captures/sv220-nb/file.fit"
+    )
+
+    #expect(missingSlug.captureSlug == nil)
+    #expect(missingSlug.role == .other)
+    #expect(missingRole.captureSlug == nil)
+    #expect(missingRole.role == .other)
+}

@@ -10,17 +10,28 @@ public struct PathInfo: Equatable, Sendable {
     public var target: String?
     public var dateRaw: String?
     public var role: FrameRole
+    /// Slug from the canonical capture-aware layout, or from a mirrored
+    /// stack/processed subfolder. `nil` for classic session paths.
+    public var captureSlug: String?
+    /// Raw suffix from a legacy role folder such as `lights_osc`. Kept
+    /// separate from `captureSlug`: the converter must show this as an
+    /// inference rather than pretending the legacy label is canonical.
+    public var legacyCaptureLabel: String?
 
     public init(
         area: LibraryArea,
         target: String? = nil,
         dateRaw: String? = nil,
-        role: FrameRole
+        role: FrameRole,
+        captureSlug: String? = nil,
+        legacyCaptureLabel: String? = nil
     ) {
         self.area = area
         self.target = target
         self.dateRaw = dateRaw
         self.role = role
+        self.captureSlug = captureSlug
+        self.legacyCaptureLabel = legacyCaptureLabel
     }
 }
 
@@ -46,6 +57,26 @@ public enum PathClassifier {
         "flats": .flat,
         "biases": .bias,
     ]
+
+    /// Recognizes non-canonical but common `lights_osc`/`flats_sv220`
+    /// folders. The suffix is evidence for a converter suggestion, not a
+    /// canonical capture slug, so the two are returned separately.
+    private static func legacySessionRole(_ directory: String) -> (role: FrameRole, label: String)? {
+        let lower = directory.lowercased()
+        let candidates: [(String, FrameRole)] = [
+            ("lights", .light), ("light", .light),
+            ("flats", .flat), ("flat", .flat),
+            ("darks", .dark), ("dark", .dark),
+            ("biases", .bias), ("bias", .bias),
+        ]
+        for (prefix, role) in candidates {
+            let marker = prefix + "_"
+            guard lower.hasPrefix(marker) else { continue }
+            let label = String(directory.dropFirst(marker.count))
+            if !label.isEmpty { return (role, label) }
+        }
+        return nil
+    }
 
     /// Classifies `relativePath` (root-relative, "/"-separated, no leading
     /// "/"). Only the top-level area directory and — for `sessions`/
@@ -75,20 +106,44 @@ public enum PathClassifier {
             // misread as a target/date.
             let target = components.count >= 3 ? components[1] : nil
             let dateRaw = components.count >= 4 ? components[2] : nil
-            let role = components.count >= 5
-                ? (sessionRoleSubdirs[components[3].lowercased()] ?? .other)
-                : .other
-            return PathInfo(area: .sessions, target: target, dateRaw: dateRaw, role: role)
+            if components.count >= 7, components[3].lowercased() == "captures" {
+                let slug = components[4]
+                let role = sessionRoleSubdirs[components[5].lowercased()] ?? .other
+                guard !slug.isEmpty, role != .other else {
+                    return PathInfo(area: .sessions, target: target, dateRaw: dateRaw, role: .other)
+                }
+                return PathInfo(
+                    area: .sessions, target: target, dateRaw: dateRaw,
+                    role: role, captureSlug: slug
+                )
+            }
+
+            guard components.count >= 5 else {
+                return PathInfo(area: .sessions, target: target, dateRaw: dateRaw, role: .other)
+            }
+            let roleDirectory = components[3]
+            if let role = sessionRoleSubdirs[roleDirectory.lowercased()] {
+                return PathInfo(area: .sessions, target: target, dateRaw: dateRaw, role: role)
+            }
+            if let legacy = legacySessionRole(roleDirectory) {
+                return PathInfo(
+                    area: .sessions, target: target, dateRaw: dateRaw,
+                    role: legacy.role, legacyCaptureLabel: legacy.label
+                )
+            }
+            return PathInfo(area: .sessions, target: target, dateRaw: dateRaw, role: .other)
 
         case "stacks":
             let target = components.count >= 3 ? components[1] : nil
             let dateRaw = components.count >= 4 ? components[2] : nil
-            return PathInfo(area: .stacks, target: target, dateRaw: dateRaw, role: .stack)
+            let captureSlug = components.count >= 5 ? components[3] : nil
+            return PathInfo(area: .stacks, target: target, dateRaw: dateRaw, role: .stack, captureSlug: captureSlug)
 
         case "processed":
             let target = components.count >= 3 ? components[1] : nil
             let dateRaw = components.count >= 4 ? components[2] : nil
-            return PathInfo(area: .processed, target: target, dateRaw: dateRaw, role: .processed)
+            let captureSlug = components.count >= 5 ? components[3] : nil
+            return PathInfo(area: .processed, target: target, dateRaw: dateRaw, role: .processed, captureSlug: captureSlug)
 
         case "calibration_library":
             let role = components.count > 1
