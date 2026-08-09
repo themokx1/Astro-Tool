@@ -91,6 +91,64 @@ private func makeTempRoot(_ label: String) throws -> URL {
     return dir
 }
 
+@Test func sessionConvertPlanRequiresOneExactTargetAndDate() throws {
+    let root = try makeTempRoot("convert-scope")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let result = try runCLI(["session-convert", "plan", "--root", root.path, "--target", "IC_1396"])
+
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("--target and --date are required"))
+}
+
+@Test func captureCreateAndListRoundTripThroughCLIJSON() throws {
+    let root = try makeTempRoot("capture-cli")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let session = root.appendingPathComponent("sessions/IC_1396/2026-08-08", isDirectory: true)
+    try FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)
+
+    let created = try runCLI([
+        "capture", "create", "--root", root.path, "--target", "IC_1396", "--date", "2026-08-08",
+        "--name", "SV220 köd sorozat", "--slug", "sv220-300s", "--sensor", "osc",
+        "--signal", "dual_band", "--filter-maker", "SVBONY", "--filter-model", "SV220", "--json"
+    ])
+    #expect(created.exitCode == 0)
+    #expect(created.stdout.contains("\"slug\" : \"sv220-300s\""))
+
+    let listed = try runCLI([
+        "capture", "list", "--root", root.path, "--target", "IC_1396", "--date", "2026-08-08", "--json"
+    ])
+    #expect(listed.exitCode == 0)
+    #expect(listed.stdout.contains("SV220 köd sorozat"))
+}
+
+@Test func sessionConvertPlanJSONNamesExactSingleSessionPathsAndApplyNeedsConfirmation() throws {
+    let root = try makeTempRoot("convert-preview")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let light = root.appendingPathComponent(
+        "sessions/IC_1396/2026-08-08/lights_osc/light_001.fit"
+    )
+    try FileManager.default.createDirectory(at: light.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("not-a-real-fits-but-indexable".utf8).write(to: light)
+    #expect(try runCLI(["scan", "--root", root.path]).exitCode == 0)
+
+    let planURL = root.appendingPathComponent("preview-plan.json")
+    let preview = try runCLI([
+        "session-convert", "plan", "--root", root.path, "--target", "IC_1396",
+        "--date", "2026-08-08", "--out", planURL.path, "--json"
+    ])
+    #expect(preview.exitCode == 0)
+    #expect(preview.stdout.contains("\"target\" : \"IC_1396\""))
+    #expect(preview.stdout.contains("sessions\\/IC_1396\\/2026-08-08\\/lights_osc\\/light_001.fit"))
+    #expect(!preview.stdout.contains("2026-08-09"))
+
+    let refused = try runCLI([
+        "session-convert", "apply", "--root", root.path, "--plan", planURL.path
+    ])
+    #expect(refused.exitCode == 1)
+    #expect(refused.stderr.contains("--plan and --yes are required"))
+}
+
 // MARK: - R11-T14/F9 verify fixture helpers
 //
 // `FixityVerifier` only ever re-checks a file that already has a cached

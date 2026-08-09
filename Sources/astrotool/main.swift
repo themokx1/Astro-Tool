@@ -55,6 +55,8 @@ do {
     case "stacks": exitCode = try cmdStacks(rest)
     case "report": exitCode = try cmdReport(rest)
     case "target-report": exitCode = try cmdTargetReport(rest)
+    case "capture": exitCode = try cmdCapture(rest)
+    case "session-convert": exitCode = try cmdSessionConvert(rest)
     default:
         eprint(usageText)
         exit(1)
