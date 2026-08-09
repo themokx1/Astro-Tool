@@ -1,5 +1,37 @@
 import Foundation
 
+/// Exact comparison population used for one frame's relative score. The
+/// session/exposure pair remains, but capture, resolved filter, setup, and
+/// binning prevent physically different acquisitions from sharing a z-score
+/// population merely because they happened on the same date.
+public struct RatingCohortDescriptor: Codable, Sendable, Equatable, Hashable {
+    public var sessionDate: String?
+    public var nominalExposureSeconds: Double?
+    public var captureGroupID: Int64?
+    public var captureSlug: String?
+    public var resolvedFilter: String?
+    public var setupDescriptor: String?
+    public var binning: String?
+
+    public init(
+        sessionDate: String? = nil,
+        nominalExposureSeconds: Double? = nil,
+        captureGroupID: Int64? = nil,
+        captureSlug: String? = nil,
+        resolvedFilter: String? = nil,
+        setupDescriptor: String? = nil,
+        binning: String? = nil
+    ) {
+        self.sessionDate = sessionDate
+        self.nominalExposureSeconds = nominalExposureSeconds
+        self.captureGroupID = captureGroupID
+        self.captureSlug = captureSlug
+        self.resolvedFilter = resolvedFilter
+        self.setupDescriptor = setupDescriptor
+        self.binning = binning
+    }
+}
+
 /// A single light frame's rating result, as returned by `Rater.rate`.
 ///
 /// `saturatedFraction`, `exptime`, `sessionSubdir`, and `dateObs` were added
@@ -41,6 +73,9 @@ public struct FrameScore: Codable, Sendable {
     /// see its own doc comment for why re-deriving it at query time (rather
     /// than persisting new DB columns) was the chosen approach.
     public var outlierBreakdown: OutlierBreakdown?
+    /// The exact population this frame was compared with. Optional for JSON
+    /// written before capture-aware rating existed.
+    public var cohort: RatingCohortDescriptor?
 
     /// The filename only (last path component) -- computed, not stored, so
     /// it never affects `Codable` (old JSON without it still decodes, and
@@ -59,7 +94,8 @@ public struct FrameScore: Codable, Sendable {
         exptime: Double? = nil,
         sessionSubdir: String? = nil,
         dateObs: String? = nil,
-        outlierBreakdown: OutlierBreakdown? = nil
+        outlierBreakdown: OutlierBreakdown? = nil,
+        cohort: RatingCohortDescriptor? = nil
     ) {
         self.path = path
         self.score = score
@@ -71,6 +107,7 @@ public struct FrameScore: Codable, Sendable {
         self.sessionSubdir = sessionSubdir
         self.dateObs = dateObs
         self.outlierBreakdown = outlierBreakdown
+        self.cohort = cohort
     }
 }
 
@@ -140,6 +177,7 @@ public final class Rater {
                 && (date == nil || file.sessionDate == date)
         }
         guard !frames.isEmpty else { return [] }
+        let captureResolver = try CaptureResolver.load(db: db)
 
         let workDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("astrotool-siril-\(UUID().uuidString)", isDirectory: true)
@@ -148,7 +186,7 @@ public final class Rater {
 
         let total = frames.count
         var done = 0
-        var rated: [(file: FileRecord, record: RatingRecord, exptime: Double?, dateObs: String?)] = []
+        var rated: [(file: FileRecord, record: RatingRecord, exptime: Double?, dateObs: String?, cohort: RatingCohortDescriptor)] = []
         rated.reserveCapacity(frames.count)
 
         let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
@@ -165,6 +203,11 @@ public final class Rater {
             let meta = try db.fitsMeta(fileID: fileID)
             let exptime = meta?.exptime
             let dateObs = meta?.dateObs
+            let cohort = Self.cohortDescriptor(
+                file: file,
+                meta: meta,
+                resolver: captureResolver
+            )
 
             let inputSig = "\(file.size)-\(Int(file.mtime.rounded()))"
             let cached = try db.rating(fileID: fileID)
@@ -178,7 +221,7 @@ public final class Rater {
                 if !stale.native && !stale.metrics {
                     // TRUE cache hit -- reuse the stored row untouched,
                     // neither `NativeStats` nor the provider is invoked.
-                    rated.append((file, cachedRow, exptime, dateObs))
+                    rated.append((file, cachedRow, exptime, dateObs, cohort))
                     continue
                 }
 
@@ -210,7 +253,7 @@ public final class Rater {
                     sirilVersion: provider?.version, inputSig: inputSig
                 )
                 try db.upsertRating(record)
-                rated.append((file, record, exptime, dateObs))
+                rated.append((file, record, exptime, dateObs, cohort))
                 continue
             }
 
@@ -263,7 +306,7 @@ public final class Rater {
                 bg11: nativeStats?.backgroundMedian11
             )
             try db.upsertRating(record)
-            rated.append((file, record, exptime, dateObs))
+            rated.append((file, record, exptime, dateObs, cohort))
         }
 
         guard !rated.isEmpty else { return [] }
@@ -300,6 +343,7 @@ public final class Rater {
         let fileIDs = frames.compactMap(\.id)
         let ratingsByFileID = try db.ratingsBatch(fileIDs: fileIDs)
         let metaByFileID = try db.fitsMetaBatch(fileIDs: fileIDs)
+        let captureResolver = try CaptureResolver.load(db: db)
 
         var results: [FrameScore] = []
         results.reserveCapacity(frames.count)
@@ -326,7 +370,12 @@ public final class Rater {
                     saturatedFraction: record.saturatedFraction,
                     exptime: exptime,
                     sessionSubdir: sessionSubdir(path: file.path),
-                    dateObs: dateObs
+                    dateObs: dateObs,
+                    cohort: cohortDescriptor(
+                        file: file,
+                        meta: metaByFileID[fileID],
+                        resolver: captureResolver
+                    )
                 )
             )
         }
@@ -394,19 +443,27 @@ public final class Rater {
     private typealias MetricStats = RatingGroupMath.MetricStats
     private typealias ExposureGroupKey = RatingGroupMath.GroupKey
 
-    private static func exposureGroupKey(sessionDate: String?, exptime: Double?) -> ExposureGroupKey {
-        RatingGroupMath.groupKey(sessionDate: sessionDate, exptime: exptime)
+    private static func exposureGroupKey(
+        sessionDate: String?,
+        exptime: Double?,
+        cohort: RatingCohortDescriptor?
+    ) -> ExposureGroupKey {
+        RatingGroupMath.groupKey(sessionDate: sessionDate, exptime: exptime, cohort: cohort)
     }
 
     /// Splits `rated` into exposure groups (see `ExposureGroupKey`) and
     /// scores each group independently, so a frame's z-scores only ever
     /// compare it against other frames shot the same night at the same
     /// nominal exposure time.
-    private func score(_ rated: [(file: FileRecord, record: RatingRecord, exptime: Double?, dateObs: String?)]) throws -> [FrameScore] {
-        var groups: [ExposureGroupKey: [(file: FileRecord, record: RatingRecord, exptime: Double?, dateObs: String?)]] = [:]
+    private func score(_ rated: [(file: FileRecord, record: RatingRecord, exptime: Double?, dateObs: String?, cohort: RatingCohortDescriptor)]) throws -> [FrameScore] {
+        var groups: [ExposureGroupKey: [(file: FileRecord, record: RatingRecord, exptime: Double?, dateObs: String?, cohort: RatingCohortDescriptor)]] = [:]
         for entry in rated {
-            let key = Self.exposureGroupKey(sessionDate: entry.file.sessionDate, exptime: entry.exptime)
-            groups[key, default: []].append((entry.file, entry.record, entry.exptime, entry.dateObs))
+            let key = Self.exposureGroupKey(
+                sessionDate: entry.file.sessionDate,
+                exptime: entry.exptime,
+                cohort: entry.cohort
+            )
+            groups[key, default: []].append((entry.file, entry.record, entry.exptime, entry.dateObs, entry.cohort))
         }
 
         var results: [FrameScore] = []
@@ -426,7 +483,7 @@ public final class Rater {
         return results.sorted { $0.score > $1.score }
     }
 
-    private func scoreGroup(_ rated: [(file: FileRecord, record: RatingRecord, exptime: Double?, dateObs: String?)]) throws -> [FrameScore] {
+    private func scoreGroup(_ rated: [(file: FileRecord, record: RatingRecord, exptime: Double?, dateObs: String?, cohort: RatingCohortDescriptor)]) throws -> [FrameScore] {
         let weights = config.rating.weights
 
         let fwhmStats = Self.metricStats(rated.compactMap { $0.record.fwhm })
@@ -437,7 +494,7 @@ public final class Rater {
         var results: [FrameScore] = []
         results.reserveCapacity(rated.count)
 
-        for (file, original, exptime, dateObs) in rated {
+        for (file, original, exptime, dateObs, cohort) in rated {
             var record = original
             var weightedSum = 0.0
             var weightTotal = 0.0
@@ -487,7 +544,8 @@ public final class Rater {
                     saturatedFraction: record.saturatedFraction,
                     exptime: exptime,
                     sessionSubdir: Self.sessionSubdir(path: file.path),
-                    dateObs: dateObs
+                    dateObs: dateObs,
+                    cohort: cohort
                 )
             )
         }
@@ -509,6 +567,49 @@ public final class Rater {
         guard components.count > 4 else { return nil }
         let middle = components[3..<(components.count - 1)]
         return middle.joined(separator: "/")
+    }
+
+    private static func cohortDescriptor(
+        file: FileRecord,
+        meta: FITSMetaRecord?,
+        resolver: CaptureResolver
+    ) -> RatingCohortDescriptor {
+        let resolved = resolver.resolve(file: file, meta: meta)
+        let setup = meta.flatMap { EquipmentProfile.fingerprint(meta: $0, headerJSON: $0.headerJSON) }
+        let nominalExposure = meta?.exptime.map(NominalExposure.nominal)
+        return RatingCohortDescriptor(
+            sessionDate: file.sessionDate,
+            nominalExposureSeconds: nominalExposure,
+            captureGroupID: resolved.groupID,
+            captureSlug: resolved.slug,
+            resolvedFilter: resolvedFilterLabel(resolved),
+            setupDescriptor: setup?.descriptor,
+            binning: binning(from: meta?.headerJSON)
+        )
+    }
+
+    private static func resolvedFilterLabel(_ resolved: ResolvedCaptureMetadata) -> String? {
+        let parts = [resolved.filterManufacturer, resolved.filterModel]
+            .compactMap { value -> String? in
+                guard let value else { return nil }
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+        if !parts.isEmpty { return parts.joined(separator: " ") }
+        guard let name = resolved.filterName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else {
+            return nil
+        }
+        return name
+    }
+
+    private static func binning(from headerJSON: String?) -> String? {
+        guard let headerJSON,
+              let data = headerJSON.data(using: .utf8),
+              let cards = try? JSONDecoder().decode([String: String].self, from: data)
+        else { return nil }
+        let header = FITSHeader(rawValues: cards)
+        guard let x = header.int("XBINNING") else { return nil }
+        return "\(x)x\(header.int("YBINNING") ?? x)"
     }
 
     /// Forwards to `RatingGroupMath` -- see the `typealias`es above this

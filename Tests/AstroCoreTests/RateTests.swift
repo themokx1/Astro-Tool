@@ -856,6 +856,7 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(decoded.saturatedFraction == nil)
     #expect(decoded.exptime == nil)
     #expect(decoded.sessionSubdir == nil)
+    #expect(decoded.cohort == nil)
     #expect(decoded.fileName == "a.fit")
 }
 
@@ -1450,6 +1451,45 @@ private final class ProgressRecorder: @unchecked Sendable {
     #expect(abs(byPath["sessions/P/2026-02-02/lights/D2_3.fit"]!.score - (-expectedMagnitude)) < 0.0001)
 }
 
+@Test func scoringSeparatesCaptureGroupsWithSameDateAndExposure() throws {
+    let fixture = try RateFixture.make()
+    defer { fixture.cleanup() }
+    _ = try fixture.db.upsertCaptureGroup(
+        CaptureGroupRecord(
+            target: "CG", sessionDate: "2026-01-01", slug: "osc",
+            displayName: "OSC", sensorMode: .osc, signalMode: .broadband
+        )
+    )
+    _ = try fixture.db.upsertCaptureGroup(
+        CaptureGroupRecord(
+            target: "CG", sessionDate: "2026-01-01", slug: "sv220",
+            displayName: "SV220", sensorMode: .osc, signalMode: .dualBand,
+            filterManufacturer: "SVBONY", filterModel: "SV220"
+        )
+    )
+
+    for (slug, values) in [("osc", [10, 20, 30]), ("sv220", [1_000, 1_010, 1_020])] {
+        for (index, value) in values.enumerated() {
+            try fixture.addLightFrame(
+                relativePath: "sessions/CG/2026-01-01/captures/\(slug)/lights/f\(index).fit",
+                target: "CG",
+                pixels: Array(repeating: value, count: 4),
+                width: 2,
+                height: 2,
+                exptime: 60
+            )
+        }
+    }
+
+    let results = try Rater(db: fixture.db, config: fixture.config, provider: nil).rate(target: "CG")
+    let byPath = Dictionary(uniqueKeysWithValues: results.map { ($0.path, $0) })
+    let magnitude = (3.0 / 2.0).squareRoot()
+    #expect(abs(byPath["sessions/CG/2026-01-01/captures/osc/lights/f0.fit"]!.score - magnitude) < 0.0001)
+    #expect(abs(byPath["sessions/CG/2026-01-01/captures/sv220/lights/f0.fit"]!.score - magnitude) < 0.0001)
+    #expect(byPath["sessions/CG/2026-01-01/captures/osc/lights/f0.fit"]?.cohort?.captureSlug == "osc")
+    #expect(byPath["sessions/CG/2026-01-01/captures/sv220/lights/f0.fit"]?.cohort?.resolvedFilter == "SVBONY SV220")
+}
+
 @Test func scoringTreatsFramesWithoutExptimeAsTheirOwnSharedGroup() throws {
     let fixture = try RateFixture.make()
     defer { fixture.cleanup() }
@@ -1809,6 +1849,38 @@ private func buildSyntheticStarFieldFITS(
     let longMedian = try #require(breakdowns["sessions/M1/2026-01-01/lights/a50.fit"]?.entries.first { $0.metric == .fwhm }?.groupMedian)
     #expect(shortMedian == 3, "the 5s group's median must be computed from ONLY the 5s frames")
     #expect(longMedian == 30, "the 50s group's median must be computed from ONLY the 50s frames, not pooled with the 5s group")
+}
+
+@Test func outlierBreakdownUsesTheSameCaptureCohortAsScoring() throws {
+    func frame(_ slug: String, _ name: String, fwhm: Double) -> FrameScore {
+        FrameScore(
+            path: "sessions/M1/2026-01-01/captures/\(slug)/lights/\(name).fit",
+            score: 0,
+            isOutlier: false,
+            metrics: StarMetrics(fwhm: fwhm, roundness: nil, starCount: 0),
+            background: nil,
+            exptime: 60,
+            cohort: RatingCohortDescriptor(
+                sessionDate: "2026-01-01",
+                nominalExposureSeconds: 60,
+                captureSlug: slug
+            )
+        )
+    }
+    let frames = [
+        frame("osc", "a", fwhm: 2), frame("osc", "b", fwhm: 3), frame("osc", "c", fwhm: 4),
+        frame("sv220", "a", fwhm: 20), frame("sv220", "b", fwhm: 30), frame("sv220", "c", fwhm: 40),
+    ]
+
+    let breakdowns = OutlierBreakdown.breakdowns(for: frames)
+    let oscMedian = try #require(
+        breakdowns["sessions/M1/2026-01-01/captures/osc/lights/a.fit"]?.entries.first { $0.metric == .fwhm }?.groupMedian
+    )
+    let nbMedian = try #require(
+        breakdowns["sessions/M1/2026-01-01/captures/sv220/lights/a.fit"]?.entries.first { $0.metric == .fwhm }?.groupMedian
+    )
+    #expect(oscMedian == 3)
+    #expect(nbMedian == 30)
 }
 
 /// A frame that's bad on ONLY one metric (fwhm), with every other metric

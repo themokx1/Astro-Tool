@@ -1,5 +1,48 @@
 import Foundation
 
+/// Absolute quality metrics for one capture group inside a session.
+public struct CaptureQualitySummary: Codable, Sendable, Equatable, Identifiable {
+    public var groupID: Int64?
+    public var slug: String?
+    public var displayName: String
+    public var frameCount: Int
+    public var medianFWHMPixels: Double?
+    public var medianFWHMArcsec: Double?
+    public var pixelScaleArcsec: Double?
+    public var medianBackgroundADU: Double?
+    public var backgroundEPerSecPerArcsec2: Double?
+    public var medianStarCount: Int?
+    public var outlierFraction: Double?
+
+    public var id: String { groupID.map(String.init) ?? "implicit" }
+
+    public init(
+        groupID: Int64? = nil,
+        slug: String? = nil,
+        displayName: String,
+        frameCount: Int,
+        medianFWHMPixels: Double? = nil,
+        medianFWHMArcsec: Double? = nil,
+        pixelScaleArcsec: Double? = nil,
+        medianBackgroundADU: Double? = nil,
+        backgroundEPerSecPerArcsec2: Double? = nil,
+        medianStarCount: Int? = nil,
+        outlierFraction: Double? = nil
+    ) {
+        self.groupID = groupID
+        self.slug = slug
+        self.displayName = displayName
+        self.frameCount = frameCount
+        self.medianFWHMPixels = medianFWHMPixels
+        self.medianFWHMArcsec = medianFWHMArcsec
+        self.pixelScaleArcsec = pixelScaleArcsec
+        self.medianBackgroundADU = medianBackgroundADU
+        self.backgroundEPerSecPerArcsec2 = backgroundEPerSecPerArcsec2
+        self.medianStarCount = medianStarCount
+        self.outlierFraction = outlierFraction
+    }
+}
+
 /// Absolute, cross-setup-comparable quality metrics for one target's session
 /// -- the counterpart to `Rater`'s per-frame z-scores, which are RELATIVE
 /// (they can only say "this frame is worse than its own group tonight") and
@@ -54,6 +97,11 @@ public struct SessionQualitySummary: Codable, Sendable, Equatable {
     /// Total number of sessions `summaries(target:...)` returned for this
     /// target -- lets a caller show "2/6" without a second query.
     public var sessionCountForTarget: Int?
+    /// Per-capture metrics. One implicit row preserves classic sessions.
+    public var captureGroups: [CaptureQualitySummary]
+    /// True when two or more capture populations contributed rated frames;
+    /// in that case aggregate FWHM is intentionally suppressed.
+    public var hasHeterogeneousCaptureGroups: Bool
 
     public init(
         target: String,
@@ -67,7 +115,9 @@ public struct SessionQualitySummary: Codable, Sendable, Equatable {
         medianStarCount: Int? = nil,
         outlierFraction: Double? = nil,
         rankAmongSessions: Int? = nil,
-        sessionCountForTarget: Int? = nil
+        sessionCountForTarget: Int? = nil,
+        captureGroups: [CaptureQualitySummary] = [],
+        hasHeterogeneousCaptureGroups: Bool = false
     ) {
         self.target = target
         self.date = date
@@ -81,6 +131,35 @@ public struct SessionQualitySummary: Codable, Sendable, Equatable {
         self.outlierFraction = outlierFraction
         self.rankAmongSessions = rankAmongSessions
         self.sessionCountForTarget = sessionCountForTarget
+        self.captureGroups = captureGroups
+        self.hasHeterogeneousCaptureGroups = hasHeterogeneousCaptureGroups
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case target, date, frameCount, medianFWHMPixels, medianFWHMArcsec,
+             pixelScaleArcsec, medianBackgroundADU, backgroundEPerSecPerArcsec2,
+             medianStarCount, outlierFraction, rankAmongSessions, sessionCountForTarget,
+             captureGroups, hasHeterogeneousCaptureGroups
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        target = try c.decode(String.self, forKey: .target)
+        date = try c.decode(String.self, forKey: .date)
+        frameCount = try c.decode(Int.self, forKey: .frameCount)
+        medianFWHMPixels = try c.decodeIfPresent(Double.self, forKey: .medianFWHMPixels)
+        medianFWHMArcsec = try c.decodeIfPresent(Double.self, forKey: .medianFWHMArcsec)
+        pixelScaleArcsec = try c.decodeIfPresent(Double.self, forKey: .pixelScaleArcsec)
+        medianBackgroundADU = try c.decodeIfPresent(Double.self, forKey: .medianBackgroundADU)
+        backgroundEPerSecPerArcsec2 = try c.decodeIfPresent(Double.self, forKey: .backgroundEPerSecPerArcsec2)
+        medianStarCount = try c.decodeIfPresent(Int.self, forKey: .medianStarCount)
+        outlierFraction = try c.decodeIfPresent(Double.self, forKey: .outlierFraction)
+        rankAmongSessions = try c.decodeIfPresent(Int.self, forKey: .rankAmongSessions)
+        sessionCountForTarget = try c.decodeIfPresent(Int.self, forKey: .sessionCountForTarget)
+        captureGroups = try c.decodeIfPresent([CaptureQualitySummary].self, forKey: .captureGroups) ?? []
+        hasHeterogeneousCaptureGroups = try c.decodeIfPresent(
+            Bool.self, forKey: .hasHeterogeneousCaptureGroups
+        ) ?? false
     }
 }
 
@@ -112,8 +191,17 @@ public enum SessionQuality {
         guard !sessionFiles.isEmpty else { return [] }
 
         let dates = Set(sessionFiles.compactMap(\.sessionDate)).sorted()
+        let resolver = try CaptureResolver.load(db: db)
         var summaries = try dates.map { date in
-            try computeSummary(target: target, date: date, files: sessionFiles, db: db, config: config)
+            try computeSummary(
+                target: target,
+                date: date,
+                files: sessionFiles,
+                resolver: resolver,
+                captureGroups: db.captureGroups(target: target, date: date),
+                db: db,
+                config: config
+            )
         }
 
         assignRanks(&summaries)
@@ -123,6 +211,9 @@ public enum SessionQuality {
     // MARK: - Per-session computation
 
     private struct FrameMetrics {
+        var groupID: Int64?
+        var slug: String?
+        var displayName: String
         var fwhmPixels: Double?
         var fwhmArcsec: Double?
         var pixelScale: Double?
@@ -144,6 +235,8 @@ public enum SessionQuality {
         target: String,
         date: String,
         files: [FileRecord],
+        resolver: CaptureResolver,
+        captureGroups: [CaptureGroupRecord],
         db: Database,
         config: AstroConfig
     ) throws -> SessionQualitySummary {
@@ -170,7 +263,12 @@ public enum SessionQuality {
         for file in buckets.usable {
             guard let id = file.id, let rating = try db.rating(fileID: id) else { continue }
 
-            var m = FrameMetrics()
+            let resolvedCapture = resolver.resolve(file: file, meta: metaByFileID[id])
+            var m = FrameMetrics(
+                groupID: resolvedCapture.groupID,
+                slug: resolvedCapture.slug,
+                displayName: resolvedCapture.displayName ?? "Nincs gyűjtéshez rendelve"
+            )
             m.fwhmPixels = rating.fwhm
             m.backgroundADU = rating.background
             m.starCount = rating.starCount
@@ -223,16 +321,75 @@ public enum SessionQuality {
             outlierFraction = Double(outliers) / Double(scores.count)
         }
 
+        let groupsByID = Dictionary(uniqueKeysWithValues: captureGroups.compactMap { group in
+            group.id.map { ($0, group) }
+        })
+        let metricsByGroupID = Dictionary(grouping: frameMetrics.filter { $0.groupID != nil }) { $0.groupID! }
+        var captureSummaries: [CaptureQualitySummary] = captureGroups.compactMap { group in
+            guard let id = group.id, let metrics = metricsByGroupID[id], !metrics.isEmpty else { return nil }
+            return captureQualitySummary(
+                groupID: id,
+                slug: group.slug,
+                displayName: group.displayName,
+                metrics: metrics,
+                config: config
+            )
+        }
+        let implicitMetrics = frameMetrics.filter { metrics in
+            guard let id = metrics.groupID else { return true }
+            return groupsByID[id] == nil
+        }
+        if !implicitMetrics.isEmpty {
+            captureSummaries.append(
+                captureQualitySummary(
+                    groupID: nil,
+                    slug: nil,
+                    displayName: "Nincs gyűjtéshez rendelve",
+                    metrics: implicitMetrics,
+                    config: config
+                )
+            )
+        }
+        let heterogeneous = captureSummaries.count > 1
+
         return SessionQualitySummary(
             target: target,
             date: date,
             frameCount: frameMetrics.count,
-            medianFWHMPixels: median(frameMetrics.compactMap(\.fwhmPixels)),
-            medianFWHMArcsec: median(frameMetrics.compactMap(\.fwhmArcsec)),
+            medianFWHMPixels: heterogeneous ? nil : median(frameMetrics.compactMap(\.fwhmPixels)),
+            medianFWHMArcsec: heterogeneous ? nil : median(frameMetrics.compactMap(\.fwhmArcsec)),
             pixelScaleArcsec: median(frameMetrics.compactMap(\.pixelScale)),
             medianBackgroundADU: median(frameMetrics.compactMap(\.backgroundADU)),
             backgroundEPerSecPerArcsec2: median(frameMetrics.compactMap(\.backgroundEPerSecPerArcsec2)),
             medianStarCount: median(frameMetrics.compactMap { $0.starCount.map(Double.init) }).map { Int($0.rounded()) },
+            outlierFraction: outlierFraction,
+            captureGroups: captureSummaries,
+            hasHeterogeneousCaptureGroups: heterogeneous
+        )
+    }
+
+    private static func captureQualitySummary(
+        groupID: Int64?,
+        slug: String?,
+        displayName: String,
+        metrics: [FrameMetrics],
+        config: AstroConfig
+    ) -> CaptureQualitySummary {
+        let scores = metrics.compactMap(\.score)
+        let outlierFraction: Double? = scores.isEmpty ? nil : Double(
+            scores.filter { $0 < -config.rating.outlierZScore }.count
+        ) / Double(scores.count)
+        return CaptureQualitySummary(
+            groupID: groupID,
+            slug: slug,
+            displayName: displayName,
+            frameCount: metrics.count,
+            medianFWHMPixels: median(metrics.compactMap(\.fwhmPixels)),
+            medianFWHMArcsec: median(metrics.compactMap(\.fwhmArcsec)),
+            pixelScaleArcsec: median(metrics.compactMap(\.pixelScale)),
+            medianBackgroundADU: median(metrics.compactMap(\.backgroundADU)),
+            backgroundEPerSecPerArcsec2: median(metrics.compactMap(\.backgroundEPerSecPerArcsec2)),
+            medianStarCount: median(metrics.compactMap { $0.starCount.map(Double.init) }).map { Int($0.rounded()) },
             outlierFraction: outlierFraction
         )
     }
