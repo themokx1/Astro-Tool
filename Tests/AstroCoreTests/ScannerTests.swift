@@ -72,6 +72,26 @@ private struct ScanFixture {
     #expect(try fixture.db.fileID(path: "sessions/M45_Pleiades/2026-01-10/lights/light_0001.fit") != nil)
 }
 
+@Test func scanSkipsDanglingSymbolicLinksInsteadOfIndexingThemAsFrames() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let relativeDirectory = "processed/IC_1396/2026-08-08/work"
+    let directory = fixture.root.appendingPathComponent(relativeDirectory, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let link = directory.appendingPathComponent("stars_aligned_00001.fit")
+    try FileManager.default.createSymbolicLink(
+        atPath: link.path,
+        withDestinationPath: directory.appendingPathComponent("removed-sequence.fit").path
+    )
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    let summary = try scanner.scan(subpath: "processed/IC_1396/2026-08-08")
+
+    #expect(summary.added == 0)
+    #expect(try fixture.db.fileID(path: "\(relativeDirectory)/stars_aligned_00001.fit") == nil)
+}
+
 @Test func secondScanOnUnchangedTreeReportsEverythingUnchanged() throws {
     let fixture = try ScanFixture.make()
     defer { fixture.cleanup() }

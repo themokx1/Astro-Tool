@@ -22,8 +22,10 @@
 
 **Files:**
 - Modify: `Tests/AstroCoreTests/SessionConversionExecutorTests.swift`
+- Modify: `Tests/AstroCoreTests/ScannerTests.swift`
 - Modify: `Sources/AstroCore/Capture/SessionConversionPlanner.swift`
 - Modify: `Sources/AstroCore/Capture/SessionConversionExecutor.swift`
+- Modify: `Sources/AstroCore/Scan/Scanner.swift`
 
 **Interfaces:**
 - Consumes: `LibraryScanner.scan(subpath:refreshMeta:progress:)`, `Database.markMissing(pathsNotIn:underSubpath:)`.
@@ -90,10 +92,17 @@ swift test --disable-sandbox --no-parallel --filter 'SessionConversion'
 
 Expected: the new test and the existing `applyRejectsStaleSourceFingerprint` both PASS.
 
+- [ ] **Step 4a: Align scanner and executor symlink semantics**
+
+Real-library validation revealed four dangling Siril work-tree symlinks: the
+scanner indexed the links' own 586 bytes while the executor fingerprints only
+regular files. Add a failing scanner test, then skip symbolic links during
+directory walking. Keep the existing hard-link inode/nlink behavior unchanged.
+
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -- Tests/AstroCoreTests/SessionConversionExecutorTests.swift Sources/AstroCore/Capture/SessionConversionPlanner.swift Sources/AstroCore/Capture/SessionConversionExecutor.swift
+git add -- Tests/AstroCoreTests/SessionConversionExecutorTests.swift Tests/AstroCoreTests/ScannerTests.swift Sources/AstroCore/Capture/SessionConversionPlanner.swift Sources/AstroCore/Capture/SessionConversionExecutor.swift Sources/AstroCore/Scan/Scanner.swift
 git commit -m "fix: refresh session before conversion planning"
 ```
 

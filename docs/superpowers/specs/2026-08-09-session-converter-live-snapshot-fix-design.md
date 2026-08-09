@@ -7,12 +7,14 @@
 ## Bizonyított gyökérok
 
 Az IC 1396 `2026-08-08` session konverziós terve az SQLite-index 178 aktív
-rekordjából készült, miközben a három érintett fájlrendszerágban már csak 174
-fájl létezett. Négy ideiglenes Siril `stars_aligned` fájl eltűnt, egy további
-feldolgozott FITS módosult a legutóbbi scan után. A tervező elavult DB-
-snapshotot használt, a végrehajtó viszont helyesen az élő fájlrendszert
-ellenőrizte, ezért az alkalmazás a döntések után stale-fingerprint hibával
-leállt.
+rekordjából készült, miközben a végrehajtó csak 174 valódi regular file-t
+látott. A négy, összesen 586 bájtos eltérés törött Siril `stars_aligned` /
+`osc_nb_stars` szimbolikus link volt: a scanner fájlként indexelte magukat a
+linkeket, a végrehajtó helyesen nem tekintette őket session-adatnak. Emellett
+egy valódi feldolgozott FITS módosult a legutóbbi scan után. Vagyis két réteg
+adódott össze: elavult DB-snapshot és eltérő symlink-kezelés. A végrehajtó
+helyesen az élő fájlrendszert ellenőrizte, ezért az alkalmazás a döntések után
+stale-fingerprint hibával leállt.
 
 ## Tervezett működés
 
@@ -30,6 +32,12 @@ Létező ág esetén a meglévő `LibraryScanner.scan(subpath:)` frissíti az ú
 módosult és eltűnt rekordokat, valamint az új képek FITS-metaadatait. Egy
 nem létező opcionális stack/processed ág korábbi rekordjai missing állapotba
 kerülnek. Teljes könyvtárscan nem fut, képfájl nem változik.
+
+A scanner a szimbolikus linkeket nem indexeli sessionfájlként. Ez a Siril
+feldolgozási munkafáiból hátramaradó törött linkeket is kiveszi a fingerprintből,
+és egyező fájlkészletet ad a regular-file-only végrehajtónak. A valódi hard
+linkek továbbra is rendes fájlok: a kalibrációs könyvtár linkelési workflow-ja
+nem változik.
 
 Ezután a terv és a végrehajtó ugyanabból az élő állapotból számol fingerprintet.
 A terv **után** bekövetkező tényleges fájlváltozás továbbra is blokkol: a
@@ -68,6 +76,8 @@ pontos target/date hatókörével.
    utasítani.
 3. Forráskód-szintű app regressziós teszt: minden fő sessionlista beköti a két
    capture-műveletet és a hozzájuk tartozó sheeteket.
-4. Teljes Swift tesztcsomag, debug/release build, DMG és telepített app smoke.
-5. Read-only IC 1396 terv: a fingerprint fileCount/bytes/mtime egyezzen az élő
+4. Scanner regressziós teszt: a dangling symlink ne legyen fájlrekord, a hard
+   linkek meglévő inode/nlink tesztje maradjon zöld.
+5. Teljes Swift tesztcsomag, debug/release build, DMG és telepített app smoke.
+6. Read-only IC 1396 terv: a fingerprint fileCount/bytes/mtime egyezzen az élő
    fájlrendszerrel.
