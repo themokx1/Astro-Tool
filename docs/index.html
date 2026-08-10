@@ -1,224 +1,95 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="hu">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AstroTool — asztrofotó-könyvtár karbantartó</title>
-<meta name="description" content="AstroTool — asztrofotó-könyvtár karbantartó macOS-re: audit (soha nem töröl), minőség-pontozás, kalibrációs hiánylista, expozíció-tanácsadó, session-kezelés.">
-
-<!-- Tab icon -->
-<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
-<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
-<meta name="theme-color" content="#405282">
-
-<!-- Link preview (Open Graph / Twitter) -->
-<meta property="og:type" content="website">
-<meta property="og:title" content="AstroTool">
-<meta property="og:description" content="Asztrofotó-könyvtár karbantartó macOS-re: audit (soha nem töröl), minőség-pontozás, kalibrációs hiánylista, expozíció-tanácsadó, session-kezelés.">
-<meta property="og:url" content="https://themokx1.github.io/Astro-Tool/">
-<meta property="og:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="AstroTool">
-<meta name="twitter:description" content="Asztrofotó-könyvtár karbantartó macOS-re: audit (soha nem töröl), minőség-pontozás, kalibrációs hiánylista, expozíció-tanácsadó, session-kezelés.">
-<meta name="twitter:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
-<style>
-  :root {
-    --bg: #f5f5f7; --card: #ffffff; --text: #1d1d1f; --muted: #6e6e73;
-    --line: #e5e5ea; --accent: #405282; --accent2: #7a2bff; --code-bg: #f0f0f3;
-    --star: transparent;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #06081a; --card: #10142c; --text: #f2f3fb; --muted: #9096b8;
-      --line: #262c4d; --accent: #9fb2e8; --accent2: #c7d3ff; --code-bg: #171b38;
-      --star: #ffffff;
-    }
-  }
-  * { box-sizing: border-box; }
-  html { background: var(--bg); }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    -webkit-font-smoothing: antialiased; display: flex; justify-content: center;
-    padding: 40px 20px 48px; position: relative; overflow-x: hidden;
-  }
-  /* Deterministic-looking star field, dark mode only. */
-  body::before {
-    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-    background-image:
-      radial-gradient(1.6px 1.6px at 8% 12%, var(--star), transparent),
-      radial-gradient(1.2px 1.2px at 22% 38%, var(--star), transparent),
-      radial-gradient(1.8px 1.8px at 34% 8%, var(--star), transparent),
-      radial-gradient(1.2px 1.2px at 47% 52%, var(--star), transparent),
-      radial-gradient(1.5px 1.5px at 63% 22%, var(--star), transparent),
-      radial-gradient(1.1px 1.1px at 78% 44%, var(--star), transparent),
-      radial-gradient(1.7px 1.7px at 89% 15%, var(--star), transparent),
-      radial-gradient(1.3px 1.3px at 12% 70%, var(--star), transparent),
-      radial-gradient(1.6px 1.6px at 29% 86%, var(--star), transparent),
-      radial-gradient(1.1px 1.1px at 55% 78%, var(--star), transparent),
-      radial-gradient(1.4px 1.4px at 71% 92%, var(--star), transparent),
-      radial-gradient(1.2px 1.2px at 94% 68%, var(--star), transparent),
-      radial-gradient(1.5px 1.5px at 5% 95%, var(--star), transparent),
-      radial-gradient(1.3px 1.3px at 85% 88%, var(--star), transparent);
-    opacity: .55;
-  }
-  main { width: 100%; max-width: 720px; position: relative; z-index: 1; }
-  nav.topnav {
-    display: flex; justify-content: center; gap: 4px; flex-wrap: wrap; margin: 0 0 32px;
-  }
-  nav.topnav a {
-    color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 600;
-    padding: 8px 14px; border-radius: 999px; transition: background .12s ease, color .12s ease;
-  }
-  nav.topnav a:hover { background: var(--code-bg); color: var(--text); }
-  nav.topnav a.active { color: var(--text); background: var(--card); border: 1px solid var(--line); }
-  .hero { text-align: center; margin-bottom: 40px; }
-  .icon {
-    width: 132px; height: 132px; border-radius: 29px; margin: 0 auto 20px;
-    display: block; box-shadow: 0 10px 30px rgba(0,0,0,.35);
-  }
-  h1 { font-size: 34px; margin: 0 0 6px; letter-spacing: -.02em; }
-  .tagline { color: var(--muted); font-size: 18px; margin: 0 0 28px; }
-  .download {
-    display: inline-block; text-decoration: none; color: #0b0d1f; font-weight: 700;
-    font-size: 17px; padding: 14px 30px; border-radius: 12px;
-    background: linear-gradient(120deg, var(--accent), var(--accent2));
-    box-shadow: 0 6px 20px rgba(64,82,130,.35); transition: transform .12s ease;
-  }
-  .download:hover { transform: translateY(-1px); }
-  .req { color: var(--muted); font-size: 13px; margin-top: 12px; }
-  .card {
-    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
-    padding: 24px 26px; margin-top: 28px;
-  }
-  .card h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em;
-    color: var(--muted); margin: 0 0 14px; }
-  ol { margin: 0; padding-left: 20px; }
-  li { margin: 9px 0; }
-  code {
-    background: var(--code-bg); border-radius: 6px; padding: 2px 7px;
-    font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all;
-  }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
-  @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } }
-  .feature {
-    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
-    padding: 20px 22px;
-  }
-  .feature h3 { margin: 0 0 8px; font-size: 16px; }
-  .feature p { margin: 0 0 10px; color: var(--text); font-size: 14.5px; }
-  .feature .stat {
-    display: inline-block; font-size: 12.5px; font-weight: 700; color: var(--accent2);
-    background: var(--code-bg); border-radius: 8px; padding: 4px 9px;
-  }
-  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 16px; }
-  .badge {
-    display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px;
-    font-weight: 600; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line);
-  }
-  .badge .swatch { width: 8px; height: 8px; border-radius: 50%; }
-  .badge.sure { color: #ff8a8a; } .badge.sure .swatch { background: #ff5c5c; }
-  .badge.suspicious { color: #ffcf7d; } .badge.suspicious .swatch { background: #ffb545; }
-  .badge.intentional { color: #8fd0a8; } .badge.intentional .swatch { background: #4fbf78; }
-  .warn {
-    background: rgba(255,181,69,.12); border: 1px solid rgba(255,181,69,.3);
-    border-radius: 12px; padding: 14px 16px; font-size: 14px; margin-top: 16px;
-  }
-  .warn strong { color: #ffb545; }
-  .pagelinks { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 8px; }
-  .pagelinks a {
-    text-decoration: none; color: var(--text); font-size: 14px; font-weight: 600;
-    border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; background: var(--card);
-  }
-  footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 36px; }
-  a { color: var(--accent2); }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AstroTool 1.0 — az asztrofotós könyvtárad, érthetően</title>
+  <meta name="description" content="Natív macOS alkalmazás asztrofotós sessionök, minőség, kalibráció, capture-gyűjtések és tervezés átlátható kezeléséhez.">
+  <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/site.css">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="AstroTool 1.0">
+  <meta property="og:description" content="Az asztrofotós könyvtárad, érthetően. Natív, helyi és biztonságos macOS workflow.">
+  <meta property="og:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
 </head>
 <body>
-<main>
-  <nav class="topnav">
-    <a class="active" href="index.html">Kezdőlap</a>
-    <a href="tutorial.html">Tutorial</a>
-    <a href="features.html">Funkciók</a>
-    <a href="cli.html">CLI</a>
-    <a href="https://github.com/themokx1/Astro-Tool/releases/latest">Letöltés</a>
-  </nav>
+  <header class="site-header">
+    <nav class="nav-shell" aria-label="Fő navigáció">
+      <a class="wordmark" href="index.html" aria-current="page"><img src="icon.png" alt="">AstroTool</a>
+      <div class="site-nav">
+        <a href="features.html">Funkciók</a><a href="tutorial.html">Első lépések</a><a href="cli.html">CLI</a><a href="support.html">Támogatás</a>
+        <a class="nav-download" href="https://github.com/themokx1/Astro-Tool/releases/latest">Letöltés</a>
+      </div>
+    </nav>
+  </header>
 
-  <div class="hero">
-    <img class="icon" src="icon.png" alt="AstroTool ikon">
-    <h1>AstroTool</h1>
-    <p class="tagline">Asztrofotó-könyvtár karbantartó — audit, minőség, kalibráció, tervezés — egy helyen.</p>
-    <a class="download" href="https://github.com/themokx1/Astro-Tool/releases/latest">Letöltés macOS-re</a>
-    <div class="req">macOS 14 vagy újabb · Apple Silicon · ingyenes, nyílt forráskódú (MIT)</div>
-  </div>
+  <main>
+    <section class="shell hero">
+      <div>
+        <div class="eyebrow">AstroTool 1.0 macOS-re</div>
+        <h1>A tiszta éjszakáid másnap is érthetők.</h1>
+        <p class="hero-copy">Sessionök, capture-gyűjtések, minőség, kalibráció és tervezés egyetlen nyugodt, natív felületen. A képeid a Maceden maradnak.</p>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/themokx1/Astro-Tool/releases/latest">AstroTool letöltése</a>
+          <a class="button" href="tutorial.html">Így működik</a>
+        </div>
+        <div class="requirements">macOS 14 vagy újabb · Apple Silicon és Intel · Universal · MIT licenc</div>
+      </div>
 
-  <div class="card">
-    <h2>Mit tud</h2>
-    <div class="grid">
-      <div class="feature">
-        <h3>📊 Valós statisztika</h3>
-        <p>Célpontonkénti integrációs idő a <strong>ténylegesen felhasználható</strong> (deduplikált, kihagyott session-öket nem számoló) keretekből — nem a nyers fájlszámból.</p>
-        <span class="stat">egy valós projektben: 42,5 h-ból 28 h volt a valódi integráció</span>
+      <div class="product-window" aria-label="Az AstroTool szintetikus, adatmentes előnézete">
+        <div class="window-bar"><span class="traffic"></span><span class="window-title">AstroTool</span></div>
+        <div class="window-body">
+          <aside class="demo-sidebar">
+            <div class="demo-search"></div>
+            <div class="demo-nav">Ma este</div><div class="demo-nav">Naptár</div><div class="demo-nav active">Minden célpont</div>
+            <div class="demo-label">ÁLLAPOT</div><div class="demo-nav">Kalibráció</div><div class="demo-nav">Audit</div><div class="demo-nav">Trendek</div>
+            <div class="demo-label">ESZKÖZÖK</div><div class="demo-nav">Szenzor-profilok</div>
+          </aside>
+          <div class="demo-content">
+            <div class="demo-heading"><strong>Minden célpont</strong><span class="demo-pill">Frissítve most</span></div>
+            <div class="demo-metrics">
+              <div class="demo-metric"><small>Célpontok</small><b>12</b></div><div class="demo-metric"><small>Integráció</small><b>28:40</b></div>
+              <div class="demo-metric"><small>Sessionök</small><b>19</b></div><div class="demo-metric"><small>Következő</small><b>3,2 h</b></div>
+            </div>
+            <div class="demo-section">PROJEKTEK</div>
+            <div class="demo-row"><strong>IC 1396 · Elefántormány-köd</strong><span>4:12</span><span>3 gyűjtés</span><span class="status">gyűjtés</span></div>
+            <div class="demo-row"><strong>M 31 · Androméda-galaxis</strong><span>6:35</span><span>2 session</span><span class="status">kész</span></div>
+            <div class="demo-row"><strong>NGC 7000 · Észak-Amerika-köd</strong><span>3:48</span><span>4 session</span><span class="status">gyűjtés</span></div>
+            <div class="demo-chart"></div>
+          </div>
+        </div>
       </div>
-      <div class="feature">
-        <h3>🔍 Audit</h3>
-        <p>Végigpásztázza a könyvtárat, három súlyossági szintbe sorolja a talált problémákat, de <strong>soha nem töröl vagy mozgat</strong> — csak jelöl és javasol.</p>
-        <span class="stat">egy valós könyvtárban: ~167 GB felszabadítható maradványt talált</span>
-      </div>
-      <div class="feature">
-        <h3>🗓️ Tervező</h3>
-        <p>Ma esti célpont-rangsor (kulmináció, max magasság, Hold-zavarás) és 30 éjszakás havi naptár, minden éjszaka top 3 célpontjával.</p>
-        <span class="stat">pl. egy jó éjszakán: M31 (5,8 h), NGC7000 (4,1 h)</span>
-      </div>
-      <div class="feature">
-        <h3>⏱️ Expozíció-tanácsadó</h3>
-        <p>A mért szenzor-zajból és a mért per-Bayer égháttérből számolja ki az ideális sub-hosszt — nem találgatja.</p>
-        <span class="stat">1,30 e⁻ mért leolvasási zaj alapján számolt ajánlás</span>
-      </div>
-      <div class="feature">
-        <h3>🛡️ Kalibráció-őr</h3>
-        <p>Dark/flat/bias lefedettség-hiánylista pontos (kamera, gain, offset, hőmérséklet) egyezéssel — sosem tippel hamis egyezést.</p>
-        <span class="stat">±1 °C tűrés, 12 hónapnál régebbi dark automatikusan elévül</span>
-      </div>
-      <div class="feature">
-        <h3>📄 Éjszaka-riport</h3>
-        <p>Egyetlen önmagában megnyitható HTML fájlba: idővonal, minőség, magasság &amp; Hold, kalibráció-státusz, teendők.</p>
-        <span class="stat">nincs szükség internetre vagy külön appra a megnyitáshoz</span>
-      </div>
-    </div>
-    <div class="badges" style="margin-top:20px">
-      <span class="badge sure"><span class="swatch"></span>Biztos hiba</span>
-      <span class="badge suspicious"><span class="swatch"></span>Gyanús</span>
-      <span class="badge intentional"><span class="swatch"></span>Szándékos</span>
-    </div>
-  </div>
+    </section>
 
-  <div class="card">
-    <h2>Telepítés</h2>
-    <ol>
-      <li>Nyisd meg az <code>AstroTool.dmg</code>-t és húzd az <strong>AstroTool.app</strong>-ot az <strong>Applications</strong> mappára.</li>
-      <li>Első indításkor: jobbklikk az app ikonján → <strong>Megnyitás</strong> → <strong>Megnyitás</strong> (mert az app nincs notarizálva).</li>
-      <li>Válaszd ki a képkönyvtárat az appban, és kezdd az audittal.</li>
-    </ol>
-    <p class="req">CLI-telepítés (a release zip-ből): <code>curl -L https://github.com/themokx1/Astro-Tool/releases/latest/download/astrotool.zip -o astrotool.zip &amp;&amp; unzip astrotool.zip &amp;&amp; mv astrotool ~/.local/bin/</code></p>
-    <div class="warn"><strong>Teljes lemez-hozzáférés:</strong> ha a képkönyvtár egy külső köteten van, a Rendszerbeállítások → Adatvédelem és biztonság → Teljes lemezhozzáférés alatt engedélyezd az appnak (és a terminálnak, ha a CLI-t onnan futtatod), majd indítsd újra.</div>
-  </div>
+    <section class="section tint">
+      <div class="shell">
+        <div class="section-head"><div class="eyebrow">Egy munkafolyamat</div><h2>Az éjszakától a kész képig.</h2><p class="section-lead">Az AstroTool nem újabb feldolgozóprogram. A teljes asztrofotós könyvtár szervező és döntéstámogató rétege.</p></div>
+        <div class="bento">
+          <article class="feature-card wide"><div class="feature-icon">01</div><h3>Egy session, több valódi gyűjtés</h3><p>Az azonos célpont és dátum alatt külön maradhat az OSC, dual-band, keskenysáv, eltérő expozíció vagy másik setup. Mindegyik saját minőséget, kalibrációt, stacket és feldolgozást kap.</p><div class="mini-flow"><span>Session</span><i>→</i><span>OSC 30 s</span><span>Dual-band 120 s</span><span>Dual-band 300 s</span></div></article>
+          <article class="feature-card"><div class="feature-icon">02</div><h3>Minőség, ami összehasonlítható</h3><p>FWHM, háttér, kerekség, csillagszám és kiugró keretek capture-önként — mert a szélessáv és a keskenysáv nem ugyanaz a mérce.</p></article>
+          <article class="feature-card"><div class="feature-icon">03</div><h3>Tervezés valódi setupra</h3><p>A látómező szenzorméretből és fókusztávból számolódik. A túl kicsi célpont hátrébb kerül, nem csak egy „befér” címkét kap.</p></article>
+          <article class="feature-card"><div class="feature-icon">04</div><h3>Kalibráció emlékezetből</h3><p>Az app megmutatja, mely dark, flat és bias illik a kamerához, gainhez, hőmérséklethez, rotátorszöghöz és gyűjtéshez.</p></article>
+          <article class="feature-card wide"><div class="feature-icon">05</div><h3>Konverzió meglepetés nélkül</h3><p>Egyetlen sessiont választasz. Előbb pontosan látod a jelenlegi forrásokat, a javasolt gyűjtéseket és minden műveletet. A logikai mód nem mozgat fájlt; a fizikai rendezés külön döntés és visszavonható.</p></article>
+        </div>
+      </div>
+    </section>
 
-  <div class="card">
-    <h2>Merülj bele</h2>
-    <p style="margin:0 0 14px;color:var(--muted);font-size:14.5px;">Új vagy az eszközzel? Kezdd a tutorialnál — a könyvtár-felépítéstől egy teljes éjszaka munkafolyamatáig.</p>
-    <div class="pagelinks">
-      <a href="tutorial.html">📖 Tutorial — a lényeg egy oldalon</a>
-      <a href="features.html">🧩 Teljes funkciólista</a>
-      <a href="cli.html">⌨️ CLI-referencia</a>
-    </div>
-  </div>
+    <section class="section">
+      <div class="shell privacy-block">
+        <div><div class="eyebrow">Local by design</div><h2>A könyvtárad nem egy felhőszolgáltatás.</h2><p class="section-lead">Az audit, katalógus, elemzések, pontozások és jegyzetek helyben futnak. Az időjárás alapból ki van kapcsolva, és külön engedélyezhető.</p><ul class="check-list"><li>Az audit nem töröl és nem mozgat</li><li>Az archívum és a fizikai konverzió előnézetes, megerősített és visszaállítható</li><li>A támogatási diagnosztika nem tartalmaz útvonalat, fájlnevet, célpontot vagy koordinátát</li></ul><div class="actions"><a class="button" href="privacy.html">Adatvédelem részletesen</a></div></div>
+        <div class="privacy-mark" aria-hidden="true">⌾</div>
+      </div>
+    </section>
 
-  <footer>
-    MIT licenc · <a href="https://github.com/themokx1/Astro-Tool">forráskód a GitHubon</a>
-  </footer>
-</main>
+    <section class="section tint compact">
+      <div class="shell"><div class="section-head"><div class="eyebrow">Kezdés</div><h2>Három lépés. A részletek ráérnek.</h2></div><ol class="steps"><li><strong>Töltsd le és húzd az Applications mappába.</strong><br>A Universal DMG Apple Silicon és Intel Macen is fut.</li><li><strong>Válaszd ki a képkönyvtárad.</strong><br>Az AstroTool csak az általad kiválasztott mappához kér hozzáférést.</li><li><strong>Indítsd el az első beolvasást.</strong><br>A személyre szabó oldalak kihagyhatók és később bármikor visszahívhatók.</li></ol><div class="actions"><a class="button primary" href="https://github.com/themokx1/Astro-Tool/releases/latest">Legújabb kiadás</a><a class="button" href="tutorial.html">Első lépések</a></div></div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="footer-shell"><span>© <span data-year>2026</span> AstroTool contributors · MIT</span><span class="footer-links"><a href="features.html">Funkciók</a><a href="privacy.html">Adatvédelem</a><a href="support.html">Támogatás</a><a href="https://github.com/themokx1/Astro-Tool">GitHub</a></span></div></footer>
+  <script src="assets/site.js"></script>
 </body>
 </html>
