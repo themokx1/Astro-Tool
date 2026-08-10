@@ -651,7 +651,7 @@ public enum TargetReport {
         formatter.timeZone = TimeZone.current
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
         let generated = formatter.string(from: Date())
-        return "<footer class=\"report-footer\">Generálva: \(escapeHTML(generated)) · astrotool 0.16.0</footer>\n"
+        return "<footer class=\"report-footer\">Generálva: \(escapeHTML(generated)) · astrotool \(ProductInfo.version)</footer>\n"
     }
 
     // MARK: - Small shared helpers

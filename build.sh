@@ -14,9 +14,21 @@ APP_EXECUTABLE_TARGET="AstroToolApp"  # SwiftPM product name, distinct from
                                       # "$BIN_PATH/AstroTool" would otherwise
                                       # silently resolve to the CLI binary
                                       # "astrotool" (same file, different case).
-BUNDLE_ID="com.zoltanpalotai.astrotool"
-SHORT_VERSION="0.16.0"
-BUILD_VERSION="1"
+PRODUCT_INFO_SOURCE="Sources/AstroCore/Product/ProductInfo.swift"
+
+read_product_value() {
+    local key="$1"
+    sed -n "s/^[[:space:]]*public static let ${key} = \"\([^\"]*\)\"[[:space:]]*$/\\1/p" "$PRODUCT_INFO_SOURCE"
+}
+
+BUNDLE_ID="$(read_product_value bundleIdentifier)"
+SHORT_VERSION="$(read_product_value version)"
+BUILD_VERSION="$(read_product_value build)"
+
+if [ -z "$BUNDLE_ID" ] || [ -z "$SHORT_VERSION" ] || [ -z "$BUILD_VERSION" ]; then
+    echo "ERROR: Could not read product identity from $PRODUCT_INFO_SOURCE" >&2
+    exit 1
+fi
 
 BUILD="build"
 APP="$BUILD/$APP_NAME.app"
