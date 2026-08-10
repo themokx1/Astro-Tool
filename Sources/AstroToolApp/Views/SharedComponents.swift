@@ -103,19 +103,20 @@ struct StatTile: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value)
-                .font(compact ? .title3 : .title2)
-                .bold()
-                .foregroundStyle(color ?? .primary)
-            if let caption {
-                Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        ProductCard(padding: compact ? ProductMetrics.compact : ProductMetrics.standard) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.caption).foregroundStyle(.secondary)
+                Text(value)
+                    .font(compact ? .title3 : .title2)
+                    .bold()
+                    .foregroundStyle(color ?? .primary)
+                if let caption {
+                    Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(backgroundTintColor.opacity(tintsBackground ? (compact ? 0.035 : 0.05) : 0))
         }
-        .padding(compact ? 10 : 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(backgroundTintColor.opacity(compact ? 0.08 : 0.12)))
     }
 }
 

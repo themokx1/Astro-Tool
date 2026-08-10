@@ -77,6 +77,44 @@ enum Page: Hashable {
     case searchResults
 }
 
+extension Page {
+    var persistentIdentifier: String {
+        switch self {
+        case .tonight: "tonight"
+        case .calendar: "calendar"
+        case .discover: "discover"
+        case .previousNight: "previousNight"
+        case .allTargets, .target: "allTargets"
+        case .nights: "nights"
+        case .calibration: "calibration"
+        case .audit: "audit"
+        case .cleanup: "cleanup"
+        case .trends: "trends"
+        case .sensor: "sensor"
+        case .filters: "filters"
+        case .searchResults: "allTargets"
+        }
+    }
+
+    init?(persistentIdentifier: String) {
+        switch persistentIdentifier {
+        case "tonight": self = .tonight
+        case "calendar": self = .calendar
+        case "discover": self = .discover
+        case "previousNight": self = .previousNight
+        case "allTargets": self = .allTargets
+        case "nights": self = .nights
+        case "calibration": self = .calibration
+        case "audit": self = .audit
+        case "cleanup": self = .cleanup
+        case "trends": self = .trends
+        case "sensor": self = .sensor
+        case "filters": self = .filters
+        default: return nil
+        }
+    }
+}
+
 /// The resolved manual-setup or WCS-fallback FOV, wrapped for
 /// `@Observable`/SwiftUI `Equatable` diffing -- the core layer's plain
 /// `(widthDeg: Double, heightDeg: Double)` tuple can't itself be compared
@@ -176,6 +214,8 @@ final class AppState: @unchecked Sendable {
     private static let discoveryFocalLengthsBySetupKey = "discoveryFocalLengthsBySetup"
     private static let onboardingCompletedVersionKey = "onboardingCompletedVersion"
     private static let legacyPreferencesMigratedKey = "legacyPreferencesMigratedV1"
+    private static let lastPageKey = "lastPage"
+    private static let lastSettingsTabKey = "lastSettingsTab"
 
     @ObservationIgnored
     private let preferences: UserDefaults
@@ -201,7 +241,9 @@ final class AppState: @unchecked Sendable {
 
     /// The navigation shell's current page (R9-T1) -- drives both the
     /// sidebar's selection highlight and which detail view is shown.
-    var currentPage: Page = .tonight
+    var currentPage: Page = .tonight {
+        didSet { preferences.set(currentPage.persistentIdentifier, forKey: Self.lastPageKey) }
+    }
 
     /// One entry per completed background operation (B15 activity log),
     /// newest first, capped at 50 -- appended from `endOperation` (see its
@@ -635,15 +677,22 @@ final class AppState: @unchecked Sendable {
     /// page's "Helyszín" tile (which preselects `.location` before opening
     /// the Settings window) so that click actually lands on the tab it
     /// promises, not just Settings in general.
-    enum SettingsTab: Hashable {
+    enum SettingsTab: String, CaseIterable, Hashable, Identifiable {
+        case general
         case library
         case location
         case equipment
+        case filters
         case calibration
         case rating
         case libraryRules
+        case support
+
+        var id: String { rawValue }
     }
-    var settingsTab: SettingsTab = .library
+    var settingsTab: SettingsTab = .general {
+        didSet { preferences.set(settingsTab.rawValue, forKey: Self.lastSettingsTabKey) }
+    }
     /// Incrementing this requests a user-initiated re-run even when the
     /// current onboarding version was already completed.
     var onboardingPresentationNonce: Int = 0
@@ -1236,8 +1285,22 @@ final class AppState: @unchecked Sendable {
            let decoded = try? JSONDecoder().decode([String: Double].self, from: data) {
             discoveryFocalLengthsBySetup = decoded
         }
+        restoreNavigationPreferences()
         loadRecentRoots()
         AppState.shared = self
+    }
+
+    private func restoreNavigationPreferences() {
+        if let rawPage = preferences.string(forKey: Self.lastPageKey),
+           let restored = Page(persistentIdentifier: rawPage)
+        {
+            currentPage = restored
+        }
+        if let rawSettingsTab = preferences.string(forKey: Self.lastSettingsTabKey),
+           let restored = SettingsTab(rawValue: rawSettingsTab)
+        {
+            settingsTab = restored
+        }
     }
 
     private static func defaultPreferences() -> UserDefaults {
@@ -1260,6 +1323,8 @@ final class AppState: @unchecked Sendable {
             selectedImagingSetupIDKey,
             discoveryFocalLengthsBySetupKey,
             onboardingCompletedVersionKey,
+            lastPageKey,
+            lastSettingsTabKey,
         ]
         PreferenceMigration.migratePersistentDomain(
             named: ProductInfo.legacyBundleIdentifier,

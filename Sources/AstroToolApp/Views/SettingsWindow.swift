@@ -1,41 +1,138 @@
+import AstroCore
 import SwiftUI
 
-/// The `Settings { }` scene's content (R9-T1 spec: Beállítások moves out of
-/// the sidebar/tabs into the standard macOS Settings window, ⌘,). R9-T4/B10
-/// adds the "Helyszín" tab now (additively, ahead of T5's full per-spec
-/// rebuild of the other four A.7 tabs) because the Ma este page's "Helyszín"
-/// tile needs somewhere concrete to send its click to. `AppState.
-/// settingsTab` is the router -- same "AppState property preselects,
-/// `.tag`-based `TabView`/`List` selection reads it" pattern `currentPage`/
-/// `auditSegment` already use, needed here because a `Button` on another
-/// page (the "Helyszín" tile) has to land on a SPECIFIC tab of a scene that
-/// opens fresh each time, not just "Settings in general".
+/// A scalable macOS Settings window. The sidebar keeps seven product areas
+/// understandable without compressing them into a toolbar-sized tab strip;
+/// existing deep links continue to route through `AppState.settingsTab`.
 struct SettingsWindow: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
         @Bindable var appState = appState
 
-        TabView(selection: $appState.settingsTab) {
-            LibrarySettingsView()
-                .tabItem { Text("Könyvtár") }
-                .tag(AppState.SettingsTab.library)
-            LocationSettingsView()
-                .tabItem { Text("Helyszín") }
-                .tag(AppState.SettingsTab.location)
-            EquipmentSettingsView()
-                .tabItem { Text("Felszerelés") }
-                .tag(AppState.SettingsTab.equipment)
-            CalibrationSettingsView()
-                .tabItem { Text("Kalibráció") }
-                .tag(AppState.SettingsTab.calibration)
-            RatingSettingsView()
-                .tabItem { Text("Pontozás & expozíció") }
-                .tag(AppState.SettingsTab.rating)
-            LibraryRulesSettingsView()
-                .tabItem { Text("Könyvtár-szabályok") }
-                .tag(AppState.SettingsTab.libraryRules)
+        NavigationSplitView {
+            List(selection: $appState.settingsTab) {
+                Section {
+                    settingsRow("Általános", symbol: "gearshape", tab: .general)
+                }
+                Section("KÖNYVTÁR") {
+                    settingsRow("Könyvtár", symbol: "externaldrive", tab: .library)
+                    settingsRow("Könyvtár-szabályok", symbol: "line.3.horizontal.decrease.circle", tab: .libraryRules)
+                }
+                Section("MEGFIGYELÉS") {
+                    settingsRow("Helyszínek", symbol: "location", tab: .location)
+                    settingsRow("Felszerelések", symbol: "camera.aperture", tab: .equipment)
+                    settingsRow("Szűrők", symbol: "camera.filters", tab: .filters)
+                    settingsRow("Minőség", symbol: "waveform.path.ecg", tab: .rating)
+                    settingsRow("Kalibráció", symbol: "thermometer", tab: .calibration)
+                }
+                Section("SEGÍTSÉG") {
+                    settingsRow("Adatvédelem és támogatás", symbol: "lock.shield", tab: .support)
+                }
+            }
+            .navigationTitle("Beállítások")
+            .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 280)
+        } detail: {
+            VStack(spacing: 0) {
+                ProductSectionHeader(title: title(for: appState.settingsTab), detail: detail(for: appState.settingsTab))
+                    .padding(.horizontal, ProductMetrics.spacious)
+                    .padding(.vertical, ProductMetrics.section)
+                Divider()
+                settingsDetail(appState.settingsTab)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(width: 700, height: 610)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 900, minHeight: 640)
+    }
+
+    private func settingsRow(_ title: String, symbol: String, tab: AppState.SettingsTab) -> some View {
+        Label(title, systemImage: symbol).tag(tab)
+    }
+
+    @ViewBuilder
+    private func settingsDetail(_ tab: AppState.SettingsTab) -> some View {
+        switch tab {
+        case .general: GeneralSettingsView()
+        case .library: LibrarySettingsView()
+        case .location: LocationSettingsView()
+        case .equipment: EquipmentSettingsView()
+        case .filters: FilterProfilesPage()
+        case .calibration: CalibrationSettingsView()
+        case .rating: RatingSettingsView()
+        case .libraryRules: LibraryRulesSettingsView()
+        case .support: SupportSettingsPlaceholder()
+        }
+    }
+
+    private func title(for tab: AppState.SettingsTab) -> String {
+        switch tab {
+        case .general: "Általános"
+        case .library: "Könyvtár"
+        case .location: "Helyszínek"
+        case .equipment: "Felszerelések"
+        case .filters: "Szűrők"
+        case .calibration: "Kalibráció"
+        case .rating: "Minőség és expozíció"
+        case .libraryRules: "Könyvtár-szabályok"
+        case .support: "Adatvédelem és támogatás"
+        }
+    }
+
+    private func detail(for tab: AppState.SettingsTab) -> String? {
+        switch tab {
+        case .general: "Az AstroTool alapvető működése és első lépései."
+        case .library: "Könyvtárváltás, kizárások és exportkapcsolatok."
+        case .location: "Tervezési helyszínek és opcionális időjárás."
+        case .equipment: "Kamerák, szenzorok és optikák a látómezőhöz."
+        case .filters: "Újrahasználható szűrőtár minden capture-höz."
+        case .calibration: "Dark, flat és egyéb illesztési szabályok."
+        case .rating: "Keretpontozás, Siril és expozíciós küszöbök."
+        case .libraryRules: "Felismerési és munkafolyamat-konvenciók."
+        case .support: "Helyi adatkezelés, verzió és biztonságos diagnosztika."
+        }
+    }
+}
+
+private struct GeneralSettingsView: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        Form {
+            Section("AstroTool") {
+                LabeledContent("Verzió", value: ProductInfo.displayVersion)
+                LabeledContent("Könyvtár", value: appState.config.rootPath.isEmpty ? "Nincs kiválasztva" : appState.config.rootPath)
+                Button("Képkönyvtár kiválasztása…") { appState.chooseRoot() }
+            }
+            Section("Indulás") {
+                Toggle("Automatikus beolvasás kötet csatlakozásakor", isOn: Binding(
+                    get: { appState.autoScanOnMount },
+                    set: { appState.autoScanOnMount = $0 }
+                ))
+                Button("Részletes személyre szabás…") { appState.requestOnboarding() }
+                Text("A részletes beállítás minden oldala kihagyható, és nem hoz létre minta-felszerelést.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// Replaced by the redacted export surface in the following implementation
+/// task; this is already truthful and contains no non-working upload action.
+private struct SupportSettingsPlaceholder: View {
+    var body: some View {
+        Form {
+            Section("Helyi adatkezelés") {
+                Label("A képek, katalógus és elemzések a Macen maradnak.", systemImage: "internaldrive")
+                Label("Az időjárás csak külön bekapcsolás után használ hálózatot.", systemImage: "cloud")
+            }
+            Section("Alkalmazás") {
+                LabeledContent("Verzió", value: ProductInfo.displayVersion)
+                Link("Dokumentáció megnyitása", destination: URL(string: ProductInfo.documentationURL)!)
+            }
+        }
+        .formStyle(.grouped)
     }
 }

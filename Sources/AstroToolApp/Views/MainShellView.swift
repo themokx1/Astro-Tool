@@ -13,6 +13,7 @@ struct MainShellView: View {
         } detail: {
             DetailContainerView()
         }
+        .navigationSplitViewStyle(.balanced)
         // Toggled by "Oldalsáv" (⌃⌘S, `Views/Commands.swift`).
         .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
             sidebarVisibility = sidebarVisibility == .detailOnly ? .all : .detailOnly
