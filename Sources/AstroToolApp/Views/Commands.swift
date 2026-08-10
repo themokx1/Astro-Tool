@@ -1,4 +1,5 @@
 import AppKit
+import AstroCore
 import SwiftUI
 
 extension Notification.Name {
@@ -29,8 +30,8 @@ extension Notification.Name {
     static let showFirstSteps = Notification.Name("AstroTool.showFirstSteps")
 }
 
-private let tutorialURL = URL(string: "https://themokx1.github.io/Astro-Tool/tutorial.html")!
-private let cliReferenceURL = URL(string: "https://themokx1.github.io/Astro-Tool/cli.html")!
+private let tutorialURL = URL(string: ProductInfo.documentationURL)!
+private let cliReferenceURL = URL(string: ProductInfo.cliDocumentationURL)!
 
 /// The app's menu bar (R9-T1, spec A.8). Commands run outside the normal
 /// view hierarchy, so they can't use `@Environment(AppState.self)` --
@@ -243,6 +244,16 @@ struct AstroToolCommands: Commands {
             }
             Button("Tutorial") { NSWorkspace.shared.open(tutorialURL) }
             Button("CLI-referencia") { NSWorkspace.shared.open(cliReferenceURL) }
+            Divider()
+            Button("Diagnosztika másolása") {
+                AppState.shared?.copySupportDiagnostics()
+            }
+            Button("Adatvédelem") {
+                NSWorkspace.shared.open(URL(string: ProductInfo.privacyURL)!)
+            }
+            Button("Támogatás") {
+                NSWorkspace.shared.open(URL(string: ProductInfo.supportURL)!)
+            }
         }
     }
 }

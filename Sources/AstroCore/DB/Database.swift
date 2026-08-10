@@ -557,6 +557,10 @@ extension SearchResults: Encodable {
 /// concurrent statement execution. Marked `@unchecked Sendable` because the
 /// compiler cannot see through the lock to verify this.
 public final class Database: @unchecked Sendable {
+    /// Exposed only as release/support metadata. It never identifies a
+    /// user's library and lets diagnostics avoid duplicating a magic number.
+    public static let currentSchemaVersion = 12
+
     // Internal (not private) so tests in this module can verify migration
     // and DAO behavior directly against the underlying connection via
     // `@testable import`.

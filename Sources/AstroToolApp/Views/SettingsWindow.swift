@@ -61,7 +61,7 @@ struct SettingsWindow: View {
         case .calibration: CalibrationSettingsView()
         case .rating: RatingSettingsView()
         case .libraryRules: LibraryRulesSettingsView()
-        case .support: SupportSettingsPlaceholder()
+        case .support: SupportSettingsView()
         }
     }
 
@@ -113,24 +113,6 @@ private struct GeneralSettingsView: View {
                 Text("A részletes beállítás minden oldala kihagyható, és nem hoz létre minta-felszerelést.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-}
-
-/// Replaced by the redacted export surface in the following implementation
-/// task; this is already truthful and contains no non-working upload action.
-private struct SupportSettingsPlaceholder: View {
-    var body: some View {
-        Form {
-            Section("Helyi adatkezelés") {
-                Label("A képek, katalógus és elemzések a Macen maradnak.", systemImage: "internaldrive")
-                Label("Az időjárás csak külön bekapcsolás után használ hálózatot.", systemImage: "cloud")
-            }
-            Section("Alkalmazás") {
-                LabeledContent("Verzió", value: ProductInfo.displayVersion)
-                Link("Dokumentáció megnyitása", destination: URL(string: ProductInfo.documentationURL)!)
             }
         }
         .formStyle(.grouped)
