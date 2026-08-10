@@ -77,29 +77,50 @@ private let budapest = SiteRule(latitudeDeg: 47.5, longitudeDeg: 19.0)
     #expect(designations == ["M 42", "NGC 7000"])
 }
 
-// MARK: - FOV fit labels: small vs. huge object against a 2x1.3 deg FOV
+// MARK: - FOV composition: visible is not automatically photographically useful
 
 @Test func fovFitLabelsDiscriminateASmallObjectFromAHugeOneAgainstTheSameFOV() throws {
     let rows = DiscoveryPlanner.discover(date: utc(2026, 8, 4), site: budapest, setupFOVDeg: (width: 2.0, height: 1.3))
 
-    // M 57 (Ring Nebula, ~3.8' major axis) sits comfortably inside a
-    // 2x1.3 deg (120' x 78') frame; M 31 (Andromeda, ~190' major axis) is
-    // bigger than even the LONG side of that same frame, so the two real
-    // objects land on clearly different labels.
+    // M 57 (Ring Nebula, ~3.8' major axis) technically fits, but fills under
+    // 5% of the short edge and is therefore a speck in this composition.
+    // M 31 is bigger than even the long edge and needs a mosaic.
     let m57 = try #require(rows.first { $0.target.designation == "M 57" })
     let m31 = try #require(rows.first { $0.target.designation == "M 31" })
-    #expect(m57.fovFitLabel == "befér", "M57 size=\(m57.target.sizeArcmin ?? -1)")
+    #expect(m57.fovFitLabel == "nagyon kicsi a képmezőben", "M57 size=\(m57.target.sizeArcmin ?? -1)")
     #expect(m31.fovFitLabel == "mozaik kellene", "M31 size=\(m31.target.sizeArcmin ?? -1)")
 }
 
 @Test func fovFitLabelFlagsAnObjectTooSmallForTheFrame() {
-    // The third label needs an object under 3% of the frame's SHORT
-    // dimension (78' x 3% = 2.34') -- no Messier object is quite that tiny
-    // against this particular FOV, so this exercises the (internal, same-
-    // module) helper directly with a synthetic size rather than hunting for
-    // a real catalog entry small enough.
+    // Even a technically visible 1' target is not a useful composition in a
+    // 78'-high frame and must be demoted, not advertised as merely fitting.
     let label = DiscoveryPlanner.fovFitLabel(sizeArcmin: 1.0, setupFOVDeg: (width: 2.0, height: 1.3))
-    #expect(label == "túl kicsi a képmezőhöz")
+    #expect(label == "nagyon kicsi a képmezőben")
+}
+
+@Test func apscAtTwoHundredMillimetersStronglyDemotesBarelyVisibleTargets() throws {
+    let fov = (width: 6.7, height: 4.5)
+    let tiny = try #require(DiscoveryPlanner.fovComposition(sizeArcmin: 16, setupFOVDeg: fov))
+    let useful = try #require(DiscoveryPlanner.fovComposition(sizeArcmin: 190, setupFOVDeg: fov))
+
+    #expect(abs(tiny.shortEdgeFillFraction - (16.0 / 270.0)) < 0.001)
+    #expect(tiny.label == "nagyon kicsi a képmezőben")
+    #expect(tiny.scoreFactor < 0.25)
+    #expect(useful.label == "jó kitöltés")
+    #expect(useful.scoreFactor > 0.85)
+}
+
+@Test func discoveryOverallScoreIncludesCompositionWhenFOVIsKnown() throws {
+    let rows = DiscoveryPlanner.discover(
+        date: utc(2026, 8, 4), site: budapest,
+        setupFOVDeg: (width: 6.7, height: 4.5)
+    )
+    let m2 = try #require(rows.first { $0.target.designation == "M 2" })
+    let m31 = try #require(rows.first { $0.target.designation == "M 31" })
+
+    #expect((m2.compositionScoreFactor ?? 1) < 0.25)
+    #expect((m31.compositionScoreFactor ?? 0) > 0.85)
+    #expect(m2.score < m31.score)
 }
 
 @Test func fovFitLabelIsNilWithoutAKnownSizeOrAKnownFOV() {
@@ -110,6 +131,7 @@ private let budapest = SiteRule(latitudeDeg: 47.5, longitudeDeg: 19.0)
 @Test func discoverLeavesFovFitLabelNilForEveryRowWhenNoSetupFOVIsSupplied() {
     let rows = DiscoveryPlanner.discover(date: utc(2026, 12, 15), site: budapest)
     #expect(rows.allSatisfy { $0.fovFitLabel == nil })
+    #expect(rows.allSatisfy { $0.compositionScoreFactor == nil })
 }
 
 // MARK: - Moon interference verdict shape matches Planner's vocabulary

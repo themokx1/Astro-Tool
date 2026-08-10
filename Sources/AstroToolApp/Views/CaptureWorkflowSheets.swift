@@ -16,11 +16,7 @@ enum CaptureVisuals {
     }
 
     static func filterLabel(_ metadata: ResolvedCaptureMetadata?) -> String? {
-        guard let metadata else { return nil }
-        let makeModel = [metadata.filterManufacturer, metadata.filterModel]
-            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " ")
-        if !makeModel.isEmpty { return makeModel }
-        return metadata.filterName
+        metadata?.filterLabel
     }
 }
 
@@ -51,9 +47,7 @@ struct CaptureGroupSheet: View {
     @State private var slug = ""
     @State private var sensorMode: SensorMode = .osc
     @State private var signalMode: SignalMode = .broadband
-    @State private var filterManufacturer = ""
-    @State private var filterModel = ""
-    @State private var filterName = ""
+    @State private var filterSelection = FilterProfileSelection()
     @State private var notes = ""
     @State private var editingGroupID: Int64?
     @State private var savedSnapshot: [CaptureGroupRecord]?
@@ -65,9 +59,9 @@ struct CaptureGroupSheet: View {
             displayName: displayName,
             sensorMode: sensorMode,
             signalMode: signalMode,
-            filterManufacturer: filterManufacturer,
-            filterModel: filterModel,
-            filterName: filterName,
+            filterManufacturer: filterSelection.manufacturer,
+            filterModel: filterSelection.model,
+            filterName: filterSelection.name,
             notes: notes
         )
     }
@@ -115,9 +109,7 @@ struct CaptureGroupSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
-                    TextField("Szűrő gyártója, pl. SVBONY", text: $filterManufacturer)
-                    TextField("Modell, pl. SV220", text: $filterModel)
-                    TextField("Egyedi név / sáv, pl. Hα + OIII", text: $filterName)
+                    FilterProfilePicker(selection: groupFilterBinding)
                     TextField("Megjegyzés", text: $notes, axis: .vertical)
                         .lineLimit(2...4)
                 }
@@ -211,8 +203,11 @@ struct CaptureGroupSheet: View {
         Button(title) {
             sensorMode = sensor
             signalMode = signal
-            filterManufacturer = manufacturer
-            filterModel = model
+            filterSelection = FilterProfileSelection(
+                manufacturer: optionalText(manufacturer),
+                model: optionalText(model),
+                signalMode: signal
+            )
             if displayName.isEmpty { displayName = title }
         }
         .buttonStyle(.bordered)
@@ -225,9 +220,12 @@ struct CaptureGroupSheet: View {
         slug = group.slug
         sensorMode = group.sensorMode
         signalMode = group.signalMode
-        filterManufacturer = group.filterManufacturer ?? ""
-        filterModel = group.filterModel ?? ""
-        filterName = group.filterName ?? ""
+        filterSelection = FilterProfileSelection(
+            manufacturer: group.filterManufacturer,
+            model: group.filterModel,
+            name: group.filterName,
+            signalMode: group.signalMode
+        )
         notes = group.notes ?? ""
     }
 
@@ -237,9 +235,7 @@ struct CaptureGroupSheet: View {
         slug = ""
         sensorMode = .osc
         signalMode = .broadband
-        filterManufacturer = ""
-        filterModel = ""
-        filterName = ""
+        filterSelection = FilterProfileSelection()
         notes = ""
     }
 
@@ -250,9 +246,9 @@ struct CaptureGroupSheet: View {
             group.displayName = displayName
             group.sensorMode = sensorMode
             group.signalMode = signalMode
-            group.filterManufacturer = optionalText(filterManufacturer)
-            group.filterModel = optionalText(filterModel)
-            group.filterName = optionalText(filterName)
+            group.filterManufacturer = filterSelection.manufacturer
+            group.filterModel = filterSelection.model
+            group.filterName = filterSelection.name
             group.notes = optionalText(notes)
             appState.updateCaptureGroup(group)
         } else {
@@ -263,6 +259,16 @@ struct CaptureGroupSheet: View {
     private func optionalText(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private var groupFilterBinding: Binding<FilterProfileSelection> {
+        Binding(
+            get: { filterSelection },
+            set: { selection in
+                filterSelection = selection
+                if selection.signalMode != .unknown { signalMode = selection.signalMode }
+            }
+        )
     }
 }
 
@@ -283,9 +289,7 @@ struct CaptureAssignmentSheet: View {
     @State private var useExactOverride = false
     @State private var sensorOverride: SensorMode = .osc
     @State private var signalOverride: SignalMode = .dualBand
-    @State private var filterManufacturer = ""
-    @State private var filterModel = ""
-    @State private var filterName = ""
+    @State private var filterSelection = FilterProfileSelection(signalMode: .dualBand)
 
     private var candidates: [CaptureAssignmentCandidate] {
         frames.compactMap { frame in
@@ -360,16 +364,16 @@ struct CaptureAssignmentSheet: View {
 
             if useExactOverride {
                 GroupBox("Fájlszintű OSC/NB és szűrőadat") {
-                    HStack {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
                         Picker("Szenzor", selection: $sensorOverride) {
                             ForEach(SensorMode.allCases, id: \.self) { Text($0.displayNameHU).tag($0) }
                         }
                         Picker("Fénysáv", selection: $signalOverride) {
                             ForEach(SignalMode.allCases, id: \.self) { Text($0.displayNameHU).tag($0) }
                         }
-                        TextField("Gyártó", text: $filterManufacturer)
-                        TextField("Modell", text: $filterModel)
-                        TextField("Név/sáv", text: $filterName)
+                        }
+                        FilterProfilePicker(selection: assignmentFilterBinding, title: "Pontos szűrő-felülírás")
                     }
                 }
             }
@@ -399,9 +403,9 @@ struct CaptureAssignmentSheet: View {
                         groupID: groupID,
                         sensorOverride: useExactOverride ? sensorOverride : nil,
                         signalOverride: useExactOverride ? signalOverride : nil,
-                        filterManufacturerOverride: useExactOverride ? filterManufacturer : nil,
-                        filterModelOverride: useExactOverride ? filterModel : nil,
-                        filterNameOverride: useExactOverride ? filterName : nil
+                        filterManufacturerOverride: useExactOverride ? filterSelection.manufacturer : nil,
+                        filterModelOverride: useExactOverride ? filterSelection.model : nil,
+                        filterNameOverride: useExactOverride ? filterSelection.name : nil
                     )
                     dismiss()
                 }
@@ -465,8 +469,7 @@ struct CaptureAssignmentSheet: View {
     private var afterLabel: String {
         guard let group = selectedGroup else { return "Válassz célgyűjtést" }
         if useExactOverride {
-            let filter = [filterManufacturer, filterModel, filterName].filter { !$0.isEmpty }.joined(separator: " ")
-            return "\(group.displayName) · \(sensorOverride.displayNameHU) · \(signalOverride.displayNameHU) · \(filter.isEmpty ? "szűrő nincs megadva" : filter) · Kézi felülírás"
+            return "\(group.displayName) · \(sensorOverride.displayNameHU) · \(signalOverride.displayNameHU) · \(filterSelection.displayLabel) · Kézi felülírás"
         }
         return "\(group.displayName) · \(group.quickLabel) · Gyűjtésből"
     }
@@ -474,6 +477,16 @@ struct CaptureAssignmentSheet: View {
     private func sessionDate(_ path: String) -> String? {
         let parts = path.split(separator: "/")
         return parts.count > 2 ? String(parts[2]) : nil
+    }
+
+    private var assignmentFilterBinding: Binding<FilterProfileSelection> {
+        Binding(
+            get: { filterSelection },
+            set: { selection in
+                filterSelection = selection
+                if selection.signalMode != .unknown { signalOverride = selection.signalMode }
+            }
+        )
     }
 }
 
@@ -620,16 +633,21 @@ struct SessionConversionSheet: View {
                     .font(.callout).foregroundStyle(.secondary)
                 ForEach(plan.proposedGroups.indices, id: \.self) { index in
                     GroupBox {
-                        HStack {
-                            TextField("Gyűjtés neve", text: proposedNameBinding(index))
-                            Text(plan.proposedGroups[index].draft.slug).font(.body.monospaced()).foregroundStyle(.secondary)
-                            Picker("Szenzor", selection: proposedSensorBinding(index)) {
-                                ForEach(SensorMode.allCases, id: \.self) { Text($0.displayNameHU).tag($0) }
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                TextField("Gyűjtés neve", text: proposedNameBinding(index))
+                                Text(plan.proposedGroups[index].draft.slug).font(.body.monospaced()).foregroundStyle(.secondary)
+                                Picker("Szenzor", selection: proposedSensorBinding(index)) {
+                                    ForEach(SensorMode.allCases, id: \.self) { Text($0.displayNameHU).tag($0) }
+                                }
+                                Picker("Fénysáv", selection: proposedSignalBinding(index)) {
+                                    ForEach(SignalMode.allCases, id: \.self) { Text($0.displayNameHU).tag($0) }
+                                }
                             }
-                            Picker("Fénysáv", selection: proposedSignalBinding(index)) {
-                                ForEach(SignalMode.allCases, id: \.self) { Text($0.displayNameHU).tag($0) }
-                            }
-                            TextField("Szűrő gyártó/modell", text: proposedFilterBinding(index))
+                            FilterProfilePicker(
+                                selection: proposedFilterSelectionBinding(index),
+                                title: "Ehhez a gyűjtéshez rögzített szűrő"
+                            )
                         }
                     } label: {
                         Label(
@@ -855,16 +873,25 @@ struct SessionConversionSheet: View {
         )
     }
 
-    private func proposedFilterBinding(_ index: Int) -> Binding<String> {
+    private func proposedFilterSelectionBinding(_ index: Int) -> Binding<FilterProfileSelection> {
         Binding(
             get: {
-                guard let draft = appState.sessionConversionPlan?.proposedGroups[index].draft else { return "" }
-                return [draft.filterManufacturer, draft.filterModel].compactMap { $0 }.joined(separator: " ")
+                guard let draft = appState.sessionConversionPlan?.proposedGroups[index].draft else {
+                    return FilterProfileSelection()
+                }
+                return FilterProfileSelection(
+                    manufacturer: draft.filterManufacturer,
+                    model: draft.filterModel,
+                    name: draft.filterName,
+                    signalMode: draft.signalMode
+                )
             },
-            set: { value in
+            set: { selection in
                 updateProposed(index) {
-                    $0.filterManufacturer = nil
-                    $0.filterModel = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
+                    $0.filterManufacturer = selection.manufacturer
+                    $0.filterModel = selection.model
+                    $0.filterName = selection.name
+                    if selection.signalMode != .unknown { $0.signalMode = selection.signalMode }
                 }
             }
         )

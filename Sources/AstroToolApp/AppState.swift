@@ -73,6 +73,7 @@ enum Page: Hashable {
     /// `Page.previousNight` already takes.
     case trends
     case sensor
+    case filters
     case searchResults
 }
 
@@ -736,6 +737,15 @@ final class AppState: @unchecked Sendable {
     /// `measureSensorProfiles()`), never separately -- a combo missing from
     /// this dictionary simply has no history rows on record yet.
     var sensorProfileHistoryByCombo: [String: [SensorProfileHistoryRecord]] = [:]
+    /// Library-scoped reusable equipment inventory. Capture editors copy a
+    /// selected profile into their own historical snapshot fields.
+    var filterProfiles: [FilterProfileRecord] = []
+    /// Values already present in capture metadata/FITS but not yet saved in
+    /// the inventory; the Filters page offers one-click import.
+    var discoveredFilterProfiles: [FilterProfileRecord] = []
+    /// Set after a successful create/update so an inline picker can select
+    /// the just-saved profile without guessing from array order.
+    var lastSavedFilterProfile: FilterProfileRecord?
     var frameScores: [FrameScore] = []
     /// Capture membership, exact filter metadata and provenance for the
     /// quality table's currently loaded frames. This deliberately lives
@@ -1398,6 +1408,9 @@ final class AppState: @unchecked Sendable {
         // newly opened one, which hasn't been scanned yet at all here.
         freshSessionKeys = []
         previousNightCards = []
+        filterProfiles = []
+        discoveredFilterProfiles = []
+        lastSavedFilterProfile = nil
 
         guard FileManager.default.fileExists(atPath: path) else {
             rootStatus = Self.classifyMissingRoot(path: path)
@@ -2994,6 +3007,8 @@ final class AppState: @unchecked Sendable {
         // until the user separately visited the Kalibráció page (the only
         // other place anything populated them).
         var calib: CalibBundle
+        var filterProfiles: [FilterProfileRecord]
+        var discoveredFilterProfiles: [FilterProfileRecord]
     }
 
     /// The three Kalibráció-oldal queries (`CalibAnalyzer.coverage`,
@@ -3077,11 +3092,15 @@ final class AppState: @unchecked Sendable {
                     let storage = try StorageQueries.perTarget(db: db, config: cfg)
                     let quarantine = Self.inspectQuarantine(config: cfg)
                     let calib = try Self.loadCalibBundle(db: db, config: cfg)
+                    let filterProfiles = try db.allFilterProfiles()
+                    let discoveredFilterProfiles = try db.discoveredFilterProfiles()
                     return DashboardBundle(
                         stats: stats, sessionsByTarget: sessionsByTarget, panelsByTarget: panelsByTarget,
                         stacksByTarget: stacksByTarget, stackGroupsByTarget: stackGroupsByTarget,
                         plan: plans, site: site, night: night, projects: projects, cleanup: cleanup,
-                        storage: storage, quarantine: quarantine, calib: calib
+                        storage: storage, quarantine: quarantine, calib: calib,
+                        filterProfiles: filterProfiles,
+                        discoveredFilterProfiles: discoveredFilterProfiles
                     )
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }
@@ -3105,6 +3124,8 @@ final class AppState: @unchecked Sendable {
                 self.calibNeeds = bundle.calib.needs
                 self.calibHealth = bundle.calib.health
                 self.sensorProfiles = bundle.calib.sensorProfiles
+                self.filterProfiles = bundle.filterProfiles
+                self.discoveredFilterProfiles = bundle.discoveredFilterProfiles
                 self.progressText = "Áttekintés kész: \(bundle.stats.count) célpont"
             } catch {
                 self.handle(error)
@@ -4174,6 +4195,89 @@ final class AppState: @unchecked Sendable {
                 self.sensorProfiles = result
                 self.sensorProfileHistoryByCombo = historyByCombo
                 self.progressText = "Szenzor-mérés kész: \(result.count) kombináció"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    // MARK: - Filter inventory (schema v12)
+
+    /// Lightweight independent refresh used by the Filters page and inline
+    /// pickers. It deliberately does not claim `currentTask`: opening a
+    /// small picker must not cancel an in-flight dashboard/scan operation.
+    func loadFilterProfiles() {
+        guard let db else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let inventory = try await Task.detached(priority: .userInitiated) {
+                    (
+                        try db.allFilterProfiles(),
+                        try db.discoveredFilterProfiles()
+                    )
+                }.value
+                guard !Task.isCancelled else { return }
+                self.filterProfiles = inventory.0
+                self.discoveredFilterProfiles = inventory.1
+            } catch {
+                self.handle(error)
+            }
+        }
+    }
+
+    func saveFilterProfile(_ profile: FilterProfileRecord) {
+        guard let db else { return }
+        // Force a distinct observable transition even when an inline editor
+        // saves an identical profile twice; otherwise the picker could wait
+        // forever because `onChange` receives the same value as last time.
+        lastSavedFilterProfile = nil
+        let opID = beginOperation(profile.id == nil ? "Szűrő hozzáadása…" : "Szűrő mentése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    var record = profile
+                    let now = Date().timeIntervalSince1970
+                    if record.id == nil { record.createdAt = now }
+                    record.updatedAt = now
+                    let id = try db.upsertFilterProfile(record)
+                    return (
+                        try db.filterProfile(id: id),
+                        try db.allFilterProfiles(),
+                        try db.discoveredFilterProfiles()
+                    )
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.lastSavedFilterProfile = result.0
+                self.filterProfiles = result.1
+                self.discoveredFilterProfiles = result.2
+                self.progressText = "Szűrő mentve: \(result.0?.displayLabel ?? profile.displayLabel)"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    func deleteFilterProfile(_ profile: FilterProfileRecord) {
+        guard let db, let id = profile.id else { return }
+        let opID = beginOperation("Szűrő törlése…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let inventory = try await Task.detached(priority: .userInitiated) {
+                    try db.deleteFilterProfile(id: id)
+                    return (
+                        try db.allFilterProfiles(),
+                        try db.discoveredFilterProfiles()
+                    )
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+                self.filterProfiles = inventory.0
+                self.discoveredFilterProfiles = inventory.1
+                self.progressText = "Szűrő törölve: \(profile.displayLabel); session-adat nem változott"
             } catch {
                 self.handle(error)
             }

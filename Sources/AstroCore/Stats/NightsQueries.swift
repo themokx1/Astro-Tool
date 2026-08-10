@@ -176,6 +176,7 @@ public enum NightsQueries {
         let libraryFiles = try db.allFiles(includeMissing: false)
         let allSessionFiles = libraryFiles.filter { $0.area == .sessions }
         let snapshotMeta = try db.fitsMetaBatch(fileIDs: allSessionFiles.compactMap(\.id))
+        let captureResolver = try CaptureResolver.load(db: db)
         let filesBySession = Dictionary(grouping: allSessionFiles) { file in
             SiteSessionKey(target: file.target ?? "", date: file.sessionDate ?? "")
         }
@@ -217,7 +218,8 @@ public enum NightsQueries {
                 let snapshotFiles = filesBySession[sessionKey] ?? []
                 let filterBreakdown = FilterBreakdownQueries.compute(
                     target: target, date: session.dateRaw,
-                    files: snapshotFiles, meta: snapshotMeta, config: config
+                    files: snapshotFiles, meta: snapshotMeta,
+                    resolver: captureResolver, config: config
                 )
 
                 var resolvedSiteName: String?

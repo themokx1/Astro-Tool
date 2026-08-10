@@ -19,11 +19,10 @@ public struct DiscoveryRow: Sendable, Equatable {
     /// Same Hungarian verdict vocabulary as `Planner.plan` (`SkyVerdict`) --
     /// see `discover`'s own doc comment for the priority order.
     public let verdict: String
-    /// `visibilityFactor x moonPenalty` -- the same two factors
-    /// `Planner.score` multiplies, just with no goal-derived leading
-    /// factor (a catalog target has no integration history to have a goal
-    /// against). Sort key, descending: higher means "point at this one
-    /// tonight".
+    /// `visibilityFactor x moonPenalty x compositionScoreFactor` (the last
+    /// factor is neutral when no setup FOV is known). Sort key, descending:
+    /// higher means both well placed tonight AND usefully framed by the
+    /// selected setup -- merely being a tiny visible speck is not enough.
     public let score: Double
     /// `true` when `target.designation` matches one of the caller-supplied
     /// `existingDesignations` -- rows are NOT filtered on this, only
@@ -34,6 +33,13 @@ public struct DiscoveryRow: Sendable, Equatable {
     /// `target.sizeArcmin` compares to the caller's `setupFOVDeg`. `nil`
     /// when either is unknown (no recorded size, or no FOV supplied).
     public let fovFitLabel: String?
+    /// Approximate target diameter divided by the setup FOV's short edge.
+    /// `0.06` means the object fills only about 6% of the frame height.
+    public let fovShortEdgeFillFraction: Double?
+    /// Continuous 0...1 recommendation multiplier derived from framing.
+    /// `nil` means no size/FOV comparison was possible and is treated as
+    /// neutral rather than as evidence for or against the target.
+    public let compositionScoreFactor: Double?
 
     public init(
         target: CatalogTarget,
@@ -44,7 +50,9 @@ public struct DiscoveryRow: Sendable, Equatable {
         verdict: String,
         score: Double,
         alreadyInLibrary: Bool,
-        fovFitLabel: String? = nil
+        fovFitLabel: String? = nil,
+        fovShortEdgeFillFraction: Double? = nil,
+        compositionScoreFactor: Double? = nil
     ) {
         self.target = target
         self.maxAltitudeDeg = maxAltitudeDeg
@@ -55,6 +63,8 @@ public struct DiscoveryRow: Sendable, Equatable {
         self.score = score
         self.alreadyInLibrary = alreadyInLibrary
         self.fovFitLabel = fovFitLabel
+        self.fovShortEdgeFillFraction = fovShortEdgeFillFraction
+        self.compositionScoreFactor = compositionScoreFactor
     }
 }
 
@@ -140,8 +150,13 @@ public enum DiscoveryPlanner {
                 verdict = SkyVerdict.good
             }
 
+            let composition = fovComposition(
+                sizeArcmin: catalogTarget.sizeArcmin,
+                setupFOVDeg: setupFOVDeg
+            )
             let score = SkyScore.visibilityFactor(visibleHours: visibleHours)
                 * SkyScore.moonPenalty(moonInterferes: moonInterferes)
+                * (composition?.scoreFactor ?? 1)
 
             return DiscoveryRow(
                 target: catalogTarget,
@@ -152,7 +167,9 @@ public enum DiscoveryPlanner {
                 verdict: verdict,
                 score: score,
                 alreadyInLibrary: existingDesignations.contains(catalogTarget.designation),
-                fovFitLabel: fovFitLabel(sizeArcmin: catalogTarget.sizeArcmin, setupFOVDeg: setupFOVDeg)
+                fovFitLabel: composition?.label,
+                fovShortEdgeFillFraction: composition?.shortEdgeFillFraction,
+                compositionScoreFactor: composition?.scoreFactor
             )
         }
 
@@ -169,12 +186,18 @@ public enum DiscoveryPlanner {
         setupFOVDeg: (width: Double, height: Double)?
     ) -> [DiscoveryRow] {
         TargetCatalog.all.map { catalogTarget in
-            DiscoveryRow(
+            let composition = fovComposition(
+                sizeArcmin: catalogTarget.sizeArcmin,
+                setupFOVDeg: setupFOVDeg
+            )
+            return DiscoveryRow(
                 target: catalogTarget,
                 verdict: SkyVerdict.noCoordinate,
                 score: 0,
                 alreadyInLibrary: existingDesignations.contains(catalogTarget.designation),
-                fovFitLabel: fovFitLabel(sizeArcmin: catalogTarget.sizeArcmin, setupFOVDeg: setupFOVDeg)
+                fovFitLabel: composition?.label,
+                fovShortEdgeFillFraction: composition?.shortEdgeFillFraction,
+                compositionScoreFactor: composition?.scoreFactor
             )
         }
     }
@@ -185,28 +208,71 @@ public enum DiscoveryPlanner {
     /// either input is unknown (no recorded size, or no FOV supplied at
     /// all -- an equipment-less caller gets no opinion, not a guess).
     ///
-    /// Only two cutoffs actually distinguish the three labels (the spec's
-    /// own "fits when size <= 0.9x the smaller FOV dimension" and its
-    /// "else fits" catch-all resolve to the SAME label, so there's no
-    /// third branch to write): bigger than 1.1x the LARGER FOV dimension
-    /// doesn't fit in one frame at all (`"mozaik kellene"`); smaller than
-    /// 3% of the SMALLER FOV dimension is a speck lost in an otherwise-
-    /// empty frame (`"túl kicsi a képmezőhöz"`); everything else,
-    /// including the spec's own "comfortably smaller than the frame"
-    /// example, is simply `"befér"`.
+    /// Labels describe composition quality rather than a permissive
+    /// geometric yes/no. The catalog currently stores one representative
+    /// angular diameter, so this remains an honest approximation for very
+    /// elongated targets and arbitrary camera rotation.
     static func fovFitLabel(sizeArcmin: Double?, setupFOVDeg: (width: Double, height: Double)?) -> String? {
-        guard let sizeArcmin, let setupFOVDeg else { return nil }
+        fovComposition(sizeArcmin: sizeArcmin, setupFOVDeg: setupFOVDeg)?.label
+    }
+
+    struct FOVComposition: Sendable, Equatable {
+        let label: String
+        let shortEdgeFillFraction: Double
+        let scoreFactor: Double
+    }
+
+    /// A deliberately continuous recommendation factor. Thresholds only
+    /// choose the human label; targets immediately either side of a label
+    /// boundary do not jump wildly in the actual ordering.
+    static func fovComposition(
+        sizeArcmin: Double?,
+        setupFOVDeg: (width: Double, height: Double)?
+    ) -> FOVComposition? {
+        guard let sizeArcmin, sizeArcmin > 0, let setupFOVDeg else { return nil }
         let widthArcmin = setupFOVDeg.width * 60.0
         let heightArcmin = setupFOVDeg.height * 60.0
         let minDim = min(widthArcmin, heightArcmin)
         let maxDim = max(widthArcmin, heightArcmin)
+        guard minDim > 0, maxDim > 0 else { return nil }
+        let fill = sizeArcmin / minDim
 
         if sizeArcmin > 1.1 * maxDim {
-            return "mozaik kellene"
+            return FOVComposition(label: "mozaik kellene", shortEdgeFillFraction: fill, scoreFactor: 0.10)
         }
-        if sizeArcmin < 0.03 * minDim {
-            return "túl kicsi a képmezőhöz"
+        if fill < 0.08 {
+            let factor = max(0.05, 0.20 * (fill / 0.08))
+            return FOVComposition(
+                label: "nagyon kicsi a képmezőben",
+                shortEdgeFillFraction: fill,
+                scoreFactor: factor
+            )
         }
-        return "befér"
+        if fill < 0.18 {
+            let progress = (fill - 0.08) / 0.10
+            return FOVComposition(
+                label: "kicsi, tág kompozíció",
+                shortEdgeFillFraction: fill,
+                scoreFactor: 0.25 + 0.45 * progress
+            )
+        }
+        if fill <= 0.75 {
+            let factor: Double
+            if fill < 0.35 {
+                factor = 0.85 + 0.15 * ((fill - 0.18) / 0.17)
+            } else {
+                factor = 1.0 - 0.08 * ((fill - 0.35) / 0.40)
+            }
+            return FOVComposition(
+                label: "jó kitöltés",
+                shortEdgeFillFraction: fill,
+                scoreFactor: factor
+            )
+        }
+        return FOVComposition(
+            label: "szorosan fér be",
+            shortEdgeFillFraction: fill,
+            scoreFactor: sizeArcmin <= minDim ? 0.82 : 0.65
+        )
     }
 }

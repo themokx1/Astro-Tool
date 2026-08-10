@@ -35,6 +35,7 @@ struct TargetDetailPage: View {
     @State private var linkingSession: LinkingSession?
     @State private var solvingTarget: SolvingTarget?
     @State private var stackListingSession: LinkingSession?
+    @State private var filterEditingSession: LinkingSession?
 
     private var stat: TargetStats? { appState.stats.first { $0.target == target } }
     private var projectState: ProjectState? { appState.projectStates.first { $0.target == target } }
@@ -75,6 +76,9 @@ struct TargetDetailPage: View {
         .sheet(item: $linkingSession) { session in CalibLinkSheet(target: session.target, date: session.date) }
         .sheet(item: $solvingTarget) { solving in PlateSolveSheet(target: solving.target) }
         .sheet(item: $stackListingSession) { session in StackListSheet(target: session.target, date: session.date) }
+        .sheet(item: $filterEditingSession) { session in
+            CaptureGroupSheet(target: session.target, date: session.date)
+        }
         .sheet(item: $goalEditingTarget) { editing in
             GoalEditSheet(target: editing.target, initialHours: editing.currentHours)
         }
@@ -93,7 +97,11 @@ struct TargetDetailPage: View {
                         currentHours: projectState?.goalSeconds.map { $0 / 3600.0 }
                     )
                 },
-                openStacks: { segment = .stacks }
+                openStacks: { segment = .stacks },
+                assignFilter: {
+                    guard let latestSessionDate else { return }
+                    filterEditingSession = LinkingSession(target: target, date: latestSessionDate)
+                }
             )
         case .sessions:
             SessionsSegment(target: target, linkingSession: $linkingSession, stackListingSession: $stackListingSession)

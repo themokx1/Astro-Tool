@@ -159,13 +159,14 @@ public enum StatsQueries {
     /// Sorted by target name.
     public static func perTarget(db: Database, config: AstroConfig) throws -> [TargetStats] {
         let files = try db.allFiles(includeMissing: false)
+        let resolver = try CaptureResolver.load(db: db)
         let targetNames = Set(files.compactMap { file -> String? in
             guard let target = file.target, isStatsRelevant(file.area) else { return nil }
             return target
         })
 
         return try targetNames.sorted().map { name in
-            try computeStats(target: name, files: files, db: db, config: config)
+            try computeStats(target: name, files: files, resolver: resolver, db: db, config: config)
         }
     }
 
@@ -175,7 +176,8 @@ public enum StatsQueries {
         let files = try db.allFiles(includeMissing: false)
         let exists = files.contains { $0.target == name && isStatsRelevant($0.area) }
         guard exists else { return nil }
-        return try computeStats(target: name, files: files, db: db, config: config)
+        let resolver = try CaptureResolver.load(db: db)
+        return try computeStats(target: name, files: files, resolver: resolver, db: db, config: config)
     }
 
     private static func isStatsRelevant(_ area: LibraryArea) -> Bool {
@@ -185,6 +187,7 @@ public enum StatsQueries {
     private static func computeStats(
         target: String,
         files: [FileRecord],
+        resolver: CaptureResolver,
         db: Database,
         config: AstroConfig
     ) throws -> TargetStats {
@@ -241,7 +244,9 @@ public enum StatsQueries {
                 exposureBreakdown["unknown", default: 0] += 1
             }
             if let camera = meta?.instrume { cameras.insert(camera) }
-            if let filter = meta?.filter { filters.insert(filter) }
+            if let filter = resolver.resolve(file: file, meta: meta).filterLabel {
+                filters.insert(filter)
+            }
         }
 
         let sessionDates = Set(sessionFiles.compactMap(\.sessionDate)).sorted()
