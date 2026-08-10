@@ -2,6 +2,7 @@ import Foundation
 
 public enum AppStoragePathsError: Error, Equatable, Sendable {
     case storageRootInsideLibrary
+    case storageDestinationInsideLibrary
     case libraryIdentityMismatch
     case applicationSupportUnavailable
     case cachesUnavailable
@@ -43,10 +44,21 @@ public struct AppStoragePaths: Sendable {
             .appendingPathComponent("Libraries", isDirectory: true)
             .appendingPathComponent(libraryID.id, isDirectory: true)
 
-        self.metadataDatabase = appLibrary.appendingPathComponent("metadata.sqlite")
-        self.indexDatabase = cacheLibrary.appendingPathComponent("index.sqlite")
-        self.thumbnails = cacheLibrary.appendingPathComponent("thumbnails", isDirectory: true)
-        self.migration = appLibrary.appendingPathComponent("migration", isDirectory: true)
+        let metadataDatabase = appLibrary.appendingPathComponent("metadata.sqlite")
+        let indexDatabase = cacheLibrary.appendingPathComponent("index.sqlite")
+        let thumbnails = cacheLibrary.appendingPathComponent("thumbnails", isDirectory: true)
+        let migration = appLibrary.appendingPathComponent("migration", isDirectory: true)
+        let finalDestinations = [appLibrary, cacheLibrary, metadataDatabase, indexDatabase, thumbnails, migration]
+        guard !finalDestinations.contains(where: {
+            Self.isContained(Self.canonicalDirectory($0), in: resolvedLibraryRoot)
+        }) else {
+            throw AppStoragePathsError.storageDestinationInsideLibrary
+        }
+
+        self.metadataDatabase = metadataDatabase
+        self.indexDatabase = indexDatabase
+        self.thumbnails = thumbnails
+        self.migration = migration
     }
 
     public static func production(
@@ -72,7 +84,13 @@ public struct AppStoragePaths: Sendable {
     }
 
     private static func canonicalDirectory(_ url: URL) -> URL {
-        url.standardizedFileURL.resolvingSymlinksInPath()
+        url.standardizedFileURL.pathComponents.dropFirst().reduce(
+            URL(fileURLWithPath: "/", isDirectory: true)
+        ) { resolvedPrefix, component in
+            resolvedPrefix
+                .appendingPathComponent(component)
+                .resolvingSymlinksInPath()
+        }
     }
 
     private static func isContained(_ candidate: URL, in root: URL) -> Bool {

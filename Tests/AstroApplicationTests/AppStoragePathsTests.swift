@@ -1,4 +1,5 @@
 import AstroApplication
+import CryptoKit
 import Foundation
 import Testing
 
@@ -9,22 +10,28 @@ struct AppStoragePathsTests {
     private let imageRoot = URL(fileURLWithPath: "/Volumes/Fixture/Astro", isDirectory: true)
 
     @Test("Library identity is stable for equivalent canonical URLs")
-    func stableLibraryIdentity() {
-        let identity = LibraryIdentity(rootURL: imageRoot)
+    func stableLibraryIdentity() throws {
+        let disk = FileManager.default
+        let fixture = disk.temporaryDirectory
+            .appendingPathComponent("AstroToolStableIdentity-\(UUID().uuidString)", isDirectory: true)
+        let libraryRoot = fixture.appendingPathComponent("Library", isDirectory: true)
+        try disk.createDirectory(at: libraryRoot, withIntermediateDirectories: true)
+        defer { try? disk.removeItem(at: fixture) }
+
+        let identity = LibraryIdentity(rootURL: libraryRoot)
         let equivalent = LibraryIdentity(
-            rootURL: imageRoot
+            rootURL: libraryRoot
                 .appendingPathComponent("subdirectory", isDirectory: true)
                 .appendingPathComponent("..", isDirectory: true)
         )
 
         #expect(identity == equivalent)
-        #expect(identity.id == "bffb14db97dca1fab014b4ed350c3842469ac83fdbfe33f0ca3a981297ca6492")
         #expect(identity.id.count == 64)
         #expect(identity.id.allSatisfy { $0.isHexDigit && !$0.isUppercase })
     }
 
-    @Test("Encoded identity contains the digest but not the image root")
-    func identityEncodingIsPrivacySafe() throws {
+    @Test("Encoded identity does not include the plaintext library root")
+    func doesNotEncodePlaintextRoot() throws {
         let identity = LibraryIdentity(rootURL: imageRoot)
 
         let data = try JSONEncoder().encode(identity)
@@ -54,6 +61,23 @@ struct AppStoragePathsTests {
             "/tmp/AstroToolAppSupport/AstroTool/Libraries/\(identity.id)/metadata.sqlite")
         #expect(paths.indexDatabase.path ==
             "/tmp/AstroToolCache/AstroTool/Libraries/\(identity.id)/index.sqlite")
+    }
+
+    @Test("Malformed encoded library identities are rejected")
+    func rejectsMalformedEncodedIdentities() throws {
+        let malformedIDs = [
+            String(repeating: "a", count: 63),
+            String(repeating: "a", count: 65),
+            String(repeating: "A", count: 64),
+            String(repeating: "g", count: 64),
+        ]
+
+        for id in malformedIDs {
+            let data = try JSONEncoder().encode(["id": id])
+            #expect(throws: DecodingError.self) {
+                try JSONDecoder().decode(LibraryIdentity.self, from: data)
+            }
+        }
     }
 
     @Test("Library identity resolves symbolic links")
@@ -121,8 +145,13 @@ struct AppStoragePathsTests {
         try disk.createDirectory(at: fixtureRoot, withIntermediateDirectories: false)
         defer { try? disk.removeItem(at: fixtureRoot) }
 
-        let marker = fixtureRoot.appendingPathComponent("sentinel")
-        #expect(disk.createFile(atPath: marker.path, contents: Data("unchanged".utf8)))
+        let sentinelDirectory = fixtureRoot
+            .appendingPathComponent("sentinel-tree", isDirectory: true)
+            .appendingPathComponent("nested", isDirectory: true)
+        try disk.createDirectory(at: sentinelDirectory, withIntermediateDirectories: true)
+        let marker = sentinelDirectory.appendingPathComponent("sentinel.bin")
+        let sentinelBytes = Data("unchanged sentinel bytes".utf8)
+        #expect(disk.createFile(atPath: marker.path, contents: sentinelBytes))
         let applicationSupportParent = fixtureRoot.appendingPathComponent("app-parent", isDirectory: true)
         let cachesParent = fixtureRoot.appendingPathComponent("cache-parent", isDirectory: true)
         let injectedApplicationSupport = applicationSupportParent
@@ -157,6 +186,7 @@ struct AppStoragePathsTests {
         #expect(!disk.fileExists(atPath: cachesParent.path))
         #expect(!disk.fileExists(atPath: injectedApplicationSupport.path))
         #expect(!disk.fileExists(atPath: injectedCaches.path))
+        #expect(try Data(contentsOf: marker) == sentinelBytes)
         #expect(try directoryManifest(at: fixtureRoot, fileManager: disk) == manifestBefore)
     }
 
@@ -183,6 +213,75 @@ struct AppStoragePathsTests {
         }
     }
 
+    @Test("Final app and cache library directories inside the image library are rejected")
+    func rejectsFinalLibraryDirectoriesInsideImageLibrary() {
+        let fixture = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AstroToolFinalDestination-\(UUID().uuidString)", isDirectory: true)
+        let applicationSupport = fixture.appendingPathComponent("support", isDirectory: true)
+        let appNestedLibrary = applicationSupport.appendingPathComponent("AstroTool", isDirectory: true)
+        let caches = fixture.appendingPathComponent("caches", isDirectory: true)
+        let cacheNestedLibrary = caches.appendingPathComponent("AstroTool", isDirectory: true)
+
+        #expect(throws: AppStoragePathsError.storageDestinationInsideLibrary) {
+            try AppStoragePaths(
+                applicationSupport: applicationSupport,
+                caches: caches,
+                libraryID: LibraryIdentity(rootURL: appNestedLibrary),
+                libraryRoot: appNestedLibrary
+            )
+        }
+        #expect(throws: AppStoragePathsError.storageDestinationInsideLibrary) {
+            try AppStoragePaths(
+                applicationSupport: applicationSupport,
+                caches: caches,
+                libraryID: LibraryIdentity(rootURL: cacheNestedLibrary),
+                libraryRoot: cacheNestedLibrary
+            )
+        }
+    }
+
+    @Test("Symlinked final app and cache destinations inside the image library are rejected")
+    func rejectsSymlinkedFinalDestinationsInsideImageLibrary() throws {
+        let disk = FileManager.default
+        let fixture = disk.temporaryDirectory
+            .appendingPathComponent("AstroToolSymlinkDestination-\(UUID().uuidString)", isDirectory: true)
+        let libraryRoot = fixture.appendingPathComponent("library", isDirectory: true)
+        let applicationSupport = fixture.appendingPathComponent("support", isDirectory: true)
+        let caches = fixture.appendingPathComponent("caches", isDirectory: true)
+        try disk.createDirectory(at: libraryRoot, withIntermediateDirectories: true)
+        try disk.createDirectory(at: applicationSupport, withIntermediateDirectories: true)
+        try disk.createDirectory(at: caches, withIntermediateDirectories: true)
+        defer { try? disk.removeItem(at: fixture) }
+        try disk.createSymbolicLink(
+            at: applicationSupport.appendingPathComponent("AstroTool", isDirectory: true),
+            withDestinationURL: libraryRoot
+        )
+        try disk.createSymbolicLink(
+            at: caches.appendingPathComponent("AstroTool", isDirectory: true),
+            withDestinationURL: libraryRoot
+        )
+        let identity = LibraryIdentity(rootURL: libraryRoot)
+        let safeCaches = fixture.appendingPathComponent("safe-caches", isDirectory: true)
+        let safeSupport = fixture.appendingPathComponent("safe-support", isDirectory: true)
+
+        #expect(throws: AppStoragePathsError.storageDestinationInsideLibrary) {
+            try AppStoragePaths(
+                applicationSupport: applicationSupport,
+                caches: safeCaches,
+                libraryID: identity,
+                libraryRoot: libraryRoot
+            )
+        }
+        #expect(throws: AppStoragePathsError.storageDestinationInsideLibrary) {
+            try AppStoragePaths(
+                applicationSupport: safeSupport,
+                caches: caches,
+                libraryID: identity,
+                libraryRoot: libraryRoot
+            )
+        }
+    }
+
     @Test("Library identity must describe the supplied library root")
     func rejectsMismatchedLibraryIdentityAndRoot() {
         let identity = LibraryIdentity(rootURL: imageRoot)
@@ -205,16 +304,31 @@ struct AppStoragePathsTests {
     }
 
     private func directoryManifest(at root: URL, fileManager: FileManager) throws -> [String] {
-        try fileManager.contentsOfDirectory(
+        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey]
+        let enumerator = try #require(fileManager.enumerator(
             at: root,
-            includingPropertiesForKeys: [.fileSizeKey],
-            options: []
-        )
-        .map { url in
-            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-            return "\(url.lastPathComponent):\(size)"
+            includingPropertiesForKeys: keys,
+            options: [],
+            errorHandler: nil
+        ))
+        var manifest: [String] = []
+        for case let url as URL in enumerator {
+            let values = try url.resourceValues(forKeys: Set(keys))
+            let relativePath = String(url.path.dropFirst(root.path.count + 1))
+            let size = values.fileSize ?? 0
+            let modified = values.contentModificationDate?
+                .timeIntervalSinceReferenceDate.bitPattern ?? 0
+            let contentHash: String
+            if values.isDirectory == true {
+                contentHash = "-"
+            } else {
+                contentHash = SHA256.hash(data: try Data(contentsOf: url))
+                    .map { String(format: "%02x", $0) }
+                    .joined()
+            }
+            manifest.append("\(relativePath)|\(size)|\(modified)|\(contentHash)")
         }
-        .sorted()
+        return manifest.sorted()
     }
 }
 
