@@ -124,7 +124,7 @@ public enum FrameSet {
         var usable: [FileRecord] = []
         var rejected: [FileRecord] = []
         for file in merged {
-            if isUnderReject(file.path, config: config) {
+            if isUnderReject(file.path, config: config) || FrameArchivePlanner.isArchived(file.path) {
                 rejected.append(file)
             } else {
                 usable.append(file)

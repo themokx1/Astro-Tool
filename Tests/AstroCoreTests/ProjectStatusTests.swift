@@ -74,7 +74,8 @@ private struct ProjectStatusFixture {
     #expect(state.phase == .collecting)
     #expect(ha.missingSeconds == 18_000.0)
     #expect(state.largestFilterDeficitSeconds == 18_000.0)
-    #expect(state.effectiveGoalSeconds == 21_600.0)
+    #expect(state.effectiveGoalSeconds == 36_000.0)
+    #expect(state.goalSource == .automaticReference)
     #expect(state.todos.contains { $0.contains("5.0") && $0.contains("Ha") })
 }
 
@@ -102,6 +103,7 @@ private struct ProjectStatusFixture {
     #expect(t1.phase == .collecting)
     #expect(t1.goalSeconds == 21600.0)
     #expect(t1.missingSeconds == 19800.0)
+    #expect(t1.goalSource == .explicitTag)
 }
 
 @Test func projectStatusCollectingWhenNoGoalNoStackAndBelowDefaultThreshold() throws {
@@ -116,19 +118,21 @@ private struct ProjectStatusFixture {
     let projects = try ProjectStatusQueries.projects(db: fixture.db, config: fixture.config)
     let t2 = try #require(projects.first { $0.target == "T2" })
     #expect(t2.phase == .collecting)
-    #expect(t2.goalSeconds == nil)
-    #expect(t2.missingSeconds == nil)
+    #expect(t2.goalSeconds == 36_000)
+    #expect(t2.missingSeconds == 34_200)
+    #expect(t2.goalSource == .automaticReference)
 }
 
 @Test func projectStatusReadyToStackWhenSessionUncoveredAndNoGoal() throws {
     let fixture = try ProjectStatusFixture.make()
     defer { fixture.cleanup() }
 
-    // Above the default 2h collecting threshold and no goal -> data
-    // collection looks done for now, but nothing has been stacked.
+    // An explicit completed target isolates the stack-coverage phase from
+    // the new automatic 10h reference.
     try fixture.writeFITSLight("sessions/T3/2026-01-10/lights/l1.fit", exptime: 3600 * 3)
     try fixture.writeReadme("sessions/T3/2026-01-10/README.txt")
     try fixture.scan()
+    try fixture.db.addTag(TagRecord(kind: "target", target: "T3", sessionDate: nil, tag: "goal:3h"))
 
     let projects = try ProjectStatusQueries.projects(db: fixture.db, config: fixture.config)
     let t3 = try #require(projects.first { $0.target == "T3" })
@@ -144,6 +148,7 @@ private struct ProjectStatusFixture {
     try fixture.writeReadme("sessions/T4/2026-01-10/README.txt")
     try fixture.writeFITSLight("stacks/T4/2026-01-10/stack.fit", exptime: nil)
     try fixture.scan()
+    try fixture.db.addTag(TagRecord(kind: "target", target: "T4", sessionDate: nil, tag: "goal:3h"))
 
     let projects = try ProjectStatusQueries.projects(db: fixture.db, config: fixture.config)
     let t4 = try #require(projects.first { $0.target == "T4" })
@@ -160,6 +165,7 @@ private struct ProjectStatusFixture {
     try fixture.writeFITSLight("stacks/T5/2026-01-10/stack.fit", exptime: nil)
     try fixture.writeReadme("processed/T5/2026-01-10/final.txt")
     try fixture.scan()
+    try fixture.db.addTag(TagRecord(kind: "target", target: "T5", sessionDate: nil, tag: "goal:3h"))
 
     let projects = try ProjectStatusQueries.projects(db: fixture.db, config: fixture.config)
     let t5 = try #require(projects.first { $0.target == "T5" })
@@ -184,6 +190,7 @@ private struct ProjectStatusFixture {
     // into stack-evidence so T9 doesn't stay stuck in "stackelheto".
     try fixture.writeFITSLight("sessions/T9/2026-01-10/T9_050x60sec_3000s_result.fit", exptime: nil)
     try fixture.scan()
+    try fixture.db.addTag(TagRecord(kind: "target", target: "T9", sessionDate: nil, tag: "goal:3h"))
 
     let projects = try ProjectStatusQueries.projects(db: fixture.db, config: fixture.config)
     let t9 = try #require(projects.first { $0.target == "T9" })
@@ -208,6 +215,7 @@ private struct ProjectStatusFixture {
     // need a stack/readme todo, but should still show up as excluded.
     try fixture.writeFITSLight("sessions/T6/2026-02-01-hibas/lights/l2.fit", exptime: 3600)
     try fixture.scan()
+    try fixture.db.addTag(TagRecord(kind: "target", target: "T6", sessionDate: nil, tag: "goal:3h"))
 
     let projects = try ProjectStatusQueries.projects(db: fixture.db, config: fixture.config)
     let t6 = try #require(projects.first { $0.target == "T6" })
@@ -266,6 +274,7 @@ private struct ProjectStatusFixture {
     try fixture.writeReadme("sessions/C_SmallGap/2026-01-10/README.txt")
 
     try fixture.scan()
+    try fixture.db.addTag(TagRecord(kind: "target", target: "A_Done", sessionDate: nil, tag: "goal:3h"))
     try fixture.db.addTag(TagRecord(kind: "target", target: "B_BigGap", sessionDate: nil, tag: "goal:6h"))
     try fixture.db.addTag(TagRecord(kind: "target", target: "C_SmallGap", sessionDate: nil, tag: "goal:6h"))
 

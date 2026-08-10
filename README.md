@@ -16,7 +16,7 @@ Asztrofotó-könyvtár auditálása, minőség-pontozás és kalibráció-követ
 - **Statisztika (stats)** — célpontonkénti integrációs idő, session-szám, utolsó felvétel dátuma, wide-field/deep-sky besorolás.
 - **Kalibráció-hiánylista (calib)** — mely expozíciós idő/hőmérséklet kombinációkhoz van lefedettség (dark/flat/bias), és mihez kell még kalibrációs keretet készíteni.
 - **Session-párosítás (match)** — egy adott célpont+dátum session-höz tartozó kalibrációs keretek és light frame-ek összerendelése, problémákkal.
-- **Új session létrehozás (new-session)** — kanonikus `YYYY-MM-DD` könyvtárstruktúra és README-sablon létrehozása egy célponthoz.
+- **Új session létrehozás (new-session)** — az app offline katalógusában katalógusszám, angol vagy magyar név szerint kereshető célpont; stabil kanonikus mappanév, `YYYY-MM-DD` struktúra és README-sablon készül, elírt duplikátumok nélkül.
 - **Capture-gyűjtések** — egyetlen célpont/dátum session alatt külön OSC,
   dual-band/NB, expozíciós vagy felszerelés-csomagok saját minőség-,
   kalibráció-, stack- és feldolgozási összesítéssel.
@@ -25,6 +25,9 @@ Asztrofotó-könyvtár auditálása, minőség-pontozás és kalibráció-követ
   pontos fájllistával és visszavonási bizonylattal.
 - **Észlelés-tervező (plan)** — ma esti kulmináció, max magasság, láthatósági ablak és Hold-zavarás célpontonként, pontszám szerint rendezve.
 - **Kézi setup-látómező (Felfedezés)** — több kamera+optika profil, APS-C/full-frame/egyedi szenzorméret, fix vagy zoom fókusztáv; a célpontok FOV-illeszkedése az éppen kiválasztott valós setupból számolódik.
+- **Fényesség- és setupfüggő célidő** — explicit `goal:` nélkül 10 óra az APS-C f/5 referencia 22,0 mag/arcsec² becsült felületi fényességnél; a célpont mérete/magnitúdója, a szenzor, f-szám és rendszerhatékonyság ehhez képest skáláz.
+- **Első indítási onboarding** — külön, kihagyható oldalakon helyszín, setupok, saját szűrők, minőség/Siril és integrációs referencia; később a Beállításokból újraindítható.
+- **Visszaállítható frame-archívum** — az elvetett frame egyenként, pontos forrás→cél előnézettel a saját gyűjtése `lights/archive` mappájába tehető; az appban látható és kizárt marad, majd ütközésmentesen visszaállítható.
 - **Kereshető éjszaka-napló (search)** — a session `README.txt`-jébe kézzel beírt Bortle/SQM/seeing/megjegyzés szöveg indexelve, kulcs vagy érték szerint kereshetően.
 - **Plate-solve backfill (solve)** — wide-field Canon CR3 célpontok koordináta-pótlása Siril blind plate-solve-jával, hogy a tervező és a mozaik-panel követés ezekre is működjön.
 - **Expozíció-tanácsadó (expose)** — mért szenzor-zajból és per-Bayer égháttérből számolt ideális sub-hossz + relatív SNR-tanács ("mennyivel javul a jel, ha még N órát integrálok").
@@ -34,11 +37,13 @@ Asztrofotó-könyvtár auditálása, minőség-pontozás és kalibráció-követ
 
 **Az audit, pontozás, riport és normál könyvtárműveletek nem törlik és nem
 mozgatják a képfájlokat.** Az audit kizárólag jelöl, és kérésre átnézhető
-javaslat-scriptet készít. Az egyetlen szándékos kivétel a v0.15.0 explicit
-**Session átalakítása gyűjtésekre** műveletének fizikai módja: ez mindig egy
+javaslat-scriptet készít. Két szándékos, mindig külön megerősített kivétel van: a
+**Session átalakítása gyűjtésekre** művelet fizikai módja mindig egy
 konkrét célpont+dátum sessionre zárt, előbb tételes forrás→cél előnézetet
 mutat, felülírást nem enged, külön megerősítést kér, bizonylatot készít és
-visszavonható. Az alapértelmezett logikai mód egyetlen képfájlt sem mozgat.
+visszavonható. Az **Áthelyezés archívumba** kizárólag egy már elvetett frame-et
+mozgat a saját gyűjtésén belül, no-overwrite szabállyal, és visszaállítható.
+Az alapértelmezett logikai módok egyetlen képfájlt sem mozgatnak.
 
 ## Telepítés
 
@@ -573,14 +578,21 @@ A konfiguráció a `<ROOT>/.astro_tool/config.json` fájlban van; hiányzó kulc
 | `wideField` | Wide-field/deep-sky besorolás szabálya: `extensions`, `maxFocalLengthMM`, `nameMarkers`, és célpontonkénti `overrides`. |
 | `calib` | Kalibráció-illesztés tűrései: `tempToleranceC`, `exposureToleranceS`, `darkMaxAgeMonths` (mikor számít elévültnek egy dark). |
 | `rating` | Minőség-pontozás beállításai: `workers` (párhuzamos worker-ek száma), `outlierZScore`, `sirilPath`, `weights` (metrikánkénti súlyok: `fwhm`, `roundness`, `starCount`, `background`). |
+| `imagingSetups` | Több kamera–optika profil: szenzorméret, gyújtótáv vagy zoomtartomány, alapértelmezett gyújtótáv, fényerő (`fNumber`) és relatív rendszerhatásfok. A látómező és az automatikus integrációs cél is ezeket használja. |
+| `integrationReference` | Az automatikus integrációs cél referenciája. Alapból 10 óra APS-C szenzoron, f/5 és 1,0 hatásfok mellett, 22 mag/ívmp² felületi fényességű célpontra; a tényleges cél a katalógusfényesség és a kiválasztott setup alapján skálázódik, elérhető minimum/maximum korlátokkal. |
 | `site` | A tervező (`astrotool plan`) helyszín-felülbírálása: `latitudeDeg`/`longitudeDeg`. Üresen hagyva a könyvtár `SITELAT`/`SITELONG` fejléceinek mediánjából származik. |
 | `expose` | Az expozíció-tanácsadó (`astrotool expose`) beállításai: `maxSubSeconds` (alapból 300 — sapka az ajánlott sub-hosszra), `noiseContributionC` (alapból 0.05 — mennyi extra leolvasási zajt engedünk a tiszta foton-zaj felett). |
+
+A saját szűrőprofilok nem a `config.json` részei: az alkalmazás a könyvtár
+SQLite-adatbázisában tárolja és a Szűrők oldalon, illetve az onboardingban
+kezeli őket. A capture-gyűjtések történeti szűrőadatai külön pillanatképként
+megmaradnak akkor is, ha egy profilt később módosítasz vagy törölsz.
 
 ## Fejlesztés
 
 ```bash
 swift build            # debug build
-swift test              # teljes teszt-szuit (214 teszt)
+swift test              # teljes teszt-szuit (1532 teszt)
 ./build.sh              # release build + app bundle + DMG + CLI zip
 ```
 

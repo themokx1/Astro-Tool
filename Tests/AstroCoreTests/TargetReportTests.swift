@@ -104,6 +104,8 @@ private func insertLight(
     // has no FILTER value.
     #expect(html.contains("<h2>Szűrők</h2>"))
     #expect(html.contains("SVBONY SV220"))
+    #expect(html.contains("automatikus"))
+    #expect(html.contains("mag/arcsec²"))
 }
 
 /// A stack-looking file (ASIAIR autosave naming, so `StackDiscovery` picks

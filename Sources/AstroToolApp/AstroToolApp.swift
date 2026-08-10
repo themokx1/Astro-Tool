@@ -45,6 +45,7 @@ struct RootView: View {
     @State private var showSirilHelp = false
     /// R11-T12/F12: "Súgó ▸ Első lépések…" -- same notification pattern.
     @State private var showFirstSteps = false
+    @State private var showOnboarding = false
 
     var body: some View {
         Group {
@@ -75,6 +76,20 @@ struct RootView: View {
         .sheet(isPresented: $showFirstSteps) {
             FirstStepsSheet()
         }
+        .sheet(isPresented: $showOnboarding) {
+            OnboardingWizardView(
+                onSkipAll: {
+                    appState.completeOnboardingVersion()
+                    showOnboarding = false
+                },
+                onFinished: { showOnboarding = false }
+            )
+        }
+        .onAppear { presentOnboardingIfNeeded() }
+        .onChange(of: appState.rootStatus) { _, _ in presentOnboardingIfNeeded() }
+        .onChange(of: appState.onboardingPresentationNonce) { _, _ in
+            if canPresentOnboarding { showOnboarding = true }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .showFolderStructureHelp)) { _ in
             showFolderStructureHelp = true
         }
@@ -88,5 +103,14 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .showFirstSteps)) { _ in
             showFirstSteps = true
         }
+    }
+
+    private var canPresentOnboarding: Bool {
+        appState.rootStatus == .ok || appState.rootStatus == .notScanned
+    }
+
+    private func presentOnboardingIfNeeded() {
+        guard canPresentOnboarding, appState.needsAutomaticOnboarding else { return }
+        DispatchQueue.main.async { showOnboarding = true }
     }
 }

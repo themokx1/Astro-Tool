@@ -1,3 +1,4 @@
+import AppKit
 import AstroCore
 import Foundation
 import SwiftUI
@@ -83,6 +84,16 @@ struct LibrarySettingsView: View {
                 ) {
                     astrobinFilterIdsList
                 }
+            }
+
+            Section("Beállítóvarázsló") {
+                Button("Onboarding újraindítása…") {
+                    appState.requestOnboarding()
+                    NSApp.keyWindow?.performClose(nil)
+                }
+                Text("Újra végigvezet a helyszín, setupok, szűrők, minőség és integrációs referencia oldalain. Minden oldal ismét kihagyható.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section {

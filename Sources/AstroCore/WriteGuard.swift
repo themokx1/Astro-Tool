@@ -251,6 +251,59 @@ public struct WriteGuard: Sendable {
         )
     }
 
+    /// Executes one exact `FrameArchivePlanner` move. Rebuilding the plan
+    /// here prevents callers from smuggling an arbitrary destination into a
+    /// superficially valid value. Existing destinations are never replaced.
+    public func moveArchivedFrame(_ plan: FrameArchivePlan) throws {
+        let rebuilt = try FrameArchivePlanner.plan(
+            sourceRelative: plan.sourceRelative, mode: plan.mode
+        )
+        guard rebuilt == plan else { throw AstroError.writeForbidden(path: plan.destinationRelative) }
+
+        let rootURL = root.standardizedFileURL
+        let source = root.appendingPathComponent(plan.sourceRelative).standardizedFileURL
+        let destination = root.appendingPathComponent(plan.destinationRelative).standardizedFileURL
+        let resolvedRoot = rootURL.resolvingSymlinksInPath()
+        let resolvedSource = source.resolvingSymlinksInPath()
+        let resolvedDestination = destination.resolvingSymlinksInPath()
+        guard source.path.hasPrefix(rootURL.path + "/"),
+              destination.path.hasPrefix(rootURL.path + "/"),
+              resolvedSource.path.hasPrefix(resolvedRoot.path + "/"),
+              resolvedDestination.path.hasPrefix(resolvedRoot.path + "/")
+        else { throw AstroError.writeForbidden(path: plan.destinationRelative) }
+
+        // `resolvingSymlinksInPath()` does not reliably resolve a symlinked
+        // parent when the final destination does not exist yet. Reject every
+        // existing symlink component explicitly before creating a directory
+        // or moving the file, so `lights/archive -> /outside` cannot redirect
+        // a confirmed in-library operation.
+        for relativePath in [plan.sourceRelative, plan.destinationRelative] {
+            var componentURL = rootURL
+            for component in relativePath.split(separator: "/") {
+                componentURL.appendPathComponent(String(component))
+                let attributes = try? FileManager.default.attributesOfItem(atPath: componentURL.path)
+                if attributes?[.type] as? FileAttributeType == .typeSymbolicLink {
+                    throw AstroError.writeForbidden(path: relativePath)
+                }
+            }
+        }
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: source.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue
+        else { throw AstroError.pathNotFound(path: source.path) }
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            throw AstroError.writeForbidden(path: destination.path)
+        }
+
+        try Self.classifyingPermissionErrors(path: destination.path) {
+            try FileManager.default.createDirectory(
+                at: destination.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            try FileManager.default.moveItem(at: source, to: destination)
+        }
+    }
+
     /// Writes `data` to `relativePath` resolved under `toolDir`, creating
     /// intermediate directories as needed. Overwriting an existing file
     /// under `.astro_tool/` is allowed — that's the tool's own state, not

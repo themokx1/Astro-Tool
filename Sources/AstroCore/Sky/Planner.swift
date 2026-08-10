@@ -18,6 +18,9 @@ public struct TargetPlan: Codable, Sendable, Equatable {
     public var decDeg: Double?
     public var usableIntegrationSeconds: Double
     public var goalSeconds: Double?
+    /// Whether `goalSeconds` came from a tag or the automatic planning
+    /// reference. `nil` only for older decoded payloads/direct test values.
+    public var goalSource: IntegrationGoalSource?
     /// ISO 8601 (UTC) instant of tonight's meridian transit, within the
     /// scanned night window. `nil` if there's no coordinate, or the target
     /// never rises during the window.
@@ -60,6 +63,7 @@ public struct TargetPlan: Codable, Sendable, Equatable {
         decDeg: Double? = nil,
         usableIntegrationSeconds: Double,
         goalSeconds: Double? = nil,
+        goalSource: IntegrationGoalSource? = nil,
         culminationUTC: String? = nil,
         culminationLocal: String? = nil,
         maxAltitudeDeg: Double? = nil,
@@ -78,6 +82,7 @@ public struct TargetPlan: Codable, Sendable, Equatable {
         self.decDeg = decDeg
         self.usableIntegrationSeconds = usableIntegrationSeconds
         self.goalSeconds = goalSeconds
+        self.goalSource = goalSource
         self.culminationUTC = culminationUTC
         self.culminationLocal = culminationLocal
         self.maxAltitudeDeg = maxAltitudeDeg
@@ -92,7 +97,7 @@ public struct TargetPlan: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case target, displayName, raDeg, decDeg, usableIntegrationSeconds, goalSeconds,
+        case target, displayName, raDeg, decDeg, usableIntegrationSeconds, goalSeconds, goalSource,
              culminationUTC, culminationLocal, maxAltitudeDeg, visibleWindowLocal, visibleHours,
              moonIlluminationPercent, moonSeparationDeg, verdict, score, filterGoals, filterAdvice
     }
@@ -107,6 +112,7 @@ public struct TargetPlan: Codable, Sendable, Equatable {
         decDeg = try c.decodeIfPresent(Double.self, forKey: .decDeg)
         usableIntegrationSeconds = try c.decode(Double.self, forKey: .usableIntegrationSeconds)
         goalSeconds = try c.decodeIfPresent(Double.self, forKey: .goalSeconds)
+        goalSource = try c.decodeIfPresent(IntegrationGoalSource.self, forKey: .goalSource)
         culminationUTC = try c.decodeIfPresent(String.self, forKey: .culminationUTC)
         culminationLocal = try c.decodeIfPresent(String.self, forKey: .culminationLocal)
         maxAltitudeDeg = try c.decodeIfPresent(Double.self, forKey: .maxAltitudeDeg)
@@ -596,7 +602,13 @@ public enum Planner {
         for stat in stats {
             let targetLights = allLights.filter { $0.target == stat.target }
             let coord = TargetCoordinates.medianCoordinates(files: targetLights, meta: allMeta)
-            let goalSeconds = GoalTag.parse(tags: stat.tags)
+            let effectiveGoal = IntegrationGoalCalculator.effectiveGoal(
+                tags: stat.tags,
+                rule: config.integrationReference,
+                setup: ImagingSetupProfile.defaultSetup(in: config.imagingSetups),
+                target: TargetCatalog.target(matchingFolderName: stat.target)
+            )
+            let goalSeconds = effectiveGoal.seconds
             let isComet = TargetNameResolver.resolve(folderName: stat.target).isComet
 
             // R11-T5/F2: per-filter goal breakdown, gated on the target
@@ -615,6 +627,7 @@ public enum Planner {
                 displayName: stat.displayName,
                 usableIntegrationSeconds: stat.usableIntegrationSeconds,
                 goalSeconds: goalSeconds,
+                goalSource: effectiveGoal.source,
                 filterGoals: filterGoals,
                 coord: coord,
                 isComet: isComet,
@@ -692,6 +705,7 @@ public enum Planner {
         displayName: String,
         usableIntegrationSeconds: Double,
         goalSeconds: Double?,
+        goalSource: IntegrationGoalSource?,
         filterGoals: [FilterIntegration],
         coord: (raDeg: Double, decDeg: Double)?,
         isComet: Bool,
@@ -710,6 +724,7 @@ public enum Planner {
                 decDeg: coord?.decDeg,
                 usableIntegrationSeconds: usableIntegrationSeconds,
                 goalSeconds: goalSeconds,
+                goalSource: goalSource,
                 verdict: Verdict.cometStaleCoordinate,
                 score: 0,
                 filterGoals: filterGoals
@@ -726,6 +741,7 @@ public enum Planner {
                 decDeg: coord?.decDeg,
                 usableIntegrationSeconds: usableIntegrationSeconds,
                 goalSeconds: goalSeconds,
+                goalSource: goalSource,
                 verdict: Verdict.noCoordinate,
                 score: 0,
                 filterGoals: filterGoals
@@ -772,6 +788,7 @@ public enum Planner {
         let score = self.score(
             usableIntegrationSeconds: usableIntegrationSeconds,
             goalSeconds: goalSeconds,
+            goalSource: goalSource,
             filterGoals: filterGoals,
             visibleHours: visibleHours,
             moonInterferes: moonInterferes
@@ -784,6 +801,7 @@ public enum Planner {
             decDeg: coord.decDeg,
             usableIntegrationSeconds: usableIntegrationSeconds,
             goalSeconds: goalSeconds,
+            goalSource: goalSource,
             culminationUTC: sweep.culminationUTC.map(isoString),
             culminationLocal: culminationLocal,
             maxAltitudeDeg: sweep.maxAltitudeDeg,
@@ -800,30 +818,35 @@ public enum Planner {
 
     // MARK: - Score
 
-    /// `missingNeed x visibilityFactor x moonPenalty`. `missingNeed` is 1.0
-    /// when there's no overall or filter goal (every target with data is
-    /// equally "worth finishing"). Otherwise it is the larger of the
-    /// overall missing hours and the largest per-filter deficit, capped
-    /// at 99 (so a wildly under-shot goal doesn't dwarf everything else)
-    /// and floored at a small positive value once the goal is already met
-    /// (still shootable, just deprioritized under anything still missing
-    /// hours). `visibilityFactor` is `min(visibleHours/4, 1)`.
+    /// `missingNeed x visibilityFactor x moonPenalty`. Explicit overall and
+    /// filter goals use missing hours because they are deliberate user
+    /// intent. An automatic reference uses only its missing fraction (0...1),
+    /// so it usefully orders otherwise-unplanned targets without outranking
+    /// an outstanding explicit filter plan merely because every target now
+    /// has a default number of hours. Explicit need is capped at 99 and a
+    /// completed target is floored at 0.1. `visibilityFactor` is
+    /// `min(visibleHours/4, 1)`.
     /// `moonPenalty` is 0.2 when the verdict is "Hold zavar", else 1.
     private static func score(
         usableIntegrationSeconds: Double,
         goalSeconds: Double?,
+        goalSource: IntegrationGoalSource?,
         filterGoals: [FilterIntegration],
         visibleHours: Double,
         moonInterferes: Bool
     ) -> Double {
-        let overallMissingHours = goalSeconds.map {
-            max(0, ($0 - usableIntegrationSeconds) / 3600.0)
+        let overallMissingNeed = goalSeconds.map { goal -> Double in
+            let missing = max(0, goal - usableIntegrationSeconds)
+            if goalSource == .automaticReference, goal > 0 {
+                return min(missing / goal, 1)
+            }
+            return missing / 3600.0
         }
         let largestFilterMissingHours = filterGoals
             .compactMap(\.missingSeconds)
             .map { $0 / 3600.0 }
             .max()
-        let relevantMissingHours = max(overallMissingHours ?? 0, largestFilterMissingHours ?? 0)
+        let relevantMissingHours = max(overallMissingNeed ?? 0, largestFilterMissingHours ?? 0)
         let hasAnyGoal = goalSeconds != nil || filterGoals.contains { $0.goalSeconds != nil }
 
         let missingNeed: Double

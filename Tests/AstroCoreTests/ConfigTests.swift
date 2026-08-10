@@ -44,6 +44,8 @@ import Testing
     #expect(config.site.longitudeDeg == nil)
 
     #expect(config.weather.enabled == false)
+
+    #expect(config.integrationReference == IntegrationReferenceRule())
 }
 
 @Test func defaultSiteRuleHasNilCoordinates() {

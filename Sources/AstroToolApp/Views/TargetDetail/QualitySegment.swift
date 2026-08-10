@@ -43,12 +43,19 @@ struct QualitySegment: View {
     @State private var selectedFrames: Set<Row.ID> = []
     @State private var selectedCaptureSlug: String?
     @State private var captureAssignment: AssignmentContext?
+    @State private var archiveConfirmation: ArchiveConfirmation?
 
     private struct AssignmentContext: Identifiable {
         let id = UUID()
         let date: String
         let anchorPath: String
         let selectedPaths: [String]
+    }
+
+    private struct ArchiveConfirmation: Identifiable {
+        let id = UUID()
+        let plan: FrameArchivePlan
+        let fileName: String
     }
     /// R12-U2 (point 5): the session currently shown in `StackListSheet` --
     /// `nil` when the sheet is closed. Set directly from the control bar's
@@ -144,6 +151,7 @@ struct QualitySegment: View {
         let resolvedFilter: String?
         let metadataOrigin: String
         let captureConflict: Bool
+        let isArchived: Bool
 
         init(_ frameScore: FrameScore, verdict: Bool?, metadata: ResolvedCaptureMetadata?) {
             self.frameScore = frameScore
@@ -167,6 +175,7 @@ struct QualitySegment: View {
                 "\($0.sensorOrigin.displayNameHU) / \($0.signalOrigin.displayNameHU) / \($0.filterOrigin.displayNameHU)"
             } ?? "Ismeretlen"
             captureConflict = metadata?.hasConflict == true
+            isArchived = FrameArchivePlanner.isArchived(frameScore.path)
         }
 
         var sessionSubdirSortKey: String { sessionSubdir ?? "" }
@@ -377,6 +386,13 @@ struct QualitySegment: View {
                 frames: appState.frameScores,
                 anchorPath: context.anchorPath,
                 selectedPaths: context.selectedPaths
+            )
+        }
+        .sheet(item: $archiveConfirmation) { confirmation in
+            FrameArchiveConfirmSheet(
+                plan: confirmation.plan,
+                fileName: confirmation.fileName,
+                onConfirm: { appState.applyFrameArchive(confirmation.plan) }
             )
         }
     }
@@ -952,6 +968,11 @@ struct QualitySegment: View {
                             .foregroundColor(tint(row))
                         Text(row.captureName ?? "nincs capture-besorolás")
                             .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        if row.isArchived {
+                            Text("ARCHÍV · kizárva")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.orange)
+                        }
                     }
                 }
                 .help(row.path)
@@ -1061,6 +1082,11 @@ struct QualitySegment: View {
                             .foregroundColor(tint(row))
                         Text(row.captureName ?? "nincs capture-besorolás")
                             .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        if row.isArchived {
+                            Text("ARCHÍV · kizárva")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.orange)
+                        }
                     }
                 }
                 .help(row.path)
@@ -1152,7 +1178,7 @@ struct QualitySegment: View {
             // same convention "Kiugró" right above already uses for a
             // glance-only signal column.
             TableColumn("Saját döntés") { (row: Row) in verdictCell(row) }
-                .width(90)
+                .width(120)
         }
     }
 
@@ -1204,14 +1230,26 @@ struct QualitySegment: View {
         // the frame's current verdict is hidden rather than shown-but-inert,
         // and "Döntés törlése" only appears at all once there's something
         // to clear.
-        if row.verdict != true {
-            Button("Elfogadás") { appState.setFrameVerdict(path: row.path, accepted: true) }
-        }
-        if row.verdict != false {
-            Button("Elvetés") { appState.setFrameVerdict(path: row.path, accepted: false) }
-        }
-        if row.verdict != nil {
-            Button("Döntés törlése") { appState.setFrameVerdict(path: row.path, accepted: nil) }
+        if row.isArchived {
+            Button("Visszaállítás az eredeti helyre…") {
+                requestArchiveMove(row, mode: .restore)
+            }
+        } else {
+            if row.verdict != true {
+                Button("Elfogadás") { appState.setFrameVerdict(path: row.path, accepted: true) }
+            }
+            if row.verdict != false {
+                Button("Elvetés") { appState.setFrameVerdict(path: row.path, accepted: false) }
+            }
+            if row.verdict != nil {
+                Button("Döntés törlése") { appState.setFrameVerdict(path: row.path, accepted: nil) }
+            }
+            if row.verdict == false {
+                Divider()
+                Button("Áthelyezés archívumba…") {
+                    requestArchiveMove(row, mode: .archive)
+                }
+            }
         }
     }
 
@@ -1229,13 +1267,41 @@ struct QualitySegment: View {
         case .some(true):
             Text("✓").bold().foregroundStyle(.green)
         case .some(false):
-            Text("✗").bold().foregroundStyle(.red)
+            if row.isArchived {
+                Text("ARCHÍV · kizárva").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+            } else {
+                HStack(spacing: 6) {
+                    Text("✗").bold().foregroundStyle(.red)
+                    Button {
+                        requestArchiveMove(row, mode: .archive)
+                    } label: {
+                        Image(systemName: "archivebox")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Áthelyezés archívumba…")
+                }
+            }
         case .none:
             if row.isOutlier {
                 Text("javasolt: elvetés").font(.caption).foregroundStyle(.secondary)
             } else {
                 Text(TDFormat.missingCell).foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private func requestArchiveMove(_ row: Row, mode: FrameArchiveMode) {
+        do {
+            archiveConfirmation = ArchiveConfirmation(
+                plan: try FrameArchivePlanner.plan(sourceRelative: row.path, mode: mode),
+                fileName: row.fileName
+            )
+        } catch {
+            // A quality row is expected to be a tracked session light. If a
+            // stale/noncanonical path slips through, leave the filesystem
+            // untouched; the next scan will reconcile the row.
+            archiveConfirmation = nil
+            appState.lastError = "Az archív művelet nem tervezhető ehhez a frame-hez: \(error)"
         }
     }
 
@@ -1246,6 +1312,65 @@ struct QualitySegment: View {
     private static func formatExptime(_ value: Double) -> String {
         if value == value.rounded() { return "\(Int(value)) s" }
         return String(format: "%.1f s", value)
+    }
+}
+
+private struct FrameArchiveConfirmSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let plan: FrameArchivePlan
+    let fileName: String
+    let onConfirm: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(
+                plan.mode == .archive ? "Frame áthelyezése archívumba" : "Archív frame visszaállítása",
+                systemImage: plan.mode == .archive ? "archivebox" : "arrow.uturn.backward.circle"
+            )
+            .font(.headline)
+
+            Text(fileName).font(.subheadline.weight(.semibold))
+            pathBlock("Forrás", plan.sourceRelative)
+            pathBlock("Cél", plan.destinationRelative)
+
+            if plan.mode == .archive {
+                Label(
+                    "A fájl fizikailag az adott gyűjtés lights/archive mappájába kerül. Az appban látható marad, minden mérése és capture-besorolása megmarad, de a stackből és a hasznos integrációból továbbra is ki lesz zárva.",
+                    systemImage: "checkmark.shield"
+                )
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            } else {
+                Label(
+                    "A fájl visszakerül az archíválás előtti relatív helyére. A korábbi elvetési döntés megmarad, ezért nem kerül automatikusan vissza a stackbe.",
+                    systemImage: "arrow.uturn.backward"
+                )
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Spacer()
+                Button("Mégse") { dismiss() }
+                Button(plan.mode == .archive ? "Áthelyezés" : "Visszaállítás") {
+                    onConfirm()
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 620)
+    }
+
+    private func pathBlock(_ title: String, _ path: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(path).font(.caption.monospaced()).textSelection(.enabled)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.08)))
+        }
     }
 }
 

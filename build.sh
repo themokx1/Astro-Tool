@@ -15,7 +15,7 @@ APP_EXECUTABLE_TARGET="AstroToolApp"  # SwiftPM product name, distinct from
                                       # silently resolve to the CLI binary
                                       # "astrotool" (same file, different case).
 BUNDLE_ID="com.zoltanpalotai.astrotool"
-SHORT_VERSION="0.15.3"
+SHORT_VERSION="0.16.0"
 BUILD_VERSION="1"
 
 BUILD="build"
@@ -24,9 +24,17 @@ INSTALL_DIR="$HOME/Applications"
 BIN_DIR="$HOME/.local/bin"
 CLI_STAGE="$BUILD/astrotool-cli"
 
-echo "==> swift build -c release"
-swift build -c release
-BIN_PATH="$(swift build -c release --show-bin-path)"
+SWIFT_BUILD_ARGS=(-c release)
+if [ "${ASTROTOOL_DISABLE_SWIFTPM_SANDBOX:-0}" = "1" ]; then
+    # Useful inside an already-sandboxed build runner where SwiftPM cannot
+    # start its own nested sandbox. Normal local and CI builds keep SwiftPM's
+    # default isolation unless this opt-in flag is set explicitly.
+    SWIFT_BUILD_ARGS+=(--disable-sandbox)
+fi
+
+echo "==> swift build ${SWIFT_BUILD_ARGS[*]}"
+swift build "${SWIFT_BUILD_ARGS[@]}"
+BIN_PATH="$(swift build "${SWIFT_BUILD_ARGS[@]}" --show-bin-path)"
 
 echo "==> Assembling $APP"
 rm -rf "$APP"

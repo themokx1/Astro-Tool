@@ -174,6 +174,7 @@ final class AppState: @unchecked Sendable {
     /// structure, so they live in UserDefaults rather than config.json.
     private static let selectedImagingSetupIDKey = "selectedImagingSetupID"
     private static let discoveryFocalLengthsBySetupKey = "discoveryFocalLengthsBySetup"
+    private static let onboardingCompletedVersionKey = "onboardingCompletedVersion"
 
     /// App-lifetime singleton reference, set from `init()`. The menu bar
     /// (`Views/Commands.swift`) needs to call into `AppState` from `.commands`
@@ -639,6 +640,26 @@ final class AppState: @unchecked Sendable {
         case libraryRules
     }
     var settingsTab: SettingsTab = .library
+    /// Incrementing this requests a user-initiated re-run even when the
+    /// current onboarding version was already completed.
+    var onboardingPresentationNonce: Int = 0
+
+    var needsAutomaticOnboarding: Bool {
+        OnboardingLifecycle.shouldPresent(
+            completedVersion: UserDefaults.standard.integer(forKey: Self.onboardingCompletedVersionKey)
+        )
+    }
+
+    func completeOnboardingVersion() {
+        UserDefaults.standard.set(
+            OnboardingLifecycle.currentVersion,
+            forKey: Self.onboardingCompletedVersionKey
+        )
+    }
+
+    func requestOnboarding() {
+        onboardingPresentationNonce += 1
+    }
 
     // MARK: - Global search (R9-T6/B3)
 
@@ -1233,6 +1254,7 @@ final class AppState: @unchecked Sendable {
         startActivationObserverIfNeeded()
         if ProcessInfo.processInfo.arguments.contains("-ResetOnboarding") {
             UserDefaults.standard.removeObject(forKey: Self.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: Self.onboardingCompletedVersionKey)
         }
         if let data = UserDefaults.standard.data(forKey: Self.bookmarkKey),
            let url = Self.resolveBookmark(data)
@@ -1248,6 +1270,46 @@ final class AppState: @unchecked Sendable {
     /// currently configured root without prompting for a new one.
     func retryRootAccess() {
         openRoot(at: URL(fileURLWithPath: config.rootPath, isDirectory: true))
+    }
+
+    /// Saves the wizard's merged config once, then upserts its new filter
+    /// inventory rows. Returns false with `lastError` populated on any
+    /// validation/write failure so the wizard stays open.
+    func applyOnboarding(config newConfig: AstroConfig, filters newFilters: [FilterProfileRecord]?) -> Bool {
+        do {
+            for setup in newConfig.imagingSetups { try setup.validate() }
+            guard newConfig.rating.workers > 0,
+                  newConfig.rating.outlierZScore.isFinite,
+                  newConfig.rating.outlierZScore > 0
+            else { throw AstroError.invalidInput("A pontozási worker és z-küszöb pozitív legyen.") }
+
+            let root = URL(fileURLWithPath: newConfig.rootPath, isDirectory: true)
+            try newConfig.save(using: WriteGuard(root: root))
+
+            if let newFilters {
+                guard let db else { throw AstroError.databaseError("A szűrők mentéséhez nyisd meg a könyvtár adatbázisát.") }
+                let now = Date().timeIntervalSince1970
+                let stamped = newFilters.map { input -> FilterProfileRecord in
+                    var filter = input
+                    if filter.createdAt == 0 { filter.createdAt = now }
+                    filter.updatedAt = now
+                    return filter
+                }
+                try db.replaceFilterProfiles(stamped)
+                filterProfiles = try db.allFilterProfiles()
+                discoveredFilterProfiles = try db.discoveredFilterProfiles()
+            }
+
+            config = newConfig
+            completeOnboardingVersion()
+            lastError = nil
+            progressText = "Az onboarding beállításai mentve."
+            refreshDiscoveryAfterEquipmentChange()
+            return true
+        } catch {
+            handle(error)
+            return false
+        }
     }
 
     /// "Mappa választása…": prompts via `NSOpenPanel`, then hands the chosen
@@ -4227,6 +4289,32 @@ final class AppState: @unchecked Sendable {
         }
     }
 
+    /// The onboarding editor is authoritative only after this awaited
+    /// snapshot finishes. Unlike the fire-and-forget page refresh, callers
+    /// can keep editing disabled on failure and therefore cannot replace a
+    /// delayed inventory with a partial draft.
+    func loadFilterProfilesForOnboarding() async -> [FilterProfileRecord]? {
+        guard let db else {
+            lastError = "A szűrők betöltéséhez nyisd meg a könyvtár adatbázisát."
+            return nil
+        }
+        do {
+            let inventory = try await Task.detached(priority: .userInitiated) {
+                (
+                    try db.allFilterProfiles(),
+                    try db.discoveredFilterProfiles()
+                )
+            }.value
+            guard !Task.isCancelled else { return nil }
+            filterProfiles = inventory.0
+            discoveredFilterProfiles = inventory.1
+            return inventory.0
+        } catch {
+            handle(error)
+            return nil
+        }
+    }
+
     func saveFilterProfile(_ profile: FilterProfileRecord) {
         guard let db else { return }
         // Force a distinct observable transition even when an inline editor
@@ -4621,6 +4709,52 @@ final class AppState: @unchecked Sendable {
             try db.clearUserVerdict(fileID: fileID)
         }
         return true
+    }
+
+    /// Applies the exact frame archive/restore preview confirmed in the
+    /// Minőség UI. `FrameArchiveExecutor` owns filesystem+DB rollback; this
+    /// layer only patches the already loaded path-keyed presentation state.
+    func applyFrameArchive(_ plan: FrameArchivePlan) {
+        guard let db else { return }
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        let opID = beginOperation(plan.mode == .archive ? "Frame archíválása…" : "Frame visszaállítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let updated = try await Task.detached(priority: .userInitiated) {
+                    try FrameArchiveExecutor.apply(plan: plan, root: root, db: db)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+
+                if let index = self.frameScores.firstIndex(where: { $0.path == plan.sourceRelative }) {
+                    var score = self.frameScores[index]
+                    score.path = updated.path
+                    score.sessionSubdir = Self.sessionSubdir(path: updated.path, date: plan.date)
+                    self.frameScores[index] = score
+                }
+                if let verdict = self.frameVerdicts.removeValue(forKey: plan.sourceRelative) {
+                    self.frameVerdicts[plan.destinationRelative] = verdict
+                }
+                if let metadata = self.frameCaptureMetadata.removeValue(forKey: plan.sourceRelative) {
+                    self.frameCaptureMetadata[plan.destinationRelative] = metadata
+                }
+                self.trendPoints = nil
+                self.progressText = plan.mode == .archive
+                    ? "Archívumba helyezve: \(plan.destinationRelative)"
+                    : "Visszaállítva: \(plan.destinationRelative)"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    private nonisolated static func sessionSubdir(path: String, date: String) -> String? {
+        let components = path.split(separator: "/").map(String.init)
+        guard let dateIndex = components.firstIndex(of: date), dateIndex + 1 < components.count - 1 else {
+            return nil
+        }
+        return components[(dateIndex + 1)..<(components.count - 1)].joined(separator: "/")
     }
 
     // MARK: - Plate-solve backfill (R7-1)
@@ -5314,7 +5448,8 @@ final class AppState: @unchecked Sendable {
         catalog: String,
         name: String,
         date: String,
-        initialCapture: CaptureGroupDraft? = nil
+        initialCapture: CaptureGroupDraft? = nil,
+        catalogTarget: CatalogTarget? = nil
     ) {
         guard let parsedDate = SessionDateParser.parse(date), parsedDate.isCanonical else {
             lastError = "Érvénytelen dátum: \(date) (YYYY-MM-DD formátum szükséges)"
@@ -5327,27 +5462,44 @@ final class AppState: @unchecked Sendable {
 
         let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
         let database = db
+        let indexedTargetFolders = stats.map(\.target)
+        let resolvedCatalog = catalogTarget?.designation ?? catalog
+        let resolvedName = catalogTarget.flatMap { TargetCatalog.englishName(for: $0) }
+            ?? catalogTarget?.commonNameHU
+            ?? name
 
         let opID = beginOperation("Session létrehozása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
+                    let targetFolderOverride = catalogTarget.map { target in
+                        SessionCreator.targetFolder(
+                            for: target,
+                            root: root,
+                            indexedFolders: indexedTargetFolders
+                        )
+                    }
                     if let initialCapture {
                         guard let database else {
                             throw AstroError.databaseError("A könyvtár-adatbázis nem érhető el.")
                         }
                         return try SessionCreator.create(
                             root: root,
-                            catalogRaw: catalog,
-                            nameRaw: name,
+                            catalogRaw: resolvedCatalog,
+                            nameRaw: resolvedName,
                             date: date,
                             initialCapture: initialCapture,
-                            db: database
+                            db: database,
+                            targetFolderOverride: targetFolderOverride
                         )
                     }
                     return try SessionCreator.create(
-                        root: root, catalogRaw: catalog, nameRaw: name, date: date
+                        root: root,
+                        catalogRaw: resolvedCatalog,
+                        nameRaw: resolvedName,
+                        date: date,
+                        targetFolderOverride: targetFolderOverride
                     )
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }

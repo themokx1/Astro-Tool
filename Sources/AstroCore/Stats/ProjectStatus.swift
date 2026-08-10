@@ -3,9 +3,8 @@ import Foundation
 /// Where a target sits in the collect -> stack -> process pipeline. See
 /// `ProjectStatusQueries.projects` for exactly how each phase is derived.
 public enum ProjectPhase: String, Codable, Sendable, Equatable {
-    /// Usable integration is below the goal (or, with no goal set, below
-    /// `config.stats.collectingThresholdSeconds` and there's no stack at
-    /// all yet) -- still out shooting this target.
+    /// Usable integration is below the explicit or automatic goal -- still
+    /// out shooting this target.
     case collecting = "gyujtes"
     /// Has session data whose date isn't covered by any stack yet, and data
     /// collection looks done for now (no goal, or the goal is already met).
@@ -30,14 +29,16 @@ public struct ProjectState: Codable, Sendable, Equatable {
     public var phase: ProjectPhase
     public var usableIntegrationSeconds: Double
     public var goalSeconds: Double?
-    /// `max(goal - usable, 0)`; `nil` if there's no goal tag.
+    /// Provenance for `goalSeconds`; `nil` only in older decoded payloads.
+    public var goalSource: IntegrationGoalSource?
+    /// `max(goal - usable, 0)`; `nil` only in older decoded payloads.
     public var missingSeconds: Double?
     /// Per-filter usable/goal/missing rows from `FilterGoalQueries.merge`.
     /// Older serialized states decode this additive field as an empty list.
     public var filterGoals: [FilterIntegration]
-    /// Explicit overall goal when present; otherwise the sum of the
-    /// independently configured filter goals. UI callers must label the
-    /// fallback as a filter-goal sum rather than an explicit overall goal.
+    /// Effective overall goal (explicit tag or automatic reference).
+    /// Older decoded payloads without one fall back to the sum of their
+    /// independently configured filter goals.
     public var effectiveGoalSeconds: Double? {
         if let goalSeconds { return goalSeconds }
         let values = filterGoals.compactMap(\.goalSeconds)
@@ -66,6 +67,7 @@ public struct ProjectState: Codable, Sendable, Equatable {
         phase: ProjectPhase,
         usableIntegrationSeconds: Double,
         goalSeconds: Double? = nil,
+        goalSource: IntegrationGoalSource? = nil,
         missingSeconds: Double? = nil,
         filterGoals: [FilterIntegration] = [],
         latestSessionDate: String? = nil,
@@ -78,6 +80,7 @@ public struct ProjectState: Codable, Sendable, Equatable {
         self.phase = phase
         self.usableIntegrationSeconds = usableIntegrationSeconds
         self.goalSeconds = goalSeconds
+        self.goalSource = goalSource
         self.missingSeconds = missingSeconds
         self.filterGoals = filterGoals
         self.latestSessionDate = latestSessionDate
@@ -87,7 +90,7 @@ public struct ProjectState: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case target, displayName, phase, usableIntegrationSeconds, goalSeconds, missingSeconds, filterGoals,
+        case target, displayName, phase, usableIntegrationSeconds, goalSeconds, goalSource, missingSeconds, filterGoals,
              latestSessionDate, latestStackDate, latestProcessedDate, todos
     }
 
@@ -100,6 +103,7 @@ public struct ProjectState: Codable, Sendable, Equatable {
         phase = try c.decode(ProjectPhase.self, forKey: .phase)
         usableIntegrationSeconds = try c.decode(Double.self, forKey: .usableIntegrationSeconds)
         goalSeconds = try c.decodeIfPresent(Double.self, forKey: .goalSeconds)
+        goalSource = try c.decodeIfPresent(IntegrationGoalSource.self, forKey: .goalSource)
         missingSeconds = try c.decodeIfPresent(Double.self, forKey: .missingSeconds)
         filterGoals = try c.decodeIfPresent([FilterIntegration].self, forKey: .filterGoals) ?? []
         latestSessionDate = try c.decodeIfPresent(String.self, forKey: .latestSessionDate)
@@ -225,8 +229,14 @@ public enum ProjectStatusQueries {
         let latestStackDate = stackSpans.map(\.start).max()
         let latestProcessedDate = processedSpans.map(\.start).max()
 
-        let goalSeconds = GoalTag.parse(tags: stat.tags)
-        let missingSeconds = goalSeconds.map { max(0, $0 - stat.usableIntegrationSeconds) }
+        let effectiveGoal = IntegrationGoalCalculator.effectiveGoal(
+            tags: stat.tags,
+            rule: config.integrationReference,
+            setup: ImagingSetupProfile.defaultSetup(in: config.imagingSetups),
+            target: TargetCatalog.target(matchingFolderName: stat.target)
+        )
+        let goalSeconds = effectiveGoal.seconds
+        let missingSeconds = max(0, goalSeconds - stat.usableIntegrationSeconds)
 
         let sessionsNeedingStack = actionableSessionSpans
             .filter { session in !stackSpans.contains { overlaps($0, session) } }
@@ -236,7 +246,7 @@ public enum ProjectStatusQueries {
 
         // MARK: Phase
         let hasAnyStack = !stackSpans.isEmpty
-        let underGoal = goalSeconds.map { stat.usableIntegrationSeconds < $0 } ?? false
+        let underGoal = stat.usableIntegrationSeconds < goalSeconds
         let underFilterGoal = filterGoals.contains { ($0.missingSeconds ?? 0) > 0 }
         let noStackAndLow = !hasAnyStack && stat.usableIntegrationSeconds < config.stats.collectingThresholdSeconds
 
@@ -261,8 +271,11 @@ public enum ProjectStatusQueries {
         for stack in stacksNeedingProcess {
             todos.append("dolgozd fel: stacks/\(target)/\(stack.raw)")
         }
-        if let goalSeconds, let missingSeconds, missingSeconds > 0 {
-            todos.append("hiányzik még \(formatHours(missingSeconds)) óra a célhoz (goal:\(formatGoalHours(goalSeconds))h)")
+        if missingSeconds > 0 {
+            let sourceText = effectiveGoal.source == .explicitTag
+                ? "goal:\(formatGoalHours(goalSeconds))h"
+                : "automatikus célpontfényesség + APS-C f/5 referencia"
+            todos.append("hiányzik még \(formatHours(missingSeconds)) óra a célhoz (\(sourceText))")
         }
         for entry in filterGoals
             .filter({ ($0.missingSeconds ?? 0) > 0 })
@@ -290,6 +303,7 @@ public enum ProjectStatusQueries {
             phase: phase,
             usableIntegrationSeconds: stat.usableIntegrationSeconds,
             goalSeconds: goalSeconds,
+            goalSource: effectiveGoal.source,
             missingSeconds: missingSeconds,
             filterGoals: filterGoals,
             latestSessionDate: latestSessionDate,

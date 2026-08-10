@@ -116,3 +116,43 @@ import Testing
         #expect(target.commonNameHU == existing, "\(target.designation): TargetCatalog says \(target.commonNameHU ?? "nil"), CatalogNames says \(existing)")
     }
 }
+
+// MARK: - Human search and canonical session folders
+
+@Test func catalogSearchFindsTargetByCompactDesignation() throws {
+    let result = try #require(TargetCatalog.search("ic1396").first)
+    #expect(result.designation == "IC 1396")
+}
+
+@Test func catalogSearchFindsTargetByEnglishCommonName() throws {
+    let result = try #require(TargetCatalog.search("elephant trunk").first)
+    #expect(result.designation == "IC 1396")
+    #expect(TargetCatalog.englishName(for: result) == "Elephant's Trunk Nebula")
+}
+
+@Test func catalogSearchFindsTargetByAccentlessHungarianName() throws {
+    let result = try #require(TargetCatalog.search("elefantormany").first)
+    #expect(result.designation == "IC 1396")
+}
+
+@Test func catalogCanonicalFolderUsesStableEnglishName() throws {
+    let target = try #require(TargetCatalog.all.first { $0.designation == "IC 1396" })
+    #expect(TargetCatalog.canonicalFolderName(for: target) == "IC_1396_Elephants_Trunk_Nebula")
+}
+
+@Test func existingFolderForCatalogTargetPreventsSpellingDuplicate() throws {
+    let target = try #require(TargetCatalog.all.first { $0.designation == "IC 1396" })
+    let existing = TargetCatalog.existingFolder(
+        for: target,
+        among: ["M42_Orion_Nebula", "IC_1396_Elephants_Trunk_Nebula", "IC1396_elefant_kod"]
+    )
+    #expect(existing == "IC_1396_Elephants_Trunk_Nebula")
+}
+
+@Test func catalogSurfaceBrightnessUsesMagnitudeAndAngularArea() throws {
+    let target = try #require(TargetCatalog.all.first { $0.designation == "M 42" })
+    let brightness = try #require(TargetCatalog.estimatedSurfaceBrightness(for: target))
+
+    #expect(brightness > (target.magnitude ?? 0))
+    #expect(brightness > 21 && brightness < 23)
+}

@@ -1020,52 +1020,88 @@ public final class Database: @unchecked Sendable {
     public func upsertFilterProfile(_ record: FilterProfileRecord) throws -> Int64 {
         let prepared = try FilterProfileValidator.prepared(record)
         return try withLock {
-            if let id = prepared.id {
-                var exists = false
-                try db.query("SELECT 1 FROM filter_profiles WHERE id = ? LIMIT 1;", bind: [.int(id)]) { _ in
-                    exists = true
-                }
-                guard exists else {
-                    throw AstroError.databaseError("upsertFilterProfile: unknown id \(id)")
-                }
-                try db.run(
-                    """
-                    UPDATE filter_profiles SET
-                      manufacturer = ?, model = ?, name = ?, signal_mode = ?, notes = ?,
-                      identity_key = ?, updated_at = ?
-                    WHERE id = ?;
-                    """,
-                    bind: Self.filterProfileBindings(prepared, includeCreatedAt: false) + [.int(id)]
-                )
-                return id
-            }
+            try upsertFilterProfileUnlocked(prepared)
+        }
+    }
 
+    /// Synchronizes the editable onboarding inventory in one transaction.
+    /// Capture groups retain their historical filter metadata snapshots.
+    public func replaceFilterProfiles(_ records: [FilterProfileRecord]) throws {
+        let prepared = try records.map(FilterProfileValidator.prepared)
+        let identities = prepared.map(\.identityKey)
+        guard Set(identities).count == identities.count else {
+            throw AstroError.invalidInput("Ugyanaz a szűrő többször szerepel az onboarding listában.")
+        }
+
+        try withLock {
+            try db.exec("BEGIN IMMEDIATE;")
+            do {
+                var keptIDs = Set<Int64>()
+                for record in prepared {
+                    keptIDs.insert(try upsertFilterProfileUnlocked(record))
+                }
+
+                var existingIDs: [Int64] = []
+                try db.query("SELECT id FROM filter_profiles;") { row in
+                    if let id = row.int64(0) { existingIDs.append(id) }
+                }
+                for id in existingIDs where !keptIDs.contains(id) {
+                    try db.run("DELETE FROM filter_profiles WHERE id = ?;", bind: [.int(id)])
+                }
+                try db.exec("COMMIT;")
+            } catch {
+                try? db.exec("ROLLBACK;")
+                throw error
+            }
+        }
+    }
+
+    private func upsertFilterProfileUnlocked(_ prepared: FilterProfileRecord) throws -> Int64 {
+        if let id = prepared.id {
+            var exists = false
+            try db.query("SELECT 1 FROM filter_profiles WHERE id = ? LIMIT 1;", bind: [.int(id)]) { _ in
+                exists = true
+            }
+            guard exists else {
+                throw AstroError.databaseError("upsertFilterProfile: unknown id \(id)")
+            }
             try db.run(
                 """
-                INSERT INTO filter_profiles(
-                  manufacturer, model, name, signal_mode, notes, identity_key, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(identity_key) DO UPDATE SET
-                  manufacturer = excluded.manufacturer,
-                  model = excluded.model,
-                  name = excluded.name,
-                  signal_mode = excluded.signal_mode,
-                  notes = excluded.notes,
-                  updated_at = excluded.updated_at;
+                UPDATE filter_profiles SET
+                  manufacturer = ?, model = ?, name = ?, signal_mode = ?, notes = ?,
+                  identity_key = ?, updated_at = ?
+                WHERE id = ?;
                 """,
-                bind: Self.filterProfileBindings(prepared, includeCreatedAt: true)
+                bind: Self.filterProfileBindings(prepared, includeCreatedAt: false) + [.int(id)]
             )
-
-            var id: Int64?
-            try db.query(
-                "SELECT id FROM filter_profiles WHERE identity_key = ?;",
-                bind: [.text(prepared.identityKey)]
-            ) { id = $0.int64(0) }
-            guard let id else {
-                throw AstroError.databaseError("upsertFilterProfile: no row after upsert")
-            }
             return id
         }
+
+        try db.run(
+            """
+            INSERT INTO filter_profiles(
+              manufacturer, model, name, signal_mode, notes, identity_key, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(identity_key) DO UPDATE SET
+              manufacturer = excluded.manufacturer,
+              model = excluded.model,
+              name = excluded.name,
+              signal_mode = excluded.signal_mode,
+              notes = excluded.notes,
+              updated_at = excluded.updated_at;
+            """,
+            bind: Self.filterProfileBindings(prepared, includeCreatedAt: true)
+        )
+
+        var id: Int64?
+        try db.query(
+            "SELECT id FROM filter_profiles WHERE identity_key = ?;",
+            bind: [.text(prepared.identityKey)]
+        ) { id = $0.int64(0) }
+        guard let id else {
+            throw AstroError.databaseError("upsertFilterProfile: no row after upsert")
+        }
+        return id
     }
 
     public func filterProfile(id: Int64) throws -> FilterProfileRecord? {
@@ -1895,6 +1931,34 @@ public final class Database: @unchecked Sendable {
                 record = Self.fileRecord(from: row)
             }
             return record
+        }
+    }
+
+    /// Changes only one tracked file's path while preserving its primary key
+    /// and every dependent metadata row. Both the expected old path and id
+    /// must match, and an existing destination is a hard collision.
+    public func relocateFilePath(
+        fileID: Int64,
+        sourcePath: String,
+        destinationPath: String
+    ) throws {
+        try withLock {
+            var sourceID: Int64?
+            try db.query("SELECT id FROM files WHERE path = ?;", bind: [.text(sourcePath)]) { row in
+                sourceID = row.int64(0)
+            }
+            guard sourceID == fileID else { throw AstroError.pathNotFound(path: sourcePath) }
+
+            var destinationExists = false
+            try db.query("SELECT 1 FROM files WHERE path = ? LIMIT 1;", bind: [.text(destinationPath)]) { _ in
+                destinationExists = true
+            }
+            guard !destinationExists else { throw AstroError.writeForbidden(path: destinationPath) }
+
+            try db.run(
+                "UPDATE files SET path = ? WHERE id = ? AND path = ?;",
+                bind: [.text(destinationPath), .int(fileID), .text(sourcePath)]
+            )
         }
     }
 

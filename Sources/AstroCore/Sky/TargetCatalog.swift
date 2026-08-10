@@ -49,6 +49,12 @@ public struct CatalogTarget: Sendable, Codable, Equatable {
     public let sizeArcmin: Double?
     /// Apparent visual magnitude. `nil` when genuinely unrecorded.
     public let magnitude: Double?
+    /// Curated or measured mean surface brightness in mag/arcsec². Most
+    /// embedded records leave this nil and use the documented magnitude +
+    /// angular-area estimate instead. A direct value is useful for targets
+    /// whose integrated magnitude is not representative of the photographed
+    /// structure, and for deterministic planning tests.
+    public let surfaceBrightnessMagPerArcsec2: Double?
 
     public init(
         designation: String,
@@ -57,7 +63,8 @@ public struct CatalogTarget: Sendable, Codable, Equatable {
         decDeg: Double,
         kind: CatalogTargetKind,
         sizeArcmin: Double?,
-        magnitude: Double?
+        magnitude: Double?,
+        surfaceBrightnessMagPerArcsec2: Double? = nil
     ) {
         self.designation = designation
         self.commonNameHU = commonNameHU
@@ -66,6 +73,7 @@ public struct CatalogTarget: Sendable, Codable, Equatable {
         self.kind = kind
         self.sizeArcmin = sizeArcmin
         self.magnitude = magnitude
+        self.surfaceBrightnessMagPerArcsec2 = surfaceBrightnessMagPerArcsec2
     }
 }
 
@@ -80,6 +88,173 @@ public struct CatalogTarget: Sendable, Codable, Equatable {
 /// `DiscoveryPlanner.discover`.
 public enum TargetCatalog {
     public static let all: [CatalogTarget] = messier + nonMessier
+
+    /// English names are deliberately data, not UI translations: they are
+    /// stable search aliases and therefore also provide deterministic ASCII
+    /// folder names. Bare catalog objects remain searchable by designation.
+    private static let englishNames: [String: String] = [
+        "M 1": "Crab Nebula", "M 6": "Butterfly Cluster", "M 7": "Ptolemy Cluster",
+        "M 8": "Lagoon Nebula", "M 11": "Wild Duck Cluster", "M 13": "Hercules Globular Cluster",
+        "M 16": "Eagle Nebula", "M 17": "Omega Nebula", "M 20": "Trifid Nebula",
+        "M 27": "Dumbbell Nebula", "M 31": "Andromeda Galaxy", "M 33": "Triangulum Galaxy",
+        "M 42": "Orion Nebula", "M 44": "Beehive Cluster", "M 45": "Pleiades",
+        "M 51": "Whirlpool Galaxy", "M 57": "Ring Nebula", "M 63": "Sunflower Galaxy",
+        "M 64": "Black Eye Galaxy", "M 76": "Little Dumbbell Nebula", "M 81": "Bode's Galaxy",
+        "M 82": "Cigar Galaxy", "M 83": "Southern Pinwheel Galaxy", "M 97": "Owl Nebula",
+        "M 101": "Pinwheel Galaxy", "M 104": "Sombrero Galaxy",
+        "NGC 40": "Bow-Tie Nebula", "NGC 104": "47 Tucanae", "NGC 246": "Skull Nebula",
+        "NGC 253": "Sculptor Galaxy", "NGC 281": "Pacman Nebula",
+        "NGC 300": "Sculptor Pinwheel Galaxy", "NGC 457": "Owl Cluster",
+        "NGC 663": "Lawnmower Cluster", "NGC 772": "Fiddlehead Galaxy",
+        "NGC 869": "Double Cluster h Persei", "NGC 884": "Double Cluster chi Persei",
+        "NGC 891": "Silver Sliver Galaxy", "NGC 1333": "Embryo Nebula",
+        "NGC 1435": "Merope Nebula", "NGC 1499": "California Nebula",
+        "NGC 1502": "Golden Harp Cluster", "NGC 1579": "Northern Trifid Nebula",
+        "NGC 1977": "Running Man Nebula", "NGC 2024": "Flame Nebula",
+        "NGC 2070": "Tarantula Nebula", "NGC 2237": "Rosette Nebula",
+        "NGC 2244": "Satellite Cluster", "NGC 2264": "Christmas Tree Cluster",
+        "NGC 2359": "Thor's Helmet", "NGC 2392": "Eskimo Nebula",
+        "NGC 2419": "Intergalactic Wanderer", "NGC 2516": "Southern Beehive Cluster",
+        "NGC 2683": "UFO Galaxy", "NGC 3132": "Eight-Burst Nebula",
+        "NGC 3242": "Ghost of Jupiter", "NGC 3372": "Carina Nebula",
+        "NGC 3532": "Wishing Well Cluster", "NGC 3628": "Hamburger Galaxy",
+        "NGC 4038": "Antennae Galaxies", "NGC 4039": "Antennae Galaxies",
+        "NGC 4244": "Silver Needle Galaxy", "NGC 4490": "Cocoon Galaxy",
+        "NGC 4565": "Needle Galaxy", "NGC 4631": "Whale Galaxy",
+        "NGC 5128": "Centaurus A", "NGC 5139": "Omega Centauri",
+        "NGC 5907": "Splinter Galaxy", "NGC 6164": "Dragon's Egg Nebula",
+        "NGC 6165": "Dragon's Egg Nebula", "NGC 6188": "Fighting Dragons of Ara",
+        "NGC 6210": "Turtle Nebula", "NGC 6231": "Baby Scorpion Cluster",
+        "NGC 6334": "Cat's Paw Nebula", "NGC 6357": "Lobster Nebula",
+        "NGC 6503": "Lost-in-Space Galaxy", "NGC 6543": "Cat's Eye Nebula",
+        "NGC 6752": "Great Peacock Globular", "NGC 6819": "Foxhead Cluster",
+        "NGC 6822": "Barnard's Galaxy", "NGC 6888": "Crescent Nebula",
+        "NGC 6946": "Fireworks Galaxy", "NGC 6960": "Witch's Broom Nebula",
+        "NGC 6992": "Eastern Veil Nebula", "NGC 7000": "North America Nebula",
+        "NGC 7009": "Saturn Nebula", "NGC 7023": "Iris Nebula",
+        "NGC 7217": "Ringed Spiral Galaxy", "NGC 7293": "Helix Nebula",
+        "NGC 7331": "Deer Lick Group", "NGC 7380": "Wizard Nebula",
+        "NGC 7635": "Bubble Nebula", "NGC 7789": "Caroline's Rose",
+        "NGC 7814": "Little Sombrero Galaxy", "IC 63": "Ghost of Cassiopeia",
+        "IC 405": "Flaming Star Nebula", "IC 410": "Tadpole Nebula",
+        "IC 434": "Horsehead Nebula", "IC 443": "Jellyfish Nebula",
+        "IC 1396": "Elephant's Trunk Nebula", "IC 1805": "Heart Nebula",
+        "IC 1848": "Soul Nebula", "IC 2118": "Witch Head Nebula",
+        "IC 2602": "Southern Pleiades", "IC 2944": "Running Chicken Nebula",
+        "IC 4628": "Prawn Nebula", "IC 5070": "Pelican Nebula",
+        "IC 5146": "Cocoon Nebula", "IC 5148": "Spare Tyre Nebula",
+        "Sh2-101": "Tulip Nebula", "Sh2-115": "Sharpless 115",
+        "Sh2-129": "Flying Bat Nebula", "Sh2-132": "Lion Nebula",
+        "Sh2-155": "Cave Nebula", "Sh2-157": "Lobster Claw Nebula",
+        "Sh2-240": "Spaghetti Nebula",
+    ]
+
+    private static let extraAliases: [String: [String]] = [
+        "IC 1396": ["Elephant Trunk Nebula", "Elephant Trunk", "IC 1396A"],
+        "NGC 869": ["Double Cluster", "h Persei"],
+        "NGC 884": ["Double Cluster", "chi Persei"],
+        "NGC 2237": ["Rosette", "Caldwell 49"],
+        "NGC 7000": ["North America", "Caldwell 20"],
+        "M 31": ["Andromeda"], "M 42": ["Orion"], "M 45": ["Seven Sisters"],
+    ]
+
+    public static func englishName(for target: CatalogTarget) -> String? {
+        englishNames[target.designation]
+    }
+
+    /// Offline, forgiving target search used by new-session creation. Search
+    /// normalization removes accents, punctuation and whitespace, so
+    /// `IC1396`, `Elephant's Trunk` and `elefantormany` all hit one record.
+    public static func search(_ query: String, limit: Int = 20) -> [CatalogTarget] {
+        let needle = normalizedSearch(query)
+        guard !needle.isEmpty, limit > 0 else { return [] }
+
+        return all.compactMap { target -> (CatalogTarget, Int)? in
+            let values = [target.designation, target.commonNameHU, englishNames[target.designation]]
+                .compactMap { $0 } + (extraAliases[target.designation] ?? [])
+            let normalized = values.map(normalizedSearch)
+            let rank: Int
+            if normalized.contains(needle) { rank = 0 }
+            else if normalized.contains(where: { $0.hasPrefix(needle) }) { rank = 1 }
+            else if normalized.contains(where: { $0.contains(needle) }) { rank = 2 }
+            else { return nil }
+            return (target, rank)
+        }
+        .sorted {
+            if $0.1 != $1.1 { return $0.1 < $1.1 }
+            return $0.0.designation.localizedStandardCompare($1.0.designation) == .orderedAscending
+        }
+        .prefix(limit)
+        .map(\.0)
+    }
+
+    /// Stable ASCII path component. A well-known English name makes the
+    /// folder understandable across locales; unnamed entries use the catalog
+    /// designation alone instead of inventing a translation.
+    public static func canonicalFolderName(for target: CatalogTarget) -> String {
+        guard let english = englishNames[target.designation] else {
+            return Sanitizer.sanitize(target.designation)
+        }
+        return Sanitizer.makeTarget(catalog: target.designation, name: english)
+    }
+
+    /// Finds the already existing folder for the same catalog identity. The
+    /// canonical spelling wins if it is present; otherwise the shortest,
+    /// then lexical spelling makes the choice deterministic.
+    public static func existingFolder(for target: CatalogTarget, among folders: [String]) -> String? {
+        let matches = folders.filter {
+            TargetNameResolver.resolve(folderName: $0).designation == target.designation
+        }
+        let canonical = canonicalFolderName(for: target)
+        if matches.contains(canonical) { return canonical }
+        return matches.sorted {
+            if $0.count != $1.count { return $0.count < $1.count }
+            return $0.localizedStandardCompare($1) == .orderedAscending
+        }.first
+    }
+
+    public static func target(matchingFolderName folderName: String) -> CatalogTarget? {
+        guard let designation = TargetNameResolver.resolve(folderName: folderName).designation else { return nil }
+        return all.first { $0.designation == designation }
+    }
+
+    /// Mean surface-brightness estimate in mag/arcsec². A direct curated
+    /// value wins. Otherwise the integrated magnitude is spread over an
+    /// ellipse whose minor axis uses a conservative type-specific ratio.
+    /// This is explicitly a planning estimate, not scientific photometry.
+    public static func estimatedSurfaceBrightness(for target: CatalogTarget) -> Double? {
+        if let direct = target.surfaceBrightnessMagPerArcsec2,
+           direct.isFinite, direct > 0 { return direct }
+        guard let magnitude = target.magnitude, magnitude.isFinite,
+              let majorArcmin = target.sizeArcmin, majorArcmin.isFinite, majorArcmin > 0
+        else { return nil }
+
+        let minorArcmin = majorArcmin * axisRatio(for: target.kind)
+        let semiMajorArcsec = majorArcmin * 30
+        let semiMinorArcsec = minorArcmin * 30
+        let areaArcsec2 = Double.pi * semiMajorArcsec * semiMinorArcsec
+        guard areaArcsec2.isFinite, areaArcsec2 > 0 else { return nil }
+        return magnitude + 2.5 * log10(areaArcsec2)
+    }
+
+    private static func normalizedSearch(_ raw: String) -> String {
+        let folded = raw.folding(
+            options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+            locale: Locale(identifier: "hu_HU")
+        ).lowercased()
+        return String(folded.unicodeScalars.filter(CharacterSet.alphanumerics.contains))
+    }
+
+    private static func axisRatio(for kind: CatalogTargetKind) -> Double {
+        switch kind {
+        case .galaxy: 0.55
+        case .emissionNebula, .reflectionNebula, .supernovaRemnant: 0.65
+        case .planetaryNebula: 0.85
+        case .openCluster: 0.85
+        case .globularCluster: 0.90
+        case .darkNebula, .other: 0.80
+        }
+    }
 
     // MARK: - Messier (all 110, M1...M110)
 

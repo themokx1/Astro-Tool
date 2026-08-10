@@ -3151,8 +3151,8 @@ private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Doubl
     let root = try makeTempRoot("projects-json")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    // No stack yet, well above the 2h default collecting threshold, no
-    // goal tag -> readyToStack.
+    // No explicit goal tag: the brightness- and setup-aware automatic goal
+    // keeps this short M31 fixture in collection.
     try writeProjectsFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, exptime: 3 * 3600)
     try "notes".write(to: root.appendingPathComponent("sessions/M31_Andromeda/2026-08-01/README.txt"), atomically: true, encoding: .utf8)
 
@@ -3165,9 +3165,10 @@ private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Doubl
     let json = try jsonItems(result.stdout)
     let projects = try #require(json)
     let project = try #require(projects.first { $0["target"] as? String == "M31_Andromeda" })
-    #expect(project["phase"] as? String == "stackelheto")
+    #expect(project["phase"] as? String == "gyujtes")
     let todos = try #require(project["todos"] as? [String])
-    #expect(todos.contains("készíts stacket: M31_Andromeda/2026-08-01"))
+    #expect(todos.contains { $0.contains("automatikus cél") })
+    #expect(todos.contains { $0.contains("hiányzik még") })
 }
 
 @Test func projectsHumanOutputShowsPhaseHeaders() throws {
@@ -3182,7 +3183,8 @@ private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Doubl
 
     let result = try runCLI(["projects", "--root", root.path])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
-    #expect(result.stdout.contains("Stackelhető"))
+    #expect(result.stdout.contains("Gyűjtés alatt"))
+    #expect(result.stdout.contains("automatikus cél"))
     #expect(result.stdout.contains("M31_Andromeda"))
 }
 

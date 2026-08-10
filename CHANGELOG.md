@@ -8,6 +8,47 @@ történik.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-10
+
+### Added
+
+- Többoldalas, teljesen és oldalanként is kihagyható első indítási
+  onboarding a helyszín, több kamera–optika setup, saját szűrők,
+  minőségpontozás/Siril és integrációs referencia beállításához. A
+  varázsló később a Beállításokból bármikor újraindítható.
+- Offline célpontkatalógus-kereső az új session felületén: katalógusszám,
+  angol vagy magyar név alapján is megtalálja ugyanazt a rekordot, stabil
+  kanonikus mappanevet használ, és a már meglévő azonos célpontmappát nyitja
+  tovább.
+- Fényesség- és setupfüggő automatikus integrációs cél. A referencia
+  10 óra APS-C f/5 setupon, 22,0 mag/arcsec² becsült felületi
+  fényességnél; a célpontszorzó 0,5–3× közé korlátozott. Az explicit
+  `goal:` címke változatlanul elsőbbséget élvez.
+- Elvetett frame-enkénti **Áthelyezés archívumba** és **Visszaállítás**
+  pontos forrás→cél előnézettel. A frame az appban látható, `ARCHÍV ·
+  kizárva` jelölt és minden mérése/capture-besorolása megmarad.
+
+### Changed
+
+- A setupok f-száma és relatív rendszerhatékonysága a Felszerelés
+  beállításokban is szerkeszthető; az automatikus célidő teljes
+  referencia-modellje a Pontozás & expozíció oldalon később is
+  finomhangolható.
+- A Ma este tervező, a projektfázis, a hiányzó órák, a célpontoldal és
+  a HTML célpont-riport ugyanazt az effektív célt és annak forrását
+  használja. A kézzel megadott szűrőcél rangsorolási elsőbbsége
+  megmaradt az automatikus referencia mellett.
+- Az onboarding szűrőoldala tranzakciósan szinkronizálja a teljes saját
+  listát; a kihagyott oldal semmit nem módosít, a törölt profil nem írja
+  át a capture-gyűjtések történeti szűrőadatait.
+
+### Safety
+
+- Az archívum kizárólag az adott session `lights` vagy
+  `captures/<slug>/lights` ágán belül mozoghat, célfájlt soha nem ír felül.
+  Adatbázis-hiba esetén a fájlművelet automatikusan visszagördül; restore
+  után az elvetési döntés szándékosan megmarad.
+
 ## [0.15.3] - 2026-08-09
 
 ### Added

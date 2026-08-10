@@ -20,6 +20,35 @@ public enum SessionCreator {
         }
     }
 
+    /// Resolves a catalog identity against both indexed targets and the
+    /// actual `sessions/` directories. Reading the filesystem here prevents
+    /// an empty or not-yet-scanned legacy spelling from being duplicated by
+    /// a newly created canonical folder.
+    public static func targetFolder(
+        for target: CatalogTarget,
+        root: URL,
+        indexedFolders: [String]
+    ) -> String {
+        let sessions = root.appendingPathComponent("sessions", isDirectory: true)
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
+        let diskFolders = (try? FileManager.default.contentsOfDirectory(
+            at: sessions,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        ))?.compactMap { url -> String? in
+            guard let values = try? url.resourceValues(forKeys: keys),
+                  values.isDirectory == true,
+                  values.isSymbolicLink != true
+            else { return nil }
+            return url.lastPathComponent
+        } ?? []
+
+        return TargetCatalog.existingFolder(
+            for: target,
+            among: Array(Set(indexedFolders + diskFolders))
+        ) ?? TargetCatalog.canonicalFolderName(for: target)
+    }
+
     /// - Parameters:
     ///   - root: library root.
     ///   - catalogRaw: catalog string exactly as typed (e.g. `"M1"`).
@@ -37,9 +66,12 @@ public enum SessionCreator {
         catalogRaw: String,
         nameRaw: String,
         date: String,
-        now: Date = Date()
+        now: Date = Date(),
+        targetFolderOverride: String? = nil
     ) throws -> Result {
-        let targetFolder = Sanitizer.makeTarget(catalog: catalogRaw, name: nameRaw)
+        let targetFolder = try resolvedTargetFolder(
+            catalogRaw: catalogRaw, nameRaw: nameRaw, override: targetFolderOverride
+        )
         guard !targetFolder.isEmpty else {
             throw AstroError.invalidInput(
                 "catalog \"\(catalogRaw)\" and name \"\(nameRaw)\" sanitize to an empty target folder name"
@@ -74,9 +106,12 @@ public enum SessionCreator {
         date: String,
         initialCapture: CaptureGroupDraft,
         db: Database,
-        now: Date = Date()
+        now: Date = Date(),
+        targetFolderOverride: String? = nil
     ) throws -> Result {
-        let targetFolder = Sanitizer.makeTarget(catalog: catalogRaw, name: nameRaw)
+        let targetFolder = try resolvedTargetFolder(
+            catalogRaw: catalogRaw, nameRaw: nameRaw, override: targetFolderOverride
+        )
         guard !targetFolder.isEmpty else {
             throw AstroError.invalidInput(
                 "catalog \"\(catalogRaw)\" and name \"\(nameRaw)\" sanitize to an empty target folder name"
@@ -116,6 +151,21 @@ public enum SessionCreator {
             targetFolder: targetFolder,
             captureGroup: captureResult.group
         )
+    }
+
+    private static func resolvedTargetFolder(
+        catalogRaw: String,
+        nameRaw: String,
+        override: String?
+    ) throws -> String {
+        guard let override else {
+            return Sanitizer.makeTarget(catalog: catalogRaw, name: nameRaw)
+        }
+        let trimmed = override.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, Sanitizer.sanitize(trimmed) == trimmed else {
+            throw AstroError.invalidInput("unsafe canonical target folder: \"\(override)\"")
+        }
+        return trimmed
     }
 
     /// Exact README.txt template ground-truthed against the real

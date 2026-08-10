@@ -591,6 +591,17 @@ public enum TargetReport {
 
         if let goalSeconds = projectState?.goalSeconds {
             html += "<p>Cél: \(escapeHTML(formatHM(goalSeconds)))"
+            if projectState?.goalSource == .automaticReference {
+                let surfaceBrightness = TargetCatalog.target(matchingFolderName: projectState?.target ?? "")
+                    .flatMap(TargetCatalog.estimatedSurfaceBrightness)
+                if let surfaceBrightness {
+                    html += " <span class=\"muted\">(automatikus · becsült μ \(String(format: "%.1f", surfaceBrightness)) mag/arcsec² · setuphoz igazítva)</span>"
+                } else {
+                    html += " <span class=\"muted\">(automatikus · 22,0 mag/arcsec² referencia · setuphoz igazítva)</span>"
+                }
+            } else if projectState?.goalSource == .explicitTag {
+                html += " <span class=\"muted\">(explicit goal: címke)</span>"
+            }
             if let missing = projectState?.missingSeconds, missing > 0 {
                 html += " — még hiányzik \(escapeHTML(formatHM(missing)))"
             } else {
@@ -598,7 +609,7 @@ public enum TargetReport {
             }
             html += "</p>\n"
         } else {
-            html += "<p class=\"muted\">Nincs kitűzött cél (goal tag).</p>\n"
+            html += "<p class=\"muted\">Nincs kiszámítható integrációs cél.</p>\n"
         }
 
         if advice.notAvailableReason == nil {
@@ -640,7 +651,7 @@ public enum TargetReport {
         formatter.timeZone = TimeZone.current
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
         let generated = formatter.string(from: Date())
-        return "<footer class=\"report-footer\">Generálva: \(escapeHTML(generated)) · astrotool 0.1.0</footer>\n"
+        return "<footer class=\"report-footer\">Generálva: \(escapeHTML(generated)) · astrotool 0.16.0</footer>\n"
     }
 
     // MARK: - Small shared helpers

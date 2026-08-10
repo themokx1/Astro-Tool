@@ -43,6 +43,54 @@ private func makeTempRoot() throws -> URL {
     }
 }
 
+@Test func sessionCreatorUsesValidatedCatalogCanonicalFolderOverride() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let result = try SessionCreator.create(
+        root: root,
+        catalogRaw: "IC 1396",
+        nameRaw: "Elephant's Trunk Nebula",
+        date: "2026-08-10",
+        targetFolderOverride: "IC_1396_Elephants_Trunk_Nebula"
+    )
+
+    #expect(result.targetFolder == "IC_1396_Elephants_Trunk_Nebula")
+    #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(
+        "sessions/IC_1396_Elephants_Trunk_Nebula/2026-08-10/lights"
+    ).path))
+}
+
+@Test func catalogTargetFolderResolutionReusesAnEmptyUnscannedExistingDirectory() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let existing = "IC_1396_Elephant_Trunk_Nebula"
+    try FileManager.default.createDirectory(
+        at: root.appendingPathComponent("sessions/\(existing)"),
+        withIntermediateDirectories: true
+    )
+    let target = try #require(TargetCatalog.all.first { $0.designation == "IC 1396" })
+
+    let resolved = SessionCreator.targetFolder(
+        for: target, root: root, indexedFolders: []
+    )
+
+    #expect(resolved == existing)
+    #expect(resolved != TargetCatalog.canonicalFolderName(for: target))
+}
+
+@Test func sessionCreatorRejectsUnsafeFolderOverride() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    #expect(throws: AstroError.self) {
+        _ = try SessionCreator.create(
+            root: root, catalogRaw: "IC 1396", nameRaw: "Elephant",
+            date: "2026-08-10", targetFolderOverride: "../outside"
+        )
+    }
+}
+
 @Test func sessionCreatorReadmeContainsExpectedSections() throws {
     let root = try makeTempRoot()
     defer { try? FileManager.default.removeItem(at: root) }

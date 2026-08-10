@@ -19,6 +19,7 @@ struct RatingSettingsView: View {
     @State private var weights: [String: Double] = RatingRule().weights
     @State private var maxSubSeconds: Double = 300
     @State private var noiseContributionC: Double = 0.05
+    @State private var integrationReference = IntegrationReferenceRule()
 
     @State private var sirilStatus: SirilProbeStatus = .checking
 
@@ -98,6 +99,53 @@ struct RatingSettingsView: View {
                 )
             }
 
+            Section("Automatikus integrációs célidő") {
+                numberRow(
+                    "Referencia alapidő (h)", value: $integrationReference.baseHours,
+                    defaultValue: defaults.integrationReference.baseHours,
+                    caption: "Gyári alap: 10 óra a referencia APS-C, f/5 setupon. Egy explicit goal: címke ezt mindig felülírja."
+                )
+                numberRow(
+                    "Felületi fényesség (mag/arcsec²)",
+                    value: $integrationReference.referenceSurfaceBrightnessMagPerArcsec2,
+                    defaultValue: defaults.integrationReference.referenceSurfaceBrightnessMagPerArcsec2,
+                    caption: "Ehhez a célpontfényességhez tartozik az alapidő. A katalógus magnitúdójából és látszó méretéből becsült átlagos felületi fényességet használjuk."
+                )
+                numberRow(
+                    "Referencia f-szám", value: $integrationReference.referenceFNumber,
+                    defaultValue: defaults.integrationReference.referenceFNumber,
+                    caption: "Az optikai sebesség négyzetesen skálázza a célidőt."
+                )
+                numberRow(
+                    "Referencia szenzorszélesség (mm)", value: $integrationReference.referenceSensorWidthMM,
+                    defaultValue: defaults.integrationReference.referenceSensorWidthMM,
+                    caption: "A gyári APS-C referencia szélessége 23,5 mm."
+                )
+                numberRow(
+                    "Referencia szenzormagasság (mm)", value: $integrationReference.referenceSensorHeightMM,
+                    defaultValue: defaults.integrationReference.referenceSensorHeightMM,
+                    caption: "A gyári APS-C referencia magassága 15,6 mm."
+                )
+                numberRow(
+                    "Referencia hatékonyság", value: $integrationReference.referenceEfficiency,
+                    defaultValue: defaults.integrationReference.referenceEfficiency,
+                    caption: "1,0 a referencia rendszer. A setup saját hatékonysága ehhez viszonyul."
+                )
+                HStack {
+                    Text("Célpontszorzó korlát")
+                    Spacer()
+                    TextField("min.", value: $integrationReference.minimumTargetFactor, format: .number)
+                        .frame(width: 65)
+                    Text("–").foregroundStyle(.secondary)
+                    TextField("max.", value: $integrationReference.maximumTargetFactor, format: .number)
+                        .frame(width: 65)
+                    Text("×").foregroundStyle(.secondary)
+                }
+                Text("A gyári 0,5–3× korlát a referencia setupon 5–30 órás, még elérhető tartományban tartja a fotometriai becslést.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section {
                 HStack {
                     Button("Alaphelyzetbe állítás…") { showResetConfirm = true }
@@ -164,6 +212,7 @@ struct RatingSettingsView: View {
         if sirilPathText != cfg.rating.sirilPath { return true }
         if maxSubSeconds != cfg.expose.maxSubSeconds { return true }
         if noiseContributionC != cfg.expose.noiseContributionC { return true }
+        if integrationReference != cfg.integrationReference { return true }
         return !Self.weightOrder.allSatisfy { entry in
             abs((weights[entry.key] ?? 0) - (cfg.rating.weights[entry.key] ?? 0)) < 0.001
         }
@@ -337,6 +386,7 @@ struct RatingSettingsView: View {
         weights = defaultConfig.rating.weights
         maxSubSeconds = defaultConfig.expose.maxSubSeconds
         noiseContributionC = defaultConfig.expose.noiseContributionC
+        integrationReference = defaultConfig.integrationReference
         checkSiril()
     }
 
@@ -347,6 +397,7 @@ struct RatingSettingsView: View {
         weights = appState.config.rating.weights
         maxSubSeconds = appState.config.expose.maxSubSeconds
         noiseContributionC = appState.config.expose.noiseContributionC
+        integrationReference = appState.config.integrationReference
     }
 
     private func save() {
@@ -361,8 +412,27 @@ struct RatingSettingsView: View {
             weights: normalizedWeightsForSave()
         )
         newConfig.expose = ExposeRule(maxSubSeconds: maxSubSeconds, noiseContributionC: noiseContributionC)
+        newConfig.integrationReference = integrationReference
 
         do {
+            guard integrationReference.baseHours.isFinite, integrationReference.baseHours > 0,
+                  integrationReference.referenceSensorWidthMM.isFinite,
+                  integrationReference.referenceSensorWidthMM > 0,
+                  integrationReference.referenceSensorHeightMM.isFinite,
+                  integrationReference.referenceSensorHeightMM > 0,
+                  integrationReference.referenceFNumber.isFinite,
+                  integrationReference.referenceFNumber > 0,
+                  integrationReference.referenceEfficiency.isFinite,
+                  integrationReference.referenceEfficiency > 0,
+                  integrationReference.referenceSurfaceBrightnessMagPerArcsec2.isFinite,
+                  integrationReference.referenceSurfaceBrightnessMagPerArcsec2 > 0,
+                  integrationReference.minimumTargetFactor.isFinite,
+                  integrationReference.minimumTargetFactor > 0,
+                  integrationReference.maximumTargetFactor.isFinite,
+                  integrationReference.maximumTargetFactor >= integrationReference.minimumTargetFactor
+            else {
+                throw AstroError.invalidInput("Az automatikus célidő referenciaértékei pozitívak legyenek, a maximum pedig ne legyen kisebb a minimumnál.")
+            }
             let writeGuard = WriteGuard(root: URL(fileURLWithPath: newConfig.rootPath, isDirectory: true))
             try newConfig.save(using: writeGuard)
             appState.config = newConfig

@@ -156,7 +156,7 @@ private struct PlannerFixture {
     #expect(plan.usableIntegrationSeconds == 3600)
 }
 
-@Test func plannerLeavesGoalSecondsNilWithoutGoalTag() throws {
+@Test func plannerUsesAutomaticTenHourGoalWithoutGoalTag() throws {
     var fixture = try PlannerFixture.make()
     defer { fixture.cleanup() }
     fixture.config.site = SiteRule(latitudeDeg: 47.5, longitudeDeg: 19.0)
@@ -164,7 +164,8 @@ private struct PlannerFixture {
 
     let plans = try Planner.plan(date: utc(2026, 8, 10), db: fixture.db, config: fixture.config)
     let plan = try #require(plans.first { $0.target == "T_NoGoal" })
-    #expect(plan.goalSeconds == nil)
+    #expect(abs((plan.goalSeconds ?? 0) - 10 * 3600) < 0.001)
+    #expect(plan.goalSource == .automaticReference)
 }
 
 @Test func plannerParsesGoalTagWithFractionalHoursLeniently() throws {
@@ -177,6 +178,7 @@ private struct PlannerFixture {
     let plans = try Planner.plan(date: utc(2026, 8, 10), db: fixture.db, config: fixture.config)
     let plan = try #require(plans.first { $0.target == "T_GoalFrac" })
     #expect(plan.goalSeconds == 6.5 * 3600)
+    #expect(plan.goalSource == .explicitTag)
 }
 
 @Test func plannerRanksOutstandingFilterDeficitAheadOfNoGoalTarget() throws {

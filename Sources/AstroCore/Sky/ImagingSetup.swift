@@ -32,6 +32,8 @@ public enum ImagingSetupValidationError: Error, Equatable, Sendable {
     case invalidSensorSize
     case invalidFocalRange
     case defaultFocalLengthOutsideRange
+    case invalidFNumber
+    case invalidRelativeEfficiency
 }
 
 /// One user-defined camera + lens/telescope combination for planning.
@@ -51,6 +53,12 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
     public var focalLengthMinMM: Double
     public var focalLengthMaxMM: Double
     public var defaultFocalLengthMM: Double
+    /// Working focal ratio used by the integration-reference planner. Older
+    /// saved setups decode to f/5, the app-wide reference default.
+    public var fNumber: Double
+    /// Relative throughput/QE multiplier. `1` means reference efficiency;
+    /// values below one require proportionally more integration.
+    public var relativeEfficiency: Double
     public var isDefault: Bool
 
     public init(
@@ -63,6 +71,8 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
         focalLengthMinMM: Double,
         focalLengthMaxMM: Double,
         defaultFocalLengthMM: Double,
+        fNumber: Double = 5,
+        relativeEfficiency: Double = 1,
         isDefault: Bool = false
     ) {
         self.id = id
@@ -74,7 +84,31 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
         self.focalLengthMinMM = focalLengthMinMM
         self.focalLengthMaxMM = focalLengthMaxMM
         self.defaultFocalLengthMM = defaultFocalLengthMM
+        self.fNumber = fNumber
+        self.relativeEfficiency = relativeEfficiency
         self.isDefault = isDefault
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, cameraName, cameraKind, sensorWidthMM, sensorHeightMM
+        case focalLengthMinMM, focalLengthMaxMM, defaultFocalLengthMM
+        case fNumber, relativeEfficiency, isDefault
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        cameraName = try container.decode(String.self, forKey: .cameraName)
+        cameraKind = try container.decode(CameraKind.self, forKey: .cameraKind)
+        sensorWidthMM = try container.decode(Double.self, forKey: .sensorWidthMM)
+        sensorHeightMM = try container.decode(Double.self, forKey: .sensorHeightMM)
+        focalLengthMinMM = try container.decode(Double.self, forKey: .focalLengthMinMM)
+        focalLengthMaxMM = try container.decode(Double.self, forKey: .focalLengthMaxMM)
+        defaultFocalLengthMM = try container.decode(Double.self, forKey: .defaultFocalLengthMM)
+        fNumber = try container.decodeIfPresent(Double.self, forKey: .fNumber) ?? 5
+        relativeEfficiency = try container.decodeIfPresent(Double.self, forKey: .relativeEfficiency) ?? 1
+        isDefault = try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
     }
 
     public var isZoom: Bool {
@@ -103,6 +137,12 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
               defaultFocalLengthMM >= focalLengthMinMM,
               defaultFocalLengthMM <= focalLengthMaxMM else {
             throw ImagingSetupValidationError.defaultFocalLengthOutsideRange
+        }
+        guard fNumber.isFinite, fNumber > 0 else {
+            throw ImagingSetupValidationError.invalidFNumber
+        }
+        guard relativeEfficiency.isFinite, relativeEfficiency > 0 else {
+            throw ImagingSetupValidationError.invalidRelativeEfficiency
         }
     }
 

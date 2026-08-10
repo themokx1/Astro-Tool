@@ -124,4 +124,12 @@ private let apscZoom = ImagingSetupProfile(
     setup = apscZoom
     setup.defaultFocalLengthMM = 450
     #expect(throws: ImagingSetupValidationError.defaultFocalLengthOutsideRange) { try setup.validate() }
+
+    setup = apscZoom
+    setup.fNumber = 0
+    #expect(throws: ImagingSetupValidationError.invalidFNumber) { try setup.validate() }
+
+    setup = apscZoom
+    setup.relativeEfficiency = 0
+    #expect(throws: ImagingSetupValidationError.invalidRelativeEfficiency) { try setup.validate() }
 }

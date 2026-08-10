@@ -7,6 +7,9 @@ struct NewSessionSheet: View {
 
     @State private var catalog: String
     @State private var name: String
+    @State private var catalogQuery: String
+    @State private var selectedCatalogTarget: CatalogTarget?
+    @State private var usesCustomTarget = false
     @State private var dateText: String = NewSessionSheet.today()
     @State private var createsInitialCapture = true
     @State private var captureName = "OSC · szűrő nélkül"
@@ -24,12 +27,19 @@ struct NewSessionSheet: View {
     /// "Új session…" empty-state buttons) behaving exactly as before --
     /// blank fields.
     init(prefillDesignation: String? = nil) {
+        let catalogTarget = prefillDesignation.flatMap { designation in
+            TargetCatalog.all.first { $0.designation == designation }
+        }
         if let prefillDesignation, let split = Self.splitDesignation(prefillDesignation) {
             _catalog = State(initialValue: split.catalog)
             _name = State(initialValue: split.name)
+            _catalogQuery = State(initialValue: prefillDesignation)
+            _selectedCatalogTarget = State(initialValue: catalogTarget)
         } else {
             _catalog = State(initialValue: "")
             _name = State(initialValue: "")
+            _catalogQuery = State(initialValue: "")
+            _selectedCatalogTarget = State(initialValue: nil)
         }
     }
 
@@ -63,7 +73,27 @@ struct NewSessionSheet: View {
     }
 
     private var previewTarget: String {
-        Sanitizer.makeTarget(catalog: catalog, name: name)
+        if let selectedCatalogTarget {
+            return SessionCreator.targetFolder(
+                for: selectedCatalogTarget,
+                root: URL(fileURLWithPath: appState.config.rootPath, isDirectory: true),
+                indexedFolders: appState.stats.map(\.target)
+            )
+        }
+        return Sanitizer.makeTarget(catalog: catalog, name: name)
+    }
+
+    private var catalogMatches: [CatalogTarget] {
+        TargetCatalog.search(catalogQuery, limit: 8)
+    }
+
+    private var selectedTargetHours: Double? {
+        guard let selectedCatalogTarget else { return nil }
+        return IntegrationGoalCalculator.recommendedHours(
+            rule: appState.config.integrationReference,
+            setup: ImagingSetupProfile.defaultSetup(in: appState.config.imagingSetups),
+            target: selectedCatalogTarget
+        )
     }
 
     private var dateIsValid: Bool {
@@ -95,10 +125,91 @@ struct NewSessionSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Új session létrehozása").font(.headline)
 
-            TextField("Katalógus (pl. M45, NGC2237)", text: $catalog)
-            TextField("Név (pl. Pleiades)", text: $name)
+            Picker("Célpont mód", selection: $usesCustomTarget) {
+                Text("Katalógusból").tag(false)
+                Text("Egyedi célpont").tag(true)
+            }
+            .pickerStyle(.segmented)
 
-            Text("Célpont: \(previewTarget.isEmpty ? TDFormat.missingCell : previewTarget)")
+            if usesCustomTarget {
+                TextField("Katalógusszám (opcionális, pl. C 14)", text: $catalog)
+                TextField("Célpont neve", text: $name)
+                Text("Az egyedi név nincs a katalógushoz kötve. Ellenőrizd a mappanév-előnézetet, hogy ne jöjjön létre elírt duplikátum.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            } else {
+                TextField("Keresés: IC 1396, Elephant Trunk vagy Elefántormány", text: $catalogQuery)
+                    .textFieldStyle(.roundedBorder)
+
+                if selectedCatalogTarget == nil, !catalogQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if catalogMatches.isEmpty {
+                            Text("Nincs találat. Próbálj katalógusszámot, angol vagy magyar nevet.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(catalogMatches, id: \.designation) { target in
+                                Button {
+                                    selectedCatalogTarget = target
+                                    catalogQuery = [target.designation, TargetCatalog.englishName(for: target)]
+                                        .compactMap { $0 }
+                                        .joined(separator: " · ")
+                                } label: {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(target.designation).fontWeight(.semibold)
+                                            Text([
+                                                TargetCatalog.englishName(for: target), target.commonNameHU,
+                                            ].compactMap { $0 }.joined(separator: " · "))
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Text(targetKindLabel(target.kind))
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+                }
+
+                if let target = selectedCatalogTarget {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(target.designation + " · " + (TargetCatalog.englishName(for: target) ?? target.commonNameHU ?? "katalóguscélpont"))
+                                .fontWeight(.semibold)
+                            Text([
+                                target.commonNameHU,
+                                target.sizeArcmin.map { String(format: "méret %.1f′", $0) },
+                                target.magnitude.map { String(format: "magnitúdó %.1f", $0) },
+                                TargetCatalog.estimatedSurfaceBrightness(for: target).map {
+                                    String(format: "becsült felületi fényesség %.1f mag/arcsec²", $0)
+                                },
+                                selectedTargetHours.map { String(format: "automatikus cél %.1f óra", $0) },
+                            ].compactMap { $0 }.joined(separator: " · "))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Másik") {
+                            selectedCatalogTarget = nil
+                            catalogQuery = ""
+                        }
+                    }
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.green.opacity(0.08)))
+                }
+            }
+
+            Text("Létrejövő célpontmappa: \(previewTarget.isEmpty ? TDFormat.missingCell : previewTarget)")
                 .foregroundStyle(.secondary)
 
             TextField("Dátum (YYYY-MM-DD)", text: $dateText)
@@ -150,7 +261,7 @@ struct NewSessionSheet: View {
                 }
             }
 
-            if !matchingTargets.isEmpty {
+            if usesCustomTarget, !matchingTargets.isEmpty {
                 Text("Meglévő hasonló célpontok:")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -178,12 +289,14 @@ struct NewSessionSheet: View {
                         catalog: catalog,
                         name: name,
                         date: dateText,
-                        initialCapture: initialCapture
+                        initialCapture: initialCapture,
+                        catalogTarget: usesCustomTarget ? nil : selectedCatalogTarget
                     )
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(
-                    catalog.isEmpty || name.isEmpty || !dateIsValid || appState.isBusy
+                    (usesCustomTarget ? name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty : selectedCatalogTarget == nil)
+                        || !dateIsValid || appState.isBusy
                         || (createsInitialCapture && captureName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 )
             }
@@ -197,6 +310,20 @@ struct NewSessionSheet: View {
         }
         .onChange(of: appState.lastCreatedSessionDir) { _, newValue in
             if newValue != nil { dismiss() }
+        }
+    }
+
+    private func targetKindLabel(_ kind: CatalogTargetKind) -> String {
+        switch kind {
+        case .galaxy: "galaxis"
+        case .emissionNebula: "emissziós köd"
+        case .planetaryNebula: "planetáris köd"
+        case .supernovaRemnant: "szupernóva-maradvány"
+        case .openCluster: "nyílthalmaz"
+        case .globularCluster: "gömbhalmaz"
+        case .reflectionNebula: "reflexiós köd"
+        case .darkNebula: "sötét köd"
+        case .other: "egyéb"
         }
     }
 

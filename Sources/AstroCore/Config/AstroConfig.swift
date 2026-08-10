@@ -421,6 +421,66 @@ public struct PlanRule: Codable, Equatable, Sendable {
     }
 }
 
+/// Library-wide default for targets without an explicit overall goal. The
+/// factory baseline is deliberately concrete and visible: 10 hours on a
+/// 23.5 × 15.6 mm APS-C sensor at f/5.
+public struct IntegrationReferenceRule: Codable, Equatable, Sendable {
+    public var baseHours: Double
+    public var referenceSensorWidthMM: Double
+    public var referenceSensorHeightMM: Double
+    public var referenceFNumber: Double
+    public var referenceEfficiency: Double
+    /// The target difficulty tied to `baseHours`. Mean surface brightness is
+    /// used rather than integrated magnitude, because a large nebula spreads
+    /// the same total light over far more pixels than a compact object.
+    public var referenceSurfaceBrightnessMagPerArcsec2: Double
+    /// Planning guardrails: keep the heuristic useful and attainable instead
+    /// of turning uncertain catalog photometry into hundreds of hours.
+    public var minimumTargetFactor: Double
+    public var maximumTargetFactor: Double
+
+    public init(
+        baseHours: Double = 10,
+        referenceSensorWidthMM: Double = 23.5,
+        referenceSensorHeightMM: Double = 15.6,
+        referenceFNumber: Double = 5,
+        referenceEfficiency: Double = 1,
+        referenceSurfaceBrightnessMagPerArcsec2: Double = 22,
+        minimumTargetFactor: Double = 0.5,
+        maximumTargetFactor: Double = 3
+    ) {
+        self.baseHours = baseHours
+        self.referenceSensorWidthMM = referenceSensorWidthMM
+        self.referenceSensorHeightMM = referenceSensorHeightMM
+        self.referenceFNumber = referenceFNumber
+        self.referenceEfficiency = referenceEfficiency
+        self.referenceSurfaceBrightnessMagPerArcsec2 = referenceSurfaceBrightnessMagPerArcsec2
+        self.minimumTargetFactor = minimumTargetFactor
+        self.maximumTargetFactor = maximumTargetFactor
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case baseHours, referenceSensorWidthMM, referenceSensorHeightMM
+        case referenceFNumber, referenceEfficiency
+        case referenceSurfaceBrightnessMagPerArcsec2, minimumTargetFactor, maximumTargetFactor
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = IntegrationReferenceRule()
+        baseHours = try container.decodeIfPresent(Double.self, forKey: .baseHours) ?? defaults.baseHours
+        referenceSensorWidthMM = try container.decodeIfPresent(Double.self, forKey: .referenceSensorWidthMM) ?? defaults.referenceSensorWidthMM
+        referenceSensorHeightMM = try container.decodeIfPresent(Double.self, forKey: .referenceSensorHeightMM) ?? defaults.referenceSensorHeightMM
+        referenceFNumber = try container.decodeIfPresent(Double.self, forKey: .referenceFNumber) ?? defaults.referenceFNumber
+        referenceEfficiency = try container.decodeIfPresent(Double.self, forKey: .referenceEfficiency) ?? defaults.referenceEfficiency
+        referenceSurfaceBrightnessMagPerArcsec2 = try container.decodeIfPresent(
+            Double.self, forKey: .referenceSurfaceBrightnessMagPerArcsec2
+        ) ?? defaults.referenceSurfaceBrightnessMagPerArcsec2
+        minimumTargetFactor = try container.decodeIfPresent(Double.self, forKey: .minimumTargetFactor) ?? defaults.minimumTargetFactor
+        maximumTargetFactor = try container.decodeIfPresent(Double.self, forKey: .maximumTargetFactor) ?? defaults.maximumTargetFactor
+    }
+}
+
 /// R11-T16/F20: AstroBin's own numeric equipment-database filter IDs, keyed
 /// by the FITS `FILTER` name Astro-Tool already reads off scanned lights.
 /// When present, `AcquisitionExport`'s AstroBin CSV writes the numeric ID
@@ -530,6 +590,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var expose: ExposeRule
     public var weather: WeatherRule
     public var plan: PlanRule
+    public var integrationReference: IntegrationReferenceRule
     /// User-defined camera + optic combinations for manual Discovery FOV
     /// planning. An empty list preserves the legacy automatic behavior that
     /// derives the dominant setup from scanned image/WCS metadata.
@@ -555,6 +616,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         expose: ExposeRule = ExposeRule(),
         weather: WeatherRule = WeatherRule(),
         plan: PlanRule = PlanRule(),
+        integrationReference: IntegrationReferenceRule = IntegrationReferenceRule(),
         imagingSetups: [ImagingSetupProfile] = [],
         astrobin: AstroBinRule = AstroBinRule()
     ) {
@@ -574,13 +636,14 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.expose = expose
         self.weather = weather
         self.plan = plan
+        self.integrationReference = integrationReference
         self.imagingSetups = imagingSetups
         self.astrobin = astrobin
     }
 
     private enum CodingKeys: String, CodingKey {
         case rootPath, excludedDirNames, excludedPaths, residuePatterns, residueDirNames, toolOutputDirNames
-        case intentional, wideField, calib, rating, stats, site, sites, expose, weather, plan, imagingSetups, astrobin
+        case intentional, wideField, calib, rating, stats, site, sites, expose, weather, plan, integrationReference, imagingSetups, astrobin
     }
 
     public init(from decoder: any Decoder) throws {
@@ -615,6 +678,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.expose = try container.decodeIfPresent(ExposeRule.self, forKey: .expose) ?? defaults.expose
         self.weather = try container.decodeIfPresent(WeatherRule.self, forKey: .weather) ?? defaults.weather
         self.plan = try container.decodeIfPresent(PlanRule.self, forKey: .plan) ?? defaults.plan
+        self.integrationReference = try container.decodeIfPresent(IntegrationReferenceRule.self, forKey: .integrationReference) ?? defaults.integrationReference
         self.imagingSetups = try container.decodeIfPresent([ImagingSetupProfile].self, forKey: .imagingSetups) ?? defaults.imagingSetups
         self.astrobin = try container.decodeIfPresent(AstroBinRule.self, forKey: .astrobin) ?? defaults.astrobin
     }

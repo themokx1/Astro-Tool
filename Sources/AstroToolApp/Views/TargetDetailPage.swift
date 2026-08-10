@@ -269,7 +269,15 @@ struct TargetDetailPage: View {
                     }
                     .buttonStyle(.plain)
                 }
-                if projectState?.goalSeconds == nil {
+                if projectState?.goalSource == .automaticReference {
+                    let surfaceBrightness = TargetCatalog.target(matchingFolderName: target)
+                        .flatMap { TargetCatalog.estimatedSurfaceBrightness(for: $0) }
+                    Text(surfaceBrightness.map {
+                        String(format: "automatikus · becsült μ %.1f mag/arcsec² · setuphoz igazítva", $0)
+                    } ?? "automatikus · 22,0 mag/arcsec² referencia · setuphoz igazítva")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else if projectState?.goalSeconds == nil {
                     Text("szűrőcélok összege")
                         .font(.caption2)
                         .foregroundStyle(.secondary)

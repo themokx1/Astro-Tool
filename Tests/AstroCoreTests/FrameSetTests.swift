@@ -129,6 +129,17 @@ private func lightFile(
     #expect(buckets.duplicateLinkCount == 0)
 }
 
+@Test func archivedFrameRemainsVisibleButIsNeverUsable() {
+    let files = [
+        lightFile("sessions/M31/2026-01-01/lights/archive/l1.fit", id: 1, ext: "fit", inode: 100),
+    ]
+
+    let buckets = FrameSet.lightBuckets(files: files, meta: [:], config: AstroConfig())
+    #expect(buckets.usable.isEmpty)
+    #expect(buckets.rejected.map(\.id) == [1])
+    #expect(FrameArchivePlanner.isArchived(files[0].path))
+}
+
 @Test func filesWithNoInodeDedupByTargetSessionDateObsAndExptimeFallbackKey() {
     let meta: [Int64: FITSMetaRecord] = [
         1: FITSMetaRecord(fileID: 1, exptime: 300, dateObs: "2026-04-18T04:36:24"),
