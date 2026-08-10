@@ -4,6 +4,7 @@ import Foundation
 
 public enum LibraryManifestError: Error, Equatable, Sendable {
     case invalidRoot
+    case unstableRoot
     case unstableFile(relativePath: String)
 }
 
@@ -44,7 +45,8 @@ public struct LibraryManifest: Codable, Equatable, Sendable {
             root: root,
             exclusions: exclusions,
             beforeOpen: { _, _ in },
-            afterHash: { _, _ in }
+            afterHash: { _, _ in },
+            beforeFinalValidation: { _ in }
         )
     }
 
@@ -57,7 +59,8 @@ public struct LibraryManifest: Codable, Equatable, Sendable {
             root: root,
             exclusions: exclusions,
             beforeOpen: { _, _ in },
-            afterHash: afterHash
+            afterHash: afterHash,
+            beforeFinalValidation: { _ in }
         )
     }
 
@@ -71,7 +74,24 @@ public struct LibraryManifest: Codable, Equatable, Sendable {
             root: root,
             exclusions: exclusions,
             beforeOpen: beforeOpen,
-            afterHash: afterHash
+            afterHash: afterHash,
+            beforeFinalValidation: { _ in }
+        )
+    }
+
+    static func capture(
+        root: URL,
+        exclusions: Set<String>,
+        beforeOpen: (_ relativePath: String, _ url: URL) throws -> Void,
+        afterHash: (_ relativePath: String, _ url: URL) throws -> Void,
+        beforeFinalValidation: (_ root: URL) throws -> Void
+    ) async throws -> Self {
+        try captureSynchronously(
+            root: root,
+            exclusions: exclusions,
+            beforeOpen: beforeOpen,
+            afterHash: afterHash,
+            beforeFinalValidation: beforeFinalValidation
         )
     }
 
@@ -79,23 +99,32 @@ public struct LibraryManifest: Codable, Equatable, Sendable {
         root: URL,
         exclusions: Set<String>,
         beforeOpen: (_ relativePath: String, _ url: URL) throws -> Void,
-        afterHash: (_ relativePath: String, _ url: URL) throws -> Void
+        afterHash: (_ relativePath: String, _ url: URL) throws -> Void,
+        beforeFinalValidation: (_ root: URL) throws -> Void
     ) throws -> Self {
         let root = root.standardizedFileURL
         guard let rootState = fileState(at: root), rootState.isDirectory, !rootState.isSymbolicLink else {
             throw LibraryManifestError.invalidRoot
         }
         let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
-        let rootDescriptor = canonicalRoot.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return -1 }
-            return Darwin.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        }
+        let rootDescriptor = openRootDirectory(canonicalRoot)
         guard rootDescriptor >= 0 else {
             throw LibraryManifestError.invalidRoot
         }
         defer { Darwin.close(rootDescriptor) }
         guard fileState(descriptor: rootDescriptor) == rootState else {
             throw LibraryManifestError.invalidRoot
+        }
+        let rootEntryNames: [String]
+        let rootEntryIdentities: [String: FileIdentity]
+        do {
+            rootEntryNames = try directoryEntryNames(descriptor: rootDescriptor)
+            rootEntryIdentities = try entryIdentities(
+                names: rootEntryNames,
+                directoryDescriptor: rootDescriptor
+            )
+        } catch {
+            throw LibraryManifestError.unstableRoot
         }
 
         var entries: [Entry] = []
@@ -105,10 +134,38 @@ public struct LibraryManifest: Codable, Equatable, Sendable {
             rootDescriptor: rootDescriptor,
             rootURL: root,
             relativeDirectory: "",
+            entryNames: rootEntryNames,
             exclusions: exclusions,
             beforeOpen: beforeOpen,
             afterHash: afterHash
         )
+
+        try beforeFinalValidation(root)
+        let reopenedRootDescriptor = openRootDirectory(canonicalRoot)
+        defer {
+            if reopenedRootDescriptor >= 0 { Darwin.close(reopenedRootDescriptor) }
+        }
+        guard
+            fileState(descriptor: rootDescriptor) == rootState,
+            reopenedRootDescriptor >= 0,
+            fileState(descriptor: reopenedRootDescriptor) == rootState
+        else {
+            throw LibraryManifestError.unstableRoot
+        }
+        do {
+            let finalNames = try directoryEntryNames(descriptor: rootDescriptor)
+            let finalIdentities = try entryIdentities(
+                names: finalNames,
+                directoryDescriptor: rootDescriptor
+            )
+            guard finalNames == rootEntryNames, finalIdentities == rootEntryIdentities else {
+                throw LibraryManifestError.unstableRoot
+            }
+        } catch let error as LibraryManifestError {
+            throw error
+        } catch {
+            throw LibraryManifestError.unstableRoot
+        }
 
         entries.sort { $0.relativePath < $1.relativePath }
         return Self(entries: entries)
@@ -120,11 +177,18 @@ public struct LibraryManifest: Codable, Equatable, Sendable {
         rootDescriptor: Int32,
         rootURL: URL,
         relativeDirectory: String,
+        entryNames: [String]? = nil,
         exclusions: Set<String>,
         beforeOpen: (_ relativePath: String, _ url: URL) throws -> Void,
         afterHash: (_ relativePath: String, _ url: URL) throws -> Void
     ) throws {
-        for name in try directoryEntryNames(descriptor: directoryDescriptor) {
+        let names: [String]
+        if let entryNames {
+            names = entryNames
+        } else {
+            names = try directoryEntryNames(descriptor: directoryDescriptor)
+        }
+        for name in names {
             if relativeDirectory.isEmpty && exclusions.contains(name) {
                 continue
             }
@@ -151,6 +215,7 @@ public struct LibraryManifest: Codable, Equatable, Sendable {
                         rootDescriptor: rootDescriptor,
                         rootURL: rootURL,
                         relativeDirectory: relativePath,
+                        entryNames: nil,
                         exclusions: exclusions,
                         beforeOpen: beforeOpen,
                         afterHash: afterHash
@@ -202,6 +267,7 @@ public struct LibraryManifest: Codable, Equatable, Sendable {
 
         guard
             let opened = fileState(descriptor: descriptor),
+            opened.isRegularFile,
             opened == observed
         else {
             throw LibraryManifestError.unstableFile(relativePath: relativePath)
@@ -248,7 +314,11 @@ public struct LibraryManifest: Codable, Equatable, Sendable {
     }
 
     private static func directoryEntryNames(descriptor: Int32) throws -> [String] {
-        let duplicate = Darwin.dup(descriptor)
+        let duplicate = Darwin.openat(
+            descriptor,
+            ".",
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
         guard duplicate >= 0 else {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
         }
@@ -293,13 +363,34 @@ public struct LibraryManifest: Codable, Equatable, Sendable {
 
         for (index, component) in components.enumerated() {
             let isLast = index == components.count - 1
-            let flags = O_RDONLY | O_NOFOLLOW | O_CLOEXEC | (isLast ? 0 : O_DIRECTORY)
+            let flags = O_RDONLY | O_NOFOLLOW | O_CLOEXEC | (isLast ? O_NONBLOCK : O_DIRECTORY)
             let next = String(component).withCString { Darwin.openat(descriptor, $0, flags) }
             Darwin.close(descriptor)
             guard next >= 0 else { return -1 }
             descriptor = next
         }
         return descriptor
+    }
+
+    private static func openRootDirectory(_ root: URL) -> Int32 {
+        root.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        }
+    }
+
+    private static func entryIdentities(
+        names: [String],
+        directoryDescriptor: Int32
+    ) throws -> [String: FileIdentity] {
+        var identities: [String: FileIdentity] = [:]
+        for name in names {
+            guard let state = fileState(name: name, relativeTo: directoryDescriptor) else {
+                throw LibraryManifestError.unstableRoot
+            }
+            identities[name] = state.identity
+        }
+        return identities
     }
 
     private static func fileState(at url: URL) -> FileState? {
@@ -347,6 +438,10 @@ private struct FileState: Equatable {
         mode & S_IFMT == S_IFLNK
     }
 
+    var identity: FileIdentity {
+        FileIdentity(device: device, inode: inode, fileType: mode & S_IFMT)
+    }
+
     init(_ info: Darwin.stat) {
         device = UInt64(info.st_dev)
         inode = UInt64(info.st_ino)
@@ -355,4 +450,10 @@ private struct FileState: Equatable {
         modifiedAtNanoseconds = Int64(info.st_mtimespec.tv_sec) * 1_000_000_000
             + Int64(info.st_mtimespec.tv_nsec)
     }
+}
+
+private struct FileIdentity: Equatable {
+    let device: UInt64
+    let inode: UInt64
+    let fileType: mode_t
 }

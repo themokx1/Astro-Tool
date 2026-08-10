@@ -1,5 +1,7 @@
 @testable import AstroApplication
 import CryptoKit
+import Darwin
+import Dispatch
 import Foundation
 import Testing
 
@@ -218,6 +220,63 @@ struct LibraryManifestTests {
                     try disk.createSymbolicLink(at: parent, withDestinationURL: externalParent)
                 },
                 afterHash: { _, _ in }
+            )
+        }
+    }
+
+    @Test("Replacing an enumerated file with a FIFO fails without blocking")
+    func fifoSwapFailsWithoutBlocking() async throws {
+        let disk = FileManager.default
+        let fixture = try V2FixtureLibrary.make(fileManager: disk)
+        defer { fixture.remove(fileManager: disk) }
+        let fifoPath = fixture.exposure30.path
+        let clock = ContinuousClock()
+        let started = clock.now
+
+        await #expect(throws: LibraryManifestError.unstableFile(relativePath: "IC1396/30s.fit")) {
+            try await LibraryManifest.capture(
+                root: fixture.root,
+                exclusions: [],
+                beforeOpen: { relativePath, url in
+                    guard relativePath == "IC1396/30s.fit" else { return }
+                    try disk.removeItem(at: url)
+                    let result = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+                        guard let path else { return -1 }
+                        return Darwin.mkfifo(path, S_IRUSR | S_IWUSR)
+                    }
+                    guard result == 0 else {
+                        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                    }
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
+                        let writer = fifoPath.withCString {
+                            Darwin.open($0, O_WRONLY | O_NONBLOCK | O_CLOEXEC)
+                        }
+                        if writer >= 0 { Darwin.close(writer) }
+                    }
+                },
+                afterHash: { _, _ in }
+            )
+        }
+
+        #expect(started.duration(to: clock.now) < .milliseconds(750))
+    }
+
+    @Test("A root-level entry added after enumeration invalidates the capture")
+    func finalRootValidationDetectsLateEntry() async throws {
+        let fixture = try V2FixtureLibrary.make()
+        defer { fixture.remove() }
+
+        await #expect(throws: LibraryManifestError.unstableRoot) {
+            try await LibraryManifest.capture(
+                root: fixture.root,
+                exclusions: [],
+                beforeOpen: { _, _ in },
+                afterHash: { _, _ in },
+                beforeFinalValidation: { root in
+                    try Data("late root-level entry".utf8).write(
+                        to: root.appendingPathComponent("late.fit")
+                    )
+                }
             )
         }
     }
