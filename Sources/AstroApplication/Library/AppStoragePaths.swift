@@ -2,7 +2,7 @@ import Foundation
 
 public enum AppStoragePathsError: Error, Equatable, Sendable {
     case storageRootInsideLibrary
-    case libraryRootUnavailable
+    case libraryIdentityMismatch
     case applicationSupportUnavailable
     case cachesUnavailable
 }
@@ -20,10 +20,11 @@ public struct AppStoragePaths: Sendable {
     public init(
         applicationSupport: URL,
         caches: URL,
-        libraryID: LibraryIdentity
+        libraryID: LibraryIdentity,
+        libraryRoot: URL
     ) throws {
-        guard let libraryRoot = libraryID.canonicalRootURL else {
-            throw AppStoragePathsError.libraryRootUnavailable
+        guard libraryID == LibraryIdentity(rootURL: libraryRoot) else {
+            throw AppStoragePathsError.libraryIdentityMismatch
         }
 
         let resolvedLibraryRoot = Self.canonicalDirectory(libraryRoot)
@@ -50,6 +51,7 @@ public struct AppStoragePaths: Sendable {
 
     public static func production(
         libraryID: LibraryIdentity,
+        libraryRoot: URL,
         fileManager: FileManager = .default
     ) throws -> Self {
         guard let applicationSupport = fileManager.urls(
@@ -64,7 +66,8 @@ public struct AppStoragePaths: Sendable {
         return try Self(
             applicationSupport: applicationSupport,
             caches: caches,
-            libraryID: libraryID
+            libraryID: libraryID,
+            libraryRoot: libraryRoot
         )
     }
 

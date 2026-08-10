@@ -37,6 +37,25 @@ struct AppStoragePathsTests {
         #expect(decoded == identity)
     }
 
+    @Test("Decoded identity remains usable with a separately supplied library root")
+    func decodedIdentityConstructsStoragePaths() throws {
+        let identity = LibraryIdentity(rootURL: imageRoot)
+        let data = try JSONEncoder().encode(identity)
+        let decoded = try JSONDecoder().decode(LibraryIdentity.self, from: data)
+
+        let paths = try AppStoragePaths(
+            applicationSupport: applicationSupport,
+            caches: caches,
+            libraryID: decoded,
+            libraryRoot: imageRoot
+        )
+
+        #expect(paths.metadataDatabase.path ==
+            "/tmp/AstroToolAppSupport/AstroTool/Libraries/\(identity.id)/metadata.sqlite")
+        #expect(paths.indexDatabase.path ==
+            "/tmp/AstroToolCache/AstroTool/Libraries/\(identity.id)/index.sqlite")
+    }
+
     @Test("Library identity resolves symbolic links")
     func identityResolvesSymbolicLinks() throws {
         let fileManager = FileManager.default
@@ -57,7 +76,8 @@ struct AppStoragePathsTests {
         let paths = try AppStoragePaths(
             applicationSupport: applicationSupport,
             caches: caches,
-            libraryID: identity
+            libraryID: identity,
+            libraryRoot: imageRoot
         )
         let appLibrary = applicationSupport
             .appendingPathComponent("AstroTool/Libraries", isDirectory: true)
@@ -83,7 +103,8 @@ struct AppStoragePathsTests {
         let paths = try AppStoragePaths(
             applicationSupport: applicationSupport,
             caches: caches,
-            libraryID: LibraryIdentity(rootURL: imageRoot)
+            libraryID: LibraryIdentity(rootURL: imageRoot),
+            libraryRoot: imageRoot
         )
 
         for url in paths.allURLs {
@@ -94,21 +115,49 @@ struct AppStoragePathsTests {
 
     @Test("Production paths use FileManager roots without creating storage")
     func productionPathsAreInjectableAndComputeOnly() throws {
+        let disk = FileManager.default
+        let fixtureRoot = disk.temporaryDirectory
+            .appendingPathComponent("AstroToolStorageProbe-\(UUID().uuidString)", isDirectory: true)
+        try disk.createDirectory(at: fixtureRoot, withIntermediateDirectories: false)
+        defer { try? disk.removeItem(at: fixtureRoot) }
+
+        let marker = fixtureRoot.appendingPathComponent("sentinel")
+        #expect(disk.createFile(atPath: marker.path, contents: Data("unchanged".utf8)))
+        let applicationSupportParent = fixtureRoot.appendingPathComponent("app-parent", isDirectory: true)
+        let cachesParent = fixtureRoot.appendingPathComponent("cache-parent", isDirectory: true)
+        let injectedApplicationSupport = applicationSupportParent
+            .appendingPathComponent("Application Support", isDirectory: true)
+        let injectedCaches = cachesParent.appendingPathComponent("Caches", isDirectory: true)
         let fileManager = StorageRootFileManager(
-            applicationSupport: applicationSupport,
-            caches: caches
+            applicationSupport: injectedApplicationSupport,
+            caches: injectedCaches
         )
+        let manifestBefore = try directoryManifest(at: fixtureRoot, fileManager: disk)
+        #expect(!disk.fileExists(atPath: applicationSupportParent.path))
+        #expect(!disk.fileExists(atPath: cachesParent.path))
+        #expect(!disk.fileExists(atPath: injectedApplicationSupport.path))
+        #expect(!disk.fileExists(atPath: injectedCaches.path))
+
         let identity = LibraryIdentity(rootURL: imageRoot)
         let expected = try AppStoragePaths(
-            applicationSupport: applicationSupport,
-            caches: caches,
-            libraryID: identity
+            applicationSupport: injectedApplicationSupport,
+            caches: injectedCaches,
+            libraryID: identity,
+            libraryRoot: imageRoot
         )
 
-        let paths = try AppStoragePaths.production(libraryID: identity, fileManager: fileManager)
+        let paths = try AppStoragePaths.production(
+            libraryID: identity,
+            libraryRoot: imageRoot,
+            fileManager: fileManager
+        )
 
         #expect(paths.allURLs == expected.allURLs)
-        #expect(paths.allURLs.allSatisfy { !fileManager.fileExists(atPath: $0.path) })
+        #expect(!disk.fileExists(atPath: applicationSupportParent.path))
+        #expect(!disk.fileExists(atPath: cachesParent.path))
+        #expect(!disk.fileExists(atPath: injectedApplicationSupport.path))
+        #expect(!disk.fileExists(atPath: injectedCaches.path))
+        #expect(try directoryManifest(at: fixtureRoot, fileManager: disk) == manifestBefore)
     }
 
     @Test("Storage roots nested inside the image library are rejected")
@@ -117,10 +166,35 @@ struct AppStoragePathsTests {
         let nested = imageRoot.appendingPathComponent("AppOwned", isDirectory: true)
 
         #expect(throws: AppStoragePathsError.storageRootInsideLibrary) {
-            try AppStoragePaths(applicationSupport: nested, caches: caches, libraryID: identity)
+            try AppStoragePaths(
+                applicationSupport: nested,
+                caches: caches,
+                libraryID: identity,
+                libraryRoot: imageRoot
+            )
         }
         #expect(throws: AppStoragePathsError.storageRootInsideLibrary) {
-            try AppStoragePaths(applicationSupport: applicationSupport, caches: nested, libraryID: identity)
+            try AppStoragePaths(
+                applicationSupport: applicationSupport,
+                caches: nested,
+                libraryID: identity,
+                libraryRoot: imageRoot
+            )
+        }
+    }
+
+    @Test("Library identity must describe the supplied library root")
+    func rejectsMismatchedLibraryIdentityAndRoot() {
+        let identity = LibraryIdentity(rootURL: imageRoot)
+        let differentRoot = URL(fileURLWithPath: "/Volumes/Fixture/Other", isDirectory: true)
+
+        #expect(throws: AppStoragePathsError.libraryIdentityMismatch) {
+            try AppStoragePaths(
+                applicationSupport: applicationSupport,
+                caches: caches,
+                libraryID: identity,
+                libraryRoot: differentRoot
+            )
         }
     }
 
@@ -128,6 +202,19 @@ struct AppStoragePathsTests {
         let candidatePath = candidate.standardizedFileURL.resolvingSymlinksInPath().path
         let rootPath = root.standardizedFileURL.resolvingSymlinksInPath().path
         return candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/")
+    }
+
+    private func directoryManifest(at root: URL, fileManager: FileManager) throws -> [String] {
+        try fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: []
+        )
+        .map { url in
+            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            return "\(url.lastPathComponent):\(size)"
+        }
+        .sorted()
     }
 }
 
