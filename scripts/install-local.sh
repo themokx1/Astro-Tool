@@ -9,6 +9,7 @@ SOURCE_APP="build/AstroTool.app"
 DESTINATION_APP="/Applications/AstroTool.app"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_APP="/private/tmp/AstroTool.previous.$TIMESTAMP.app"
+FAILED_APP="/private/tmp/AstroTool.failed-install.$TIMESTAMP.app"
 
 if [ ! -d "$SOURCE_APP" ]; then
     echo "ERROR: build/AstroTool.app is missing. Run ./build.sh first." >&2
@@ -23,10 +24,16 @@ fi
 
 echo "==> Installing AstroTool in /Applications"
 if ! ditto "$SOURCE_APP" "$DESTINATION_APP"; then
-    if [ -e "$BACKUP_APP" ] && [ ! -e "$DESTINATION_APP" ]; then
-        mv "$BACKUP_APP" "$DESTINATION_APP"
+    FAILURE_RESULT="no previous installation existed"
+    if [ -e "$DESTINATION_APP" ]; then
+        echo "==> Preserving the incomplete installation at $FAILED_APP"
+        mv "$DESTINATION_APP" "$FAILED_APP"
     fi
-    echo "ERROR: Installation failed; the previous app was restored when possible." >&2
+    if [ -e "$BACKUP_APP" ]; then
+        mv "$BACKUP_APP" "$DESTINATION_APP"
+        FAILURE_RESULT="the previous app was restored"
+    fi
+    echo "ERROR: Installation failed; $FAILURE_RESULT." >&2
     exit 1
 fi
 

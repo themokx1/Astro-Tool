@@ -27,7 +27,9 @@ struct ReleasePackagingSurfaceTests {
         let installer = try source("scripts/install-local.sh")
         #expect(installer.contains("/Applications"))
         #expect(installer.contains("AstroTool.previous"))
+        #expect(installer.contains("AstroTool.failed-install"))
         #expect(installer.contains("ditto"))
+        #expect(installer.contains("mv \"$BACKUP_APP\" \"$DESTINATION_APP\""))
     }
 
     @Test("Public release requires signing and notarization")
