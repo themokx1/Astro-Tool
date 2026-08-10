@@ -32,12 +32,17 @@ struct ReleasePackagingSurfaceTests {
         #expect(installer.contains("mv \"$BACKUP_APP\" \"$DESTINATION_APP\""))
     }
 
-    @Test("CI proves a neutral app launch with isolated preferences")
+    @Test("CI proves a neutral app launch and a selected empty-library first-run path")
     func cleanInstallSmokeGate() throws {
         let smoke = try source("scripts/smoke-clean-install.sh")
         let workflow = try source(".github/workflows/ci.yml")
         #expect(smoke.contains("ASTROTOOL_DEFAULTS_SUITE"))
+        #expect(smoke.contains("ASTROTOOL_CLEAN_INSTALL_SMOKE_LIBRARY=\"$SMOKE_LIBRARY\""))
         #expect(smoke.contains("-ResetOnboarding"))
+        #expect(smoke.contains("cleanInstallSmokeReachedFirstScan"))
+        #expect(smoke.contains(".astro_tool/astrotool.sqlite"))
+        #expect(smoke.contains("finished_at IS NOT NULL"))
+        #expect(!smoke.contains("completed_at IS NOT NULL"))
         #expect(smoke.contains("kill -0"))
         #expect(workflow.contains("scripts/smoke-clean-install.sh"))
     }

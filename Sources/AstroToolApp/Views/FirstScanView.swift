@@ -51,6 +51,7 @@ struct FirstScanView: View {
         .onAppear {
             let entries = try? FileManager.default.contentsOfDirectory(atPath: appState.config.rootPath)
             topLevelEntries = Set(entries ?? [])
+            appState.markCleanInstallFirstScanVisible()
         }
         .onChange(of: appState.isBusy) { wasBusy, isBusyNow in
             guard didStartScan, wasBusy, !isBusyNow, !scanFinished else { return }

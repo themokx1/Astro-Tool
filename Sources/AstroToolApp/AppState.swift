@@ -214,6 +214,7 @@ final class AppState: @unchecked Sendable {
     private static let discoveryFocalLengthsBySetupKey = "discoveryFocalLengthsBySetup"
     private static let onboardingCompletedVersionKey = "onboardingCompletedVersion"
     private static let legacyPreferencesMigratedKey = "legacyPreferencesMigratedV1"
+    private static let cleanInstallSmokeReachedFirstScanKey = "cleanInstallSmokeReachedFirstScan"
     private static let lastPageKey = "lastPage"
     private static let lastSettingsTabKey = "lastSettingsTab"
 
@@ -1332,6 +1333,27 @@ final class AppState: @unchecked Sendable {
         return .standard
     }
 
+    /// Release-CI hook: opens one explicitly supplied temporary library only
+    /// when paired with the isolated clean-install suite. Normal launches can
+    /// never take this branch. This lets the packaged release render its real
+    /// selected-library/first-scan UI without manufacturing a security-scoped
+    /// bookmark in a differently signed helper process.
+    private static func cleanInstallSmokeLibraryURL() -> URL? {
+        let environment = ProcessInfo.processInfo.environment
+        guard let suite = environment["ASTROTOOL_DEFAULTS_SUITE"],
+              suite.hasPrefix("\(ProductInfo.bundleIdentifier).clean-install-smoke."),
+              let path = environment["ASTROTOOL_CLEAN_INSTALL_SMOKE_LIBRARY"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !path.isEmpty
+        else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    func markCleanInstallFirstScanVisible() {
+        guard Self.cleanInstallSmokeLibraryURL() != nil else { return }
+        preferences.set(true, forKey: Self.cleanInstallSmokeReachedFirstScanKey)
+    }
+
     private static let legacyPreferenceAllowlist: Set<String> = [
             bookmarkKey,
             recentRootsKey,
@@ -1390,6 +1412,11 @@ final class AppState: @unchecked Sendable {
     func resolveRootOnLaunch() {
         startVolumeMountObserverIfNeeded()
         startActivationObserverIfNeeded()
+        if let smokeLibrary = Self.cleanInstallSmokeLibraryURL() {
+            legacyMigrationAvailable = false
+            openRoot(at: smokeLibrary)
+            return
+        }
         guard !legacyMigrationAvailable else {
             config = AstroConfig()
             db = nil

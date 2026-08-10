@@ -42,6 +42,7 @@ import Testing
         #expect(app.contains("appState.shouldShowFirstScanExperience"))
         #expect(firstScan.contains("Személyre szabás…"))
         #expect(firstScan.contains("appState.requestOnboarding()"))
+        #expect(firstScan.contains("markCleanInstallFirstScanVisible"))
         #expect(firstScan.contains("Az audit csak jelöl"))
     }
 

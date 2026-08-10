@@ -72,8 +72,9 @@ maradt elfogadott adósságként:
 - a támogatási export csak a felhasználó által ténylegesen átnézett, rögzített
   pillanatképet másolja vagy menti;
 - root nélküli CLI-hívás konkrét `--root /path/to/library` útmutatást ad;
-- a CI izolált preferenciával valódi appindítást futtat, és ellenőrzi, hogy
-  nem keletkezik bookmark vagy személyes mintaállapot;
+- a CI izolált preferenciával valódi, ideiglenes üres könyvtárat nyit meg,
+  megvárja az első-scan felület tényleges megjelenését, és ellenőrzi, hogy
+  nem indul automatikus scan vagy személyes mintaállapot;
 - a publikus DMG külön Developer ID aláírást, notarizációt, staplinget,
   lemezkép-ellenőrzést és Gatekeeper `open` vizsgálatot kap;
 - a tag, a ProductInfo-verzió, a CHANGELOG és a kötelező release note közös
