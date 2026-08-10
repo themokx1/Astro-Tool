@@ -15,6 +15,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test
         run: swift test --no-parallel
+      - name: Check public content
+        run: scripts/check-public-content.sh
       - name: Build Universal release artifacts
         run: ./build.sh
       - name: Verify architectures and signature

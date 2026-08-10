@@ -22,6 +22,9 @@ jobs:
       - name: Test
         run: swift test --no-parallel
 
+      - name: Check public content
+        run: scripts/check-public-content.sh
+
       - name: Import Developer ID certificate
         env:
           DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}

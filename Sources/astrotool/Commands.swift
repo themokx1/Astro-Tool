@@ -321,7 +321,7 @@ func resolveConfig(rootFlag: String?) throws -> AstroConfig {
 }
 
 /// The volume mount point portion of an absolute path -- its first two path
-/// components, e.g. `/Volumes/images/sessions` -> `/Volumes/images`. Mirrors
+/// components, e.g. `/Volumes/AstroDrive/sessions` -> `/Volumes/AstroDrive`. Mirrors
 /// the equivalent (internal, not visible from here) logic in
 /// `AstroCore`'s `RootErrorClassifier`.
 private func volumePortion(of path: String) -> String {

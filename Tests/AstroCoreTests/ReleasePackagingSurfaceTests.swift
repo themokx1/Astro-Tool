@@ -51,4 +51,19 @@ struct ReleasePackagingSurfaceTests {
         let workflow = try source(".github/workflows/release.yml")
         #expect(workflow.contains("SHA256SUMS.txt"))
     }
+
+    @Test("Versioned release documentation is complete and public-safe")
+    func releaseDocumentation() throws {
+        let notes = try source("docs/releases/v1.0.0.md")
+        let changelog = try source("CHANGELOG.md")
+        let readme = try source("README.md")
+        let check = try source("scripts/check-public-content.sh")
+
+        #expect(notes.contains("AstroTool 1.0.0"))
+        #expect(notes.contains("Universal"))
+        #expect(notes.contains("Biztonságos diagnosztika"))
+        #expect(changelog.contains("## [1.0.0] - 2026-08-10"))
+        #expect(readme.contains("Tiszta telepítéskor nincs előre felvett felszerelés"))
+        #expect(check.contains("Public content check passed."))
+    }
 }

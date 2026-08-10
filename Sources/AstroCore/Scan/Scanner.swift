@@ -6,7 +6,7 @@ import Foundation
 /// without touching a real `/Volumes` mount point.
 enum RootErrorClassifier {
     /// - `rootPath` starts with `/Volumes/` and its volume portion (the
-    ///   first two path components, e.g. `/Volumes/images`) doesn't exist
+    ///   first two path components, e.g. `/Volumes/AstroDrive`) doesn't exist
     ///   per `volumeExists` → `.volumeNotMounted(path: rootPath)`.
     /// - Otherwise the missing root/subpath itself doesn't exist (but its
     ///   parent does) → `.pathNotFound(path:)`, using `subpath` when one was
@@ -27,7 +27,7 @@ enum RootErrorClassifier {
     }
 
     /// The volume mount point portion of an absolute path — its first two
-    /// path components, e.g. `/Volumes/images/sessions` → `/Volumes/images`.
+    /// path components, e.g. `/Volumes/AstroDrive/sessions` → `/Volumes/AstroDrive`.
     static func volumePortion(of path: String) -> String {
         let comps = path.split(separator: "/", omittingEmptySubsequences: true)
         guard comps.count >= 2 else { return path }

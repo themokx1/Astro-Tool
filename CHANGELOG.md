@@ -8,6 +8,37 @@ történik.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-10
+
+### Added
+
+- Első nyilvános termékkiadás tiszta, semleges első indítással és opcionális,
+  többoldalas személyre szabással.
+- Adatvédelem és támogatás beállításlap másolható/menthető, szerkezetileg
+  redaktált diagnosztikával.
+- Universal (`arm64 + x86_64`) app- és CLI-csomag, SHA-256 ellenőrzőösszegek,
+  explicit helyi telepítő és fail-closed Developer ID/notarizációs release.
+- Újratervezett reszponzív weboldal külön Funkciók, Első lépések, CLI,
+  Adatvédelem és Támogatás oldalakkal.
+
+### Changed
+
+- A bundle identifier `io.github.themokx1.AstroTool`; a korábbi preferenciák
+  csak szűk allowlist alapján, egyszer migrálódnak.
+- A Beállítások natív oldalsávos szerkezetet, a fő felületek közös spacing-,
+  kártya-, fejléc- és üresállapot-rendszert kaptak.
+- A normál build többé nem telepít appot és nem hoz létre CLI-szimlinket.
+- A production első indítás és a publikus dokumentáció nem tartalmaz konkrét
+  fejlesztői könyvtárat, felszerelést, szűrőt vagy személyes mérőszámot.
+
+### Safety
+
+- Tiszta induláskor nincs kitalált vagy örökölt root path.
+- A támogatási export nem fogad el útvonalat, fájlnevet, célpontot,
+  koordinátát, jegyzetet, FITS-fejlécet, bookmarkot vagy hibaüzenetet.
+- A publikus release érvényes Apple aláírás és notarizáció nélkül nem készül
+  el; a helyi ad-hoc build egyértelműen fejlesztői csomag marad.
+
 ## [0.16.0] - 2026-08-10
 
 ### Added
