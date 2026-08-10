@@ -5,7 +5,7 @@ import Testing
 @Test func defaultConfigHasExpectedValues() {
     let config = AstroConfig()
 
-    #expect(config.rootPath == "/Volumes/images/Astro")
+    #expect(config.rootPath.isEmpty)
     #expect(config.excludedDirNames == ["tools"])
     #expect(config.excludedPaths == [])
     #expect(config.residuePatterns == ["*.seq", "*.lst", "*_conv*", "*_bkg*", "*_pp_*", "r_*", "bkg_*", ".DS_Store"])

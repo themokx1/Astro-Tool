@@ -600,7 +600,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var astrobin: AstroBinRule
 
     public init(
-        rootPath: String = "/Volumes/images/Astro",
+        rootPath: String = "",
         excludedDirNames: [String] = ["tools"],
         excludedPaths: [String] = [],
         residuePatterns: [String] = ["*.seq", "*.lst", "*_conv*", "*_bkg*", "*_pp_*", "r_*", "bkg_*", ".DS_Store"],

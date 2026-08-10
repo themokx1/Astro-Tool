@@ -175,6 +175,10 @@ final class AppState: @unchecked Sendable {
     private static let selectedImagingSetupIDKey = "selectedImagingSetupID"
     private static let discoveryFocalLengthsBySetupKey = "discoveryFocalLengthsBySetup"
     private static let onboardingCompletedVersionKey = "onboardingCompletedVersion"
+    private static let legacyPreferencesMigratedKey = "legacyPreferencesMigratedV1"
+
+    @ObservationIgnored
+    private let preferences: UserDefaults
 
     /// App-lifetime singleton reference, set from `init()`. The menu bar
     /// (`Views/Commands.swift`) needs to call into `AppState` from `.commands`
@@ -329,7 +333,7 @@ final class AppState: @unchecked Sendable {
     /// reads the persisted starting value once (a stored property's own
     /// declared default can't reach `UserDefaults` itself).
     var firstStepsCardDismissed: Bool = false {
-        didSet { UserDefaults.standard.set(firstStepsCardDismissed, forKey: Self.firstStepsCardDismissedKey) }
+        didSet { preferences.set(firstStepsCardDismissed, forKey: Self.firstStepsCardDismissedKey) }
     }
 
     /// R11-T12/F12: the "Első lépések" checklist -- 6 fixed steps, each
@@ -492,7 +496,7 @@ final class AppState: @unchecked Sendable {
     /// READ this property ever got invalidated the instant it changed.
     /// `init()` reads the persisted starting value once.
     var autoScanOnMount: Bool = false {
-        didSet { UserDefaults.standard.set(autoScanOnMount, forKey: Self.autoScanOnMountKey) }
+        didSet { preferences.set(autoScanOnMount, forKey: Self.autoScanOnMountKey) }
     }
     var findings: [Finding] = []
     /// Audit and verify evidence are persisted independently, then composed
@@ -646,12 +650,12 @@ final class AppState: @unchecked Sendable {
 
     var needsAutomaticOnboarding: Bool {
         OnboardingLifecycle.shouldPresent(
-            completedVersion: UserDefaults.standard.integer(forKey: Self.onboardingCompletedVersionKey)
+            completedVersion: preferences.integer(forKey: Self.onboardingCompletedVersionKey)
         )
     }
 
     func completeOnboardingVersion() {
-        UserDefaults.standard.set(
+        preferences.set(
             OnboardingLifecycle.currentVersion,
             forKey: Self.onboardingCompletedVersionKey
         )
@@ -854,9 +858,9 @@ final class AppState: @unchecked Sendable {
     var selectedSiteName: String? = nil {
         didSet {
             if let selectedSiteName {
-                UserDefaults.standard.set(selectedSiteName, forKey: Self.selectedSiteNameKey)
+                preferences.set(selectedSiteName, forKey: Self.selectedSiteNameKey)
             } else {
-                UserDefaults.standard.removeObject(forKey: Self.selectedSiteNameKey)
+                preferences.removeObject(forKey: Self.selectedSiteNameKey)
             }
         }
     }
@@ -906,9 +910,9 @@ final class AppState: @unchecked Sendable {
     var selectedImagingSetupID: String? = nil {
         didSet {
             if let selectedImagingSetupID {
-                UserDefaults.standard.set(selectedImagingSetupID, forKey: Self.selectedImagingSetupIDKey)
+                preferences.set(selectedImagingSetupID, forKey: Self.selectedImagingSetupIDKey)
             } else {
-                UserDefaults.standard.removeObject(forKey: Self.selectedImagingSetupIDKey)
+                preferences.removeObject(forKey: Self.selectedImagingSetupIDKey)
             }
         }
     }
@@ -919,7 +923,7 @@ final class AppState: @unchecked Sendable {
     var discoveryFocalLengthsBySetup: [String: Double] = [:] {
         didSet {
             if let data = try? JSONEncoder().encode(discoveryFocalLengthsBySetup) {
-                UserDefaults.standard.set(data, forKey: Self.discoveryFocalLengthsBySetupKey)
+                preferences.set(data, forKey: Self.discoveryFocalLengthsBySetupKey)
             }
         }
     }
@@ -1220,18 +1224,21 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - Root selection
 
-    init() {
+    init(preferences: UserDefaults? = nil) {
+        let resolvedPreferences = preferences ?? Self.defaultPreferences()
+        self.preferences = resolvedPreferences
+        Self.migrateLegacyPreferences(into: resolvedPreferences)
         // R12-U1 item 4: `firstStepsCardDismissed`/`autoScanOnMount`/
         // `selectedSiteName` are now plain STORED properties (see each
         // one's own doc comment for why) -- the one-time read of whatever
         // was already persisted has to happen explicitly here, since a
         // stored property's own declared default (`false`/`nil`) is all
         // `@Observable` initializes it to otherwise.
-        firstStepsCardDismissed = UserDefaults.standard.bool(forKey: Self.firstStepsCardDismissedKey)
-        autoScanOnMount = UserDefaults.standard.bool(forKey: Self.autoScanOnMountKey)
-        selectedSiteName = UserDefaults.standard.string(forKey: Self.selectedSiteNameKey)
-        selectedImagingSetupID = UserDefaults.standard.string(forKey: Self.selectedImagingSetupIDKey)
-        if let data = UserDefaults.standard.data(forKey: Self.discoveryFocalLengthsBySetupKey),
+        firstStepsCardDismissed = resolvedPreferences.bool(forKey: Self.firstStepsCardDismissedKey)
+        autoScanOnMount = resolvedPreferences.bool(forKey: Self.autoScanOnMountKey)
+        selectedSiteName = resolvedPreferences.string(forKey: Self.selectedSiteNameKey)
+        selectedImagingSetupID = resolvedPreferences.string(forKey: Self.selectedImagingSetupIDKey)
+        if let data = resolvedPreferences.data(forKey: Self.discoveryFocalLengthsBySetupKey),
            let decoded = try? JSONDecoder().decode([String: Double].self, from: data) {
             discoveryFocalLengthsBySetup = decoded
         }
@@ -1239,31 +1246,60 @@ final class AppState: @unchecked Sendable {
         AppState.shared = self
     }
 
+    private static func defaultPreferences() -> UserDefaults {
+        if let suiteName = ProcessInfo.processInfo.environment["ASTROTOOL_DEFAULTS_SUITE"],
+           !suiteName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let isolated = UserDefaults(suiteName: suiteName)
+        {
+            return isolated
+        }
+        return .standard
+    }
+
+    private static func migrateLegacyPreferences(into preferences: UserDefaults) {
+        let allowedKeys: Set<String> = [
+            bookmarkKey,
+            recentRootsKey,
+            autoScanOnMountKey,
+            firstStepsCardDismissedKey,
+            selectedSiteNameKey,
+            selectedImagingSetupIDKey,
+            discoveryFocalLengthsBySetupKey,
+            onboardingCompletedVersionKey,
+        ]
+        PreferenceMigration.migratePersistentDomain(
+            named: ProductInfo.legacyBundleIdentifier,
+            into: preferences,
+            allowedKeys: allowedKeys,
+            markerKey: legacyPreferencesMigratedKey
+        )
+    }
+
     /// Called once from `.onAppear`: resolves a previously-saved
-    /// security-scoped bookmark if there is one, otherwise falls back to
-    /// `AstroConfig()`'s default root path. Never scans automatically --
+    /// security-scoped bookmark if there is one. Without one, presents the
+    /// explicit library-selection welcome state. Never scans automatically --
     /// a large external volume should only be walked on explicit request.
     ///
     /// `-ResetOnboarding` (acceptance ⓑ): a debug-only launch argument that
-    /// clears the saved bookmark before resolving, so the first-run flow
-    /// (`WelcomeView`/`FirstScanView`) can be exercised on a machine that
-    /// already has a real library configured, without touching that
-    /// configuration on disk.
+    /// clears only the versioned detailed-onboarding completion flag. It no
+    /// longer destroys the real library bookmark merely to preview help UI.
     func resolveRootOnLaunch() {
         startVolumeMountObserverIfNeeded()
         startActivationObserverIfNeeded()
         if ProcessInfo.processInfo.arguments.contains("-ResetOnboarding") {
-            UserDefaults.standard.removeObject(forKey: Self.bookmarkKey)
-            UserDefaults.standard.removeObject(forKey: Self.onboardingCompletedVersionKey)
+            preferences.removeObject(forKey: Self.onboardingCompletedVersionKey)
         }
-        if let data = UserDefaults.standard.data(forKey: Self.bookmarkKey),
+        if let data = preferences.data(forKey: Self.bookmarkKey),
            let url = Self.resolveBookmark(data)
         {
             _ = url.startAccessingSecurityScopedResource()
             openRoot(at: url)
             return
         }
-        openRoot(at: URL(fileURLWithPath: AstroConfig().rootPath, isDirectory: true))
+        config = AstroConfig()
+        db = nil
+        lastError = nil
+        rootStatus = .noRoot
     }
 
     /// "Újrapróbálás" on the access-denied/not-mounted screens: re-checks the
@@ -1336,7 +1372,7 @@ final class AppState: @unchecked Sendable {
     /// "Legutóbbi könyvtárak" entry, then opens it.
     func selectRoot(at url: URL) {
         if let bookmark = makeBookmark(for: url) {
-            UserDefaults.standard.set(bookmark, forKey: Self.bookmarkKey)
+            preferences.set(bookmark, forKey: Self.bookmarkKey)
             rememberRecentRoot(url: url, bookmark: bookmark)
         }
         openRoot(at: url)
@@ -1357,7 +1393,7 @@ final class AppState: @unchecked Sendable {
     }
 
     private func loadRecentRoots() {
-        guard let datas = UserDefaults.standard.array(forKey: Self.recentRootsKey) as? [Data] else { return }
+        guard let datas = preferences.array(forKey: Self.recentRootsKey) as? [Data] else { return }
         recentRoots = datas.compactMap { data in
             Self.resolveBookmark(data).map { RecentRoot(path: $0.path, bookmark: data) }
         }
@@ -1369,7 +1405,7 @@ final class AppState: @unchecked Sendable {
         if recentRoots.count > 5 {
             recentRoots.removeLast(recentRoots.count - 5)
         }
-        UserDefaults.standard.set(recentRoots.map(\.bookmark), forKey: Self.recentRootsKey)
+        preferences.set(recentRoots.map(\.bookmark), forKey: Self.recentRootsKey)
     }
 
     private static func resolveBookmark(_ data: Data) -> URL? {
