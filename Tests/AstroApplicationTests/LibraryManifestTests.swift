@@ -100,6 +100,21 @@ struct LibraryManifestTests {
         #expect(paths.contains("IC1396/.astro_tool/keep.txt"))
     }
 
+    @Test("Excluding app metadata does not also exclude its backup")
+    func aSingleExclusionRetainsSimilarlyNamedBackup() async throws {
+        let fixture = try V2FixtureLibrary.make()
+        defer { fixture.remove() }
+
+        let manifest = try await LibraryManifest.capture(
+            root: fixture.root,
+            exclusions: [".astro_tool"]
+        )
+        let paths = manifest.entries.map(\.relativePath)
+
+        #expect(!paths.contains(".astro_tool/state.json"))
+        #expect(paths.contains(".astro_tool_backup/state.json"))
+    }
+
     @Test("Symbolic links are ignored and never followed outside the library")
     func symlinksAreIgnored() async throws {
         let fixture = try V2FixtureLibrary.make()
@@ -174,6 +189,35 @@ struct LibraryManifestTests {
                     try handle.write(contentsOf: Data("changed".utf8))
                     try handle.close()
                 }
+            )
+        }
+    }
+
+    @Test("Replacing an enumerated parent with an external symlink fails closed before hashing")
+    func parentSymlinkSwapCannotEscapeRoot() async throws {
+        let disk = FileManager.default
+        let fixture = try V2FixtureLibrary.make(fileManager: disk)
+        defer { fixture.remove(fileManager: disk) }
+        let parent = fixture.root.appendingPathComponent("Race", isDirectory: true)
+        let displacedParent = fixture.container.appendingPathComponent("DisplacedRace", isDirectory: true)
+        let externalParent = fixture.container.appendingPathComponent("ExternalRace", isDirectory: true)
+        let target = parent.appendingPathComponent("target.fit")
+        let externalTarget = externalParent.appendingPathComponent("target.fit")
+        try disk.createDirectory(at: parent, withIntermediateDirectories: true)
+        try disk.createDirectory(at: externalParent, withIntermediateDirectories: true)
+        try Data("inside library".utf8).write(to: target)
+        try Data("external content must never be hashed".utf8).write(to: externalTarget)
+
+        await #expect(throws: LibraryManifestError.unstableFile(relativePath: "Race/target.fit")) {
+            try await LibraryManifest.capture(
+                root: fixture.root,
+                exclusions: [],
+                beforeOpen: { relativePath, _ in
+                    guard relativePath == "Race/target.fit" else { return }
+                    try disk.moveItem(at: parent, to: displacedParent)
+                    try disk.createSymbolicLink(at: parent, withDestinationURL: externalParent)
+                },
+                afterHash: { _, _ in }
             )
         }
     }
