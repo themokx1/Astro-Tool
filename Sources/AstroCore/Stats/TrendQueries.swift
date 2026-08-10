@@ -32,6 +32,14 @@ public struct TrendPoint: Codable, Sendable, Equatable {
     /// descriptor (`EquipmentProfile.dominant(...)?.descriptor`), `nil` when
     /// its lights carry no derivable fingerprint at all.
     public var setupDescriptor: String?
+    /// Usable (deduped, non-rejected) acquisition volume. Unlike quality
+    /// metrics these exist for an ordinary un-rated session too, allowing
+    /// Trends to be useful from the very first night.
+    public var integrationSeconds: Double
+    public var usableFrameCount: Int
+    /// The same resolved capture/FITS filter buckets shown on Nights and in
+    /// reports; this is deliberately not rebuilt from raw FITS headers.
+    public var filterBreakdown: [FilterIntegration]
 
     public init(
         target: String,
@@ -41,7 +49,10 @@ public struct TrendPoint: Codable, Sendable, Equatable {
         medianFWHMPixels: Double? = nil,
         backgroundEPerSecPerArcsec2: Double? = nil,
         efficiencyPercent: Double? = nil,
-        setupDescriptor: String? = nil
+        setupDescriptor: String? = nil,
+        integrationSeconds: Double = 0,
+        usableFrameCount: Int = 0,
+        filterBreakdown: [FilterIntegration] = []
     ) {
         self.target = target
         self.date = date
@@ -51,6 +62,40 @@ public struct TrendPoint: Codable, Sendable, Equatable {
         self.backgroundEPerSecPerArcsec2 = backgroundEPerSecPerArcsec2
         self.efficiencyPercent = efficiencyPercent
         self.setupDescriptor = setupDescriptor
+        self.integrationSeconds = integrationSeconds
+        self.usableFrameCount = usableFrameCount
+        self.filterBreakdown = filterBreakdown
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case target
+        case date
+        case sessionStartDate
+        case medianFWHMArcsec
+        case medianFWHMPixels
+        case backgroundEPerSecPerArcsec2
+        case efficiencyPercent
+        case setupDescriptor
+        case integrationSeconds
+        case usableFrameCount
+        case filterBreakdown
+    }
+
+    /// Keeps CLI/API JSON from earlier releases readable after acquisition
+    /// dashboard fields were added in v0.15.3.
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        target = try values.decode(String.self, forKey: .target)
+        date = try values.decode(String.self, forKey: .date)
+        sessionStartDate = try values.decodeIfPresent(String.self, forKey: .sessionStartDate)
+        medianFWHMArcsec = try values.decodeIfPresent(Double.self, forKey: .medianFWHMArcsec)
+        medianFWHMPixels = try values.decodeIfPresent(Double.self, forKey: .medianFWHMPixels)
+        backgroundEPerSecPerArcsec2 = try values.decodeIfPresent(Double.self, forKey: .backgroundEPerSecPerArcsec2)
+        efficiencyPercent = try values.decodeIfPresent(Double.self, forKey: .efficiencyPercent)
+        setupDescriptor = try values.decodeIfPresent(String.self, forKey: .setupDescriptor)
+        integrationSeconds = try values.decodeIfPresent(Double.self, forKey: .integrationSeconds) ?? 0
+        usableFrameCount = try values.decodeIfPresent(Int.self, forKey: .usableFrameCount) ?? 0
+        filterBreakdown = try values.decodeIfPresent([FilterIntegration].self, forKey: .filterBreakdown) ?? []
     }
 
     /// The FWHM value the "Trendek" chart should actually plot, plus whether
@@ -112,7 +157,10 @@ public enum TrendQueries {
                     medianFWHMPixels: night.medianFWHMPixels,
                     backgroundEPerSecPerArcsec2: night.backgroundEPerSecPerArcsec2,
                     efficiencyPercent: night.dutyCyclePercent,
-                    setupDescriptor: setupDescriptor
+                    setupDescriptor: setupDescriptor,
+                    integrationSeconds: night.integrationSeconds,
+                    usableFrameCount: night.usableLightCount,
+                    filterBreakdown: night.filterBreakdown
                 )
             )
         }
@@ -152,6 +200,144 @@ public enum TrendQueries {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
+}
+
+// MARK: - Acquisition dashboard roll-ups
+
+public struct TrendMonthSummary: Sendable, Equatable, Identifiable {
+    public var month: String
+    public var sessionCount: Int
+    public var distinctNightCount: Int
+    public var integrationSeconds: Double
+    public var usableFrameCount: Int
+    public var id: String { month }
+}
+
+public struct TrendTargetSummary: Sendable, Equatable, Identifiable {
+    public var target: String
+    public var sessionCount: Int
+    public var integrationSeconds: Double
+    public var usableFrameCount: Int
+    public var lastDate: String
+    public var id: String { target }
+}
+
+public struct TrendFilterSummary: Sendable, Equatable, Identifiable {
+    public var filter: String
+    public var sessionCount: Int
+    public var integrationSeconds: Double
+    public var usableFrameCount: Int
+    public var id: String { filter }
+}
+
+public struct TrendDashboardSummary: Sendable, Equatable {
+    public var sessionCount: Int
+    public var distinctNightCount: Int
+    public var integrationSeconds: Double
+    public var usableFrameCount: Int
+    public var firstDate: String?
+    public var lastDate: String?
+    public var averageEfficiencyPercent: Double?
+    public var months: [TrendMonthSummary]
+    public var targets: [TrendTargetSummary]
+    public var filters: [TrendFilterSummary]
+}
+
+/// Pure report/dashboard composition over already-filtered Trend points.
+/// App controls can therefore narrow once and every tile/chart/table stays
+/// on exactly the same scope without another database query.
+public enum TrendAnalytics {
+    public static func summarize(_ points: [TrendPoint]) -> TrendDashboardSummary {
+        let dated = points.sorted {
+            ($0.sessionStartDate ?? $0.date, $0.target, $0.date)
+                < ($1.sessionStartDate ?? $1.date, $1.target, $1.date)
+        }
+        let efficiencies = points.compactMap(\.efficiencyPercent)
+
+        let byMonth = Dictionary(grouping: points) { point in
+            monthKey(point.sessionStartDate ?? point.date)
+        }
+        let months = byMonth.map { month, values in
+            TrendMonthSummary(
+                month: month,
+                sessionCount: values.count,
+                distinctNightCount: Set(values.map { $0.sessionStartDate ?? $0.date }).count,
+                integrationSeconds: values.reduce(0) { $0 + $1.integrationSeconds },
+                usableFrameCount: values.reduce(0) { $0 + $1.usableFrameCount }
+            )
+        }.sorted { lhs, rhs in
+            if lhs.month == "ismeretlen" { return false }
+            if rhs.month == "ismeretlen" { return true }
+            return lhs.month < rhs.month
+        }
+
+        let targets = Dictionary(grouping: points, by: \.target).map { target, values in
+            TrendTargetSummary(
+                target: target,
+                sessionCount: values.count,
+                integrationSeconds: values.reduce(0) { $0 + $1.integrationSeconds },
+                usableFrameCount: values.reduce(0) { $0 + $1.usableFrameCount },
+                lastDate: values.map { $0.sessionStartDate ?? $0.date }.max() ?? ""
+            )
+        }.sorted {
+            if $0.integrationSeconds != $1.integrationSeconds {
+                return $0.integrationSeconds > $1.integrationSeconds
+            }
+            return $0.target < $1.target
+        }
+
+        struct FilterAccumulator {
+            var sessions = Set<String>()
+            var seconds = 0.0
+            var frames = 0
+        }
+        var filterTotals: [String: FilterAccumulator] = [:]
+        for point in points {
+            let sessionKey = "\(point.target)\u{1F}\(point.date)"
+            for bucket in point.filterBreakdown {
+                filterTotals[bucket.filter, default: FilterAccumulator()].sessions.insert(sessionKey)
+                filterTotals[bucket.filter, default: FilterAccumulator()].seconds += bucket.integrationSeconds
+                filterTotals[bucket.filter, default: FilterAccumulator()].frames += bucket.usableFrameCount
+            }
+        }
+        let filters = filterTotals.map { filter, total in
+            TrendFilterSummary(
+                filter: filter,
+                sessionCount: total.sessions.count,
+                integrationSeconds: total.seconds,
+                usableFrameCount: total.frames
+            )
+        }.sorted {
+            if $0.integrationSeconds != $1.integrationSeconds {
+                return $0.integrationSeconds > $1.integrationSeconds
+            }
+            return $0.filter.localizedCaseInsensitiveCompare($1.filter) == .orderedAscending
+        }
+
+        return TrendDashboardSummary(
+            sessionCount: points.count,
+            distinctNightCount: Set(points.map { $0.sessionStartDate ?? $0.date }).count,
+            integrationSeconds: points.reduce(0) { $0 + $1.integrationSeconds },
+            usableFrameCount: points.reduce(0) { $0 + $1.usableFrameCount },
+            firstDate: dated.first.map { $0.sessionStartDate ?? $0.date },
+            lastDate: dated.last.map { $0.sessionStartDate ?? $0.date },
+            averageEfficiencyPercent: efficiencies.isEmpty
+                ? nil
+                : efficiencies.reduce(0, +) / Double(efficiencies.count),
+            months: months,
+            targets: targets,
+            filters: filters
+        )
+    }
+
+    private static func monthKey(_ date: String) -> String {
+        guard date.count >= 7 else { return "ismeretlen" }
+        let prefix = String(date.prefix(7))
+        guard prefix.count == 7, prefix[prefix.index(prefix.startIndex, offsetBy: 4)] == "-" else {
+            return "ismeretlen"
+        }
+        return prefix
+    }
 }
 
 /// Pure moving-average helper, shared by `TrendsPage`'s three charts and

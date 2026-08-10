@@ -162,7 +162,7 @@ public enum CaptureQueries {
             var builder = builders[bucketKey]!
             if resolved.sensorMode != .unknown { builder.sensorModes.insert(resolved.sensorMode) }
             if resolved.signalMode != .unknown { builder.signalModes.insert(resolved.signalMode) }
-            if let label = resolvedFilterLabel(resolved) { builder.filters.insert(label) }
+            if let label = resolved.filterLabel { builder.filters.insert(label) }
             builder.summary.metadataConflictCount += resolved.conflicts.count
 
             switch file.role {
@@ -244,27 +244,10 @@ public enum CaptureQueries {
         return explicit + implicit
     }
 
-    private static func resolvedFilterLabel(_ metadata: ResolvedCaptureMetadata) -> String? {
-        let makeAndModel = [nonBlank(metadata.filterManufacturer), nonBlank(metadata.filterModel)]
-            .compactMap { $0 }
-            .joined(separator: " ")
-        let name = nonBlank(metadata.filterName)
-        if !makeAndModel.isEmpty, let name,
-           normalized(makeAndModel) != normalized(name)
-        {
-            return "\(makeAndModel) \(name)"
-        }
-        if !makeAndModel.isEmpty { return makeAndModel }
-        return name
-    }
-
     private static func nonBlank(_ value: String?) -> String? {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private static func normalized(_ value: String) -> String {
-        value.lowercased().filter { $0.isLetter || $0.isNumber }
-    }
 }

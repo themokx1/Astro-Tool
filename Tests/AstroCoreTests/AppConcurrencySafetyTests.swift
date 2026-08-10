@@ -69,6 +69,21 @@ private func detachedTaskBodies(in source: String) -> [Substring] {
     )
 }
 
+@Test func quickLookCompletionBridgeIsExplicitlyNonisolated() throws {
+    let sourceURL = repositoryRoot()
+        .appendingPathComponent("Sources/AstroToolApp/Views/ThumbnailCell.swift")
+    let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+    #expect(
+        source.contains("enum QuickLookThumbnailBridge"),
+        "The arbitrary-queue Quick Look callback must live outside the main-actor-inferred SwiftUI View"
+    )
+    #expect(
+        source.contains("nonisolated static func cgImage"),
+        "Swift 6 must see an explicit nonisolated boundary before Quick Look invokes its completion handler"
+    )
+}
+
 @Test func everyAppDiscoveryLoadUsesTheManualFirstFOVResolver() throws {
     let sourceURL = repositoryRoot()
         .appendingPathComponent("Sources/AstroToolApp/AppState.swift")

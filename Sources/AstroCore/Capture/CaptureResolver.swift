@@ -114,7 +114,8 @@ public struct CaptureResolver: Sendable {
             signalOrigin = .fitsHeader
         }
 
-        let manualFilterPresent = [
+        let explicitNoFilter = assignment?.signalModeOverride == .unfiltered
+        let manualFilterPresent = explicitNoFilter || [
             assignment?.filterManufacturerOverride,
             assignment?.filterModelOverride,
             assignment?.filterNameOverride,
@@ -126,9 +127,11 @@ public struct CaptureResolver: Sendable {
         var filterName: String?
         var filterOrigin: CaptureMetadataOrigin = .unknown
         if manualFilterPresent {
-            filterManufacturer = Self.nonBlank(assignment?.filterManufacturerOverride) ?? Self.nonBlank(group?.filterManufacturer)
-            filterModel = Self.nonBlank(assignment?.filterModelOverride) ?? Self.nonBlank(group?.filterModel)
-            filterName = Self.nonBlank(assignment?.filterNameOverride) ?? Self.nonBlank(group?.filterName)
+            if !explicitNoFilter {
+                filterManufacturer = Self.nonBlank(assignment?.filterManufacturerOverride) ?? Self.nonBlank(group?.filterManufacturer)
+                filterModel = Self.nonBlank(assignment?.filterModelOverride) ?? Self.nonBlank(group?.filterModel)
+                filterName = Self.nonBlank(assignment?.filterNameOverride) ?? Self.nonBlank(group?.filterName)
+            }
             filterOrigin = .manualOverride
         } else if groupFilterPresent {
             filterManufacturer = Self.nonBlank(group?.filterManufacturer)
@@ -141,7 +144,7 @@ public struct CaptureResolver: Sendable {
         }
 
         if let fitsFilter, filterOrigin == .captureGroup || filterOrigin == .manualOverride {
-            let resolvedLabel = Self.filterLabel(
+            let resolvedLabel = CaptureFilterLabel.make(
                 manufacturer: filterManufacturer, model: filterModel, name: filterName
             )
             if let resolvedLabel, !Self.sameNormalizedText(resolvedLabel, fitsFilter) {
@@ -208,12 +211,6 @@ public struct CaptureResolver: Sendable {
         let broadbandMarkers = ["uv/ir", "uv-ir", "uv ir", "l-pro", "cls", "broadband"]
         if broadbandMarkers.contains(where: filter.contains) { return .broadband }
         return nil
-    }
-
-    private static func filterLabel(manufacturer: String?, model: String?, name: String?) -> String? {
-        let makeAndModel = [nonBlank(manufacturer), nonBlank(model)].compactMap { $0 }.joined(separator: " ")
-        if !makeAndModel.isEmpty { return makeAndModel }
-        return nonBlank(name)
     }
 
     private static func sameNormalizedText(_ lhs: String, _ rhs: String) -> Bool {

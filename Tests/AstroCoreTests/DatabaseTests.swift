@@ -83,7 +83,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 11)
+    #expect(version == 12)
 }
 
 @Test func migrateIsIdempotentAndDoesNotDuplicateVersionRow() throws {
@@ -101,6 +101,7 @@ import Testing
         "schema_version", "files", "fits_meta", "ratings", "findings", "runs", "tags", "session_notes",
         "sensor_profile", "finding_acks", "sensor_profile_history",
         "capture_groups", "capture_sources", "file_capture_assignments",
+        "filter_profiles",
     ]
     var found: Set<String> = []
     try database.db.query("SELECT name FROM sqlite_master WHERE type = 'table';") { row in
@@ -148,7 +149,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 11)
+    #expect(version == 12)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -201,7 +202,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 11)
+    #expect(version == 12)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -270,7 +271,7 @@ import Testing
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 11)
+    #expect(version == 12)
 
     let fileID1 = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let meta1 = try database.fitsMeta(fileID: fileID1)
@@ -1090,7 +1091,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 11)
+    #expect(version == 12)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1, "the v4 row must survive the upgrade untouched")
@@ -1144,7 +1145,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 11)
+    #expect(version == 12)
 
     let fileID = try #require(try database.fileID(path: "sessions/M45_Pleiades/2026-01-01/lights/f1.cr3"))
     let metaBeforeSolve = try database.fitsMeta(fileID: fileID)
@@ -1199,7 +1200,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 11)
+    #expect(version == 12)
 
     let fileID = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let rating = try database.rating(fileID: fileID)
@@ -1259,7 +1260,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 11)
+    #expect(version == 12)
 
     let fileID = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let rating = try database.rating(fileID: fileID)
@@ -1695,7 +1696,7 @@ private func sessionFile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 11)
+    #expect(version == 12)
 
     // finding_acks table exists and is usable after the same migration.
     #expect(try database.ackedKeys().isEmpty)
@@ -1733,7 +1734,7 @@ private func sessionFile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 11)
+    #expect(version == 12)
 
     // sensor_profile_history exists and is usable after the same migration.
     #expect(try database.sensorProfileHistory(camera: "ASI2600MC", gain: 100, offset: 50).isEmpty)
@@ -1835,7 +1836,7 @@ private func sessionFile(
     let reopened = try Database(path: path)
     var version: Int64 = 0
     try reopened.db.query("SELECT version FROM schema_version LIMIT 1;") { version = $0.int64(0) ?? 0 }
-    #expect(version == 11)
+    #expect(version == 12)
 }
 
 @Test func insertSensorProfileHistoryThenQueryReturnsAscendingByMeasuredAt() throws {

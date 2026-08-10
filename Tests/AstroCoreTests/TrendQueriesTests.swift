@@ -209,6 +209,54 @@ private func insertRating(
     #expect(point.efficiencyPercent == nightRow.dutyCyclePercent)
 }
 
+@Test func pointsCarryAcquisitionAndResolvedFilterDataForDashboard() throws {
+    let db = try makeMemoryDB()
+    let config = AstroConfig()
+    try insertLight(
+        db: db, target: "T1", date: "2026-01-02", name: "a",
+        exptime: 300, instrume: "Cam", filter: "Ha"
+    )
+
+    let point = try #require(try TrendQueries.points(db: db, config: config).first)
+    #expect(point.integrationSeconds == 300)
+    #expect(point.usableFrameCount == 1)
+    #expect(point.filterBreakdown.map(\.filter) == ["Ha"])
+    #expect(point.filterBreakdown.first?.integrationSeconds == 300)
+}
+
+@Test func trendDashboardSummarizesWhenHoursTargetsMonthsAndFilters() throws {
+    let points = [
+        TrendPoint(
+            target: "T1", date: "2026-01-02", sessionStartDate: "2026-01-02",
+            efficiencyPercent: 60, integrationSeconds: 3600, usableFrameCount: 12,
+            filterBreakdown: [FilterIntegration(filter: "Ha", usableFrameCount: 12, integrationSeconds: 3600)]
+        ),
+        TrendPoint(
+            target: "T1", date: "2026-01-03", sessionStartDate: "2026-01-03",
+            efficiencyPercent: 80, integrationSeconds: 1800, usableFrameCount: 6,
+            filterBreakdown: [FilterIntegration(filter: "OIII", usableFrameCount: 6, integrationSeconds: 1800)]
+        ),
+        TrendPoint(
+            target: "T2", date: "2026-02-10", sessionStartDate: "2026-02-10",
+            efficiencyPercent: nil, integrationSeconds: 7200, usableFrameCount: 24,
+            filterBreakdown: [FilterIntegration(filter: "SVBONY SV220", usableFrameCount: 24, integrationSeconds: 7200)]
+        ),
+    ]
+
+    let dashboard = TrendAnalytics.summarize(points)
+    #expect(dashboard.sessionCount == 3)
+    #expect(dashboard.distinctNightCount == 3)
+    #expect(dashboard.integrationSeconds == 12_600)
+    #expect(dashboard.usableFrameCount == 42)
+    #expect(dashboard.firstDate == "2026-01-02")
+    #expect(dashboard.lastDate == "2026-02-10")
+    #expect(dashboard.averageEfficiencyPercent == 70)
+    #expect(dashboard.months.map(\.month) == ["2026-01", "2026-02"])
+    #expect(dashboard.months.map(\.integrationSeconds) == [5400, 7200])
+    #expect(dashboard.targets.map(\.target) == ["T2", "T1"])
+    #expect(dashboard.filters.map(\.filter) == ["SVBONY SV220", "Ha", "OIII"])
+}
+
 // MARK: - fwhmValue fallback
 
 @Test func fwhmValuePrefersArcsecOverPixelsAndFlagsThePixelFallback() throws {
@@ -224,4 +272,25 @@ private func insertRating(
 
     let neitherPoint = TrendPoint(target: "T", date: "d")
     #expect(neitherPoint.fwhmValue == nil)
+}
+
+@Test func trendPointDecodesLegacyJSONWithoutAcquisitionDashboardFields() throws {
+    let data = try #require(
+        """
+        {
+          "target": "M 42",
+          "date": "2026-03-15",
+          "sessionStartDate": "2026-03-15",
+          "medianFWHMArcsec": 3.1,
+          "efficiencyPercent": 82.0
+        }
+        """.data(using: .utf8)
+    )
+
+    let point = try JSONDecoder().decode(TrendPoint.self, from: data)
+
+    #expect(point.target == "M 42")
+    #expect(point.integrationSeconds == 0)
+    #expect(point.usableFrameCount == 0)
+    #expect(point.filterBreakdown.isEmpty)
 }

@@ -14,6 +14,28 @@ import SwiftUI
 /// afterward exactly like every other unsupported case.
 let fitsFallbackExtensions: Set<String> = ["fits", "fit", "fz"]
 
+/// Quick Look invokes its completion handler on an implementation-owned
+/// response queue. Keeping that callback inside `ThumbnailCell` made Swift
+/// 6 inherit the SwiftUI view's main-actor isolation for the closure, then
+/// trap at runtime when Quick Look called it off the main queue. This bridge
+/// is deliberately outside the view and explicitly nonisolated: it transports
+/// only immutable `CGImage`, never AppKit/SwiftUI state.
+enum QuickLookThumbnailBridge {
+    nonisolated static func cgImage(url: URL, size: CGFloat) async -> CGImage? {
+        let request = QLThumbnailGenerator.Request(
+            fileAt: url,
+            size: CGSize(width: size, height: size),
+            scale: 2,
+            representationTypes: .thumbnail
+        )
+        return await withCheckedContinuation { (continuation: CheckedContinuation<CGImage?, Never>) in
+            QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { thumbnail, _ in
+                continuation.resume(returning: thumbnail?.cgImage)
+            }
+        }
+    }
+}
+
 /// R9-T6/B7: a small thumbnail view for one file on disk, via
 /// `QLThumbnailGenerator` (64×64 generation size, downscaled to fit a
 /// 28pt-tall table row). Cached in-memory keyed by `path + mtime` (an
@@ -111,20 +133,7 @@ struct ThumbnailCell: View {
     /// fallback was added, just extracted so `load()` can fall through to
     /// the FITS path in between the two of its steps.
     private static func generateQuickLookThumbnail(url: URL, size: CGFloat) async -> NSImage? {
-        let request = QLThumbnailGenerator.Request(
-            fileAt: url, size: CGSize(width: size, height: size), scale: 2,
-            representationTypes: .thumbnail
-        )
-        let cgImage = await withCheckedContinuation { (continuation: CheckedContinuation<CGImage?, Never>) in
-            QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { thumbnail, _ in
-                // Extracted immediately, outside the actor-hop the caller
-                // does: the callback itself runs on an arbitrary queue, and
-                // `QLThumbnailRepresentation` isn't `Sendable`. Its immutable,
-                // Sendable `CGImage` crosses the continuation instead; the
-                // AppKit object is created back on the main actor below.
-                continuation.resume(returning: thumbnail?.cgImage)
-            }
-        }
+        let cgImage = await QuickLookThumbnailBridge.cgImage(url: url, size: size)
         guard let cgImage else { return nil }
         return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }

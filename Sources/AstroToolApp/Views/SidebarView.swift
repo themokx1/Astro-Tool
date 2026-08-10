@@ -218,6 +218,7 @@ struct SidebarView: View {
 
             Section("ESZKÖZÖK") {
                 navRow("Szenzor-profilok", systemImage: "gearshape", page: .sensor, badgeCount: appState.sensorProfiles.count)
+                navRow("Szűrők", systemImage: "camera.filters", page: .filters, badgeCount: appState.filterProfiles.count)
             }
         }
         .searchable(text: $searchText, placement: .sidebar, prompt: "Célpont, session, fájl, jegyzet")

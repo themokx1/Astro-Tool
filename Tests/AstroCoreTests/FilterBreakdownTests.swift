@@ -85,6 +85,92 @@ private struct FilterFixture {
     #expect(breakdown[0].integrationSeconds == 120.0)
 }
 
+@Test func breakdownUsesCaptureGroupFilterWhenFITSHeaderHasNone() throws {
+    let fixture = try FilterFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/sv220.fit",
+        exptime: 300.0,
+        filter: nil
+    )
+    try fixture.scan()
+
+    var group = CaptureGroupRecord(
+        target: "T1",
+        sessionDate: "2026-01-10",
+        slug: "sv220",
+        displayName: "OSC · Dual-band · SV220 · 300 s",
+        sensorMode: .osc,
+        signalMode: .dualBand,
+        filterManufacturer: "SVBONY",
+        filterModel: "SV220",
+        createdAt: 1,
+        updatedAt: 1
+    )
+    group.id = try fixture.db.upsertCaptureGroup(group)
+    _ = try fixture.db.upsertCaptureSource(
+        CaptureSourceRecord(
+            captureGroupID: try #require(group.id),
+            relativePath: "sessions/T1/2026-01-10/lights",
+            role: .light
+        )
+    )
+
+    let breakdown = try FilterBreakdownQueries.breakdown(
+        db: fixture.db,
+        config: fixture.config,
+        target: "T1"
+    )
+
+    #expect(breakdown.count == 1)
+    #expect(breakdown[0].filter == "SVBONY SV220")
+    #expect(breakdown[0].usableFrameCount == 1)
+    #expect(breakdown[0].integrationSeconds == 300.0)
+
+    // Every user-visible roll-up must resolve the same capture snapshot;
+    // otherwise the capture card and the report/table would disagree.
+    let targetStats = try #require(try StatsQueries.target("T1", db: fixture.db, config: fixture.config))
+    #expect(targetStats.filters == ["SVBONY SV220"])
+    let session = try #require(try SessionStatsQueries.sessions(target: "T1", db: fixture.db, config: fixture.config).first)
+    #expect(session.filters == ["SVBONY SV220"])
+    let night = try #require(try NightsQueries.allNights(db: fixture.db, config: fixture.config).first)
+    #expect(night.filters == ["SVBONY SV220"])
+    #expect(night.filterBreakdown.map(\.filter) == ["SVBONY SV220"])
+}
+
+@Test func exactFileFilterOverrideWinsOverCaptureGroupAndFITSHeader() throws {
+    let fixture = try FilterFixture.make()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/T1/2026-01-10/lights/frame.fit"
+    try fixture.writeFITSLight(relativePath, exptime: 300, filter: "L")
+    try fixture.scan()
+
+    var group = CaptureGroupRecord(
+        target: "T1", sessionDate: "2026-01-10", slug: "sv220",
+        displayName: "SV220", sensorMode: .osc, signalMode: .dualBand,
+        filterManufacturer: "SVBONY", filterModel: "SV220"
+    )
+    group.id = try fixture.db.upsertCaptureGroup(group)
+    let file = try #require(try fixture.db.allFiles(includeMissing: false).first { $0.path == relativePath })
+    try fixture.db.upsertFileCaptureAssignment(
+        FileCaptureAssignmentRecord(
+            fileID: try #require(file.id),
+            captureGroupID: try #require(group.id),
+            signalModeOverride: .narrowband,
+            filterManufacturerOverride: "Antlia",
+            filterModelOverride: "3 nm",
+            filterNameOverride: "Hα"
+        )
+    )
+
+    let breakdown = try FilterBreakdownQueries.breakdown(
+        db: fixture.db, config: fixture.config, target: "T1"
+    )
+    #expect(breakdown.map(\.filter) == ["Antlia 3 nm Hα"])
+}
+
 // MARK: - Dedup (must reuse FrameSet, not reimplement it)
 
 /// A hardlinked triage copy of the same physical exposure (same inode) must

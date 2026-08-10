@@ -68,9 +68,49 @@ private func captureTestGroup(
     var version: Int64 = 0
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { version = $0.int64(0) ?? 0 }
 
-    #expect(version == 11)
+    #expect(version == 12)
     #expect(try database.allFiles(includeMissing: false).count == 1)
     #expect(try database.captureGroups(target: "IC_1396", date: "2026-08-08").isEmpty)
+}
+
+@Test func migrateV11ToV12CreatesFilterProfilesAndPreservesCaptureGroups() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-migrate-v11-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("v11.sqlite").path
+
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.exec(Database.schemaSQLv1)
+        try raw.exec(Database.schemaSQLv2)
+        try raw.exec(Database.schemaSQLv3)
+        try raw.exec(Database.schemaSQLv4)
+        try raw.exec(Database.schemaSQLv5)
+        try raw.exec(Database.schemaSQLv6)
+        try raw.exec(Database.schemaSQLv7)
+        try raw.exec(Database.schemaSQLv8)
+        try raw.exec(Database.schemaSQLv9)
+        try raw.exec(Database.schemaSQLv10)
+        try raw.exec(Database.schemaSQLv11)
+        try raw.run("INSERT INTO schema_version(version) VALUES (11);")
+        try raw.run(
+            """
+            INSERT INTO capture_groups(
+              target, session_date, slug, display_name, sensor_mode, signal_mode,
+              filter_model, created_at, updated_at)
+            VALUES ('IC_1396', '2026-08-08', 'sv220', 'SV220', 'osc', 'dual_band', 'SV220', 1, 1);
+            """
+        )
+    }
+
+    let database = try Database(path: path)
+    var version: Int64 = 0
+    try database.db.query("SELECT version FROM schema_version LIMIT 1;") { version = $0.int64(0) ?? 0 }
+
+    #expect(version == 12)
+    #expect(try database.allFilterProfiles().isEmpty)
+    #expect(try database.captureGroups(target: "IC_1396", date: "2026-08-08").first?.filterLabel == "SV220")
 }
 
 @Test func upsertCaptureGroupInsertsThenUpdatesSameStableRow() throws {

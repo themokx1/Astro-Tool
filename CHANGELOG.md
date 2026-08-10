@@ -8,6 +8,54 @@ történik.
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-08-09
+
+### Added
+
+- Új **Szűrők** eszközoldal saját, újrahasználható szűrőtárral. A gyártó,
+  modell, megjelenítési név, fénysáv és jegyzet egyszer rögzíthető, majd a
+  capture-gyűjtés, tömeges besorolás és session-konverter közös listájából
+  választható.
+- A szűrőválasztókban helyben elérhető az **Új szűrő…** művelet; mentés után
+  az új elem rögtön ki is választódik. A már capture- vagy FITS-adatban
+  előforduló, de még el nem mentett szűrők külön importálható listán jelennek
+  meg.
+- A **Trendek** oldal új fotózási aktivitás-dashboardot kapott: összes
+  integráció, fotózási éjszakák és sessionök, használható keretek,
+  sessionátlag, átlagos hatékonyság, havi idővonal, célpont- és szűrőrangsor,
+  valamint a legutóbbi sessionök közvetlen megnyitással.
+- A Felfedezés FOV-értékelése százalékosan mutatja, mennyit tölt ki a célpont
+  a képmező rövidebb oldalából, és ezt külön kompozíciós tényezőként beépíti
+  az ajánlási pontszámba.
+
+### Changed
+
+- Minden statisztika, Éjszakák/Trendek nézet, stacklista és HTML-riport
+  ugyanazt a feloldott szűrőadatot használja: fájlszintű kézi felülírás →
+  capture-gyűjtés → FITS fejléc. A capture-kártyán látott szűrő ezért nem
+  veszhet el az összesítésekben.
+- A túl kicsi célpontok már nem kapnak pusztán attól erős ajánlást, hogy
+  beleférnek a látómezőbe. 8% alatti rövidoldali kitöltés erős, 8–18% közötti
+  kitöltés fokozatos hátrasorolást kap; a jó kompozíció előrébb kerül.
+- A Trendek minőségi grafikonjai kevés session esetén is elérhetők; az
+  aktivitási dashboard már az első, még nem pontozott sessiontől hasznos.
+- Az adatbázisséma 12-es verzióra frissült a `filter_profiles` táblával. A
+  törölt saját szűrőprofil nem írja át a történeti capture-pillanatképeket.
+
+### Fixed
+
+- Javítva a célpont **Minőség** fülének natív app-crashe. A Quick Look
+  háttér-callback többé nem hoz létre `NSImage` objektumot a fő actoron kívül;
+  az AppKit-konverzió kizárólag a felületi szálon történik.
+- A session-konverterben megadott `SV220` és más capture-szűrők most már a
+  célpont Áttekintésében, a szűrőösszesítésben, az Éjszakák/Trendek sorában és
+  az exportált target-riportban is helyesen jelennek meg akkor is, ha a FITS
+  `FILTER` kártyája üres.
+- A fájlszintű **Szűrő nélkül** felülírás valóban törli az örökölt
+  capture/FITS-szűrőt, nem csak a fénysáv címkéjét módosítja.
+- A régebbi `astrotool trends --json` kimenetek az új aktivitási mezők nélkül
+  is visszaolvashatók; az új mezők biztonságos nulla/üres alapértéket kapnak.
+
 ## [0.15.2] - 2026-08-09
 
 ### Changed

@@ -244,8 +244,8 @@ public enum StackList {
             if let meta = try db.fitsMeta(fileID: id) { metaByFileID[id] = meta }
         }
 
+        let resolver = try CaptureResolver.load(db: db)
         if let captureSlug {
-            let resolver = try CaptureResolver.load(db: db)
             sessionLights = sessionLights.filter { file in
                 resolver.resolve(file: file, meta: file.id.flatMap { metaByFileID[$0] }).slug == captureSlug
             }
@@ -268,7 +268,7 @@ public enum StackList {
             )
         }
 
-        // Bucket by raw FITS FILTER header -- same convention
+        // Bucket by resolved capture filter -- same convention
         // `FilterBreakdownQueries` uses for the "Szűrők" card, so a
         // "Ha"/"(nincs szűrő-adat)" bucket here always means the same thing
         // it does everywhere else in the app.
@@ -276,8 +276,9 @@ public enum StackList {
         var filterOrder: [String] = []
         for file in usable {
             let meta = file.id.flatMap { metaByFileID[$0] }
+            let resolvedFilter = resolver.resolve(file: file, meta: meta).filterLabel
             let rawFilter = meta?.filter?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let key = (rawFilter?.isEmpty == false) ? rawFilter! : FilterBreakdownQueries.noFilterSentinel
+            let key = resolvedFilter ?? ((rawFilter?.isEmpty == false) ? rawFilter! : FilterBreakdownQueries.noFilterSentinel)
             if filesByFilter[key] == nil { filterOrder.append(key) }
             filesByFilter[key, default: []].append(file)
         }

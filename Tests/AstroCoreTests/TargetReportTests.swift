@@ -99,6 +99,11 @@ private func insertLight(
     #expect(html.contains("↳ SV220 köd sorozat"))
     #expect(html.contains("1×30s"))
     #expect(html.contains("1×300s"))
+    // The report's headline filter table must use the same resolved capture
+    // metadata as the nested session rows, even when the source FITS header
+    // has no FILTER value.
+    #expect(html.contains("<h2>Szűrők</h2>"))
+    #expect(html.contains("SVBONY SV220"))
 }
 
 /// A stack-looking file (ASIAIR autosave naming, so `StackDiscovery` picks

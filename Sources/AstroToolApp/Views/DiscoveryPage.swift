@@ -383,7 +383,10 @@ struct DiscoveryPage: View {
     // MARK: - Tiles
 
     private var recommendedCount: Int {
-        filteredRows.count { $0.verdict == SkyVerdictText.good }
+        filteredRows.count {
+            $0.verdict == SkyVerdictText.good
+                && ($0.compositionScoreFactor ?? 1) >= 0.50
+        }
     }
 
     private var fovTileValueText: String {
@@ -439,7 +442,7 @@ struct DiscoveryPage: View {
         ),
         .init(
             title: "FOV",
-            explanation: "A célpont mérete a Felfedezésben kiválasztott kézi setup és konkrét zoom-fókusztáv látómezejéhez mérve („befér” / „mozaik kellene” / „túl kicsi a képmezőhöz”). Kézi setup nélkül a könyvtár domináns, WCS-ből felismert látómezeje a tartalék. A számítás a katalógus egyetlen méretadatából dolgozik, ezért elnyúlt vagy elforgatott célpontnál közelítés."
+            explanation: "Kompozíciós illeszkedés a kiválasztott setup és zoom-fókusztáv látómezejéhez. A százalék azt becsüli, hogy a célpont átmérője a kép rövidebb oldalának mekkora részét tölti ki. A nagyon kicsi célpontok erős rangsorolási levonást kapnak akkor is, ha geometriailag beférnek; a 18–75% közötti kitöltés számít igazán jónak. Kézi setup nélkül a könyvtár domináns WCS-látómezeje a tartalék. Elnyúlt vagy elforgatott célpontnál ez az egy katalógusméretből számolt érték közelítés."
         ),
         .init(
             title: "Döntés",
@@ -570,22 +573,25 @@ struct DiscoveryPage: View {
     @ViewBuilder
     private func fovCell(_ row: DiscoveryTableRow) -> some View {
         if let label = row.fovFitLabel {
-            Text(label).foregroundStyle(fovFitColor(label))
+            HStack(spacing: 5) {
+                Text(label)
+                if let fraction = row.fovShortEdgeFillFraction {
+                    Text("· \(Int((fraction * 100).rounded()))%")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            .foregroundStyle(fovFitColor(label))
         } else {
             Text(TDFormat.missingCell).foregroundStyle(.secondary)
         }
     }
 
-    /// "befér" = green, "mozaik kellene" = orange, everything else (i.e.
-    /// "túl kicsi a képmezőhöz") = secondary -- exactly the three
-    /// `DiscoveryPlanner.fovFitLabel` strings, spelled out rather than
-    /// switched over an enum since that function's return type is a plain
-    /// `String?` (see its own doc for why -- only two cutoffs actually
-    /// distinguish three labels).
     private func fovFitColor(_ label: String) -> Color {
         switch label {
-        case "befér": return .green
-        case "mozaik kellene": return .orange
+        case "jó kitöltés": return .green
+        case "szorosan fér be", "mozaik kellene": return .orange
+        case "kicsi, tág kompozíció": return .yellow
         default: return .secondary
         }
     }
@@ -704,6 +710,8 @@ private struct DiscoveryTableRow: Identifiable {
     var visibleHours: Double? { discoveryRow.visibleHours }
     var moonSeparationDeg: Double? { discoveryRow.moonSeparationDeg }
     var fovFitLabel: String? { discoveryRow.fovFitLabel }
+    var fovShortEdgeFillFraction: Double? { discoveryRow.fovShortEdgeFillFraction }
+    var compositionScoreFactor: Double? { discoveryRow.compositionScoreFactor }
     var verdict: String { discoveryRow.verdict }
     var score: Double { discoveryRow.score }
     var alreadyInLibrary: Bool { discoveryRow.alreadyInLibrary }
@@ -716,7 +724,7 @@ private struct DiscoveryTableRow: Identifiable {
     var maxAltSortKey: Double { maxAltitudeDeg ?? -999 }
     var visibleHoursSortKey: Double { visibleHours ?? -1 }
     var moonSortKey: Double { moonSeparationDeg ?? -1 }
-    var fovFitSortKey: String { fovFitLabel ?? "" }
+    var fovFitSortKey: Double { compositionScoreFactor ?? -1 }
     var verdictSortKey: String { verdict }
 }
 

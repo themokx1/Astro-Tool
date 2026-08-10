@@ -60,12 +60,6 @@ struct TrendsPage: View {
     @State private var selectedSetup: String?
     @State private var targetType: TargetTypeFilter = .all
 
-    /// Minimum session count IN THE ACTIVE FILTER before the charts show at
-    /// all -- same "don't trend a handful of points" floor
-    /// `QualitySegment.minFWHMPointsForTrend` already uses for its own
-    /// (much narrower) per-session FWHM-over-the-night chart.
-    private static let minPointsForCharts = 5
-
     private var allPoints: [TrendPoint] { appState.trendPoints ?? [] }
 
     private var distinctSetups: [String] {
@@ -102,6 +96,14 @@ struct TrendsPage: View {
         }
     }
 
+    private var dashboard: TrendDashboardSummary {
+        TrendAnalytics.summarize(filteredPoints)
+    }
+
+    private var displayNameByTarget: [String: String] {
+        Dictionary(uniqueKeysWithValues: appState.stats.map { ($0.target, $0.displayName) })
+    }
+
     var body: some View {
         Group {
             if appState.trendPoints == nil {
@@ -110,8 +112,8 @@ struct TrendsPage: View {
                 } else {
                     notLoadedState
                 }
-            } else if filteredPoints.count < Self.minPointsForCharts {
-                tooFewSessionsState
+            } else if filteredPoints.isEmpty {
+                noMatchingSessionsState
             } else {
                 content
             }
@@ -164,14 +166,14 @@ struct TrendsPage: View {
         }
     }
 
-    private var tooFewSessionsState: some View {
+    private var noMatchingSessionsState: some View {
         ContentUnavailableView {
-            Label("Kevés adat a trendekhez", systemImage: "chart.xyaxis.line")
+            Label("Nincs session ebben a nézetben", systemImage: "chart.xyaxis.line")
         } description: {
             Text(
                 hasActiveFilter
-                    ? "A jelenlegi szűrővel csak \(filteredPoints.count) session van (legalább \(Self.minPointsForCharts) kellene). Próbáld tágabbra venni az időtartományt, vagy törölni a szűrőt."
-                    : "Eddig csak \(filteredPoints.count) mért/pontozott session van (legalább \(Self.minPointsForCharts) kellene a trendekhez). Pontozz több sessiont, vagy várj, amíg több anyag gyűlik össze."
+                    ? "A jelenlegi időtartomány/setup/célpont-szűrés nem talál sessiont."
+                    : "A könyvtárban még nincs kiértékelhető session."
             )
         } actions: {
             if hasActiveFilter {
@@ -197,31 +199,244 @@ struct TrendsPage: View {
             .frame(maxWidth: 420)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    TrendChartCard(
-                        title: "Medián FWHM″",
-                        points: fwhmChartPoints,
-                        yAxisLabel: "FWHM",
-                        valueFormat: { String(format: "%.2f″", $0) },
-                        onSelect: openSession
+                VStack(alignment: .leading, spacing: 22) {
+                    activityHeader
+                    summaryTiles
+                    monthlyActivityCard
+                    HStack(alignment: .top, spacing: 14) {
+                        targetBreakdownCard
+                        filterBreakdownCard
+                    }
+                    recentSessionsCard
+                    qualitySection
+                }
+                .padding(.bottom, 20)
+            }
+        }
+    }
+
+    // MARK: - Acquisition dashboard
+
+    private var activityHeader: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Fotózási aktivitás")
+                    .font(.title2.weight(.semibold))
+                Text("Sessionök, valódi integráció és felszerelés szerinti bontások ugyanabból a könyvtáradatból.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if let first = dashboard.firstDate, let last = dashboard.lastDate {
+                Text(first == last ? first : "\(first) → \(last)")
+                    .font(.callout.monospacedDigit().weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var summaryTiles: some View {
+        HStack(spacing: 12) {
+            dashboardTile("Összes integráció", TDFormat.hm(dashboard.integrationSeconds), "használható expozíció", .green)
+            dashboardTile("Fotózási éjszakák", "\(dashboard.distinctNightCount)", "\(dashboard.sessionCount) session", .blue)
+            dashboardTile("Használható keretek", "\(dashboard.usableFrameCount)", averageFramesCaption, .purple)
+            dashboardTile("Átlag / session", TDFormat.hm(averageSessionSeconds), "integráció", .orange)
+            dashboardTile("Átlagos hatékonyság", efficiencySummaryText, "mért sessionök", .teal)
+        }
+    }
+
+    private var averageSessionSeconds: Double {
+        dashboard.sessionCount == 0 ? 0 : dashboard.integrationSeconds / Double(dashboard.sessionCount)
+    }
+
+    private var averageFramesCaption: String {
+        guard dashboard.sessionCount > 0 else { return "0 / session" }
+        return "átlag \(dashboard.usableFrameCount / dashboard.sessionCount) / session"
+    }
+
+    private var efficiencySummaryText: String {
+        dashboard.averageEfficiencyPercent.map { String(format: "%.0f%%", $0) } ?? TDFormat.missingTile
+    }
+
+    private func dashboardTile(_ title: String, _ value: String, _ caption: String, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.system(.title2, design: .rounded).weight(.bold)).foregroundStyle(color)
+            Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 11)
+                .fill(color.opacity(0.075))
+                .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(color.opacity(0.16)))
+        )
+    }
+
+    private var monthlyActivityCard: some View {
+        dashboardCard(title: "Mikor fotóztam?", caption: "Havi használható integráció; a címkén session / külön éjszaka.") {
+            Chart(dashboard.months) { month in
+                BarMark(
+                    x: .value("Hónap", month.month),
+                    y: .value("Integráció (óra)", month.integrationSeconds / 3600)
+                )
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color.blue.opacity(0.95), Color.purple.opacity(0.70)],
+                        startPoint: .bottom,
+                        endPoint: .top
                     )
-                    TrendChartCard(
-                        title: "Háttér (e⁻/s/″²)",
-                        points: backgroundChartPoints,
-                        yAxisLabel: "e⁻/s/″²",
-                        valueFormat: { String(format: "%.4f", $0) },
-                        onSelect: openSession
+                )
+                .cornerRadius(4)
+                .annotation(position: .top) {
+                    Text("\(month.sessionCount)s / \(month.distinctNightCount)é")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .chartYAxisLabel("óra")
+            .frame(height: 210)
+        }
+    }
+
+    private var targetBreakdownCard: some View {
+        dashboardCard(title: "Célpontok szerint", caption: "A legtöbb integrációval kezdve.") {
+            VStack(spacing: 9) {
+                ForEach(Array(dashboard.targets.prefix(8))) { item in
+                    rankedRow(
+                        title: displayNameByTarget[item.target] ?? item.target,
+                        value: TDFormat.hm(item.integrationSeconds),
+                        caption: "\(item.sessionCount) session · \(item.usableFrameCount) keret",
+                        fraction: item.integrationSeconds / max(dashboard.targets.first?.integrationSeconds ?? 1, 1),
+                        color: .blue
                     )
-                    TrendChartCard(
-                        title: "Hatékonyság%",
-                        points: efficiencyChartPoints,
-                        yAxisLabel: "%",
-                        valueFormat: { String(format: "%.0f%%", $0) },
-                        onSelect: openSession
-                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture { openSession(target: item.target, date: item.lastDate) }
                 }
             }
         }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var filterBreakdownCard: some View {
+        dashboardCard(title: "Szűrők szerint", caption: "Feloldott capture-adat; ismeretlen érték külön bucket.") {
+            if dashboard.filters.isEmpty {
+                Text("Nincs szűrőbontás a jelenlegi nézetben.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 80, alignment: .center)
+            } else {
+                VStack(spacing: 9) {
+                    ForEach(Array(dashboard.filters.prefix(8))) { item in
+                        rankedRow(
+                            title: item.filter,
+                            value: TDFormat.hm(item.integrationSeconds),
+                            caption: "\(item.sessionCount) session · \(item.usableFrameCount) keret",
+                            fraction: item.integrationSeconds / max(dashboard.filters.first?.integrationSeconds ?? 1, 1),
+                            color: item.filter == FilterBreakdownQueries.noFilterSentinel ? .secondary : .purple
+                        )
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func rankedRow(
+        title: String, value: String, caption: String, fraction: Double, color: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.callout.weight(.medium)).lineLimit(1)
+                    Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer()
+                Text(value).font(.callout.monospacedDigit().weight(.semibold))
+            }
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(color.opacity(0.10))
+                    Capsule().fill(color.opacity(0.72))
+                        .frame(width: geometry.size.width * max(0, min(1, fraction)))
+                }
+            }
+            .frame(height: 5)
+        }
+    }
+
+    private var recentSessions: [TrendPoint] {
+        Array(filteredPoints.suffix(10).reversed())
+    }
+
+    private var recentSessionsCard: some View {
+        dashboardCard(title: "Legutóbbi sessionök", caption: "Kattintásra megnyílik az adott session.") {
+            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 7) {
+                GridRow {
+                    Text("Dátum")
+                    Text("Célpont")
+                    Text("Integráció")
+                    Text("Keret")
+                    Text("Hatékonyság")
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                Divider().gridCellColumns(5)
+                ForEach(Array(recentSessions.enumerated()), id: \.offset) { _, point in
+                    GridRow {
+                        Button(point.date) { openSession(target: point.target, date: point.date) }
+                            .buttonStyle(.link)
+                        Text(displayNameByTarget[point.target] ?? point.target).lineLimit(1)
+                        Text(TDFormat.hm(point.integrationSeconds)).monospacedDigit()
+                        Text("\(point.usableFrameCount)").monospacedDigit()
+                        Text(point.efficiencyPercent.map { String(format: "%.0f%%", $0) } ?? TDFormat.missingCell)
+                            .monospacedDigit()
+                    }
+                    .font(.callout)
+                }
+            }
+        }
+    }
+
+    private var qualitySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Minőség és hatékonyság").font(.headline)
+                Text("Pontok: sessionértékek; vonal: ötpontos mozgóátlag. Kevés adatnál is megmutatjuk a tényeket, csak a trend bizonytalanabb.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            TrendChartCard(
+                title: "Medián FWHM″", points: fwhmChartPoints, yAxisLabel: "FWHM",
+                valueFormat: { String(format: "%.2f″", $0) }, onSelect: openSession
+            )
+            TrendChartCard(
+                title: "Háttér (e⁻/s/″²)", points: backgroundChartPoints, yAxisLabel: "e⁻/s/″²",
+                valueFormat: { String(format: "%.4f", $0) }, onSelect: openSession
+            )
+            TrendChartCard(
+                title: "Hatékonyság%", points: efficiencyChartPoints, yAxisLabel: "%",
+                valueFormat: { String(format: "%.0f%%", $0) }, onSelect: openSession
+            )
+        }
+    }
+
+    private func dashboardCard<Content: View>(
+        title: String, caption: String, @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                Text(caption).font(.caption).foregroundStyle(.secondary)
+            }
+            content()
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.primary.opacity(0.045))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.08)))
+        )
     }
 
     // MARK: - Chart point extraction

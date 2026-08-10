@@ -1,5 +1,41 @@
 import Foundation
 
+/// One canonical display label for every place capture filter metadata is
+/// shown or bucketed. Keeping this outside the individual record types
+/// prevents reports, stats and capture cards from formatting the same
+/// manufacturer/model/name triplet differently.
+public enum CaptureFilterLabel {
+    public static func make(manufacturer: String?, model: String?, name: String?) -> String? {
+        let manufacturer = nonBlank(manufacturer)
+        let model = nonBlank(model)
+        let name = nonBlank(name)
+        let makeAndModel = [manufacturer, model].compactMap { $0 }.joined(separator: " ")
+
+        if !makeAndModel.isEmpty, let name,
+           normalized(makeAndModel) != normalized(name)
+        {
+            return "\(makeAndModel) \(name)"
+        }
+        if !makeAndModel.isEmpty { return makeAndModel }
+        return name
+    }
+
+    public static func normalized(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(of: "α", with: "a")
+            .replacingOccurrences(of: "β", with: "b")
+            .folding(options: [.diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .filter { $0.isLetter || $0.isNumber }
+    }
+
+    private static func nonBlank(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 /// Physical sensor/color interpretation. This is deliberately independent
 /// from `SignalMode`: an OSC camera can capture either broadband or filtered
 /// dual-band data.
@@ -116,15 +152,11 @@ public struct CaptureGroupRecord: Codable, Equatable, Sendable, Identifiable {
     }
 
     public var filterLabel: String? {
-        let manufacturer = filterManufacturer?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let model = filterModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let name = filterName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let makeAndModel = [manufacturer, model].filter { !$0.isEmpty }.joined(separator: " ")
-        if !makeAndModel.isEmpty, !name.isEmpty, name.caseInsensitiveCompare(makeAndModel) != .orderedSame {
-            return "\(makeAndModel) \(name)"
-        }
-        if !makeAndModel.isEmpty { return makeAndModel }
-        return name.isEmpty ? nil : name
+        CaptureFilterLabel.make(
+            manufacturer: filterManufacturer,
+            model: filterModel,
+            name: filterName
+        )
     }
 }
 
@@ -263,4 +295,12 @@ public struct ResolvedCaptureMetadata: Codable, Equatable, Sendable {
     }
 
     public var hasConflict: Bool { !conflicts.isEmpty }
+
+    public var filterLabel: String? {
+        CaptureFilterLabel.make(
+            manufacturer: filterManufacturer,
+            model: filterModel,
+            name: filterName
+        )
+    }
 }

@@ -108,7 +108,15 @@ public enum FilterBreakdownQueries {
             .filter { $0.target == target && $0.area == .sessions && $0.role == .light }
             .compactMap(\.id)
         let meta = try db.fitsMetaBatch(fileIDs: Array(lightIDs))
-        return compute(target: target, date: date, files: files, meta: meta, config: config)
+        let resolver = try CaptureResolver.load(db: db)
+        return compute(
+            target: target,
+            date: date,
+            files: files,
+            meta: meta,
+            resolver: resolver,
+            config: config
+        )
     }
 
     /// Snapshot overload used by whole-library aggregators. It preserves
@@ -116,7 +124,9 @@ public enum FilterBreakdownQueries {
     /// `allFiles` + N metadata lookup round-trip for every session.
     static func compute(
         target: String, date: String?, files: [FileRecord],
-        meta metaByFileID: [Int64: FITSMetaRecord], config: AstroConfig
+        meta metaByFileID: [Int64: FITSMetaRecord],
+        resolver: CaptureResolver? = nil,
+        config: AstroConfig
     ) -> [FilterIntegration] {
         var sessionFiles = files.filter { $0.target == target && $0.area == .sessions }
         if let date {
@@ -150,8 +160,9 @@ public enum FilterBreakdownQueries {
         var secondsByFilter: [String: Double] = [:]
         for file in usable {
             let meta = file.id.flatMap { metaByFileID[$0] }
+            let resolvedFilter = resolver?.resolve(file: file, meta: meta).filterLabel
             let rawFilter = meta?.filter?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let key = (rawFilter?.isEmpty == false) ? rawFilter! : noFilterSentinel
+            let key = resolvedFilter ?? ((rawFilter?.isEmpty == false) ? rawFilter! : noFilterSentinel)
             frameCountByFilter[key, default: 0] += 1
             secondsByFilter[key, default: 0] += meta?.exptime ?? 0
         }

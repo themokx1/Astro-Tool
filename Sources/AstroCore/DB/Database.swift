@@ -765,6 +765,24 @@ public final class Database: @unchecked Sendable {
     CREATE INDEX IF NOT EXISTS idx_file_capture_assignments_group ON file_capture_assignments(capture_group_id);
     """
 
+    /// Library-scoped equipment inventory. Capture groups intentionally
+    /// keep value snapshots instead of foreign keys to these editable rows,
+    /// so deleting or renaming a profile never rewrites historical nights.
+    static let schemaSQLv12 = """
+    CREATE TABLE IF NOT EXISTS filter_profiles(
+      id INTEGER PRIMARY KEY,
+      manufacturer TEXT,
+      model TEXT,
+      name TEXT,
+      signal_mode TEXT NOT NULL DEFAULT 'unknown',
+      notes TEXT,
+      identity_key TEXT NOT NULL UNIQUE,
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_filter_profiles_label
+      ON filter_profiles(manufacturer COLLATE NOCASE, model COLLATE NOCASE, name COLLATE NOCASE);
+    """
+
     public init(path: String) throws {
         self.db = try SQLiteDB(path: path)
         try migrate()
@@ -884,6 +902,19 @@ public final class Database: @unchecked Sendable {
             }
             version = 11
         }
+
+        if version < 12 {
+            try db.exec("BEGIN IMMEDIATE;")
+            do {
+                try db.exec(Self.schemaSQLv12)
+                try db.run("UPDATE schema_version SET version = ?;", bind: [.int(12)])
+                try db.exec("COMMIT;")
+            } catch {
+                try? db.exec("ROLLBACK;")
+                throw error
+            }
+            version = 12
+        }
     }
 
     private func tableExists(_ name: String) throws -> Bool {
@@ -981,6 +1012,165 @@ public final class Database: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return try body()
+    }
+
+    // MARK: filter profiles (schema v12)
+
+    @discardableResult
+    public func upsertFilterProfile(_ record: FilterProfileRecord) throws -> Int64 {
+        let prepared = try FilterProfileValidator.prepared(record)
+        return try withLock {
+            if let id = prepared.id {
+                var exists = false
+                try db.query("SELECT 1 FROM filter_profiles WHERE id = ? LIMIT 1;", bind: [.int(id)]) { _ in
+                    exists = true
+                }
+                guard exists else {
+                    throw AstroError.databaseError("upsertFilterProfile: unknown id \(id)")
+                }
+                try db.run(
+                    """
+                    UPDATE filter_profiles SET
+                      manufacturer = ?, model = ?, name = ?, signal_mode = ?, notes = ?,
+                      identity_key = ?, updated_at = ?
+                    WHERE id = ?;
+                    """,
+                    bind: Self.filterProfileBindings(prepared, includeCreatedAt: false) + [.int(id)]
+                )
+                return id
+            }
+
+            try db.run(
+                """
+                INSERT INTO filter_profiles(
+                  manufacturer, model, name, signal_mode, notes, identity_key, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(identity_key) DO UPDATE SET
+                  manufacturer = excluded.manufacturer,
+                  model = excluded.model,
+                  name = excluded.name,
+                  signal_mode = excluded.signal_mode,
+                  notes = excluded.notes,
+                  updated_at = excluded.updated_at;
+                """,
+                bind: Self.filterProfileBindings(prepared, includeCreatedAt: true)
+            )
+
+            var id: Int64?
+            try db.query(
+                "SELECT id FROM filter_profiles WHERE identity_key = ?;",
+                bind: [.text(prepared.identityKey)]
+            ) { id = $0.int64(0) }
+            guard let id else {
+                throw AstroError.databaseError("upsertFilterProfile: no row after upsert")
+            }
+            return id
+        }
+    }
+
+    public func filterProfile(id: Int64) throws -> FilterProfileRecord? {
+        try withLock {
+            var result: FilterProfileRecord?
+            try db.query(
+                "SELECT \(Self.filterProfileColumns) FROM filter_profiles WHERE id = ?;",
+                bind: [.int(id)]
+            ) { result = Self.filterProfileRecord(from: $0) }
+            return result
+        }
+    }
+
+    public func allFilterProfiles() throws -> [FilterProfileRecord] {
+        try withLock {
+            var result: [FilterProfileRecord] = []
+            try db.query("SELECT \(Self.filterProfileColumns) FROM filter_profiles;") {
+                result.append(Self.filterProfileRecord(from: $0))
+            }
+            return result.sorted {
+                $0.displayLabel.localizedCaseInsensitiveCompare($1.displayLabel) == .orderedAscending
+            }
+        }
+    }
+
+    public func deleteFilterProfile(id: Int64) throws {
+        try withLock {
+            try db.run("DELETE FROM filter_profiles WHERE id = ?;", bind: [.int(id)])
+        }
+    }
+
+    /// Filters already used in capture snapshots or FITS headers but not
+    /// yet saved in the user's inventory. Capture metadata wins when the
+    /// same normalized identity is also present in a raw header because it
+    /// carries the richer signal-mode/manufacturer/model information.
+    public func discoveredFilterProfiles() throws -> [FilterProfileRecord] {
+        let savedKeys = Set(try allFilterProfiles().map(\.identityKey))
+        let groups = try allCaptureGroups()
+        var candidates: [String: FilterProfileRecord] = [:]
+
+        for group in groups where group.filterLabel != nil {
+            let candidate = FilterProfileRecord(
+                manufacturer: group.filterManufacturer,
+                model: group.filterModel,
+                name: group.filterName,
+                signalMode: group.signalMode
+            )
+            if !savedKeys.contains(candidate.identityKey) {
+                candidates[candidate.identityKey] = candidate
+            }
+        }
+
+        let fitsFilters: [String] = try withLock {
+            var values: [String] = []
+            try db.query(
+                "SELECT DISTINCT TRIM(filter) FROM fits_meta WHERE filter IS NOT NULL AND TRIM(filter) <> '' ORDER BY TRIM(filter) COLLATE NOCASE;"
+            ) { row in
+                if let value = row.string(0) { values.append(value) }
+            }
+            return values
+        }
+        for raw in fitsFilters {
+            let candidate = FilterProfileRecord(name: raw)
+            if !savedKeys.contains(candidate.identityKey), candidates[candidate.identityKey] == nil {
+                candidates[candidate.identityKey] = candidate
+            }
+        }
+
+        return candidates.values.sorted {
+            $0.displayLabel.localizedCaseInsensitiveCompare($1.displayLabel) == .orderedAscending
+        }
+    }
+
+    private static let filterProfileColumns = """
+    id, manufacturer, model, name, signal_mode, notes, identity_key, created_at, updated_at
+    """
+
+    private static func filterProfileBindings(
+        _ record: FilterProfileRecord,
+        includeCreatedAt: Bool
+    ) -> [SQLiteValue] {
+        var values: [SQLiteValue] = [
+            record.manufacturer.map(SQLiteValue.text) ?? .null,
+            record.model.map(SQLiteValue.text) ?? .null,
+            record.name.map(SQLiteValue.text) ?? .null,
+            .text(record.signalMode.rawValue),
+            record.notes.map(SQLiteValue.text) ?? .null,
+            .text(record.identityKey),
+        ]
+        if includeCreatedAt { values.append(.real(record.createdAt)) }
+        values.append(.real(record.updatedAt))
+        return values
+    }
+
+    private static func filterProfileRecord(from row: SQLiteRow) -> FilterProfileRecord {
+        FilterProfileRecord(
+            id: row.int64(0),
+            manufacturer: row.string(1),
+            model: row.string(2),
+            name: row.string(3),
+            signalMode: row.string(4).flatMap(SignalMode.init(rawValue:)) ?? .unknown,
+            notes: row.string(5),
+            createdAt: row.double(7) ?? 0,
+            updatedAt: row.double(8) ?? 0
+        )
     }
 
     // MARK: capture groups (schema v11)

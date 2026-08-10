@@ -19,6 +19,10 @@ struct OverviewSegment: View {
     @Binding var solvingTarget: SolvingTarget?
     let editGoals: () -> Void
     let openStacks: () -> Void
+    /// Opens the latest session's capture editor, where the user can assign
+    /// an inventory filter to one or more capture groups. Kept as a closure
+    /// so this segment does not own a second, competing sheet lifecycle.
+    let assignFilter: () -> Void
 
     private var sessions: [SessionDetail] { appState.sessionDetailsByTarget[target] ?? [] }
     private var plan: TargetPlan? { appState.plan?.first { $0.target == target } }
@@ -141,11 +145,23 @@ struct OverviewSegment: View {
     private var filtersBlock: some View {
         section("Szűrők") {
             if appState.targetFilterBreakdown.isEmpty {
-                Text("Nincs szűrő-adat.").font(.callout).foregroundStyle(.secondary)
+                missingFilterCallout("Nincs szűrő-adat.")
             } else if isFilterlessOnlyTarget {
-                Text("Nincs szűrő-adat — OSC/DSLR anyag.").font(.callout).foregroundStyle(.secondary)
+                missingFilterCallout("Nincs szűrő-adat — OSC/DSLR anyag.")
             } else {
                 filtersTable
+            }
+        }
+    }
+
+    private func missingFilterCallout(_ message: String) -> some View {
+        HStack(spacing: 10) {
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            if !sessions.isEmpty {
+                Button("Szűrő hozzárendelése…") { assignFilter() }
+                    .buttonStyle(.link)
             }
         }
     }

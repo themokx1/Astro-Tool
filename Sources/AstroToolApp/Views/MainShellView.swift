@@ -218,6 +218,7 @@ private struct DetailContainerView: View {
         // `.discover` above).
         case .trends: TrendsPage()
         case .sensor: SensorPage()
+        case .filters: FilterProfilesPage()
         case .searchResults: SearchResultsPage()
         }
     }
@@ -236,6 +237,7 @@ private struct DetailContainerView: View {
         case .cleanup: return "Takarítás"
         case .trends: return "Trendek"
         case .sensor: return "Szenzor-profilok"
+        case .filters: return "Szűrők"
         // R10 review: "Kereső" ("search engine"/noun) renamed to "Keresés"
         // ("search"/action) -- "Kereső" is reserved for the ⌘F "Kereső
         // fókuszálása" menu item (`Views/Commands.swift`) which focuses the

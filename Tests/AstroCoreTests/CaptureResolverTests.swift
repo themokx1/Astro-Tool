@@ -79,6 +79,23 @@ private func resolverMeta(
     #expect(result.filterOrigin == .manualOverride)
 }
 
+@Test func explicitUnfilteredFileOverrideClearsGroupAndFITSFilter() {
+    let group = resolverGroup()
+    let assignment = FileCaptureAssignmentRecord(
+        fileID: 1,
+        captureGroupID: 10,
+        signalModeOverride: .unfiltered,
+        assignmentSource: "app"
+    )
+    let resolver = CaptureResolver(groups: [group], sources: [], assignments: [1: assignment])
+
+    let result = resolver.resolve(file: resolverFile(), meta: resolverMeta(filter: "SV220"))
+
+    #expect(result.signalMode == .unfiltered)
+    #expect(result.filterLabel == nil)
+    #expect(result.filterOrigin == .manualOverride)
+}
+
 @Test func captureGroupMetadataWinsOverFITSThenReportsConflict() {
     let group = resolverGroup()
     let resolver = CaptureResolver(groups: [group], sources: [], assignments: [

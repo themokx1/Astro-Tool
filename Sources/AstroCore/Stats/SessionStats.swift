@@ -269,7 +269,9 @@ public enum SessionStatsQueries {
                 exposureBreakdown["unknown", default: 0] += 1
             }
             if let camera = meta?.instrume { cameras.insert(camera) }
-            if let filter = meta?.filter { filters.insert(filter) }
+            if let filter = resolver.resolve(file: file, meta: meta).filterLabel {
+                filters.insert(filter)
+            }
             if let focallen = meta?.focallen { focalLengths.insert(focallen.rounded()) }
             if let gain = meta?.gain { gains.insert(gain) }
             if let setTemp = meta?.setTemp { sensorTemps.insert((setTemp * 2).rounded() / 2) }
