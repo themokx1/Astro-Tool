@@ -11,6 +11,26 @@ import Testing
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
+    @Test func offerRequiresEmptyTargetAllowedLegacyValueAndNoCompletionMarker() {
+        let allowed: Set<String> = ["rootBookmark", "lastPage"]
+        #expect(PreferenceMigration.shouldOffer(
+            currentDomain: [:], legacyDomain: ["rootBookmark": Data([1])],
+            allowedKeys: allowed, alreadyCompleted: false
+        ))
+        #expect(!PreferenceMigration.shouldOffer(
+            currentDomain: ["lastPage": "tonight"], legacyDomain: ["rootBookmark": Data([1])],
+            allowedKeys: allowed, alreadyCompleted: false
+        ))
+        #expect(!PreferenceMigration.shouldOffer(
+            currentDomain: [:], legacyDomain: ["secret": "ignored"],
+            allowedKeys: allowed, alreadyCompleted: false
+        ))
+        #expect(!PreferenceMigration.shouldOffer(
+            currentDomain: [:], legacyDomain: ["rootBookmark": Data([1])],
+            allowedKeys: allowed, alreadyCompleted: true
+        ))
+    }
+
     private func defaults(_ suffix: String) -> UserDefaults {
         let name = "io.github.themokx1.AstroTool.tests.\(suffix).\(UUID().uuidString)"
         let store = UserDefaults(suiteName: name)!
@@ -29,7 +49,8 @@ import Testing
             ],
             into: target,
             allowedKeys: ["rootBookmark", "autoScanOnMount"],
-            markerKey: "legacyMigrationComplete"
+            markerKey: "legacyMigrationComplete",
+            targetDomainWasEmpty: true
         )
 
         #expect(result.copiedKeys == ["autoScanOnMount", "rootBookmark"])
@@ -39,7 +60,7 @@ import Testing
         #expect(target.bool(forKey: "legacyMigrationComplete"))
     }
 
-    @Test func neverOverwritesCurrentValues() {
+    @Test func nonemptyNewDomainSkipsTheWholeMigration() {
         let target = defaults("preserve")
         target.set("new", forKey: "selectedSiteName")
 
@@ -47,11 +68,13 @@ import Testing
             legacyValues: ["selectedSiteName": "old"],
             into: target,
             allowedKeys: ["selectedSiteName"],
-            markerKey: "done"
+            markerKey: "done",
+            targetDomainWasEmpty: false
         )
 
         #expect(result.copiedKeys.isEmpty)
-        #expect(result.preservedKeys == ["selectedSiteName"])
+        #expect(result.targetDomainWasNotEmpty)
+        #expect(!target.bool(forKey: "done"))
         #expect(target.string(forKey: "selectedSiteName") == "new")
     }
 
@@ -63,14 +86,16 @@ import Testing
             legacyValues: source,
             into: target,
             allowedKeys: ["rootBookmark"],
-            markerKey: "done"
+            markerKey: "done",
+            targetDomainWasEmpty: true
         )
         target.set(Data([4, 5, 6]), forKey: "rootBookmark")
         let second = PreferenceMigration.migrate(
             legacyValues: source,
             into: target,
             allowedKeys: ["rootBookmark"],
-            markerKey: "done"
+            markerKey: "done",
+            targetDomainWasEmpty: true
         )
 
         #expect(first.copiedKeys == ["rootBookmark"])
@@ -86,7 +111,8 @@ import Testing
             legacyValues: ["rootBookmark": URL(fileURLWithPath: "/private/tmp/example")],
             into: target,
             allowedKeys: ["rootBookmark"],
-            markerKey: "done"
+            markerKey: "done",
+            targetDomainWasEmpty: true
         )
 
         #expect(result.copiedKeys.isEmpty)
@@ -97,7 +123,9 @@ import Testing
     @Test func appStartupMigratesBeforeResolvingAndHasAnExplicitNoRootState() throws {
         let appState = try source("Sources/AstroToolApp/AppState.swift")
 
-        #expect(appState.contains("Self.migrateLegacyPreferences(into: resolvedPreferences)"))
+        #expect(appState.contains("legacyMigrationAvailable"))
+        #expect(appState.contains("acceptLegacyMigration"))
+        #expect(appState.contains("declineLegacyMigration"))
         #expect(appState.contains("ProductInfo.legacyBundleIdentifier"))
         #expect(appState.contains("rootStatus = .noRoot"))
         #expect(!appState.contains("openRoot(at: URL(fileURLWithPath: AstroConfig().rootPath"))

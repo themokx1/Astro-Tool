@@ -195,17 +195,10 @@ struct OnboardingWizardView: View {
 
     private var setupMenu: some View {
         Menu {
-            Button("APS-C alapsetup") { addSetup(Self.apsCBaseTemplate()) }
-            Button("Full frame alapsetup") { addSetup(Self.fullFrameBaseTemplate()) }
+            Button("APS-C szenzorméret") { addSetup(Self.sensorTemplate(width: 23.5, height: 15.6)) }
+            Button("Full frame szenzorméret") { addSetup(Self.sensorTemplate(width: 36, height: 24)) }
             Divider()
-            Button("Egyedi setup") {
-                addSetup(ImagingSetupProfile(
-                    id: UUID().uuidString, name: "Új setup", cameraName: "Kamera",
-                    cameraKind: .dedicatedAstro, sensorWidthMM: 23.5, sensorHeightMM: 15.6,
-                    focalLengthMinMM: 200, focalLengthMaxMM: 200, defaultFocalLengthMM: 200,
-                    fNumber: 5, relativeEfficiency: 1
-                ))
-            }
+            Button("Egyedi szenzorméret") { addSetup(Self.sensorTemplate(width: 0, height: 0)) }
         } label: { Label("Setup hozzáadása", systemImage: "plus") }
     }
 
@@ -572,6 +565,7 @@ struct OnboardingWizardView: View {
 
     private func cameraKindName(_ kind: CameraKind) -> String {
         switch kind {
+        case .unspecified: "Válassz típust"
         case .dedicatedAstro: "Dedikált asztrokamera"
         case .unmodifiedColor: "Nem modifikált színes"
         case .modifiedColor: "Asztromodifikált színes"
@@ -579,21 +573,12 @@ struct OnboardingWizardView: View {
         }
     }
 
-    private static func apsCBaseTemplate() -> ImagingSetupProfile {
+    private static func sensorTemplate(width: Double, height: Double) -> ImagingSetupProfile {
         ImagingSetupProfile(
-            id: "onboarding-apsc", name: "APS-C alapsetup", cameraName: "",
-            cameraKind: .dedicatedAstro, sensorWidthMM: 23.5, sensorHeightMM: 15.6,
-            focalLengthMinMM: 200, focalLengthMaxMM: 200, defaultFocalLengthMM: 200,
-            fNumber: 5, relativeEfficiency: 1, isDefault: true
-        )
-    }
-
-    private static func fullFrameBaseTemplate() -> ImagingSetupProfile {
-        ImagingSetupProfile(
-            id: "onboarding-full-frame", name: "Full frame alapsetup", cameraName: "",
-            cameraKind: .unmodifiedColor, sensorWidthMM: 36, sensorHeightMM: 24,
-            focalLengthMinMM: 50, focalLengthMaxMM: 50, defaultFocalLengthMM: 50,
-            fNumber: 4, relativeEfficiency: 1
+            id: UUID().uuidString, name: "Új setup", cameraName: "",
+            cameraKind: .unspecified, sensorWidthMM: width, sensorHeightMM: height,
+            focalLengthMinMM: 0, focalLengthMaxMM: 0, defaultFocalLengthMM: 0,
+            fNumber: 0, relativeEfficiency: 1, isDefault: true
         )
     }
 

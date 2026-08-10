@@ -18,6 +18,7 @@ jobs:
         run: |
           version="$(sed -n 's/^[[:space:]]*public static let version = "\([^"]*\)"[[:space:]]*$/\1/p' Sources/AstroCore/Product/ProductInfo.swift)"
           test "$GITHUB_REF_NAME" = "v$version"
+          scripts/check-release-metadata.sh
 
       - name: Test
         run: swift test --no-parallel
@@ -65,13 +66,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           notes_file="docs/releases/$GITHUB_REF_NAME.md"
-          if [[ -f "$notes_file" ]]; then
-            notes_args=(--notes-file "$notes_file")
-          else
-            notes_args=(--generate-notes)
-          fi
           gh release create "$GITHUB_REF_NAME" \
             build/AstroTool-*.dmg \
             build/astrotool-*.zip \
             build/SHA256SUMS.txt \
-            "${notes_args[@]}"
+            --notes-file "$notes_file"

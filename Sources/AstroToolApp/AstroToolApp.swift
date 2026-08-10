@@ -31,6 +31,7 @@ struct AstroToolApp: App {
 /// `TabView`).
 struct RootView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.openSettings) private var openSettings
     @State private var showFolderStructureHelp = false
     /// R9-T6/B16(b): "Súgó ▸ Fogalomtár" -- same "the menu bar has no view
     /// state, so it posts a `Notification` this always-on-screen view
@@ -48,22 +49,7 @@ struct RootView: View {
     @State private var showOnboarding = false
 
     var body: some View {
-        Group {
-            switch appState.rootStatus {
-            case .accessDenied, .notMounted:
-                AccessDeniedView(status: appState.rootStatus) {
-                    appState.retryRootAccess()
-                }
-            case .noRoot:
-                WelcomeView()
-            case .notScanned, .ok:
-                if appState.lastScanDate == nil, !appState.didDismissFirstRun {
-                    FirstScanView()
-                } else {
-                    MainShellView()
-                }
-            }
-        }
+        rootContent
         .sheet(isPresented: $showFolderStructureHelp) {
             FolderStructureHelpSheet()
         }
@@ -101,10 +87,35 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .showFirstSteps)) { _ in
             showFirstSteps = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: .showSupportDiagnostics)) { _ in
+            appState.settingsTab = .support
+            openSettings()
+        }
     }
 
     private var canPresentOnboarding: Bool {
         appState.rootStatus == .ok || appState.rootStatus == .notScanned
     }
 
+    @ViewBuilder
+    private var rootContent: some View {
+        if appState.legacyMigrationAvailable {
+            LegacyMigrationView()
+        } else {
+            switch appState.rootStatus {
+            case .accessDenied, .notMounted:
+                AccessDeniedView(status: appState.rootStatus) {
+                    appState.retryRootAccess()
+                }
+            case .noRoot:
+                WelcomeView()
+            case .notScanned, .ok:
+                if appState.shouldShowFirstScanExperience {
+                    FirstScanView()
+                } else {
+                    MainShellView()
+                }
+            }
+        }
+    }
 }

@@ -59,6 +59,29 @@ fájlmozgatás ritka, szűk és explicit kivétel marad.
 - telepített app indulási smoke;
 - nyilvános csomagnál Developer ID és Apple notarizáció.
 
+## Független kiadás-review utáni keményítés
+
+A külön release-review tíz fontos rést talált az első jelöltben; egyik sem
+maradt elfogadott adósságként:
+
+- a sikeres első scan eredményoldala a Tovább döntésig a képernyőn marad;
+- a régi bundle preferenciái csak üres új domain és külön felhasználói
+  jóváhagyás után vehetők át;
+- a setup menük kizárólag APS-C/full-frame szenzorméretet ajánlanak, kamera-,
+  optika- és f-szám feltételezés nélkül;
+- a támogatási export csak a felhasználó által ténylegesen átnézett, rögzített
+  pillanatképet másolja vagy menti;
+- root nélküli CLI-hívás konkrét `--root /path/to/library` útmutatást ad;
+- a CI izolált preferenciával valódi appindítást futtat, és ellenőrzi, hogy
+  nem keletkezik bookmark vagy személyes mintaállapot;
+- a publikus DMG külön Developer ID aláírást, notarizációt, staplinget,
+  lemezkép-ellenőrzést és Gatekeeper `open` vizsgálatot kap;
+- a tag, a ProductInfo-verzió, a CHANGELOG és a kötelező release note közös
+  hard gate;
+- a webes app-minta láthatóan fiktív adatot használ;
+- minden publikus oldal billentyűzetes skip linket és fókuszolható fő tartalmi
+  landmarkot kapott.
+
 ## Külső feltétel
 
 A helyi gépen nincs érvényes Developer ID Application identity. Emiatt itt

@@ -28,6 +28,9 @@ extension Notification.Name {
     /// the "Első lépések" checklist sheet is presented from `RootView`, the
     /// one place always on screen regardless of which page is open.
     static let showFirstSteps = Notification.Name("AstroTool.showFirstSteps")
+    /// Opens Settings directly on the support page. Export remains disabled
+    /// there until the user reviews the exact diagnostics snapshot.
+    static let showSupportDiagnostics = Notification.Name("AstroTool.showSupportDiagnostics")
 }
 
 private let tutorialURL = URL(string: ProductInfo.documentationURL)!
@@ -245,8 +248,8 @@ struct AstroToolCommands: Commands {
             Button("Tutorial") { NSWorkspace.shared.open(tutorialURL) }
             Button("CLI-referencia") { NSWorkspace.shared.open(cliReferenceURL) }
             Divider()
-            Button("Diagnosztika másolása") {
-                AppState.shared?.copySupportDiagnostics()
+            Button("Diagnosztika előnézete…") {
+                NotificationCenter.default.post(name: .showSupportDiagnostics, object: nil)
             }
             Button("Adatvédelem") {
                 NSWorkspace.shared.open(URL(string: ProductInfo.privacyURL)!)

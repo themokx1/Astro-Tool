@@ -2,6 +2,42 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct LegacyMigrationView: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                .font(.system(size: 64))
+                .foregroundStyle(Color.accentColor)
+                .accessibilityHidden(true)
+            VStack(spacing: 8) {
+                Text("Korábbi AstroTool telepítés található")
+                    .font(.largeTitle.bold())
+                Text("Átveheted a korábbi képkönyvtár-kapcsolatot és az ismert, biztonságos beállításokat. A régi beállítások és a képfájlok változatlanok maradnak.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 620)
+            }
+            HStack(spacing: 12) {
+                Button("Tiszta indítás") { appState.declineLegacyMigration() }
+                Button("Korábbi beállítások átvétele") { appState.acceptLegacyMigration() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+            Text("Csak a könyvtárengedély, a legutóbbi könyvtárak és általános felületi beállítások vehetők át. Ismeretlen vagy érzékeny kulcsot az AstroTool nem másol.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 620)
+        }
+        .padding(48)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.regularMaterial)
+    }
+}
+
 /// First-run screen (R9-T1, spec A.9): replaces the WHOLE window when there
 /// is no saved root bookmark at all -- `RootView` shows this instead of
 /// `NavigationSplitView`, same "full-screen replacement, not an overlay"

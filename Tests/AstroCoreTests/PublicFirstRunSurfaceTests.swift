@@ -32,15 +32,30 @@ import Testing
             #expect(!wizard.contains(forbidden), Comment(rawValue: forbidden))
         }
         #expect(wizard.contains("setups = appState.config.imagingSetups"))
-        #expect(wizard.contains("APS-C alapsetup"))
-        #expect(wizard.contains("Full frame alapsetup"))
+        #expect(wizard.contains("APS-C szenzorméret"))
+        #expect(wizard.contains("Full frame szenzorméret"))
     }
 
     @Test func firstScanOffersOptionalPersonalizationAfterTheCoreAction() throws {
+        let app = try source("Sources/AstroToolApp/AstroToolApp.swift")
         let firstScan = try source("Sources/AstroToolApp/Views/FirstScanView.swift")
+        #expect(app.contains("appState.shouldShowFirstScanExperience"))
         #expect(firstScan.contains("Személyre szabás…"))
         #expect(firstScan.contains("appState.requestOnboarding()"))
         #expect(firstScan.contains("Az audit csak jelöl"))
+    }
+
+    @Test func setupPresetsOnlySupplyNeutralSensorDimensions() throws {
+        let wizard = try source("Sources/AstroToolApp/Views/OnboardingWizardView.swift")
+        let settings = try source("Sources/AstroToolApp/Views/Settings/EquipmentSettingsView.swift")
+
+        #expect(!settings.contains("Canon APS-C"))
+        #expect(wizard.contains("cameraKind: .unspecified"))
+        #expect(settings.contains("cameraKind: .unspecified"))
+        for injected in ["focalLengthMinMM: 200", "focalLengthMinMM: 50", "defaultFocal: 200", "defaultFocal: 50"] {
+            #expect(!wizard.contains(injected), Comment(rawValue: injected))
+            #expect(!settings.contains(injected), Comment(rawValue: injected))
+        }
     }
 
     @Test func productionUISourcesContainNoPersonalEquipmentExamples() throws {

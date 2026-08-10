@@ -59,6 +59,22 @@ a { color: var(--accent); }
 a:hover { color: var(--accent-hover); }
 :focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 3px; }
 
+.skip-link {
+  position: fixed;
+  top: 10px;
+  left: 14px;
+  z-index: 100;
+  padding: 10px 14px;
+  border-radius: 10px;
+  color: white;
+  background: var(--accent);
+  font-weight: 650;
+  text-decoration: none;
+  transform: translateY(-180%);
+  transition: transform .16s ease;
+}
+.skip-link:focus { color: white; transform: translateY(0); }
+
 .site-header {
   position: sticky;
   top: 0;

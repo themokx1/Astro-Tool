@@ -4,6 +4,30 @@ import Testing
 
 @Suite("Privacy-safe support diagnostics")
 struct SupportDiagnosticsTests {
+    private func source(_ relative: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
+    }
+
+    @Test("Copy and save can only export the exact captured preview")
+    func supportSurfaceRequiresExactPreview() throws {
+        let view = try source("Sources/AstroToolApp/Views/Settings/SupportSettingsView.swift")
+        let commands = try source("Sources/AstroToolApp/Views/Commands.swift")
+        let support = try source("Sources/AstroToolApp/AppState+Support.swift")
+
+        #expect(view.contains("@State private var preview: SupportDiagnostics?"))
+        #expect(view.contains(".disabled(preview == nil)"))
+        #expect(view.contains("appState.copySupportDiagnostics(preview)"))
+        #expect(view.contains("appState.saveSupportDiagnostics(preview)"))
+        #expect(commands.contains("showSupportDiagnostics"))
+        #expect(!commands.contains("AppState.shared?.copySupportDiagnostics()"))
+        #expect(support.contains("func copySupportDiagnostics(_ snapshot: SupportDiagnostics)"))
+        #expect(support.contains("func saveSupportDiagnostics(_ snapshot: SupportDiagnostics)"))
+    }
+
     @Test("Export contains useful product and aggregate state")
     func usefulAggregateState() {
         let diagnostics = SupportDiagnostics(

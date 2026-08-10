@@ -29,15 +29,14 @@ extension AppState {
         )
     }
 
-    func copySupportDiagnostics() {
+    func copySupportDiagnostics(_ snapshot: SupportDiagnostics) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(supportDiagnostics.plainText, forType: .string)
+        pasteboard.setString(snapshot.plainText, forType: .string)
         pushToast(.success, "A biztonságos diagnosztika a vágólapra került.")
     }
 
-    func saveSupportDiagnostics() {
-        let snapshot = supportDiagnostics
+    func saveSupportDiagnostics(_ snapshot: SupportDiagnostics) {
         let panel = NSSavePanel()
         panel.title = "Diagnosztika mentése"
         panel.nameFieldStringValue = snapshot.suggestedFilename

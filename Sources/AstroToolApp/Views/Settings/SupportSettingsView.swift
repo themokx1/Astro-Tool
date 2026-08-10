@@ -4,7 +4,7 @@ import SwiftUI
 
 struct SupportSettingsView: View {
     @Environment(AppState.self) private var appState
-    @State private var showsPreview = false
+    @State private var preview: SupportDiagnostics?
 
     var body: some View {
         Form {
@@ -37,17 +37,24 @@ struct SupportSettingsView: View {
                     .foregroundStyle(.secondary)
 
                 HStack {
-                    Button("Másolás") { appState.copySupportDiagnostics() }
-                    Button("Mentés…") { appState.saveSupportDiagnostics() }
+                    Button("Előnézet készítése") { preview = appState.supportDiagnostics }
+                    Button("Másolás") {
+                        if let preview { appState.copySupportDiagnostics(preview) }
+                    }
+                    .disabled(preview == nil)
+                    Button("Mentés…") {
+                        if let preview { appState.saveSupportDiagnostics(preview) }
+                    }
+                    .disabled(preview == nil)
                     Spacer()
-                    Button(showsPreview ? "Előnézet elrejtése" : "Előnézet") {
-                        withAnimation(.snappy) { showsPreview.toggle() }
+                    if preview != nil {
+                        Button("Előnézet törlése") { withAnimation(.snappy) { preview = nil } }
                     }
                 }
 
-                if showsPreview {
+                if let preview {
                     ScrollView([.horizontal, .vertical]) {
-                        Text(appState.supportDiagnostics.plainText)
+                        Text(preview.plainText)
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -55,6 +62,9 @@ struct SupportSettingsView: View {
                     }
                     .frame(minHeight: 220, maxHeight: 320)
                     .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    Text("A Másolás és Mentés pontosan a fent látható pillanatképet használja. Friss adatokhoz készíts új előnézetet.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }

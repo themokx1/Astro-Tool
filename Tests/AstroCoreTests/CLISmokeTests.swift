@@ -91,6 +91,15 @@ private func makeTempRoot(_ label: String) throws -> URL {
     return dir
 }
 
+@Test func rootRequiredCommandWithoutRootExplainsHowToContinue() throws {
+    let result = try runCLI(["stats"])
+
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("no library root selected"))
+    #expect(result.stderr.contains("--root /path/to/library"))
+    #expect(!result.stderr.contains("path not found: \n"))
+}
+
 @Test func sessionConvertPlanRequiresOneExactTargetAndDate() throws {
     let root = try makeTempRoot("convert-scope")
     defer { try? FileManager.default.removeItem(at: root) }

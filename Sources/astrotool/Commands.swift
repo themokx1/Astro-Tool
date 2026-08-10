@@ -303,6 +303,9 @@ func describeAstroError(_ error: AstroError) -> String {
 /// config file loaded from that root specifies a different one.
 func resolveConfig(rootFlag: String?) throws -> AstroConfig {
     let lookupRoot = rootFlag ?? AstroConfig().rootPath
+    guard !lookupRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        throw AstroError.invalidInput("no library root selected; pass --root /path/to/library")
+    }
     let configURL = URL(fileURLWithPath: lookupRoot, isDirectory: true)
         .appendingPathComponent(".astro_tool", isDirectory: true)
         .appendingPathComponent("config.json", isDirectory: false)

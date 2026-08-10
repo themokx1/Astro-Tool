@@ -220,6 +220,11 @@ final class AppState: @unchecked Sendable {
     @ObservationIgnored
     private let preferences: UserDefaults
 
+    /// A pre-1.0 preference domain was found while the new product domain
+    /// was still empty. Migration waits for an explicit choice instead of
+    /// silently opening a legacy security-scoped bookmark.
+    var legacyMigrationAvailable: Bool = false
+
     /// App-lifetime singleton reference, set from `init()`. The menu bar
     /// (`Views/Commands.swift`) needs to call into `AppState` from `.commands`
     /// closures, which don't get SwiftUI's `@Environment` injection the way
@@ -352,6 +357,12 @@ final class AppState: @unchecked Sendable {
     /// skipped first scan doesn't silently disable the flow forever if the
     /// user relaunches still not having scanned.
     var didDismissFirstRun: Bool = false
+
+    /// Keeps the successful first-scan result visible until the user chooses
+    /// Continue or opens the optional personalization wizard.
+    var shouldShowFirstScanExperience: Bool {
+        !didDismissFirstRun && (lastScanDate == nil || scanSummary != nil)
+    }
 
     /// R11-T12/F12: "Ma este"'s dismissible "Első lépések" card -- persisted
     /// (unlike `cloudBannerDismissed`) since the spec wants this to stay
@@ -1270,24 +1281,32 @@ final class AppState: @unchecked Sendable {
     init(preferences: UserDefaults? = nil) {
         let resolvedPreferences = preferences ?? Self.defaultPreferences()
         self.preferences = resolvedPreferences
-        Self.migrateLegacyPreferences(into: resolvedPreferences)
+        if preferences == nil {
+            legacyMigrationAvailable = Self.shouldOfferLegacyMigration(using: resolvedPreferences)
+        }
         // R12-U1 item 4: `firstStepsCardDismissed`/`autoScanOnMount`/
         // `selectedSiteName` are now plain STORED properties (see each
         // one's own doc comment for why) -- the one-time read of whatever
         // was already persisted has to happen explicitly here, since a
         // stored property's own declared default (`false`/`nil`) is all
         // `@Observable` initializes it to otherwise.
-        firstStepsCardDismissed = resolvedPreferences.bool(forKey: Self.firstStepsCardDismissedKey)
-        autoScanOnMount = resolvedPreferences.bool(forKey: Self.autoScanOnMountKey)
-        selectedSiteName = resolvedPreferences.string(forKey: Self.selectedSiteNameKey)
-        selectedImagingSetupID = resolvedPreferences.string(forKey: Self.selectedImagingSetupIDKey)
-        if let data = resolvedPreferences.data(forKey: Self.discoveryFocalLengthsBySetupKey),
+        loadStoredPreferences()
+        AppState.shared = self
+    }
+
+    private func loadStoredPreferences() {
+        firstStepsCardDismissed = preferences.bool(forKey: Self.firstStepsCardDismissedKey)
+        autoScanOnMount = preferences.bool(forKey: Self.autoScanOnMountKey)
+        selectedSiteName = preferences.string(forKey: Self.selectedSiteNameKey)
+        selectedImagingSetupID = preferences.string(forKey: Self.selectedImagingSetupIDKey)
+        if let data = preferences.data(forKey: Self.discoveryFocalLengthsBySetupKey),
            let decoded = try? JSONDecoder().decode([String: Double].self, from: data) {
             discoveryFocalLengthsBySetup = decoded
+        } else {
+            discoveryFocalLengthsBySetup = [:]
         }
         restoreNavigationPreferences()
         loadRecentRoots()
-        AppState.shared = self
     }
 
     private func restoreNavigationPreferences() {
@@ -1313,8 +1332,7 @@ final class AppState: @unchecked Sendable {
         return .standard
     }
 
-    private static func migrateLegacyPreferences(into preferences: UserDefaults) {
-        let allowedKeys: Set<String> = [
+    private static let legacyPreferenceAllowlist: Set<String> = [
             bookmarkKey,
             recentRootsKey,
             autoScanOnMountKey,
@@ -1326,12 +1344,39 @@ final class AppState: @unchecked Sendable {
             lastPageKey,
             lastSettingsTabKey,
         ]
+
+    private static func shouldOfferLegacyMigration(using preferences: UserDefaults) -> Bool {
+        let current = preferences.persistentDomain(forName: ProductInfo.bundleIdentifier) ?? [:]
+        let legacy = preferences.persistentDomain(forName: ProductInfo.legacyBundleIdentifier) ?? [:]
+        return PreferenceMigration.shouldOffer(
+            currentDomain: current,
+            legacyDomain: legacy,
+            allowedKeys: legacyPreferenceAllowlist,
+            alreadyCompleted: preferences.bool(forKey: legacyPreferencesMigratedKey)
+        )
+    }
+
+    func acceptLegacyMigration() {
+        guard legacyMigrationAvailable else { return }
         PreferenceMigration.migratePersistentDomain(
             named: ProductInfo.legacyBundleIdentifier,
             into: preferences,
-            allowedKeys: allowedKeys,
-            markerKey: legacyPreferencesMigratedKey
+            allowedKeys: Self.legacyPreferenceAllowlist,
+            markerKey: Self.legacyPreferencesMigratedKey,
+            targetDomainWasEmpty: true
         )
+        legacyMigrationAvailable = false
+        loadStoredPreferences()
+        resolveRootOnLaunch()
+    }
+
+    func declineLegacyMigration() {
+        guard legacyMigrationAvailable else { return }
+        preferences.set(true, forKey: Self.legacyPreferencesMigratedKey)
+        legacyMigrationAvailable = false
+        config = AstroConfig()
+        db = nil
+        rootStatus = .noRoot
     }
 
     /// Called once from `.onAppear`: resolves a previously-saved
@@ -1345,6 +1390,12 @@ final class AppState: @unchecked Sendable {
     func resolveRootOnLaunch() {
         startVolumeMountObserverIfNeeded()
         startActivationObserverIfNeeded()
+        guard !legacyMigrationAvailable else {
+            config = AstroConfig()
+            db = nil
+            rootStatus = .noRoot
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("-ResetOnboarding") {
             preferences.removeObject(forKey: Self.onboardingCompletedVersionKey)
         }
@@ -1542,6 +1593,7 @@ final class AppState: @unchecked Sendable {
         db = nil
         lastError = nil
         lastScanDate = nil
+        scanSummary = nil
         didDismissFirstRun = false
         findings = []
         auditFindings = []

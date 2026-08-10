@@ -106,6 +106,9 @@ private let apscZoom = ImagingSetupProfile(
 @Test func imagingSetupValidationRejectsEachInvalidPhysicalInput() {
     var setup = apscZoom
 
+    setup.cameraKind = .unspecified
+    #expect(throws: ImagingSetupValidationError.unspecifiedCameraKind) { try setup.validate() }
+
     setup.name = "   "
     #expect(throws: ImagingSetupValidationError.emptyName) { try setup.validate() }
 

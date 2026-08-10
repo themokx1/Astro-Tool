@@ -22,9 +22,12 @@ struct PublicWebsiteSurfaceTests {
             #expect(html.contains("href=\"assets/site.css\""), Comment(rawValue: page))
             #expect(html.contains("class=\"site-header\""), Comment(rawValue: page))
             #expect(html.contains("class=\"site-footer\""), Comment(rawValue: page))
+            #expect(html.contains("class=\"skip-link\""), Comment(rawValue: page))
+            #expect(html.contains("id=\"main-content\""), Comment(rawValue: page))
             #expect(!html.contains("<style>"), Comment(rawValue: page))
         }
         let css = try source("docs/assets/site.css")
+        #expect(css.contains(".skip-link:focus"))
         #expect(css.contains("prefers-reduced-motion"))
         #expect(css.contains("prefers-color-scheme"))
         #expect(css.contains("@media"))
@@ -49,10 +52,12 @@ struct PublicWebsiteSurfaceTests {
             .filter { $0.pathExtension == "html" }
         for file in files {
             let html = try String(contentsOf: file, encoding: .utf8)
-            for forbidden in ["/Volumes/images", "167 GB", "42,5 h-ból 28 h", "Canon R8", "SV220"] {
+            for forbidden in ["/Volumes/images", "167 GB", "42,5 h-ból 28 h", "Canon R8", "SV220", "IC 1396 · Elefántormány-köd", ">4:12<", ">3 gyűjtés<"] {
                 #expect(!html.contains(forbidden), Comment(rawValue: "\(file.lastPathComponent): \(forbidden)"))
             }
         }
+        let homepage = try source("docs/index.html")
+        #expect(homepage.contains("Mintaadat"))
     }
 
     @Test("Privacy and support promises match the app")

@@ -32,6 +32,16 @@ struct ReleasePackagingSurfaceTests {
         #expect(installer.contains("mv \"$BACKUP_APP\" \"$DESTINATION_APP\""))
     }
 
+    @Test("CI proves a neutral app launch with isolated preferences")
+    func cleanInstallSmokeGate() throws {
+        let smoke = try source("scripts/smoke-clean-install.sh")
+        let workflow = try source(".github/workflows/ci.yml")
+        #expect(smoke.contains("ASTROTOOL_DEFAULTS_SUITE"))
+        #expect(smoke.contains("-ResetOnboarding"))
+        #expect(smoke.contains("kill -0"))
+        #expect(workflow.contains("scripts/smoke-clean-install.sh"))
+    }
+
     @Test("Public release requires signing and notarization")
     func signedNotarizedRelease() throws {
         let release = try source("scripts/release.sh")
@@ -39,6 +49,8 @@ struct ReleasePackagingSurfaceTests {
         #expect(release.contains("NOTARY_PROFILE"))
         #expect(release.contains("notarytool submit"))
         #expect(release.contains("stapler staple"))
+        #expect(release.contains("codesign --force --sign \"$DEVELOPER_ID_APPLICATION\" --timestamp \"$DMG\""))
+        #expect(release.contains("spctl --assess --type open"))
 
         let workflow = try source(".github/workflows/release.yml")
         #expect(workflow.contains("DEVELOPER_ID_CERTIFICATE_BASE64"))
@@ -60,6 +72,7 @@ struct ReleasePackagingSurfaceTests {
         let changelog = try source("CHANGELOG.md")
         let readme = try source("README.md")
         let check = try source("scripts/check-public-content.sh")
+        let metadataCheck = try source("scripts/check-release-metadata.sh")
 
         #expect(notes.contains("AstroTool 1.0.0"))
         #expect(notes.contains("Universal"))
@@ -67,5 +80,8 @@ struct ReleasePackagingSurfaceTests {
         #expect(changelog.contains("## [1.0.0] - 2026-08-10"))
         #expect(readme.contains("Tiszta telepítéskor nincs előre felvett felszerelés"))
         #expect(check.contains("Public content check passed."))
+        #expect(metadataCheck.contains("docs/releases/v$VERSION.md"))
+        #expect(metadataCheck.contains("CHANGELOG.md"))
+        #expect(metadataCheck.contains("Release metadata check passed."))
     }
 }

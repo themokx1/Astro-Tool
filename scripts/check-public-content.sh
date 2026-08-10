@@ -13,6 +13,9 @@ forbidden=(
     "100–400"
     "42,5 h-ból 28 h"
     "167 GB"
+    "IC 1396 · Elefántormány-köd"
+    ">4:12<"
+    ">3 gyűjtés<"
 )
 
 failed=0

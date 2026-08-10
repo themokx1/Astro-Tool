@@ -8,6 +8,7 @@ import Foundation
 /// setup unambiguous to the photographer and leaves a sound input for future
 /// target/filter suitability advice.
 public enum CameraKind: String, Codable, CaseIterable, Equatable, Sendable {
+    case unspecified
     case dedicatedAstro
     case unmodifiedColor
     case modifiedColor
@@ -29,6 +30,7 @@ public struct SetupFieldOfView: Equatable, Sendable {
 public enum ImagingSetupValidationError: Error, Equatable, Sendable {
     case emptyName
     case emptyCameraName
+    case unspecifiedCameraKind
     case invalidSensorSize
     case invalidFocalRange
     case defaultFocalLengthOutsideRange
@@ -124,6 +126,9 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
         }
         guard !cameraName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ImagingSetupValidationError.emptyCameraName
+        }
+        guard cameraKind != .unspecified else {
+            throw ImagingSetupValidationError.unspecifiedCameraKind
         }
         guard sensorWidthMM.isFinite, sensorHeightMM.isFinite,
               sensorWidthMM > 0, sensorHeightMM > 0 else {

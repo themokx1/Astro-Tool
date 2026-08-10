@@ -5,17 +5,20 @@ public struct PreferenceMigrationResult: Equatable, Sendable {
     public var preservedKeys: [String]
     public var rejectedKeys: [String]
     public var alreadyCompleted: Bool
+    public var targetDomainWasNotEmpty: Bool
 
     public init(
         copiedKeys: [String] = [],
         preservedKeys: [String] = [],
         rejectedKeys: [String] = [],
-        alreadyCompleted: Bool = false
+        alreadyCompleted: Bool = false,
+        targetDomainWasNotEmpty: Bool = false
     ) {
         self.copiedKeys = copiedKeys
         self.preservedKeys = preservedKeys
         self.rejectedKeys = rejectedKeys
         self.alreadyCompleted = alreadyCompleted
+        self.targetDomainWasNotEmpty = targetDomainWasNotEmpty
     }
 }
 
@@ -23,14 +26,31 @@ public struct PreferenceMigrationResult: Equatable, Sendable {
 /// domain. The source is never modified, current values always win, and a
 /// marker makes the operation safe to call on every launch.
 public enum PreferenceMigration {
+    /// Decides whether the user should be offered the one-time legacy import.
+    /// A populated 1.0 domain is never overwritten, and unrelated legacy
+    /// defaults are not enough to surface the choice.
+    public static func shouldOffer(
+        currentDomain: [String: Any],
+        legacyDomain: [String: Any],
+        allowedKeys: Set<String>,
+        alreadyCompleted: Bool
+    ) -> Bool {
+        guard !alreadyCompleted, currentDomain.isEmpty else { return false }
+        return !allowedKeys.isDisjoint(with: legacyDomain.keys)
+    }
+
     public static func migrate(
         legacyValues: [String: Any],
         into current: UserDefaults,
         allowedKeys: Set<String>,
-        markerKey: String
+        markerKey: String,
+        targetDomainWasEmpty: Bool
     ) -> PreferenceMigrationResult {
         guard !current.bool(forKey: markerKey) else {
             return PreferenceMigrationResult(alreadyCompleted: true)
+        }
+        guard targetDomainWasEmpty else {
+            return PreferenceMigrationResult(targetDomainWasNotEmpty: true)
         }
 
         var result = PreferenceMigrationResult()
@@ -57,13 +77,15 @@ public enum PreferenceMigration {
         into current: UserDefaults,
         allowedKeys: Set<String>,
         markerKey: String,
-        domainReader: UserDefaults = .standard
+        domainReader: UserDefaults = .standard,
+        targetDomainWasEmpty: Bool
     ) -> PreferenceMigrationResult {
         migrate(
             legacyValues: domainReader.persistentDomain(forName: legacyDomain) ?? [:],
             into: current,
             allowedKeys: allowedKeys,
-            markerKey: markerKey
+            markerKey: markerKey,
+            targetDomainWasEmpty: targetDomainWasEmpty
         )
     }
 }

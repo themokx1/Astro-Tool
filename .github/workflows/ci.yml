@@ -16,9 +16,13 @@ jobs:
       - name: Test
         run: swift test --no-parallel
       - name: Check public content
-        run: scripts/check-public-content.sh
+        run: |
+          scripts/check-public-content.sh
+          scripts/check-release-metadata.sh
       - name: Build Universal release artifacts
         run: ./build.sh
+      - name: Smoke-test a clean installation
+        run: scripts/smoke-clean-install.sh
       - name: Verify architectures and signature
         run: |
           lipo -archs build/AstroTool.app/Contents/MacOS/AstroTool
