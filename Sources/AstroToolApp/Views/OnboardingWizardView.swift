@@ -89,7 +89,7 @@ struct OnboardingWizardView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("AstroTool beállítása", systemImage: "moon.stars.fill")
+                Label("Részletes személyre szabás", systemImage: "slider.horizontal.3")
                     .font(.title2.bold())
                 Spacer()
                 Text("\(step.rawValue + 1) / \(Step.allCases.count)")
@@ -195,9 +195,8 @@ struct OnboardingWizardView: View {
 
     private var setupMenu: some View {
         Menu {
-            Button("APS-C astro · 100–400 mm · f/5") { addSetup(Self.apsCTemplate()) }
-            Button("Canon R8 · 16 mm") { addSetup(Self.r8WideTemplate()) }
-            Button("Canon R8 · 28–70 mm") { addSetup(Self.r8ZoomTemplate()) }
+            Button("APS-C alapsetup") { addSetup(Self.apsCBaseTemplate()) }
+            Button("Full frame alapsetup") { addSetup(Self.fullFrameBaseTemplate()) }
             Divider()
             Button("Egyedi setup") {
                 addSetup(ImagingSetupProfile(
@@ -271,12 +270,6 @@ struct OnboardingWizardView: View {
                 }
                 Spacer()
                 Menu {
-                    Button("SVBONY SV220 · dual-band") {
-                        filterDrafts.append(FilterDraft(
-                            databaseID: nil, manufacturer: "SVBONY", model: "SV220", name: "",
-                            signalMode: .dualBand, notes: "", createdAt: 0
-                        ))
-                    }
                     Button("Egyedi szűrő") {
                         filterDrafts.append(FilterDraft(
                             databaseID: nil, manufacturer: "", model: "", name: "",
@@ -531,9 +524,7 @@ struct OnboardingWizardView: View {
             longitude = appState.resolvedSite.longitudeDeg.map { String(format: "%.4f", $0) } ?? ""
         }
         weatherEnabled = appState.config.weather.enabled
-        setups = appState.config.imagingSetups.isEmpty
-            ? [Self.apsCTemplate(), Self.r8WideTemplate(), Self.r8ZoomTemplate()]
-            : appState.config.imagingSetups
+        setups = appState.config.imagingSetups
         if let inventory {
             filterDrafts = inventory.map(Self.filterDraft)
             filterInventoryReady = true
@@ -588,30 +579,21 @@ struct OnboardingWizardView: View {
         }
     }
 
-    private static func apsCTemplate() -> ImagingSetupProfile {
+    private static func apsCBaseTemplate() -> ImagingSetupProfile {
         ImagingSetupProfile(
-            id: "onboarding-apsc", name: "APS-C astro · 100–400 mm", cameraName: "Dedikált asztrokamera",
+            id: "onboarding-apsc", name: "APS-C alapsetup", cameraName: "",
             cameraKind: .dedicatedAstro, sensorWidthMM: 23.5, sensorHeightMM: 15.6,
-            focalLengthMinMM: 100, focalLengthMaxMM: 400, defaultFocalLengthMM: 200,
+            focalLengthMinMM: 200, focalLengthMaxMM: 200, defaultFocalLengthMM: 200,
             fNumber: 5, relativeEfficiency: 1, isDefault: true
         )
     }
 
-    private static func r8WideTemplate() -> ImagingSetupProfile {
+    private static func fullFrameBaseTemplate() -> ImagingSetupProfile {
         ImagingSetupProfile(
-            id: "onboarding-r8-16", name: "Canon R8 · 16 mm", cameraName: "Canon R8 (nem modolt)",
+            id: "onboarding-full-frame", name: "Full frame alapsetup", cameraName: "",
             cameraKind: .unmodifiedColor, sensorWidthMM: 36, sensorHeightMM: 24,
-            focalLengthMinMM: 16, focalLengthMaxMM: 16, defaultFocalLengthMM: 16,
-            fNumber: 2.8, relativeEfficiency: 0.9
-        )
-    }
-
-    private static func r8ZoomTemplate() -> ImagingSetupProfile {
-        ImagingSetupProfile(
-            id: "onboarding-r8-28-70", name: "Canon R8 · 28–70 mm", cameraName: "Canon R8 (nem modolt)",
-            cameraKind: .unmodifiedColor, sensorWidthMM: 36, sensorHeightMM: 24,
-            focalLengthMinMM: 28, focalLengthMaxMM: 70, defaultFocalLengthMM: 50,
-            fNumber: 4, relativeEfficiency: 0.9
+            focalLengthMinMM: 50, focalLengthMaxMM: 50, defaultFocalLengthMM: 50,
+            fNumber: 4, relativeEfficiency: 1
         )
     }
 

@@ -648,12 +648,6 @@ final class AppState: @unchecked Sendable {
     /// current onboarding version was already completed.
     var onboardingPresentationNonce: Int = 0
 
-    var needsAutomaticOnboarding: Bool {
-        OnboardingLifecycle.shouldPresent(
-            completedVersion: preferences.integer(forKey: Self.onboardingCompletedVersionKey)
-        )
-    }
-
     func completeOnboardingVersion() {
         preferences.set(
             OnboardingLifecycle.currentVersion,

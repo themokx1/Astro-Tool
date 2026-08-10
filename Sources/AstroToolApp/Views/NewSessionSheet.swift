@@ -232,12 +232,12 @@ struct NewSessionSheet: View {
                                 captureManufacturer = ""
                                 captureModel = ""
                             }
-                            Button("OSC · SV220") {
-                                captureName = "SV220 · dual-band"
+                            Button("OSC · dual-band") {
+                                captureName = "OSC · dual-band"
                                 captureSensor = .osc
                                 captureSignal = .dualBand
-                                captureManufacturer = "SVBONY"
-                                captureModel = "SV220"
+                                captureManufacturer = ""
+                                captureModel = ""
                             }
                         }
                         TextField("Gyűjtés neve", text: $captureName)

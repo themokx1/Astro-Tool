@@ -85,13 +85,13 @@ struct CaptureGroupSheet: View {
 
             HStack(spacing: 8) {
                 presetButton("OSC · szűrő nélkül", sensor: .osc, signal: .unfiltered)
-                presetButton("OSC · SV220", sensor: .osc, signal: .dualBand, manufacturer: "SVBONY", model: "SV220")
+                presetButton("OSC · dual-band", sensor: .osc, signal: .dualBand)
                 presetButton("Monó · keskenysáv", sensor: .mono, signal: .narrowband)
             }
 
             HStack(alignment: .top, spacing: 18) {
                 VStack(alignment: .leading, spacing: 10) {
-                    TextField("Beszédes név, pl. SV220 · 300 s", text: $displayName)
+                    TextField("Beszédes név, pl. dual-band · 300 s", text: $displayName)
                     TextField("Mappanév (slug)", text: $slug)
                         .font(.body.monospaced())
                         .disabled(editingGroupID != nil)

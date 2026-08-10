@@ -117,27 +117,19 @@ struct EquipmentSettingsView: View {
 
     private var addSetupMenu: some View {
         Menu {
-            Button("APS-C astro · 100–400 mm") {
+            Button("APS-C alapsetup") {
                 addTemplate(
-                    name: "APS-C astro · 100–400 mm", cameraName: "Dedikált asztrokamera",
+                    name: "APS-C alapsetup", cameraName: "",
                     cameraKind: .dedicatedAstro, sensorPreset: .apsc,
-                    opticMode: .zoom, min: 100, max: 400, defaultFocal: 200
+                    opticMode: .fixed, min: 200, max: 200, defaultFocal: 200
                 )
             }
-            Button("Canon R8 · 16 mm") {
+            Button("Full frame alapsetup") {
                 addTemplate(
-                    name: "Canon R8 · 16 mm", cameraName: "Canon R8 (nem modolt)",
+                    name: "Full frame alapsetup", cameraName: "",
                     cameraKind: .unmodifiedColor, sensorPreset: .fullFrame,
-                    opticMode: .fixed, min: 16, max: 16, defaultFocal: 16,
-                    fNumber: 2.8, relativeEfficiency: 0.9
-                )
-            }
-            Button("Canon R8 · 28–70 mm") {
-                addTemplate(
-                    name: "Canon R8 · 28–70 mm", cameraName: "Canon R8 (nem modolt)",
-                    cameraKind: .unmodifiedColor, sensorPreset: .fullFrame,
-                    opticMode: .zoom, min: 28, max: 70, defaultFocal: 50,
-                    fNumber: 4, relativeEfficiency: 0.9
+                    opticMode: .fixed, min: 50, max: 50, defaultFocal: 50,
+                    fNumber: 4, relativeEfficiency: 1
                 )
             }
             Divider()

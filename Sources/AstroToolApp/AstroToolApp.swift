@@ -85,8 +85,6 @@ struct RootView: View {
                 onFinished: { showOnboarding = false }
             )
         }
-        .onAppear { presentOnboardingIfNeeded() }
-        .onChange(of: appState.rootStatus) { _, _ in presentOnboardingIfNeeded() }
         .onChange(of: appState.onboardingPresentationNonce) { _, _ in
             if canPresentOnboarding { showOnboarding = true }
         }
@@ -109,8 +107,4 @@ struct RootView: View {
         appState.rootStatus == .ok || appState.rootStatus == .notScanned
     }
 
-    private func presentOnboardingIfNeeded() {
-        guard canPresentOnboarding, appState.needsAutomaticOnboarding else { return }
-        DispatchQueue.main.async { showOnboarding = true }
-    }
 }
