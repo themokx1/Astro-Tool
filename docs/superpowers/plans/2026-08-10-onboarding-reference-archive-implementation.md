@@ -21,4 +21,5 @@
 - 2026-08-10: a Planner/Project/report regressziók, majd a review-javításokkal bővített teljes soros tesztcsomag 1532/1532 teszttel hibamentesen lefutott.
 - 2026-08-10: elkészült a v0.16.0 arm64 release app és CLI; az app ad-hoc aláírása, bundle-verziója, CLI-verziója, DMG checksumja és ZIP-tartalma ellenőrzött.
 - 2026-08-10: a végső kód-review symlink-, preflight-, hibás referencia-, scan előtti mappa- és onboarding-versenyhelyzet findingjai regressziós tesztekkel javítva; az ismételt review nem talált Critical/Important hibát, az utolsó preview-eltérés is megszűnt.
-- Következő: commit/push/PR/merge/tag/GitHub-kiadás, majd telepítés és natív indítási smoke.
+- 2026-08-10: a végleges v0.16.0 app telepítve a `/Applications/AstroTool.app` helyre; a bundle-verzió, aláírás, arm64 architektúra, beágyazott CLI-verzió és a tényleges natív appfolyamat ellenőrzött. A korábbi 0.15.3 app visszaállítható másolata a `/private/tmp/AstroTool-pre-v0160-20260810.app` helyen maradt.
+- Következő: a commitolt release branch GitHub-publikálása, PR/merge/tag és GitHub Release létrehozása a külső repository-cél külön jóváhagyása után.
