@@ -1,5 +1,6 @@
 import AppKit
 import AstroCore
+import AstroUI
 import SwiftUI
 
 extension Notification.Name {
@@ -257,6 +258,59 @@ struct AstroToolCommands: Commands {
             Button("Támogatás") {
                 NSWorkspace.shared.open(URL(string: ProductInfo.supportURL)!)
             }
+        }
+    }
+}
+
+/// V2 menu commands resolve the active window's router through FocusedValues.
+/// They never reach across windows or depend on the V1 singleton/notifications.
+struct V2AstroToolCommands: Commands {
+    @FocusedValue(\.appRouter) private var router
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("New Project…") {
+                FocusedAppCommands(router: router).present(.newProject)
+            }
+            .keyboardShortcut("n", modifiers: .command)
+            .disabled(router == nil)
+
+            Button("New Night…") {
+                FocusedAppCommands(router: router).present(.newNight)
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+            .disabled(router == nil)
+        }
+
+        CommandGroup(after: .toolbar) {
+            ForEach(Array(PrimarySection.allCases.enumerated()), id: \.element) { index, section in
+                Button(section.commandTitle) {
+                    FocusedAppCommands(router: router).navigate(to: section)
+                }
+                .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                .disabled(router == nil)
+            }
+
+            Divider()
+
+            Button(router?.isInspectorPresented == true ? "Hide Inspector" : "Show Inspector") {
+                FocusedAppCommands(router: router).toggleInspector()
+            }
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            .disabled(router == nil)
+        }
+    }
+}
+
+private extension PrimarySection {
+    var commandTitle: String {
+        switch self {
+        case .home: "Home"
+        case .projects: "Projects"
+        case .nights: "Nights"
+        case .planning: "Planning"
+        case .library: "Library"
+        case .insights: "Insights"
         }
     }
 }

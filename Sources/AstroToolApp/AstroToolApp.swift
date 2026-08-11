@@ -1,20 +1,36 @@
+import AstroUI
 import SwiftUI
 
 @main
 struct AstroToolApp: App {
     @State private var appState = AppState()
+    @State private var appModel = AppModel(
+        restorationValidator: RouteRestorationValidator(
+            selectionIsAvailable: { _ in false },
+            contentRouteIsAvailable: { $0.selection == nil }
+        )
+    )
+    private let launchSelection = AppUILaunchSelection.current
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environment(appState)
-                .frame(minWidth: 1100, minHeight: 700)
-                .onAppear {
-                    appState.resolveRootOnLaunch()
-                }
+            if launchSelection.usesV2 {
+                V2RootView(appModel: appModel)
+            } else {
+                RootView()
+                    .environment(appState)
+                    .frame(minWidth: 1100, minHeight: 700)
+                    .onAppear {
+                        appState.resolveRootOnLaunch()
+                    }
+            }
         }
         .commands {
-            AstroToolCommands()
+            if launchSelection.usesV2 {
+                V2AstroToolCommands()
+            } else {
+                AstroToolCommands()
+            }
         }
 
         Settings {
