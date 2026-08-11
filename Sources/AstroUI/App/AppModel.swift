@@ -1,6 +1,32 @@
 import Foundation
 import Observation
 
+public struct RouteRestorationValidator: Sendable {
+    private let selectionAvailability: @Sendable (LibrarySelection) -> Bool
+    private let contentRouteAvailability: @Sendable (ContentRoute) -> Bool
+
+    public init(
+        selectionIsAvailable: @escaping @Sendable (LibrarySelection) -> Bool,
+        contentRouteIsAvailable: @escaping @Sendable (ContentRoute) -> Bool
+    ) {
+        selectionAvailability = selectionIsAvailable
+        contentRouteAvailability = contentRouteIsAvailable
+    }
+
+    public func isAvailable(_ selection: LibrarySelection) -> Bool {
+        selectionAvailability(selection)
+    }
+
+    public func isAvailable(_ route: ContentRoute) -> Bool {
+        contentRouteAvailability(route)
+    }
+
+    public static let allowingAll = RouteRestorationValidator(
+        selectionIsAvailable: { _ in true },
+        contentRouteIsAvailable: { _ in true }
+    )
+}
+
 @MainActor
 @Observable
 public final class AppRouter {
@@ -27,29 +53,34 @@ public final class AppRouter {
 
     public init(
         restoring state: WindowRestorationState,
-        selectionIsAvailable: (LibrarySelection) -> Bool = { _ in true }
+        validator: RouteRestorationValidator
     ) {
         presentation = nil
 
+        let routeIsConsistent = state.contentRoute.primarySection == state.primarySection
+        let routeIsAvailable = state.contentRoute.selection == nil
+            || validator.isAvailable(state.contentRoute)
+
         if let selection = state.selection,
-           selectionIsAvailable(selection),
+           routeIsConsistent,
+           routeIsAvailable,
+           validator.isAvailable(selection),
            selection.primarySection == state.primarySection,
            selection.contentRoute == state.contentRoute {
             primarySection = selection.primarySection
             contentRoute = selection.contentRoute
             inspectorSelection = selection
             isInspectorPresented = state.isInspectorPresented
-        } else {
+        } else if state.selection == nil, routeIsConsistent, routeIsAvailable {
             primarySection = state.primarySection
-            contentRoute = state.contentRoute.primarySection == state.primarySection
-                ? state.contentRoute
-                : state.primarySection.rootRoute
+            contentRoute = state.contentRoute
             inspectorSelection = nil
             isInspectorPresented = false
-
-            if state.selection != nil {
-                contentRoute = state.primarySection.rootRoute
-            }
+        } else {
+            primarySection = state.primarySection
+            contentRoute = state.primarySection.rootRoute
+            inspectorSelection = nil
+            isInspectorPresented = false
         }
     }
 
@@ -72,7 +103,7 @@ public final class AppRouter {
     public func navigate(toContent route: ContentRoute) {
         primarySection = route.primarySection
         contentRoute = route
-        inspectorSelection = selection(for: route)
+        inspectorSelection = route.selection
         isInspectorPresented = inspectorSelection != nil
     }
 
@@ -114,24 +145,17 @@ public final class AppRouter {
         presentation = nil
     }
 
-    private func selection(for route: ContentRoute) -> LibrarySelection? {
-        switch route {
-        case .project(let id): .project(id)
-        case .projectSeries(let id): .series(id)
-        case .night(let id): .night(id)
-        case .review(let id): .result(id)
-        default: nil
-        }
-    }
 }
 
 @MainActor
 @Observable
 public final class AppModel {
     private var windowRouters: [UUID: AppRouter]
+    private let restorationValidator: RouteRestorationValidator
 
-    public init() {
+    public init(restorationValidator: RouteRestorationValidator) {
         windowRouters = [:]
+        self.restorationValidator = restorationValidator
     }
 
     public func router(
@@ -144,7 +168,7 @@ public final class AppModel {
 
         let router: AppRouter
         if let state {
-            router = AppRouter(restoring: state)
+            router = AppRouter(restoring: state, validator: restorationValidator)
         } else {
             router = AppRouter()
         }

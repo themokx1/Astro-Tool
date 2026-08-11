@@ -34,6 +34,29 @@ struct AppRouterTests {
         #expect(router.isInspectorPresented)
     }
 
+    @Test("Selection and content routes round-trip without losing their type", arguments: [
+        (LibrarySelection.project("project-1"), ContentRoute.project("project-1"), PrimarySection.projects),
+        (.night("night-1"), .night("night-1"), .nights),
+        (.series("series-1"), .projectSeries("series-1"), .projects),
+        (.frame(42), .reviewFrame(42), .nights),
+        (.result("result-1"), .result("result-1"), .projects),
+    ])
+    func selectionRouteRoundTrip(
+        selection: LibrarySelection,
+        route: ContentRoute,
+        section: PrimarySection
+    ) {
+        let router = AppRouter()
+
+        router.select(selection)
+        #expect(router.contentRoute == route)
+        #expect(router.primarySection == section)
+
+        router.navigate(toContent: route)
+        #expect(router.inspectorSelection == selection)
+        #expect(router.primarySection == section)
+    }
+
     @Test("Routers keep window navigation independent")
     func independentWindowRouters() {
         let firstWindow = AppRouter()
@@ -51,7 +74,7 @@ struct AppRouterTests {
 
     @Test("App model returns one router per window identity")
     func appModelScopesRoutersByWindow() {
-        let model = AppModel()
+        let model = AppModel(restorationValidator: .allowingAll)
         let firstWindowID = UUID()
         let secondWindowID = UUID()
 
@@ -63,6 +86,39 @@ struct AppRouterTests {
         #expect(firstWindow !== secondWindow)
     }
 
+    @Test("App model rejects deleted selections and stale ID routes during restoration")
+    func appModelValidatesEveryRestoredIdentifier() {
+        let validator = RouteRestorationValidator(
+            selectionIsAvailable: { $0 != .frame(404) },
+            contentRouteIsAvailable: {
+                $0 != .reviewFrame(404) && $0 != .project("deleted")
+            }
+        )
+        let model = AppModel(restorationValidator: validator)
+        let staleSelectionState = WindowRestorationState(
+            primarySection: .nights,
+            contentRoute: .reviewFrame(404),
+            selection: .frame(404),
+            isInspectorPresented: true
+        )
+        let staleRouteState = WindowRestorationState(
+            primarySection: .projects,
+            contentRoute: .project("deleted"),
+            selection: nil
+        )
+
+        let staleSelectionRouter = model.router(for: UUID(), restoring: staleSelectionState)
+        let staleRouteRouter = model.router(for: UUID(), restoring: staleRouteState)
+
+        #expect(staleSelectionRouter.contentRoute == .nights)
+        #expect(staleSelectionRouter.inspectorSelection == nil)
+        #expect(!staleSelectionRouter.isInspectorPresented)
+        #expect(staleSelectionRouter.presentation == nil)
+        #expect(staleRouteRouter.contentRoute == .projects)
+        #expect(staleRouteRouter.inspectorSelection == nil)
+        #expect(staleRouteRouter.presentation == nil)
+    }
+
     @Test("Restoration keeps stable routes and never restores a presentation")
     func restoredStateNeverRestoresConfirmation() {
         let state = WindowRestorationState(
@@ -72,7 +128,7 @@ struct AppRouterTests {
             isInspectorPresented: true
         )
 
-        let router = AppRouter(restoring: state)
+        let router = AppRouter(restoring: state, validator: .allowingAll)
 
         #expect(router.primarySection == .library)
         #expect(router.contentRoute == .health)
@@ -88,7 +144,13 @@ struct AppRouterTests {
             selection: .project("deleted")
         )
 
-        let router = AppRouter(restoring: state) { _ in false }
+        let router = AppRouter(
+            restoring: state,
+            validator: RouteRestorationValidator(
+                selectionIsAvailable: { _ in false },
+                contentRouteIsAvailable: { _ in false }
+            )
+        )
 
         #expect(router.primarySection == .projects)
         #expect(router.contentRoute == .projects)
@@ -127,10 +189,20 @@ struct AppRouterTests {
         let projectURL = try #require(URL(string: "astrotool://projects/m31"))
         let malformedURL = try #require(URL(string: "astrotool://frames/not-a-number"))
         let foreignURL = try #require(URL(string: "https://example.com/projects/m31"))
+        let invalidEncodingURL = try #require(URL(string: "astrotool://projects/%FF"))
+        let emptyIDURL = try #require(URL(string: "astrotool://projects/%20"))
+        let controlIDURL = try #require(URL(string: "astrotool://projects/m31%0A"))
+        let encodedSlashURL = try #require(URL(string: "astrotool://projects/m31%2Fnight"))
+        let extraComponentURL = try #require(URL(string: "astrotool://projects/m31/extra"))
 
         #expect(AppRoute(deepLink: projectURL) == .content(.project("m31")))
         #expect(AppRoute(deepLink: malformedURL) == nil)
         #expect(AppRoute(deepLink: foreignURL) == nil)
+        #expect(AppRoute(deepLink: invalidEncodingURL) == nil)
+        #expect(AppRoute(deepLink: emptyIDURL) == nil)
+        #expect(AppRoute(deepLink: controlIDURL) == nil)
+        #expect(AppRoute(deepLink: encodedSlashURL) == nil)
+        #expect(AppRoute(deepLink: extraComponentURL) == nil)
     }
 
     @Test("Focused commands act on the active window only")

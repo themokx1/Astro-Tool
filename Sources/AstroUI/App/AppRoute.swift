@@ -32,8 +32,8 @@ public enum LibrarySelection: Hashable, Codable, Sendable {
         case .project(let id): .project(id)
         case .night(let id): .night(id)
         case .series(let id): .projectSeries(id)
-        case .frame(let id): .review(String(id))
-        case .result(let id): .review(id)
+        case .frame(let id): .reviewFrame(id)
+        case .result(let id): .result(id)
         }
     }
 
@@ -56,16 +56,28 @@ public enum ContentRoute: Hashable, Codable, Sendable {
     case library
     case health
     case insights
-    case review(String)
+    case reviewFrame(Int64)
+    case result(String)
 
     public var primarySection: PrimarySection {
         switch self {
         case .home: .home
-        case .projects, .project, .projectSeries, .review: .projects
-        case .nights, .night: .nights
+        case .projects, .project, .projectSeries, .result: .projects
+        case .nights, .night, .reviewFrame: .nights
         case .planning: .planning
         case .library, .health: .library
         case .insights: .insights
+        }
+    }
+
+    public var selection: LibrarySelection? {
+        switch self {
+        case .project(let id): .project(id)
+        case .projectSeries(let id): .series(id)
+        case .night(let id): .night(id)
+        case .reviewFrame(let id): .frame(id)
+        case .result(let id): .result(id)
+        default: nil
         }
     }
 }
@@ -103,9 +115,17 @@ public enum AppRoute: Hashable, Sendable {
               let destination = url.host?.lowercased()
         else { return nil }
 
-        let components = url.pathComponents
-            .filter { $0 != "/" }
-            .compactMap { $0.removingPercentEncoding }
+        guard url.user == nil,
+              url.password == nil,
+              url.port == nil,
+              url.query == nil,
+              url.fragment == nil,
+              let encodedPath = URLComponents(
+                  url: url,
+                  resolvingAgainstBaseURL: false
+              )?.percentEncodedPath,
+              let components = Self.decodePathComponents(encodedPath)
+        else { return nil }
 
         switch (destination, components) {
         case ("home", []): self = .content(.home)
@@ -126,11 +146,43 @@ public enum AppRoute: Hashable, Sendable {
         case ("library", []): self = .content(.library)
         case ("library", ["health"]): self = .content(.health)
         case ("insights", []): self = .content(.insights)
-        case ("review", let parts) where parts.count == 1 && !parts[0].isEmpty:
-            self = .content(.review(parts[0]))
         case ("settings", let parts) where parts.count == 1 && !parts[0].isEmpty:
             self = .presentation(.settingsDeepLink(parts[0]))
         default: return nil
+        }
+    }
+
+    private static func decodePathComponents(_ path: String) -> [String]? {
+        guard !path.isEmpty else { return [] }
+        guard path.first == "/" else { return nil }
+
+        let encodedComponents = path.dropFirst().split(
+            separator: "/",
+            omittingEmptySubsequences: false
+        )
+        var decodedComponents: [String] = []
+        decodedComponents.reserveCapacity(encodedComponents.count)
+
+        for encodedComponent in encodedComponents {
+            guard !encodedComponent.isEmpty,
+                  let decoded = String(encodedComponent).removingPercentEncoding,
+                  isValidIdentifier(decoded)
+            else { return nil }
+            decodedComponents.append(decoded)
+        }
+
+        return decodedComponents
+    }
+
+    private static func isValidIdentifier(_ value: String) -> Bool {
+        guard !value.isEmpty,
+              value == value.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.contains("/"),
+              !value.contains("\\")
+        else { return false }
+
+        return value.unicodeScalars.allSatisfy {
+            !CharacterSet.controlCharacters.contains($0)
         }
     }
 }
