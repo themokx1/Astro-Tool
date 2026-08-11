@@ -2,11 +2,11 @@ import SwiftUI
 
 public struct HomeView: View {
     @Bindable private var store: HomeStore
-    private let exploreLibrary: () -> Void
+    private let chooseLibrary: () -> Void
 
-    public init(store: HomeStore, openLibrary: @escaping () -> Void) {
+    public init(store: HomeStore, chooseLibrary: @escaping () -> Void) {
         _store = Bindable(store)
-        exploreLibrary = openLibrary
+        self.chooseLibrary = chooseLibrary
     }
 
     public var body: some View {
@@ -42,11 +42,11 @@ public struct HomeView: View {
         ContentUnavailableView {
             Label("No library open", systemImage: "sparkles.rectangle.stack")
         } description: {
-            Text("Explore the Library workspace to preview projects and observing nights.")
+            Text("Choose an image folder, then explore the Library workspace through a local, read-only index.")
         } actions: {
-            Button("Explore Library workspace", action: exploreLibrary)
+            Button("Choose Image Library…", action: chooseLibrary)
                 .buttonStyle(.borderedProminent)
-                .accessibilityLabel("Explore Library workspace")
+                .accessibilityLabel("Choose Image Library")
         }
         .frame(maxWidth: .infinity, minHeight: 250)
     }

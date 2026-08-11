@@ -81,7 +81,8 @@ struct V2ShellSurfaceTests {
 
         #expect(tokens.contains("NSColor.windowBackgroundColor"))
         #expect(tokens.contains("NSColor.separatorColor"))
-        #expect(home.contains("Explore Library workspace"))
+        #expect(home.contains("Choose Image Library…"))
+        #expect(home.contains("read-only index"))
         #expect(!home.contains("Open Library"))
         #expect(root.contains("Available after library workflows arrive"))
         #expect(commands.contains("Available after library workflows arrive"))

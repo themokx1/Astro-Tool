@@ -44,6 +44,8 @@ public struct V2RootView: View {
     private let appModel: AppModel
     @State private var router: AppRouter
     @State private var homeStore = HomeStore()
+    @State private var onboardingStore = OnboardingStore()
+    @State private var isOnboardingPresented = false
     @State private var didRestoreWindowState = false
     @SceneStorage("v2.windowRestoration") private var encodedWindowState = ""
 
@@ -53,7 +55,12 @@ public struct V2RootView: View {
     }
 
     public var body: some View {
-        V2Shell(router: router, homeStore: homeStore)
+        V2Shell(
+            router: router,
+            homeStore: homeStore,
+            onboardingStore: onboardingStore,
+            isOnboardingPresented: $isOnboardingPresented
+        )
             .onAppear {
                 restoreWindowStateOnce()
             }
@@ -84,6 +91,9 @@ public struct V2RootView: View {
 private struct V2Shell: View {
     @Bindable var router: AppRouter
     let homeStore: HomeStore
+    let onboardingStore: OnboardingStore
+    @Binding var isOnboardingPresented: Bool
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         NavigationSplitView {
@@ -91,7 +101,11 @@ private struct V2Shell: View {
         } content: {
             ContentColumn(router: router)
         } detail: {
-            DetailHost(router: router, homeStore: homeStore)
+            DetailHost(
+                router: router,
+                homeStore: homeStore,
+                chooseLibrary: presentOnboarding
+            )
         }
         .navigationSplitViewStyle(.balanced)
         .inspector(isPresented: $router.isInspectorPresented) {
@@ -125,10 +139,28 @@ private struct V2Shell: View {
                 router.dismissPresentation()
             }
         }
+        .sheet(isPresented: $isOnboardingPresented) {
+            LibraryWelcomeView(
+                store: onboardingStore,
+                onContinue: {
+                    isOnboardingPresented = false
+                    router.navigate(to: .library)
+                },
+                onPersonalize: {
+                    isOnboardingPresented = false
+                    openSettings()
+                }
+            )
+        }
         .onOpenURL { url in
             guard let route = AppRoute(deepLink: url) else { return }
             router.open(route)
         }
+    }
+
+    private func presentOnboarding() {
+        onboardingStore.returnToLibraryChoice()
+        isOnboardingPresented = true
     }
 }
 
@@ -185,14 +217,13 @@ private struct ContentColumn: View {
 private struct DetailHost: View {
     @Bindable var router: AppRouter
     let homeStore: HomeStore
+    let chooseLibrary: () -> Void
 
     @ViewBuilder
     var body: some View {
         switch router.contentRoute {
         case .home:
-            HomeView(store: homeStore) {
-                router.navigate(to: .library)
-            }
+            HomeView(store: homeStore, chooseLibrary: chooseLibrary)
         case .health:
             V2EmptyDetail(
                 title: "Library health is ready",
@@ -204,13 +235,19 @@ private struct DetailHost: View {
         default:
             V2EmptyDetail(
                 title: router.primarySection.emptyTitle,
-                message: router.primarySection.emptyMessage,
+                message: router.primarySection == .library
+                    ? "Choose a folder to build a local, read-only index. Your image files stay untouched."
+                    : router.primarySection.emptyMessage,
                 systemImage: router.primarySection.systemImage,
                 actionTitle: router.primarySection == .library
-                    ? "Return Home"
+                    ? "Choose Image Library…"
                     : "Explore Library workspace",
                 action: {
-                    router.navigate(to: router.primarySection == .library ? .home : .library)
+                    if router.primarySection == .library {
+                        chooseLibrary()
+                    } else {
+                        router.navigate(to: .library)
+                    }
                 }
             )
         }
