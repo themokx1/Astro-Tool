@@ -32,8 +32,12 @@ public enum LibraryMutationError: Error, Equatable, Sendable {
 
 enum LibraryMutationJournalStage: Equatable, Sendable {
     case temporarySynced(String)
+    case renamedBeforeDirectorySync(String)
+    case cleanupUnlinked(String)
     case published(String)
 }
+
+struct LibraryMutationSimulatedCrash: Error, Sendable {}
 
 public actor LibraryMutationAuthorizer {
     private struct FileState: Equatable {
@@ -43,6 +47,8 @@ public actor LibraryMutationAuthorizer {
         let size: Int64
         let modifiedSeconds: Int64
         let modifiedNanoseconds: Int64
+        let owner: UInt32
+        let linkCount: UInt64
 
         init(_ value: stat) {
             device = UInt64(value.st_dev)
@@ -51,13 +57,17 @@ public actor LibraryMutationAuthorizer {
             size = Int64(value.st_size)
             modifiedSeconds = Int64(value.st_mtimespec.tv_sec)
             modifiedNanoseconds = Int64(value.st_mtimespec.tv_nsec)
+            owner = UInt32(value.st_uid)
+            linkCount = UInt64(value.st_nlink)
         }
 
         var isDirectory: Bool { mode & UInt32(S_IFMT) == UInt32(S_IFDIR) }
         var isRegularFile: Bool { mode & UInt32(S_IFMT) == UInt32(S_IFREG) }
+        var permissions: UInt32 { mode & 0o777 }
 
         func isSameObject(as other: Self) -> Bool {
             device == other.device && inode == other.inode && mode == other.mode
+                && owner == other.owner
         }
     }
 
@@ -77,16 +87,53 @@ public actor LibraryMutationAuthorizer {
         }
     }
 
-    private struct JournalTransaction: Codable {
+    private enum JournalOperation: String, Codable, Equatable, Sendable {
+        case apply
+        case rollback
+    }
+
+    private enum JournalRecordKind: String, Codable, Equatable, Sendable {
+        case pending
+        case intent
+        case progress
+        case completed
+        case aborted
+        case recovered
+    }
+
+    private struct JournalRecord: Codable, Equatable, Sendable {
         let version: Int
+        let transactionNonce: UUID
+        let operation: JournalOperation
+        let kind: JournalRecordKind
         let receipt: MutationReceipt
-        let completedEntryCount: Int
+        let entryIndex: Int?
+    }
+
+    private struct JournalEnvelope: Codable, Sendable {
+        let record: JournalRecord
+        let authenticationCode: String
+    }
+
+    private struct PendingTransaction {
+        let record: JournalRecord
+        let intendedEntries: Set<Int>
+    }
+
+    private struct JournalChain {
+        var records: [JournalRecord] = []
     }
 
     private struct LoadedJournal {
         var receipts: [UUID: MutationReceipt] = [:]
         var usedPlans: Set<UUID> = []
         var rolledBackReceipts: Set<UUID> = []
+        var incompleteTransactions: [PendingTransaction] = []
+    }
+
+    private struct FileObservation {
+        let state: FileState
+        let fingerprint: String
     }
 
     private let root: URL
@@ -98,6 +145,7 @@ public actor LibraryMutationAuthorizer {
     private let journalDescriptor: Int32
     private let rootState: FileState
     private let journalState: FileState
+    private let journalKey: Data
     private let beforeMove: @Sendable (Int) throws -> Void
     private let afterRename: @Sendable (Int) throws -> Void
     private let journalStage: @Sendable (LibraryMutationJournalStage) throws -> Void
@@ -170,7 +218,7 @@ public actor LibraryMutationAuthorizer {
         guard
             !Self.isSymbolicLink(at: journal),
             let journalPathState = Self.fileState(at: journal),
-            journalPathState.isDirectory
+            Self.isSecureJournalDirectory(journalPathState)
         else {
             Darwin.close(rootDescriptor)
             throw LibraryMutationError.invalidJournalDirectory
@@ -186,13 +234,27 @@ public actor LibraryMutationAuthorizer {
             throw LibraryMutationError.invalidJournalDirectory
         }
 
-        let loaded: LoadedJournal
+        let key: Data
+        var loaded: LoadedJournal
         do {
+            key = try Self.loadOrCreateJournalKey(descriptor: journalDescriptor)
             loaded = try Self.loadJournal(
                 descriptor: journalDescriptor,
                 identity: identity,
-                revision: currentRevision
+                revision: currentRevision,
+                root: root,
+                key: key
             )
+            for transaction in loaded.incompleteTransactions {
+                try Self.reconcile(
+                    transaction,
+                    root: root,
+                    rootDescriptor: rootDescriptor,
+                    journalDescriptor: journalDescriptor,
+                    key: key
+                )
+            }
+            loaded.incompleteTransactions.removeAll()
         } catch {
             Darwin.close(rootDescriptor)
             Darwin.close(journalDescriptor)
@@ -208,6 +270,7 @@ public actor LibraryMutationAuthorizer {
         self.journalDescriptor = journalDescriptor
         self.rootState = rootPathState
         self.journalState = journalPathState
+        self.journalKey = key
         self.beforeMove = beforeMove
         self.afterRename = afterRename
         self.journalStage = journalStage
@@ -281,36 +344,71 @@ public actor LibraryMutationAuthorizer {
             entries: prepared.map(\.entry),
             totalBytes: plan.totalBytes
         )
-        try publishTransaction(receipt, completedEntryCount: 0, suffix: "pending")
+        let transactionNonce = UUID()
+        try publishRecord(
+            receipt: receipt,
+            nonce: transactionNonce,
+            operation: .apply,
+            kind: .pending,
+            entryIndex: nil,
+            suffix: "pending"
+        )
 
         var completed: [PreparedMove] = []
         do {
             for (index, move) in prepared.enumerated() {
                 try beforeMove(index)
+                try publishRecord(
+                    receipt: receipt,
+                    nonce: transactionNonce,
+                    operation: .apply,
+                    kind: .intent,
+                    entryIndex: index,
+                    suffix: String(format: "intent-%06d", index + 1)
+                )
                 try performRename(move)
                 completed.append(move)
-                try publishTransaction(
-                    receipt,
-                    completedEntryCount: completed.count,
+                try afterRename(index)
+                try publishRecord(
+                    receipt: receipt,
+                    nonce: transactionNonce,
+                    operation: .apply,
+                    kind: .progress,
+                    entryIndex: index,
                     suffix: String(format: "progress-%06d", completed.count)
                 )
-                try afterRename(index)
                 guard Self.fileState(name: move.destinationName, relativeTo: move.destinationParent) == move.sourceState else {
                     throw LibraryMutationError.stalePlan
                 }
             }
-            try publish(receipt, filename: filename(for: receipt.id, suffix: "receipt"))
+            try publishRecord(
+                receipt: receipt,
+                nonce: transactionNonce,
+                operation: .apply,
+                kind: .completed,
+                entryIndex: nil,
+                suffix: "receipt"
+            )
             receipts[receipt.id] = receipt
             usedPlans.insert(plan.id)
             return receipt
         } catch {
+            if error is LibraryMutationSimulatedCrash { throw error }
+            if error as? LibraryMutationError == .incompleteTransaction { throw error }
             do {
                 try restore(completed)
             } catch {
                 throw LibraryMutationError.partialRollbackFailed
             }
             do {
-                try publishTransaction(receipt, completedEntryCount: 0, suffix: "aborted")
+                try publishRecord(
+                    receipt: receipt,
+                    nonce: transactionNonce,
+                    operation: .apply,
+                    kind: .aborted,
+                    entryIndex: nil,
+                    suffix: "aborted"
+                )
             } catch {
                 throw LibraryMutationError.journalWriteFailed
             }
@@ -342,32 +440,66 @@ public actor LibraryMutationAuthorizer {
             throw LibraryMutationError.rollbackCollision
         }
         defer { prepared.forEach { $0.close() } }
-        try publishTransaction(receipt, completedEntryCount: 0, suffix: "rollback-pending")
+        let transactionNonce = UUID()
+        try publishRecord(
+            receipt: receipt,
+            nonce: transactionNonce,
+            operation: .rollback,
+            kind: .pending,
+            entryIndex: nil,
+            suffix: "rollback-pending"
+        )
 
         var completed: [PreparedMove] = []
         do {
-            for move in prepared {
+            for (index, move) in prepared.enumerated() {
+                try publishRecord(
+                    receipt: receipt,
+                    nonce: transactionNonce,
+                    operation: .rollback,
+                    kind: .intent,
+                    entryIndex: index,
+                    suffix: String(format: "rollback-intent-%06d", index + 1)
+                )
                 try performRename(move)
                 completed.append(move)
-                try publishTransaction(
-                    receipt,
-                    completedEntryCount: completed.count,
+                try publishRecord(
+                    receipt: receipt,
+                    nonce: transactionNonce,
+                    operation: .rollback,
+                    kind: .progress,
+                    entryIndex: index,
                     suffix: String(format: "rollback-progress-%06d", completed.count)
                 )
                 guard Self.fileState(name: move.destinationName, relativeTo: move.destinationParent) == move.sourceState else {
                     throw LibraryMutationError.stalePlan
                 }
             }
-            try publish(receipt, filename: filename(for: receipt.id, suffix: "rolledback"))
+            try publishRecord(
+                receipt: receipt,
+                nonce: transactionNonce,
+                operation: .rollback,
+                kind: .completed,
+                entryIndex: nil,
+                suffix: "rolledback"
+            )
             rolledBackReceipts.insert(receiptID)
         } catch {
+            if error as? LibraryMutationError == .incompleteTransaction { throw error }
             do {
                 try restore(completed)
             } catch {
                 throw LibraryMutationError.partialRollbackFailed
             }
             do {
-                try publishTransaction(receipt, completedEntryCount: 0, suffix: "rollback-aborted")
+                try publishRecord(
+                    receipt: receipt,
+                    nonce: transactionNonce,
+                    operation: .rollback,
+                    kind: .aborted,
+                    entryIndex: nil,
+                    suffix: "rollback-aborted"
+                )
             } catch {
                 throw LibraryMutationError.journalWriteFailed
             }
@@ -516,69 +648,109 @@ public actor LibraryMutationAuthorizer {
         }
     }
 
-    private func publishTransaction(
-        _ receipt: MutationReceipt,
-        completedEntryCount: Int,
+    private func publishRecord(
+        receipt: MutationReceipt,
+        nonce: UUID,
+        operation: JournalOperation,
+        kind: JournalRecordKind,
+        entryIndex: Int?,
         suffix: String
     ) throws {
-        try publish(
-            JournalTransaction(version: 1, receipt: receipt, completedEntryCount: completedEntryCount),
-            filename: filename(for: receipt.id, suffix: suffix)
+        try validatePinnedRoots()
+        let record = JournalRecord(
+            version: 1,
+            transactionNonce: nonce,
+            operation: operation,
+            kind: kind,
+            receipt: receipt,
+            entryIndex: entryIndex
+        )
+        let filename = Self.filename(for: receipt.id, nonce: nonce, suffix: suffix)
+        try Self.publish(
+            envelope: Self.authenticatedEnvelope(for: record, key: journalKey),
+            filename: filename,
+            descriptor: journalDescriptor,
+            stage: journalStage
         )
     }
 
-    private func filename(for id: UUID, suffix: String) -> String {
-        "\(id.uuidString.lowercased()).\(suffix).json"
+    private static func filename(for id: UUID, nonce: UUID, suffix: String) -> String {
+        "\(id.uuidString.lowercased()).\(nonce.uuidString.lowercased()).\(suffix).json"
     }
 
-    private func publish<Value: Encodable>(_ value: Value, filename: String) throws {
+    private static func publish(
+        envelope: JournalEnvelope,
+        filename: String,
+        descriptor journalDescriptor: Int32,
+        stage: @Sendable (LibraryMutationJournalStage) throws -> Void
+    ) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(envelope) else {
+            throw LibraryMutationError.journalWriteFailed
+        }
+        let temporary = ".tmp-\(UUID().uuidString.lowercased())"
+        var fileDescriptor = temporary.withCString {
+            Darwin.openat(
+                journalDescriptor,
+                $0,
+                O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                mode_t(S_IRUSR | S_IWUSR)
+            )
+        }
+        guard fileDescriptor >= 0 else { throw LibraryMutationError.journalWriteFailed }
+        var temporaryExists = true
+        defer {
+            if fileDescriptor >= 0 { Darwin.close(fileDescriptor) }
+            if temporaryExists {
+                _ = temporary.withCString { Darwin.unlinkat(journalDescriptor, $0, 0) }
+            }
+        }
         do {
-            try validatePinnedRoots()
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            let data = try encoder.encode(value)
-            let temporary = ".tmp-\(UUID().uuidString.lowercased())"
-            let descriptor = temporary.withCString {
-                Darwin.openat(
-                    journalDescriptor,
-                    $0,
-                    O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
-                    mode_t(S_IRUSR | S_IWUSR)
-                )
-            }
-            guard descriptor >= 0 else { throw LibraryMutationError.journalWriteFailed }
-            var temporaryExists = true
-            defer {
-                Darwin.close(descriptor)
-                if temporaryExists {
-                    _ = temporary.withCString { Darwin.unlinkat(journalDescriptor, $0, 0) }
-                }
-            }
-            try Self.write(data, to: descriptor)
-            guard Darwin.fsync(descriptor) == 0 else {
+            try write(data, to: fileDescriptor)
+            guard Darwin.fsync(fileDescriptor) == 0 else {
                 throw LibraryMutationError.journalWriteFailed
             }
-            try journalStage(.temporarySynced(filename))
-            let renamed = temporary.withCString { temporaryName in
-                filename.withCString { finalName in
-                    Darwin.renameatx_np(
-                        journalDescriptor,
-                        temporaryName,
-                        journalDescriptor,
-                        finalName,
-                        UInt32(RENAME_EXCL)
-                    )
-                }
-            }
-            guard renamed == 0 else { throw LibraryMutationError.journalWriteFailed }
-            temporaryExists = false
-            guard Darwin.fsync(journalDescriptor) == 0 else {
-                throw LibraryMutationError.journalWriteFailed
-            }
-            try journalStage(.published(filename))
+            try stage(.temporarySynced(filename))
         } catch {
             throw LibraryMutationError.journalWriteFailed
         }
+        Darwin.close(fileDescriptor)
+        fileDescriptor = -1
+
+        let renamed = temporary.withCString { temporaryName in
+            filename.withCString { finalName in
+                Darwin.renameatx_np(
+                    journalDescriptor,
+                    temporaryName,
+                    journalDescriptor,
+                    finalName,
+                    UInt32(RENAME_EXCL)
+                )
+            }
+        }
+        guard renamed == 0 else { throw LibraryMutationError.journalWriteFailed }
+        temporaryExists = false
+
+        do {
+            try stage(.renamedBeforeDirectorySync(filename))
+            guard Darwin.fsync(journalDescriptor) == 0 else {
+                throw LibraryMutationError.journalWriteFailed
+            }
+        } catch {
+            let unlinked = filename.withCString { Darwin.unlinkat(journalDescriptor, $0, 0) }
+            do {
+                guard unlinked == 0 else { throw LibraryMutationError.incompleteTransaction }
+                try stage(.cleanupUnlinked(filename))
+                guard Darwin.fsync(journalDescriptor) == 0 else {
+                    throw LibraryMutationError.incompleteTransaction
+                }
+            } catch {
+                throw LibraryMutationError.incompleteTransaction
+            }
+            throw LibraryMutationError.journalWriteFailed
+        }
+        try? stage(.published(filename))
     }
 
     private func validatePinnedRoots() throws {
@@ -596,6 +768,8 @@ public actor LibraryMutationAuthorizer {
         defer { if reopenedJournal >= 0 { Darwin.close(reopenedJournal) } }
         guard
             reopenedJournal >= 0,
+            Self.fileState(descriptor: journalDescriptor).map(Self.isSecureJournalDirectory) == true,
+            Self.fileState(descriptor: reopenedJournal).map(Self.isSecureJournalDirectory) == true,
             Self.fileState(descriptor: journalDescriptor)?.isSameObject(as: journalState) == true,
             Self.fileState(descriptor: reopenedJournal)?.isSameObject(as: journalState) == true,
             Self.fileState(at: journalDirectory)?.isSameObject(as: journalState) == true
@@ -665,54 +839,86 @@ public actor LibraryMutationAuthorizer {
     private static func loadJournal(
         descriptor: Int32,
         identity: LibraryIdentity,
-        revision: UInt64
+        revision: UInt64,
+        root: URL,
+        key: Data
     ) throws -> LoadedJournal {
         var loaded = LoadedJournal()
-        var pending: Set<UUID> = []
-        var aborted: Set<UUID> = []
-        var rollbackPending: Set<UUID> = []
-        var rollbackAborted: Set<UUID> = []
-        var rolledBackRecords: [UUID: MutationReceipt] = [:]
+        var chains: [UUID: JournalChain] = [:]
 
-        for name in try directoryEntryNames(descriptor: descriptor) where !name.hasPrefix(".tmp-") {
-            if name.hasSuffix(".receipt.json") {
-                let receipt = try decode(MutationReceipt.self, name: name, descriptor: descriptor)
-                try authenticate(receipt, filename: name, identity: identity, revision: revision)
-                loaded.receipts[receipt.id] = receipt
-                loaded.usedPlans.insert(receipt.planID)
-            } else if name.hasSuffix(".rolledback.json") {
-                let receipt = try decode(MutationReceipt.self, name: name, descriptor: descriptor)
-                try authenticate(receipt, filename: name, identity: identity, revision: revision)
-                loaded.rolledBackReceipts.insert(receipt.id)
-                rolledBackRecords[receipt.id] = receipt
-            } else if name.hasSuffix(".json") {
-                let transaction = try decode(JournalTransaction.self, name: name, descriptor: descriptor)
-                guard transaction.version == 1,
-                      (0...transaction.receipt.entries.count).contains(transaction.completedEntryCount)
-                else {
+        for name in try directoryEntryNames(descriptor: descriptor) {
+            if name == ".journal-key" || name.hasPrefix(".tmp-") { continue }
+            guard name.hasSuffix(".json") else {
+                throw LibraryMutationError.invalidJournalRecord
+            }
+            let envelope: JournalEnvelope
+            do {
+                envelope = try JSONDecoder().decode(
+                    JournalEnvelope.self,
+                    from: read(name: name, descriptor: descriptor)
+                )
+            } catch {
+                throw LibraryMutationError.invalidJournalRecord
+            }
+            guard verify(envelope: envelope, key: key) else {
+                throw LibraryMutationError.invalidJournalRecord
+            }
+            try authenticate(
+                envelope.record,
+                filename: name,
+                identity: identity,
+                revision: revision,
+                root: root
+            )
+            chains[envelope.record.transactionNonce, default: JournalChain()]
+                .records.append(envelope.record)
+        }
+
+        var rolledBackRecords: [UUID: MutationReceipt] = [:]
+        for chain in chains.values {
+            let pendingRecords = chain.records.filter { $0.kind == .pending }
+            guard pendingRecords.count == 1, let pending = pendingRecords.first else {
+                throw LibraryMutationError.invalidJournalRecord
+            }
+            guard chain.records.allSatisfy({ record in
+                record.transactionNonce == pending.transactionNonce
+                    && record.operation == pending.operation
+                    && record.receipt == pending.receipt
+            }) else {
+                throw LibraryMutationError.invalidJournalRecord
+            }
+            let intents = try uniqueEntryIndexes(kind: .intent, records: chain.records)
+            let progress = try uniqueEntryIndexes(kind: .progress, records: chain.records)
+            let terminals = chain.records.filter {
+                $0.kind == .completed || $0.kind == .aborted || $0.kind == .recovered
+            }
+            guard terminals.count <= 1 else { throw LibraryMutationError.invalidJournalRecord }
+            guard let terminal = terminals.first else {
+                loaded.incompleteTransactions.append(PendingTransaction(
+                    record: pending,
+                    intendedEntries: intents
+                ))
+                continue
+            }
+            if terminal.kind == .completed {
+                let allEntries = Set(pending.receipt.entries.indices)
+                guard intents == allEntries, progress == allEntries else {
                     throw LibraryMutationError.invalidJournalRecord
                 }
-                try authenticate(
-                    transaction.receipt,
-                    filename: name,
-                    identity: identity,
-                    revision: revision
-                )
-                if name.hasSuffix(".pending.json") { pending.insert(transaction.receipt.id) }
-                if name.hasSuffix(".aborted.json") { aborted.insert(transaction.receipt.id) }
-                if name.hasSuffix(".rollback-pending.json") { rollbackPending.insert(transaction.receipt.id) }
-                if name.hasSuffix(".rollback-aborted.json") { rollbackAborted.insert(transaction.receipt.id) }
+                if pending.operation == .apply {
+                    guard loaded.receipts[pending.receipt.id] == nil else {
+                        throw LibraryMutationError.invalidJournalRecord
+                    }
+                    loaded.receipts[pending.receipt.id] = pending.receipt
+                    loaded.usedPlans.insert(pending.receipt.planID)
+                } else {
+                    guard rolledBackRecords[pending.receipt.id] == nil else {
+                        throw LibraryMutationError.invalidJournalRecord
+                    }
+                    rolledBackRecords[pending.receipt.id] = pending.receipt
+                    loaded.rolledBackReceipts.insert(pending.receipt.id)
+                }
             }
-        }
-        let completed = Set(loaded.receipts.keys)
-        guard pending.subtracting(completed).subtracting(aborted).isEmpty else {
-            throw LibraryMutationError.incompleteTransaction
-        }
-        guard rollbackPending.subtracting(loaded.rolledBackReceipts).subtracting(rollbackAborted).isEmpty else {
-            throw LibraryMutationError.incompleteTransaction
-        }
-        guard loaded.rolledBackReceipts.isSubset(of: completed) else {
-            throw LibraryMutationError.invalidJournalRecord
         }
         for (id, rolledBackReceipt) in rolledBackRecords {
             guard loaded.receipts[id] == rolledBackReceipt else {
@@ -722,36 +928,345 @@ public actor LibraryMutationAuthorizer {
         return loaded
     }
 
+    private static func uniqueEntryIndexes(
+        kind: JournalRecordKind,
+        records: [JournalRecord]
+    ) throws -> Set<Int> {
+        let values = records.filter { $0.kind == kind }.compactMap(\.entryIndex)
+        guard values.count == Set(values).count else {
+            throw LibraryMutationError.invalidJournalRecord
+        }
+        return Set(values)
+    }
+
     private static func authenticate(
-        _ receipt: MutationReceipt,
+        _ record: JournalRecord,
         filename: String,
         identity: LibraryIdentity,
-        revision: UInt64
+        revision: UInt64,
+        root: URL
     ) throws {
-        let expectedPrefix = receipt.id.uuidString.lowercased() + "."
+        let receipt = record.receipt
         guard
-            filename.hasPrefix(expectedPrefix),
+            record.version == 1,
             receipt.libraryID == identity,
             receipt.revision == revision,
             !receipt.entries.isEmpty,
             receipt.totalBytes >= 0,
-            receipt.entries.allSatisfy({ isSHA256($0.fingerprint) })
+            receipt.entries.allSatisfy({ isSHA256($0.fingerprint) }),
+            Set(receipt.entries.map { $0.source.standardizedFileURL.path }).count == receipt.entries.count,
+            Set(receipt.entries.map { $0.destination.standardizedFileURL.path }).count == receipt.entries.count,
+            receipt.entries.allSatisfy({ entry in
+                isContained(entry.source, in: root)
+                    && isContained(entry.destination, in: root)
+                    && entry.source.standardizedFileURL.path != root.standardizedFileURL.path
+                    && entry.destination.standardizedFileURL.path != root.standardizedFileURL.path
+                    && entry.source.standardizedFileURL != entry.destination.standardizedFileURL
+            }),
+            filename == expectedFilename(for: record)
         else {
             throw LibraryMutationError.invalidJournalRecord
         }
+        switch record.kind {
+        case .intent, .progress:
+            guard let index = record.entryIndex, receipt.entries.indices.contains(index) else {
+                throw LibraryMutationError.invalidJournalRecord
+            }
+        case .pending, .completed, .aborted, .recovered:
+            guard record.entryIndex == nil else {
+                throw LibraryMutationError.invalidJournalRecord
+            }
+        }
     }
 
-    private static func decode<Value: Decodable>(
-        _ type: Value.Type,
-        name: String,
-        descriptor: Int32
-    ) throws -> Value {
+    private static func expectedFilename(for record: JournalRecord) -> String {
+        let prefix = record.operation == .rollback ? "rollback-" : ""
+        let suffix: String
+        switch record.kind {
+        case .pending: suffix = prefix + "pending"
+        case .intent: suffix = prefix + String(format: "intent-%06d", (record.entryIndex ?? -1) + 1)
+        case .progress: suffix = prefix + String(format: "progress-%06d", (record.entryIndex ?? -1) + 1)
+        case .completed: suffix = record.operation == .apply ? "receipt" : "rolledback"
+        case .aborted: suffix = prefix + "aborted"
+        case .recovered: suffix = prefix + "recovered"
+        }
+        return filename(for: record.receipt.id, nonce: record.transactionNonce, suffix: suffix)
+    }
+
+    private static func authenticatedEnvelope(for record: JournalRecord, key: Data) -> JournalEnvelope {
+        let data = canonicalData(for: record)
+        let code = HMAC<SHA256>.authenticationCode(
+            for: data,
+            using: SymmetricKey(data: key)
+        )
+        return JournalEnvelope(
+            record: record,
+            authenticationCode: code.map { String(format: "%02x", $0) }.joined()
+        )
+    }
+
+    private static func verify(envelope: JournalEnvelope, key: Data) -> Bool {
+        guard let code = hexadecimalData(envelope.authenticationCode), code.count == 32 else {
+            return false
+        }
+        return HMAC<SHA256>.isValidAuthenticationCode(
+            code,
+            authenticating: canonicalData(for: envelope.record),
+            using: SymmetricKey(data: key)
+        )
+    }
+
+    private static func canonicalData(for record: JournalRecord) -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return (try? encoder.encode(record)) ?? Data()
+    }
+
+    private static func hexadecimalData(_ value: String) -> Data? {
+        guard value.utf8.count.isMultiple(of: 2) else { return nil }
+        var data = Data()
+        var index = value.startIndex
+        while index < value.endIndex {
+            let next = value.index(index, offsetBy: 2)
+            guard let byte = UInt8(value[index..<next], radix: 16) else { return nil }
+            data.append(byte)
+            index = next
+        }
+        return data
+    }
+
+    private static func loadOrCreateJournalKey(descriptor: Int32) throws -> Data {
+        let name = ".journal-key"
+        var file = name.withCString {
+            Darwin.openat(descriptor, $0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        if file < 0, errno == ENOENT {
+            let key = Data((0..<32).map { _ in UInt8.random(in: .min ... .max) })
+            file = name.withCString {
+                Darwin.openat(
+                    descriptor,
+                    $0,
+                    O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                    mode_t(S_IRUSR | S_IWUSR)
+                )
+            }
+            if file < 0, errno == EEXIST {
+                file = name.withCString {
+                    Darwin.openat(descriptor, $0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+                }
+            } else if file >= 0 {
+                do {
+                    try write(key, to: file)
+                    guard Darwin.fsync(file) == 0, Darwin.fsync(descriptor) == 0 else {
+                        throw LibraryMutationError.invalidJournalDirectory
+                    }
+                } catch {
+                    Darwin.close(file)
+                    _ = name.withCString { Darwin.unlinkat(descriptor, $0, 0) }
+                    throw LibraryMutationError.invalidJournalDirectory
+                }
+                guard let state = fileState(descriptor: file), isSecureKeyFile(state) else {
+                    Darwin.close(file)
+                    throw LibraryMutationError.invalidJournalDirectory
+                }
+                Darwin.close(file)
+                return key
+            }
+        }
+        guard file >= 0 else { throw LibraryMutationError.invalidJournalDirectory }
+        defer { Darwin.close(file) }
+        guard let state = fileState(descriptor: file), isSecureKeyFile(state) else {
+            throw LibraryMutationError.invalidJournalDirectory
+        }
+        var key = Data()
+        var buffer = [UInt8](repeating: 0, count: 32)
+        while key.count < 32 {
+            let count = Darwin.read(file, &buffer, 32 - key.count)
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else { throw LibraryMutationError.invalidJournalDirectory }
+            key.append(buffer, count: count)
+        }
+        var extra: UInt8 = 0
+        guard Darwin.read(file, &extra, 1) == 0 else {
+            throw LibraryMutationError.invalidJournalDirectory
+        }
+        guard fileState(descriptor: file) == state else {
+            throw LibraryMutationError.invalidJournalDirectory
+        }
+        return key
+    }
+
+    private static func reconcile(
+        _ transaction: PendingTransaction,
+        root: URL,
+        rootDescriptor: Int32,
+        journalDescriptor: Int32,
+        key: Data
+    ) throws {
+        let pending = transaction.record
+        let entries: [LibraryMutationPlan.Entry]
+        if pending.operation == .apply {
+            entries = pending.receipt.entries
+        } else {
+            entries = pending.receipt.entries.reversed().map {
+                LibraryMutationPlan.Entry(
+                    source: $0.destination,
+                    destination: $0.source,
+                    fingerprint: $0.fingerprint
+                )
+            }
+        }
+        var moved: [Int] = []
+        for (index, entry) in entries.enumerated() {
+            let source = try observe(entry.source, root: root, rootDescriptor: rootDescriptor)
+            let destination = try observe(entry.destination, root: root, rootDescriptor: rootDescriptor)
+            if source?.fingerprint == entry.fingerprint, destination == nil {
+                continue
+            }
+            if source == nil,
+               destination?.fingerprint == entry.fingerprint,
+               transaction.intendedEntries.contains(index) {
+                moved.append(index)
+                continue
+            }
+            throw LibraryMutationError.incompleteTransaction
+        }
+
+        for index in moved.reversed() {
+            let entry = entries[index]
+            let sourceComponents = try relativeComponents(
+                for: entry.destination,
+                root: root
+            )
+            let destinationComponents = try relativeComponents(
+                for: entry.source,
+                root: root
+            )
+            let sourceParent = try openParent(
+                components: sourceComponents,
+                rootDescriptor: rootDescriptor
+            )
+            defer { Darwin.close(sourceParent.descriptor) }
+            let destinationParent = try openParent(
+                components: destinationComponents,
+                rootDescriptor: rootDescriptor
+            )
+            defer { Darwin.close(destinationParent.descriptor) }
+            let renamed = sourceParent.name.withCString { sourceName in
+                destinationParent.name.withCString { destinationName in
+                    Darwin.renameatx_np(
+                        sourceParent.descriptor,
+                        sourceName,
+                        destinationParent.descriptor,
+                        destinationName,
+                        UInt32(RENAME_EXCL)
+                    )
+                }
+            }
+            guard renamed == 0,
+                  Darwin.fsync(sourceParent.descriptor) == 0,
+                  Darwin.fsync(destinationParent.descriptor) == 0
+            else {
+                throw LibraryMutationError.incompleteTransaction
+            }
+        }
+
+        let recovered = JournalRecord(
+            version: 1,
+            transactionNonce: pending.transactionNonce,
+            operation: pending.operation,
+            kind: .recovered,
+            receipt: pending.receipt,
+            entryIndex: nil
+        )
+        let suffix = pending.operation == .apply ? "recovered" : "rollback-recovered"
         do {
-            return try JSONDecoder().decode(type, from: read(name: name, descriptor: descriptor))
-        } catch let error as LibraryMutationError {
-            throw error
+            try publish(
+                envelope: authenticatedEnvelope(for: recovered, key: key),
+                filename: filename(
+                    for: pending.receipt.id,
+                    nonce: pending.transactionNonce,
+                    suffix: suffix
+                ),
+                descriptor: journalDescriptor,
+                stage: { _ in }
+            )
         } catch {
-            throw LibraryMutationError.invalidJournalRecord
+            throw LibraryMutationError.incompleteTransaction
+        }
+    }
+
+    private static func observe(
+        _ url: URL,
+        root: URL,
+        rootDescriptor: Int32
+    ) throws -> FileObservation? {
+        let components = try relativeComponents(for: url, root: root)
+        let parent = try openParent(components: components, rootDescriptor: rootDescriptor)
+        defer { Darwin.close(parent.descriptor) }
+        var status = stat()
+        let exists = parent.name.withCString {
+            Darwin.fstatat(parent.descriptor, $0, &status, AT_SYMLINK_NOFOLLOW) == 0
+        }
+        if !exists, errno == ENOENT { return nil }
+        guard exists else { throw LibraryMutationError.incompleteTransaction }
+        let observed = FileState(status)
+        guard observed.isRegularFile else { throw LibraryMutationError.incompleteTransaction }
+        let file = parent.name.withCString {
+            Darwin.openat(parent.descriptor, $0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard file >= 0 else { throw LibraryMutationError.incompleteTransaction }
+        defer { Darwin.close(file) }
+        guard fileState(descriptor: file) == observed else {
+            throw LibraryMutationError.incompleteTransaction
+        }
+        do {
+            return FileObservation(
+                state: observed,
+                fingerprint: try hash(descriptor: file, expected: observed)
+            )
+        } catch {
+            throw LibraryMutationError.incompleteTransaction
+        }
+    }
+
+    private static func relativeComponents(for url: URL, root: URL) throws -> [String] {
+        let candidate = url.standardizedFileURL
+        guard isContained(candidate, in: root), candidate.path != root.path else {
+            throw LibraryMutationError.incompleteTransaction
+        }
+        let prefix = root.path == "/" ? "/" : root.path + "/"
+        let components = String(candidate.path.dropFirst(prefix.count))
+            .split(separator: "/", omittingEmptySubsequences: false)
+            .map(String.init)
+        guard !components.isEmpty,
+              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." })
+        else {
+            throw LibraryMutationError.incompleteTransaction
+        }
+        return components
+    }
+
+    private static func openParent(
+        components: [String],
+        rootDescriptor: Int32
+    ) throws -> (descriptor: Int32, name: String) {
+        guard let name = components.last else { throw LibraryMutationError.incompleteTransaction }
+        var descriptor = Darwin.dup(rootDescriptor)
+        guard descriptor >= 0 else { throw LibraryMutationError.incompleteTransaction }
+        do {
+            for component in components.dropLast() {
+                let next = component.withCString {
+                    Darwin.openat(descriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                }
+                guard next >= 0 else { throw LibraryMutationError.incompleteTransaction }
+                Darwin.close(descriptor)
+                descriptor = next
+            }
+            return (descriptor, name)
+        } catch {
+            Darwin.close(descriptor)
+            throw error
         }
     }
 
@@ -762,7 +1277,10 @@ public actor LibraryMutationAuthorizer {
         guard file >= 0 else { throw LibraryMutationError.invalidJournalRecord }
         defer { Darwin.close(file) }
         guard let state = fileState(descriptor: file), state.isRegularFile,
-              state.size >= 0, state.size <= 16 * 1_024 * 1_024
+              state.size >= 0, state.size <= 16 * 1_024 * 1_024,
+              state.owner == UInt32(Darwin.geteuid()),
+              state.permissions == 0o600,
+              state.linkCount == 1
         else {
             throw LibraryMutationError.invalidJournalRecord
         }
@@ -883,6 +1401,21 @@ public actor LibraryMutationAuthorizer {
     private static func isSymbolicLink(at url: URL) -> Bool {
         guard let state = fileState(at: url) else { return false }
         return state.mode & UInt32(S_IFMT) == UInt32(S_IFLNK)
+    }
+
+    private static func isSecureJournalDirectory(_ state: FileState) -> Bool {
+        state.isDirectory
+            && state.owner == UInt32(Darwin.geteuid())
+            && state.permissions == 0o700
+            && state.linkCount >= 2
+    }
+
+    private static func isSecureKeyFile(_ state: FileState) -> Bool {
+        state.isRegularFile
+            && state.owner == UInt32(Darwin.geteuid())
+            && state.permissions == 0o600
+            && state.linkCount == 1
+            && state.size == 32
     }
 
     private static func isContained(_ candidate: URL, in root: URL) -> Bool {
