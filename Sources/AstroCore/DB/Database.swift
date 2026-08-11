@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 extension Array {
@@ -801,6 +802,24 @@ public final class Database: @unchecked Sendable {
 
     public init(path: String) throws {
         self.db = try SQLiteDB(path: path)
+        try migrate()
+    }
+
+    package init(
+        confinedIndexPath path: String,
+        beforeOpen: @Sendable () throws -> Void,
+        validateBeforeUse: @Sendable () throws -> Void
+    ) throws {
+        guard let resolvedPath = Darwin.realpath(path, nil) else {
+            throw AstroError.databaseError("Unable to canonicalize confined index database path.")
+        }
+        defer { Darwin.free(resolvedPath) }
+        let canonicalPath = String(cString: resolvedPath)
+        self.db = try SQLiteDB(
+            confinedIndexPath: canonicalPath,
+            beforeOpen: beforeOpen,
+            validateBeforeUse: validateBeforeUse
+        )
         try migrate()
     }
 

@@ -48,13 +48,52 @@ public struct SQLiteRow {
 public final class SQLiteDB {
     private var handle: OpaquePointer?
 
+    private enum OpenPolicy {
+        case standard
+        case confinedIndex
+    }
+
     /// Opens (creating if needed) the database at `path`. Pass `":memory:"`
     /// for an ephemeral in-memory database. WAL mode is enabled for
     /// file-backed databases (skipped for `:memory:`, where it is a no-op
     /// SQLite would otherwise silently ignore anyway).
-    public init(path: String) throws {
+    public convenience init(path: String) throws {
+        try self.init(
+            path: path,
+            policy: .standard,
+            beforeOpen: {},
+            validateBeforeUse: {}
+        )
+    }
+
+    package convenience init(
+        confinedIndexPath path: String,
+        beforeOpen: @Sendable () throws -> Void,
+        validateBeforeUse: @Sendable () throws -> Void
+    ) throws {
+        try self.init(
+            path: path,
+            policy: .confinedIndex,
+            beforeOpen: beforeOpen,
+            validateBeforeUse: validateBeforeUse
+        )
+    }
+
+    private init(
+        path: String,
+        policy: OpenPolicy,
+        beforeOpen: @Sendable () throws -> Void,
+        validateBeforeUse: @Sendable () throws -> Void
+    ) throws {
+        try beforeOpen()
         var db: OpaquePointer?
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        var flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
+        switch policy {
+        case .standard:
+            flags |= SQLITE_OPEN_CREATE
+        case .confinedIndex:
+            flags |= SQLITE_OPEN_NOFOLLOW
+        }
         let rc = sqlite3_open_v2(path, &db, flags, nil)
         guard rc == SQLITE_OK, let db else {
             let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "sqlite3_open_v2 failed (\(rc))"
@@ -63,8 +102,16 @@ public final class SQLiteDB {
         }
         self.handle = db
 
+        try validateBeforeUse()
+
         if path != ":memory:" {
-            try exec("PRAGMA journal_mode=WAL;")
+            switch policy {
+            case .standard:
+                try exec("PRAGMA journal_mode=WAL;")
+            case .confinedIndex:
+                try exec("PRAGMA journal_mode=MEMORY;")
+                try exec("PRAGMA temp_store=MEMORY;")
+            }
         }
     }
 

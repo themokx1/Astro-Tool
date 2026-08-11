@@ -1,4 +1,5 @@
 import AstroCore
+import Darwin
 import Foundation
 
 public enum LibrarySessionError: Error, Equatable, Sendable {
@@ -8,6 +9,9 @@ public enum LibrarySessionError: Error, Equatable, Sendable {
     case invalidIndexDestination
     case indexDatabaseIsSymbolicLink
     case cannotCreateIndexParent
+    case unsafeIndexParent
+    case unsafeIndexDatabase
+    case indexDestinationChanged
 }
 
 public actor LibrarySession {
@@ -27,6 +31,14 @@ public actor LibrarySession {
     }
 
     public static func open(rootURL: URL, storage: AppStoragePaths) async throws -> LibrarySession {
+        try await open(rootURL: rootURL, storage: storage, beforeDatabaseOpen: {})
+    }
+
+    static func open(
+        rootURL: URL,
+        storage: AppStoragePaths,
+        beforeDatabaseOpen: @Sendable () throws -> Void
+    ) async throws -> LibrarySession {
         let root = try validatedRoot(rootURL)
         let identity = LibraryIdentity(rootURL: root)
         guard storage.libraryID == identity else {
@@ -45,7 +57,34 @@ public actor LibrarySession {
         }
         try validateIndexDestination(indexDatabase, relativeTo: root)
 
-        let database = try Database(path: indexDatabase.path)
+        let parentDescriptor = try openIndexParent(
+            indexDatabase.deletingLastPathComponent()
+        )
+        defer { Darwin.close(parentDescriptor) }
+        _ = try safeParentState(descriptor: parentDescriptor)
+        let databaseDescriptor = try openIndexDatabase(
+            named: indexDatabase.lastPathComponent,
+            relativeTo: parentDescriptor
+        )
+        defer { Darwin.close(databaseDescriptor) }
+        let parentState = try safeParentState(descriptor: parentDescriptor)
+        let databaseState = try safeDatabaseState(descriptor: databaseDescriptor)
+        let canonicalIndexDatabase = canonicalPath(indexDatabase)
+
+        let database = try Database(
+            confinedIndexPath: canonicalIndexDatabase.path,
+            beforeOpen: beforeDatabaseOpen,
+            validateBeforeUse: {
+                try validatePinnedDestination(
+                    indexDatabase,
+                    relativeTo: root,
+                    parentDescriptor: parentDescriptor,
+                    expectedParent: parentState,
+                    databaseDescriptor: databaseDescriptor,
+                    expectedDatabase: databaseState
+                )
+            }
+        )
         let scanner = LibraryScanner(config: AstroConfig(rootPath: root.path), db: database)
         return LibrarySession(identity: identity, scanner: scanner, database: database)
     }
@@ -100,6 +139,121 @@ public actor LibrarySession {
                 throw LibrarySessionError.invalidIndexDestination
             }
         }
+    }
+
+    private struct FileState: Equatable, Sendable {
+        let device: UInt64
+        let inode: UInt64
+        let mode: UInt32
+        let owner: UInt32
+        let linkCount: UInt64
+
+        var fileType: UInt32 { mode & UInt32(S_IFMT) }
+        var isGroupOrWorldWritable: Bool {
+            mode & UInt32(S_IWGRP | S_IWOTH) != 0
+        }
+
+        init(_ status: stat) {
+            self.device = UInt64(status.st_dev)
+            self.inode = UInt64(status.st_ino)
+            self.mode = UInt32(status.st_mode)
+            self.owner = UInt32(status.st_uid)
+            self.linkCount = UInt64(status.st_nlink)
+        }
+    }
+
+    private static func openIndexParent(_ parent: URL) throws -> Int32 {
+        let descriptor = parent.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else {
+            throw LibrarySessionError.unsafeIndexParent
+        }
+        return descriptor
+    }
+
+    private static func openIndexDatabase(named name: String, relativeTo parent: Int32) throws -> Int32 {
+        let descriptor = name.withCString { path in
+            Darwin.openat(
+                parent,
+                path,
+                O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC,
+                mode_t(S_IRUSR | S_IWUSR)
+            )
+        }
+        guard descriptor >= 0 else {
+            throw LibrarySessionError.unsafeIndexDatabase
+        }
+        return descriptor
+    }
+
+    private static func safeParentState(descriptor: Int32) throws -> FileState {
+        let state = try fileState(descriptor: descriptor)
+        guard
+            state.fileType == UInt32(S_IFDIR),
+            state.owner == UInt32(Darwin.geteuid()),
+            !state.isGroupOrWorldWritable
+        else {
+            throw LibrarySessionError.unsafeIndexParent
+        }
+        return state
+    }
+
+    private static func safeDatabaseState(descriptor: Int32) throws -> FileState {
+        let state = try fileState(descriptor: descriptor)
+        guard
+            state.fileType == UInt32(S_IFREG),
+            state.owner == UInt32(Darwin.geteuid()),
+            state.linkCount == 1,
+            !state.isGroupOrWorldWritable
+        else {
+            throw LibrarySessionError.unsafeIndexDatabase
+        }
+        return state
+    }
+
+    private static func validatePinnedDestination(
+        _ indexDatabase: URL,
+        relativeTo root: URL,
+        parentDescriptor: Int32,
+        expectedParent: FileState,
+        databaseDescriptor: Int32,
+        expectedDatabase: FileState
+    ) throws {
+        try validateIndexDestination(indexDatabase, relativeTo: root)
+        guard try fileState(descriptor: parentDescriptor) == expectedParent else {
+            throw LibrarySessionError.unsafeIndexParent
+        }
+        guard try fileState(at: indexDatabase.deletingLastPathComponent()) == expectedParent else {
+            throw LibrarySessionError.indexDestinationChanged
+        }
+        guard try fileState(descriptor: databaseDescriptor) == expectedDatabase else {
+            throw LibrarySessionError.unsafeIndexDatabase
+        }
+        guard try fileState(at: indexDatabase) == expectedDatabase else {
+            throw LibrarySessionError.indexDestinationChanged
+        }
+    }
+
+    private static func fileState(descriptor: Int32) throws -> FileState {
+        var status = stat()
+        guard Darwin.fstat(descriptor, &status) == 0 else {
+            throw LibrarySessionError.indexDestinationChanged
+        }
+        return FileState(status)
+    }
+
+    private static func fileState(at url: URL) throws -> FileState {
+        var status = stat()
+        let result = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.lstat(path, &status)
+        }
+        guard result == 0 else {
+            throw LibrarySessionError.indexDestinationChanged
+        }
+        return FileState(status)
     }
 
     private static func canonicalPath(_ url: URL) -> URL {

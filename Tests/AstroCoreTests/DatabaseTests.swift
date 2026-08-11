@@ -152,6 +152,31 @@ private func indexCountRecord(
     #expect(mode?.lowercased() == "wal")
 }
 
+@Test func confinedIndexDatabaseUsesMemoryOnlyJournalAndCreatesNoSidecars() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-confined-db-tests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let databaseURL = dir.appendingPathComponent("index.sqlite")
+    #expect(FileManager.default.createFile(atPath: databaseURL.path, contents: nil))
+
+    let database = try Database(
+        confinedIndexPath: databaseURL.path,
+        beforeOpen: {},
+        validateBeforeUse: {}
+    )
+    var journalMode: String?
+    var tempStore: Int64?
+    try database.db.query("PRAGMA journal_mode;") { journalMode = $0.string(0) }
+    try database.db.query("PRAGMA temp_store;") { tempStore = $0.int64(0) }
+
+    #expect(journalMode?.lowercased() == "memory")
+    #expect(tempStore == 2)
+    #expect(!FileManager.default.fileExists(atPath: databaseURL.path + "-wal"))
+    #expect(!FileManager.default.fileExists(atPath: databaseURL.path + "-shm"))
+    #expect(!FileManager.default.fileExists(atPath: databaseURL.path + "-journal"))
+}
+
 // MARK: - Database migration
 
 @Test func migrateSetsSchemaVersionToLatestForFreshDatabase() throws {

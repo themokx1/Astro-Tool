@@ -137,6 +137,73 @@ struct LibrarySessionTests {
         }
     }
 
+    @Test("An index ancestor swapped to the library before SQLite open cannot write there")
+    func ancestorSwapBeforeSQLiteOpenFailsWithoutLibraryWrites() async throws {
+        let fixture = try V2FixtureLibrary.make()
+        defer { fixture.remove() }
+        let storage = try makeStorage(for: fixture)
+        let redirectedParent = fixture.root
+            .appendingPathComponent("Libraries", isDirectory: true)
+            .appendingPathComponent(storage.libraryID.id, isDirectory: true)
+        try FileManager.default.createDirectory(at: redirectedParent, withIntermediateDirectories: true)
+        let before = try await LibraryManifest.capture(root: fixture.root)
+        let astroToolDirectory = storage.indexDatabase
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let displacedDirectory = fixture.container
+            .appendingPathComponent("DisplacedAstroTool", isDirectory: true)
+
+        await #expect(throws: (any Error).self) {
+            try await LibrarySession.open(
+                rootURL: fixture.root,
+                storage: storage,
+                beforeDatabaseOpen: {
+                    try FileManager.default.moveItem(
+                        at: astroToolDirectory,
+                        to: displacedDirectory
+                    )
+                    try FileManager.default.createSymbolicLink(
+                        at: astroToolDirectory,
+                        withDestinationURL: fixture.root
+                    )
+                }
+            )
+        }
+
+        #expect(try await LibraryManifest.capture(root: fixture.root) == before)
+        #expect(!FileManager.default.fileExists(
+            atPath: redirectedParent.appendingPathComponent("index.sqlite").path
+        ))
+    }
+
+    @Test("The index file swapped to a library symlink before SQLite open cannot be followed")
+    func finalSymlinkSwapBeforeSQLiteOpenFailsWithoutLibraryWrites() async throws {
+        let fixture = try V2FixtureLibrary.make()
+        defer { fixture.remove() }
+        let storage = try makeStorage(for: fixture)
+        let libraryTarget = fixture.root.appendingPathComponent("sqlite-race-target.sqlite")
+        try Data("must remain unchanged".utf8).write(to: libraryTarget)
+        let before = try await LibraryManifest.capture(root: fixture.root)
+
+        await #expect(throws: (any Error).self) {
+            try await LibrarySession.open(
+                rootURL: fixture.root,
+                storage: storage,
+                beforeDatabaseOpen: {
+                    try FileManager.default.removeItem(at: storage.indexDatabase)
+                    try FileManager.default.createSymbolicLink(
+                        at: storage.indexDatabase,
+                        withDestinationURL: libraryTarget
+                    )
+                }
+            )
+        }
+
+        #expect(try await LibraryManifest.capture(root: fixture.root) == before)
+        #expect(try Data(contentsOf: libraryTarget) == Data("must remain unchanged".utf8))
+    }
+
     private func makeStorage(for fixture: V2FixtureLibrary) throws -> AppStoragePaths {
         let support = fixture.container.appendingPathComponent("application-support", isDirectory: true)
         let caches = fixture.container.appendingPathComponent("caches", isDirectory: true)
