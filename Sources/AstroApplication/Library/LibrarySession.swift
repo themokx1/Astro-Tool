@@ -31,12 +31,18 @@ public actor LibrarySession {
     }
 
     public static func open(rootURL: URL, storage: AppStoragePaths) async throws -> LibrarySession {
-        try await open(rootURL: rootURL, storage: storage, beforeDatabaseOpen: {})
+        try await open(
+            rootURL: rootURL,
+            storage: storage,
+            beforeIndexParentOpen: {},
+            beforeDatabaseOpen: {}
+        )
     }
 
     static func open(
         rootURL: URL,
         storage: AppStoragePaths,
+        beforeIndexParentOpen: @Sendable () throws -> Void = {},
         beforeDatabaseOpen: @Sendable () throws -> Void
     ) async throws -> LibrarySession {
         let root = try validatedRoot(rootURL)
@@ -47,20 +53,17 @@ public actor LibrarySession {
 
         let indexDatabase = storage.indexDatabase.standardizedFileURL
         try validateIndexDestination(indexDatabase, relativeTo: root)
-        do {
-            try FileManager.default.createDirectory(
-                at: indexDatabase.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-        } catch {
-            throw LibrarySessionError.cannotCreateIndexParent
-        }
-        try validateIndexDestination(indexDatabase, relativeTo: root)
-
-        let parentDescriptor = try openIndexParent(
+        let canonicalParent = try canonicalIntendedPath(
             indexDatabase.deletingLastPathComponent()
         )
+        guard !isContained(canonicalParent, in: canonicalPath(root)) else {
+            throw LibrarySessionError.indexDestinationInsideLibrary
+        }
+        try beforeIndexParentOpen()
+
+        let parentDescriptor = try openIndexParent(canonicalParent)
         defer { Darwin.close(parentDescriptor) }
+        try validateIndexDestination(indexDatabase, relativeTo: root)
         _ = try safeParentState(descriptor: parentDescriptor)
         let databaseDescriptor = try openIndexDatabase(
             named: indexDatabase.lastPathComponent,
@@ -69,7 +72,8 @@ public actor LibrarySession {
         defer { Darwin.close(databaseDescriptor) }
         let parentState = try safeParentState(descriptor: parentDescriptor)
         let databaseState = try safeDatabaseState(descriptor: databaseDescriptor)
-        let canonicalIndexDatabase = canonicalPath(indexDatabase)
+        let canonicalIndexDatabase = canonicalParent
+            .appendingPathComponent(indexDatabase.lastPathComponent)
 
         let database = try Database(
             confinedIndexPath: canonicalIndexDatabase.path,
@@ -163,14 +167,66 @@ public actor LibrarySession {
     }
 
     private static func openIndexParent(_ parent: URL) throws -> Int32 {
-        let descriptor = parent.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return -1 }
-            return Darwin.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        var descriptor = Darwin.open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard descriptor >= 0 else { throw LibrarySessionError.unsafeIndexParent }
+
+        do {
+            for component in parent.standardizedFileURL.pathComponents.dropFirst() {
+                let nextDescriptor = try component.withCString { name -> Int32 in
+                    var opened = Darwin.openat(
+                        descriptor,
+                        name,
+                        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                    )
+                    if opened < 0, errno == ENOENT {
+                        let created = Darwin.mkdirat(
+                            descriptor,
+                            name,
+                            mode_t(S_IRWXU)
+                        )
+                        guard created == 0 || errno == EEXIST else {
+                            throw LibrarySessionError.cannotCreateIndexParent
+                        }
+                        opened = Darwin.openat(
+                            descriptor,
+                            name,
+                            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                        )
+                    }
+                    guard opened >= 0 else {
+                        throw LibrarySessionError.unsafeIndexParent
+                    }
+                    return opened
+                }
+                Darwin.close(descriptor)
+                descriptor = nextDescriptor
+            }
+            return descriptor
+        } catch {
+            Darwin.close(descriptor)
+            throw error
         }
-        guard descriptor >= 0 else {
-            throw LibrarySessionError.unsafeIndexParent
+    }
+
+    private static func canonicalIntendedPath(_ url: URL) throws -> URL {
+        var existingAncestor = url.standardizedFileURL
+        var missingComponents: [String] = []
+
+        while true {
+            if let resolved = Darwin.realpath(existingAncestor.path, nil) {
+                defer { Darwin.free(resolved) }
+                return missingComponents.reversed().reduce(
+                    URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
+                ) { partial, component in
+                    partial.appendingPathComponent(component, isDirectory: true)
+                }
+            }
+            guard existingAncestor.path != "/" else {
+                throw LibrarySessionError.unsafeIndexParent
+            }
+            missingComponents.append(existingAncestor.lastPathComponent)
+            existingAncestor.deleteLastPathComponent()
         }
-        return descriptor
     }
 
     private static func openIndexDatabase(named name: String, relativeTo parent: Int32) throws -> Int32 {

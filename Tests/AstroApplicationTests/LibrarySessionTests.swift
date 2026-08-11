@@ -177,6 +177,38 @@ struct LibrarySessionTests {
         ))
     }
 
+    @Test("An index ancestor swapped before parent creation cannot redirect creation into the library")
+    func ancestorSwapBeforeParentOpenFailsWithoutLibraryWrites() async throws {
+        let fixture = try V2FixtureLibrary.make()
+        defer { fixture.remove() }
+        let storage = try makeStorage(for: fixture)
+        let cachesRoot = storage.indexDatabase
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let before = try await LibraryManifest.capture(root: fixture.root)
+
+        await #expect(throws: (any Error).self) {
+            try await LibrarySession.open(
+                rootURL: fixture.root,
+                storage: storage,
+                beforeIndexParentOpen: {
+                    try FileManager.default.createSymbolicLink(
+                        at: cachesRoot,
+                        withDestinationURL: fixture.root
+                    )
+                },
+                beforeDatabaseOpen: {}
+            )
+        }
+
+        #expect(try await LibraryManifest.capture(root: fixture.root) == before)
+        #expect(!FileManager.default.fileExists(
+            atPath: fixture.root.appendingPathComponent("AstroTool").path
+        ))
+    }
+
     @Test("The index file swapped to a library symlink before SQLite open cannot be followed")
     func finalSymlinkSwapBeforeSQLiteOpenFailsWithoutLibraryWrites() async throws {
         let fixture = try V2FixtureLibrary.make()
