@@ -27,7 +27,7 @@ public struct OperationState: Identifiable, Hashable, Sendable {
     public let kind: OperationKind
     public let cancellationPolicy: CancellationPolicy
     public internal(set) var phase: OperationPhase
-    public internal(set) var progress: Int64
+    public internal(set) var completed: Int64
     public internal(set) var total: Int64?
     public internal(set) var errorMessage: String?
     public let startedAt: Date
@@ -39,7 +39,7 @@ public struct OperationState: Identifiable, Hashable, Sendable {
         kind: OperationKind,
         cancellationPolicy: CancellationPolicy,
         phase: OperationPhase,
-        progress: Int64,
+        completed: Int64,
         total: Int64?,
         errorMessage: String?,
         startedAt: Date,
@@ -50,11 +50,15 @@ public struct OperationState: Identifiable, Hashable, Sendable {
         self.kind = kind
         self.cancellationPolicy = cancellationPolicy
         self.phase = phase
-        self.progress = progress
+        self.completed = completed
         self.total = total
         self.errorMessage = errorMessage
         self.startedAt = startedAt
         self.updatedAt = updatedAt
         self.finishedAt = finishedAt
+    }
+
+    public var progress: Int64 {
+        completed
     }
 }

@@ -25,7 +25,7 @@ public actor OperationCenter {
             kind: kind,
             cancellationPolicy: cancellation,
             phase: .running,
-            progress: 0,
+            completed: 0,
             total: nil,
             errorMessage: nil,
             startedAt: now,
@@ -46,14 +46,14 @@ public actor OperationCenter {
 
         let resolvedTotal = total ?? entry.state.total
         let resolvedProgress = resolvedTotal.map { min(progress, $0) } ?? progress
-        guard resolvedProgress >= entry.state.progress else {
+        guard resolvedProgress >= entry.state.completed else {
             return false
         }
-        guard resolvedProgress != entry.state.progress || resolvedTotal != entry.state.total else {
+        guard resolvedProgress != entry.state.completed || resolvedTotal != entry.state.total else {
             return false
         }
 
-        entry.state.progress = resolvedProgress
+        entry.state.completed = resolvedProgress
         entry.state.total = resolvedTotal
         entry.state.updatedAt = nextTimestamp(after: entry.state.updatedAt)
         entries[id] = entry

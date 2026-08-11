@@ -20,6 +20,19 @@ struct OperationCenterTests {
         #expect(Set([OperationPhase.running, .succeeded, .failed, .cancelled]).count == 4)
     }
 
+    @Test("Operation state exposes completed work through its public API")
+    func operationStateExposesCompletedWork() async {
+        let center = OperationCenter()
+        let operation = await center.start(
+            kind: .scan(library: "A"),
+            cancellation: .cooperative
+        )
+
+        #expect(operation.completed == 0)
+        #expect(await center.progress(operation.id, to: 3, total: 10))
+        #expect(await center.state(operation.id)?.completed == 3)
+    }
+
     @Test("Cancelling one operation does not cancel unrelated work")
     func operationsAreScopedAndDoNotCancelUnrelatedWork() async {
         let center = OperationCenter()
@@ -126,7 +139,7 @@ struct OperationCenterTests {
         #expect(await center.state(operation.id) == accepted)
 
         #expect(await center.progress(operation.id, to: 50, total: 12))
-        #expect(await center.state(operation.id)?.progress == 12)
+        #expect(await center.state(operation.id)?.completed == 12)
         #expect(await center.state(operation.id)?.total == 12)
     }
 
