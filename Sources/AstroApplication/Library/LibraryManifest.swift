@@ -141,12 +141,18 @@ public struct LibraryManifest: Codable, Equatable, Sendable {
         )
 
         try beforeFinalValidation(root)
+        let reopenedCallerRootDescriptor = openRootDirectory(root)
+        defer {
+            if reopenedCallerRootDescriptor >= 0 { Darwin.close(reopenedCallerRootDescriptor) }
+        }
         let reopenedRootDescriptor = openRootDirectory(canonicalRoot)
         defer {
             if reopenedRootDescriptor >= 0 { Darwin.close(reopenedRootDescriptor) }
         }
         guard
             fileState(descriptor: rootDescriptor) == rootState,
+            reopenedCallerRootDescriptor >= 0,
+            fileState(descriptor: reopenedCallerRootDescriptor) == rootState,
             reopenedRootDescriptor >= 0,
             fileState(descriptor: reopenedRootDescriptor) == rootState
         else {

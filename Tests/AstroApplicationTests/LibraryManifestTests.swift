@@ -280,6 +280,38 @@ struct LibraryManifestTests {
             )
         }
     }
+
+    @Test("Retargeting a symlinked caller-root ancestor invalidates the capture")
+    func finalValidationRechecksCallerRootIdentity() async throws {
+        let disk = FileManager.default
+        let container = disk.temporaryDirectory
+            .appendingPathComponent("AstroToolCallerRootRace-\(UUID().uuidString)", isDirectory: true)
+        let ancestorA = container.appendingPathComponent("AncestorA", isDirectory: true)
+        let ancestorB = container.appendingPathComponent("AncestorB", isDirectory: true)
+        let libraryA = ancestorA.appendingPathComponent("Library", isDirectory: true)
+        let libraryB = ancestorB.appendingPathComponent("Library", isDirectory: true)
+        let callerAncestor = container.appendingPathComponent("CallerAncestor", isDirectory: true)
+        let callerRoot = callerAncestor.appendingPathComponent("Library", isDirectory: true)
+        try disk.createDirectory(at: libraryA, withIntermediateDirectories: true)
+        try disk.createDirectory(at: libraryB, withIntermediateDirectories: true)
+        try Data("directory A".utf8).write(to: libraryA.appendingPathComponent("a.fit"))
+        try Data("directory B".utf8).write(to: libraryB.appendingPathComponent("b.fit"))
+        try disk.createSymbolicLink(at: callerAncestor, withDestinationURL: ancestorA)
+        defer { try? disk.removeItem(at: container) }
+
+        await #expect(throws: LibraryManifestError.unstableRoot) {
+            try await LibraryManifest.capture(
+                root: callerRoot,
+                exclusions: [],
+                beforeOpen: { _, _ in },
+                afterHash: { _, _ in },
+                beforeFinalValidation: { _ in
+                    try disk.removeItem(at: callerAncestor)
+                    try disk.createSymbolicLink(at: callerAncestor, withDestinationURL: ancestorB)
+                }
+            )
+        }
+    }
 }
 
 private struct SnapshotEntry: Equatable {
