@@ -2,6 +2,84 @@ import Foundation
 import Testing
 @testable import AstroCore
 
+// MARK: - V2 library index counts
+
+@Test func libraryIndexCountsAreEmptyForFreshDatabase() throws {
+    let database = try Database(path: ":memory:")
+
+    #expect(try database.libraryIndexCounts() == LibraryIndexCounts(
+        projectCount: 0,
+        nightCount: 0,
+        frameCount: 0
+    ))
+}
+
+@Test func libraryIndexCountsUseProjectsRealNightsAndActiveImageFrames() throws {
+    let database = try Database(path: ":memory:")
+    let records = [
+        indexCountRecord(
+            path: "sessions/M31/2026-08-08/lights/m31.fit",
+            ext: "fit", area: .sessions, target: "M31", date: "2026-08-08"
+        ),
+        indexCountRecord(
+            path: "sessions/M42/2026-08-08/lights/m42.fits",
+            ext: "fits", area: .sessions, target: "M42", date: "2026-08-08"
+        ),
+        indexCountRecord(
+            path: "stacks/M45/stack.tif",
+            ext: "tif", area: .stacks, target: "M45"
+        ),
+        indexCountRecord(
+            path: "processed/M31/result.cr3",
+            ext: "cr3", area: .processed, target: "M31"
+        ),
+        indexCountRecord(
+            path: "sessions/M31/2026-08-08/lights/m31.xmp",
+            ext: "xmp", area: .sessions, target: "M31", date: "2026-08-08"
+        ),
+        indexCountRecord(
+            path: "sessions/Missing/2026-08-09/lights/missing.fz",
+            ext: "fz", area: .sessions, target: "Missing", date: "2026-08-09", missing: true
+        ),
+        indexCountRecord(
+            path: "calibration/darks/dark.fit",
+            ext: "fit", area: .calibration, target: "Calibration"
+        ),
+    ]
+    for record in records {
+        _ = try database.upsertFile(record)
+    }
+
+    #expect(try database.libraryIndexCounts() == LibraryIndexCounts(
+        projectCount: 3,
+        nightCount: 1,
+        frameCount: 5
+    ))
+}
+
+private func indexCountRecord(
+    path: String,
+    ext: String,
+    area: LibraryArea,
+    target: String?,
+    date: String? = nil,
+    missing: Bool = false
+) -> FileRecord {
+    FileRecord(
+        path: path,
+        size: 1,
+        mtime: 1,
+        ext: ext,
+        kind: ext,
+        area: area,
+        target: target,
+        sessionDate: date,
+        role: .other,
+        scannedAt: 1,
+        missing: missing
+    )
+}
+
 // MARK: - SQLiteDB (thin wrapper)
 
 @Test func sqliteDBOpensInMemoryAndExecutesDDL() throws {

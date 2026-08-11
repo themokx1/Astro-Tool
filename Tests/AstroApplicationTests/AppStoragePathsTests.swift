@@ -57,6 +57,8 @@ struct AppStoragePathsTests {
             libraryRoot: imageRoot
         )
 
+        #expect(paths.libraryID == identity)
+
         #expect(paths.metadataDatabase.path ==
             "/tmp/AstroToolAppSupport/AstroTool/Libraries/\(identity.id)/metadata.sqlite")
         #expect(paths.indexDatabase.path ==

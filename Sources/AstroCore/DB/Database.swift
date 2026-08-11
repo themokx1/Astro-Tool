@@ -547,6 +547,18 @@ extension SearchResults: Encodable {
 
 // MARK: - Database
 
+public struct LibraryIndexCounts: Equatable, Sendable {
+    public let projectCount: Int
+    public let nightCount: Int
+    public let frameCount: Int
+
+    public init(projectCount: Int, nightCount: Int, frameCount: Int) {
+        self.projectCount = projectCount
+        self.nightCount = nightCount
+        self.frameCount = frameCount
+    }
+}
+
 /// The single source of truth for a scanned library: schema owner and DAO
 /// layer over `SQLiteDB`. The scanner fills `files`/`fits_meta`; audit,
 /// stats, calibration, and rating all read from here.
@@ -1016,6 +1028,38 @@ public final class Database: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return try body()
+    }
+
+    public func libraryIndexCounts() throws -> LibraryIndexCounts {
+        try withLock {
+            var counts = LibraryIndexCounts(projectCount: 0, nightCount: 0, frameCount: 0)
+            try db.query(
+                """
+                SELECT
+                  (SELECT COUNT(DISTINCT target)
+                   FROM files
+                   WHERE missing = 0
+                     AND target IS NOT NULL AND target <> ''
+                     AND area IN ('sessions', 'stacks', 'processed')),
+                  (SELECT COUNT(DISTINCT session_date)
+                   FROM files
+                   WHERE missing = 0
+                     AND area = 'sessions'
+                     AND session_date IS NOT NULL AND session_date <> ''),
+                  (SELECT COUNT(*)
+                   FROM files
+                   WHERE missing = 0
+                     AND lower(ext) IN ('fit', 'fits', 'fz', 'cr3', 'tif'));
+                """
+            ) { row in
+                counts = LibraryIndexCounts(
+                    projectCount: Int(row.int64(0) ?? 0),
+                    nightCount: Int(row.int64(1) ?? 0),
+                    frameCount: Int(row.int64(2) ?? 0)
+                )
+            }
+            return counts
+        }
     }
 
     // MARK: filter profiles (schema v12)

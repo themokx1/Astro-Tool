@@ -9,6 +9,7 @@ public enum AppStoragePathsError: Error, Equatable, Sendable {
 }
 
 public struct AppStoragePaths: Sendable {
+    public let libraryID: LibraryIdentity
     public let metadataDatabase: URL
     public let indexDatabase: URL
     public let thumbnails: URL
@@ -55,6 +56,7 @@ public struct AppStoragePaths: Sendable {
             throw AppStoragePathsError.storageDestinationInsideLibrary
         }
 
+        self.libraryID = libraryID
         self.metadataDatabase = metadataDatabase
         self.indexDatabase = indexDatabase
         self.thumbnails = thumbnails
