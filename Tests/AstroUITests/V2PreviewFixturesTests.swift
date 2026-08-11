@@ -1,9 +1,47 @@
 @testable import AstroUI
+import AstroApplication
 import Foundation
 import Testing
 
 @Suite("V2 preview fixtures")
 struct V2PreviewFixturesTests {
+    @MainActor
+    @Test("A late support-root swap cannot receive onboarding index writes")
+    func fixtureOnboardingNeverWritesThroughSwappedSupportRoot() async throws {
+        let paths = try FixtureRacePaths.make()
+        defer { paths.remove() }
+        let optionalFixture = try V2PreviewFixtures.fixture(arguments: paths.arguments)
+        let fixture = try #require(optionalFixture)
+        let sentinel = paths.realSupportTarget.appendingPathComponent("keep.txt")
+        try Data("untouched".utf8).write(to: sentinel)
+        let targetBefore = try await LibraryManifest.capture(root: paths.realSupportTarget)
+
+        try FileManager.default.moveItem(
+            at: paths.supportContainer,
+            to: paths.parkedSupportContainer
+        )
+        try FileManager.default.createSymbolicLink(
+            at: paths.supportContainer,
+            withDestinationURL: paths.realSupportTarget
+        )
+
+        let store = fixture.makeOnboardingStore()
+        try await store.openAndScan(fixture.libraryRoot)
+
+        let summary = try #require(store.phase.summary)
+        #expect(summary.libraryID == LibraryIdentity(rootURL: fixture.libraryRoot))
+        #expect(summary.revision == 1)
+        #expect(summary.projectCount == 1)
+        #expect(summary.nightCount == 1)
+        #expect(summary.frameCount == 1)
+        #expect(try await LibraryManifest.capture(root: paths.realSupportTarget) == targetBefore)
+        #expect(!allRelativePaths(in: paths.realSupportTarget).contains(where: {
+            $0.hasSuffix("index.sqlite")
+                || $0.hasSuffix("index.sqlite-wal")
+                || $0.hasSuffix("index.sqlite-shm")
+        }))
+    }
+
     @Test("A fixture-root symlink swap cannot redirect fixture creation")
     func rejectsFixtureRootSwapBeforeMutation() throws {
         let paths = try FixtureRacePaths.make()
@@ -201,6 +239,20 @@ struct V2PreviewFixturesTests {
 
         #expect(throws: V2UITestFixtureError.self) {
             try refuseRealLibrary(link.appendingPathComponent("DemoLibrary", isDirectory: true))
+        }
+    }
+
+    private func allRelativePaths(
+        in root: URL,
+        fileManager: FileManager = .default
+    ) -> [String] {
+        guard let enumerator = fileManager.enumerator(
+            at: root,
+            includingPropertiesForKeys: nil
+        ) else { return [] }
+        return enumerator.compactMap { item in
+            guard let url = item as? URL else { return nil }
+            return String(url.path.dropFirst(root.path.count + 1))
         }
     }
 }

@@ -35,8 +35,25 @@ public struct V2UITestFixture: Sendable {
 
     @MainActor
     public func makeOnboardingStore() -> OnboardingStore {
-        OnboardingStore(
-            sessionFactory: .production,
+        let identity = LibraryIdentity(rootURL: libraryRoot)
+        let snapshot = LibrarySnapshot(
+            libraryID: identity,
+            revision: 1,
+            projectCount: 1,
+            nightCount: 1,
+            frameCount: 1
+        )
+        return OnboardingStore(
+            sessionFactory: OnboardingSessionFactory { root, _ in
+                guard LibraryIdentity(rootURL: root) == identity else {
+                    throw V2UITestSessionError.unexpectedLibrary(root.path)
+                }
+                return OnboardingSessionClient(accessMode: .readOnly) { progress in
+                    progress(LibraryScanProgress(scanned: 0, total: 1))
+                    progress(LibraryScanProgress(scanned: 1, total: 1))
+                    return snapshot
+                }
+            },
             storageFactory: OnboardingStorageFactory { root in
                 try AppStoragePaths(
                     applicationSupport: applicationSupport,
@@ -48,6 +65,10 @@ public struct V2UITestFixture: Sendable {
             securityScopedAccess: .inactive
         )
     }
+}
+
+private enum V2UITestSessionError: Error, Sendable {
+    case unexpectedLibrary(String)
 }
 
 public enum V2PreviewFixtures {
