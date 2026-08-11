@@ -16,17 +16,17 @@ public enum LibrarySessionError: Error, Equatable, Sendable {
 
 public struct LibraryScanProgress: Equatable, Sendable {
     public let scanned: Int
-    public let total: Int
-    public let fraction: Double
+    public let total: Int?
+    public let fraction: Double?
 
-    public init(scanned: Int, total: Int) {
-        let safeTotal = max(0, total)
-        let safeScanned = min(max(0, scanned), safeTotal)
+    public init(scanned: Int, total: Int?) {
+        let safeTotal = total.map { max(0, $0) }
+        let safeScanned = safeTotal.map { min(max(0, scanned), $0) } ?? max(0, scanned)
         self.scanned = safeScanned
         self.total = safeTotal
-        self.fraction = safeTotal == 0
-            ? 1
-            : Double(safeScanned) / Double(safeTotal)
+        self.fraction = safeTotal.map { total in
+            total == 0 ? 1 : Double(safeScanned) / Double(total)
+        }
     }
 }
 
@@ -119,7 +119,7 @@ public actor LibrarySession {
     ) async throws -> LibrarySnapshot {
         _ = try scanner.scan(progressUpdate: { update in
             progress(LibraryScanProgress(scanned: update.scanned, total: update.total))
-        })
+        }, shouldCancel: { Task.isCancelled })
         return try nextSnapshot()
     }
 

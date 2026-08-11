@@ -1,5 +1,6 @@
 @testable import AstroApplication
 import AstroCore
+import Dispatch
 import Foundation
 import Testing
 
@@ -75,9 +76,41 @@ struct LibrarySessionTests {
         let first = try #require(updates.first)
         let last = try #require(updates.last)
         #expect(first.scanned == 0)
-        #expect(last.scanned == last.total)
+        #expect(first.total == nil)
+        #expect(last.scanned == last.total!)
         #expect(last.fraction == 1)
-        #expect(updates.allSatisfy { (0...1).contains($0.fraction) })
+        #expect(updates.compactMap(\.fraction).allSatisfy { (0...1).contains($0) })
+    }
+
+    @Test("Cancelling a session scan stops the synchronous scanner cooperatively")
+    func sessionScanCancellationIsForwarded() async throws {
+        let fixture = try V2FixtureLibrary.make()
+        defer { fixture.remove() }
+        for index in 0..<256 {
+            let file = fixture.root.appendingPathComponent("Cancellation/f\(index).fit")
+            try FileManager.default.createDirectory(
+                at: file.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("x".utf8).write(to: file)
+        }
+        let session = try await LibrarySession.open(
+            rootURL: fixture.root,
+            storage: makeStorage(for: fixture)
+        )
+        let blocker = SessionProgressBlocker()
+        let task = Task {
+            try await session.scan(progress: blocker.recordAndBlock)
+        }
+
+        await blocker.waitUntilBlocked()
+        task.cancel()
+        blocker.release()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        #expect(!blocker.values.contains { $0.total != nil })
     }
 
     @Test("A failed scan does not consume a revision")
@@ -279,5 +312,48 @@ private final class ProgressRecorder: @unchecked Sendable {
 
     func record(_ progress: LibraryScanProgress) {
         lock.withLock { stored.append(progress) }
+    }
+}
+
+private final class SessionProgressBlocker: @unchecked Sendable {
+    private let lock = NSLock()
+    private let released = DispatchSemaphore(value: 0)
+    private var didBlock = false
+    private var stored: [LibraryScanProgress] = []
+    private var waitingContinuation: CheckedContinuation<Void, Never>?
+
+    var values: [LibraryScanProgress] {
+        lock.withLock { stored }
+    }
+
+    func recordAndBlock(_ progress: LibraryScanProgress) {
+        let result = lock.withLock { () -> (Bool, CheckedContinuation<Void, Never>?) in
+            stored.append(progress)
+            guard !didBlock, progress.scanned >= 64, progress.total == nil else {
+                return (false, nil)
+            }
+            didBlock = true
+            defer { waitingContinuation = nil }
+            return (true, waitingContinuation)
+        }
+        result.1?.resume()
+        guard result.0 else { return }
+        released.wait()
+    }
+
+    func waitUntilBlocked() async {
+        if lock.withLock({ didBlock }) { return }
+        await withCheckedContinuation { continuation in
+            let resumeImmediately = lock.withLock {
+                if didBlock { return true }
+                waitingContinuation = continuation
+                return false
+            }
+            if resumeImmediately { continuation.resume() }
+        }
+    }
+
+    func release() {
+        released.signal()
     }
 }

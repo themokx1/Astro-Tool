@@ -120,13 +120,13 @@ struct V2OnboardingTests {
         let store = OnboardingStore(
             sessionFactory: .constant(
                 OnboardingSessionClient(accessMode: .readOnly) { progress in
-                    progress(-0.4)
+                    progress(LibraryScanProgress(scanned: -4, total: 100))
                     await firstGate.wait()
-                    progress(0.6)
+                    progress(LibraryScanProgress(scanned: 60, total: 100))
                     await secondGate.wait()
-                    progress(0.2)
+                    progress(LibraryScanProgress(scanned: 20, total: 100))
                     await thirdGate.wait()
-                    progress(1.4)
+                    progress(LibraryScanProgress(scanned: 140, total: 100))
                     await finalGate.wait()
                     return snapshot
                 }
@@ -151,6 +151,110 @@ struct V2OnboardingTests {
         try await task.value
 
         #expect(store.phase.summary == snapshot)
+    }
+
+    @Test("A superseded scan cannot overwrite the newer scan")
+    func staleCompletionCannotClobberNewerScan() async throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let oldRoot = fixture.root
+        let newRoot = fixture.container.appendingPathComponent("NewLibrary", isDirectory: true)
+        try FileManager.default.createDirectory(at: newRoot, withIntermediateDirectories: true)
+        let oldGate = AsyncGate()
+        let newGate = AsyncGate()
+        let oldSnapshot = LibrarySnapshot(
+            libraryID: LibraryIdentity(rootURL: oldRoot),
+            revision: 1,
+            projectCount: 1,
+            nightCount: 1,
+            frameCount: 1
+        )
+        let newSnapshot = LibrarySnapshot(
+            libraryID: LibraryIdentity(rootURL: newRoot),
+            revision: 1,
+            projectCount: 2,
+            nightCount: 2,
+            frameCount: 2
+        )
+        let factory = SequencedSessionFactory([
+            OnboardingSessionClient(accessMode: .readOnly) { _ in
+                await oldGate.wait()
+                return oldSnapshot
+            },
+            OnboardingSessionClient(accessMode: .readOnly) { _ in
+                await newGate.wait()
+                return newSnapshot
+            },
+        ])
+        let store = OnboardingStore(
+            sessionFactory: factory.client,
+            storageFactory: .temporary(
+                applicationSupport: fixture.applicationSupport,
+                caches: fixture.caches
+            ),
+            securityScopedAccess: .inactive
+        )
+
+        let oldTask = Task { try await store.openAndScan(oldRoot) }
+        await oldGate.waitUntilWaiting()
+        let newTask = Task { try await store.openAndScan(newRoot) }
+        await newGate.waitUntilWaiting()
+        await newGate.open()
+        try await newTask.value
+        #expect(store.phase.summary == newSnapshot)
+        #expect(store.selectedRoot == newRoot.standardizedFileURL)
+
+        await oldGate.open()
+        try await oldTask.value
+        #expect(store.phase.summary == newSnapshot)
+        #expect(store.selectedRoot == newRoot.standardizedFileURL)
+    }
+
+    @Test("A late cancellation from an old scan cannot reset the replacement")
+    func staleCancellationCannotResetNewerScan() async throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let newRoot = fixture.container.appendingPathComponent("Replacement", isDirectory: true)
+        try FileManager.default.createDirectory(at: newRoot, withIntermediateDirectories: true)
+        let oldGate = AsyncGate()
+        let replacementGate = AsyncGate()
+        let replacement = LibrarySnapshot(
+            libraryID: LibraryIdentity(rootURL: newRoot),
+            revision: 1,
+            projectCount: 0,
+            nightCount: 0,
+            frameCount: 2
+        )
+        let factory = SequencedSessionFactory([
+            OnboardingSessionClient(accessMode: .readOnly) { _ in
+                await oldGate.wait()
+                throw CancellationError()
+            },
+            OnboardingSessionClient(accessMode: .readOnly) { _ in
+                await replacementGate.wait()
+                return replacement
+            },
+        ])
+        let store = OnboardingStore(
+            sessionFactory: factory.client,
+            storageFactory: .temporary(
+                applicationSupport: fixture.applicationSupport,
+                caches: fixture.caches
+            ),
+            securityScopedAccess: .inactive
+        )
+
+        let oldTask = Task { try await store.openAndScan(fixture.root) }
+        await oldGate.waitUntilWaiting()
+        let replacementTask = Task { try await store.openAndScan(newRoot) }
+        await replacementGate.waitUntilWaiting()
+        await replacementGate.open()
+        try await replacementTask.value
+
+        await oldGate.open()
+        await #expect(throws: CancellationError.self) { try await oldTask.value }
+        #expect(store.phase.summary == replacement)
+        #expect(store.selectedRoot == newRoot.standardizedFileURL)
     }
 
     @Test("A dropped file is rejected with an actionable folder choice")
@@ -270,17 +374,45 @@ private enum TestFailure: Error, Equatable {
 
 private actor AsyncGate {
     private var continuation: CheckedContinuation<Void, Never>?
+    private var waitingContinuation: CheckedContinuation<Void, Never>?
     private var isOpen = false
+    private var isWaiting = false
 
     func wait() async {
+        isWaiting = true
+        waitingContinuation?.resume()
+        waitingContinuation = nil
         if isOpen { return }
         await withCheckedContinuation { continuation = $0 }
+    }
+
+    func waitUntilWaiting() async {
+        if isWaiting { return }
+        await withCheckedContinuation { waitingContinuation = $0 }
     }
 
     func open() {
         isOpen = true
         continuation?.resume()
         continuation = nil
+    }
+}
+
+private final class SequencedSessionFactory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sessions: [OnboardingSessionClient]
+
+    init(_ sessions: [OnboardingSessionClient]) {
+        self.sessions = sessions
+    }
+
+    var client: OnboardingSessionFactory {
+        OnboardingSessionFactory { [self] _, _ in
+            try lock.withLock {
+                guard !sessions.isEmpty else { throw TestFailure.denied }
+                return sessions.removeFirst()
+            }
+        }
     }
 }
 

@@ -1085,9 +1085,18 @@ private struct ScanFixture {
     }
 }
 
-@Test func detailedProgressReportsScannedAndTotalForEveryFile() throws {
+@Test func detailedProgressUsesOnePassAndBoundedCallbacks() throws {
     let fixture = try ScanFixture.make()
     defer { fixture.cleanup() }
+
+    for i in 0..<2_048 {
+        let url = fixture.root.appendingPathComponent("stacks/Progress/f\(i).fit")
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("x".utf8).write(to: url)
+    }
 
     final class ProgressBox: @unchecked Sendable {
         private let lock = NSLock()
@@ -1110,8 +1119,44 @@ private struct ScanFixture {
     let first = try #require(values.first)
     let last = try #require(values.last)
     #expect(first.scanned == 0)
-    #expect(first.total > 0)
-    #expect(last.scanned == last.total)
+    #expect(first.total == nil)
+    #expect(values.dropLast().allSatisfy { $0.total == nil })
+    #expect(last.scanned == last.total!)
     #expect(last.fraction == 1)
-    #expect(values.map(\.scanned) == Array(0...last.total))
+    #expect(values.count <= (last.scanned / 64) + 3)
+    #expect(values.dropFirst().dropLast().allSatisfy { $0.scanned % 64 == 0 })
+}
+
+@Test func detailedScanCooperativelyCancelsBeforeProcessingAllFiles() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 0..<512 {
+        let url = fixture.root.appendingPathComponent("stacks/Cancellation/f\(i).fit")
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("x".utf8).write(to: url)
+    }
+
+    final class CancellationCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var checks = 0
+
+        func shouldCancel() -> Bool {
+            lock.withLock {
+                checks += 1
+                return checks > 90
+            }
+        }
+    }
+    let cancellation = CancellationCounter()
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+
+    #expect(throws: CancellationError.self) {
+        _ = try scanner.scan(shouldCancel: cancellation.shouldCancel)
+    }
+
+    #expect(try fixture.db.allFiles(includeMissing: false).count < 512)
 }

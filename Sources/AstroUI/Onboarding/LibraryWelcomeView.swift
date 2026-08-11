@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 
 public enum OnboardingPhase: Equatable, Sendable {
     case chooseLibrary
-    case scanning(progress: Double?)
+    case scanning(progress: LibraryScanProgress?)
     case summary(LibrarySnapshot)
     case accessProblem(String)
 
@@ -26,6 +26,11 @@ public enum OnboardingPhase: Equatable, Sendable {
     }
 
     public var progress: Double? {
+        if case .scanning(let progress) = self { return progress?.fraction }
+        return nil
+    }
+
+    public var scanProgress: LibraryScanProgress? {
         if case .scanning(let progress) = self { return progress }
         return nil
     }
@@ -39,7 +44,7 @@ public enum OnboardingCompletionChoice: Equatable, Sendable {
 public struct OnboardingSessionClient: Sendable {
     public let accessMode: LibraryAccessMode
     private let scanOperation: @Sendable (
-        @escaping @Sendable (Double) -> Void
+        @escaping @Sendable (LibraryScanProgress) -> Void
     ) async throws -> LibrarySnapshot
 
     public init(
@@ -53,7 +58,7 @@ public struct OnboardingSessionClient: Sendable {
     public init(
         accessMode: LibraryAccessMode,
         scan: @escaping @Sendable (
-            @escaping @Sendable (Double) -> Void
+            @escaping @Sendable (LibraryScanProgress) -> Void
         ) async throws -> LibrarySnapshot
     ) {
         self.accessMode = accessMode
@@ -61,7 +66,7 @@ public struct OnboardingSessionClient: Sendable {
     }
 
     public func scan(
-        progress: @escaping @Sendable (Double) -> Void
+        progress: @escaping @Sendable (LibraryScanProgress) -> Void
     ) async throws -> LibrarySnapshot {
         try await scanOperation(progress)
     }
@@ -90,7 +95,7 @@ public struct OnboardingSessionFactory: Sendable {
             accessMode: await session.accessMode,
             scan: { progress in
                 try await session.scan { update in
-                    progress(update.fraction)
+                    progress(update)
                 }
             }
         )
@@ -166,6 +171,7 @@ public final class OnboardingStore {
     private let sessionFactory: OnboardingSessionFactory
     private let storageFactory: OnboardingStorageFactory
     private let securityScopedAccess: SecurityScopedAccess
+    private var activeOperationID: UUID?
 
     public init(
         sessionFactory: OnboardingSessionFactory = .production,
@@ -179,10 +185,13 @@ public final class OnboardingStore {
         selectedRoot = nil
         indexDatabaseURL = nil
         completionChoice = nil
+        activeOperationID = nil
     }
 
     public func openAndScan(_ rootURL: URL) async throws {
+        let operationID = UUID()
         let root = rootURL.standardizedFileURL
+        activeOperationID = operationID
         selectedRoot = root
         completionChoice = nil
         phase = .scanning(progress: nil)
@@ -200,29 +209,53 @@ public final class OnboardingStore {
                 throw OnboardingStoreError.notDirectory
             }
             let storage = try storageFactory(root: root)
+            guard isActive(operationID) else { return }
             indexDatabaseURL = storage.indexDatabase
             let session = try await sessionFactory(root: root, storage: storage)
+            guard isActive(operationID) else { return }
             guard session.accessMode == .readOnly else {
                 throw OnboardingStoreError.mutationAccessUnsupported
             }
-            let snapshot = try await session.scan(progress: { [weak self] progress in
-                Task { @MainActor [weak self] in
-                    self?.receiveProgress(progress)
+            let progressBuffer = LatestOnboardingProgress()
+            let progressPoller = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    if let progress = progressBuffer.take() {
+                        self?.receiveProgress(progress, operationID: operationID)
+                    }
+                    try? await Task.sleep(for: .milliseconds(50))
                 }
+            }
+            defer { progressPoller.cancel() }
+            let snapshot = try await session.scan(progress: { progress in
+                progressBuffer.store(progress)
             })
             try Task.checkCancellation()
-            await Task.yield()
+            if let progress = progressBuffer.take() {
+                receiveProgress(progress, operationID: operationID)
+            }
+            guard isActive(operationID) else { return }
             phase = .summary(snapshot)
         } catch is CancellationError {
-            resetToLibraryChoice()
+            if isActive(operationID) {
+                activeOperationID = nil
+                resetToLibraryChoice()
+            }
             throw CancellationError()
         } catch {
-            phase = .accessProblem(Self.actionableMessage(for: error))
+            if isActive(operationID) {
+                phase = .accessProblem(Self.actionableMessage(for: error))
+            }
             throw error
         }
     }
 
     public func returnToLibraryChoice() {
+        activeOperationID = nil
+        resetToLibraryChoice()
+    }
+
+    public func cancelActiveScan() {
+        activeOperationID = nil
         resetToLibraryChoice()
     }
 
@@ -241,10 +274,25 @@ public final class OnboardingStore {
         completionChoice = nil
     }
 
-    private func receiveProgress(_ progress: Double) {
-        guard case .scanning(let current) = phase else { return }
-        let clamped = min(max(progress, 0), 1)
-        phase = .scanning(progress: max(current ?? 0, clamped))
+    private func isActive(_ operationID: UUID) -> Bool {
+        activeOperationID == operationID
+    }
+
+    private func receiveProgress(
+        _ progress: LibraryScanProgress,
+        operationID: UUID
+    ) {
+        guard isActive(operationID), case .scanning(let current) = phase else { return }
+        if let current {
+            guard progress.scanned >= current.scanned else { return }
+            if current.total != nil, progress.total == nil { return }
+            if let currentFraction = current.fraction,
+               let nextFraction = progress.fraction,
+               nextFraction < currentFraction {
+                return
+            }
+        }
+        phase = .scanning(progress: progress)
     }
 
     private static func isDirectory(_ url: URL) -> Bool {
@@ -271,6 +319,7 @@ public struct LibraryWelcomeView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var isChoosingLibrary = false
     @State private var scanTask: Task<Void, Never>?
+    @State private var scanOperationID: UUID?
     @State private var isDropTargeted = false
 
     public init(
@@ -321,8 +370,7 @@ public struct LibraryWelcomeView: View {
             beginScan(root)
         }
         .onDisappear {
-            scanTask?.cancel()
-            scanTask = nil
+            cancelScan()
         }
     }
 
@@ -420,8 +468,11 @@ public struct LibraryWelcomeView: View {
     }
 
     private func beginScan(_ root: URL) {
-        scanTask?.cancel()
+        cancelScan()
+        let operationID = UUID()
+        scanOperationID = operationID
         scanTask = Task {
+            defer { finishScanTask(operationID) }
             do {
                 try await store.openAndScan(root)
             } catch is CancellationError {
@@ -433,7 +484,32 @@ public struct LibraryWelcomeView: View {
     }
 
     private func cancelScan() {
-        scanTask?.cancel()
+        scanOperationID = nil
+        store.cancelActiveScan()
+        let task = scanTask
         scanTask = nil
+        task?.cancel()
+    }
+
+    private func finishScanTask(_ operationID: UUID) {
+        guard scanOperationID == operationID else { return }
+        scanOperationID = nil
+        scanTask = nil
+    }
+}
+
+private final class LatestOnboardingProgress: @unchecked Sendable {
+    private let lock = NSLock()
+    private var latest: LibraryScanProgress?
+
+    func store(_ progress: LibraryScanProgress) {
+        lock.withLock { latest = progress }
+    }
+
+    func take() -> LibraryScanProgress? {
+        lock.withLock {
+            defer { latest = nil }
+            return latest
+        }
     }
 }

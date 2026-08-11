@@ -1,14 +1,15 @@
+import AstroApplication
 import SwiftUI
 
 @MainActor
 public struct FirstScanView: View {
     private let libraryName: String
-    private let progress: Double?
+    private let progress: LibraryScanProgress?
     private let cancel: () -> Void
 
     public init(
         libraryName: String,
-        progress: Double?,
+        progress: LibraryScanProgress?,
         cancel: @escaping () -> Void
     ) {
         self.libraryName = libraryName
@@ -18,17 +19,24 @@ public struct FirstScanView: View {
 
     public var body: some View {
         VStack(spacing: AstroTokens.Spacing.spacious) {
-            if let progress {
+            if let fraction = progress?.fraction {
                 VStack(spacing: AstroTokens.Spacing.compact) {
-                    ProgressView(value: progress, total: 1)
+                    ProgressView(value: fraction, total: 1)
                         .frame(maxWidth: 360)
-                    Text(progress, format: .percent.precision(.fractionLength(0)))
+                    Text(fraction, format: .percent.precision(.fractionLength(0)))
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
             } else {
-                ProgressView()
-                    .controlSize(.large)
+                VStack(spacing: AstroTokens.Spacing.compact) {
+                    ProgressView()
+                        .controlSize(.large)
+                    if let progress {
+                        Text("\(progress.scanned) files scanned")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             VStack(spacing: AstroTokens.Spacing.compact) {
