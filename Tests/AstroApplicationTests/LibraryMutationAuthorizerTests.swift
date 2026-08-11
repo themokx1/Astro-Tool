@@ -181,7 +181,8 @@ struct LibraryMutationAuthorizerTests {
         #expect(fixture.exists("b.fit"))
         #expect(!fixture.exists("Archive/a.fit"))
         #expect(!fixture.exists("Archive/b.fit"))
-        #expect((try FileManager.default.contentsOfDirectory(atPath: fixture.journal.path)).isEmpty)
+        #expect(try fixture.journalNames().contains { $0.hasSuffix(".aborted.json") })
+        #expect(try !fixture.journalNames().contains { $0.hasSuffix(".receipt.json") })
     }
 
     @Test("Successful moves are deterministic, journaled externally, and plans are single-use")
@@ -198,9 +199,10 @@ struct LibraryMutationAuthorizerTests {
         #expect(fixture.exists("Archive/a.fit"))
         #expect(fixture.exists("Archive/b.fit"))
         #expect(!fixture.journal.path.hasPrefix(fixture.root.path + "/"))
-        let journalFiles = try FileManager.default.contentsOfDirectory(at: fixture.journal, includingPropertiesForKeys: nil)
-        #expect(journalFiles.count == 1)
-        #expect(try JSONDecoder().decode(MutationReceipt.self, from: Data(contentsOf: journalFiles[0])) == receipt)
+        let receiptFiles = try FileManager.default.contentsOfDirectory(at: fixture.journal, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasSuffix(".receipt.json") }
+        #expect(receiptFiles.count == 1)
+        #expect(try JSONDecoder().decode(MutationReceipt.self, from: Data(contentsOf: receiptFiles[0])) == receipt)
 
         await #expect(throws: LibraryMutationError.planAlreadyUsed) {
             try await fixture.authorizer.apply(planID: plan.id, confirmation: plan.confirmationToken)
@@ -253,6 +255,114 @@ struct LibraryMutationAuthorizerTests {
         }
         #expect(try Data(contentsOf: displacedArchive.appendingPathComponent("a.fit")) == Data("alpha".utf8))
     }
+
+    @Test("A durable pending record exists before the first library move")
+    func writesAheadBeforeMoving() async throws {
+        let observedPending = LockedFlag()
+        let fixture = try MutationFixture.make(
+            mode: .mutationEnabled,
+            beforeMoveAction: { root, journal, index in
+                guard index == 0 else { return }
+                let names = try FileManager.default.contentsOfDirectory(atPath: journal.path)
+                observedPending.set(names.contains { $0.hasSuffix(".pending.json") })
+                #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("a.fit").path))
+            }
+        )
+        defer { fixture.remove() }
+        let plan = try fixture.plan([("a.fit", "Archive/a.fit")])
+        try await fixture.authorizer.register(plan)
+
+        _ = try await fixture.authorizer.apply(planID: plan.id, confirmation: plan.confirmationToken)
+
+        #expect(observedPending.value)
+        #expect(try fixture.journalNames().contains { $0.hasSuffix(".progress-000001.json") })
+        #expect(try fixture.journalNames().contains { $0.hasSuffix(".receipt.json") })
+        #expect(try fixture.journalNames().allSatisfy { !$0.hasPrefix(".tmp-") })
+    }
+
+    @Test("A final receipt is never exposed when atomic publication is interrupted")
+    func interruptedReceiptPublicationLeavesNoTruncatedFinal() async throws {
+        let fixture = try MutationFixture.make(
+            mode: .mutationEnabled,
+            journalAction: { stage in
+                if case let .temporarySynced(name) = stage, name.hasSuffix(".receipt.json") {
+                    throw MutationFixture.InjectedFailure()
+                }
+            }
+        )
+        defer { fixture.remove() }
+        let plan = try fixture.plan([("a.fit", "Archive/a.fit")])
+        try await fixture.authorizer.register(plan)
+
+        await #expect(throws: LibraryMutationError.journalWriteFailed) {
+            try await fixture.authorizer.apply(planID: plan.id, confirmation: plan.confirmationToken)
+        }
+
+        #expect(fixture.exists("a.fit"))
+        #expect(!fixture.exists("Archive/a.fit"))
+        #expect(try !fixture.journalNames().contains { $0.hasSuffix(".receipt.json") })
+        #expect(try fixture.journalNames().allSatisfy { !$0.hasPrefix(".tmp-") })
+    }
+
+    @Test("Completed receipts and rolled-back state survive authorizer restarts")
+    func receiptAndRollbackStateSurviveRestart() async throws {
+        let fixture = try MutationFixture.make(mode: .mutationEnabled)
+        defer { fixture.remove() }
+        let plan = try fixture.plan([("a.fit", "Archive/a.fit")])
+        try await fixture.authorizer.register(plan)
+        let receipt = try await fixture.authorizer.apply(planID: plan.id, confirmation: plan.confirmationToken)
+
+        let restarted = try fixture.restartedAuthorizer()
+        try await restarted.rollback(receiptID: receipt.id)
+        #expect(fixture.exists("a.fit"))
+
+        let restartedAgain = try fixture.restartedAuthorizer()
+        await #expect(throws: LibraryMutationError.receiptAlreadyRolledBack) {
+            try await restartedAgain.rollback(receiptID: receipt.id)
+        }
+    }
+
+    @Test("Repeated destination-parent preflight failures do not leak descriptors")
+    func failedPreflightClosesEveryDescriptor() async throws {
+        let fixture = try MutationFixture.make(mode: .mutationEnabled)
+        defer { fixture.remove() }
+        let plan = try fixture.plan([("a.fit", "Archive/a.fit")])
+        try await fixture.authorizer.register(plan)
+        try FileManager.default.removeItem(at: fixture.url("Archive"))
+        let before = try descriptorCount()
+
+        for _ in 0..<128 {
+            await #expect(throws: LibraryMutationError.unsafeDestination) {
+                try await fixture.authorizer.apply(planID: plan.id, confirmation: plan.confirmationToken)
+            }
+        }
+
+        #expect(try descriptorCount() <= before + 2)
+    }
+
+    @Test("Failed post-rename compensation is durable and reports partial rollback failure")
+    func postRenameCompensationFailureRemainsRecoverable() async throws {
+        let fixture = try MutationFixture.make(
+            mode: .mutationEnabled,
+            afterRenameAction: { root, index in
+                guard index == 0 else { return }
+                try Data("collision".utf8).write(to: root.appendingPathComponent("a.fit"))
+                throw MutationFixture.InjectedFailure()
+            }
+        )
+        defer { fixture.remove() }
+        let plan = try fixture.plan([("a.fit", "Archive/a.fit")])
+        try await fixture.authorizer.register(plan)
+
+        await #expect(throws: LibraryMutationError.partialRollbackFailed) {
+            try await fixture.authorizer.apply(planID: plan.id, confirmation: plan.confirmationToken)
+        }
+
+        #expect(try Data(contentsOf: fixture.url("a.fit")) == Data("collision".utf8))
+        #expect(try Data(contentsOf: fixture.url("Archive/a.fit")) == Data("alpha".utf8))
+        #expect(try fixture.journalNames().contains { $0.hasSuffix(".progress-000001.json") })
+        #expect(try !fixture.journalNames().contains { $0.hasSuffix(".aborted.json") })
+    }
 }
 
 private struct MutationFixture {
@@ -268,7 +378,10 @@ private struct MutationFixture {
     static func make(
         mode: LibraryAccessMode = .readOnly,
         revision: UInt64 = 1,
-        failBeforeMove: Int? = nil
+        failBeforeMove: Int? = nil,
+        beforeMoveAction: (@Sendable (URL, URL, Int) throws -> Void)? = nil,
+        afterRenameAction: (@Sendable (URL, Int) throws -> Void)? = nil,
+        journalAction: (@Sendable (LibraryMutationJournalStage) throws -> Void)? = nil
     ) throws -> Self {
         let container = FileManager.default.temporaryDirectory
             .appendingPathComponent("AstroMutationTests-\(UUID().uuidString)", isDirectory: true)
@@ -287,7 +400,10 @@ private struct MutationFixture {
             journalDirectory: journal,
             beforeMove: { index in
                 if index == failBeforeMove { throw InjectedFailure() }
-            }
+                try beforeMoveAction?(root, journal, index)
+            },
+            afterRename: { index in try afterRenameAction?(root, index) },
+            journalStage: { stage in try journalAction?(stage) }
         )
         return Self(
             container: container,
@@ -330,6 +446,20 @@ private struct MutationFixture {
     func remove() {
         try? FileManager.default.removeItem(at: container)
     }
+
+    func restartedAuthorizer() throws -> LibraryMutationAuthorizer {
+        try LibraryMutationAuthorizer(
+            root: root,
+            identity: identity,
+            currentRevision: revision,
+            accessMode: .mutationEnabled,
+            journalDirectory: journal
+        )
+    }
+
+    func journalNames() throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: journal.path).sorted()
+    }
 }
 
 private extension LibraryMutationPlan {
@@ -351,4 +481,25 @@ private extension LibraryMutationPlan {
 
 private func sha256(_ data: Data) -> String {
     SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}
+
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = false
+
+    var value: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func set(_ value: Bool) {
+        lock.lock()
+        storage = value
+        lock.unlock()
+    }
+}
+
+private func descriptorCount() throws -> Int {
+    try FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count
 }

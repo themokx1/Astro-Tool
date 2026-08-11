@@ -7,6 +7,8 @@ public enum LibraryMutationError: Error, Equatable, Sendable {
     case staleLibraryIdentity
     case invalidJournalDirectory
     case journalInsideLibrary
+    case invalidJournalRecord
+    case incompleteTransaction
     case readOnly
     case libraryIdentityMismatch
     case staleRevision
@@ -26,6 +28,11 @@ public enum LibraryMutationError: Error, Equatable, Sendable {
     case unknownReceipt
     case rollbackCollision
     case receiptAlreadyRolledBack
+}
+
+enum LibraryMutationJournalStage: Equatable, Sendable {
+    case temporarySynced(String)
+    case published(String)
 }
 
 public actor LibraryMutationAuthorizer {
@@ -56,6 +63,7 @@ public actor LibraryMutationAuthorizer {
 
     private struct PreparedMove {
         let entry: LibraryMutationPlan.Entry
+        let sourceDescriptor: Int32
         let sourceParent: Int32
         let sourceName: String
         let destinationParent: Int32
@@ -63,9 +71,22 @@ public actor LibraryMutationAuthorizer {
         let sourceState: FileState
 
         func close() {
+            Darwin.close(sourceDescriptor)
             Darwin.close(sourceParent)
             Darwin.close(destinationParent)
         }
+    }
+
+    private struct JournalTransaction: Codable {
+        let version: Int
+        let receipt: MutationReceipt
+        let completedEntryCount: Int
+    }
+
+    private struct LoadedJournal {
+        var receipts: [UUID: MutationReceipt] = [:]
+        var usedPlans: Set<UUID> = []
+        var rolledBackReceipts: Set<UUID> = []
     }
 
     private let root: URL
@@ -78,11 +99,13 @@ public actor LibraryMutationAuthorizer {
     private let rootState: FileState
     private let journalState: FileState
     private let beforeMove: @Sendable (Int) throws -> Void
+    private let afterRename: @Sendable (Int) throws -> Void
+    private let journalStage: @Sendable (LibraryMutationJournalStage) throws -> Void
 
     private var plans: [UUID: LibraryMutationPlan] = [:]
-    private var usedPlans: Set<UUID> = []
-    private var receipts: [UUID: MutationReceipt] = [:]
-    private var rolledBackReceipts: Set<UUID> = []
+    private var usedPlans: Set<UUID>
+    private var receipts: [UUID: MutationReceipt]
+    private var rolledBackReceipts: Set<UUID>
 
     public init(
         root: URL,
@@ -97,7 +120,9 @@ public actor LibraryMutationAuthorizer {
             currentRevision: currentRevision,
             accessMode: accessMode,
             journalDirectory: journalDirectory,
-            beforeMove: { _ in }
+            beforeMove: { _ in },
+            afterRename: { _ in },
+            journalStage: { _ in }
         )
     }
 
@@ -107,7 +132,9 @@ public actor LibraryMutationAuthorizer {
         currentRevision: UInt64,
         accessMode: LibraryAccessMode,
         journalDirectory: URL,
-        beforeMove: @escaping @Sendable (Int) throws -> Void
+        beforeMove: @escaping @Sendable (Int) throws -> Void,
+        afterRename: @escaping @Sendable (Int) throws -> Void,
+        journalStage: @escaping @Sendable (LibraryMutationJournalStage) throws -> Void
     ) throws {
         let root = root.standardizedFileURL
         guard
@@ -159,6 +186,19 @@ public actor LibraryMutationAuthorizer {
             throw LibraryMutationError.invalidJournalDirectory
         }
 
+        let loaded: LoadedJournal
+        do {
+            loaded = try Self.loadJournal(
+                descriptor: journalDescriptor,
+                identity: identity,
+                revision: currentRevision
+            )
+        } catch {
+            Darwin.close(rootDescriptor)
+            Darwin.close(journalDescriptor)
+            throw error
+        }
+
         self.root = root
         self.identity = identity
         self.currentRevision = currentRevision
@@ -169,6 +209,11 @@ public actor LibraryMutationAuthorizer {
         self.rootState = rootPathState
         self.journalState = journalPathState
         self.beforeMove = beforeMove
+        self.afterRename = afterRename
+        self.journalStage = journalStage
+        self.receipts = loaded.receipts
+        self.usedPlans = loaded.usedPlans
+        self.rolledBackReceipts = loaded.rolledBackReceipts
     }
 
     deinit {
@@ -177,12 +222,8 @@ public actor LibraryMutationAuthorizer {
     }
 
     public func register(_ plan: LibraryMutationPlan) throws {
-        guard plan.libraryID == identity else {
-            throw LibraryMutationError.libraryIdentityMismatch
-        }
-        guard plan.revision == currentRevision else {
-            throw LibraryMutationError.staleRevision
-        }
+        guard plan.libraryID == identity else { throw LibraryMutationError.libraryIdentityMismatch }
+        guard plan.revision == currentRevision else { throw LibraryMutationError.staleRevision }
         guard plans[plan.id] == nil, !usedPlans.contains(plan.id) else {
             throw LibraryMutationError.planAlreadyRegistered
         }
@@ -197,9 +238,7 @@ public actor LibraryMutationAuthorizer {
         }
 
         for entry in plan.entries {
-            guard Self.isSHA256(entry.fingerprint) else {
-                throw LibraryMutationError.invalidPlan
-            }
+            guard Self.isSHA256(entry.fingerprint) else { throw LibraryMutationError.invalidPlan }
             let sourceComponents = try relativeComponents(
                 for: entry.source,
                 outsideError: .sourceOutsideLibrary
@@ -223,78 +262,70 @@ public actor LibraryMutationAuthorizer {
     }
 
     public func apply(planID: UUID, confirmation: String) async throws -> MutationReceipt {
-        guard accessMode == .mutationEnabled else {
-            throw LibraryMutationError.readOnly
-        }
-        guard !usedPlans.contains(planID) else {
-            throw LibraryMutationError.planAlreadyUsed
-        }
-        guard let plan = plans[planID] else {
-            throw LibraryMutationError.unknownPlan
-        }
+        guard accessMode == .mutationEnabled else { throw LibraryMutationError.readOnly }
+        guard !usedPlans.contains(planID) else { throw LibraryMutationError.planAlreadyUsed }
+        guard let plan = plans[planID] else { throw LibraryMutationError.unknownPlan }
         guard confirmation == plan.confirmationToken else {
             throw LibraryMutationError.invalidConfirmation
         }
-        guard plan.libraryID == identity else {
-            throw LibraryMutationError.libraryIdentityMismatch
-        }
-        guard plan.revision == currentRevision else {
-            throw LibraryMutationError.staleRevision
-        }
+        guard plan.libraryID == identity else { throw LibraryMutationError.libraryIdentityMismatch }
+        guard plan.revision == currentRevision else { throw LibraryMutationError.staleRevision }
         try validatePinnedRoots()
 
         let prepared = try prepare(plan.entries, rollback: false, expectedTotalBytes: plan.totalBytes)
         defer { prepared.forEach { $0.close() } }
+        let receipt = MutationReceipt(
+            planID: plan.id,
+            libraryID: plan.libraryID,
+            revision: plan.revision,
+            entries: prepared.map(\.entry),
+            totalBytes: plan.totalBytes
+        )
+        try publishTransaction(receipt, completedEntryCount: 0, suffix: "pending")
+
         var completed: [PreparedMove] = []
         do {
             for (index, move) in prepared.enumerated() {
                 try beforeMove(index)
-                try perform(move)
+                try performRename(move)
                 completed.append(move)
+                try publishTransaction(
+                    receipt,
+                    completedEntryCount: completed.count,
+                    suffix: String(format: "progress-%06d", completed.count)
+                )
+                try afterRename(index)
+                guard Self.fileState(name: move.destinationName, relativeTo: move.destinationParent) == move.sourceState else {
+                    throw LibraryMutationError.stalePlan
+                }
             }
-            let receipt = MutationReceipt(
-                planID: plan.id,
-                libraryID: plan.libraryID,
-                revision: plan.revision,
-                entries: prepared.map(\.entry),
-                totalBytes: plan.totalBytes
-            )
-            do {
-                try writeReceipt(receipt)
-            } catch {
-                throw LibraryMutationError.journalWriteFailed
-            }
+            try publish(receipt, filename: filename(for: receipt.id, suffix: "receipt"))
             receipts[receipt.id] = receipt
             usedPlans.insert(plan.id)
             return receipt
         } catch {
-            if !completed.isEmpty {
-                do {
-                    try restore(completed)
-                } catch {
-                    throw LibraryMutationError.partialRollbackFailed
-                }
+            do {
+                try restore(completed)
+            } catch {
+                throw LibraryMutationError.partialRollbackFailed
+            }
+            do {
+                try publishTransaction(receipt, completedEntryCount: 0, suffix: "aborted")
+            } catch {
+                throw LibraryMutationError.journalWriteFailed
             }
             throw error
         }
     }
 
     public func rollback(receiptID: UUID) async throws {
-        guard accessMode == .mutationEnabled else {
-            throw LibraryMutationError.readOnly
-        }
+        guard accessMode == .mutationEnabled else { throw LibraryMutationError.readOnly }
         guard !rolledBackReceipts.contains(receiptID) else {
             throw LibraryMutationError.receiptAlreadyRolledBack
         }
-        guard let receipt = receipts[receiptID] else {
-            throw LibraryMutationError.unknownReceipt
-        }
-        guard receipt.libraryID == identity else {
-            throw LibraryMutationError.libraryIdentityMismatch
-        }
-        guard receipt.revision == currentRevision else {
-            throw LibraryMutationError.staleRevision
-        }
+        guard let receipt = receipts[receiptID] else { throw LibraryMutationError.unknownReceipt }
+        guard receipt.libraryID == identity else { throw LibraryMutationError.libraryIdentityMismatch }
+        guard receipt.revision == currentRevision else { throw LibraryMutationError.staleRevision }
         try validatePinnedRoots()
 
         let reverseEntries = receipt.entries.reversed().map {
@@ -311,21 +342,37 @@ public actor LibraryMutationAuthorizer {
             throw LibraryMutationError.rollbackCollision
         }
         defer { prepared.forEach { $0.close() } }
+        try publishTransaction(receipt, completedEntryCount: 0, suffix: "rollback-pending")
 
         var completed: [PreparedMove] = []
         do {
             for move in prepared {
-                try perform(move)
+                try performRename(move)
                 completed.append(move)
+                try publishTransaction(
+                    receipt,
+                    completedEntryCount: completed.count,
+                    suffix: String(format: "rollback-progress-%06d", completed.count)
+                )
+                guard Self.fileState(name: move.destinationName, relativeTo: move.destinationParent) == move.sourceState else {
+                    throw LibraryMutationError.stalePlan
+                }
             }
+            try publish(receipt, filename: filename(for: receipt.id, suffix: "rolledback"))
             rolledBackReceipts.insert(receiptID)
         } catch {
-            if !completed.isEmpty {
-                do {
-                    try restore(completed)
-                } catch {
-                    throw LibraryMutationError.partialRollbackFailed
-                }
+            do {
+                try restore(completed)
+            } catch {
+                throw LibraryMutationError.partialRollbackFailed
+            }
+            do {
+                try publishTransaction(receipt, completedEntryCount: 0, suffix: "rollback-aborted")
+            } catch {
+                throw LibraryMutationError.journalWriteFailed
+            }
+            if error as? LibraryMutationError == .collision {
+                throw LibraryMutationError.rollbackCollision
             }
             throw error
         }
@@ -337,9 +384,8 @@ public actor LibraryMutationAuthorizer {
         expectedTotalBytes: Int64
     ) throws -> [PreparedMove] {
         let sorted = rollback ? entries : entries.sorted {
-            let left = ($0.source.standardizedFileURL.path, $0.destination.standardizedFileURL.path)
-            let right = ($1.source.standardizedFileURL.path, $1.destination.standardizedFileURL.path)
-            return left < right
+            ($0.source.standardizedFileURL.path, $0.destination.standardizedFileURL.path)
+                < ($1.source.standardizedFileURL.path, $1.destination.standardizedFileURL.path)
         }
         var prepared: [PreparedMove] = []
         var totalBytes: Int64 = 0
@@ -355,28 +401,55 @@ public actor LibraryMutationAuthorizer {
                     outsideError: rollback ? .unsafeDestination : .destinationOutsideLibrary
                 )
                 let openedSource = try openSource(components: sourceComponents)
-                defer { Darwin.close(openedSource.descriptor) }
-                guard try Self.hash(descriptor: openedSource.descriptor, expected: openedSource.state) == entry.fingerprint else {
+                let observedFingerprint: String
+                do {
+                    observedFingerprint = try Self.hash(
+                        descriptor: openedSource.descriptor,
+                        expected: openedSource.state
+                    )
+                } catch {
+                    Darwin.close(openedSource.descriptor)
+                    throw error
+                }
+                guard observedFingerprint == entry.fingerprint else {
+                    Darwin.close(openedSource.descriptor)
                     throw LibraryMutationError.stalePlan
                 }
-                let sourceParent = try openParent(components: sourceComponents, error: .unsafeSource)
-                let destinationParent = try openParent(components: destinationComponents, error: .unsafeDestination)
+
+                let sourceParent: (descriptor: Int32, name: String)
+                do {
+                    sourceParent = try openParent(components: sourceComponents, error: .unsafeSource)
+                } catch {
+                    Darwin.close(openedSource.descriptor)
+                    throw error
+                }
+                let destinationParent: (descriptor: Int32, name: String)
+                do {
+                    destinationParent = try openParent(
+                        components: destinationComponents,
+                        error: .unsafeDestination
+                    )
+                } catch {
+                    Darwin.close(openedSource.descriptor)
+                    Darwin.close(sourceParent.descriptor)
+                    throw error
+                }
+
                 var destinationState = stat()
                 let destinationExists = destinationParent.name.withCString {
                     Darwin.fstatat(destinationParent.descriptor, $0, &destinationState, AT_SYMLINK_NOFOLLOW) == 0
                 }
-                if destinationExists {
+                guard !destinationExists, errno == ENOENT else {
+                    Darwin.close(openedSource.descriptor)
                     Darwin.close(sourceParent.descriptor)
                     Darwin.close(destinationParent.descriptor)
-                    throw LibraryMutationError.collision
-                }
-                guard errno == ENOENT else {
-                    Darwin.close(sourceParent.descriptor)
-                    Darwin.close(destinationParent.descriptor)
+                    if destinationExists { throw LibraryMutationError.collision }
                     throw LibraryMutationError.unsafeDestination
                 }
+
                 prepared.append(PreparedMove(
                     entry: entry,
+                    sourceDescriptor: openedSource.descriptor,
                     sourceParent: sourceParent.descriptor,
                     sourceName: sourceParent.name,
                     destinationParent: destinationParent.descriptor,
@@ -384,14 +457,10 @@ public actor LibraryMutationAuthorizer {
                     sourceState: openedSource.state
                 ))
                 let addition = totalBytes.addingReportingOverflow(openedSource.state.size)
-                guard !addition.overflow else {
-                    throw LibraryMutationError.invalidPlan
-                }
+                guard !addition.overflow else { throw LibraryMutationError.invalidPlan }
                 totalBytes = addition.partialValue
             }
-            guard totalBytes == expectedTotalBytes else {
-                throw LibraryMutationError.stalePlan
-            }
+            guard totalBytes == expectedTotalBytes else { throw LibraryMutationError.stalePlan }
             return prepared
         } catch {
             prepared.forEach { $0.close() }
@@ -399,8 +468,11 @@ public actor LibraryMutationAuthorizer {
         }
     }
 
-    private func perform(_ move: PreparedMove) throws {
-        guard Self.fileState(name: move.sourceName, relativeTo: move.sourceParent) == move.sourceState else {
+    private func performRename(_ move: PreparedMove) throws {
+        guard
+            Self.fileState(name: move.sourceName, relativeTo: move.sourceParent) == move.sourceState,
+            try Self.hash(descriptor: move.sourceDescriptor, expected: move.sourceState) == move.entry.fingerprint
+        else {
             throw LibraryMutationError.stalePlan
         }
         var destinationState = stat()
@@ -425,20 +497,6 @@ public actor LibraryMutationAuthorizer {
             if errno == EEXIST { throw LibraryMutationError.collision }
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
         }
-        guard Self.fileState(name: move.destinationName, relativeTo: move.destinationParent) == move.sourceState else {
-            _ = move.destinationName.withCString { destinationName in
-                move.sourceName.withCString { sourceName in
-                    Darwin.renameatx_np(
-                        move.destinationParent,
-                        destinationName,
-                        move.sourceParent,
-                        sourceName,
-                        UInt32(RENAME_EXCL)
-                    )
-                }
-            }
-            throw LibraryMutationError.stalePlan
-        }
     }
 
     private func restore(_ completed: [PreparedMove]) throws {
@@ -454,50 +512,73 @@ public actor LibraryMutationAuthorizer {
                     )
                 }
             }
-            guard result == 0 else {
-                throw LibraryMutationError.partialRollbackFailed
-            }
+            guard result == 0 else { throw LibraryMutationError.partialRollbackFailed }
         }
     }
 
-    private func writeReceipt(_ receipt: MutationReceipt) throws {
-        try validatePinnedRoots()
-        let filename = "\(receipt.id.uuidString.lowercased()).json"
-        let descriptor = filename.withCString {
-            Darwin.openat(
-                journalDescriptor,
-                $0,
-                O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
-                mode_t(S_IRUSR | S_IWUSR)
-            )
-        }
-        guard descriptor >= 0 else {
+    private func publishTransaction(
+        _ receipt: MutationReceipt,
+        completedEntryCount: Int,
+        suffix: String
+    ) throws {
+        try publish(
+            JournalTransaction(version: 1, receipt: receipt, completedEntryCount: completedEntryCount),
+            filename: filename(for: receipt.id, suffix: suffix)
+        )
+    }
+
+    private func filename(for id: UUID, suffix: String) -> String {
+        "\(id.uuidString.lowercased()).\(suffix).json"
+    }
+
+    private func publish<Value: Encodable>(_ value: Value, filename: String) throws {
+        do {
+            try validatePinnedRoots()
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let data = try encoder.encode(value)
+            let temporary = ".tmp-\(UUID().uuidString.lowercased())"
+            let descriptor = temporary.withCString {
+                Darwin.openat(
+                    journalDescriptor,
+                    $0,
+                    O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                    mode_t(S_IRUSR | S_IWUSR)
+                )
+            }
+            guard descriptor >= 0 else { throw LibraryMutationError.journalWriteFailed }
+            var temporaryExists = true
+            defer {
+                Darwin.close(descriptor)
+                if temporaryExists {
+                    _ = temporary.withCString { Darwin.unlinkat(journalDescriptor, $0, 0) }
+                }
+            }
+            try Self.write(data, to: descriptor)
+            guard Darwin.fsync(descriptor) == 0 else {
+                throw LibraryMutationError.journalWriteFailed
+            }
+            try journalStage(.temporarySynced(filename))
+            let renamed = temporary.withCString { temporaryName in
+                filename.withCString { finalName in
+                    Darwin.renameatx_np(
+                        journalDescriptor,
+                        temporaryName,
+                        journalDescriptor,
+                        finalName,
+                        UInt32(RENAME_EXCL)
+                    )
+                }
+            }
+            guard renamed == 0 else { throw LibraryMutationError.journalWriteFailed }
+            temporaryExists = false
+            guard Darwin.fsync(journalDescriptor) == 0 else {
+                throw LibraryMutationError.journalWriteFailed
+            }
+            try journalStage(.published(filename))
+        } catch {
             throw LibraryMutationError.journalWriteFailed
         }
-        var completed = false
-        defer {
-            Darwin.close(descriptor)
-            if !completed {
-                _ = filename.withCString { Darwin.unlinkat(journalDescriptor, $0, 0) }
-            }
-        }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(receipt)
-        try data.withUnsafeBytes { rawBuffer in
-            guard let base = rawBuffer.baseAddress else { return }
-            var offset = 0
-            while offset < rawBuffer.count {
-                let written = Darwin.write(descriptor, base.advanced(by: offset), rawBuffer.count - offset)
-                if written < 0, errno == EINTR { continue }
-                guard written > 0 else { throw LibraryMutationError.journalWriteFailed }
-                offset += written
-            }
-        }
-        guard Darwin.fsync(descriptor) == 0 else {
-            throw LibraryMutationError.journalWriteFailed
-        }
-        completed = true
     }
 
     private func validatePinnedRoots() throws {
@@ -581,6 +662,138 @@ public actor LibraryMutationAuthorizer {
         }
     }
 
+    private static func loadJournal(
+        descriptor: Int32,
+        identity: LibraryIdentity,
+        revision: UInt64
+    ) throws -> LoadedJournal {
+        var loaded = LoadedJournal()
+        var pending: Set<UUID> = []
+        var aborted: Set<UUID> = []
+        var rollbackPending: Set<UUID> = []
+        var rollbackAborted: Set<UUID> = []
+        var rolledBackRecords: [UUID: MutationReceipt] = [:]
+
+        for name in try directoryEntryNames(descriptor: descriptor) where !name.hasPrefix(".tmp-") {
+            if name.hasSuffix(".receipt.json") {
+                let receipt = try decode(MutationReceipt.self, name: name, descriptor: descriptor)
+                try authenticate(receipt, filename: name, identity: identity, revision: revision)
+                loaded.receipts[receipt.id] = receipt
+                loaded.usedPlans.insert(receipt.planID)
+            } else if name.hasSuffix(".rolledback.json") {
+                let receipt = try decode(MutationReceipt.self, name: name, descriptor: descriptor)
+                try authenticate(receipt, filename: name, identity: identity, revision: revision)
+                loaded.rolledBackReceipts.insert(receipt.id)
+                rolledBackRecords[receipt.id] = receipt
+            } else if name.hasSuffix(".json") {
+                let transaction = try decode(JournalTransaction.self, name: name, descriptor: descriptor)
+                guard transaction.version == 1,
+                      (0...transaction.receipt.entries.count).contains(transaction.completedEntryCount)
+                else {
+                    throw LibraryMutationError.invalidJournalRecord
+                }
+                try authenticate(
+                    transaction.receipt,
+                    filename: name,
+                    identity: identity,
+                    revision: revision
+                )
+                if name.hasSuffix(".pending.json") { pending.insert(transaction.receipt.id) }
+                if name.hasSuffix(".aborted.json") { aborted.insert(transaction.receipt.id) }
+                if name.hasSuffix(".rollback-pending.json") { rollbackPending.insert(transaction.receipt.id) }
+                if name.hasSuffix(".rollback-aborted.json") { rollbackAborted.insert(transaction.receipt.id) }
+            }
+        }
+        let completed = Set(loaded.receipts.keys)
+        guard pending.subtracting(completed).subtracting(aborted).isEmpty else {
+            throw LibraryMutationError.incompleteTransaction
+        }
+        guard rollbackPending.subtracting(loaded.rolledBackReceipts).subtracting(rollbackAborted).isEmpty else {
+            throw LibraryMutationError.incompleteTransaction
+        }
+        guard loaded.rolledBackReceipts.isSubset(of: completed) else {
+            throw LibraryMutationError.invalidJournalRecord
+        }
+        for (id, rolledBackReceipt) in rolledBackRecords {
+            guard loaded.receipts[id] == rolledBackReceipt else {
+                throw LibraryMutationError.invalidJournalRecord
+            }
+        }
+        return loaded
+    }
+
+    private static func authenticate(
+        _ receipt: MutationReceipt,
+        filename: String,
+        identity: LibraryIdentity,
+        revision: UInt64
+    ) throws {
+        let expectedPrefix = receipt.id.uuidString.lowercased() + "."
+        guard
+            filename.hasPrefix(expectedPrefix),
+            receipt.libraryID == identity,
+            receipt.revision == revision,
+            !receipt.entries.isEmpty,
+            receipt.totalBytes >= 0,
+            receipt.entries.allSatisfy({ isSHA256($0.fingerprint) })
+        else {
+            throw LibraryMutationError.invalidJournalRecord
+        }
+    }
+
+    private static func decode<Value: Decodable>(
+        _ type: Value.Type,
+        name: String,
+        descriptor: Int32
+    ) throws -> Value {
+        do {
+            return try JSONDecoder().decode(type, from: read(name: name, descriptor: descriptor))
+        } catch let error as LibraryMutationError {
+            throw error
+        } catch {
+            throw LibraryMutationError.invalidJournalRecord
+        }
+    }
+
+    private static func read(name: String, descriptor: Int32) throws -> Data {
+        let file = name.withCString {
+            Darwin.openat(descriptor, $0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard file >= 0 else { throw LibraryMutationError.invalidJournalRecord }
+        defer { Darwin.close(file) }
+        guard let state = fileState(descriptor: file), state.isRegularFile,
+              state.size >= 0, state.size <= 16 * 1_024 * 1_024
+        else {
+            throw LibraryMutationError.invalidJournalRecord
+        }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
+        while true {
+            let count = Darwin.read(file, &buffer, buffer.count)
+            if count == 0 { break }
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else { throw LibraryMutationError.invalidJournalRecord }
+            data.append(buffer, count: count)
+        }
+        guard fileState(descriptor: file) == state else {
+            throw LibraryMutationError.invalidJournalRecord
+        }
+        return data
+    }
+
+    private static func write(_ data: Data, to descriptor: Int32) throws {
+        try data.withUnsafeBytes { rawBuffer in
+            guard let base = rawBuffer.baseAddress else { return }
+            var offset = 0
+            while offset < rawBuffer.count {
+                let written = Darwin.write(descriptor, base.advanced(by: offset), rawBuffer.count - offset)
+                if written < 0, errno == EINTR { continue }
+                guard written > 0 else { throw LibraryMutationError.journalWriteFailed }
+                offset += written
+            }
+        }
+    }
+
     private static func hash(descriptor: Int32, expected: FileState) throws -> String {
         guard Darwin.lseek(descriptor, 0, SEEK_SET) >= 0 else {
             throw LibraryMutationError.stalePlan
@@ -598,6 +811,32 @@ public actor LibraryMutationAuthorizer {
             throw LibraryMutationError.stalePlan
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func directoryEntryNames(descriptor: Int32) throws -> [String] {
+        let duplicate = Darwin.openat(
+            descriptor,
+            ".",
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard duplicate >= 0, let directory = Darwin.fdopendir(duplicate) else {
+            if duplicate >= 0 { Darwin.close(duplicate) }
+            throw LibraryMutationError.invalidJournalDirectory
+        }
+        defer { Darwin.closedir(directory) }
+        var names: [String] = []
+        errno = 0
+        while let entry = Darwin.readdir(directory) {
+            let name = withUnsafePointer(to: entry.pointee.d_name) { pointer in
+                pointer.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) {
+                    String(cString: $0)
+                }
+            }
+            if name != "." && name != ".." { names.append(name) }
+            errno = 0
+        }
+        guard errno == 0 else { throw LibraryMutationError.invalidJournalDirectory }
+        return names.sorted()
     }
 
     private static func openAbsoluteDirectory(_ url: URL) -> Int32 {
