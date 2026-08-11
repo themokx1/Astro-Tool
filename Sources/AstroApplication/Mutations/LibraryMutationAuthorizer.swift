@@ -241,7 +241,6 @@ public actor LibraryMutationAuthorizer {
             loaded = try Self.loadJournal(
                 descriptor: journalDescriptor,
                 identity: identity,
-                revision: currentRevision,
                 root: root,
                 key: key
             )
@@ -839,7 +838,6 @@ public actor LibraryMutationAuthorizer {
     private static func loadJournal(
         descriptor: Int32,
         identity: LibraryIdentity,
-        revision: UInt64,
         root: URL,
         key: Data
     ) throws -> LoadedJournal {
@@ -867,7 +865,6 @@ public actor LibraryMutationAuthorizer {
                 envelope.record,
                 filename: name,
                 identity: identity,
-                revision: revision,
                 root: root
             )
             chains[envelope.record.transactionNonce, default: JournalChain()]
@@ -943,14 +940,12 @@ public actor LibraryMutationAuthorizer {
         _ record: JournalRecord,
         filename: String,
         identity: LibraryIdentity,
-        revision: UInt64,
         root: URL
     ) throws {
         let receipt = record.receipt
         guard
             record.version == 1,
             receipt.libraryID == identity,
-            receipt.revision == revision,
             !receipt.entries.isEmpty,
             receipt.totalBytes >= 0,
             receipt.entries.allSatisfy({ isSHA256($0.fingerprint) }),

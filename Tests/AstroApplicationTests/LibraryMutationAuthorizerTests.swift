@@ -443,6 +443,25 @@ struct LibraryMutationAuthorizerTests {
             _ = try fixture.restartedAuthorizer()
         }
     }
+
+    @Test("Historical receipts load after revision advances but cannot roll back")
+    func historicalReceiptSurvivesRevisionAdvance() async throws {
+        let fixture = try MutationFixture.make(mode: .mutationEnabled, revision: 7)
+        defer { fixture.remove() }
+        let plan = try fixture.plan([("a.fit", "Archive/a.fit")])
+        try await fixture.authorizer.register(plan)
+        let receipt = try await fixture.authorizer.apply(
+            planID: plan.id,
+            confirmation: plan.confirmationToken
+        )
+
+        let nextRevision = try fixture.restartedAuthorizer(revision: 8)
+
+        await #expect(throws: LibraryMutationError.staleRevision) {
+            try await nextRevision.rollback(receiptID: receipt.id)
+        }
+        #expect(fixture.exists("Archive/a.fit"))
+    }
 }
 
 private struct MutationFixture {
@@ -531,11 +550,11 @@ private struct MutationFixture {
         try? FileManager.default.removeItem(at: container)
     }
 
-    func restartedAuthorizer() throws -> LibraryMutationAuthorizer {
+    func restartedAuthorizer(revision: UInt64? = nil) throws -> LibraryMutationAuthorizer {
         try LibraryMutationAuthorizer(
             root: root,
             identity: identity,
-            currentRevision: revision,
+            currentRevision: revision ?? self.revision,
             accessMode: .mutationEnabled,
             journalDirectory: journal
         )
