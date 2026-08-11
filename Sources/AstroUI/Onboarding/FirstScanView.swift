@@ -3,17 +3,33 @@ import SwiftUI
 @MainActor
 public struct FirstScanView: View {
     private let libraryName: String
+    private let progress: Double?
     private let cancel: () -> Void
 
-    public init(libraryName: String, cancel: @escaping () -> Void) {
+    public init(
+        libraryName: String,
+        progress: Double?,
+        cancel: @escaping () -> Void
+    ) {
         self.libraryName = libraryName
+        self.progress = progress
         self.cancel = cancel
     }
 
     public var body: some View {
         VStack(spacing: AstroTokens.Spacing.spacious) {
-            ProgressView()
-                .controlSize(.large)
+            if let progress {
+                VStack(spacing: AstroTokens.Spacing.compact) {
+                    ProgressView(value: progress, total: 1)
+                        .frame(maxWidth: 360)
+                    Text(progress, format: .percent.precision(.fractionLength(0)))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                ProgressView()
+                    .controlSize(.large)
+            }
 
             VStack(spacing: AstroTokens.Spacing.compact) {
                 Text("Reading \(libraryName)")

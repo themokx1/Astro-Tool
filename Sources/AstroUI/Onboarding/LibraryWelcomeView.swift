@@ -24,6 +24,11 @@ public enum OnboardingPhase: Equatable, Sendable {
         if case .accessProblem(let message) = self { return message }
         return nil
     }
+
+    public var progress: Double? {
+        if case .scanning(let progress) = self { return progress }
+        return nil
+    }
 }
 
 public enum OnboardingCompletionChoice: Equatable, Sendable {
@@ -33,18 +38,32 @@ public enum OnboardingCompletionChoice: Equatable, Sendable {
 
 public struct OnboardingSessionClient: Sendable {
     public let accessMode: LibraryAccessMode
-    private let scanOperation: @Sendable () async throws -> LibrarySnapshot
+    private let scanOperation: @Sendable (
+        @escaping @Sendable (Double) -> Void
+    ) async throws -> LibrarySnapshot
 
     public init(
         accessMode: LibraryAccessMode,
         scan: @escaping @Sendable () async throws -> LibrarySnapshot
     ) {
         self.accessMode = accessMode
+        scanOperation = { _ in try await scan() }
+    }
+
+    public init(
+        accessMode: LibraryAccessMode,
+        scan: @escaping @Sendable (
+            @escaping @Sendable (Double) -> Void
+        ) async throws -> LibrarySnapshot
+    ) {
+        self.accessMode = accessMode
         scanOperation = scan
     }
 
-    public func scan() async throws -> LibrarySnapshot {
-        try await scanOperation()
+    public func scan(
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> LibrarySnapshot {
+        try await scanOperation(progress)
     }
 }
 
@@ -69,7 +88,11 @@ public struct OnboardingSessionFactory: Sendable {
         let session = try await LibrarySession.open(rootURL: root, storage: storage)
         return OnboardingSessionClient(
             accessMode: await session.accessMode,
-            scan: { try await session.scan() }
+            scan: { progress in
+                try await session.scan { update in
+                    progress(update.fraction)
+                }
+            }
         )
     }
 }
@@ -126,6 +149,7 @@ public struct SecurityScopedAccess: Sendable {
 
 public enum OnboardingStoreError: Error, Equatable, Sendable {
     case mutationAccessUnsupported
+    case notDirectory
 }
 
 @MainActor
@@ -172,14 +196,22 @@ public final class OnboardingStore {
 
         do {
             try Task.checkCancellation()
+            guard Self.isDirectory(root) else {
+                throw OnboardingStoreError.notDirectory
+            }
             let storage = try storageFactory(root: root)
             indexDatabaseURL = storage.indexDatabase
             let session = try await sessionFactory(root: root, storage: storage)
             guard session.accessMode == .readOnly else {
                 throw OnboardingStoreError.mutationAccessUnsupported
             }
-            let snapshot = try await session.scan()
+            let snapshot = try await session.scan(progress: { [weak self] progress in
+                Task { @MainActor [weak self] in
+                    self?.receiveProgress(progress)
+                }
+            })
             try Task.checkCancellation()
+            await Task.yield()
             phase = .summary(snapshot)
         } catch is CancellationError {
             resetToLibraryChoice()
@@ -209,8 +241,24 @@ public final class OnboardingStore {
         completionChoice = nil
     }
 
+    private func receiveProgress(_ progress: Double) {
+        guard case .scanning(let current) = phase else { return }
+        let clamped = min(max(progress, 0), 1)
+        phase = .scanning(progress: max(current ?? 0, clamped))
+    }
+
+    private static func isDirectory(_ url: URL) -> Bool {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+            return false
+        }
+        return attributes[.type] as? FileAttributeType == .typeDirectory
+    }
+
     private static func actionableMessage(for error: any Error) -> String {
-        "AstroTool could not read this folder. Choose it again to restore access, or select a different image library. (\(error.localizedDescription))"
+        if error as? OnboardingStoreError == .notDirectory {
+            return "Choose a folder that contains your image library. Individual files cannot be scanned as a library."
+        }
+        return "AstroTool could not read this folder. Choose it again to restore access, or select a different image library. (\(error.localizedDescription))"
     }
 }
 
@@ -240,9 +288,10 @@ public struct LibraryWelcomeView: View {
             switch store.phase {
             case .chooseLibrary:
                 welcome
-            case .scanning:
+            case .scanning(let progress):
                 FirstScanView(
                     libraryName: store.selectedRoot?.lastPathComponent ?? "Image Library",
+                    progress: progress,
                     cancel: cancelScan
                 )
             case .summary(let snapshot):

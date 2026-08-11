@@ -136,6 +136,22 @@ public struct ScanSummary: Codable, Sendable {
     }
 }
 
+public struct ScanProgress: Equatable, Sendable {
+    public let scanned: Int
+    public let total: Int
+
+    public var fraction: Double {
+        guard total > 0 else { return 1 }
+        return Double(scanned) / Double(total)
+    }
+
+    public init(scanned: Int, total: Int) {
+        let safeTotal = max(0, total)
+        self.total = safeTotal
+        self.scanned = min(max(0, scanned), safeTotal)
+    }
+}
+
 /// Walks the library tree and incrementally syncs `Database.files` with
 /// what's actually on disk. Never writes, deletes, or moves anything in the
 /// library itself — the only filesystem access here is read-only directory
@@ -167,7 +183,8 @@ public final class LibraryScanner {
     public func scan(
         subpath: String? = nil,
         refreshMeta: Bool = false,
-        progress: (@Sendable (Int) -> Void)? = nil
+        progress: (@Sendable (Int) -> Void)? = nil,
+        progressUpdate: (@Sendable (ScanProgress) -> Void)? = nil
     ) throws -> ScanSummary {
         let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
         let startURL = subpath.map { root.appendingPathComponent($0, isDirectory: true) } ?? root
@@ -185,6 +202,14 @@ public final class LibraryScanner {
         var processedCount = 0
         var changedTargets = Set<String>()
         var changedSessions = Set<ScanSummary.SessionKey>()
+        let total = try progressUpdate.map { _ in
+            try countScannableFiles(
+                dirURL: startURL,
+                relPrefix: subpath ?? "",
+                isTopLevel: true
+            )
+        } ?? 0
+        progressUpdate?(ScanProgress(scanned: 0, total: total))
 
         try walk(
             dirURL: startURL,
@@ -192,6 +217,8 @@ public final class LibraryScanner {
             seen: &seen,
             processedCount: &processedCount,
             progress: progress,
+            progressUpdate: progressUpdate,
+            total: total,
             summary: &summary,
             refreshMeta: refreshMeta,
             changedTargets: &changedTargets,
@@ -242,6 +269,8 @@ public final class LibraryScanner {
         seen: inout Set<String>,
         processedCount: inout Int,
         progress: (@Sendable (Int) -> Void)?,
+        progressUpdate: (@Sendable (ScanProgress) -> Void)?,
+        total: Int,
         summary: inout ScanSummary,
         refreshMeta: Bool,
         changedTargets: inout Set<String>,
@@ -296,6 +325,8 @@ public final class LibraryScanner {
                     seen: &seen,
                     processedCount: &processedCount,
                     progress: progress,
+                    progressUpdate: progressUpdate,
+                    total: total,
                     summary: &summary,
                     refreshMeta: refreshMeta,
                     changedTargets: &changedTargets,
@@ -321,7 +352,49 @@ public final class LibraryScanner {
                 changedTargets: &changedTargets,
                 changedSessions: &changedSessions
             )
+            progressUpdate?(ScanProgress(scanned: processedCount, total: total))
         }
+    }
+
+    private func countScannableFiles(
+        dirURL: URL,
+        relPrefix: String,
+        isTopLevel: Bool = false
+    ) throws -> Int {
+        let entries: [URL]
+        do {
+            entries = try FileManager.default.contentsOfDirectory(
+                at: dirURL,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: []
+            )
+        } catch {
+            guard isPermissionError(error) else { throw error }
+            guard isTopLevel else { return 0 }
+            throw AstroError.accessDenied(path: relPrefix)
+        }
+
+        var total = 0
+        for entryURL in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            let name = entryURL.lastPathComponent
+            let relativePath = relPrefix.isEmpty ? name : relPrefix + "/" + name
+            let values = try entryURL.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+            ])
+            guard values.isSymbolicLink != true else { continue }
+
+            if values.isDirectory == true {
+                guard !isExcludedDir(name: name, relativePath: relativePath) else { continue }
+                total += try countScannableFiles(
+                    dirURL: entryURL,
+                    relPrefix: relativePath
+                )
+            } else if !isExcludedFile(name: name, relativePath: relativePath) {
+                total += 1
+            }
+        }
+        return total
     }
 
     private func recordFile(

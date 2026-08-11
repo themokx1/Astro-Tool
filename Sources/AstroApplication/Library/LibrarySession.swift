@@ -14,6 +14,22 @@ public enum LibrarySessionError: Error, Equatable, Sendable {
     case indexDestinationChanged
 }
 
+public struct LibraryScanProgress: Equatable, Sendable {
+    public let scanned: Int
+    public let total: Int
+    public let fraction: Double
+
+    public init(scanned: Int, total: Int) {
+        let safeTotal = max(0, total)
+        let safeScanned = min(max(0, scanned), safeTotal)
+        self.scanned = safeScanned
+        self.total = safeTotal
+        self.fraction = safeTotal == 0
+            ? 1
+            : Double(safeScanned) / Double(safeTotal)
+    }
+}
+
 public actor LibrarySession {
     public nonisolated let identity: LibraryIdentity
     public private(set) var accessMode: LibraryAccessMode
@@ -95,6 +111,19 @@ public actor LibrarySession {
 
     public func scan() async throws -> LibrarySnapshot {
         _ = try scanner.scan()
+        return try nextSnapshot()
+    }
+
+    public func scan(
+        progress: @escaping @Sendable (LibraryScanProgress) -> Void
+    ) async throws -> LibrarySnapshot {
+        _ = try scanner.scan(progressUpdate: { update in
+            progress(LibraryScanProgress(scanned: update.scanned, total: update.total))
+        })
+        return try nextSnapshot()
+    }
+
+    private func nextSnapshot() throws -> LibrarySnapshot {
         let counts = try database.libraryIndexCounts()
         let nextRevision = revision + 1
         revision = nextRevision

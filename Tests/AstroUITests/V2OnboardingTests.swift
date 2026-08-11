@@ -102,6 +102,81 @@ struct V2OnboardingTests {
         #expect(store.indexDatabaseURL == nil)
     }
 
+    @Test("Progress is observable, clamped, and never moves backward")
+    func progressIsMonotonic() async throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let firstGate = AsyncGate()
+        let secondGate = AsyncGate()
+        let thirdGate = AsyncGate()
+        let finalGate = AsyncGate()
+        let snapshot = LibrarySnapshot(
+            libraryID: LibraryIdentity(rootURL: fixture.root),
+            revision: 1,
+            projectCount: 0,
+            nightCount: 0,
+            frameCount: 1
+        )
+        let store = OnboardingStore(
+            sessionFactory: .constant(
+                OnboardingSessionClient(accessMode: .readOnly) { progress in
+                    progress(-0.4)
+                    await firstGate.wait()
+                    progress(0.6)
+                    await secondGate.wait()
+                    progress(0.2)
+                    await thirdGate.wait()
+                    progress(1.4)
+                    await finalGate.wait()
+                    return snapshot
+                }
+            ),
+            storageFactory: .temporary(
+                applicationSupport: fixture.applicationSupport,
+                caches: fixture.caches
+            ),
+            securityScopedAccess: .inactive
+        )
+        let task = Task { try await store.openAndScan(fixture.root) }
+
+        try await expectProgress(0, in: store)
+        await firstGate.open()
+        try await expectProgress(0.6, in: store)
+        await secondGate.open()
+        try await Task.sleep(for: .milliseconds(10))
+        #expect(store.phase.progress == 0.6)
+        await thirdGate.open()
+        try await expectProgress(1, in: store)
+        await finalGate.open()
+        try await task.value
+
+        #expect(store.phase.summary == snapshot)
+    }
+
+    @Test("A dropped file is rejected with an actionable folder choice")
+    func droppedFileIsRejected() async throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let file = fixture.root.appendingPathComponent("not-a-folder.fit")
+        try Data("file".utf8).write(to: file)
+        let store = OnboardingStore(
+            sessionFactory: .failing(TestFailure.denied),
+            storageFactory: .temporary(
+                applicationSupport: fixture.applicationSupport,
+                caches: fixture.caches
+            ),
+            securityScopedAccess: .inactive
+        )
+
+        await #expect(throws: OnboardingStoreError.notDirectory) {
+            try await store.openAndScan(file)
+        }
+
+        #expect(store.phase.accessProblemMessage?.contains("Choose a folder") == true)
+        #expect(store.selectedRoot == file.standardizedFileURL)
+        #expect(store.indexDatabaseURL == nil)
+    }
+
     @Test("Summary continuation and preference setup remain separate optional choices")
     func summaryChoicesAreExplicit() async throws {
         let fixture = try OnboardingFixture.make()
@@ -159,6 +234,7 @@ struct V2OnboardingTests {
         #expect(onboardingSource.contains("Application Support"))
         #expect(onboardingSource.contains("dropDestination"))
         #expect(onboardingSource.contains("keyboardShortcut(.cancelAction)"))
+        #expect(onboardingSource.contains("ProgressView(value:"))
         #expect(home.contains("Choose Image Library…"))
         #expect(root.contains("LibraryWelcomeView"))
         #expect(root.contains("openSettings"))
@@ -175,10 +251,37 @@ struct V2OnboardingTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
     }
+
+    private func expectProgress(
+        _ expected: Double,
+        in store: OnboardingStore
+    ) async throws {
+        for _ in 0..<500 {
+            if store.phase.progress == expected { return }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        Issue.record("Expected onboarding progress \(expected), got \(String(describing: store.phase.progress))")
+    }
 }
 
 private enum TestFailure: Error, Equatable {
     case denied
+}
+
+private actor AsyncGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isOpen = false
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func open() {
+        isOpen = true
+        continuation?.resume()
+        continuation = nil
+    }
 }
 
 private final class ScopedAccessProbe: @unchecked Sendable {

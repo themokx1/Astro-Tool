@@ -59,6 +59,27 @@ struct LibrarySessionTests {
         #expect(second.revision == 2)
     }
 
+    @Test("Session scan forwards normalized scanned and total progress")
+    func scanProgressIsNormalized() async throws {
+        let fixture = try V2FixtureLibrary.make()
+        defer { fixture.remove() }
+        let session = try await LibrarySession.open(
+            rootURL: fixture.root,
+            storage: makeStorage(for: fixture)
+        )
+        let progress = ProgressRecorder()
+
+        _ = try await session.scan(progress: progress.record)
+
+        let updates = progress.values
+        let first = try #require(updates.first)
+        let last = try #require(updates.last)
+        #expect(first.scanned == 0)
+        #expect(last.scanned == last.total)
+        #expect(last.fraction == 1)
+        #expect(updates.allSatisfy { (0...1).contains($0.fraction) })
+    }
+
     @Test("A failed scan does not consume a revision")
     func failedScanDoesNotAdvanceRevision() async throws {
         let fixture = try V2FixtureLibrary.make()
@@ -245,5 +266,18 @@ struct LibrarySessionTests {
             libraryID: LibraryIdentity(rootURL: fixture.root),
             libraryRoot: fixture.root
         )
+    }
+}
+
+private final class ProgressRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [LibraryScanProgress] = []
+
+    var values: [LibraryScanProgress] {
+        lock.withLock { stored }
+    }
+
+    func record(_ progress: LibraryScanProgress) {
+        lock.withLock { stored.append(progress) }
     }
 }

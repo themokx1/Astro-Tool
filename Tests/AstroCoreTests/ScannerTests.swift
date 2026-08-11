@@ -1084,3 +1084,34 @@ private struct ScanFixture {
         previous = count
     }
 }
+
+@Test func detailedProgressReportsScannedAndTotalForEveryFile() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    final class ProgressBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [ScanProgress] = []
+
+        func append(_ progress: ScanProgress) {
+            lock.withLock { stored.append(progress) }
+        }
+
+        var values: [ScanProgress] {
+            lock.withLock { stored }
+        }
+    }
+    let box = ProgressBox()
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+
+    _ = try scanner.scan(progressUpdate: box.append)
+
+    let values = box.values
+    let first = try #require(values.first)
+    let last = try #require(values.last)
+    #expect(first.scanned == 0)
+    #expect(first.total > 0)
+    #expect(last.scanned == last.total)
+    #expect(last.fraction == 1)
+    #expect(values.map(\.scanned) == Array(0...last.total))
+}
