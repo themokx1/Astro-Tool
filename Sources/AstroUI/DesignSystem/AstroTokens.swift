@@ -1,30 +1,27 @@
+import AppKit
 import SwiftUI
 
 /// Shared V2 values. Typography deliberately remains system-native so the
 /// workspace follows the user's macOS accessibility and appearance settings.
 public enum AstroTokens {
     public enum Color {
+        /// Native dynamic colors preserve the graphite character in dark mode
+        /// and remain legible in light/increased-contrast appearances.
         public static let graphite = SwiftUI.Color(
-            red: 0.055,
-            green: 0.063,
-            blue: 0.078
+            nsColor: NSColor.windowBackgroundColor
         )
         public static let elevatedGraphite = SwiftUI.Color(
-            red: 0.082,
-            green: 0.094,
-            blue: 0.118
+            nsColor: NSColor.controlBackgroundColor
         )
         public static let spectralBlue = SwiftUI.Color(
-            red: 0.31,
-            green: 0.58,
-            blue: 0.96
+            nsColor: NSColor.systemBlue
         )
         public static let spectralViolet = SwiftUI.Color(
-            red: 0.55,
-            green: 0.43,
-            blue: 0.92
+            nsColor: NSColor.systemPurple
         )
-        public static let hairline = SwiftUI.Color.white.opacity(0.12)
+        public static let hairline = SwiftUI.Color(
+            nsColor: NSColor.separatorColor
+        )
     }
 
     public enum Spacing {

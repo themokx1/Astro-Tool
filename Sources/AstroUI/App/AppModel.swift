@@ -75,7 +75,7 @@ public final class AppRouter {
             primarySection = state.primarySection
             contentRoute = state.contentRoute
             inspectorSelection = nil
-            isInspectorPresented = false
+            isInspectorPresented = state.isInspectorPresented
         } else {
             primarySection = state.primarySection
             contentRoute = state.primarySection.rootRoute
@@ -89,7 +89,7 @@ public final class AppRouter {
             primarySection: primarySection,
             contentRoute: contentRoute,
             selection: inspectorSelection,
-            isInspectorPresented: inspectorSelection != nil && isInspectorPresented
+            isInspectorPresented: isInspectorPresented
         )
     }
 
@@ -158,6 +158,16 @@ public final class AppModel {
         self.restorationValidator = restorationValidator
     }
 
+    /// Creates a router owned by its window view. The app model deliberately
+    /// does not retain it, so transient SwiftUI disappearance cannot erase its
+    /// state and closing a window cannot leak its navigation graph.
+    public func makeRouter(restoring state: WindowRestorationState? = nil) -> AppRouter {
+        if let state {
+            return AppRouter(restoring: state, validator: restorationValidator)
+        }
+        return AppRouter()
+    }
+
     public func router(
         for windowID: UUID,
         restoring state: WindowRestorationState? = nil
@@ -178,5 +188,44 @@ public final class AppModel {
 
     public func closeWindow(_ windowID: UUID) {
         windowRouters[windowID] = nil
+    }
+}
+
+public enum WindowRestorationStateCodec {
+    private static let maximumEncodedBytes = 64 * 1024
+
+    public static func encode(_ state: WindowRestorationState) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(state)
+        guard let encoded = String(data: data, encoding: .utf8) else {
+            throw EncodingError.invalidValue(
+                state,
+                EncodingError.Context(
+                    codingPath: [],
+                    debugDescription: "Window restoration state is not UTF-8"
+                )
+            )
+        }
+        return encoded
+    }
+
+    public static func decode(_ encoded: String) -> WindowRestorationState? {
+        guard let data = encoded.data(using: .utf8),
+              !data.isEmpty,
+              data.count <= maximumEncodedBytes,
+              let state = try? JSONDecoder().decode(WindowRestorationState.self, from: data),
+              state.contentRoute.primarySection == state.primarySection
+        else { return nil }
+
+        if let selection = state.selection {
+            guard selection.primarySection == state.primarySection,
+                  selection.contentRoute == state.contentRoute
+            else { return nil }
+        } else {
+            guard state.contentRoute.selection == nil else { return nil }
+        }
+
+        return state
     }
 }

@@ -42,38 +42,41 @@ public struct AppUILaunchSelection: Equatable, Sendable {
 @MainActor
 public struct V2RootView: View {
     private let appModel: AppModel
-    @State private var windowID = UUID()
+    @State private var router: AppRouter
     @State private var homeStore = HomeStore()
-    @SceneStorage("v2.primarySection") private var restoredSection = PrimarySection.home.rawValue
-    @SceneStorage("v2.inspectorPresented") private var restoredInspector = true
+    @State private var didRestoreWindowState = false
+    @SceneStorage("v2.windowRestoration") private var encodedWindowState = ""
 
     public init(appModel: AppModel) {
         self.appModel = appModel
+        _router = State(initialValue: appModel.makeRouter())
     }
 
     public var body: some View {
-        let section = PrimarySection(rawValue: restoredSection) ?? .home
-        let state = WindowRestorationState(
-            primarySection: section,
-            contentRoute: section.rootRoute,
-            selection: nil,
-            isInspectorPresented: false
-        )
-        let router = appModel.router(for: windowID, restoring: state)
-
         V2Shell(router: router, homeStore: homeStore)
             .onAppear {
-                router.isInspectorPresented = restoredInspector
+                restoreWindowStateOnce()
             }
-            .onChange(of: router.primarySection) { _, value in
-                restoredSection = value.rawValue
+            .onChange(of: router.restorationState) { _, state in
+                persist(state)
             }
-            .onChange(of: router.isInspectorPresented) { _, value in
-                restoredInspector = value
-            }
-            .onDisappear {
-                appModel.closeWindow(windowID)
-            }
+    }
+
+    private func restoreWindowStateOnce() {
+        guard !didRestoreWindowState else { return }
+        didRestoreWindowState = true
+
+        guard let state = WindowRestorationStateCodec.decode(encodedWindowState) else {
+            persist(router.restorationState)
+            return
+        }
+        router = appModel.makeRouter(restoring: state)
+        persist(router.restorationState)
+    }
+
+    private func persist(_ state: WindowRestorationState) {
+        guard let encoded = try? WindowRestorationStateCodec.encode(state) else { return }
+        encodedWindowState = encoded
     }
 }
 
@@ -99,13 +102,12 @@ private struct V2Shell: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                Button {
-                    router.present(.newProject)
-                } label: {
+                Button(action: {}) {
                     Label("New Project", systemImage: "plus")
                 }
-                .help("New Project")
-                .accessibilityLabel("New project")
+                .disabled(true)
+                .help("Available after library workflows arrive")
+                .accessibilityLabel("New project, available after library workflows arrive")
 
                 Button(action: router.toggleInspector) {
                     Label("Inspector", systemImage: "sidebar.right")
@@ -118,7 +120,6 @@ private struct V2Shell: View {
         }
         .focusedSceneValue(\.appRouter, router)
         .frame(minWidth: 820, minHeight: 600)
-        .preferredColorScheme(.dark)
         .sheet(item: $router.presentation) { presentation in
             V2PresentationPlaceholder(route: presentation) {
                 router.dismissPresentation()
@@ -195,9 +196,9 @@ private struct DetailHost: View {
         case .health:
             V2EmptyDetail(
                 title: "Library health is ready",
-                message: "Open a library before running read-only health checks.",
+                message: "Explore the Library workspace before read-only health checks arrive.",
                 systemImage: "checkmark.shield",
-                actionTitle: "Open Library",
+                actionTitle: "Explore Library workspace",
                 action: { router.navigate(to: .library) }
             )
         default:
@@ -205,7 +206,9 @@ private struct DetailHost: View {
                 title: router.primarySection.emptyTitle,
                 message: router.primarySection.emptyMessage,
                 systemImage: router.primarySection.systemImage,
-                actionTitle: router.primarySection == .library ? "Return Home" : "Open Library",
+                actionTitle: router.primarySection == .library
+                    ? "Return Home"
+                    : "Explore Library workspace",
                 action: {
                     router.navigate(to: router.primarySection == .library ? .home : .library)
                 }
@@ -307,12 +310,12 @@ private extension PrimarySection {
 
     var emptyMessage: String {
         switch self {
-        case .home: "Open a library to begin."
-        case .projects: "Open a library to browse or create imaging projects."
-        case .nights: "Open a library to browse captured observing nights."
-        case .planning: "Open a library before preparing an observing plan."
-        case .library: "Return home or choose a library when the open workflow is available."
-        case .insights: "Open a library to reveal trends across projects and nights."
+        case .home: "Explore the Library workspace to begin."
+        case .projects: "Explore the Library workspace before project workflows arrive."
+        case .nights: "Explore the Library workspace before night workflows arrive."
+        case .planning: "Explore the Library workspace before planning workflows arrive."
+        case .library: "Return home while the library picker is being prepared."
+        case .insights: "Explore the Library workspace before insights become available."
         }
     }
 }

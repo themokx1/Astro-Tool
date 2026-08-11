@@ -86,6 +86,52 @@ struct AppRouterTests {
         #expect(firstWindow !== secondWindow)
     }
 
+    @Test("Full lightweight restoration state round-trips as validated storage")
+    func restorationStateCodecRoundTripsHealthAndSelectionRoutes() throws {
+        let health = WindowRestorationState(
+            primarySection: .library,
+            contentRoute: .health,
+            selection: nil,
+            isInspectorPresented: true
+        )
+        let selection = WindowRestorationState(
+            primarySection: .projects,
+            contentRoute: .projectSeries("m31-lrgb"),
+            selection: .series("m31-lrgb"),
+            isInspectorPresented: true
+        )
+
+        let encodedHealth = try WindowRestorationStateCodec.encode(health)
+        let encodedSelection = try WindowRestorationStateCodec.encode(selection)
+
+        #expect(WindowRestorationStateCodec.decode(encodedHealth) == health)
+        #expect(WindowRestorationStateCodec.decode(encodedSelection) == selection)
+        #expect(WindowRestorationStateCodec.decode("not-json") == nil)
+    }
+
+    @Test("Transient shell recreation restores route and selection without retaining presentation")
+    func transientShellRecreationRestoresStateWithoutLeakingRouter() throws {
+        let model = AppModel(restorationValidator: .allowingAll)
+        var firstRouter: AppRouter? = model.makeRouter()
+        firstRouter?.select(.series("m31-lrgb"))
+        firstRouter?.present(.mutationConfirmation(UUID()))
+        let encoded = try WindowRestorationStateCodec.encode(
+            try #require(firstRouter).restorationState
+        )
+        weak let releasedRouter = firstRouter
+
+        firstRouter = nil
+
+        #expect(releasedRouter == nil)
+        let state = try #require(WindowRestorationStateCodec.decode(encoded))
+        let restoredRouter = model.makeRouter(restoring: state)
+        #expect(restoredRouter.primarySection == .projects)
+        #expect(restoredRouter.contentRoute == .projectSeries("m31-lrgb"))
+        #expect(restoredRouter.inspectorSelection == .series("m31-lrgb"))
+        #expect(restoredRouter.isInspectorPresented)
+        #expect(restoredRouter.presentation == nil)
+    }
+
     @Test("App model rejects deleted selections and stale ID routes during restoration")
     func appModelValidatesEveryRestoredIdentifier() {
         let validator = RouteRestorationValidator(
@@ -133,7 +179,7 @@ struct AppRouterTests {
         #expect(router.primarySection == .library)
         #expect(router.contentRoute == .health)
         #expect(router.presentation == nil)
-        #expect(!router.isInspectorPresented)
+        #expect(router.isInspectorPresented)
     }
 
     @Test("Deleted restored selections fall back to the section root")

@@ -269,17 +269,15 @@ struct V2AstroToolCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("New Project…") {
-                FocusedAppCommands(router: router).present(.newProject)
-            }
+            Button("New Project…", action: {})
             .keyboardShortcut("n", modifiers: .command)
-            .disabled(router == nil)
+            .disabled(true)
+            .help("Available after library workflows arrive")
 
-            Button("New Night…") {
-                FocusedAppCommands(router: router).present(.newNight)
-            }
+            Button("New Night…", action: {})
             .keyboardShortcut("n", modifiers: [.command, .shift])
-            .disabled(router == nil)
+            .disabled(true)
+            .help("Available after library workflows arrive")
         }
 
         CommandGroup(after: .toolbar) {
