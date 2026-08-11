@@ -59,6 +59,64 @@ struct OperationCenterTests {
         #expect(spy.count == 1)
     }
 
+    @Test("Every terminal transition releases cancellation-handler captures")
+    func terminalTransitionsReleaseCancellationCaptures() async {
+        let center = OperationCenter()
+        let (completed, completedCapture) = await startTrackedOperation(
+            center: center,
+            kind: .scan(library: "A"),
+            cancellation: .cooperative
+        )
+        let (failed, failedCapture) = await startTrackedOperation(
+            center: center,
+            kind: .rate(series: "S"),
+            cancellation: .cooperative
+        )
+        let (cancelled, cancelledCapture) = await startTrackedOperation(
+            center: center,
+            kind: .export(project: "P"),
+            cancellation: .discardResult
+        )
+
+        #expect(completedCapture.value != nil)
+        #expect(failedCapture.value != nil)
+        #expect(cancelledCapture.value != nil)
+        #expect(await center.finish(completed.id))
+        #expect(await center.fail(failed.id, message: "failed"))
+        #expect(await center.cancel(cancelled.id))
+        #expect(completedCapture.value == nil)
+        #expect(failedCapture.value == nil)
+        #expect(cancelledCapture.value == nil)
+    }
+
+    @Test("A blocking reentrant cancellation handler does not occupy the actor")
+    func blockingCancellationHandlerLeavesOtherStateResponsive() async {
+        let center = OperationCenter()
+        let unrelated = await center.start(
+            kind: .audit(library: "B"),
+            cancellation: .unavailable
+        )
+        let blocker = ReentrantCancellationBlocker(center: center, operationID: unrelated.id)
+        let cancellable = await center.start(
+            kind: .scan(library: "A"),
+            cancellation: .cooperative,
+            cancelHandler: { blocker.run() }
+        )
+
+        let cancellation = Task { await center.cancel(cancellable.id) }
+        let reenteredWhileBlocked = await blocker.waitForReentrantQuery()
+
+        #expect(reenteredWhileBlocked)
+        #expect(blocker.observedPhase == .running)
+        if reenteredWhileBlocked {
+            #expect(await center.state(cancellable.id)?.phase == .cancelled)
+            #expect(await center.state(unrelated.id)?.phase == .running)
+        }
+
+        blocker.release()
+        #expect(await cancellation.value)
+    }
+
     @Test("Discard-result cancellation is terminal without stopping a worker")
     func discardResultCancellationRejectsWorkerUpdates() async {
         let center = OperationCenter()
@@ -178,5 +236,69 @@ private final class CancellationSpy: @unchecked Sendable {
 
     func record() {
         lock.withLock { recordedCount += 1 }
+    }
+}
+
+private final class TrackedCapture: @unchecked Sendable {}
+
+private final class WeakReference<Value: AnyObject>: @unchecked Sendable {
+    weak var value: Value?
+
+    init(_ value: Value) {
+        self.value = value
+    }
+}
+
+private func startTrackedOperation(
+    center: OperationCenter,
+    kind: OperationKind,
+    cancellation: CancellationPolicy
+) async -> (OperationState, WeakReference<TrackedCapture>) {
+    let capture = TrackedCapture()
+    let reference = WeakReference(capture)
+    let operation = await center.start(
+        kind: kind,
+        cancellation: cancellation,
+        cancelHandler: { withExtendedLifetime(capture) {} }
+    )
+    return (operation, reference)
+}
+
+private final class ReentrantCancellationBlocker: @unchecked Sendable {
+    private let center: OperationCenter
+    private let operationID: UUID
+    private let queryFinished = DispatchSemaphore(value: 0)
+    private let mayReturn = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var storedPhase: OperationPhase?
+
+    init(center: OperationCenter, operationID: UUID) {
+        self.center = center
+        self.operationID = operationID
+    }
+
+    var observedPhase: OperationPhase? {
+        lock.withLock { storedPhase }
+    }
+
+    func run() {
+        Task.detached { [center, operationID, queryFinished] in
+            let phase = await center.state(operationID)?.phase
+            self.lock.withLock { self.storedPhase = phase }
+            queryFinished.signal()
+        }
+        _ = mayReturn.wait(timeout: .now() + 5)
+    }
+
+    func waitForReentrantQuery() async -> Bool {
+        await Task.detached { self.waitForReentrantQuerySynchronously() }.value
+    }
+
+    func release() {
+        mayReturn.signal()
+    }
+
+    private func waitForReentrantQuerySynchronously() -> Bool {
+        queryFinished.wait(timeout: .now() + 1) == .success
     }
 }

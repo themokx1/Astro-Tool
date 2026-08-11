@@ -5,7 +5,7 @@ public actor OperationCenter {
 
     private struct Entry: Sendable {
         var state: OperationState
-        let cancelHandler: CancellationHandler?
+        var cancelHandler: CancellationHandler?
     }
 
     private var entries: [UUID: Entry] = [:]
@@ -71,7 +71,7 @@ public actor OperationCenter {
     }
 
     @discardableResult
-    public func cancel(_ id: UUID) -> Bool {
+    public func cancel(_ id: UUID) async -> Bool {
         guard var entry = entries[id], entry.state.phase == .running else {
             return false
         }
@@ -82,12 +82,15 @@ public actor OperationCenter {
         let handler = entry.state.cancellationPolicy == .cooperative
             ? entry.cancelHandler
             : nil
+        entry.cancelHandler = nil
         let now = nextTimestamp(after: entry.state.updatedAt)
         entry.state.phase = .cancelled
         entry.state.updatedAt = now
         entry.state.finishedAt = now
         entries[id] = entry
-        handler?()
+        if let handler {
+            await Task.detached(operation: handler).value
+        }
         return true
     }
 
@@ -113,6 +116,7 @@ public actor OperationCenter {
         entry.state.errorMessage = errorMessage
         entry.state.updatedAt = now
         entry.state.finishedAt = now
+        entry.cancelHandler = nil
         entries[id] = entry
         return true
     }
