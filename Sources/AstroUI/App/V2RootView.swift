@@ -248,7 +248,8 @@ private struct DetailHost: View {
                 message: "Explore the Library workspace before read-only health checks arrive.",
                 systemImage: "checkmark.shield",
                 actionTitle: "Explore Library workspace",
-                action: { router.navigate(to: .library) }
+                action: { router.navigate(to: .library) },
+                accessibilityIdentifier: "v2.detail.library.health"
             )
         default:
             V2EmptyDetail(
@@ -266,7 +267,8 @@ private struct DetailHost: View {
                     } else {
                         router.navigate(to: .library)
                     }
-                }
+                },
+                accessibilityIdentifier: router.primarySection.detailAccessibilityIdentifier
             )
         }
     }
@@ -278,6 +280,7 @@ private struct V2EmptyDetail: View {
     let systemImage: String
     let actionTitle: String
     let action: () -> Void
+    let accessibilityIdentifier: String
 
     var body: some View {
         ContentUnavailableView {
@@ -291,6 +294,8 @@ private struct V2EmptyDetail: View {
         .navigationTitle(title)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AstroTokens.Color.graphite.opacity(0.36))
+        .accessibilityLabel(title)
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
 
@@ -371,6 +376,17 @@ private extension PrimarySection {
         case .planning: "Explore the Library workspace before planning workflows arrive."
         case .library: "Return home while the library picker is being prepared."
         case .insights: "Explore the Library workspace before insights become available."
+        }
+    }
+
+    var detailAccessibilityIdentifier: String {
+        switch self {
+        case .home: "v2.detail.home"
+        case .projects: "v2.detail.projects"
+        case .nights: "v2.detail.nights"
+        case .planning: "v2.detail.planning"
+        case .library: "v2.detail.library"
+        case .insights: "v2.detail.insights"
         }
     }
 }

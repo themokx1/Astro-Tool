@@ -1,4 +1,5 @@
 import AstroApplication
+import Darwin
 import Foundation
 
 public enum V2UITestFixtureError: Error, Equatable, Sendable, LocalizedError {
@@ -7,6 +8,7 @@ public enum V2UITestFixtureError: Error, Equatable, Sendable, LocalizedError {
     case nonTemporaryLibrary(String)
     case overlappingRoots
     case fixtureAlreadyExists(String)
+    case rootIdentityChanged(String)
 
     public var errorDescription: String? {
         switch self {
@@ -20,6 +22,8 @@ public enum V2UITestFixtureError: Error, Equatable, Sendable, LocalizedError {
             "UI-test fixture and application-support roots must be separate temporary directories."
         case .fixtureAlreadyExists(let path):
             "UI-test fixture mode refuses to reuse an existing fixture: \(path)"
+        case .rootIdentityChanged(let path):
+            "UI-test fixture root changed after it was pinned: \(path)"
         }
     }
 }
@@ -54,6 +58,18 @@ public enum V2PreviewFixtures {
         arguments: [String],
         fileManager: FileManager = .default
     ) throws -> V2UITestFixture? {
+        try fixture(
+            arguments: arguments,
+            fileManager: fileManager,
+            beforeMutation: { _, _ in }
+        )
+    }
+
+    static func fixture(
+        arguments: [String],
+        fileManager: FileManager = .default,
+        beforeMutation: (URL, URL) throws -> Void
+    ) throws -> V2UITestFixture? {
         let fixtureContainer = try argumentValue(
             fixtureRootArgument,
             in: arguments
@@ -71,7 +87,8 @@ public enum V2PreviewFixtures {
         return try makeFixture(
             fixtureContainer: URL(fileURLWithPath: fixtureContainer, isDirectory: true),
             supportContainer: URL(fileURLWithPath: supportContainer, isDirectory: true),
-            fileManager: fileManager
+            fileManager: fileManager,
+            beforeMutation: beforeMutation
         )
     }
 
@@ -103,7 +120,8 @@ public enum V2PreviewFixtures {
     private static func makeFixture(
         fixtureContainer: URL,
         supportContainer: URL,
-        fileManager: FileManager
+        fileManager: FileManager,
+        beforeMutation: (URL, URL) throws -> Void
     ) throws -> V2UITestFixture {
         let safeFixtureContainer = try canonicalTemporaryURL(
             fixtureContainer,
@@ -119,33 +137,52 @@ public enum V2PreviewFixtures {
             throw V2UITestFixtureError.overlappingRoots
         }
 
+        let fixtureRoot = try pinRoot(safeFixtureContainer)
+        defer { Darwin.close(fixtureRoot.descriptor) }
+        let supportRoot = try pinRoot(safeSupportContainer)
+        defer { Darwin.close(supportRoot.descriptor) }
+
+        try beforeMutation(safeFixtureContainer, safeSupportContainer)
+        try verifyPinnedRoot(fixtureRoot)
+        try verifyPinnedRoot(supportRoot)
+
         let libraryRoot = safeFixtureContainer
             .appendingPathComponent("DemoLibrary", isDirectory: true)
-        let frame = libraryRoot
-            .appendingPathComponent("DemoProject/DemoNight", isDirectory: true)
-            .appendingPathComponent("DemoFrame.fit")
         let applicationSupport = safeSupportContainer
             .appendingPathComponent("ApplicationSupport", isDirectory: true)
         let caches = safeSupportContainer.appendingPathComponent("Caches", isDirectory: true)
 
-        for url in [libraryRoot, frame, applicationSupport, caches] {
-            try refuseRealLibrary(url, fileManager: fileManager)
-        }
-        guard !fileManager.fileExists(atPath: libraryRoot.path) else {
-            throw V2UITestFixtureError.fixtureAlreadyExists(libraryRoot.path)
-        }
-
-        try fileManager.createDirectory(
-            at: frame.deletingLastPathComponent(),
-            withIntermediateDirectories: true
+        let libraryDescriptor = try createNewDirectory(
+            named: "DemoLibrary",
+            relativeTo: fixtureRoot.descriptor,
+            existingPath: libraryRoot.path
         )
-        try fileManager.createDirectory(at: applicationSupport, withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: caches, withIntermediateDirectories: true)
-        try Data("AstroTool deterministic read-only UI fixture\n".utf8).write(to: frame)
+        defer { Darwin.close(libraryDescriptor) }
+        let projectDescriptor = try createNewDirectory(
+            named: "DemoProject",
+            relativeTo: libraryDescriptor
+        )
+        defer { Darwin.close(projectDescriptor) }
+        let nightDescriptor = try createNewDirectory(
+            named: "DemoNight",
+            relativeTo: projectDescriptor
+        )
+        defer { Darwin.close(nightDescriptor) }
+        try createFixtureFrame(relativeTo: nightDescriptor)
 
-        for url in [libraryRoot, applicationSupport, caches] {
-            try refuseRealLibrary(url, fileManager: fileManager)
-        }
+        let applicationSupportDescriptor = try openOrCreateDirectory(
+            named: "ApplicationSupport",
+            relativeTo: supportRoot.descriptor
+        )
+        Darwin.close(applicationSupportDescriptor)
+        let cachesDescriptor = try openOrCreateDirectory(
+            named: "Caches",
+            relativeTo: supportRoot.descriptor
+        )
+        Darwin.close(cachesDescriptor)
+
+        try verifyPinnedRoot(fixtureRoot)
+        try verifyPinnedRoot(supportRoot)
         return V2UITestFixture(
             libraryRoot: libraryRoot,
             applicationSupport: applicationSupport,
@@ -159,6 +196,170 @@ public enum V2PreviewFixtures {
     ) throws -> URL {
         try refuseRealLibrary(url, fileManager: fileManager)
         return canonicalPath(url)
+    }
+
+    private struct DirectoryIdentity: Equatable {
+        let device: UInt64
+        let inode: UInt64
+
+        init(descriptor: Int32) throws {
+            var status = stat()
+            guard Darwin.fstat(descriptor, &status) == 0 else {
+                throw posixError()
+            }
+            guard status.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR) else {
+                throw POSIXError(.ENOTDIR)
+            }
+            device = UInt64(status.st_dev)
+            inode = UInt64(status.st_ino)
+        }
+    }
+
+    private struct PinnedRoot {
+        let url: URL
+        let descriptor: Int32
+        let identity: DirectoryIdentity
+    }
+
+    private static func pinRoot(_ url: URL) throws -> PinnedRoot {
+        let parentDescriptor = try openExistingDirectory(
+            url.deletingLastPathComponent()
+        )
+        defer { Darwin.close(parentDescriptor) }
+        let descriptor = try openOrCreateDirectory(
+            named: url.lastPathComponent,
+            relativeTo: parentDescriptor
+        )
+        return try PinnedRoot(
+            url: url,
+            descriptor: descriptor,
+            identity: DirectoryIdentity(descriptor: descriptor)
+        )
+    }
+
+    private static func verifyPinnedRoot(_ root: PinnedRoot) throws {
+        let currentDescriptor: Int32
+        do {
+            currentDescriptor = try openExistingDirectory(root.url)
+        } catch {
+            throw V2UITestFixtureError.rootIdentityChanged(root.url.path)
+        }
+        defer { Darwin.close(currentDescriptor) }
+        guard try DirectoryIdentity(descriptor: currentDescriptor) == root.identity else {
+            throw V2UITestFixtureError.rootIdentityChanged(root.url.path)
+        }
+    }
+
+    private static func openExistingDirectory(_ url: URL) throws -> Int32 {
+        var descriptor = Darwin.open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard descriptor >= 0 else { throw posixError() }
+
+        do {
+            for component in descriptorPathComponents(for: url) {
+                let nextDescriptor = component.withCString { name in
+                    Darwin.openat(
+                        descriptor,
+                        name,
+                        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                    )
+                }
+                guard nextDescriptor >= 0 else { throw posixError() }
+                Darwin.close(descriptor)
+                descriptor = nextDescriptor
+            }
+            return descriptor
+        } catch {
+            Darwin.close(descriptor)
+            throw error
+        }
+    }
+
+    private static func descriptorPathComponents(for url: URL) -> [String] {
+        var components = Array(url.standardizedFileURL.pathComponents.dropFirst())
+        if components.first == "tmp" || components.first == "var" {
+            components.insert("private", at: 0)
+        }
+        return components
+    }
+
+    private static func openOrCreateDirectory(
+        named name: String,
+        relativeTo parentDescriptor: Int32
+    ) throws -> Int32 {
+        var descriptor = name.withCString { component in
+            Darwin.openat(
+                parentDescriptor,
+                component,
+                O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+            )
+        }
+        if descriptor < 0, errno == ENOENT {
+            let result = name.withCString { component in
+                Darwin.mkdirat(parentDescriptor, component, mode_t(S_IRWXU))
+            }
+            guard result == 0 || errno == EEXIST else { throw posixError() }
+            descriptor = name.withCString { component in
+                Darwin.openat(
+                    parentDescriptor,
+                    component,
+                    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                )
+            }
+        }
+        guard descriptor >= 0 else { throw posixError() }
+        return descriptor
+    }
+
+    private static func createNewDirectory(
+        named name: String,
+        relativeTo parentDescriptor: Int32,
+        existingPath: String? = nil
+    ) throws -> Int32 {
+        let result = name.withCString { component in
+            Darwin.mkdirat(parentDescriptor, component, mode_t(S_IRWXU))
+        }
+        guard result == 0 else {
+            if errno == EEXIST, let existingPath {
+                throw V2UITestFixtureError.fixtureAlreadyExists(existingPath)
+            }
+            throw posixError()
+        }
+        return try openOrCreateDirectory(named: name, relativeTo: parentDescriptor)
+    }
+
+    private static func createFixtureFrame(relativeTo directoryDescriptor: Int32) throws {
+        let descriptor = "DemoFrame.fit".withCString { name in
+            Darwin.openat(
+                directoryDescriptor,
+                name,
+                O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                mode_t(S_IRUSR | S_IWUSR)
+            )
+        }
+        guard descriptor >= 0 else { throw posixError() }
+        defer { Darwin.close(descriptor) }
+
+        let data = Data("AstroTool deterministic read-only UI fixture\n".utf8)
+        try data.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            var written = 0
+            while written < rawBuffer.count {
+                let count = Darwin.write(
+                    descriptor,
+                    baseAddress.advanced(by: written),
+                    rawBuffer.count - written
+                )
+                guard count >= 0 else {
+                    if errno == EINTR { continue }
+                    throw posixError()
+                }
+                written += count
+            }
+        }
+    }
+
+    private static func posixError() -> POSIXError {
+        POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
 
     fileprivate static func canonicalPath(_ url: URL) -> URL {

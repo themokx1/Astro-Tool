@@ -74,23 +74,33 @@ final class AstroToolLaunchTests: XCTestCase {
         continueButton.click()
         XCTAssertTrue(summary.waitForNonExistence(timeout: 5))
 
-        let sectionIDs = [
-            "v2.sidebar.home",
-            "v2.sidebar.projects",
-            "v2.sidebar.nights",
-            "v2.sidebar.planning",
-            "v2.sidebar.library",
-            "v2.sidebar.insights",
+        let destinations = [
+            (sidebar: "v2.sidebar.home", detail: "v2.detail.home", title: "Home"),
+            (sidebar: "v2.sidebar.projects", detail: "v2.detail.projects", title: "No projects yet"),
+            (sidebar: "v2.sidebar.nights", detail: "v2.detail.nights", title: "No observing nights yet"),
+            (sidebar: "v2.sidebar.planning", detail: "v2.detail.planning", title: "No plan selected"),
+            (sidebar: "v2.sidebar.library", detail: "v2.detail.library", title: "No library open"),
+            (sidebar: "v2.sidebar.insights", detail: "v2.detail.insights", title: "No insights yet"),
         ]
-        for identifier in sectionIDs {
-            let destination = element(identifier, in: app)
-            XCTAssertTrue(destination.waitForExistence(timeout: 5), "Missing \(identifier)")
-            XCTAssertTrue(destination.isHittable, "Sidebar destination is not hittable: \(identifier)")
+        for expected in destinations {
+            let destination = element(expected.sidebar, in: app)
+            XCTAssertTrue(destination.waitForExistence(timeout: 5), "Missing \(expected.sidebar)")
+            XCTAssertTrue(destination.isHittable, "Sidebar destination is not hittable: \(expected.sidebar)")
             destination.click()
+            let detail = element(expected.detail, in: app)
+            XCTAssertTrue(
+                detail.waitForExistence(timeout: 5),
+                "Sidebar click did not reveal \(expected.detail)"
+            )
+            XCTAssertEqual(
+                detail.label,
+                expected.title,
+                "Unexpected detail title after clicking \(expected.sidebar)"
+            )
         }
 
         element("v2.sidebar.home", in: app).click()
-        XCTAssertTrue(element("v2.home", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("v2.detail.home", in: app).waitForExistence(timeout: 5))
         XCTAssertTrue(element("v2.home.night-context", in: app).waitForExistence(timeout: 5))
 
         let inspectorToggle = element("v2.toolbar.inspector", in: app)

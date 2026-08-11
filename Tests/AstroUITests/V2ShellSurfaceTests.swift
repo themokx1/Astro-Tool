@@ -102,6 +102,44 @@ struct V2ShellSurfaceTests {
         ])
     }
 
+    @Test("Every sidebar route exposes a stable detail identifier and title")
+    func stableDetailAutomationContract() throws {
+        let root = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/App/V2RootView.swift"
+            ),
+            encoding: .utf8
+        )
+        let home = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Features/Home/HomeView.swift"
+            ),
+            encoding: .utf8
+        )
+        let uiTest = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "UITests/AstroToolUITests/AstroToolLaunchTests.swift"
+            ),
+            encoding: .utf8
+        )
+
+        #expect(home.contains("v2.detail.home"))
+        for route in ["projects", "nights", "planning", "library", "insights"] {
+            #expect(root.contains("v2.detail.\(route)"))
+            #expect(uiTest.contains("v2.detail.\(route)"))
+        }
+        for title in [
+            "Home",
+            "No projects yet",
+            "No observing nights yet",
+            "No plan selected",
+            "No library open",
+            "No insights yet",
+        ] {
+            #expect(uiTest.contains("title: \"\(title)\""))
+        }
+    }
+
     @Test("Unavailable V2 creation commands preserve the native New Window command")
     func unavailableCreationCommandsPreserveNewWindow() throws {
         let commands = try String(

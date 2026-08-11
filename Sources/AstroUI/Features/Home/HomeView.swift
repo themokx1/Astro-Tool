@@ -21,7 +21,8 @@ public struct HomeView: View {
         }
         .background(AstroTokens.Color.graphite.opacity(0.36))
         .navigationTitle("Home")
-        .accessibilityIdentifier("v2.home")
+        .accessibilityLabel("Home")
+        .accessibilityIdentifier("v2.detail.home")
     }
 
     private var header: some View {

@@ -1,9 +1,76 @@
-import AstroUI
+@testable import AstroUI
 import Foundation
 import Testing
 
 @Suite("V2 preview fixtures")
 struct V2PreviewFixturesTests {
+    @Test("A fixture-root symlink swap cannot redirect fixture creation")
+    func rejectsFixtureRootSwapBeforeMutation() throws {
+        let paths = try FixtureRacePaths.make()
+        defer { paths.remove() }
+
+        var didAttemptSwap = false
+        do {
+            _ = try V2PreviewFixtures.fixture(
+                arguments: paths.arguments,
+                beforeMutation: { fixtureRoot, _ in
+                    didAttemptSwap = true
+                    try FileManager.default.moveItem(
+                        at: fixtureRoot,
+                        to: paths.parkedFixtureContainer
+                    )
+                    try FileManager.default.createSymbolicLink(
+                        at: fixtureRoot,
+                        withDestinationURL: paths.realLibraryTarget
+                    )
+                }
+            )
+            Issue.record("Fixture creation should reject a replaced fixture root")
+        } catch V2UITestFixtureError.rootIdentityChanged {
+            // Expected: the path no longer identifies the pinned directory.
+        }
+
+        #expect(didAttemptSwap)
+        #expect(!FileManager.default.fileExists(
+            atPath: paths.realLibraryTarget.appendingPathComponent("DemoLibrary").path
+        ))
+    }
+
+    @Test("An app-support symlink swap cannot redirect support or cache creation")
+    func rejectsSupportRootSwapBeforeMutation() throws {
+        let paths = try FixtureRacePaths.make()
+        defer { paths.remove() }
+
+        var didAttemptSwap = false
+        do {
+            _ = try V2PreviewFixtures.fixture(
+                arguments: paths.arguments,
+                beforeMutation: { _, supportRoot in
+                    didAttemptSwap = true
+                    try FileManager.default.moveItem(
+                        at: supportRoot,
+                        to: paths.parkedSupportContainer
+                    )
+                    try FileManager.default.createSymbolicLink(
+                        at: supportRoot,
+                        withDestinationURL: paths.realSupportTarget
+                    )
+                }
+            )
+            Issue.record("Fixture creation should reject a replaced support root")
+        } catch V2UITestFixtureError.rootIdentityChanged {
+            // Expected: the path no longer identifies the pinned directory.
+        }
+
+        #expect(didAttemptSwap)
+        #expect(!FileManager.default.fileExists(
+            atPath: paths.realSupportTarget.appendingPathComponent("ApplicationSupport").path
+        ))
+        #expect(!FileManager.default.fileExists(
+            atPath: paths.realSupportTarget.appendingPathComponent("Caches").path
+        ))
+    }
+
     @Test("The sandbox-writable macOS temporary root is accepted without sharing TMPDIR")
     func acceptsMacOSTemporaryRoot() throws {
         let runID = UUID().uuidString
@@ -134,6 +201,74 @@ struct V2PreviewFixturesTests {
 
         #expect(throws: V2UITestFixtureError.self) {
             try refuseRealLibrary(link.appendingPathComponent("DemoLibrary", isDirectory: true))
+        }
+    }
+}
+
+private struct FixtureRacePaths {
+    let fixtureContainer: URL
+    let supportContainer: URL
+    let parkedFixtureContainer: URL
+    let parkedSupportContainer: URL
+    let realLibraryTarget: URL
+    let realSupportTarget: URL
+
+    var arguments: [String] {
+        [
+            "AstroTool",
+            "-UITestFixtureRoot", fixtureContainer.path,
+            "-UITestAppSupport", supportContainer.path,
+        ]
+    }
+
+    static func make(fileManager: FileManager = .default) throws -> Self {
+        let temporaryRoot = fileManager.temporaryDirectory
+        let runID = UUID().uuidString
+        let fixtureContainer = temporaryRoot.appendingPathComponent(
+            "AstroTool-V2-UI-Fixture-Race-\(runID)",
+            isDirectory: true
+        )
+        let supportContainer = temporaryRoot.appendingPathComponent(
+            "AstroTool-V2-UI-Support-Race-\(runID)",
+            isDirectory: true
+        )
+        let realLibraryTarget = temporaryRoot.appendingPathComponent(
+            "OutsideFixtureTarget-\(runID)",
+            isDirectory: true
+        )
+        let realSupportTarget = temporaryRoot.appendingPathComponent(
+            "OutsideSupportTarget-\(runID)",
+            isDirectory: true
+        )
+        for url in [fixtureContainer, supportContainer, realLibraryTarget, realSupportTarget] {
+            try fileManager.createDirectory(at: url, withIntermediateDirectories: false)
+        }
+        return Self(
+            fixtureContainer: fixtureContainer,
+            supportContainer: supportContainer,
+            parkedFixtureContainer: temporaryRoot.appendingPathComponent(
+                "ParkedFixture-\(runID)",
+                isDirectory: true
+            ),
+            parkedSupportContainer: temporaryRoot.appendingPathComponent(
+                "ParkedSupport-\(runID)",
+                isDirectory: true
+            ),
+            realLibraryTarget: realLibraryTarget,
+            realSupportTarget: realSupportTarget
+        )
+    }
+
+    func remove(fileManager: FileManager = .default) {
+        for url in [
+            fixtureContainer,
+            supportContainer,
+            parkedFixtureContainer,
+            parkedSupportContainer,
+            realLibraryTarget,
+            realSupportTarget,
+        ] {
+            try? fileManager.removeItem(at: url)
         }
     }
 }
