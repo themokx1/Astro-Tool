@@ -23,6 +23,7 @@ public struct FirstScanSummaryView: View {
                 .font(.caption.weight(.semibold))
                 .tracking(1.3)
                 .foregroundStyle(AstroTokens.Color.spectralBlue)
+                .accessibilityIdentifier("v2.onboarding.summary")
 
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
                 Text("Your library is ready")
@@ -49,6 +50,7 @@ public struct FirstScanSummaryView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("v2.onboarding.continue")
             }
         }
         .padding(AstroTokens.Spacing.spacious)

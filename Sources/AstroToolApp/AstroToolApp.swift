@@ -3,20 +3,28 @@ import SwiftUI
 
 @main
 struct AstroToolApp: App {
-    @State private var appState = AppState()
-    @State private var appModel = AppModel(
-        restorationValidator: RouteRestorationValidator(
+    @State private var appState: AppState?
+    @State private var appModel: AppModel
+    private let launchSelection: AppUILaunchSelection
+    private let uiTestFixture: V2UITestFixture?
+
+    init() {
+        launchSelection = AppUILaunchSelection.current
+        uiTestFixture = V2PreviewFixtures.currentOrTerminate()
+        _appState = State(initialValue: launchSelection.usesV2 ? nil : AppState())
+        _appModel = State(initialValue: AppModel(
+            restorationValidator: RouteRestorationValidator(
             selectionIsAvailable: { _ in false },
             contentRouteIsAvailable: { $0.selection == nil }
         )
-    )
-    private let launchSelection = AppUILaunchSelection.current
+        ))
+    }
 
     var body: some Scene {
         WindowGroup {
             if launchSelection.usesV2 {
-                V2RootView(appModel: appModel)
-            } else {
+                V2RootView(appModel: appModel, uiTestFixture: uiTestFixture)
+            } else if let appState {
                 RootView()
                     .environment(appState)
                     .frame(minWidth: 1100, minHeight: 700)
@@ -34,8 +42,17 @@ struct AstroToolApp: App {
         }
 
         Settings {
-            SettingsWindow()
-                .environment(appState)
+            if let appState {
+                SettingsWindow()
+                    .environment(appState)
+            } else {
+                ContentUnavailableView(
+                    "Settings are not available yet",
+                    systemImage: "gearshape",
+                    description: Text("V2 settings arrive with the remaining workflows.")
+                )
+                .frame(minWidth: 520, minHeight: 360)
+            }
         }
     }
 }

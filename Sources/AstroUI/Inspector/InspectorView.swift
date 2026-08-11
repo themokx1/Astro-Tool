@@ -29,6 +29,7 @@ public struct InspectorView: View {
         .frame(minWidth: 240, idealWidth: 280)
         .padding(AstroTokens.Spacing.standard)
         .accessibilityLabel("Inspector")
+        .accessibilityIdentifier("v2.inspector")
     }
 
     @ViewBuilder

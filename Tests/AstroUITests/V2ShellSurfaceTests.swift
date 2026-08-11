@@ -101,4 +101,19 @@ struct V2ShellSurfaceTests {
             .insights,
         ])
     }
+
+    @Test("Unavailable V2 creation commands preserve the native New Window command")
+    func unavailableCreationCommandsPreserveNewWindow() throws {
+        let commands = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroToolApp/Views/Commands.swift"
+            ),
+            encoding: .utf8
+        )
+        let v2Commands = try #require(commands.components(separatedBy: "struct V2AstroToolCommands").last)
+
+        #expect(v2Commands.contains("CommandGroup(after: .newItem)"))
+        #expect(!v2Commands.contains("CommandGroup(replacing: .newItem)"))
+        #expect(!v2Commands.contains(".keyboardShortcut(\"n\""))
+    }
 }

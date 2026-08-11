@@ -21,6 +21,7 @@ public struct HomeView: View {
         }
         .background(AstroTokens.Color.graphite.opacity(0.36))
         .navigationTitle("Home")
+        .accessibilityIdentifier("v2.home")
     }
 
     private var header: some View {
@@ -114,5 +115,6 @@ private struct NightContextRail: View {
         .accessibilityLabel(
             "Night context: \(context.leadingLabel), \(context.centerLabel), \(context.trailingLabel). Site not set."
         )
+        .accessibilityIdentifier("v2.home.night-context")
     }
 }

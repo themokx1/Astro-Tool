@@ -42,16 +42,26 @@ public struct AppUILaunchSelection: Equatable, Sendable {
 @MainActor
 public struct V2RootView: View {
     private let appModel: AppModel
+    private let uiTestFixture: V2UITestFixture?
     @State private var router: AppRouter
-    @State private var homeStore = HomeStore()
-    @State private var onboardingStore = OnboardingStore()
-    @State private var isOnboardingPresented = false
+    @State private var homeStore: HomeStore
+    @State private var onboardingStore: OnboardingStore
+    @State private var isOnboardingPresented: Bool
     @State private var didRestoreWindowState = false
     @SceneStorage("v2.windowRestoration") private var encodedWindowState = ""
 
-    public init(appModel: AppModel) {
+    public init(
+        appModel: AppModel,
+        uiTestFixture: V2UITestFixture? = nil
+    ) {
         self.appModel = appModel
+        self.uiTestFixture = uiTestFixture
         _router = State(initialValue: appModel.makeRouter())
+        _homeStore = State(initialValue: HomeStore())
+        _onboardingStore = State(
+            initialValue: uiTestFixture?.makeOnboardingStore() ?? OnboardingStore()
+        )
+        _isOnboardingPresented = State(initialValue: uiTestFixture != nil)
     }
 
     public var body: some View {
@@ -66,6 +76,12 @@ public struct V2RootView: View {
             }
             .onChange(of: router.restorationState) { _, state in
                 persist(state)
+            }
+            .task(id: uiTestFixture?.libraryRoot) {
+                guard let uiTestFixture,
+                      onboardingStore.phase == .chooseLibrary
+                else { return }
+                try? await onboardingStore.openAndScan(uiTestFixture.libraryRoot)
             }
     }
 
@@ -130,6 +146,7 @@ private struct V2Shell: View {
                 .accessibilityLabel(
                     router.isInspectorPresented ? "Hide inspector" : "Show inspector"
                 )
+                .accessibilityIdentifier("v2.toolbar.inspector")
             }
         }
         .focusedSceneValue(\.appRouter, router)
@@ -174,6 +191,7 @@ private struct V2Sidebar: View {
                 Label(section.title, systemImage: section.systemImage)
                     .tag(section)
                     .accessibilityLabel(section.title)
+                    .accessibilityIdentifier("v2.sidebar.\(section.rawValue)")
             }
         }
         .navigationTitle("AstroTool")

@@ -6,6 +6,8 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "AstroCore", targets: ["AstroCore"]),
+        .library(name: "AstroApplication", targets: ["AstroApplication"]),
+        .library(name: "AstroUI", targets: ["AstroUI"]),
         .executable(name: "astrotool", targets: ["astrotool"]),
         .executable(name: "AstroToolApp", targets: ["AstroToolApp"]),
     ],
