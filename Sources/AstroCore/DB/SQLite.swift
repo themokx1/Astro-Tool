@@ -188,6 +188,54 @@ public final class SQLiteDB {
         sqlite3_last_insert_rowid(handle)
     }
 
+    /// Creates a transactionally consistent copy using SQLite's backup API.
+    /// Unlike copying the main database file, this includes pages that are
+    /// committed in a live WAL. The source connection is never written.
+    public func backup(to destinationURL: URL) throws {
+        var destination: OpaquePointer?
+        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        let openResult = sqlite3_open_v2(destinationURL.path, &destination, flags, nil)
+        guard openResult == SQLITE_OK, let destination else {
+            let message = destination.map { String(cString: sqlite3_errmsg($0)) }
+                ?? "sqlite3_open_v2 backup destination failed (\(openResult))"
+            if let destination { sqlite3_close(destination) }
+            throw AstroError.databaseError(message)
+        }
+        defer { sqlite3_close(destination) }
+
+        guard let backup = sqlite3_backup_init(destination, "main", handle, "main") else {
+            throw AstroError.databaseError(String(cString: sqlite3_errmsg(destination)))
+        }
+        var stepResult: Int32 = SQLITE_OK
+        repeat {
+            stepResult = sqlite3_backup_step(backup, 256)
+            if stepResult == SQLITE_BUSY || stepResult == SQLITE_LOCKED {
+                sqlite3_sleep(10)
+            }
+        } while stepResult == SQLITE_OK || stepResult == SQLITE_BUSY || stepResult == SQLITE_LOCKED
+        let finishResult = sqlite3_backup_finish(backup)
+        guard stepResult == SQLITE_DONE, finishResult == SQLITE_OK else {
+            throw AstroError.databaseError(String(cString: sqlite3_errmsg(destination)))
+        }
+        // A backup copies the source database header, including WAL mode.
+        // Normalize only the private destination to a standalone file so a
+        // later immutable/read-only open never needs to create -wal/-shm.
+        var journalError: UnsafeMutablePointer<Int8>?
+        let journalResult = sqlite3_exec(
+            destination,
+            "PRAGMA journal_mode=DELETE;",
+            nil,
+            nil,
+            &journalError
+        )
+        guard journalResult == SQLITE_OK else {
+            let message = journalError.map { String(cString: $0) }
+                ?? String(cString: sqlite3_errmsg(destination))
+            sqlite3_free(journalError)
+            throw AstroError.databaseError(message)
+        }
+    }
+
     private func prepare(_ sql: String) throws -> OpaquePointer? {
         var statement: OpaquePointer?
         let rc = sqlite3_prepare_v2(handle, sql, -1, &statement, nil)

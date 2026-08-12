@@ -100,3 +100,41 @@ végső) — minden találat javítva és re-approve-olva.
    (read-only) futtatás egy szűk almappán.
 3. Az AstroTool appnak és a terminálnak is Teljes lemezhozzáférés kell majd az
    első éles futáshoz.
+
+## V2.0.0 UI-rework — élő végrehajtási állapot (2026-08-12)
+
+- Aktív worktree: `.worktrees/v200-ui-rework`
+- Aktív branch: `codex/v2.0.0-ui-rework`
+- V2 foundation/UI-harness kész: `05bb1fa`, `0386a47`, `3122dfe`.
+- Stabil UUID metaadat- és lineage-réteg kész: `91b28ef`.
+- AppStorage/SQLite célútvonal confinement kész: `40c9938`.
+- Sémakompatibilitás, párhuzamos migráció, domain-validáció és ciklusvédelem
+  kész: `47f7f23`; ellenőrzés: 1705 teszt / 24 suite zöld, AstroToolApp build zöld.
+- Folyamatban: workflows-parity terv Task 2, V1 ember által megadott metaadatok
+  érintetlen, idempotens V2 importja. A WAL-biztos SQLite snapshotter első
+  vertikális része 3/3 fókuszált teszttel zöld, még nincs commitolva.
+- Biztonsági szabály: `/Volumes/images` és minden valódi képfájl érintetlen;
+  kizárólag szintetikus temp-fixture-ökön futnak írásos tesztek.
+- Push-helyzet: a rendszer a `https://github.com/themokx1/Astro-Tool.git`
+  célra történő kódkivitelt külön, konkrét remote-engedély hiányában blokkolta.
+  Ezt nem szabad megkerülni; a helyi commitok ettől függetlenül folyamatosak.
+
+### Átadási prompt, ha másik agentnek kell folytatnia
+
+> Folytasd az AstroTool V2.0.0 kiadás elkészítését a
+> `/Users/zoltanpalotai16/PhpstormProjects/Astro-Tool/.worktrees/v200-ui-rework`
+> worktree-ben, a `codex/v2.0.0-ui-rework` branchen. Először olvasd el teljesen
+> a `docs/superpowers/plans/2026-08-10-v2-workflows-parity.md` tervet és ezt a
+> PROGRESS fájlt. Használd az executing-plans és test-driven-development
+> workflow-t. Jelenleg Task 2 fut: fejezd be és commitold a V1StoreSnapshotter
+> WAL-biztos, forrást nem módosító részét, majd RED→GREEN módon készítsd el az
+> idempotens V1MetadataImporter-t minden emberi adattípusra (tags, session
+> notes és `.astro_tool/notes`, relatív útvonalra kulcsolt verdicts, filter
+> profiles, capture groups/sources/assignments, acknowledgements, config/
+> setup/site, conversion/quarantine receipts, explicit legacy sensor history).
+> Soha ne vidd át a V1 integer file/group ID-kat, és ne importáld a scanből
+> újraépíthető cache-eket. Minden atomikus egység után focused teszt, teljes
+> `swift test --disable-sandbox --no-parallel`, AstroToolApp build, diff-check,
+> commit. `/Volumes/images`-hez és valódi képekhez ne írj, ne mozgass, ne
+> törölj. Push csak akkor, ha a konkrét GitHub remote-ra történő kódkivitel
+> engedélyezett; egyébként dokumentáld a blokkot, de ne kerüld meg.
