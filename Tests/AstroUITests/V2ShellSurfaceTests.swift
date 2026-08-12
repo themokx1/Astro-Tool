@@ -11,9 +11,9 @@ struct V2ShellSurfaceTests {
             .deletingLastPathComponent()
     }
 
-    @Test("V2 is the development default while explicit switches take precedence", arguments: [
+    @Test("V2 is the product default while explicit switches take precedence", arguments: [
         (arguments: ["AstroToolApp"], environment: [:], development: true, expected: true),
-        (arguments: ["AstroToolApp"], environment: [:], development: false, expected: false),
+        (arguments: ["AstroToolApp"], environment: [:], development: false, expected: true),
         (arguments: ["AstroToolApp", "-UseV1UI"], environment: ["ASTROTOOL_V2_UI": "1"], development: true, expected: false),
         (arguments: ["AstroToolApp", "-UseV2UI"], environment: ["ASTROTOOL_V2_UI": "0"], development: false, expected: true),
         (arguments: ["AstroToolApp"], environment: ["ASTROTOOL_V2_UI": "false"], development: true, expected: false),
@@ -84,9 +84,9 @@ struct V2ShellSurfaceTests {
         #expect(home.contains("Choose Image Library…"))
         #expect(home.contains("read-only index"))
         #expect(!home.contains("Open Library"))
-        #expect(root.contains("Available after library workflows arrive"))
+        #expect(!root.contains("Available after library workflows arrive"))
         #expect(commands.contains("Available after library workflows arrive"))
-        #expect(root.contains(".disabled(true)"))
+        #expect(!root.contains(".disabled(true)"))
         #expect(commands.contains(".disabled(true)"))
     }
 

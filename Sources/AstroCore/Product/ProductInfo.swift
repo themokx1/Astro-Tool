@@ -7,8 +7,9 @@ import Foundation
 /// never drift from the code users are actually running.
 public enum ProductInfo: Sendable {
     public static let name = "AstroTool"
-    public static let version = "1.0.0"
-    public static let build = "1"
+    public static let version = "2.0.0"
+    public static let build = "20001"
+    public static let releaseChannel = "Beta 1"
     public static let bundleIdentifier = "io.github.themokx1.AstroTool"
     public static let legacyBundleIdentifier = "com.zoltanpalotai.astrotool"
     public static let websiteURL = "https://themokx1.github.io/Astro-Tool/"
@@ -18,5 +19,5 @@ public enum ProductInfo: Sendable {
     public static let supportURL = "https://github.com/themokx1/Astro-Tool/issues"
     public static let sourceURL = "https://github.com/themokx1/Astro-Tool"
 
-    public static var displayVersion: String { "\(version) (\(build))" }
+    public static var displayVersion: String { "\(version) \(releaseChannel) (\(build))" }
 }

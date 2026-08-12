@@ -18,7 +18,7 @@ public struct AppUILaunchSelection: Equatable, Sendable {
         ) {
             usesV2 = environmentValue
         } else {
-            usesV2 = isDevelopmentBuild
+            usesV2 = true
         }
     }
 

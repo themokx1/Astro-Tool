@@ -8,6 +8,32 @@ történik.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-12
+
+### Added
+
+- Első nyilvános V2 béta natív, háromoszlopos macOS munkatérrel: Home,
+  Projects, Nights, Planning, Library és Insights felületekkel.
+- Read-only könyvtár-onboarding valós projekt-, éjszaka- és keretszámokkal;
+  a forrásképeket a V2 beolvasás nem módosítja.
+- Offline célpontkereső katalógusszám, angol név és magyar név alapján,
+  kanonikus mappanév-előnézettel.
+
+### Changed
+
+- A V2 felület a normál kiadás alapértelmezett felülete; a korábbi felület
+  szükség esetén a `-UseV1UI` indítási kapcsolóval még elérhető.
+- A fő navigáció letiltott helyőrzői helyett minden elsődleges munkatér
+  őszinte, használható állapot- és következő-lépés felületet kapott.
+
+### Beta limitations
+
+- A projekt létrehozásának metadata-mentése, a részletes éjszaka-lista,
+  minőségi grafikonok és a teljes V1 munkafolyamat-paritás további béta
+  frissítésekben kapcsolódik rá az elkészült V2 adattárra.
+- A lokális béta build ad-hoc aláírt; nyilvános, Gatekeeper-barát stabil
+  kiadás csak Developer ID aláírással és Apple-notarizációval készül.
+
 ## [1.0.0] - 2026-08-10
 
 ### Added
