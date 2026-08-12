@@ -1,3 +1,4 @@
+import AstroApplication
 import Foundation
 import SwiftUI
 
@@ -46,6 +47,7 @@ public struct V2RootView: View {
     @State private var router: AppRouter
     @State private var homeStore: HomeStore
     @State private var onboardingStore: OnboardingStore
+    @State private var projectsStore: ProjectsStore
     @State private var isOnboardingPresented: Bool
     @State private var didRestoreWindowState = false
     @SceneStorage("v2.windowRestoration") private var encodedWindowState = ""
@@ -61,6 +63,11 @@ public struct V2RootView: View {
         _onboardingStore = State(
             initialValue: uiTestFixture?.makeOnboardingStore() ?? OnboardingStore()
         )
+        _projectsStore = State(initialValue: ProjectsStore(
+            metadataFactory: uiTestFixture == nil
+                ? ProjectsStore.productionMetadata
+                : ProjectsStore.previewMetadata
+        ))
         _isOnboardingPresented = State(initialValue: uiTestFixture != nil)
     }
 
@@ -69,6 +76,7 @@ public struct V2RootView: View {
             router: router,
             homeStore: homeStore,
             onboardingStore: onboardingStore,
+            projectsStore: projectsStore,
             isOnboardingPresented: $isOnboardingPresented
         )
             .onAppear {
@@ -82,6 +90,12 @@ public struct V2RootView: View {
                       onboardingStore.phase == .chooseLibrary
                 else { return }
                 try? await onboardingStore.openAndScan(uiTestFixture.libraryRoot)
+            }
+            .task(id: onboardingStore.phase.summary?.libraryID.id) {
+                guard let root = onboardingStore.selectedRoot,
+                      onboardingStore.phase.summary != nil
+                else { return }
+                try? await projectsStore.open(rootURL: root)
             }
     }
 
@@ -108,6 +122,7 @@ private struct V2Shell: View {
     @Bindable var router: AppRouter
     let homeStore: HomeStore
     let onboardingStore: OnboardingStore
+    let projectsStore: ProjectsStore
     @Binding var isOnboardingPresented: Bool
     @Environment(\.openSettings) private var openSettings
 
@@ -121,6 +136,7 @@ private struct V2Shell: View {
                 router: router,
                 homeStore: homeStore,
                 onboardingStore: onboardingStore,
+                projectsStore: projectsStore,
                 chooseLibrary: presentOnboarding
             )
         }
@@ -153,7 +169,7 @@ private struct V2Shell: View {
         .frame(minWidth: 820, minHeight: 600)
         .sheet(item: $router.presentation) { presentation in
             if presentation == .newProject {
-                NewProjectView {
+                NewProjectView(store: projectsStore) {
                     router.dismissPresentation()
                 }
             } else {
@@ -242,6 +258,7 @@ private struct DetailHost: View {
     @Bindable var router: AppRouter
     let homeStore: HomeStore
     let onboardingStore: OnboardingStore
+    let projectsStore: ProjectsStore
     let chooseLibrary: () -> Void
 
     @ViewBuilder
@@ -252,6 +269,7 @@ private struct DetailHost: View {
         case .projects:
             ProjectsView(
                 snapshot: onboardingStore.phase.summary,
+                store: projectsStore,
                 createProject: { router.present(.newProject) },
                 chooseLibrary: chooseLibrary
             )

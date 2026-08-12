@@ -3,6 +3,7 @@ import SwiftUI
 
 public struct ProjectsView: View {
     let snapshot: LibrarySnapshot?
+    @Bindable var store: ProjectsStore
     let createProject: () -> Void
     let chooseLibrary: () -> Void
 
@@ -32,6 +33,30 @@ public struct ProjectsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(8)
             }
+
+            if !store.projects.isEmpty {
+                GroupBox("Saved projects") {
+                    VStack(spacing: 0) {
+                        ForEach(store.projects, id: \.id) { project in
+                            HStack(spacing: 12) {
+                                Image(systemName: "scope").foregroundStyle(AstroTokens.Color.spectralBlue)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(project.displayName).font(.headline)
+                                    Text(project.catalogID).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(project.phase.rawValue.capitalized)
+                                    .font(.caption.weight(.medium))
+                                    .padding(.horizontal, 8).padding(.vertical, 4)
+                                    .background(.quaternary, in: Capsule())
+                            }
+                            .padding(.vertical, 10)
+                            if project.id != store.projects.last?.id { Divider() }
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                }
+            }
         }
         .navigationTitle("Projects")
         .accessibilityLabel("Projects")
@@ -42,6 +67,9 @@ public struct ProjectsView: View {
 public struct NewProjectView: View {
     @State private var search = ""
     @State private var selectedID: String?
+    @State private var isSaving = false
+    @State private var saveError: String?
+    @Bindable var store: ProjectsStore
     let dismiss: () -> Void
 
     private var matches: [ProjectCatalogMatch] {
@@ -102,13 +130,29 @@ public struct NewProjectView: View {
                 .padding(12)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
             }
+            if let saveError {
+                Label(saveError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout).foregroundStyle(.red)
+            }
             HStack {
                 Spacer()
                 Button("Cancel", action: dismiss).keyboardShortcut(.cancelAction)
-                Button("Create Project", action: dismiss)
+                Button("Create Project") {
+                    guard let selected else { return }
+                    isSaving = true
+                    saveError = nil
+                    Task {
+                        do {
+                            _ = try await store.createProject(from: selected)
+                            dismiss()
+                        } catch {
+                            saveError = error.localizedDescription
+                            isSaving = false
+                        }
+                    }
+                }
                     .buttonStyle(.borderedProminent)
-                    .disabled(selected == nil)
-                    .help("Beta preview: persistence connects in the next increment")
+                    .disabled(selected == nil || isSaving)
             }
         }
         .padding(AstroTokens.Spacing.spacious)

@@ -27,4 +27,15 @@ struct V2BetaWorkspaceSurfaceTests {
             #expect(source.contains(id))
         }
     }
+
+    @Test("Project metadata opens only after a library scan has produced an identity")
+    func projectStoreFollowsCompletedSnapshot() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let shell = try String(
+            contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift")
+        )
+        #expect(shell.contains(".task(id: onboardingStore.phase.summary?.libraryID.id)"))
+        #expect(!shell.contains(".task(id: onboardingStore.selectedRoot)"))
+    }
 }
