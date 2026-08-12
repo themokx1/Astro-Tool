@@ -261,6 +261,37 @@ struct MetadataStoreTests {
         #expect(try await LibraryManifest.capture(root: fixture.libraryRoot) == before)
     }
 
+    @Test("An AppStorage ancestor swapped to the library cannot redirect metadata writes")
+    func metadataAncestorSwapFailsWithoutLibraryWrites() async throws {
+        let fixture = try StoreFixture.makeLibrary()
+        defer { fixture.remove() }
+        let paths = try AppStoragePaths(
+            applicationSupport: fixture.applicationSupport,
+            caches: fixture.caches,
+            libraryID: LibraryIdentity(rootURL: fixture.libraryRoot),
+            libraryRoot: fixture.libraryRoot
+        )
+        let before = try await LibraryManifest.capture(root: fixture.libraryRoot)
+
+        #expect(throws: (any Error).self) {
+            _ = try MetadataStore(
+                storagePaths: paths,
+                beforeMetadataParentOpen: {
+                    try FileManager.default.createSymbolicLink(
+                        at: fixture.applicationSupport,
+                        withDestinationURL: fixture.libraryRoot
+                    )
+                },
+                beforeDatabaseOpen: {}
+            )
+        }
+
+        #expect(try await LibraryManifest.capture(root: fixture.libraryRoot) == before)
+        #expect(!FileManager.default.fileExists(
+            atPath: fixture.libraryRoot.appendingPathComponent("AstroTool").path
+        ))
+    }
+
     @Test("Concurrent callers serialize without losing UUID records")
     func concurrentSavesAreSerialized() async throws {
         let fixture = try StoreFixture.make()

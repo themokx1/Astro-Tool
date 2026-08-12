@@ -5,6 +5,12 @@ public enum MetadataStoreError: Error, Equatable, Sendable {
     case invalidSchemaVersion
     case unsupportedSchemaVersion(found: Int, supported: Int)
     case invalidRecord(table: String, id: String)
+    case metadataDestinationInsideLibrary
+    case invalidMetadataDestination
+    case cannotCreateMetadataParent
+    case unsafeMetadataParent
+    case unsafeMetadataDatabase
+    case metadataDestinationChanged
 }
 
 public enum MetadataSchema {

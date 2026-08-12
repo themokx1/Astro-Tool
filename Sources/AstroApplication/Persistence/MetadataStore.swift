@@ -1,4 +1,5 @@
 import AstroCore
+import Darwin
 import Foundation
 
 public struct MetadataWriteBatch: Sendable {
@@ -37,7 +38,25 @@ public actor MetadataStore {
     private let database: SQLiteDB
 
     public init(storagePaths: AppStoragePaths) throws {
-        try self.init(databaseURL: storagePaths.metadataDatabase)
+        try self.init(
+            storagePaths: storagePaths,
+            beforeMetadataParentOpen: {},
+            beforeDatabaseOpen: {}
+        )
+    }
+
+    init(
+        storagePaths: AppStoragePaths,
+        beforeMetadataParentOpen: @Sendable () throws -> Void,
+        beforeDatabaseOpen: @Sendable () throws -> Void
+    ) throws {
+        let opened = try Self.openConfinedDatabase(
+            storagePaths: storagePaths,
+            beforeMetadataParentOpen: beforeMetadataParentOpen,
+            beforeDatabaseOpen: beforeDatabaseOpen
+        )
+        self.databaseURL = opened.url
+        self.database = opened.database
     }
 
     init(databaseURL: URL) throws {
@@ -222,6 +241,250 @@ public actor MetadataStore {
             try? database.exec("ROLLBACK;")
             throw error
         }
+    }
+
+    private struct FileState: Equatable, Sendable {
+        let device: UInt64
+        let inode: UInt64
+        let mode: UInt32
+        let owner: UInt32
+        let linkCount: UInt64
+
+        var fileType: UInt32 { mode & UInt32(S_IFMT) }
+        var isGroupOrWorldWritable: Bool {
+            mode & UInt32(S_IWGRP | S_IWOTH) != 0
+        }
+
+        init(_ status: stat) {
+            self.device = UInt64(status.st_dev)
+            self.inode = UInt64(status.st_ino)
+            self.mode = UInt32(status.st_mode)
+            self.owner = UInt32(status.st_uid)
+            self.linkCount = UInt64(status.st_nlink)
+        }
+    }
+
+    private static func openConfinedDatabase(
+        storagePaths: AppStoragePaths,
+        beforeMetadataParentOpen: @Sendable () throws -> Void,
+        beforeDatabaseOpen: @Sendable () throws -> Void
+    ) throws -> (url: URL, database: SQLiteDB) {
+        let databaseURL = storagePaths.metadataDatabase.standardizedFileURL
+        let libraryRoot = storagePaths.libraryRoot
+        try validateMetadataDestination(databaseURL, relativeTo: libraryRoot)
+        let canonicalParent = try canonicalIntendedPath(
+            databaseURL.deletingLastPathComponent()
+        )
+        guard !isContained(canonicalParent, in: canonicalPath(libraryRoot)) else {
+            throw MetadataStoreError.metadataDestinationInsideLibrary
+        }
+        try beforeMetadataParentOpen()
+
+        let parentDescriptor = try openMetadataParent(canonicalParent)
+        defer { Darwin.close(parentDescriptor) }
+        try validateMetadataDestination(databaseURL, relativeTo: libraryRoot)
+        _ = try safeParentState(descriptor: parentDescriptor)
+        let databaseDescriptor = try openMetadataDatabase(
+            named: databaseURL.lastPathComponent,
+            relativeTo: parentDescriptor
+        )
+        defer { Darwin.close(databaseDescriptor) }
+        let parentState = try safeParentState(descriptor: parentDescriptor)
+        let databaseState = try safeDatabaseState(descriptor: databaseDescriptor)
+        let canonicalDatabase = canonicalParent.appendingPathComponent(databaseURL.lastPathComponent)
+
+        let database = try SQLiteDB(
+            confinedIndexPath: canonicalDatabase.path,
+            beforeOpen: beforeDatabaseOpen,
+            validateBeforeUse: {
+                try validatePinnedDestination(
+                    databaseURL,
+                    relativeTo: libraryRoot,
+                    parentDescriptor: parentDescriptor,
+                    expectedParent: parentState,
+                    databaseDescriptor: databaseDescriptor,
+                    expectedDatabase: databaseState
+                )
+            }
+        )
+        try database.exec("PRAGMA foreign_keys = ON;")
+        try database.exec("PRAGMA busy_timeout = 5000;")
+        try MetadataSchema.migrate(database)
+        return (canonicalDatabase, database)
+    }
+
+    private static func validateMetadataDestination(
+        _ databaseURL: URL,
+        relativeTo libraryRoot: URL
+    ) throws {
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: databaseURL.path) {
+            guard attributes[.type] as? FileAttributeType == .typeRegular else {
+                throw MetadataStoreError.invalidMetadataDestination
+            }
+        }
+        guard !isContained(canonicalPath(databaseURL), in: canonicalPath(libraryRoot)) else {
+            throw MetadataStoreError.metadataDestinationInsideLibrary
+        }
+        let parent = databaseURL.deletingLastPathComponent()
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: parent.path) {
+            guard attributes[.type] as? FileAttributeType == .typeDirectory else {
+                throw MetadataStoreError.invalidMetadataDestination
+            }
+        }
+    }
+
+    private static func openMetadataParent(_ parent: URL) throws -> Int32 {
+        var descriptor = Darwin.open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard descriptor >= 0 else { throw MetadataStoreError.unsafeMetadataParent }
+        do {
+            for component in parent.standardizedFileURL.pathComponents.dropFirst() {
+                let nextDescriptor = try component.withCString { name -> Int32 in
+                    var opened = Darwin.openat(
+                        descriptor,
+                        name,
+                        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                    )
+                    if opened < 0, errno == ENOENT {
+                        let created = Darwin.mkdirat(descriptor, name, mode_t(S_IRWXU))
+                        guard created == 0 || errno == EEXIST else {
+                            throw MetadataStoreError.cannotCreateMetadataParent
+                        }
+                        opened = Darwin.openat(
+                            descriptor,
+                            name,
+                            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                        )
+                    }
+                    guard opened >= 0 else {
+                        throw MetadataStoreError.unsafeMetadataParent
+                    }
+                    return opened
+                }
+                Darwin.close(descriptor)
+                descriptor = nextDescriptor
+            }
+            return descriptor
+        } catch {
+            Darwin.close(descriptor)
+            throw error
+        }
+    }
+
+    private static func openMetadataDatabase(named name: String, relativeTo parent: Int32) throws -> Int32 {
+        let descriptor = name.withCString { path in
+            Darwin.openat(
+                parent,
+                path,
+                O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC,
+                mode_t(S_IRUSR | S_IWUSR)
+            )
+        }
+        guard descriptor >= 0 else {
+            throw MetadataStoreError.unsafeMetadataDatabase
+        }
+        return descriptor
+    }
+
+    private static func safeParentState(descriptor: Int32) throws -> FileState {
+        let state = try fileState(descriptor: descriptor)
+        guard
+            state.fileType == UInt32(S_IFDIR),
+            state.owner == UInt32(Darwin.geteuid()),
+            !state.isGroupOrWorldWritable
+        else {
+            throw MetadataStoreError.unsafeMetadataParent
+        }
+        return state
+    }
+
+    private static func safeDatabaseState(descriptor: Int32) throws -> FileState {
+        let state = try fileState(descriptor: descriptor)
+        guard
+            state.fileType == UInt32(S_IFREG),
+            state.owner == UInt32(Darwin.geteuid()),
+            state.linkCount == 1,
+            !state.isGroupOrWorldWritable
+        else {
+            throw MetadataStoreError.unsafeMetadataDatabase
+        }
+        return state
+    }
+
+    private static func validatePinnedDestination(
+        _ databaseURL: URL,
+        relativeTo libraryRoot: URL,
+        parentDescriptor: Int32,
+        expectedParent: FileState,
+        databaseDescriptor: Int32,
+        expectedDatabase: FileState
+    ) throws {
+        try validateMetadataDestination(databaseURL, relativeTo: libraryRoot)
+        guard try fileState(descriptor: parentDescriptor) == expectedParent else {
+            throw MetadataStoreError.unsafeMetadataParent
+        }
+        guard try fileState(at: databaseURL.deletingLastPathComponent()) == expectedParent else {
+            throw MetadataStoreError.metadataDestinationChanged
+        }
+        guard try fileState(descriptor: databaseDescriptor) == expectedDatabase else {
+            throw MetadataStoreError.unsafeMetadataDatabase
+        }
+        guard try fileState(at: databaseURL) == expectedDatabase else {
+            throw MetadataStoreError.metadataDestinationChanged
+        }
+    }
+
+    private static func canonicalIntendedPath(_ url: URL) throws -> URL {
+        var existingAncestor = url.standardizedFileURL
+        var missingComponents: [String] = []
+        while true {
+            if let resolved = Darwin.realpath(existingAncestor.path, nil) {
+                defer { Darwin.free(resolved) }
+                return missingComponents.reversed().reduce(
+                    URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
+                ) { partial, component in
+                    partial.appendingPathComponent(component, isDirectory: true)
+                }
+            }
+            guard existingAncestor.path != "/" else {
+                throw MetadataStoreError.unsafeMetadataParent
+            }
+            missingComponents.append(existingAncestor.lastPathComponent)
+            existingAncestor.deleteLastPathComponent()
+        }
+    }
+
+    private static func fileState(descriptor: Int32) throws -> FileState {
+        var status = stat()
+        guard Darwin.fstat(descriptor, &status) == 0 else {
+            throw MetadataStoreError.metadataDestinationChanged
+        }
+        return FileState(status)
+    }
+
+    private static func fileState(at url: URL) throws -> FileState {
+        var status = stat()
+        let result = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.lstat(path, &status)
+        }
+        guard result == 0 else {
+            throw MetadataStoreError.metadataDestinationChanged
+        }
+        return FileState(status)
+    }
+
+    private static func canonicalPath(_ url: URL) -> URL {
+        url.standardizedFileURL.pathComponents.dropFirst().reduce(
+            URL(fileURLWithPath: "/", isDirectory: true)
+        ) { resolvedPrefix, component in
+            resolvedPrefix.appendingPathComponent(component).resolvingSymlinksInPath()
+        }
+    }
+
+    private static func isContained(_ candidate: URL, in root: URL) -> Bool {
+        if candidate.path == root.path { return true }
+        let prefix = root.path == "/" ? root.path : root.path + "/"
+        return candidate.path.hasPrefix(prefix)
     }
 
     private func upsert(_ record: ProjectRecord) throws {
