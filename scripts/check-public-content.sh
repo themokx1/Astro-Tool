@@ -26,8 +26,8 @@ for needle in "${forbidden[@]}"; do
     fi
 done
 
-if ! rg --fixed-strings 'public static let version = "1.0.0"' Sources/AstroCore/Product/ProductInfo.swift >/dev/null; then
-    echo "ERROR: ProductInfo is not version 1.0.0" >&2
+if ! rg --fixed-strings 'public static let version = "2.0.0"' Sources/AstroCore/Product/ProductInfo.swift >/dev/null; then
+    echo "ERROR: ProductInfo is not version 2.0.0" >&2
     failed=1
 fi
 
