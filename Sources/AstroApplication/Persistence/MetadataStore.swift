@@ -204,6 +204,14 @@ public actor MetadataStore {
         return record
     }
 
+    public func projects() throws -> [ProjectRecord] {
+        var records: [ProjectRecord] = []
+        try database.query(
+            "SELECT id, catalog_id, display_name, phase FROM projects ORDER BY display_name, id;"
+        ) { row in records.append(try Self.project(from: row)) }
+        return records
+    }
+
     public func night(id: UUID) throws -> NightRecord? {
         var record: NightRecord?
         try database.query(
@@ -224,6 +232,19 @@ public actor MetadataStore {
             bind: [.text(id.databaseText)]
         ) { row in record = try Self.series(from: row) }
         return record
+    }
+
+    public func series(projectID: UUID) throws -> [SeriesRecord] {
+        var records: [SeriesRecord] = []
+        try database.query(
+            """
+            SELECT id, project_id, night_id, setup_id, setup_descriptor, sensor_mode,
+                   passband, exposure_seconds, filter_name, filter_id, gain, offset, binning
+            FROM series WHERE project_id = ? ORDER BY id;
+            """,
+            bind: [.text(projectID.databaseText)]
+        ) { row in records.append(try Self.series(from: row)) }
+        return records
     }
 
     public func frameDecision(id: UUID) throws -> FrameDecisionRecord? {
