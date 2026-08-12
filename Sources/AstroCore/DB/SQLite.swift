@@ -51,6 +51,7 @@ public final class SQLiteDB {
     private enum OpenPolicy {
         case standard
         case confinedIndex
+        case readOnly
     }
 
     /// Opens (creating if needed) the database at `path`. Pass `":memory:"`
@@ -79,6 +80,18 @@ public final class SQLiteDB {
         )
     }
 
+    /// Opens an existing database without creating files or changing its
+    /// journal mode. Callers that require path confinement validate it before
+    /// handing the URL to this read-only compatibility probe.
+    package convenience init(readOnlyPath path: String) throws {
+        try self.init(
+            path: path,
+            policy: .readOnly,
+            beforeOpen: {},
+            validateBeforeUse: {}
+        )
+    }
+
     private init(
         path: String,
         policy: OpenPolicy,
@@ -87,12 +100,14 @@ public final class SQLiteDB {
     ) throws {
         try beforeOpen()
         var db: OpaquePointer?
-        var flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
+        var flags = SQLITE_OPEN_FULLMUTEX
         switch policy {
         case .standard:
-            flags |= SQLITE_OPEN_CREATE
+            flags |= SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
         case .confinedIndex:
-            flags |= SQLITE_OPEN_NOFOLLOW
+            flags |= SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOFOLLOW
+        case .readOnly:
+            flags |= SQLITE_OPEN_READONLY
         }
         let rc = sqlite3_open_v2(path, &db, flags, nil)
         guard rc == SQLITE_OK, let db else {
@@ -107,10 +122,14 @@ public final class SQLiteDB {
         if path != ":memory:" {
             switch policy {
             case .standard:
+                try exec("PRAGMA busy_timeout=5000;")
                 try exec("PRAGMA journal_mode=WAL;")
             case .confinedIndex:
+                try exec("PRAGMA busy_timeout=5000;")
                 try exec("PRAGMA journal_mode=MEMORY;")
                 try exec("PRAGMA temp_store=MEMORY;")
+            case .readOnly:
+                try exec("PRAGMA busy_timeout=5000;")
             }
         }
     }

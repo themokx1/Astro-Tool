@@ -219,7 +219,13 @@ struct MetadataStoreTests {
                 "INSERT INTO metadata_schema(singleton, version) VALUES (1, ?);",
                 bind: [.int(Int64(futureVersion))]
             )
+            try database.exec("PRAGMA journal_mode=DELETE;")
         }
+
+        let beforeBytes = try Data(contentsOf: fixture.databaseURL)
+        let beforeNames = try Set(FileManager.default.contentsOfDirectory(
+            atPath: fixture.container.path
+        ))
 
         do {
             _ = try MetadataStore(databaseURL: fixture.databaseURL)
@@ -231,8 +237,133 @@ struct MetadataStoreTests {
             ))
         }
 
-        let database = try SQLiteDB(path: fixture.databaseURL.path)
-        #expect(try schemaVersion(in: database) == futureVersion)
+        #expect(try Data(contentsOf: fixture.databaseURL) == beforeBytes)
+        #expect(try Set(FileManager.default.contentsOfDirectory(
+            atPath: fixture.container.path
+        )) == beforeNames)
+    }
+
+    @Test("Concurrent store opens migrate one old schema exactly once")
+    func concurrentMigrationIsIdempotent() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        try createVersionOneDatabase(at: fixture.databaseURL)
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0..<8 {
+                group.addTask {
+                    let store = try MetadataStore(databaseURL: fixture.databaseURL)
+                    #expect(try await store.schemaVersion() == MetadataSchema.currentVersion)
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+        #expect(try await store.schemaVersion() == MetadataSchema.currentVersion)
+    }
+
+    @Test("Invalid civil dates, time zones, and non-finite measurements are rejected")
+    func invalidDomainValuesAreRejected() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+        let records = SampleRecords.make()
+        try await store.save(records.project)
+
+        let invalidNights = [
+            NightRecord(id: UUID(), localDate: "2026-02-30", timeZoneID: "Europe/Budapest"),
+            NightRecord(id: UUID(), localDate: "2026-08-08", timeZoneID: "Not/A_Timezone"),
+        ]
+        for night in invalidNights {
+            await #expect(throws: MetadataStoreError.self) {
+                try await store.save(night)
+            }
+        }
+
+        try await store.save(records.night)
+        let invalidSeries = SeriesRecord(
+            id: UUID(),
+            projectID: records.project.id,
+            nightID: records.night.id,
+            setupID: nil,
+            setupDescriptor: "Fixture",
+            sensorMode: .osc,
+            passband: .broadband,
+            exposureSeconds: .infinity,
+            filterName: nil,
+            filterID: nil,
+            gain: .nan,
+            offset: nil,
+            binning: "1x1"
+        )
+        await #expect(throws: MetadataStoreError.self) {
+            try await store.save(invalidSeries)
+        }
+
+        let invalidResult = ResultRecord(
+            id: UUID(),
+            projectID: records.project.id,
+            parentResultID: nil,
+            kind: .stack,
+            role: .final,
+            relativePath: nil,
+            createdAt: Date(timeIntervalSince1970: .infinity),
+            softwareName: nil,
+            softwareVersion: nil
+        )
+        await #expect(throws: MetadataStoreError.self) {
+            try await store.save(invalidResult)
+        }
+    }
+
+    @Test("Result dependencies reject self references and multi-node cycles")
+    func resultDependencyCyclesAreRejected() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+        let records = SampleRecords.make()
+        try await store.save(records.project)
+
+        let firstID = UUID()
+        let secondID = UUID()
+        let first = result(id: firstID, projectID: records.project.id, parentID: nil)
+        let second = result(id: secondID, projectID: records.project.id, parentID: firstID)
+        try await store.save(first)
+        try await store.save(second)
+
+        await #expect(throws: MetadataStoreError.self) {
+            try await store.save(self.result(
+                id: firstID,
+                projectID: records.project.id,
+                parentID: secondID
+            ))
+        }
+        await #expect(throws: MetadataStoreError.self) {
+            try await store.save(self.result(
+                id: UUID(),
+                projectID: records.project.id,
+                parentID: nil,
+                forcedSelfParent: true
+            ))
+        }
+
+        let third = result(id: UUID(), projectID: records.project.id, parentID: nil)
+        try await store.save(third)
+        try await store.save(LineageEdgeRecord(
+            id: UUID(),
+            resultID: third.id,
+            sourceKind: .result,
+            sourceID: second.id
+        ))
+        await #expect(throws: MetadataStoreError.self) {
+            try await store.save(LineageEdgeRecord(
+                id: UUID(),
+                resultID: first.id,
+                sourceKind: .result,
+                sourceID: third.id
+            ))
+        }
     }
 
     @Test("AppStorage metadata stays outside the read-only image manifest")
@@ -353,6 +484,25 @@ struct MetadataStoreTests {
       version INTEGER NOT NULL CHECK(version >= 0)
     );
     """
+
+    private func result(
+        id: UUID,
+        projectID: UUID,
+        parentID: UUID?,
+        forcedSelfParent: Bool = false
+    ) -> ResultRecord {
+        ResultRecord(
+            id: id,
+            projectID: projectID,
+            parentResultID: forcedSelfParent ? id : parentID,
+            kind: .processingVariant,
+            role: .intermediate,
+            relativePath: nil,
+            createdAt: Date(timeIntervalSince1970: 1_786_404_200),
+            softwareName: "AstroTool",
+            softwareVersion: "2.0.0"
+        )
+    }
 
     private func createVersionOneDatabase(
         at url: URL,

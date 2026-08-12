@@ -61,6 +61,7 @@ public actor MetadataStore {
 
     init(databaseURL: URL) throws {
         let standardizedURL = databaseURL.standardizedFileURL
+        try MetadataSchema.rejectUnsupportedSchema(at: standardizedURL)
         try FileManager.default.createDirectory(
             at: standardizedURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -293,6 +294,16 @@ public actor MetadataStore {
         let databaseState = try safeDatabaseState(descriptor: databaseDescriptor)
         let canonicalDatabase = canonicalParent.appendingPathComponent(databaseURL.lastPathComponent)
 
+        try validatePinnedDestination(
+            databaseURL,
+            relativeTo: libraryRoot,
+            parentDescriptor: parentDescriptor,
+            expectedParent: parentState,
+            databaseDescriptor: databaseDescriptor,
+            expectedDatabase: databaseState
+        )
+        try MetadataSchema.rejectUnsupportedSchema(at: canonicalDatabase)
+
         let database = try SQLiteDB(
             confinedIndexPath: canonicalDatabase.path,
             beforeOpen: beforeDatabaseOpen,
@@ -507,6 +518,7 @@ public actor MetadataStore {
     }
 
     private func upsert(_ record: NightRecord) throws {
+        try Self.validate(record)
         try database.run(
             """
             INSERT INTO nights(id, local_date, time_zone_id)
@@ -524,6 +536,7 @@ public actor MetadataStore {
     }
 
     private func upsert(_ record: SeriesRecord) throws {
+        try Self.validate(record)
         try database.run(
             """
             INSERT INTO series(
@@ -585,6 +598,8 @@ public actor MetadataStore {
     }
 
     private func upsert(_ record: ResultRecord) throws {
+        try Self.validate(record)
+        try validateDependency(resultID: record.id, dependsOn: record.parentResultID)
         try database.run(
             """
             INSERT INTO results(
@@ -617,6 +632,13 @@ public actor MetadataStore {
     }
 
     private func upsert(_ record: LineageEdgeRecord) throws {
+        if record.sourceKind == .result {
+            try validateDependency(
+                resultID: record.resultID,
+                dependsOn: record.sourceID,
+                excludingLineageEdgeID: record.id
+            )
+        }
         let sources: (series: SQLiteValue, frame: SQLiteValue, result: SQLiteValue)
         switch record.sourceKind {
         case .series:
@@ -651,6 +673,11 @@ public actor MetadataStore {
     }
 
     private func upsert(_ record: ReviewStateRecord) throws {
+        try Self.validateFinite(
+            record.updatedAt.timeIntervalSince1970,
+            record: "review_states",
+            field: "updated_at"
+        )
         try database.run(
             """
             INSERT INTO review_states(id, series_id, status, updated_at)
@@ -670,6 +697,11 @@ public actor MetadataStore {
     }
 
     private func upsert(_ record: MutationJournalRecord) throws {
+        try Self.validateFinite(
+            record.createdAt.timeIntervalSince1970,
+            record: "mutation_journal",
+            field: "created_at"
+        )
         try database.run(
             """
             INSERT INTO mutation_journal(id, operation_id, status, created_at, payload_json)
@@ -690,6 +722,106 @@ public actor MetadataStore {
         )
     }
 
+    private func validateDependency(
+        resultID: UUID,
+        dependsOn dependencyID: UUID?,
+        excludingLineageEdgeID: UUID? = nil
+    ) throws {
+        guard let dependencyID else { return }
+        guard dependencyID != resultID else {
+            throw MetadataStoreError.resultDependencyCycle
+        }
+
+        var reachesResult = false
+        try database.query(
+            """
+            WITH RECURSIVE dependencies(id) AS (
+              SELECT ?
+              UNION
+              SELECT results.parent_result_id
+              FROM results JOIN dependencies ON results.id = dependencies.id
+              WHERE results.parent_result_id IS NOT NULL
+              UNION
+              SELECT lineage_edges.source_result_id
+              FROM lineage_edges JOIN dependencies ON lineage_edges.result_id = dependencies.id
+              WHERE lineage_edges.source_kind = 'result'
+                AND lineage_edges.source_result_id IS NOT NULL
+                AND lineage_edges.id <> ?
+            )
+            SELECT 1 FROM dependencies WHERE id = ? LIMIT 1;
+            """,
+            bind: [
+                .text(dependencyID.databaseText),
+                .text(excludingLineageEdgeID?.databaseText ?? ""),
+                .text(resultID.databaseText),
+            ]
+        ) { _ in reachesResult = true }
+        guard !reachesResult else {
+            throw MetadataStoreError.resultDependencyCycle
+        }
+    }
+
+    private static func validate(_ record: NightRecord) throws {
+        guard validCivilDate(record.localDate) else {
+            throw MetadataStoreError.invalidField(record: "nights", field: "local_date")
+        }
+        guard TimeZone(identifier: record.timeZoneID) != nil else {
+            throw MetadataStoreError.invalidField(record: "nights", field: "time_zone_id")
+        }
+    }
+
+    private static func validate(_ record: SeriesRecord) throws {
+        try validateFinite(
+            record.exposureSeconds,
+            record: "series",
+            field: "exposure_seconds",
+            mustBePositive: true
+        )
+        if let gain = record.gain {
+            try validateFinite(gain, record: "series", field: "gain")
+        }
+        if let offset = record.offset {
+            try validateFinite(offset, record: "series", field: "offset")
+        }
+    }
+
+    private static func validate(_ record: ResultRecord) throws {
+        try validateFinite(
+            record.createdAt.timeIntervalSince1970,
+            record: "results",
+            field: "created_at"
+        )
+    }
+
+    private static func validateFinite(
+        _ value: Double,
+        record: String,
+        field: String,
+        mustBePositive: Bool = false
+    ) throws {
+        guard value.isFinite, !mustBePositive || value > 0 else {
+            throw MetadataStoreError.invalidField(record: record, field: field)
+        }
+    }
+
+    private static func validCivilDate(_ value: String) -> Bool {
+        let parts = value.split(separator: "-", omittingEmptySubsequences: false)
+        guard parts.count == 3,
+              parts[0].count == 4,
+              parts[1].count == 2,
+              parts[2].count == 2,
+              let year = Int(parts[0]),
+              let month = Int(parts[1]),
+              let day = Int(parts[2])
+        else { return false }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let components = DateComponents(year: year, month: month, day: day)
+        guard let date = calendar.date(from: components) else { return false }
+        let roundTrip = calendar.dateComponents([.year, .month, .day], from: date)
+        return roundTrip.year == year && roundTrip.month == month && roundTrip.day == day
+    }
+
     private static func project(from row: SQLiteRow) throws -> ProjectRecord {
         let idText = row.string(0) ?? ""
         guard let id = UUID(uuidString: idText),
@@ -707,7 +839,9 @@ public actor MetadataStore {
               let localDate = row.string(1),
               let timeZoneID = row.string(2)
         else { throw MetadataStoreError.invalidRecord(table: "nights", id: idText) }
-        return NightRecord(id: id, localDate: localDate, timeZoneID: timeZoneID)
+        let record = NightRecord(id: id, localDate: localDate, timeZoneID: timeZoneID)
+        try validate(record)
+        return record
     }
 
     private static func series(from row: SQLiteRow) throws -> SeriesRecord {
@@ -723,7 +857,7 @@ public actor MetadataStore {
               let exposureSeconds = row.double(7),
               let binning = row.string(12)
         else { throw MetadataStoreError.invalidRecord(table: "series", id: idText) }
-        return SeriesRecord(
+        let record = SeriesRecord(
             id: id,
             projectID: projectID,
             nightID: nightID,
@@ -738,6 +872,8 @@ public actor MetadataStore {
             offset: row.double(11),
             binning: binning
         )
+        try validate(record)
+        return record
     }
 
     private static func frameDecision(from row: SQLiteRow) throws -> FrameDecisionRecord {
@@ -770,7 +906,7 @@ public actor MetadataStore {
               let role = ResultRole(rawValue: roleText),
               let createdAt = row.double(6)
         else { throw MetadataStoreError.invalidRecord(table: "results", id: idText) }
-        return ResultRecord(
+        let record = ResultRecord(
             id: id,
             projectID: projectID,
             parentResultID: parentText.flatMap(UUID.init(uuidString:)),
@@ -781,6 +917,8 @@ public actor MetadataStore {
             softwareName: row.string(7),
             softwareVersion: row.string(8)
         )
+        try validate(record)
+        return record
     }
 
     private static func lineageEdge(from row: SQLiteRow) throws -> LineageEdgeRecord {
@@ -807,12 +945,18 @@ public actor MetadataStore {
               let status = ReviewStatus(rawValue: statusText),
               let updatedAt = row.double(3)
         else { throw MetadataStoreError.invalidRecord(table: "review_states", id: idText) }
-        return ReviewStateRecord(
+        let record = ReviewStateRecord(
             id: id,
             seriesID: seriesID,
             status: status,
             updatedAt: Date(timeIntervalSince1970: updatedAt)
         )
+        try validateFinite(
+            record.updatedAt.timeIntervalSince1970,
+            record: "review_states",
+            field: "updated_at"
+        )
+        return record
     }
 
     private static func mutationJournal(from row: SQLiteRow) throws -> MutationJournalRecord {
@@ -824,13 +968,19 @@ public actor MetadataStore {
               let createdAt = row.double(3),
               let payloadJSON = row.string(4)
         else { throw MetadataStoreError.invalidRecord(table: "mutation_journal", id: idText) }
-        return MutationJournalRecord(
+        let record = MutationJournalRecord(
             id: id,
             operationID: operationID,
             status: status,
             createdAt: Date(timeIntervalSince1970: createdAt),
             payloadJSON: payloadJSON
         )
+        try validateFinite(
+            record.createdAt.timeIntervalSince1970,
+            record: "mutation_journal",
+            field: "created_at"
+        )
+        return record
     }
 }
 

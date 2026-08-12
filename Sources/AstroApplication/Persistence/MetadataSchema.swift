@@ -11,6 +11,8 @@ public enum MetadataStoreError: Error, Equatable, Sendable {
     case unsafeMetadataParent
     case unsafeMetadataDatabase
     case metadataDestinationChanged
+    case invalidField(record: String, field: String)
+    case resultDependencyCycle
 }
 
 public enum MetadataSchema {
@@ -67,6 +69,7 @@ public enum MetadataSchema {
       created_at REAL NOT NULL,
       software_name TEXT,
       software_version TEXT,
+      CHECK(parent_result_id IS NULL OR parent_result_id <> id),
       CHECK(
         (software_name IS NULL AND software_version IS NULL)
         OR (software_name IS NOT NULL AND software_version IS NOT NULL)
@@ -79,6 +82,7 @@ public enum MetadataSchema {
       source_series_id TEXT REFERENCES series(id) ON DELETE RESTRICT,
       source_frame_id TEXT REFERENCES frame_decisions(id) ON DELETE RESTRICT,
       source_result_id TEXT REFERENCES results(id) ON DELETE RESTRICT,
+      CHECK(source_result_id IS NULL OR source_result_id <> result_id),
       CHECK(
         (source_kind = 'series' AND source_series_id IS NOT NULL AND source_frame_id IS NULL AND source_result_id IS NULL)
         OR (source_kind = 'frame' AND source_series_id IS NULL AND source_frame_id IS NOT NULL AND source_result_id IS NULL)
@@ -112,16 +116,16 @@ public enum MetadataSchema {
     """
 
     static func migrate(_ database: SQLiteDB) throws {
-        var version = try readVersion(in: database)
-        guard version <= currentVersion else {
-            throw MetadataStoreError.unsupportedSchemaVersion(
-                found: version,
-                supported: currentVersion
-            )
-        }
+        try transaction(in: database) {
+            var version = try readVersion(in: database)
+            guard version <= currentVersion else {
+                throw MetadataStoreError.unsupportedSchemaVersion(
+                    found: version,
+                    supported: currentVersion
+                )
+            }
 
-        if version < 1 {
-            try transaction(in: database) {
+            if version < 1 {
                 try database.exec("""
                 CREATE TABLE metadata_schema(
                   singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
@@ -132,17 +136,27 @@ public enum MetadataSchema {
                 try database.run(
                     "INSERT INTO metadata_schema(singleton, version) VALUES (1, 1);"
                 )
+                version = 1
             }
-            version = 1
-        }
 
-        if version < 2 {
-            try transaction(in: database) {
+            if version < 2 {
                 try database.exec(versionTwoSQL)
                 try database.run(
                     "UPDATE metadata_schema SET version = 2 WHERE singleton = 1;"
                 )
             }
+        }
+    }
+
+    static func rejectUnsupportedSchema(at databaseURL: URL) throws {
+        guard FileManager.default.fileExists(atPath: databaseURL.path) else { return }
+        let probe = try SQLiteDB(readOnlyPath: databaseURL.path)
+        let version = try readVersion(in: probe)
+        guard version <= currentVersion else {
+            throw MetadataStoreError.unsupportedSchemaVersion(
+                found: version,
+                supported: currentVersion
+            )
         }
     }
 
