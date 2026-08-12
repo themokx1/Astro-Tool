@@ -111,8 +111,10 @@ végső) — minden találat javítva és re-approve-olva.
 - Sémakompatibilitás, párhuzamos migráció, domain-validáció és ciklusvédelem
   kész: `47f7f23`; ellenőrzés: 1705 teszt / 24 suite zöld, AstroToolApp build zöld.
 - Folyamatban: workflows-parity terv Task 2, V1 ember által megadott metaadatok
-  érintetlen, idempotens V2 importja. A WAL-biztos SQLite snapshotter első
-  vertikális része 3/3 fókuszált teszttel zöld, még nincs commitolva.
+  érintetlen, idempotens V2 importja. A WAL-biztos SQLite snapshotter
+  `f956e5f` commitban kész. Az importer implementációja minden tervezett emberi
+  adatcsaládra elkészült; 35/35 fókuszált snapshot/import/schema/manifest teszt
+  zöld, teljes suite és review még hátravan a következő commit előtt.
 - Biztonsági szabály: `/Volumes/images` és minden valódi képfájl érintetlen;
   kizárólag szintetikus temp-fixture-ökön futnak írásos tesztek.
 - Push-helyzet: a rendszer a `https://github.com/themokx1/Astro-Tool.git`
@@ -126,9 +128,9 @@ végső) — minden találat javítva és re-approve-olva.
 > worktree-ben, a `codex/v2.0.0-ui-rework` branchen. Először olvasd el teljesen
 > a `docs/superpowers/plans/2026-08-10-v2-workflows-parity.md` tervet és ezt a
 > PROGRESS fájlt. Használd az executing-plans és test-driven-development
-> workflow-t. Jelenleg Task 2 fut: fejezd be és commitold a V1StoreSnapshotter
-> WAL-biztos, forrást nem módosító részét, majd RED→GREEN módon készítsd el az
-> idempotens V1MetadataImporter-t minden emberi adattípusra (tags, session
+> workflow-t. Jelenleg Task 2 fut: a V1StoreSnapshotter `f956e5f`-ben kész;
+> ellenőrizd és zárd le az elkészült idempotens V1MetadataImporter-t minden
+> emberi adattípusra (tags, session
 > notes és `.astro_tool/notes`, relatív útvonalra kulcsolt verdicts, filter
 > profiles, capture groups/sources/assignments, acknowledgements, config/
 > setup/site, conversion/quarantine receipts, explicit legacy sensor history).

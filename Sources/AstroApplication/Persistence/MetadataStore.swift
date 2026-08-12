@@ -129,6 +129,72 @@ public actor MetadataStore {
         }
     }
 
+    /// Inserts a lossless V1 staging batch atomically. Existing source keys
+    /// are left untouched, making a repeated import a true no-op.
+    public func importLegacyRecords(_ records: [LegacyImportRecord]) throws -> Int {
+        var inserted = 0
+        try transaction {
+            for record in records {
+                try database.run(
+                    """
+                    INSERT INTO legacy_imports(id, source_key, kind, payload_json)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(source_key) DO NOTHING;
+                    """,
+                    bind: [
+                        .text(record.id.databaseText),
+                        .text(record.sourceKey),
+                        .text(record.kind.rawValue),
+                        .text(record.payloadJSON),
+                    ]
+                )
+                var changes = 0
+                try database.query("SELECT changes();") { row in
+                    changes = Int(row.int64(0) ?? 0)
+                }
+                inserted += changes
+            }
+        }
+        return inserted
+    }
+
+    public func legacyImportCount() throws -> Int {
+        var count = 0
+        try database.query("SELECT COUNT(*) FROM legacy_imports;") { row in
+            count = Int(row.int64(0) ?? 0)
+        }
+        return count
+    }
+
+    public func legacyImports(kind: LegacyImportKind? = nil) throws -> [LegacyImportRecord] {
+        var records: [LegacyImportRecord] = []
+        let sql: String
+        let bind: [SQLiteValue]
+        if let kind {
+            sql = "SELECT id, source_key, kind, payload_json FROM legacy_imports WHERE kind = ? ORDER BY source_key;"
+            bind = [.text(kind.rawValue)]
+        } else {
+            sql = "SELECT id, source_key, kind, payload_json FROM legacy_imports ORDER BY source_key;"
+            bind = []
+        }
+        try database.query(sql, bind: bind) { row in
+            let idText = row.string(0) ?? ""
+            let kindText = row.string(2) ?? ""
+            guard let id = UUID(uuidString: idText),
+                  let sourceKey = row.string(1),
+                  let recordKind = LegacyImportKind(rawValue: kindText),
+                  let payload = row.string(3)
+            else { throw MetadataStoreError.invalidRecord(table: "legacy_imports", id: idText) }
+            records.append(LegacyImportRecord(
+                id: id,
+                sourceKey: sourceKey,
+                kind: recordKind,
+                payloadJSON: payload
+            ))
+        }
+        return records
+    }
+
     public func project(id: UUID) throws -> ProjectRecord? {
         var record: ProjectRecord?
         try database.query(

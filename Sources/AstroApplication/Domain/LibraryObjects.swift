@@ -242,3 +242,34 @@ public struct MutationJournalRecord: Codable, Equatable, Hashable, Sendable {
         self.payloadJSON = payloadJSON
     }
 }
+
+/// Human-authored V1 facts staged for lossless V2 reconciliation. Scanner
+/// caches and integer V1 identities are deliberately excluded.
+public enum LegacyImportKind: String, CaseIterable, Codable, Sendable {
+    case tag
+    case sessionNote = "session_note"
+    case frameVerdict = "frame_verdict"
+    case filterProfile = "filter_profile"
+    case captureGroup = "capture_group"
+    case captureSource = "capture_source"
+    case captureAssignment = "capture_assignment"
+    case acknowledgement
+    case userConfiguration = "user_configuration"
+    case conversionReceipt = "conversion_receipt"
+    case quarantineReceipt = "quarantine_receipt"
+    case legacySensorMeasurement = "legacy_sensor_measurement"
+}
+
+public struct LegacyImportRecord: Codable, Equatable, Hashable, Sendable {
+    public let id: UUID
+    public let sourceKey: String
+    public let kind: LegacyImportKind
+    public let payloadJSON: String
+
+    public init(id: UUID, sourceKey: String, kind: LegacyImportKind, payloadJSON: String) {
+        self.id = id
+        self.sourceKey = sourceKey
+        self.kind = kind
+        self.payloadJSON = payloadJSON
+    }
+}
