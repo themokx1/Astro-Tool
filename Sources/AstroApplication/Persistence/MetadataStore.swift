@@ -221,6 +221,27 @@ public actor MetadataStore {
         return record
     }
 
+    public func nights() throws -> [NightRecord] {
+        var records: [NightRecord] = []
+        try database.query(
+            "SELECT id, local_date, time_zone_id FROM nights ORDER BY local_date DESC, id;"
+        ) { row in records.append(try Self.night(from: row)) }
+        return records
+    }
+
+    public func series(nightID: UUID) throws -> [SeriesRecord] {
+        var records: [SeriesRecord] = []
+        try database.query(
+            """
+            SELECT id, project_id, night_id, setup_id, setup_descriptor, sensor_mode,
+                   passband, exposure_seconds, filter_name, filter_id, gain, offset, binning
+            FROM series WHERE night_id = ? ORDER BY exposure_seconds, id;
+            """,
+            bind: [.text(nightID.databaseText)]
+        ) { row in records.append(try Self.series(from: row)) }
+        return records
+    }
+
     public func series(id: UUID) throws -> SeriesRecord? {
         var record: SeriesRecord?
         try database.query(
