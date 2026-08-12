@@ -41,7 +41,16 @@ public struct ProjectsView: View {
 
 public struct NewProjectView: View {
     @State private var search = ""
+    @State private var selectedID: String?
     let dismiss: () -> Void
+
+    private var matches: [ProjectCatalogMatch] {
+        ProjectsQuery.searchCatalog(search, limit: 12)
+    }
+
+    private var selected: ProjectCatalogMatch? {
+        matches.first { $0.id == selectedID }
+    }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
@@ -58,19 +67,52 @@ public struct NewProjectView: View {
             TextField("Catalog number or target name", text: $search)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("v2.new-project.search")
-            ContentUnavailableView {
-                Label(search.isEmpty ? "Find a target" : "Catalog search is connecting", systemImage: "scope")
-            } description: {
-                Text(search.isEmpty ? "Try IC 1396, Elephant's Trunk, or Elefántormány-köd." : "The beta already protects the workflow shape; catalog-backed creation arrives in the next beta increment.")
+            if search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ContentUnavailableView {
+                    Label("Find a target", systemImage: "scope")
+                } description: {
+                    Text("Try IC 1396, Elephant's Trunk, or Elefántormány-köd.")
+                }
+                .frame(maxWidth: .infinity, minHeight: 190)
+            } else if matches.isEmpty {
+                ContentUnavailableView.search(text: search)
+                    .frame(maxWidth: .infinity, minHeight: 190)
+            } else {
+                List(matches, selection: $selectedID) { match in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(match.displayName).font(.headline)
+                        HStack(spacing: 8) {
+                            if let englishName = match.englishName { Text(englishName) }
+                            Text(match.canonicalFolderName).font(.caption.monospaced())
+                        }
+                        .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                    .tag(match.id)
+                }
+                .frame(minHeight: 210)
             }
-            .frame(maxWidth: .infinity, minHeight: 190)
+            if let selected {
+                HStack {
+                    Image(systemName: "folder.badge.plus").foregroundStyle(AstroTokens.Color.spectralBlue)
+                    Text("Folder preview")
+                    Spacer()
+                    Text(selected.canonicalFolderName).font(.caption.monospaced()).textSelection(.enabled)
+                }
+                .padding(12)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
+            }
             HStack {
                 Spacer()
                 Button("Cancel", action: dismiss).keyboardShortcut(.cancelAction)
+                Button("Create Project", action: dismiss)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(selected == nil)
+                    .help("Beta preview: persistence connects in the next increment")
             }
         }
         .padding(AstroTokens.Spacing.spacious)
-        .frame(minWidth: 560, minHeight: 390)
+        .frame(minWidth: 640, minHeight: 520)
         .accessibilityIdentifier("v2.new-project")
     }
 }

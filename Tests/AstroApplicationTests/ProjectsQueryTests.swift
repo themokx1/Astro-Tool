@@ -3,6 +3,16 @@ import Foundation
 import Testing
 
 struct ProjectsQueryTests {
+    @Test("Catalog browsing works before a library or metadata store is open")
+    func standaloneCatalogSearchSupportsLocalizedNames() {
+        for term in ["IC1396", "Elephant's Trunk", "elefántormány"] {
+            let matches = ProjectsQuery.searchCatalog(term)
+            #expect(matches.first?.catalogID == "IC 1396")
+            #expect(matches.first?.canonicalFolderName == "IC_1396_Elephants_Trunk_Nebula")
+            #expect(matches.first?.existingProjectID == nil)
+        }
+    }
+
     @Test("Catalog number, English and Hungarian names resolve to the same existing project")
     func catalogSearchPreventsDuplicateElephantTrunkProjects() async throws {
         let store = try MetadataStore.temporary()

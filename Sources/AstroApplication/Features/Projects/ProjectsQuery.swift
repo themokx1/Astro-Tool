@@ -30,17 +30,29 @@ public struct ProjectsQuery: Sendable {
         self.metadata = metadata
     }
 
-    public func searchCatalog(_ term: String, limit: Int = 20) async throws -> [ProjectCatalogMatch] {
-        let existing = try await metadata.projects()
-        let byCatalogID = Dictionary(uniqueKeysWithValues: existing.map { ($0.catalogID, $0.id) })
-        return TargetCatalog.search(term, limit: limit).map { target in
+    public static func searchCatalog(_ term: String, limit: Int = 20) -> [ProjectCatalogMatch] {
+        TargetCatalog.search(term, limit: limit).map { target in
             ProjectCatalogMatch(
                 catalogID: target.designation,
                 displayName: target.commonNameHU.map { "\(target.designation) · \($0)" }
                     ?? target.designation,
                 englishName: TargetCatalog.englishName(for: target),
                 canonicalFolderName: TargetCatalog.canonicalFolderName(for: target),
-                existingProjectID: byCatalogID[target.designation]
+                existingProjectID: nil
+            )
+        }
+    }
+
+    public func searchCatalog(_ term: String, limit: Int = 20) async throws -> [ProjectCatalogMatch] {
+        let existing = try await metadata.projects()
+        let byCatalogID = Dictionary(uniqueKeysWithValues: existing.map { ($0.catalogID, $0.id) })
+        return Self.searchCatalog(term, limit: limit).map { match in
+            ProjectCatalogMatch(
+                catalogID: match.catalogID,
+                displayName: match.displayName,
+                englishName: match.englishName,
+                canonicalFolderName: match.canonicalFolderName,
+                existingProjectID: byCatalogID[match.catalogID]
             )
         }
     }
