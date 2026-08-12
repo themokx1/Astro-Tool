@@ -3,6 +3,7 @@ import SwiftUI
 
 public struct NightsView: View {
     let snapshot: LibrarySnapshot?
+    @Bindable var store: NightsStore
     let chooseLibrary: () -> Void
 
     public var body: some View {
@@ -18,6 +19,28 @@ public struct NightsView: View {
                     if snapshot == nil { Button("Open Library…", action: chooseLibrary).buttonStyle(.borderedProminent) }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+            }
+            if !store.nights.isEmpty {
+                GroupBox("Observed nights") {
+                    VStack(spacing: 0) {
+                        ForEach(store.nights) { night in
+                            HStack(alignment: .top, spacing: 14) {
+                                Image(systemName: "moon.stars.fill")
+                                    .foregroundStyle(AstroTokens.Color.spectralViolet)
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(night.date).font(.headline.monospacedDigit())
+                                    Text(night.projectSummary).foregroundStyle(.secondary)
+                                    Text("\(night.seriesCount) series · \(night.exposureSummary) · \(night.filterSummary)")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                            }
+                            .padding(.vertical, 11)
+                            if night.id != store.nights.last?.id { Divider() }
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                }
             }
         }
         .navigationTitle("Nights")

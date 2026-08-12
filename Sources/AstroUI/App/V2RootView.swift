@@ -48,6 +48,7 @@ public struct V2RootView: View {
     @State private var homeStore: HomeStore
     @State private var onboardingStore: OnboardingStore
     @State private var projectsStore: ProjectsStore
+    @State private var nightsStore: NightsStore
     @State private var isOnboardingPresented: Bool
     @State private var didRestoreWindowState = false
     @SceneStorage("v2.windowRestoration") private var encodedWindowState = ""
@@ -68,6 +69,11 @@ public struct V2RootView: View {
                 ? ProjectsStore.productionMetadata
                 : ProjectsStore.previewMetadata
         ))
+        _nightsStore = State(initialValue: NightsStore(
+            metadataFactory: uiTestFixture == nil
+                ? ProjectsStore.productionMetadata
+                : ProjectsStore.previewMetadata
+        ))
         _isOnboardingPresented = State(initialValue: uiTestFixture != nil)
     }
 
@@ -77,6 +83,7 @@ public struct V2RootView: View {
             homeStore: homeStore,
             onboardingStore: onboardingStore,
             projectsStore: projectsStore,
+            nightsStore: nightsStore,
             isOnboardingPresented: $isOnboardingPresented
         )
             .onAppear {
@@ -96,6 +103,7 @@ public struct V2RootView: View {
                       onboardingStore.phase.summary != nil
                 else { return }
                 try? await projectsStore.open(rootURL: root)
+                try? await nightsStore.open(rootURL: root)
             }
     }
 
@@ -123,6 +131,7 @@ private struct V2Shell: View {
     let homeStore: HomeStore
     let onboardingStore: OnboardingStore
     let projectsStore: ProjectsStore
+    let nightsStore: NightsStore
     @Binding var isOnboardingPresented: Bool
     @Environment(\.openSettings) private var openSettings
 
@@ -137,6 +146,7 @@ private struct V2Shell: View {
                 homeStore: homeStore,
                 onboardingStore: onboardingStore,
                 projectsStore: projectsStore,
+                nightsStore: nightsStore,
                 chooseLibrary: presentOnboarding
             )
         }
@@ -259,6 +269,7 @@ private struct DetailHost: View {
     let homeStore: HomeStore
     let onboardingStore: OnboardingStore
     let projectsStore: ProjectsStore
+    let nightsStore: NightsStore
     let chooseLibrary: () -> Void
 
     @ViewBuilder
@@ -276,6 +287,7 @@ private struct DetailHost: View {
         case .nights:
             NightsView(
                 snapshot: onboardingStore.phase.summary,
+                store: nightsStore,
                 chooseLibrary: chooseLibrary
             )
         case .planning:
