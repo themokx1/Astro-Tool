@@ -120,6 +120,7 @@ private struct V2Shell: View {
             DetailHost(
                 router: router,
                 homeStore: homeStore,
+                onboardingStore: onboardingStore,
                 chooseLibrary: presentOnboarding
             )
         }
@@ -132,12 +133,11 @@ private struct V2Shell: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                Button(action: {}) {
+                Button(action: { router.present(.newProject) }) {
                     Label("New Project", systemImage: "plus")
                 }
-                .disabled(true)
-                .help("Available after library workflows arrive")
-                .accessibilityLabel("New project, available after library workflows arrive")
+                .help("Create a project from the astronomical catalog")
+                .accessibilityLabel("New project")
 
                 Button(action: router.toggleInspector) {
                     Label("Inspector", systemImage: "sidebar.right")
@@ -152,8 +152,14 @@ private struct V2Shell: View {
         .focusedSceneValue(\.appRouter, router)
         .frame(minWidth: 820, minHeight: 600)
         .sheet(item: $router.presentation) { presentation in
-            V2PresentationPlaceholder(route: presentation) {
-                router.dismissPresentation()
+            if presentation == .newProject {
+                NewProjectView {
+                    router.dismissPresentation()
+                }
+            } else {
+                V2PresentationPlaceholder(route: presentation) {
+                    router.dismissPresentation()
+                }
             }
         }
         .sheet(isPresented: $isOnboardingPresented) {
@@ -235,6 +241,7 @@ private struct ContentColumn: View {
 private struct DetailHost: View {
     @Bindable var router: AppRouter
     let homeStore: HomeStore
+    let onboardingStore: OnboardingStore
     let chooseLibrary: () -> Void
 
     @ViewBuilder
@@ -242,6 +249,30 @@ private struct DetailHost: View {
         switch router.contentRoute {
         case .home:
             HomeView(store: homeStore, chooseLibrary: chooseLibrary)
+        case .projects:
+            ProjectsView(
+                snapshot: onboardingStore.phase.summary,
+                createProject: { router.present(.newProject) },
+                chooseLibrary: chooseLibrary
+            )
+        case .nights:
+            NightsView(
+                snapshot: onboardingStore.phase.summary,
+                chooseLibrary: chooseLibrary
+            )
+        case .planning:
+            PlanningView(createProject: { router.present(.newProject) })
+        case .library:
+            LibraryView(
+                snapshot: onboardingStore.phase.summary,
+                rootURL: onboardingStore.selectedRoot,
+                chooseLibrary: chooseLibrary
+            )
+        case .insights:
+            InsightsView(
+                snapshot: onboardingStore.phase.summary,
+                chooseLibrary: chooseLibrary
+            )
         case .health:
             V2EmptyDetail(
                 title: "Library health is ready",
