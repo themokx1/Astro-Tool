@@ -5,6 +5,25 @@ import Testing
 
 @Suite("Durable V2 workflow metadata")
 struct MetadataStoreTests {
+    @Test("Project goals and notes round-trip outside the image library")
+    func projectAnnotationRoundTrip() async throws {
+        let store = try MetadataStore.temporary()
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "IC 1396", displayName: "Elephant Trunk", phase: .collecting
+        )
+        try await store.save(project)
+        let annotation = ProjectAnnotationRecord(
+            projectID: project.id,
+            integrationGoalHours: 12.5,
+            notes: "Continue SV220 capture after midnight.",
+            updatedAt: Date(timeIntervalSince1970: 1_786_404_000)
+        )
+
+        try await store.save(annotation)
+
+        #expect(try await store.projectAnnotation(projectID: project.id) == annotation)
+    }
+
     @Test("All UUID workflow records round-trip with stable lineage")
     func metadataRoundTripsStableIdentityAndLineage() async throws {
         let fixture = try StoreFixture.make()
@@ -148,6 +167,7 @@ struct MetadataStoreTests {
             "lineage_edges",
             "review_states",
             "mutation_journal",
+            "project_annotations",
         ]))
         #expect(objects.indexes.isSuperset(of: [
             "idx_series_project",
@@ -161,6 +181,7 @@ struct MetadataStoreTests {
             "idx_lineage_result_source",
             "idx_review_states_series",
             "idx_mutation_journal_operation",
+            "idx_project_annotations_updated",
         ]))
     }
 

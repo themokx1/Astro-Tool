@@ -16,7 +16,35 @@ public struct ProjectWorkspaceView: View {
     let results: () -> Void
     let openNight: (UUID) -> Void
     let openSeries: (UUID) -> Void
+    let annotation: ProjectAnnotationRecord?
+    let saveAnnotation: (Double?, String) async throws -> Void
     @State private var section = Section.overview
+    @State private var goalHours: Double?
+    @State private var projectNotes: String
+    @State private var saveError: String?
+    @State private var isSaving = false
+
+    public init(
+        snapshot: ProjectSnapshot,
+        annotation: ProjectAnnotationRecord?,
+        close: @escaping () -> Void,
+        review: @escaping () -> Void,
+        results: @escaping () -> Void,
+        openNight: @escaping (UUID) -> Void,
+        openSeries: @escaping (UUID) -> Void,
+        saveAnnotation: @escaping (Double?, String) async throws -> Void
+    ) {
+        self.snapshot = snapshot
+        self.annotation = annotation
+        self.close = close
+        self.review = review
+        self.results = results
+        self.openNight = openNight
+        self.openSeries = openSeries
+        self.saveAnnotation = saveAnnotation
+        _goalHours = State(initialValue: annotation?.integrationGoalHours)
+        _projectNotes = State(initialValue: annotation?.notes ?? "")
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -76,7 +104,41 @@ public struct ProjectWorkspaceView: View {
         case .results:
             ContentUnavailableView("Open Results workspace", systemImage: "square.stack.3d.up", description: Text("Use the Results button to inspect stack and processing lineage."))
         case .notes:
-            ContentUnavailableView("No project notes yet", systemImage: "note.text", description: Text("Project notes remain attached to this canonical target."))
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
+                GroupBox("Acquisition goal") {
+                    LabeledContent("Integration goal") {
+                        HStack(spacing: 6) {
+                            TextField("Hours", value: $goalHours, format: .number.precision(.fractionLength(0...1)))
+                                .frame(width: 90)
+                            Text("hours").foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(8)
+                }
+                GroupBox("Project notes") {
+                    TextEditor(text: $projectNotes)
+                        .font(.body)
+                        .frame(minHeight: 180)
+                        .padding(6)
+                }
+                if let saveError { Text(saveError).foregroundStyle(.red) }
+                HStack {
+                    Text(annotation.map { "Last saved \($0.updatedAt.formatted(date: .abbreviated, time: .shortened))" } ?? "Not saved yet")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Save Project Details") {
+                        isSaving = true
+                        saveError = nil
+                        Task {
+                            do { try await saveAnnotation(goalHours, projectNotes) }
+                            catch { saveError = error.localizedDescription }
+                            isSaving = false
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isSaving || (goalHours != nil && goalHours! <= 0))
+                }
+            }
         }
     }
 

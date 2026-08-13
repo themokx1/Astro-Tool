@@ -501,6 +501,7 @@ private struct DetailHost: View {
             if let id = UUID(uuidString: rawID), let snapshot = projectsStore.selectedProject, snapshot.id == id {
                 ProjectWorkspaceView(
                     snapshot: snapshot,
+                    annotation: projectsStore.selectedProjectAnnotation,
                     close: { router.navigate(to: .projects) },
                     review: { reviewProject(snapshot.project) },
                     results: { showResults(snapshot.project) },
@@ -510,6 +511,9 @@ private struct DetailHost: View {
                     },
                     openSeries: { id in
                         router.navigate(toContent: .projectSeries(id.uuidString))
+                    },
+                    saveAnnotation: { goal, notes in
+                        try await projectsStore.saveSelectedProjectAnnotation(goalHours: goal, notes: notes)
                     }
                 )
             } else {

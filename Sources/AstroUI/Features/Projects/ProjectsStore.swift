@@ -33,6 +33,7 @@ public final class ProjectsStore {
     public private(set) var rootURL: URL?
     public private(set) var selectedProjectID: UUID?
     public private(set) var selectedProject: ProjectSnapshot?
+    public private(set) var selectedProjectAnnotation: ProjectAnnotationRecord?
     private var searchIndex: [UUID: String] = [:]
 
     private let metadataFactory: MetadataFactory
@@ -55,9 +56,11 @@ public final class ProjectsStore {
             searchIndex = try await Self.makeSearchIndex(projects: projects, metadata: metadata)
             if let selectedProjectID, projects.contains(where: { $0.id == selectedProjectID }) {
                 selectedProject = try await ProjectsQuery(metadata: metadata).project(id: selectedProjectID)
+                selectedProjectAnnotation = try await metadata.projectAnnotation(projectID: selectedProjectID)
             } else {
                 selectedProjectID = nil
                 selectedProject = nil
+                selectedProjectAnnotation = nil
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -80,6 +83,7 @@ public final class ProjectsStore {
         selectedProjectID = id
         guard let id else {
             selectedProject = nil
+            selectedProjectAnnotation = nil
             return
         }
         guard let metadata else { throw ProjectsStoreError.libraryNotOpen }
@@ -88,8 +92,28 @@ public final class ProjectsStore {
         defer { isLoading = false }
         do {
             selectedProject = try await ProjectsQuery(metadata: metadata).project(id: id)
+            selectedProjectAnnotation = try await metadata.projectAnnotation(projectID: id)
         } catch {
             selectedProject = nil
+            errorMessage = error.localizedDescription
+            throw error
+        }
+    }
+
+    public func saveSelectedProjectAnnotation(goalHours: Double?, notes: String) async throws {
+        guard let metadata, let selectedProjectID else { throw ProjectsStoreError.libraryNotOpen }
+        let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let annotation = ProjectAnnotationRecord(
+            projectID: selectedProjectID,
+            integrationGoalHours: goalHours,
+            notes: trimmedNotes,
+            updatedAt: .now
+        )
+        do {
+            try await metadata.save(annotation)
+            selectedProjectAnnotation = try await metadata.projectAnnotation(projectID: selectedProjectID)
+            errorMessage = nil
+        } catch {
             errorMessage = error.localizedDescription
             throw error
         }

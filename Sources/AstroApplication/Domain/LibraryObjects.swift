@@ -22,6 +22,20 @@ public struct ProjectRecord: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+public struct ProjectAnnotationRecord: Codable, Equatable, Hashable, Sendable {
+    public let projectID: UUID
+    public let integrationGoalHours: Double?
+    public let notes: String
+    public let updatedAt: Date
+
+    public init(projectID: UUID, integrationGoalHours: Double?, notes: String, updatedAt: Date) {
+        self.projectID = projectID
+        self.integrationGoalHours = integrationGoalHours
+        self.notes = notes
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct NightRecord: Codable, Equatable, Hashable, Sendable {
     public let id: UUID
     public let localDate: String

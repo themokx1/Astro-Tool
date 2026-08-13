@@ -112,4 +112,16 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(settings.contains("Remove Selected"))
         #expect(settings.contains("v2.settings.filters-table"))
     }
+
+    @Test("Project goals and notes are editable rather than placeholders")
+    func projectGoalAndNotesContract() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift"))
+        #expect(workspace.contains("Integration goal"))
+        #expect(workspace.contains("Project notes"))
+        #expect(workspace.contains("Save Project Details"))
+        #expect(workspace.contains("saveAnnotation"))
+        #expect(!workspace.contains("No project notes yet"))
+    }
 }

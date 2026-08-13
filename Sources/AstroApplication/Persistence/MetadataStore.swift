@@ -88,6 +88,10 @@ public actor MetadataStore {
         try transaction { try upsert(project) }
     }
 
+    public func save(_ annotation: ProjectAnnotationRecord) throws {
+        try transaction { try upsert(annotation) }
+    }
+
     public func save(_ night: NightRecord) throws {
         try transaction { try upsert(night) }
     }
@@ -210,6 +214,26 @@ public actor MetadataStore {
             "SELECT id, catalog_id, display_name, phase FROM projects ORDER BY display_name, id;"
         ) { row in records.append(try Self.project(from: row)) }
         return records
+    }
+
+    public func projectAnnotation(projectID: UUID) throws -> ProjectAnnotationRecord? {
+        var record: ProjectAnnotationRecord?
+        try database.query(
+            "SELECT project_id, integration_goal_hours, notes, updated_at FROM project_annotations WHERE project_id = ?;",
+            bind: [.text(projectID.databaseText)]
+        ) { row in
+            guard let id = row.string(0).flatMap(UUID.init(uuidString:)),
+                  let notes = row.string(2),
+                  let updatedAt = row.double(3)
+            else { throw MetadataStoreError.invalidRecord(table: "project_annotations", id: projectID.databaseText) }
+            record = ProjectAnnotationRecord(
+                projectID: id,
+                integrationGoalHours: row.double(1),
+                notes: notes,
+                updatedAt: Date(timeIntervalSince1970: updatedAt)
+            )
+        }
+        return record
     }
 
     public func night(id: UUID) throws -> NightRecord? {
@@ -659,6 +683,32 @@ public actor MetadataStore {
                 .text(record.catalogID),
                 .text(record.displayName),
                 .text(record.phase.rawValue),
+            ]
+        )
+    }
+
+    private func upsert(_ record: ProjectAnnotationRecord) throws {
+        if let goal = record.integrationGoalHours {
+            try Self.validateFinite(goal, record: "project_annotations", field: "integration_goal_hours")
+            guard goal > 0 else {
+                throw MetadataStoreError.invalidField(record: "project_annotations", field: "integration_goal_hours")
+            }
+        }
+        try Self.validateFinite(record.updatedAt.timeIntervalSince1970, record: "project_annotations", field: "updated_at")
+        try database.run(
+            """
+            INSERT INTO project_annotations(project_id, integration_goal_hours, notes, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET
+              integration_goal_hours = excluded.integration_goal_hours,
+              notes = excluded.notes,
+              updated_at = excluded.updated_at;
+            """,
+            bind: [
+                .text(record.projectID.databaseText),
+                record.integrationGoalHours.map(SQLiteValue.real) ?? .null,
+                .text(record.notes),
+                .real(record.updatedAt.timeIntervalSince1970),
             ]
         )
     }

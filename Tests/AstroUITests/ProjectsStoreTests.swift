@@ -6,6 +6,22 @@ import Testing
 @MainActor
 @Suite("V2 Projects store")
 struct ProjectsStoreTests {
+    @Test("Project goal and notes save through the selected project workspace")
+    func projectAnnotationEditing() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .collecting)
+        try await metadata.save(project)
+        let store = ProjectsStore(metadataFactory: { _ in metadata })
+        try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+        try await store.selectProject(project.id)
+
+        try await store.saveSelectedProjectAnnotation(goalHours: 14, notes: "More dual-band data")
+
+        #expect(store.selectedProjectAnnotation?.integrationGoalHours == 14)
+        #expect(store.selectedProjectAnnotation?.notes == "More dual-band data")
+        #expect(try await metadata.projectAnnotation(projectID: project.id) == store.selectedProjectAnnotation)
+    }
+
     @Test("Opening a library loads projects and canonical creation refreshes the list")
     func createPersistsAndRefreshes() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
