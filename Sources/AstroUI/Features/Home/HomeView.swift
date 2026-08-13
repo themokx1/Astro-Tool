@@ -14,7 +14,11 @@ public struct HomeView: View {
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.spacious) {
                 header
                 NightContextRail(context: store.snapshot.nightContext)
-                emptyLibrary
+                if store.snapshot.libraryName == nil {
+                    emptyLibrary
+                } else {
+                    libraryOverview
+                }
             }
             .frame(maxWidth: 760, alignment: .leading)
             .padding(AstroTokens.Spacing.spacious)
@@ -23,6 +27,34 @@ public struct HomeView: View {
         .navigationTitle("Home")
         .accessibilityLabel("Home")
         .accessibilityIdentifier("v2.detail.home")
+    }
+
+    private var libraryOverview: some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
+            HStack(spacing: AstroTokens.Spacing.standard) {
+                MetricCard(title: "Projects", value: "\(store.snapshot.projectCount)", detail: "In \(store.snapshot.libraryName ?? "library")", systemImage: "scope")
+                MetricCard(title: "Nights", value: "\(store.snapshot.nightCount)", detail: "Indexed observing sessions", systemImage: "moon.stars")
+            }
+            GroupBox("Continue where it matters") {
+                if let project = store.snapshot.nextProject {
+                    HStack(spacing: 14) {
+                        Image(systemName: "arrow.forward.circle.fill")
+                            .font(.title2).foregroundStyle(AstroTokens.Color.spectralBlue)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(project.displayName).font(.headline)
+                            Text(project.phase == .collecting ? "Continue collecting this project on the next suitable night." : "Open the project and plan its next step.")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(8)
+                } else {
+                    Text("Create a project to start planning your next night.")
+                        .foregroundStyle(.secondary).padding(8)
+                }
+            }
+        }
+        .accessibilityIdentifier("v2.home.library-overview")
     }
 
     private var header: some View {
