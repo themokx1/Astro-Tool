@@ -67,6 +67,7 @@ struct ReleasePackagingSurfaceTests {
     func checksummedArtifacts() throws {
         let build = try source("build.sh")
         #expect(build.contains("SHA256SUMS.txt"))
+        #expect(build.contains("COPYFILE_DISABLE=1 ditto -c -k --keepParent"))
         let workflow = try source(".github/workflows/release.yml")
         #expect(workflow.contains("SHA256SUMS.txt"))
     }

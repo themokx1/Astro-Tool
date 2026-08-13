@@ -115,7 +115,7 @@ echo "==> Packaging standalone CLI"
 cp "$APP/Contents/Resources/astrotool" "$CLI_STAGE/astrotool"
 cp LICENSE "$CLI_STAGE/LICENSE"
 chmod +x "$CLI_STAGE/astrotool"
-ditto -c -k --keepParent "$CLI_STAGE" "$CLI_ZIP"
+COPYFILE_DISABLE=1 ditto -c -k --keepParent "$CLI_STAGE" "$CLI_ZIP"
 
 echo "==> Writing SHA-256 checksums"
 (
