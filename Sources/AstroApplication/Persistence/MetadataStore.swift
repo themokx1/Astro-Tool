@@ -403,6 +403,132 @@ public actor MetadataStore {
         return enabled
     }
 
+    // MARK: - Audit acknowledgements + run history (schema v5)
+
+    /// The stable key one ack row is addressed by: `(category, groupKey)`,
+    /// the exact `"\(category)|\(groupKey)"` format V1's
+    /// `Database.ackKey(category:groupKey:)` used -- so a legacy ack
+    /// imported by `V1MetadataImporter` and a native V2 ack land in the same
+    /// keyspace and never accidentally collide or double up.
+    public static func ackKey(category: String, groupKey: String) -> String {
+        "\(category)|\(groupKey)"
+    }
+
+    /// Marks one finding group as acknowledged -- upserts on `ack_key` so
+    /// re-acking (e.g. to change `note`) never duplicates the row. `at`
+    /// defaults to now for a user-triggered ack; `V1MetadataImporter` passes
+    /// the legacy `acked_at` explicitly so a re-import stays idempotent.
+    public func acknowledgeFindingGroup(
+        category: String,
+        groupKey: String,
+        note: String? = nil,
+        at ackedAt: Date = .now
+    ) throws {
+        let key = Self.ackKey(category: category, groupKey: groupKey)
+        try transaction {
+            try database.run(
+                """
+                INSERT INTO audit_acknowledgements(id, ack_key, category, group_key, acked_at, note)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(ack_key) DO UPDATE SET acked_at = excluded.acked_at, note = excluded.note;
+                """,
+                bind: [
+                    .text(UUID().databaseText),
+                    .text(key),
+                    .text(category),
+                    .text(groupKey),
+                    .text(ackedAt.ISO8601Format()),
+                    note.map(SQLiteValue.text) ?? .null,
+                ]
+            )
+        }
+    }
+
+    /// Reverses `acknowledgeFindingGroup` -- a no-op if the group was never acked.
+    public func revokeAcknowledgement(ackKey: String) throws {
+        try transaction {
+            try database.run("DELETE FROM audit_acknowledgements WHERE ack_key = ?;", bind: [.text(ackKey)])
+        }
+    }
+
+    /// Every currently-acknowledged finding group, newest ack first.
+    public func acknowledgements() throws -> [AuditAcknowledgementRecord] {
+        var records: [AuditAcknowledgementRecord] = []
+        try database.query(
+            "SELECT ack_key, category, group_key, acked_at, note FROM audit_acknowledgements ORDER BY acked_at DESC;"
+        ) { row in
+            guard let ackKey = row.string(0), let category = row.string(1), let groupKey = row.string(2),
+                  let ackedAtText = row.string(3), let ackedAt = try? Date(ackedAtText, strategy: .iso8601)
+            else { return }
+            records.append(AuditAcknowledgementRecord(
+                ackKey: ackKey, category: category, groupKey: groupKey, ackedAt: ackedAt, note: row.string(4)
+            ))
+        }
+        return records
+    }
+
+    /// Records one completed audit run's headline facts so a later run can
+    /// be diffed against it (`auditRunDiff()`).
+    @discardableResult
+    public func recordAuditRun(
+        findingCount: Int,
+        groupKeys: [String],
+        at ranAt: Date = .now
+    ) throws -> AuditRunRecord {
+        let id = UUID()
+        let data = try JSONEncoder().encode(groupKeys)
+        guard let groupKeysJSON = String(data: data, encoding: .utf8) else {
+            throw MetadataStoreError.invalidField(record: "audit_run_history", field: "group_keys")
+        }
+        try transaction {
+            try database.run(
+                "INSERT INTO audit_run_history(id, ran_at, finding_count, group_keys) VALUES (?, ?, ?, ?);",
+                bind: [
+                    .text(id.databaseText),
+                    .text(ranAt.ISO8601Format()),
+                    .int(Int64(findingCount)),
+                    .text(groupKeysJSON),
+                ]
+            )
+        }
+        return AuditRunRecord(id: id, ranAt: ranAt, findingCount: findingCount, groupKeys: groupKeys)
+    }
+
+    /// The most recent audit runs, newest first.
+    public func auditRunHistory(limit: Int = 20) throws -> [AuditRunRecord] {
+        var records: [AuditRunRecord] = []
+        try database.query(
+            "SELECT id, ran_at, finding_count, group_keys FROM audit_run_history ORDER BY ran_at DESC LIMIT ?;",
+            bind: [.int(Int64(limit))]
+        ) { row in
+            guard let idText = row.string(0), let id = UUID(uuidString: idText),
+                  let ranAtText = row.string(1), let ranAt = try? Date(ranAtText, strategy: .iso8601),
+                  let findingCount = row.int64(2), let groupKeysJSON = row.string(3),
+                  let groupKeys = try? JSONDecoder().decode([String].self, from: Data(groupKeysJSON.utf8))
+            else { return }
+            records.append(AuditRunRecord(
+                id: id, ranAt: ranAt, findingCount: Int(findingCount), groupKeys: groupKeys
+            ))
+        }
+        return records
+    }
+
+    /// Compares the two most recent audit runs (V1 `AuditDiff` semantics):
+    /// new = present in the latest run but not the previous one, resolved =
+    /// the other way around. `nil` when fewer than two runs are on record.
+    public func auditRunDiff() throws -> AuditRunDiff? {
+        let recent = try auditRunHistory(limit: 2)
+        guard recent.count == 2 else { return nil }
+        let latest = recent[0]
+        let previous = recent[1]
+        let previousKeys = Set(previous.groupKeys)
+        let latestKeys = Set(latest.groupKeys)
+        return AuditRunDiff(
+            newGroupKeys: latest.groupKeys.filter { !previousKeys.contains($0) },
+            resolvedGroupKeys: previous.groupKeys.filter { !latestKeys.contains($0) }
+        )
+    }
+
     private func transaction(_ body: () throws -> Void) throws {
         try database.exec("BEGIN IMMEDIATE;")
         do {

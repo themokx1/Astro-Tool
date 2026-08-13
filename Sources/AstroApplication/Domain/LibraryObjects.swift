@@ -257,6 +257,56 @@ public struct MutationJournalRecord: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+/// One acknowledged finding group -- "rendben van, ismerem, nem hiba" -- keyed
+/// by `MetadataStore.ackKey(category:groupKey:)`, the same deterministic
+/// `"\(category)|\(groupKey)"` format V1's `Database.ackKey` used, so a V1
+/// import lands in the same keyspace as a native V2 ack.
+public struct AuditAcknowledgementRecord: Codable, Equatable, Hashable, Sendable {
+    public let ackKey: String
+    public let category: String
+    public let groupKey: String
+    public let ackedAt: Date
+    public let note: String?
+
+    public init(ackKey: String, category: String, groupKey: String, ackedAt: Date, note: String?) {
+        self.ackKey = ackKey
+        self.category = category
+        self.groupKey = groupKey
+        self.ackedAt = ackedAt
+        self.note = note
+    }
+}
+
+/// One completed audit run's headline facts -- when it ran, how many
+/// findings it produced, and every finding group's key (for a later run to
+/// diff against, mirroring V1 `AuditDiff`'s new/resolved comparison).
+public struct AuditRunRecord: Codable, Equatable, Hashable, Sendable {
+    public let id: UUID
+    public let ranAt: Date
+    public let findingCount: Int
+    public let groupKeys: [String]
+
+    public init(id: UUID, ranAt: Date, findingCount: Int, groupKeys: [String]) {
+        self.id = id
+        self.ranAt = ranAt
+        self.findingCount = findingCount
+        self.groupKeys = groupKeys
+    }
+}
+
+/// The result of comparing the two most recent `AuditRunRecord`s (V1
+/// `AuditDiff` semantics): a group key is "new" when it fires in the latest
+/// run but not the previous one, "resolved" the other way around.
+public struct AuditRunDiff: Equatable, Sendable {
+    public let newGroupKeys: [String]
+    public let resolvedGroupKeys: [String]
+
+    public init(newGroupKeys: [String], resolvedGroupKeys: [String]) {
+        self.newGroupKeys = newGroupKeys
+        self.resolvedGroupKeys = resolvedGroupKeys
+    }
+}
+
 /// Human-authored V1 facts staged for lossless V2 reconciliation. Scanner
 /// caches and integer V1 identities are deliberately excluded.
 public enum LegacyImportKind: String, CaseIterable, Codable, Sendable {

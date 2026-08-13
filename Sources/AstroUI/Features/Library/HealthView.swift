@@ -2,20 +2,6 @@ import AstroApplication
 import Observation
 import SwiftUI
 
-@MainActor @Observable
-public final class LibraryHealthStore {
-    public private(set) var snapshot: LibraryHealthSnapshot?
-    public private(set) var isLoading = false
-    public private(set) var errorMessage: String?
-
-    public func load(rootURL: URL) async {
-        isLoading = true; errorMessage = nil
-        defer { isLoading = false }
-        do { snapshot = try await LibraryHealthQuery.production(rootURL: rootURL).snapshot() }
-        catch { errorMessage = error.localizedDescription }
-    }
-}
-
 public struct HealthView: View {
     let rootURL: URL?
     let chooseLibrary: () -> Void
@@ -24,6 +10,7 @@ public struct HealthView: View {
     @State private var showsSensors = false
     @State private var category: LibraryHealthCategory?
     @State private var selectedFindingID: String?
+    @State private var acknowledgeRequest: AcknowledgeRequest?
 
     public var body: some View {
         WorkspacePage(eyebrow: "Read-only diagnostics", title: "Library Health", subtitle: "Actionable calibration and integrity checks without changing source files.") {
@@ -35,25 +22,40 @@ public struct HealthView: View {
                     MetricCard(title: "Organization", value: "\(snapshot.organizationIssues)", detail: "Reviewable residue", systemImage: "tray.full")
                     MetricCard(title: "Access", value: snapshot.isReadOnly ? "Read only" : "Writable", detail: "Images protected", systemImage: "lock.shield")
                 }
-                Picker("Category", selection: $category) {
-                    Text("All findings").tag(LibraryHealthCategory?.none)
-                    ForEach(LibraryHealthCategory.allCases, id: \.rawValue) { value in
-                        Text(value.rawValue.capitalized).tag(Optional(value))
+                HStack {
+                    Picker("Category", selection: $category) {
+                        Text("All findings").tag(LibraryHealthCategory?.none)
+                        ForEach(LibraryHealthCategory.allCases, id: \.rawValue) { value in
+                            Text(value.rawValue.capitalized).tag(Optional(value))
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("v2.health.categories")
+                    Toggle("Show Acknowledged", isOn: Binding(
+                        get: { store.showAcknowledged },
+                        set: { value in Task { await store.setShowAcknowledged(value) } }
+                    ))
+                    .toggleStyle(.checkbox)
+                    .accessibilityIdentifier("v2.health.show-acknowledged")
                 }
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("v2.health.categories")
                 GroupBox("Health findings") {
                     Table(filteredItems(snapshot), selection: $selectedFindingID) {
                         TableColumn("Finding") { item in
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: icon(item.severity)).foregroundStyle(color(item.severity))
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(item.title).font(.headline)
+                                    HStack(spacing: 6) {
+                                        Text(item.title).font(.headline)
+                                        if item.isAcknowledged {
+                                            Label("Acknowledged", systemImage: "checkmark.seal")
+                                                .font(.caption).foregroundStyle(.secondary)
+                                        }
+                                    }
                                     Text(item.detail).font(.callout).foregroundStyle(.secondary)
                                 }
                                 .padding(.vertical, 4)
                             }
+                            .opacity(item.isAcknowledged ? 0.6 : 1)
                         }
                         TableColumn("Target / Night") { item in
                             Text([item.target, item.sessionDate].compactMap { $0 }.joined(separator: " · ").nilIfEmpty ?? "—")
@@ -81,6 +83,24 @@ public struct HealthView: View {
                     Button("Review Cleanup Candidates…") { showsCleanup = true }.buttonStyle(.bordered)
                     Button("Sensor Profiles…") { showsSensors = true }.buttonStyle(.bordered)
                 }
+                GroupBox("Audit run history") {
+                    if snapshot.auditRuns.isEmpty {
+                        Text("No recorded audit runs yet.").foregroundStyle(.secondary)
+                    } else {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(snapshot.auditRuns.enumerated()), id: \.offset) { _, run in
+                                HStack {
+                                    Text(run.ranAt, style: .date).font(.callout.monospaced())
+                                    Text("\(run.findingCount) finding(s)").foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text("+\(run.newCount) new").foregroundStyle(.orange)
+                                    Text("−\(run.resolvedCount) resolved").foregroundStyle(.green)
+                                }
+                            }
+                        }
+                    }
+                }
+                .accessibilityIdentifier("v2.health.audit-history")
             } else if store.isLoading {
                 ProgressView("Checking library health…").frame(maxWidth: .infinity, minHeight: 280)
             } else {
@@ -100,6 +120,14 @@ public struct HealthView: View {
                 CleanupPreviewView(rootURL: rootURL) { showsCleanup = false }
             } else if showsSensors, let rootURL {
                 SensorProfilesView(rootURL: rootURL) { showsSensors = false }
+            }
+        }
+        .sheet(item: $acknowledgeRequest) { request in
+            AcknowledgeFindingSheet(item: request.item) { note in
+                Task { await store.acknowledge(request.item, note: note) }
+                acknowledgeRequest = nil
+            } onCancel: {
+                acknowledgeRequest = nil
             }
         }
     }
@@ -128,6 +156,50 @@ public struct HealthView: View {
         case .integrity:
             Text("No action required")
         }
+        Divider()
+        if item.isAcknowledged {
+            Button("Revoke Acknowledgement") {
+                Task { await store.revokeAcknowledgement(item) }
+            }
+        } else {
+            Button("Mark as Acknowledged…") {
+                acknowledgeRequest = AcknowledgeRequest(item: item)
+            }
+        }
+    }
+}
+
+private struct AcknowledgeRequest: Identifiable {
+    let item: LibraryHealthItem
+    var id: String { item.id }
+}
+
+private struct AcknowledgeFindingSheet: View {
+    let item: LibraryHealthItem
+    let onAcknowledge: (String?) -> Void
+    let onCancel: () -> Void
+    @State private var note = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+            Text("Mark as Acknowledged").font(.title3.bold())
+            Text(item.title).font(.headline)
+            Text(item.detail).font(.callout).foregroundStyle(.secondary)
+            TextField("Optional note", text: $note)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("v2.health.acknowledge-note")
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                Button("Acknowledge") {
+                    onAcknowledge(note.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("v2.health.acknowledge-confirm")
+            }
+        }
+        .padding(AstroTokens.Spacing.section)
+        .frame(width: 420)
     }
 }
 

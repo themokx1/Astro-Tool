@@ -145,6 +145,7 @@ public enum V1MetadataImporter {
                 ])
             }
         }
+        var acknowledgements: [(category: String, groupKey: String, ackedAt: Date, note: String?)] = []
         if try tableExists("finding_acks", database) {
             try database.query("SELECT ack_key, category, group_key, acked_at, note FROM finding_acks ORDER BY ack_key;") { row in
                 guard let ackKey = row.string(0), let category = row.string(1),
@@ -153,6 +154,7 @@ public enum V1MetadataImporter {
                     "ackKey": ackKey, "category": category, "groupKey": groupKey,
                     "ackedAt": ackedAt, "note": value(row.string(4)),
                 ])
+                acknowledgements.append((category, groupKey, Date(timeIntervalSince1970: ackedAt), row.string(4)))
             }
         }
         try importSensors(database, table: "sensor_profile", history: false, append: append)
@@ -161,6 +163,18 @@ public enum V1MetadataImporter {
 
         records.sort { $0.sourceKey < $1.sourceKey }
         let inserted = try await destination.importLegacyRecords(records)
+        // Also lands each legacy ack in the native `audit_acknowledgements`
+        // table (schema v5) so V2's Health UI can honor it directly, not
+        // just carry it as frozen `legacy_imports` JSON. Upserts on
+        // `ack_key`, so a repeated import never duplicates a row.
+        for acknowledgement in acknowledgements {
+            try await destination.acknowledgeFindingGroup(
+                category: acknowledgement.category,
+                groupKey: acknowledgement.groupKey,
+                note: acknowledgement.note,
+                at: acknowledgement.ackedAt
+            )
+        }
         return ImportSummary(
             discovered: records.count, inserted: inserted,
             tags: counts[.tag, default: 0], sessionNotes: counts[.sessionNote, default: 0],

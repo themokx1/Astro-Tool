@@ -113,6 +113,22 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(settings.contains("v2.settings.filters-table"))
     }
 
+    @Test("Health findings can be acknowledged, filtered, and show audit-run history")
+    func healthAcknowledgementContract() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let health = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/HealthView.swift"))
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/LibraryHealthStore.swift"))
+        #expect(health.contains("Mark as Acknowledged…"))
+        #expect(health.contains("Revoke Acknowledgement"))
+        #expect(health.contains("Show Acknowledged"))
+        #expect(health.contains("v2.health.show-acknowledged"))
+        #expect(health.contains("v2.health.audit-history"))
+        #expect(store.contains("func acknowledge("))
+        #expect(store.contains("func revokeAcknowledgement("))
+        #expect(store.contains("func setShowAcknowledged("))
+    }
+
     @Test("Project goals and notes are editable rather than placeholders")
     func projectGoalAndNotesContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()

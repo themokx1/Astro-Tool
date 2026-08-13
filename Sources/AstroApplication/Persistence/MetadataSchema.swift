@@ -16,7 +16,7 @@ public enum MetadataStoreError: Error, Equatable, Sendable {
 }
 
 public enum MetadataSchema {
-    public static let currentVersion = 4
+    public static let currentVersion = 5
 
     static let versionOneSQL = """
     CREATE TABLE projects(
@@ -140,6 +140,24 @@ public enum MetadataSchema {
     CREATE INDEX idx_project_annotations_updated ON project_annotations(updated_at DESC);
     """
 
+    static let versionFiveSQL = """
+    CREATE TABLE audit_acknowledgements(
+      id TEXT PRIMARY KEY,
+      ack_key TEXT NOT NULL UNIQUE,
+      category TEXT NOT NULL,
+      group_key TEXT NOT NULL,
+      acked_at TEXT NOT NULL,
+      note TEXT
+    );
+    CREATE TABLE audit_run_history(
+      id TEXT PRIMARY KEY,
+      ran_at TEXT NOT NULL,
+      finding_count INTEGER NOT NULL,
+      group_keys TEXT NOT NULL
+    );
+    CREATE INDEX idx_audit_run_history_ran_at ON audit_run_history(ran_at);
+    """
+
     static func migrate(_ database: SQLiteDB) throws {
         try transaction(in: database) {
             var version = try readVersion(in: database)
@@ -184,6 +202,14 @@ public enum MetadataSchema {
                 try database.exec(versionFourSQL)
                 try database.run(
                     "UPDATE metadata_schema SET version = 4 WHERE singleton = 1;"
+                )
+                version = 4
+            }
+
+            if version < 5 {
+                try database.exec(versionFiveSQL)
+                try database.run(
+                    "UPDATE metadata_schema SET version = 5 WHERE singleton = 1;"
                 )
             }
         }

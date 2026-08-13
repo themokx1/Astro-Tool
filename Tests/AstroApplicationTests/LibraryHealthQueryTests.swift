@@ -43,5 +43,66 @@ struct LibraryHealthQueryTests {
         #expect(flat.sessionDate == "2026-08-08")
         #expect(snapshot.items.contains { $0.category == .dark && $0.sessionDate == "2026-08-08" })
         #expect(snapshot.isReadOnly)
+        #expect(!flat.isAcknowledged)
+    }
+
+    @Test("Acknowledged findings are hidden by default and shown on request")
+    func acknowledgedFindingsAreHiddenByDefault() async throws {
+        let indexDatabase = try Self.makeIndexDatabase()
+        let metadata = try MetadataStore.temporary()
+        let query = LibraryHealthQuery(indexDatabaseForTesting: indexDatabase, metadata: metadata)
+        let hiddenSnapshot = try await query.snapshot()
+        let flatItem = try #require(hiddenSnapshot.items.first { $0.category == .flat })
+
+        try await metadata.acknowledgeFindingGroup(category: flatItem.ackCategory, groupKey: flatItem.ackGroupKey, note: "known gap")
+
+        let afterAck = try await query.snapshot()
+        #expect(!afterAck.items.contains { $0.id == flatItem.id })
+
+        let includingAcked = try await query.snapshot(includeAcknowledged: true)
+        let ackedFlat = try #require(includingAcked.items.first { $0.id == flatItem.id })
+        #expect(ackedFlat.isAcknowledged)
+
+        try await metadata.revokeAcknowledgement(ackKey: MetadataStore.ackKey(category: flatItem.ackCategory, groupKey: flatItem.ackGroupKey))
+        let afterRevoke = try await query.snapshot()
+        #expect(afterRevoke.items.contains { $0.id == flatItem.id && !$0.isAcknowledged })
+    }
+
+    @Test("The snapshot surfaces recent audit-run summaries with new and resolved counts")
+    func snapshotSurfacesAuditRunSummaries() async throws {
+        let indexDatabase = try Self.makeIndexDatabase()
+        let metadata = try MetadataStore.temporary()
+        try await metadata.recordAuditRun(
+            findingCount: 2, groupKeys: ["dark|A", "flat|B"],
+            at: Date(timeIntervalSince1970: 1_786_400_000)
+        )
+        try await metadata.recordAuditRun(
+            findingCount: 2, groupKeys: ["dark|A", "duplicate|C"],
+            at: Date(timeIntervalSince1970: 1_786_500_000)
+        )
+        let query = LibraryHealthQuery(indexDatabaseForTesting: indexDatabase, metadata: metadata)
+
+        let snapshot = try await query.snapshot()
+
+        #expect(snapshot.auditRuns.count == 2)
+        #expect(snapshot.auditRuns[0].findingCount == 2)
+        #expect(snapshot.auditRuns[0].newCount == 1)
+        #expect(snapshot.auditRuns[0].resolvedCount == 1)
+        #expect(snapshot.auditRuns[1].newCount == 2)
+        #expect(snapshot.auditRuns[1].resolvedCount == 0)
+    }
+
+    private static func makeIndexDatabase() throws -> URL {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("AstroHealth-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let identity = LibraryIdentity(rootURL: root)
+        let support = root.deletingLastPathComponent().appendingPathComponent("AstroHealthSupport-\(UUID())")
+        let caches = root.deletingLastPathComponent().appendingPathComponent("AstroHealthCaches-\(UUID())")
+        let storage = try AppStoragePaths(applicationSupport: support, caches: caches, libraryID: identity, libraryRoot: root)
+        try FileManager.default.createDirectory(at: storage.indexDatabase.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let db = try SQLiteDB(path: storage.indexDatabase.path)
+        try db.exec("CREATE TABLE files(path TEXT, target TEXT, session_date TEXT, role TEXT, area TEXT, missing INTEGER, content_hash TEXT, size INTEGER);")
+        try db.exec("INSERT INTO files VALUES('light.fit','IC_1396','2026-08-08','light','sessions',0,'same',100);")
+        return storage.indexDatabase
     }
 }

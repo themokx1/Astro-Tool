@@ -45,5 +45,18 @@ struct V1MetadataImporterTests {
         #expect(imports.count == 1)
         #expect(imports[0].sourceKey.contains("sessions/IC_1396/2026-08-08/lights/frame.fit"))
         #expect(!imports[0].sourceKey.contains("41"))
+
+        let acks = try await destination.acknowledgements()
+        #expect(acks.count == 1)
+        let ack = try #require(acks.first)
+        #expect(ack.category == "residue")
+        #expect(ack.groupKey == "x")
+        #expect(ack.note == "ellenőrizve")
+        #expect(ack.ackKey == MetadataStore.ackKey(category: "residue", groupKey: "x"))
+        #expect(abs(ack.ackedAt.timeIntervalSince1970 - 1_786_404_200) < 1)
+
+        // Re-importing must not duplicate the native acknowledgement row.
+        _ = try await V1MetadataImporter.importReadOnly(from: snapshot, into: destination)
+        #expect(try await destination.acknowledgements().count == 1)
     }
 }

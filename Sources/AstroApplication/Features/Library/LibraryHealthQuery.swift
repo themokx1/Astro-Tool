@@ -7,39 +7,139 @@ public struct LibraryHealthItem: Equatable, Sendable, Identifiable {
     public let id: String; public let category: LibraryHealthCategory; public let severity: LibraryHealthSeverity
     public let title: String; public let detail: String
     public let target: String?; public let sessionDate: String?
+    public let isAcknowledged: Bool
 
     public init(
         id: String, category: LibraryHealthCategory, severity: LibraryHealthSeverity,
-        title: String, detail: String, target: String? = nil, sessionDate: String? = nil
+        title: String, detail: String, target: String? = nil, sessionDate: String? = nil,
+        isAcknowledged: Bool = false
     ) {
         self.id = id; self.category = category; self.severity = severity
         self.title = title; self.detail = detail; self.target = target; self.sessionDate = sessionDate
+        self.isAcknowledged = isAcknowledged
+    }
+
+    /// The `(category, groupKey)` pair a caller acks/revokes this item
+    /// through -- `groupKey` is the item's own stable `id`, which is already
+    /// derived from content that survives a re-scan (target/date/hash), not
+    /// from an ephemeral row identity.
+    public var ackCategory: String { category.rawValue }
+    public var ackGroupKey: String { id }
+
+    func acknowledged(_ flag: Bool) -> LibraryHealthItem {
+        LibraryHealthItem(
+            id: id, category: category, severity: severity, title: title, detail: detail,
+            target: target, sessionDate: sessionDate, isAcknowledged: flag
+        )
     }
 }
+
+/// One completed audit run, ready for display: when it ran, how many
+/// findings it produced, and how many of those are new/resolved compared to
+/// the run immediately before it (V1 `AuditDiff` semantics).
+public struct LibraryHealthAuditRunSummary: Equatable, Sendable {
+    public let ranAt: Date
+    public let findingCount: Int
+    public let newCount: Int
+    public let resolvedCount: Int
+
+    public init(ranAt: Date, findingCount: Int, newCount: Int, resolvedCount: Int) {
+        self.ranAt = ranAt
+        self.findingCount = findingCount
+        self.newCount = newCount
+        self.resolvedCount = resolvedCount
+    }
+}
+
 public struct LibraryHealthSnapshot: Equatable, Sendable {
     public let sessionCount: Int; public let calibrationIssues: Int
     public let duplicateFiles: Int; public let organizationIssues: Int
     public let items: [LibraryHealthItem]; public let isReadOnly: Bool
+    public let auditRuns: [LibraryHealthAuditRunSummary]
+
+    public init(
+        sessionCount: Int, calibrationIssues: Int, duplicateFiles: Int, organizationIssues: Int,
+        items: [LibraryHealthItem], isReadOnly: Bool, auditRuns: [LibraryHealthAuditRunSummary] = []
+    ) {
+        self.sessionCount = sessionCount; self.calibrationIssues = calibrationIssues
+        self.duplicateFiles = duplicateFiles; self.organizationIssues = organizationIssues
+        self.items = items; self.isReadOnly = isReadOnly; self.auditRuns = auditRuns
+    }
 }
+
 public struct LibraryHealthQuery: Sendable {
     private let indexDatabase: URL?
-    private init(indexDatabase: URL? = nil) { self.indexDatabase = indexDatabase }
-    init(indexDatabaseForTesting: URL) { self.indexDatabase = indexDatabaseForTesting }
+    private let metadata: MetadataStore?
+    private init(indexDatabase: URL? = nil, metadata: MetadataStore? = nil) {
+        self.indexDatabase = indexDatabase
+        self.metadata = metadata
+    }
+    init(indexDatabaseForTesting: URL, metadata: MetadataStore? = nil) {
+        self.indexDatabase = indexDatabaseForTesting
+        self.metadata = metadata
+    }
     public static func fixture() -> Self { Self() }
-    public static func production(rootURL: URL) throws -> Self {
+    public static func production(rootURL: URL, metadata: MetadataStore? = nil) throws -> Self {
         let identity = LibraryIdentity(rootURL: rootURL)
         let storage = try AppStoragePaths.production(libraryID: identity, libraryRoot: rootURL)
-        return Self(indexDatabase: storage.indexDatabase)
+        let resolvedMetadata = try metadata ?? MetadataStore(storagePaths: storage)
+        return Self(indexDatabase: storage.indexDatabase, metadata: resolvedMetadata)
     }
-    public func snapshot() async throws -> LibraryHealthSnapshot {
+
+    /// `includeAcknowledged` controls whether an acked finding group is
+    /// dropped from `items` (the default, matching V1's "hide by default")
+    /// or kept in place (dimmed by the caller) with `isAcknowledged == true`.
+    public func snapshot(includeAcknowledged: Bool = false) async throws -> LibraryHealthSnapshot {
+        let base: LibraryHealthSnapshot
         if let indexDatabase {
-            return try Self.readSnapshot(indexDatabase: indexDatabase)
+            base = try Self.readSnapshot(indexDatabase: indexDatabase)
+        } else {
+            base = LibraryHealthSnapshot(sessionCount: 1, calibrationIssues: 2, duplicateFiles: 0, organizationIssues: 0, items: [
+                .init(id: "flat", category: .flat, severity: .warning, title: "Flat mismatch", detail: "Rotation differs between lights and flats."),
+                .init(id: "dark", category: .dark, severity: .warning, title: "Dark missing", detail: "No matching session or library dark."),
+                .init(id: "integrity", category: .integrity, severity: .healthy, title: "Source library protected", detail: "Health checks are read-only."),
+            ], isReadOnly: true)
         }
-        return LibraryHealthSnapshot(sessionCount: 1, calibrationIssues: 2, duplicateFiles: 0, organizationIssues: 0, items: [
-            .init(id: "flat", category: .flat, severity: .warning, title: "Flat mismatch", detail: "Rotation differs between lights and flats."),
-            .init(id: "dark", category: .dark, severity: .warning, title: "Dark missing", detail: "No matching session or library dark."),
-            .init(id: "integrity", category: .integrity, severity: .healthy, title: "Source library protected", detail: "Health checks are read-only."),
-        ], isReadOnly: true)
+        guard let metadata else { return base }
+
+        let ackedKeys = Set(try await metadata.acknowledgements().map(\.ackKey))
+        let annotatedItems = base.items.map { item -> LibraryHealthItem in
+            let key = MetadataStore.ackKey(category: item.ackCategory, groupKey: item.ackGroupKey)
+            return item.acknowledged(ackedKeys.contains(key))
+        }
+        let visibleItems = includeAcknowledged ? annotatedItems : annotatedItems.filter { !$0.isAcknowledged }
+        let auditRuns = try await Self.auditRunSummaries(metadata: metadata)
+        return LibraryHealthSnapshot(
+            sessionCount: base.sessionCount, calibrationIssues: base.calibrationIssues,
+            duplicateFiles: base.duplicateFiles, organizationIssues: base.organizationIssues,
+            items: visibleItems, isReadOnly: base.isReadOnly, auditRuns: auditRuns
+        )
+    }
+
+    private static func auditRunSummaries(
+        metadata: MetadataStore, limit: Int = 10
+    ) async throws -> [LibraryHealthAuditRunSummary] {
+        let runs = try await metadata.auditRunHistory(limit: limit + 1)
+        guard !runs.isEmpty else { return [] }
+        var summaries: [LibraryHealthAuditRunSummary] = []
+        for index in runs.indices where index < limit {
+            let current = runs[index]
+            let currentKeys = Set(current.groupKeys)
+            if index + 1 < runs.count {
+                let previousKeys = Set(runs[index + 1].groupKeys)
+                summaries.append(LibraryHealthAuditRunSummary(
+                    ranAt: current.ranAt, findingCount: current.findingCount,
+                    newCount: currentKeys.subtracting(previousKeys).count,
+                    resolvedCount: previousKeys.subtracting(currentKeys).count
+                ))
+            } else {
+                summaries.append(LibraryHealthAuditRunSummary(
+                    ranAt: current.ranAt, findingCount: current.findingCount,
+                    newCount: currentKeys.count, resolvedCount: 0
+                ))
+            }
+        }
+        return summaries
     }
 
     private static func readSnapshot(indexDatabase: URL) throws -> LibraryHealthSnapshot {

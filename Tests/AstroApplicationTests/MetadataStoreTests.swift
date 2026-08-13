@@ -24,6 +24,88 @@ struct MetadataStoreTests {
         #expect(try await store.projectAnnotation(projectID: project.id) == annotation)
     }
 
+    @Test("Acknowledging a finding group upserts on ack key and revoking removes it")
+    func acknowledgeFindingGroupUpsertsAndRevokes() async throws {
+        let store = try MetadataStore.temporary()
+        let ackedAt = Date(timeIntervalSince1970: 1_786_404_000)
+
+        try await store.acknowledgeFindingGroup(category: "dark", groupKey: "IC1396|2026-08-08", note: "known gap", at: ackedAt)
+
+        let acks = try await store.acknowledgements()
+        #expect(acks.count == 1)
+        let ack = try #require(acks.first)
+        #expect(ack.ackKey == MetadataStore.ackKey(category: "dark", groupKey: "IC1396|2026-08-08"))
+        #expect(ack.category == "dark")
+        #expect(ack.groupKey == "IC1396|2026-08-08")
+        #expect(ack.note == "known gap")
+        #expect(abs(ack.ackedAt.timeIntervalSince1970 - ackedAt.timeIntervalSince1970) < 1)
+
+        let updatedAt = Date(timeIntervalSince1970: 1_786_500_000)
+        try await store.acknowledgeFindingGroup(category: "dark", groupKey: "IC1396|2026-08-08", note: "still fine", at: updatedAt)
+        let updatedAcks = try await store.acknowledgements()
+        #expect(updatedAcks.count == 1)
+        #expect(updatedAcks.first?.note == "still fine")
+
+        try await store.revokeAcknowledgement(ackKey: ack.ackKey)
+        #expect(try await store.acknowledgements().isEmpty)
+    }
+
+    @Test("Revoking an acknowledgement that was never made is a no-op")
+    func revokingUnknownAcknowledgementIsANoOp() async throws {
+        let store = try MetadataStore.temporary()
+
+        try await store.revokeAcknowledgement(ackKey: MetadataStore.ackKey(category: "dark", groupKey: "missing"))
+
+        #expect(try await store.acknowledgements().isEmpty)
+    }
+
+    @Test("Audit run history records runs newest-first and diffs the two most recent")
+    func auditRunHistoryRecordsAndDiffsRuns() async throws {
+        let store = try MetadataStore.temporary()
+
+        try await store.recordAuditRun(
+            findingCount: 2, groupKeys: ["dark|A", "flat|B"],
+            at: Date(timeIntervalSince1970: 1_786_400_000)
+        )
+        try await store.recordAuditRun(
+            findingCount: 2, groupKeys: ["dark|A", "duplicate|C"],
+            at: Date(timeIntervalSince1970: 1_786_500_000)
+        )
+
+        let history = try await store.auditRunHistory()
+        #expect(history.count == 2)
+        #expect(history[0].groupKeys == ["dark|A", "duplicate|C"])
+        #expect(history[1].groupKeys == ["dark|A", "flat|B"])
+
+        let diff = try await #require(store.auditRunDiff())
+        #expect(diff.newGroupKeys == ["duplicate|C"])
+        #expect(diff.resolvedGroupKeys == ["flat|B"])
+    }
+
+    @Test("A single audit run has no diff")
+    func singleAuditRunHasNoDiff() async throws {
+        let store = try MetadataStore.temporary()
+        try await store.recordAuditRun(findingCount: 1, groupKeys: ["dark|A"])
+
+        #expect(try await store.auditRunDiff() == nil)
+    }
+
+    @Test("Audit run history honors the requested limit")
+    func auditRunHistoryHonorsLimit() async throws {
+        let store = try MetadataStore.temporary()
+        for index in 0..<5 {
+            try await store.recordAuditRun(
+                findingCount: index, groupKeys: ["group|\(index)"],
+                at: Date(timeIntervalSince1970: 1_786_400_000 + Double(index))
+            )
+        }
+
+        let limited = try await store.auditRunHistory(limit: 2)
+        #expect(limited.count == 2)
+        #expect(limited[0].findingCount == 4)
+        #expect(limited[1].findingCount == 3)
+    }
+
     @Test("All UUID workflow records round-trip with stable lineage")
     func metadataRoundTripsStableIdentityAndLineage() async throws {
         let fixture = try StoreFixture.make()
@@ -168,6 +250,8 @@ struct MetadataStoreTests {
             "review_states",
             "mutation_journal",
             "project_annotations",
+            "audit_acknowledgements",
+            "audit_run_history",
         ]))
         #expect(objects.indexes.isSuperset(of: [
             "idx_series_project",
@@ -182,6 +266,7 @@ struct MetadataStoreTests {
             "idx_review_states_series",
             "idx_mutation_journal_operation",
             "idx_project_annotations_updated",
+            "idx_audit_run_history_ran_at",
         ]))
     }
 
@@ -226,6 +311,43 @@ struct MetadataStoreTests {
         #expect(try !tableExists("results", in: database))
         #expect(try !tableExists("lineage_edges", in: database))
         #expect(try !tableExists("review_states", in: database))
+    }
+
+    @Test("A version-four database migrates to version five preserving existing data")
+    func migratesVersionFourToVersionFive() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "M 31", displayName: "Andromeda Galaxy", phase: .collecting
+        )
+        try createVersionFourDatabase(at: fixture.databaseURL, project: project)
+
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+
+        #expect(try await store.schemaVersion() == 5)
+        #expect(try await store.project(id: project.id) == project)
+        #expect(try await store.acknowledgements().isEmpty)
+        #expect(try await store.auditRunHistory().isEmpty)
+    }
+
+    @Test("A failed version-five migration rolls back DDL and leaves the old version stamp")
+    func failedVersionFiveMigrationDoesNotAdvanceVersion() throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        try createVersionFourDatabase(at: fixture.databaseURL)
+        do {
+            let database = try SQLiteDB(path: fixture.databaseURL.path)
+            try database.exec("CREATE TABLE idx_audit_run_history_ran_at(unexpected TEXT NOT NULL);")
+        }
+
+        #expect(throws: AstroError.self) {
+            _ = try MetadataStore(databaseURL: fixture.databaseURL)
+        }
+
+        let database = try SQLiteDB(path: fixture.databaseURL.path)
+        #expect(try schemaVersion(in: database) == 4)
+        #expect(try !tableExists("audit_acknowledgements", in: database))
+        #expect(try !tableExists("audit_run_history", in: database))
     }
 
     @Test("A schema newer than this build is rejected without modification")
@@ -576,6 +698,36 @@ struct MetadataStoreTests {
         """)
         try database.run(
             "INSERT INTO metadata_schema(singleton, version) VALUES (1, 1);"
+        )
+        if let project {
+            try database.run(
+                "INSERT INTO projects(id, catalog_id, display_name, phase) VALUES (?, ?, ?, ?);",
+                bind: [
+                    .text(project.id.uuidString.lowercased()),
+                    .text(project.catalogID),
+                    .text(project.displayName),
+                    .text(project.phase.rawValue),
+                ]
+            )
+        }
+    }
+
+    private func createVersionFourDatabase(
+        at url: URL,
+        project: ProjectRecord? = nil
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let database = try SQLiteDB(path: url.path)
+        try database.exec(Self.schemaVersionSQL)
+        try database.exec(MetadataSchema.versionOneSQL)
+        try database.exec(MetadataSchema.versionTwoSQL)
+        try database.exec(MetadataSchema.versionThreeSQL)
+        try database.exec(MetadataSchema.versionFourSQL)
+        try database.run(
+            "INSERT INTO metadata_schema(singleton, version) VALUES (1, 4);"
         )
         if let project {
             try database.run(
