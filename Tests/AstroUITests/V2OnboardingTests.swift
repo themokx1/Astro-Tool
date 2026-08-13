@@ -40,6 +40,9 @@ struct V2OnboardingTests {
         #expect(indexURL.path.hasPrefix(fixture.caches.path + "/"))
         #expect(try await LibraryManifest.capture(root: fixture.root) == manifestBefore)
         #expect(scopedAccess.startedURLs == [pickerURL])
+        #expect(scopedAccess.stoppedURLs.isEmpty)
+
+        store.returnToLibraryChoice()
         #expect(scopedAccess.stoppedURLs == [pickerURL])
     }
 

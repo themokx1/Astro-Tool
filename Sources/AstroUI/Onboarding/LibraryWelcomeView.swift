@@ -232,6 +232,7 @@ public final class OnboardingStore {
     private let securityScopedAccess: SecurityScopedAccess
     private let bookmarkStore: LibraryBookmarkStore
     private var activeOperationID: UUID?
+    private var activeSecurityScopedURL: URL?
 
     public init(
         sessionFactory: OnboardingSessionFactory = .production,
@@ -248,19 +249,22 @@ public final class OnboardingStore {
         indexDatabaseURL = nil
         completionChoice = nil
         activeOperationID = nil
+        activeSecurityScopedURL = nil
     }
 
     public func openAndScan(_ rootURL: URL) async throws {
         let operationID = UUID()
         let root = rootURL.standardizedFileURL
+        releaseActiveSecurityScope()
         activeOperationID = operationID
         selectedRoot = root
         completionChoice = nil
         phase = .scanning(progress: nil)
 
         let didStartScopedAccess = securityScopedAccess.start(rootURL)
+        var shouldStopScopedAccess = didStartScopedAccess
         defer {
-            if didStartScopedAccess {
+            if shouldStopScopedAccess {
                 securityScopedAccess.stop(rootURL)
             }
         }
@@ -298,6 +302,10 @@ public final class OnboardingStore {
             guard isActive(operationID) else { return }
             phase = .summary(snapshot)
             bookmarkStore.save(root)
+            if didStartScopedAccess {
+                activeSecurityScopedURL = rootURL
+                shouldStopScopedAccess = false
+            }
         } catch is CancellationError {
             if isActive(operationID) {
                 activeOperationID = nil
@@ -314,6 +322,7 @@ public final class OnboardingStore {
 
     public func returnToLibraryChoice() {
         activeOperationID = nil
+        releaseActiveSecurityScope()
         resetToLibraryChoice()
     }
 
@@ -348,6 +357,12 @@ public final class OnboardingStore {
         selectedRoot = nil
         indexDatabaseURL = nil
         completionChoice = nil
+    }
+
+    private func releaseActiveSecurityScope() {
+        guard let url = activeSecurityScopedURL else { return }
+        activeSecurityScopedURL = nil
+        securityScopedAccess.stop(url)
     }
 
     private func isActive(_ operationID: UUID) -> Bool {
