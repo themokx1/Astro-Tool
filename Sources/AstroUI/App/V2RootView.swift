@@ -1,3 +1,4 @@
+import AppKit
 import AstroApplication
 import Foundation
 import SwiftUI
@@ -212,13 +213,14 @@ private struct V2Shell: View {
                 Button(action: { showsSearch.toggle() }) {
                     Label("Search", systemImage: "magnifyingglass")
                 }
-                .help("Search projects and observing nights")
+                .help("Search projects, nights, series, files, and notes")
                 .accessibilityIdentifier("v2.toolbar.search")
                 .popover(isPresented: $showsSearch, arrowEdge: .bottom) {
                     GlobalSearchPanel(
                         store: globalSearch,
                         projects: projectsStore,
                         nights: nightsStore,
+                        rootURL: onboardingStore.selectedRoot ?? libraryRootFallback,
                         open: openSearchResult
                     )
                 }
@@ -318,17 +320,28 @@ private struct V2Shell: View {
         showsSearch = false
         switch result.kind {
         case .project:
+            guard let objectID = result.objectID else { return }
             router.navigate(to: .projects)
-            Task { try? await projectsStore.selectProject(result.objectID) }
+            Task { try? await projectsStore.selectProject(objectID) }
         case .night:
-            nightsStore.selectNight(result.objectID)
+            guard let objectID = result.objectID else { return }
+            nightsStore.selectNight(objectID)
             router.navigate(to: .nights)
         case .series:
+            guard let objectID = result.objectID else { return }
             guard let series = nightsStore.nights
                 .flatMap(\.snapshot.series)
-                .first(where: { $0.id == result.objectID }) else { return }
+                .first(where: { $0.id == objectID }) else { return }
             Task { try? await projectsStore.selectProject(series.projectID) }
             router.navigate(toContent: .projectSeries(series.id.uuidString))
+        case .file:
+            guard let root = onboardingStore.selectedRoot ?? libraryRootFallback,
+                  let path = result.locator else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent(path)])
+        case .note:
+            guard let objectID = result.objectID else { return }
+            router.navigate(to: .projects)
+            Task { try? await projectsStore.selectProject(objectID) }
         }
     }
 
@@ -345,16 +358,24 @@ private struct GlobalSearchPanel: View {
     @Bindable var store: GlobalSearchStore
     let projects: ProjectsStore
     let nights: NightsStore
+    let rootURL: URL?
     let open: (GlobalSearchResult) -> Void
     @State private var query = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TextField("Search projects and nights", text: $query)
+            TextField("Search projects, nights, files, and notes", text: $query)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("v2.global-search.field")
                 .onChange(of: query) { _, value in
-                    Task { await store.search(value, projects: projects, nights: nights) }
+                    Task {
+                        await store.search(
+                            value,
+                            rootURL: rootURL,
+                            projects: projects,
+                            nights: nights
+                        )
+                    }
                 }
             if query.isEmpty {
                 Label("Try a target, date, filter, setup, or status.", systemImage: "sparkle.magnifyingglass")
@@ -395,6 +416,8 @@ private struct GlobalSearchPanel: View {
         case .project: "scope"
         case .night: "moon.stars"
         case .series: "square.stack.3d.up"
+        case .file: "doc"
+        case .note: "note.text"
         }
     }
 }

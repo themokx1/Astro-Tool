@@ -112,7 +112,8 @@ struct V2BetaWorkspaceSurfaceTests {
         #expect(search.contains("Series ·"))
         #expect(search.contains("series.filterName"))
         #expect(shell.contains("case .series"))
-        #expect(shell.contains("selectProject(result.objectID)"))
+        #expect(shell.contains("guard let objectID = result.objectID"))
+        #expect(shell.contains("selectProject(series.projectID)"))
     }
 
     @Test("Insights shows usable capture efficiency")
