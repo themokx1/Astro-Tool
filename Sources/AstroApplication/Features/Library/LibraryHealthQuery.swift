@@ -1,14 +1,16 @@
 import AstroCore
 import Foundation
 
-public enum LibraryHealthCategory: String, Sendable { case flat, dark, bias, storage, integrity }
+public enum LibraryHealthCategory: String, CaseIterable, Sendable { case flat, dark, bias, storage, integrity, duplicates, organization }
 public enum LibraryHealthSeverity: String, Sendable { case healthy, info, warning, critical }
 public struct LibraryHealthItem: Equatable, Sendable, Identifiable {
     public let id: String; public let category: LibraryHealthCategory; public let severity: LibraryHealthSeverity
     public let title: String; public let detail: String
 }
 public struct LibraryHealthSnapshot: Equatable, Sendable {
-    public let sessionCount: Int; public let calibrationIssues: Int; public let items: [LibraryHealthItem]; public let isReadOnly: Bool
+    public let sessionCount: Int; public let calibrationIssues: Int
+    public let duplicateFiles: Int; public let organizationIssues: Int
+    public let items: [LibraryHealthItem]; public let isReadOnly: Bool
 }
 public struct LibraryHealthQuery: Sendable {
     private let indexDatabase: URL?
@@ -24,7 +26,7 @@ public struct LibraryHealthQuery: Sendable {
         if let indexDatabase {
             return try Self.readSnapshot(indexDatabase: indexDatabase)
         }
-        return LibraryHealthSnapshot(sessionCount: 1, calibrationIssues: 2, items: [
+        return LibraryHealthSnapshot(sessionCount: 1, calibrationIssues: 2, duplicateFiles: 0, organizationIssues: 0, items: [
             .init(id: "flat", category: .flat, severity: .warning, title: "Flat mismatch", detail: "Rotation differs between lights and flats."),
             .init(id: "dark", category: .dark, severity: .warning, title: "Dark missing", detail: "No matching session or library dark."),
             .init(id: "integrity", category: .integrity, severity: .healthy, title: "Source library protected", detail: "Health checks are read-only."),
@@ -54,13 +56,55 @@ public struct LibraryHealthQuery: Sendable {
                 title: "Flat missing · \(date)", detail: "\(target): \(lights) light frame has no session flat."
             )
         }
+        var duplicateFiles = 0
+        if try tableHasColumn(db, table: "files", column: "content_hash") {
+            try db.query(
+                """
+                SELECT content_hash, COUNT(*), COALESCE(MAX(size), 0)
+                FROM files WHERE missing = 0 AND content_hash IS NOT NULL AND content_hash <> ''
+                GROUP BY content_hash HAVING COUNT(*) > 1;
+                """
+            ) { row in
+                let count = Int(row.int64(1) ?? 0)
+                duplicateFiles += max(0, count - 1)
+                items.append(.init(
+                    id: "duplicate|\(row.string(0) ?? "unknown")", category: .duplicates,
+                    severity: .warning, title: "Duplicate content",
+                    detail: "\(count) identical files; \(max(0, count - 1)) additional copy can be reviewed safely."
+                ))
+            }
+        }
+        var organizationIssues = 0
+        try db.query(
+            """
+            SELECT COUNT(*) FROM files
+            WHERE missing = 0 AND (area = 'other' OR role = 'other')
+              AND (path LIKE '%.DS_Store' OR path LIKE '%.seq' OR path LIKE '%.lst');
+            """
+        ) { row in organizationIssues = Int(row.int64(0) ?? 0) }
+        if organizationIssues > 0 {
+            items.append(.init(
+                id: "organization", category: .organization, severity: .info,
+                title: "Organization cleanup available",
+                detail: "\(organizationIssues) residue file can be reviewed; nothing will be deleted automatically."
+            ))
+        }
         items.append(.init(
             id: "integrity", category: .integrity, severity: .healthy,
             title: "Source library protected", detail: "This health scan opened only AstroTool's external index."
         ))
         return LibraryHealthSnapshot(
             sessionCount: sessions.count, calibrationIssues: missingFlats.count,
+            duplicateFiles: duplicateFiles, organizationIssues: organizationIssues,
             items: items, isReadOnly: true
         )
+    }
+
+    private static func tableHasColumn(_ db: SQLiteDB, table: String, column: String) throws -> Bool {
+        var found = false
+        try db.query("PRAGMA table_info(\(table));") { row in
+            if row.string(1) == column { found = true }
+        }
+        return found
     }
 }

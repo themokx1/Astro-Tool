@@ -22,6 +22,7 @@ public struct HealthView: View {
     @State private var store = LibraryHealthStore()
     @State private var showsCleanup = false
     @State private var showsSensors = false
+    @State private var category: LibraryHealthCategory?
 
     public var body: some View {
         WorkspacePage(eyebrow: "Read-only diagnostics", title: "Library Health", subtitle: "Actionable calibration and integrity checks without changing source files.") {
@@ -29,11 +30,21 @@ public struct HealthView: View {
                 HStack(spacing: AstroTokens.Spacing.standard) {
                     MetricCard(title: "Sessions", value: "\(snapshot.sessionCount)", detail: "Indexed nights", systemImage: "moon.stars")
                     MetricCard(title: "Calibration", value: "\(snapshot.calibrationIssues)", detail: "Needs attention", systemImage: "exclamationmark.triangle")
+                    MetricCard(title: "Duplicates", value: "\(snapshot.duplicateFiles)", detail: "Additional copies", systemImage: "square.on.square")
+                    MetricCard(title: "Organization", value: "\(snapshot.organizationIssues)", detail: "Reviewable residue", systemImage: "tray.full")
                     MetricCard(title: "Access", value: snapshot.isReadOnly ? "Read only" : "Writable", detail: "Images protected", systemImage: "lock.shield")
                 }
+                Picker("Category", selection: $category) {
+                    Text("All findings").tag(LibraryHealthCategory?.none)
+                    ForEach(LibraryHealthCategory.allCases, id: \.rawValue) { value in
+                        Text(value.rawValue.capitalized).tag(Optional(value))
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("v2.health.categories")
                 GroupBox("Health findings") {
                     VStack(spacing: 0) {
-                        ForEach(snapshot.items) { item in
+                        ForEach(snapshot.items.filter { category == nil || $0.category == category }) { item in
                             HStack(alignment: .top, spacing: 12) {
                                 Image(systemName: icon(item.severity)).foregroundStyle(color(item.severity))
                                 VStack(alignment: .leading, spacing: 3) {
@@ -41,7 +52,10 @@ public struct HealthView: View {
                                     Text(item.detail).font(.callout).foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Text(item.category.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
+                                VStack(alignment: .trailing, spacing: 4) {
+                                    Text(item.category.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
+                                    Text(nextStep(item.category)).font(.caption2).foregroundStyle(AstroTokens.Color.spectralBlue)
+                                }
                             }.padding(.vertical, 10)
                             Divider()
                         }
@@ -76,4 +90,11 @@ public struct HealthView: View {
 
     private func icon(_ severity: LibraryHealthSeverity) -> String { severity == .healthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill" }
     private func color(_ severity: LibraryHealthSeverity) -> Color { severity == .healthy ? .green : .orange }
+    private func nextStep(_ category: LibraryHealthCategory) -> String {
+        switch category {
+        case .flat, .dark, .bias: "Review calibration"
+        case .duplicates, .organization, .storage: "Preview cleanup"
+        case .integrity: "No action needed"
+        }
+    }
 }
