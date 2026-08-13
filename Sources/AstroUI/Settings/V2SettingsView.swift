@@ -59,6 +59,8 @@ private struct PlanningSettingsView: View {
                 LabeledContent("Surface brightness") { TextField("mag/arcsec²", value: $referenceBrightness, format: .number).frame(width: 90) }
                 Text("Default: 10 hours at f/5 and μ22 mag/arcsec². Each target is calculated relative to this baseline.")
                     .font(.caption).foregroundStyle(.secondary)
+                Text("Not yet applied to planning calculations: these fields are stored but the planner still uses its built-in reference baseline.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
     }

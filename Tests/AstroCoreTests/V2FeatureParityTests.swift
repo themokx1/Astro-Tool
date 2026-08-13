@@ -39,6 +39,18 @@ struct V2FeatureParityTests {
         }
     }
 
+    @Test("Overstated rows are downgraded to beta-partial with an honest known gap")
+    func overstatedRowsAreDowngraded() throws {
+        let text = try String(contentsOf: root.appendingPathComponent("docs/superpowers/reviews/v2-feature-parity.csv"))
+        let rows = try parse(text)
+        let byWorkflow = Dictionary(uniqueKeysWithValues: rows.map { ($0["v1_workflow"]!, $0) })
+        for workflow in ["target-detail", "all-targets", "settings-planning", "trends", "discover"] {
+            let row = try #require(byWorkflow[workflow])
+            #expect(row["status"] == "beta-partial")
+            #expect(row["known_gap"] != "none")
+        }
+    }
+
     private static let columns = [
         "v1_workflow", "v2_route", "use_case", "permission_mode", "unit_test", "ui_test",
         "cli_report_parity", "accessibility", "empty_error_state", "status", "known_gap",

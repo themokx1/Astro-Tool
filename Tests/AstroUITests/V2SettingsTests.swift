@@ -17,6 +17,14 @@ struct V2SettingsTests {
         #expect(source.contains("v2.settings.diagnostics"))
     }
 
+    @Test("The Planning tab discloses that its preferences are not yet wired to planning calculations")
+    func planningPreferencesDiscloseTheyAreNotApplied() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"))
+        #expect(source.contains("Not yet applied to planning calculations"))
+    }
+
     @Test("A filter created in settings is immediately available to inline selectors")
     func sharedFilterInventory() throws {
         let suite = "AstroTool-V2SettingsTests-\(UUID().uuidString)"
