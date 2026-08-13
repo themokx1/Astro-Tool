@@ -131,11 +131,35 @@ public struct ReviewWorkspace: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    List(selection: $selectedDecisionIDs) {
-                        ForEach(selected.decisions, id: \.id) { decision in
-                            FrameDecisionRow(decision: decision).tag(decision.id)
+                    Table(selected.decisions, selection: $selectedDecisionIDs) {
+                        TableColumn("Frame") { decision in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(URL(fileURLWithPath: decision.relativePath).lastPathComponent)
+                                    .font(.body.monospaced())
+                                Text(decision.relativePath)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            .padding(.vertical, 3)
                         }
+                        TableColumn("Decision") { decision in
+                            FrameVerdictLabel(decision: decision)
+                        }
+                        .width(min: 105, ideal: 120)
+                        TableColumn("Library status") { decision in
+                            Text(decision.logicallyExcluded ? "Excluded" : "Included")
+                                .foregroundStyle(decision.logicallyExcluded ? .red : .secondary)
+                        }
+                        .width(min: 100, ideal: 115)
                     }
+                    .contextMenu(forSelectionType: UUID.self) { decisionIDs in
+                        Button("Accept") { apply(.accepted, decisionIDs: decisionIDs, in: selected) }
+                        Button("Reset Decision") { apply(.undecided, decisionIDs: decisionIDs, in: selected) }
+                        Divider()
+                        Button("Reject") { apply(.rejected, decisionIDs: decisionIDs, in: selected) }
+                    }
+                    .accessibilityIdentifier("v2.review.frames-table")
                 }
             }
             .accessibilityIdentifier("v2.review.quality")
@@ -146,12 +170,12 @@ public struct ReviewWorkspace: View {
 
     private func reviewActions(_ selected: ReviewSeriesSnapshot) -> some View {
         HStack(spacing: 8) {
-            Button("Accept") { apply(.accepted, in: selected) }
+            Button("Accept") { apply(.accepted, decisionIDs: selectedDecisionIDs, in: selected) }
                 .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
                 .keyboardShortcut("a", modifiers: [.command, .shift])
-            Button("Reset") { apply(.undecided, in: selected) }
+            Button("Reset") { apply(.undecided, decisionIDs: selectedDecisionIDs, in: selected) }
                 .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
-            Button("Reject") { apply(.rejected, in: selected) }
+            Button("Reject") { apply(.rejected, decisionIDs: selectedDecisionIDs, in: selected) }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
                 .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
@@ -174,9 +198,13 @@ public struct ReviewWorkspace: View {
         }
     }
 
-    private func apply(_ verdict: FrameVerdict, in selected: ReviewSeriesSnapshot) {
+    private func apply(
+        _ verdict: FrameVerdict,
+        decisionIDs: Set<UUID>,
+        in selected: ReviewSeriesSnapshot
+    ) {
         let paths = selected.decisions
-            .filter { selectedDecisionIDs.contains($0.id) }
+            .filter { decisionIDs.contains($0.id) }
             .map(\.relativePath)
         Task {
             try? await store.setVerdict(relativePaths: paths, verdict: verdict)
@@ -287,23 +315,24 @@ private struct SeriesRow: View {
     }
 }
 
-private struct FrameDecisionRow: View {
+private struct FrameVerdictLabel: View {
     let decision: FrameDecisionRecord
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 6) {
             Image(systemName: icon).foregroundStyle(color)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(URL(fileURLWithPath: decision.relativePath).lastPathComponent)
-                    .font(.body.monospaced())
-                Text(decision.relativePath).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer()
-            if decision.logicallyExcluded {
-                Text("Excluded").font(.caption.weight(.medium)).foregroundStyle(.red)
-            }
+            Text(label)
+                .foregroundStyle(color)
+                .font(.callout.weight(.medium))
         }
-        .padding(.vertical, 3)
+    }
+
+    private var label: String {
+        switch decision.verdict {
+        case .accepted: "Accepted"
+        case .rejected: "Rejected"
+        case .undecided: "Undecided"
+        }
     }
 
     private var icon: String {

@@ -60,4 +60,20 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(workspace.contains("v2.series.workspace"))
         #expect(shell.contains("case .projectSeries(let rawID)"))
     }
+
+    @Test("Frame review is a multi-selection work table with shared actions")
+    func frameReviewTableContract() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/ReviewWorkspace.swift"))
+        #expect(workspace.contains("Table(selected.decisions, selection: $selectedDecisionIDs)"))
+        #expect(workspace.contains("TableColumn(\"Frame\""))
+        #expect(workspace.contains("TableColumn(\"Decision\""))
+        #expect(workspace.contains("TableColumn(\"Library status\""))
+        #expect(workspace.contains("contextMenu(forSelectionType: UUID.self"))
+        #expect(workspace.contains("apply(.accepted, decisionIDs:"))
+        #expect(workspace.contains("apply(.undecided, decisionIDs:"))
+        #expect(workspace.contains("apply(.rejected, decisionIDs:"))
+        #expect(workspace.contains("Archive preview"))
+    }
 }

@@ -104,7 +104,7 @@ public enum FrameVerdict: String, CaseIterable, Codable, Sendable {
     case rejected
 }
 
-public struct FrameDecisionRecord: Codable, Equatable, Hashable, Sendable {
+public struct FrameDecisionRecord: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let id: UUID
     public let seriesID: UUID
     public let relativePath: String
