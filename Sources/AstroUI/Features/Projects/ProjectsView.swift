@@ -7,6 +7,7 @@ public struct ProjectsView: View {
     let createProject: () -> Void
     let chooseLibrary: () -> Void
     let reviewProject: (ProjectRecord) -> Void
+    let showResults: (ProjectRecord) -> Void
 
     public var body: some View {
         WorkspacePage(
@@ -50,10 +51,13 @@ public struct ProjectsView: View {
                                     .font(.caption.weight(.medium))
                                     .padding(.horizontal, 8).padding(.vertical, 4)
                                     .background(.quaternary, in: Capsule())
-                                Button("Review") { reviewProject(project) }
-                                    .buttonStyle(.bordered)
-                                    .accessibilityLabel("Review \(project.displayName)")
-                                    .accessibilityIdentifier("v2.projects.review")
+                                HStack(spacing: 6) {
+                                    Button("Results") { showResults(project) }.buttonStyle(.bordered)
+                                    Button("Review") { reviewProject(project) }
+                                        .buttonStyle(.bordered)
+                                        .accessibilityLabel("Review \(project.displayName)")
+                                        .accessibilityIdentifier("v2.projects.review")
+                                }
                             }
                             .padding(.vertical, 10)
                             if project.id != store.projects.last?.id { Divider() }

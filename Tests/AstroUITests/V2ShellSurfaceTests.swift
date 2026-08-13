@@ -199,4 +199,20 @@ struct V2ShellSurfaceTests {
             #expect(source.contains(identifier))
         }
     }
+
+    @Test("Results expose lineage, publish readiness and an honest empty state")
+    func resultsWorkspaceContract() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Features/Results/ResultsView.swift"
+            ),
+            encoding: .utf8
+        )
+        for identifier in ["v2.results.workspace", "v2.results.lineage", "v2.results.publishable"] {
+            #expect(source.contains(identifier))
+        }
+        #expect(source.contains("No results recorded"))
+        #expect(source.contains("Input series"))
+        #expect(source.contains("Source result"))
+    }
 }

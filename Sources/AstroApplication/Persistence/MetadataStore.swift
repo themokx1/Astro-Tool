@@ -302,6 +302,32 @@ public actor MetadataStore {
         return record
     }
 
+    public func results(projectID: UUID) throws -> [ResultRecord] {
+        var records: [ResultRecord] = []
+        try database.query(
+            """
+            SELECT id, project_id, parent_result_id, kind, role, relative_path,
+                   created_at, software_name, software_version
+            FROM results WHERE project_id = ? ORDER BY created_at, id;
+            """,
+            bind: [.text(projectID.databaseText)]
+        ) { row in records.append(try Self.result(from: row)) }
+        return records
+    }
+
+    public func lineageEdges(resultID: UUID) throws -> [LineageEdgeRecord] {
+        var records: [LineageEdgeRecord] = []
+        try database.query(
+            """
+            SELECT id, result_id, source_kind,
+                   COALESCE(source_series_id, source_frame_id, source_result_id)
+            FROM lineage_edges WHERE result_id = ? ORDER BY source_kind, id;
+            """,
+            bind: [.text(resultID.databaseText)]
+        ) { row in records.append(try Self.lineageEdge(from: row)) }
+        return records
+    }
+
     public func lineageEdge(id: UUID) throws -> LineageEdgeRecord? {
         var record: LineageEdgeRecord?
         try database.query(

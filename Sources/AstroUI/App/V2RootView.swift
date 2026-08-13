@@ -145,6 +145,7 @@ private struct V2Shell: View {
     @Binding var isOnboardingPresented: Bool
     @State private var reviewDestination: ReviewDestination?
     @State private var conversionRoot: URL?
+    @State private var resultsDestination: ResultsDestination?
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
@@ -166,6 +167,10 @@ private struct V2Shell: View {
                         router.toggleInspector()
                     }
                     reviewDestination = ReviewDestination(id: project.id, rootURL: rootURL)
+                },
+                showResults: { project in
+                    guard let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback else { return }
+                    resultsDestination = ResultsDestination(project: project, rootURL: rootURL)
                 },
                 convertSession: {
                     conversionRoot = onboardingStore.selectedRoot ?? libraryRootFallback
@@ -208,6 +213,10 @@ private struct V2Shell: View {
                     dismiss: { reviewDestination = nil }
                 )
                 .background(.background)
+            } else if let destination = resultsDestination {
+                ResultsView(rootURL: destination.rootURL, project: destination.project) {
+                    resultsDestination = nil
+                }
             } else if let conversionRoot,
                       let useCase = try? ConversionUseCase.production(rootURL: conversionRoot) {
                 ConversionWorkspace(useCase: useCase, dismiss: { self.conversionRoot = nil })
@@ -251,6 +260,12 @@ private struct V2Shell: View {
 
 private struct ReviewDestination: Identifiable {
     let id: UUID
+    let rootURL: URL
+}
+
+private struct ResultsDestination: Identifiable {
+    var id: UUID { project.id }
+    let project: ProjectRecord
     let rootURL: URL
 }
 
@@ -313,6 +328,7 @@ private struct DetailHost: View {
     let nightsStore: NightsStore
     let chooseLibrary: () -> Void
     let reviewProject: (ProjectRecord) -> Void
+    let showResults: (ProjectRecord) -> Void
     let convertSession: () -> Void
 
     @ViewBuilder
@@ -326,7 +342,8 @@ private struct DetailHost: View {
                 store: projectsStore,
                 createProject: { router.present(.newProject) },
                 chooseLibrary: chooseLibrary,
-                reviewProject: reviewProject
+                reviewProject: reviewProject,
+                showResults: showResults
             )
         case .nights:
             NightsView(
