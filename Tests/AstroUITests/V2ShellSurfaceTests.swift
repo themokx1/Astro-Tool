@@ -50,6 +50,7 @@ struct V2ShellSurfaceTests {
         #expect(!root.contains(".preferredColorScheme"))
         #expect(!root.contains("AppState.shared"))
         #expect(!root.contains("NotificationCenter"))
+        #expect(root.contains("ScanWorkflowMaterializer.materializeProductionLibrary"))
     }
 
     @Test("Appearance tokens are adaptive and unavailable actions are honest")

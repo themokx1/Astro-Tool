@@ -109,6 +109,11 @@ public struct V2RootView: View {
                 guard let root = onboardingStore.selectedRoot,
                       onboardingStore.phase.summary != nil
                 else { return }
+                if uiTestFixture == nil {
+                    _ = try? await Task.detached(priority: .utility) {
+                        try await ScanWorkflowMaterializer.materializeProductionLibrary(rootURL: root)
+                    }.value
+                }
                 try? await projectsStore.open(rootURL: root)
                 try? await nightsStore.open(rootURL: root)
             }
