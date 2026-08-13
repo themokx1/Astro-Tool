@@ -491,8 +491,24 @@ private struct DetailHost: View {
                 createProject: { router.present(.newProject) },
                 chooseLibrary: chooseLibrary,
                 reviewProject: reviewProject,
-                showResults: showResults
+                showResults: showResults,
+                openProject: { project in
+                    Task { try? await projectsStore.selectProject(project.id) }
+                    router.navigate(toContent: .project(project.id.uuidString))
+                }
             )
+        case .project(let rawID):
+            if let id = UUID(uuidString: rawID), let snapshot = projectsStore.selectedProject, snapshot.id == id {
+                ProjectWorkspaceView(
+                    snapshot: snapshot,
+                    close: { router.navigate(to: .projects) },
+                    review: { reviewProject(snapshot.project) },
+                    results: { showResults(snapshot.project) }
+                )
+            } else {
+                ProgressView("Loading project…")
+                    .task { if let id = UUID(uuidString: rawID) { try? await projectsStore.selectProject(id) } }
+            }
         case .nights:
             NightsView(
                 snapshot: onboardingStore.phase.summary,

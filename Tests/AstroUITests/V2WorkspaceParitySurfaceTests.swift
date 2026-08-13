@@ -14,4 +14,21 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(source.contains("contextMenu"))
         #expect(source.contains("onTapGesture(count: 2)"))
     }
+
+    @Test("A project opens as a dedicated acquisition workspace")
+    func projectWorkspaceContract() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift"))
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        #expect(workspace.contains("Project ›"))
+        #expect(workspace.contains("Overview"))
+        #expect(workspace.contains("Nights"))
+        #expect(workspace.contains("Series"))
+        #expect(workspace.contains("Results"))
+        #expect(workspace.contains("Notes"))
+        #expect(workspace.contains("Review Frames"))
+        #expect(workspace.contains("v2.project.workspace"))
+        #expect(shell.contains("case .project(let rawID)"))
+    }
 }

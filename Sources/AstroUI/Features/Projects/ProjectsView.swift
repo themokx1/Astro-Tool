@@ -8,6 +8,7 @@ public struct ProjectsView: View {
     let chooseLibrary: () -> Void
     let reviewProject: (ProjectRecord) -> Void
     let showResults: (ProjectRecord) -> Void
+    let openProject: (ProjectRecord) -> Void
     @State private var searchText = ""
     @State private var visibleProjects: [ProjectRecord] = []
 
@@ -56,7 +57,7 @@ public struct ProjectsView: View {
                                 Text(row.project.catalogID).font(.caption).foregroundStyle(.secondary)
                             }
                             .contentShape(Rectangle())
-                            .onTapGesture(count: 2) { open(row.project) }
+                            .onTapGesture(count: 2) { openProject(row.project) }
                         }
                         TableColumn("Phase") { row in Text(row.project.phase.rawValue.capitalized) }
                             .width(min: 85, ideal: 100)
@@ -84,13 +85,13 @@ public struct ProjectsView: View {
                     .frame(minHeight: 280)
                     .contextMenu(forSelectionType: UUID.self) { ids in
                         if let id = ids.first, let row = store.workspaceRows.first(where: { $0.id == id }) {
-                            Button("Open Project") { open(row.project) }
+                            Button("Open Project") { openProject(row.project) }
                             Button("Review Frames") { reviewProject(row.project) }
                             Button("Results") { showResults(row.project) }
                         }
                     } primaryAction: { ids in
                         if let id = ids.first, let row = store.workspaceRows.first(where: { $0.id == id }) {
-                            open(row.project)
+                            openProject(row.project)
                         }
                     }
                 }
@@ -123,12 +124,13 @@ public struct ProjectsView: View {
     private var projectSelection: Binding<UUID?> {
         Binding(
             get: { store.selectedProjectID },
-            set: { id in Task { try? await store.selectProject(id) } }
+            set: { id in
+                Task { try? await store.selectProject(id) }
+                if let id, let project = store.projects.first(where: { $0.id == id }) {
+                    openProject(project)
+                }
+            }
         )
-    }
-
-    private func open(_ project: ProjectRecord) {
-        Task { try? await store.selectProject(project.id) }
     }
 
     private func duration(_ seconds: Double) -> String {
