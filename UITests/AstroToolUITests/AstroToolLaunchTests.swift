@@ -76,11 +76,11 @@ final class AstroToolLaunchTests: XCTestCase {
 
         let destinations = [
             (sidebar: "v2.sidebar.home", detail: "v2.detail.home", title: "Home"),
-            (sidebar: "v2.sidebar.projects", detail: "v2.detail.projects", title: "No projects yet"),
-            (sidebar: "v2.sidebar.nights", detail: "v2.detail.nights", title: "No observing nights yet"),
-            (sidebar: "v2.sidebar.planning", detail: "v2.detail.planning", title: "No plan selected"),
-            (sidebar: "v2.sidebar.library", detail: "v2.detail.library", title: "No library open"),
-            (sidebar: "v2.sidebar.insights", detail: "v2.detail.insights", title: "No insights yet"),
+            (sidebar: "v2.sidebar.projects", detail: "v2.detail.projects", title: "Projects"),
+            (sidebar: "v2.sidebar.nights", detail: "v2.detail.nights", title: "Nights"),
+            (sidebar: "v2.sidebar.planning", detail: "v2.detail.planning", title: "Planning"),
+            (sidebar: "v2.sidebar.library", detail: "v2.detail.library", title: "Library"),
+            (sidebar: "v2.sidebar.insights", detail: "v2.detail.insights", title: "Insights"),
         ]
         for expected in destinations {
             let destination = element(expected.sidebar, in: app)
@@ -108,6 +108,16 @@ final class AstroToolLaunchTests: XCTestCase {
         XCTAssertTrue(inspectorToggle.isHittable)
         inspectorToggle.click()
         XCTAssertTrue(element("v2.inspector", in: app).waitForExistence(timeout: 5))
+
+        element("v2.sidebar.projects", in: app).click()
+        let reviewButton = element("v2.projects.review", in: app)
+        XCTAssertTrue(reviewButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(reviewButton.isHittable)
+        reviewButton.click()
+        XCTAssertTrue(element("v2.review.workspace", in: app).waitForExistence(timeout: 8))
+        XCTAssertTrue(element("v2.review.series-list", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("v2.review.quality", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("v2.review.inspector", in: app).waitForExistence(timeout: 5))
 
         XCTAssertEqual(app.state, .runningForeground)
     }

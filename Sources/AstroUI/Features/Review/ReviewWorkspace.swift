@@ -40,7 +40,7 @@ public struct ReviewWorkspace: View {
                 }
             }
         }
-        .frame(minWidth: 960, minHeight: 640)
+        .frame(minWidth: 800, minHeight: 580)
         .background(AstroTokens.Color.graphite.opacity(0.22))
         .task(id: projectID) {
             try? await store.open(rootURL: rootURL, projectID: projectID)
@@ -69,12 +69,12 @@ public struct ReviewWorkspace: View {
     private func reviewContent(_ snapshot: ReviewProjectSnapshot) -> some View {
         HSplitView {
             seriesList(snapshot.series)
-                .frame(minWidth: 245, idealWidth: 280, maxWidth: 330)
+                .frame(minWidth: 205, idealWidth: 240, maxWidth: 290)
             frameReview
-                .frame(minWidth: 430, maxWidth: .infinity)
+                .frame(minWidth: 340, maxWidth: .infinity)
             if let selectedSeries = store.selectedSeries {
                 inspector(for: selectedSeries)
-                    .frame(minWidth: 250, idealWidth: 280, maxWidth: 340)
+                    .frame(minWidth: 220, idealWidth: 250, maxWidth: 300)
             }
         }
         .sheet(item: $archivePreview) { plan in

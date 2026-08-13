@@ -65,21 +65,14 @@ public struct V2RootView: View {
         _onboardingStore = State(
             initialValue: uiTestFixture?.makeOnboardingStore() ?? OnboardingStore()
         )
-        _projectsStore = State(initialValue: ProjectsStore(
-            metadataFactory: uiTestFixture == nil
-                ? ProjectsStore.productionMetadata
-                : ProjectsStore.previewMetadata
-        ))
-        _nightsStore = State(initialValue: NightsStore(
-            metadataFactory: uiTestFixture == nil
-                ? ProjectsStore.productionMetadata
-                : ProjectsStore.previewMetadata
-        ))
-        _reviewStore = State(initialValue: ReviewStore(
-            metadataFactory: uiTestFixture == nil
-                ? ProjectsStore.productionMetadata
-                : ProjectsStore.previewMetadata
-        ))
+        let metadataFactory: ProjectsStore.MetadataFactory = if let uiTestFixture {
+            { _ in try uiTestFixture.makeMetadataStore() }
+        } else {
+            ProjectsStore.productionMetadata
+        }
+        _projectsStore = State(initialValue: ProjectsStore(metadataFactory: metadataFactory))
+        _nightsStore = State(initialValue: NightsStore(metadataFactory: metadataFactory))
+        _reviewStore = State(initialValue: ReviewStore(metadataFactory: metadataFactory))
         _isOnboardingPresented = State(initialValue: uiTestFixture != nil)
     }
 
@@ -91,6 +84,7 @@ public struct V2RootView: View {
             projectsStore: projectsStore,
             nightsStore: nightsStore,
             reviewStore: reviewStore,
+            libraryRootFallback: uiTestFixture?.libraryRoot,
             isOnboardingPresented: $isOnboardingPresented
         )
             .onAppear {
@@ -109,7 +103,9 @@ public struct V2RootView: View {
                 guard let root = onboardingStore.selectedRoot,
                       onboardingStore.phase.summary != nil
                 else { return }
-                if uiTestFixture == nil {
+                if let uiTestFixture {
+                    try? await uiTestFixture.seedReviewMetadata()
+                } else {
                     _ = try? await Task.detached(priority: .utility) {
                         try await ScanWorkflowMaterializer.materializeProductionLibrary(rootURL: root)
                     }.value
@@ -145,6 +141,7 @@ private struct V2Shell: View {
     let projectsStore: ProjectsStore
     let nightsStore: NightsStore
     let reviewStore: ReviewStore
+    let libraryRootFallback: URL?
     @Binding var isOnboardingPresented: Bool
     @State private var reviewDestination: ReviewDestination?
     @Environment(\.openSettings) private var openSettings
@@ -163,7 +160,10 @@ private struct V2Shell: View {
                 nightsStore: nightsStore,
                 chooseLibrary: presentOnboarding,
                 reviewProject: { project in
-                    guard let rootURL = onboardingStore.selectedRoot else { return }
+                    guard let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback else { return }
+                    if router.isInspectorPresented {
+                        router.toggleInspector()
+                    }
                     reviewDestination = ReviewDestination(id: project.id, rootURL: rootURL)
                 }
             )
@@ -195,6 +195,17 @@ private struct V2Shell: View {
         }
         .focusedSceneValue(\.appRouter, router)
         .frame(minWidth: 820, minHeight: 600)
+        .overlay {
+            if let destination = reviewDestination {
+                ReviewWorkspace(
+                    store: reviewStore,
+                    rootURL: destination.rootURL,
+                    projectID: destination.id,
+                    dismiss: { reviewDestination = nil }
+                )
+                .background(.background)
+            }
+        }
         .sheet(item: $router.presentation) { presentation in
             if presentation == .newProject {
                 NewProjectView(store: projectsStore) {
@@ -217,14 +228,6 @@ private struct V2Shell: View {
                     isOnboardingPresented = false
                     openSettings()
                 }
-            )
-        }
-        .sheet(item: $reviewDestination) { destination in
-            ReviewWorkspace(
-                store: reviewStore,
-                rootURL: destination.rootURL,
-                projectID: destination.id,
-                dismiss: { reviewDestination = nil }
             )
         }
         .onOpenURL { url in

@@ -131,11 +131,11 @@ struct V2ShellSurfaceTests {
         }
         for title in [
             "Home",
-            "No projects yet",
-            "No observing nights yet",
-            "No plan selected",
-            "No library open",
-            "No insights yet",
+            "Projects",
+            "Nights",
+            "Planning",
+            "Library",
+            "Insights",
         ] {
             #expect(uiTest.contains("title: \"\(title)\""))
         }

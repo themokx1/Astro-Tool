@@ -53,6 +53,7 @@ public struct ProjectsView: View {
                                 Button("Review") { reviewProject(project) }
                                     .buttonStyle(.bordered)
                                     .accessibilityLabel("Review \(project.displayName)")
+                                    .accessibilityIdentifier("v2.projects.review")
                             }
                             .padding(.vertical, 10)
                             if project.id != store.projects.last?.id { Divider() }

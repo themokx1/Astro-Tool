@@ -33,6 +33,69 @@ public struct V2UITestFixture: Sendable {
     public let applicationSupport: URL
     public let caches: URL
 
+    public func makeMetadataStore() throws -> MetadataStore {
+        let identity = LibraryIdentity(rootURL: libraryRoot)
+        let storage = try AppStoragePaths(
+            applicationSupport: applicationSupport,
+            caches: caches,
+            libraryID: identity,
+            libraryRoot: libraryRoot
+        )
+        return try MetadataStore(storagePaths: storage)
+    }
+
+    public func seedReviewMetadata() async throws {
+        let metadata = try makeMetadataStore()
+        let project = ProjectRecord(
+            id: UUID(uuidString: "13960000-0000-5000-8000-000000000001")!,
+            catalogID: "IC 1396",
+            displayName: "IC 1396 · Elefántormány-köd",
+            phase: .collecting
+        )
+        let night = NightRecord(
+            id: UUID(uuidString: "13960000-0000-5000-8000-000000000002")!,
+            localDate: "2026-08-08",
+            timeZoneID: "Europe/Budapest"
+        )
+        let exposures = [30.0, 120.0, 300.0]
+        let series = exposures.enumerated().map { index, exposure in
+            SeriesRecord(
+                id: UUID(uuidString: String(format: "13960000-0000-5000-8000-%012d", index + 10))!,
+                projectID: project.id,
+                nightID: night.id,
+                setupID: "asi2600mc-261",
+                setupDescriptor: "ZWO ASI2600MC Pro · 261 mm",
+                sensorMode: .osc,
+                passband: exposure == 30 ? .broadband : .dualBand,
+                exposureSeconds: exposure,
+                filterName: exposure == 30 ? nil : "SV220",
+                filterID: exposure == 30 ? nil : "svbony-sv220",
+                gain: 100,
+                offset: 50,
+                binning: "1x1"
+            )
+        }
+        var decisions: [FrameDecisionRecord] = []
+        for (seriesIndex, item) in series.enumerated() {
+            for frameIndex in 1...3 {
+                decisions.append(FrameDecisionRecord(
+                    id: UUID(uuidString: String(
+                        format: "13960000-0000-5000-8%03d-%012d",
+                        seriesIndex,
+                        frameIndex
+                    ))!,
+                    seriesID: item.id,
+                    relativePath: "sessions/IC_1396/2026-08-08/lights/frame_\(Int(item.exposureSeconds))s_\(frameIndex).fit",
+                    verdict: frameIndex == 3 ? .rejected : .undecided,
+                    logicallyExcluded: frameIndex == 3
+                ))
+            }
+        }
+        try await metadata.save(MetadataWriteBatch(
+            projects: [project], nights: [night], series: series, frameDecisions: decisions
+        ))
+    }
+
     @MainActor
     public func makeOnboardingStore() -> OnboardingStore {
         let identity = LibraryIdentity(rootURL: libraryRoot)
