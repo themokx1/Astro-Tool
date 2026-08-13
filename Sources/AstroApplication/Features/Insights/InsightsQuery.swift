@@ -40,6 +40,7 @@ public struct InsightsSnapshot: Equatable, Sendable {
     public let filterUsage: [FilterUsage]
     public let setupUsage: [SetupUsage]
     public let rejectedFrameCount: Int
+    public let trendPoints: [TrendPoint]
     public let isReadOnly: Bool
     public var bestMonth: MonthlyCapture? { months.max { $0.integrationSeconds < $1.integrationSeconds } }
     public var averageIntegrationPerNight: Double {
@@ -49,17 +50,33 @@ public struct InsightsSnapshot: Equatable, Sendable {
     public var captureEfficiency: Double {
         frameCount == 0 ? 0 : Double(usableFrameCount) / Double(frameCount)
     }
+    public var setupChoices: [String] { TrendQueries.distinctSetupDescriptors(trendPoints) }
 }
 
 public struct InsightsQuery: Sendable {
+    typealias TrendProvider = @Sendable () throws -> [TrendPoint]
     private let indexDatabase: URL
+    private let trendProvider: TrendProvider?
 
-    init(indexDatabaseForTesting: URL) { self.indexDatabase = indexDatabaseForTesting }
+    init(
+        indexDatabaseForTesting: URL,
+        trendPointsForTesting: TrendProvider? = nil
+    ) {
+        self.indexDatabase = indexDatabaseForTesting
+        self.trendProvider = trendPointsForTesting
+    }
 
     public static func production(rootURL: URL) throws -> Self {
         let identity = LibraryIdentity(rootURL: rootURL)
         let storage = try AppStoragePaths.production(libraryID: identity, libraryRoot: rootURL)
-        return Self(indexDatabaseForTesting: storage.indexDatabase)
+        let index = storage.indexDatabase
+        return Self(indexDatabaseForTesting: index, trendPointsForTesting: {
+            let database = try Database(path: index.path)
+            let configURL = rootURL.appendingPathComponent(".astro_tool/config.json")
+            var config = (try? AstroConfig.load(from: configURL)) ?? AstroConfig()
+            config.rootPath = rootURL.path
+            return try TrendQueries.points(db: database, config: config)
+        })
     }
 
     public func snapshot(year: Int? = nil) async throws -> InsightsSnapshot {
@@ -150,11 +167,12 @@ public struct InsightsQuery: Sendable {
                 ))
             }
         }
+        let trendPoints = try trendProvider?() ?? []
         return InsightsSnapshot(
             nightCount: nightCount, targetCount: targetCount, frameCount: frameCount,
             integrationSeconds: integrationSeconds, months: months, topTargets: targets,
             filterUsage: filterUsage, setupUsage: setupUsage,
-            rejectedFrameCount: rejectedFrameCount, isReadOnly: true
+            rejectedFrameCount: rejectedFrameCount, trendPoints: trendPoints, isReadOnly: true
         )
     }
 

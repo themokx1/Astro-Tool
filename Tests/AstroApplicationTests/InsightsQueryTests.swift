@@ -4,6 +4,32 @@ import Foundation
 import Testing
 
 struct InsightsQueryTests {
+    @Test("Insights carries session quality focus and efficiency trend points")
+    func exposesQualityTrendSeries() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let index = directory.appendingPathComponent("index.sqlite")
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("""
+        CREATE TABLE files(id INTEGER PRIMARY KEY, area TEXT, target TEXT, session_date TEXT, role TEXT, missing INTEGER);
+        CREATE TABLE fits_meta(file_id INTEGER PRIMARY KEY, exptime REAL);
+        """)
+        let points = [TrendPoint(
+            target: "IC1396", date: "2026-08-08", sessionStartDate: "2026-08-08",
+            medianFWHMArcsec: 2.4, backgroundEPerSecPerArcsec2: 0.003,
+            efficiencyPercent: 82, setupDescriptor: "ASI2600MC · 261 mm"
+        )]
+
+        let result = try await InsightsQuery(
+            indexDatabaseForTesting: index,
+            trendPointsForTesting: { points }
+        ).snapshot()
+
+        #expect(result.trendPoints == points)
+        #expect(result.setupChoices == ["ASI2600MC · 261 mm"])
+    }
+
     @Test("Insights aggregate capture time, nights, targets and monthly activity from the external index")
     func aggregatesExternalIndex() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

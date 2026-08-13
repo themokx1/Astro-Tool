@@ -1,4 +1,5 @@
 import AstroApplication
+import AstroCore
 import Charts
 import SwiftUI
 
@@ -30,6 +31,7 @@ public struct InsightsView: View {
     let chooseLibrary: () -> Void
     @State private var store = InsightsStore()
     @State private var selectedYear: Int?
+    @State private var selectedSetup: String?
 
     public init(snapshot: LibrarySnapshot?, rootURL: URL?, chooseLibrary: @escaping () -> Void) {
         self.librarySnapshot = snapshot
@@ -53,6 +55,7 @@ public struct InsightsView: View {
                 }
                 metrics(insight)
                 qualitySummary(insight)
+                qualityTrends(insight)
                 HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
                     activityChart(insight).frame(maxWidth: .infinity)
                     targetRanking(insight).frame(width: 320)
@@ -84,6 +87,114 @@ public struct InsightsView: View {
         .accessibilityLabel("Insights")
         .accessibilityIdentifier("v2.detail.insights")
         .task(id: rootURL) { await store.load(rootURL: rootURL) }
+    }
+
+    private func qualityTrends(_ insight: InsightsSnapshot) -> some View {
+        GroupBox("Session quality trends") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Compare measured sessions over time. Lower FWHM and background are better; higher efficiency is better.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    Picker("Setup", selection: $selectedSetup) {
+                        Text("All setups").tag(String?.none)
+                        ForEach(insight.setupChoices, id: \.self) { Text($0).tag(Optional($0)) }
+                    }
+                    .frame(maxWidth: 280)
+                }
+                HStack(alignment: .top, spacing: 12) {
+                    trendChart(
+                        title: "FWHM",
+                        unit: "arcsec / px",
+                        points: trendData(insight) { point in point.fwhmValue?.value },
+                        color: AstroTokens.Color.spectralBlue
+                    )
+                    trendChart(
+                        title: "Background",
+                        unit: "e⁻/s/arcsec²",
+                        points: trendData(insight) { $0.backgroundEPerSecPerArcsec2 },
+                        color: AstroTokens.Color.spectralViolet
+                    )
+                    trendChart(
+                        title: "Efficiency",
+                        unit: "%",
+                        points: trendData(insight) { $0.efficiencyPercent },
+                        color: .green
+                    )
+                }
+                recentTrendSessions(insight)
+            }
+            .padding(8)
+        }
+        .accessibilityIdentifier("v2.insights.quality-trends")
+    }
+
+    private func trendData(
+        _ insight: InsightsSnapshot,
+        value: (TrendPoint) -> Double?
+    ) -> [InsightTrendDatum] {
+        insight.trendPoints.compactMap { point in
+            guard selectedSetup == nil || point.setupDescriptor == selectedSetup,
+                  let metric = value(point) else { return nil }
+            return InsightTrendDatum(
+                id: "\(point.target)|\(point.date)",
+                date: point.sessionStartDate ?? point.date,
+                target: point.target,
+                value: metric
+            )
+        }
+    }
+
+    private func trendChart(
+        title: String,
+        unit: String,
+        points: [InsightTrendDatum],
+        color: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.headline)
+            if points.isEmpty {
+                ContentUnavailableView("No measured values", systemImage: "chart.xyaxis.line")
+                    .frame(minHeight: 150)
+            } else {
+                Chart(points) { point in
+                    LineMark(x: .value("Date", point.date), y: .value(unit, point.value))
+                        .foregroundStyle(color)
+                    PointMark(x: .value("Date", point.date), y: .value(unit, point.value))
+                        .foregroundStyle(color)
+                }
+                .chartYAxisLabel(unit)
+                .frame(minHeight: 180)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func recentTrendSessions(_ insight: InsightsSnapshot) -> some View {
+        let points = insight.trendPoints.filter {
+            selectedSetup == nil || $0.setupDescriptor == selectedSetup
+        }.suffix(8).reversed()
+        return Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 7) {
+            GridRow {
+                Text("Recent session").font(.caption.weight(.semibold))
+                Text("FWHM").font(.caption.weight(.semibold))
+                Text("Background").font(.caption.weight(.semibold))
+                Text("Efficiency").font(.caption.weight(.semibold))
+                Text("Setup").font(.caption.weight(.semibold))
+            }
+            Divider().gridCellColumns(5)
+            ForEach(Array(points), id: \.date) { point in
+                GridRow {
+                    Text("\(point.date) · \(point.target)").lineLimit(1)
+                    Text(point.fwhmValue.map { $0.value.formatted(.number.precision(.fractionLength(2))) } ?? "—").monospacedDigit()
+                    Text(point.backgroundEPerSecPerArcsec2?.formatted(.number.precision(.significantDigits(2...3))) ?? "—").monospacedDigit()
+                    Text(point.efficiencyPercent.map { "\($0.formatted(.number.precision(.fractionLength(0))))%" } ?? "—").monospacedDigit()
+                    Text(point.setupDescriptor ?? "Unknown").lineLimit(1)
+                }
+                .font(.caption)
+            }
+        }
+        .accessibilityIdentifier("v2.insights.recent-quality-table")
     }
 
     private func metrics(_ insight: InsightsSnapshot) -> some View {
@@ -199,4 +310,11 @@ public struct InsightsView: View {
         return hours > 0 ? "\(hours)h \(minutes)m" : "\(minutes)m"
     }
 
+}
+
+private struct InsightTrendDatum: Identifiable {
+    let id: String
+    let date: String
+    let target: String
+    let value: Double
 }
