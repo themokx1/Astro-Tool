@@ -21,6 +21,7 @@ public struct HealthView: View {
     let chooseLibrary: () -> Void
     @State private var store = LibraryHealthStore()
     @State private var showsCleanup = false
+    @State private var showsSensors = false
 
     public var body: some View {
         WorkspacePage(eyebrow: "Read-only diagnostics", title: "Library Health", subtitle: "Actionable calibration and integrity checks without changing source files.") {
@@ -46,8 +47,10 @@ public struct HealthView: View {
                         }
                     }.padding(.horizontal, 8)
                 }
-                Button("Review Cleanup Candidates…") { showsCleanup = true }
-                    .buttonStyle(.bordered)
+                HStack {
+                    Button("Review Cleanup Candidates…") { showsCleanup = true }.buttonStyle(.bordered)
+                    Button("Sensor Profiles…") { showsSensors = true }.buttonStyle(.bordered)
+                }
             } else if store.isLoading {
                 ProgressView("Checking library health…").frame(maxWidth: .infinity, minHeight: 280)
             } else {
@@ -65,6 +68,8 @@ public struct HealthView: View {
         .overlay {
             if showsCleanup, let rootURL {
                 CleanupPreviewView(rootURL: rootURL) { showsCleanup = false }
+            } else if showsSensors, let rootURL {
+                SensorProfilesView(rootURL: rootURL) { showsSensors = false }
             }
         }
     }
