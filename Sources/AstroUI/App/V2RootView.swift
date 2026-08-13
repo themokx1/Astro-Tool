@@ -56,6 +56,12 @@ public struct V2RootView: View {
     @State private var didRestoreWindowState = false
     @State private var operationHost = OperationHost(center: OperationCenter())
     @SceneStorage("v2.windowRestoration") private var encodedWindowState = ""
+    /// Gates the automatic restore-and-scan of the last bookmarked library
+    /// at launch (see the first `.task` below) -- default `true` preserves
+    /// today's behavior exactly. It does not gate `openAndScan` itself: the
+    /// first read-only scan of a library the user just picked is mandatory,
+    /// not a preference.
+    @AppStorage("v2.library.scanOnOpen") private var scanOnOpen = true
 
     public init(
         appModel: AppModel,
@@ -107,7 +113,7 @@ public struct V2RootView: View {
                 guard onboardingStore.phase == .chooseLibrary else { return }
                 if let uiTestFixture {
                     try? await onboardingStore.openAndScan(uiTestFixture.libraryRoot)
-                } else {
+                } else if scanOnOpen {
                     _ = try? await onboardingStore.restoreSavedLibrary()
                 }
             }
@@ -131,9 +137,17 @@ public struct V2RootView: View {
                         projectsStore: projectsStore,
                         nightCount: nightsStore.nights.count
                     )
+                    appModel.libraryDidOpen(rootURL: root, metadataStore: projectsStore.metadataStore)
                     libraryPreparationError = nil
                 } catch {
                     libraryPreparationError = error.localizedDescription
+                }
+            }
+            .onChange(of: appModel.pendingLibrarySwitchURL) { _, url in
+                guard let url else { return }
+                Task {
+                    _ = try? await onboardingStore.openAndScan(url)
+                    appModel.clearPendingLibrarySwitch()
                 }
             }
     }

@@ -34,4 +34,23 @@ struct IntegrationTimeModelTests {
 
         #expect(IntegrationTimeModel.hours(faster) < reference)
     }
+
+    @Test("Doubling the reference hours baseline doubles the recommendation")
+    func customReferenceHoursScalesTheRecommendation() {
+        let input = IntegrationTimeInput.reference(targetSurfaceBrightness: 22)
+
+        let doubled = IntegrationTimeModel.hours(input, referenceHours: 20)
+
+        #expect(doubled == 20)
+    }
+
+    @Test("A slower reference focal ratio treats the same optics as relatively faster")
+    func customReferenceFocalRatioShiftsTheOpticsFactor() {
+        let input = IntegrationTimeInput.reference(targetSurfaceBrightness: 22)
+
+        let atF5 = IntegrationTimeModel.hours(input, referenceFocalRatio: 5)
+        let atF10 = IntegrationTimeModel.hours(input, referenceFocalRatio: 10)
+
+        #expect(atF10 < atF5)
+    }
 }

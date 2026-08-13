@@ -41,11 +41,29 @@ public struct PlanningQuery: Sendable {
     public let setup: ImagingSetupProfile
     public let focalLength: Double
     public let targets: [CatalogTarget]
+    /// The user's Planning-settings baseline (`v2.planning.reference*`,
+    /// wired in by `PlanningStore`) -- defaults match
+    /// `IntegrationTimeModel`'s own built-in baseline exactly, so a caller
+    /// that never supplies these (every prior call site, and every fixture
+    /// below) keeps its historical behavior unchanged.
+    public let referenceHours: Double
+    public let referenceFocalRatio: Double
+    public let referenceSurfaceBrightness: Double
 
-    public init(setup: ImagingSetupProfile, focalLength: Double? = nil, targets: [CatalogTarget] = TargetCatalog.all) {
+    public init(
+        setup: ImagingSetupProfile,
+        focalLength: Double? = nil,
+        targets: [CatalogTarget] = TargetCatalog.all,
+        referenceHours: Double = IntegrationTimeModel.referenceHours,
+        referenceFocalRatio: Double = 5,
+        referenceSurfaceBrightness: Double = IntegrationTimeModel.referenceSurfaceBrightness
+    ) {
         self.setup = setup
         self.focalLength = focalLength ?? setup.defaultFocalLengthMM
         self.targets = targets
+        self.referenceHours = referenceHours
+        self.referenceFocalRatio = referenceFocalRatio
+        self.referenceSurfaceBrightness = referenceSurfaceBrightness
     }
 
     public static func fixture(focalLength: Double) -> Self {
@@ -78,14 +96,19 @@ public struct PlanningQuery: Sendable {
             let source = directBrightness != nil
                 ? "Curated surface brightness"
                 : (estimatedBrightness != nil ? "Catalog magnitude and angular size estimate" : "Reference μ=22 fallback")
-            let hours = IntegrationTimeModel.hours(IntegrationTimeInput(
-                targetSurfaceBrightness: brightness,
-                skySurfaceBrightness: 21,
-                focalRatio: setup.fNumber,
-                systemEfficiency: setup.relativeEfficiency,
-                passbandFactor: 1,
-                samplingFactor: 1
-            ))
+            let hours = IntegrationTimeModel.hours(
+                IntegrationTimeInput(
+                    targetSurfaceBrightness: brightness,
+                    skySurfaceBrightness: 21,
+                    focalRatio: setup.fNumber,
+                    systemEfficiency: setup.relativeEfficiency,
+                    passbandFactor: 1,
+                    samplingFactor: 1
+                ),
+                referenceHours: referenceHours,
+                referenceFocalRatio: referenceFocalRatio,
+                referenceSurfaceBrightness: referenceSurfaceBrightness
+            )
             return PlanningRecommendation(
                 target: target,
                 frameCoverage: coverage,

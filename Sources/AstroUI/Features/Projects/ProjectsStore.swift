@@ -38,6 +38,12 @@ public final class ProjectsStore {
 
     private let metadataFactory: MetadataFactory
     private var metadata: MetadataStore?
+    /// Exposes the already-open store for the current root so other V2
+    /// surfaces (Settings' Support tab diagnostics) can query it directly
+    /// instead of opening a second confined connection to the same
+    /// metadata database -- `MetadataStore`'s confined-open path is meant
+    /// to have a single owner at a time.
+    public var metadataStore: MetadataStore? { metadata }
 
     public init(metadataFactory: @escaping MetadataFactory = ProjectsStore.productionMetadata) {
         self.metadataFactory = metadataFactory

@@ -1,19 +1,25 @@
 import AppKit
+import AstroApplication
 import AstroCore
+import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 public struct V2SettingsView: View {
     @State private var store = SettingsStore()
+    private let appModel: AppModel
 
-    public init() {}
+    public init(appModel: AppModel) {
+        self.appModel = appModel
+    }
 
     public var body: some View {
         TabView {
             GeneralSettingsView().tabItem { Label("General", systemImage: "gearshape") }
-            LibrariesSettingsView().tabItem { Label("Libraries & Safety", systemImage: "externaldrive.badge.checkmark") }
+            LibrariesSettingsView(appModel: appModel).tabItem { Label("Libraries & Safety", systemImage: "externaldrive.badge.checkmark") }
             PlanningSettingsView().tabItem { Label("Planning", systemImage: "sparkles") }
             EquipmentEvaluationSettingsView(store: store).tabItem { Label("Equipment", systemImage: "camera.aperture") }
-            IntegrationsSupportSettingsView().tabItem { Label("Support", systemImage: "lifepreserver") }
+            IntegrationsSupportSettingsView(appModel: appModel, store: store).tabItem { Label("Support", systemImage: "lifepreserver") }
         }
         .padding(20)
         .frame(width: 720, height: 520)
@@ -28,7 +34,11 @@ private struct GeneralSettingsView: View {
             Section("Experience") {
                 Toggle("Show contextual guidance", isOn: $showGuidance)
                 Label("Operations that can change files always require confirmation.", systemImage: "lock.shield")
-                Text("This safety rule is part of AstroTool and is not a preference.").font(.caption).foregroundStyle(.secondary)
+                if showGuidance {
+                    Text("This safety rule is part of AstroTool and is not a preference.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("v2.settings.general.guidance-caption")
+                }
             }
         }.formStyle(.grouped)
     }
@@ -37,12 +47,43 @@ private struct GeneralSettingsView: View {
 private struct LibrariesSettingsView: View {
     @AppStorage("v2.library.scanOnOpen") private var scanOnOpen = true
     @AppStorage("v2.library.enableWriteOperations") private var enableWriteOperations = false
+    let appModel: AppModel
+
     var body: some View {
         Form {
             Section("Library behavior") {
                 Toggle("Refresh the external index when opening a library", isOn: $scanOnOpen)
                 Label("Metadata and indexes live outside the image library.", systemImage: "internaldrive")
+                Text(
+                    scanOnOpen
+                        ? "AstroTool restores and re-indexes your last library automatically at launch."
+                        : "AstroTool waits for you to choose a library at launch; it will not reopen the last one automatically."
+                )
+                .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Recent Libraries") {
+                if appModel.recentLibraries.isEmpty {
+                    Text("No library has been opened yet.").foregroundStyle(.secondary)
+                } else {
+                    ForEach(appModel.recentLibraries) { entry in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.displayName).font(.body)
+                                Text(entry.path)
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .lineLimit(1).truncationMode(.middle)
+                            }
+                            Spacer()
+                            if entry.path == appModel.currentLibraryRootURL?.path {
+                                Text("Current").font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Button("Switch") { appModel.requestLibrarySwitch(to: entry.url) }
+                            }
+                        }
+                    }
+                }
+            }
+            .accessibilityIdentifier("v2.settings.recent-libraries")
             Section("Safety") {
                 Toggle("Enable write operations", isOn: $enableWriteOperations)
                     .accessibilityIdentifier("v2.settings.enable-write-operations")
@@ -60,9 +101,9 @@ private struct LibrariesSettingsView: View {
 }
 
 private struct PlanningSettingsView: View {
-    @AppStorage("v2.planning.referenceHours") private var referenceHours = 10.0
-    @AppStorage("v2.planning.referenceFocalRatio") private var referenceFocalRatio = 5.0
-    @AppStorage("v2.planning.referenceSurfaceBrightness") private var referenceBrightness = 22.0
+    @AppStorage(PlanningStore.referenceHoursKey) private var referenceHours = IntegrationTimeModel.referenceHours
+    @AppStorage(PlanningStore.referenceFocalRatioKey) private var referenceFocalRatio = 5.0
+    @AppStorage(PlanningStore.referenceSurfaceBrightnessKey) private var referenceBrightness = IntegrationTimeModel.referenceSurfaceBrightness
     var body: some View {
         Form {
             Section("Integration baseline") {
@@ -71,7 +112,7 @@ private struct PlanningSettingsView: View {
                 LabeledContent("Surface brightness") { TextField("mag/arcsec²", value: $referenceBrightness, format: .number).frame(width: 90) }
                 Text("Default: 10 hours at f/5 and μ22 mag/arcsec². Each target is calculated relative to this baseline.")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("Not yet applied to planning calculations: these fields are stored but the planner still uses its built-in reference baseline.")
+                Text("Applied to every Planning recommendation's integration estimate.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
@@ -126,24 +167,80 @@ private struct EquipmentEvaluationSettingsView: View {
     }
 }
 
+/// A read-only projection of the library's own external index, built purely
+/// from the existing query layer (`MetadataStore`, `SensorProfilesQuery`) --
+/// no new engine, no path/target-name field, so it is safe by construction
+/// to feed straight into `SupportDiagnostics`.
+struct LibraryDiagnosticsSnapshot: Equatable, Sendable {
+    let schemaVersion: Int
+    let projectCount: Int
+    let nightCount: Int
+    let sensorProfileCount: Int
+}
+
+enum LibraryDiagnosticsQuery {
+    /// `metadata` must be a store the caller already has open (e.g.
+    /// `ProjectsStore.metadataStore` via `AppModel.currentMetadataStore`) --
+    /// `MetadataStore`'s confined-open path is meant to have a single owner
+    /// at a time, so this deliberately never constructs its own instance.
+    /// `indexDatabase` only needs a path (`SensorProfilesQuery` opens it
+    /// read-only), so it carries no such restriction.
+    static func snapshot(metadata: MetadataStore, indexDatabase: URL) async -> LibraryDiagnosticsSnapshot? {
+        guard let schemaVersion = try? await metadata.schemaVersion(),
+              let projectCount = try? await metadata.projectCount(),
+              let nights = try? await metadata.nights()
+        else { return nil }
+        let sensorProfileCount = (try? await SensorProfilesQuery(indexDatabase: indexDatabase).snapshot().profiles.count) ?? 0
+        return LibraryDiagnosticsSnapshot(
+            schemaVersion: schemaVersion,
+            projectCount: projectCount,
+            nightCount: nights.count,
+            sensorProfileCount: sensorProfileCount
+        )
+    }
+}
+
+/// Writes a diagnostics snapshot to disk -- separated from the "Save…"
+/// button's `NSSavePanel` call so the actual write path is unit-testable
+/// (`NSSavePanel.runModal()` cannot run headlessly; this function can).
+enum SupportDiagnosticsFileWriter {
+    static func write(_ snapshot: SupportDiagnostics, to url: URL) throws {
+        try snapshot.plainText.write(to: url, atomically: true, encoding: .utf8)
+    }
+}
+
 private struct IntegrationsSupportSettingsView: View {
+    let appModel: AppModel
+    let store: SettingsStore
     @State private var diagnostics: SupportDiagnostics?
     @State private var copied = false
+    @State private var saveErrorMessage: String?
+    @State private var isGenerating = false
 
     var body: some View {
         Form {
             Section("Privacy") {
                 Label("All library analysis runs locally on this Mac.", systemImage: "hand.raised")
                 Label("No account or cloud upload is required.", systemImage: "icloud.slash")
+                Link("Privacy notice", destination: URL(string: ProductInfo.privacyURL)!)
             }
             Section("Support") {
-                LabeledContent("Release channel", value: "V2 Beta")
+                LabeledContent("Release channel", value: ProductInfo.releaseChannel)
                 LabeledContent("Diagnostics", value: "Privacy-safe and local")
+                Text("Diagnostics contain only a version, system data, anonymous counts, and operation categories. No path, file name, target, coordinate, note, FITS header, or error message is included.")
+                    .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Generate Diagnostics") { generateDiagnostics() }
+                        .disabled(isGenerating)
                     Button("Copy Diagnostics") { copyDiagnostics() }
                         .disabled(diagnostics == nil)
-                    if copied { Label("Copied", systemImage: "checkmark") .foregroundStyle(.green) }
+                    Button("Save…") { saveDiagnostics() }
+                        .disabled(diagnostics == nil)
+                        .accessibilityIdentifier("v2.settings.support.save")
+                    if copied { Label("Copied", systemImage: "checkmark").foregroundStyle(.green) }
+                }
+                if let saveErrorMessage {
+                    Text(saveErrorMessage).font(.caption).foregroundStyle(.red)
                 }
                 if let diagnostics {
                     ScrollView {
@@ -155,23 +252,49 @@ private struct IntegrationsSupportSettingsView: View {
                     .frame(maxHeight: 180)
                 }
             }
+            Section("Application") {
+                LabeledContent("Version", value: ProductInfo.displayVersion)
+                LabeledContent("Operating system", value: ProcessInfo.processInfo.operatingSystemVersionString)
+                LabeledContent("Architecture", value: SupportDiagnostics.currentArchitecture)
+                Link("Documentation", destination: URL(string: ProductInfo.documentationURL)!)
+                Link("Support", destination: URL(string: ProductInfo.supportURL)!)
+                Link("Source", destination: URL(string: ProductInfo.sourceURL)!)
+            }
+            .accessibilityIdentifier("v2.settings.support.links")
         }
         .formStyle(.grouped)
         .accessibilityIdentifier("v2.settings.diagnostics")
     }
 
     private func generateDiagnostics() {
-        diagnostics = SupportDiagnostics(
-            databaseSchemaVersion: nil,
-            libraryConnected: false,
-            targetCount: 0,
-            sessionCount: 0,
-            filterProfileCount: 0,
-            sensorProfileCount: 0,
-            weatherEnabled: false,
-            recentOperations: []
-        )
         copied = false
+        saveErrorMessage = nil
+        isGenerating = true
+        let filterProfileCount = store.filters.count
+        let rootURL = appModel.currentLibraryRootURL
+        let metadataStore = appModel.currentMetadataStore
+        Task {
+            defer { isGenerating = false }
+            var librarySnapshot: LibraryDiagnosticsSnapshot?
+            if let rootURL, let metadataStore,
+               let storage = try? AppStoragePaths.production(
+                   libraryID: LibraryIdentity(rootURL: rootURL), libraryRoot: rootURL
+               ) {
+                librarySnapshot = await LibraryDiagnosticsQuery.snapshot(
+                    metadata: metadataStore, indexDatabase: storage.indexDatabase
+                )
+            }
+            diagnostics = SupportDiagnostics(
+                databaseSchemaVersion: librarySnapshot?.schemaVersion,
+                libraryConnected: librarySnapshot != nil,
+                targetCount: librarySnapshot?.projectCount ?? 0,
+                sessionCount: librarySnapshot?.nightCount ?? 0,
+                filterProfileCount: filterProfileCount,
+                sensorProfileCount: librarySnapshot?.sensorProfileCount ?? 0,
+                weatherEnabled: false,
+                recentOperations: []
+            )
+        }
     }
 
     private func copyDiagnostics() {
@@ -179,5 +302,21 @@ private struct IntegrationsSupportSettingsView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(diagnostics.plainText, forType: .string)
         copied = true
+    }
+
+    private func saveDiagnostics() {
+        guard let diagnostics else { return }
+        let panel = NSSavePanel()
+        panel.title = "Save Diagnostics"
+        panel.nameFieldStringValue = diagnostics.suggestedFilename
+        panel.allowedContentTypes = [.plainText]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try SupportDiagnosticsFileWriter.write(diagnostics, to: url)
+            saveErrorMessage = nil
+        } catch {
+            saveErrorMessage = "Could not save diagnostics. Choose a different folder."
+        }
     }
 }

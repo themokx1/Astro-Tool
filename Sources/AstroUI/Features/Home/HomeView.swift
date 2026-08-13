@@ -6,6 +6,7 @@ public struct HomeView: View {
     private let chooseLibrary: () -> Void
     private let openProject: (ProjectRecord) -> Void
     private let openProjectID: (UUID) -> Void
+    @AppStorage("v2.general.showGuidance") private var showGuidance = true
 
     public init(
         store: HomeStore,
@@ -129,10 +130,13 @@ public struct HomeView: View {
                 .foregroundStyle(AstroTokens.Color.spectralBlue)
             Text("Prepare the next clear night")
                 .font(.largeTitle.weight(.semibold))
-            Text("Keep plans, observing nights, and library health in one quiet workspace.")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if showGuidance {
+                Text("Keep plans, observing nights, and library health in one quiet workspace.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("v2.home.guidance-caption")
+            }
         }
     }
 

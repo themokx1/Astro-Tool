@@ -45,18 +45,33 @@ public enum IntegrationTimeModel {
     public static let referenceHours = 10.0
     public static let referenceSurfaceBrightness = 22.0
 
-    public static func hours(_ input: IntegrationTimeInput) -> Double {
+    /// `referenceHours`/`referenceFocalRatio`/`referenceSurfaceBrightness`
+    /// default to this type's own baseline constants (10 hours at f/5 and
+    /// μ22), matching every existing call site's behavior exactly. V2's
+    /// Planning settings (`v2.planning.reference*`) let a user move this
+    /// baseline; `PlanningStore`/`PlanningQuery` are what actually thread
+    /// the user's preferences in here -- this function itself stays a pure,
+    /// preference-agnostic calculation.
+    public static func hours(
+        _ input: IntegrationTimeInput,
+        referenceHours: Double = IntegrationTimeModel.referenceHours,
+        referenceFocalRatio: Double = 5,
+        referenceSurfaceBrightness: Double = IntegrationTimeModel.referenceSurfaceBrightness
+    ) -> Double {
         guard input.targetSurfaceBrightness.isFinite,
               input.skySurfaceBrightness.isFinite,
               input.focalRatio.isFinite, input.focalRatio > 0,
               input.systemEfficiency.isFinite, input.systemEfficiency > 0,
               input.passbandFactor.isFinite, input.passbandFactor > 0,
-              input.samplingFactor.isFinite, input.samplingFactor > 0
-        else { return referenceHours }
+              input.samplingFactor.isFinite, input.samplingFactor > 0,
+              referenceHours.isFinite, referenceHours > 0,
+              referenceFocalRatio.isFinite, referenceFocalRatio > 0,
+              referenceSurfaceBrightness.isFinite
+        else { return IntegrationTimeModel.referenceHours }
 
         let targetFactor = pow(10, 0.8 * (input.targetSurfaceBrightness - referenceSurfaceBrightness))
         let skyFactor = pow(10, -0.4 * (input.skySurfaceBrightness - 21))
-        let opticsFactor = pow(input.focalRatio / 5, 2)
+        let opticsFactor = pow(input.focalRatio / referenceFocalRatio, 2)
         let throughputFactor = 1 / (input.systemEfficiency * input.passbandFactor)
         return max(0.25, referenceHours * targetFactor * skyFactor * opticsFactor * throughputFactor * input.samplingFactor)
     }

@@ -46,7 +46,7 @@ struct AstroToolApp: App {
                 SettingsWindow()
                     .environment(appState)
             } else {
-                V2SettingsView()
+                V2SettingsView(appModel: appModel)
             }
         }
     }

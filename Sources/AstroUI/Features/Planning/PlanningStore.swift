@@ -6,6 +6,13 @@ import Observation
 @MainActor
 @Observable
 public final class PlanningStore {
+    /// Shared with `V2SettingsView`'s Planning tab -- both read and write
+    /// the same `UserDefaults` keys, so a preference change there is
+    /// reflected here without any direct store-to-store wiring.
+    public static let referenceHoursKey = "v2.planning.referenceHours"
+    public static let referenceFocalRatioKey = "v2.planning.referenceFocalRatio"
+    public static let referenceSurfaceBrightnessKey = "v2.planning.referenceSurfaceBrightness"
+
     public let setups: [ImagingSetupProfile]
     public var selectedSetupID: String {
         didSet { adoptSelectedSetupDefaults() }
@@ -13,10 +20,17 @@ public final class PlanningStore {
     public private(set) var focalLength: Double
     public var searchText = ""
     public var usefulFramingOnly = true
+    private let defaults: UserDefaults
 
-    public init(setups: [ImagingSetupProfile] = PlanningStore.defaultSetups) {
+    public init(setups: [ImagingSetupProfile] = PlanningStore.defaultSetups, defaults: UserDefaults = .standard) {
         let safeSetups = setups.isEmpty ? PlanningStore.defaultSetups : setups
         self.setups = safeSetups
+        self.defaults = defaults
+        defaults.register(defaults: [
+            Self.referenceHoursKey: IntegrationTimeModel.referenceHours,
+            Self.referenceFocalRatioKey: 5.0,
+            Self.referenceSurfaceBrightnessKey: IntegrationTimeModel.referenceSurfaceBrightness,
+        ])
         let initial = safeSetups.first(where: \.isDefault) ?? safeSetups[0]
         selectedSetupID = initial.id
         focalLength = initial.defaultFocalLengthMM
@@ -30,8 +44,23 @@ public final class PlanningStore {
         selectedSetup.fieldOfView(at: focalLength)
     }
 
+    /// The Planning tab's integration baseline (`v2.planning.reference*`),
+    /// read live from `UserDefaults` on every access -- a preference change
+    /// while this store is alive (e.g. the Settings window is open at the
+    /// same time) is picked up on the very next `recommendations` read,
+    /// with no notification plumbing required.
+    public var referenceHours: Double { defaults.double(forKey: Self.referenceHoursKey) }
+    public var referenceFocalRatio: Double { defaults.double(forKey: Self.referenceFocalRatioKey) }
+    public var referenceSurfaceBrightness: Double { defaults.double(forKey: Self.referenceSurfaceBrightnessKey) }
+
     public var recommendations: [PlanningRecommendation] {
-        PlanningQuery(setup: selectedSetup, focalLength: focalLength).recommendations()
+        PlanningQuery(
+            setup: selectedSetup,
+            focalLength: focalLength,
+            referenceHours: referenceHours,
+            referenceFocalRatio: referenceFocalRatio,
+            referenceSurfaceBrightness: referenceSurfaceBrightness
+        ).recommendations()
     }
 
     public var filteredRecommendations: [PlanningRecommendation] {
