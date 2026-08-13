@@ -11,7 +11,9 @@ public struct NightsView: View {
             HStack(spacing: AstroTokens.Spacing.standard) {
                 MetricCard(title: "Observed nights", value: snapshot.map { "\($0.nightCount)" } ?? "—", detail: "Detected date-based sessions", systemImage: "calendar")
                 MetricCard(title: "Frames", value: snapshot.map { "\($0.frameCount)" } ?? "—", detail: "Indexed read-only", systemImage: "photo.stack")
+                MetricCard(title: "Morning triage", value: "\(store.needsReviewCount)", detail: "Needs review", systemImage: "checklist")
             }
+            .accessibilityIdentifier("v2.nights.triage")
             GroupBox("Session model") {
                 VStack(alignment: .leading, spacing: 12) {
                     Label("A night can contain multiple OSC, narrowband, exposure, and filter series.", systemImage: "square.stack.3d.up")
@@ -48,6 +50,11 @@ public struct NightsView: View {
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
+                                if night.triageState != .ready {
+                                    Label(night.triageState.rawValue, systemImage: "exclamationmark.circle.fill")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.orange)
+                                }
                                 Image(systemName: store.selectedNightID == night.id ? "chevron.up" : "chevron.down")
                                     .foregroundStyle(.secondary)
                             }
@@ -75,6 +82,13 @@ private struct NightAcquisitionDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label(row.triageState.rawValue, systemImage: row.triageState == .ready ? "checkmark.circle.fill" : "checklist")
+                Spacer()
+                Text("\(row.excludedFrames) excluded")
+                    .foregroundStyle(.secondary)
+            }
+            .font(.callout.weight(.medium))
             ForEach(row.snapshot.series, id: \.id) { series in
                 HStack {
                     Text(row.snapshot.projects.first { $0.id == series.projectID }?.displayName ?? "Unknown project")

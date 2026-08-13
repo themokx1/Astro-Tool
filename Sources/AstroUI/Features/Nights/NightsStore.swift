@@ -3,6 +3,11 @@ import Foundation
 import Observation
 
 public struct NightRow: Equatable, Sendable, Identifiable {
+    public enum TriageState: String, Sendable {
+        case ready = "Ready"
+        case needsReview = "Needs review"
+        case empty = "No usable frames"
+    }
     public let snapshot: NightSnapshot
     public var id: UUID { snapshot.id }
     public var date: String { snapshot.night.localDate }
@@ -21,6 +26,11 @@ public struct NightRow: Equatable, Sendable, Identifiable {
     public var integrationSummary: String {
         let minutes = Int(snapshot.integrationSeconds.rounded()) / 60
         return String(format: "%d:%02d", minutes / 60, minutes % 60)
+    }
+    public var excludedFrames: Int { max(0, snapshot.totalFrames - snapshot.usableFrames) }
+    public var triageState: TriageState {
+        if snapshot.usableFrames == 0 { return .empty }
+        return excludedFrames > 0 ? .needsReview : .ready
     }
 }
 
@@ -50,6 +60,10 @@ public final class NightsStore {
 
     public var selectedNight: NightRow? {
         nights.first { $0.id == selectedNightID }
+    }
+
+    public var needsReviewCount: Int {
+        visibleNights.filter { $0.triageState != .ready }.count
     }
 
     public func selectMonth(_ month: String?) {

@@ -88,4 +88,17 @@ struct V2BetaWorkspaceSurfaceTests {
         #expect(shell.contains("openCreatedProject"))
         #expect(shell.contains("projectsStore.selectProject(project.id)"))
     }
+
+    @Test("Nights groups morning triage into actionable states")
+    func nightsExposeMorningTriage() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let nights = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsView.swift"))
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsStore.swift"))
+        #expect(nights.contains("Morning triage"))
+        #expect(nights.contains("Needs review"))
+        #expect(nights.contains("v2.nights.triage"))
+        #expect(store.contains("excludedFrames"))
+        #expect(store.contains("triageState"))
+    }
 }
