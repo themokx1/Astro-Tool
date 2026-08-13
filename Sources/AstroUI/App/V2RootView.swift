@@ -323,6 +323,9 @@ private struct V2Shell: View {
         case .night:
             nightsStore.selectNight(result.objectID)
             router.navigate(to: .nights)
+        case .series:
+            router.navigate(to: .projects)
+            Task { try? await projectsStore.selectProject(result.objectID) }
         }
     }
 
@@ -361,7 +364,7 @@ private struct GlobalSearchPanel: View {
                         ForEach(store.results) { result in
                             Button { open(result) } label: {
                                 HStack(spacing: 10) {
-                                    Image(systemName: result.kind == .project ? "scope" : "moon.stars")
+                                    Image(systemName: searchIcon(result.kind))
                                         .foregroundStyle(AstroTokens.Color.spectralBlue)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(result.title).font(.headline)
@@ -382,6 +385,14 @@ private struct GlobalSearchPanel: View {
         .frame(width: 430)
         .frame(minHeight: 100)
         .accessibilityIdentifier("v2.global-search")
+    }
+
+    private func searchIcon(_ kind: GlobalSearchResultKind) -> String {
+        switch kind {
+        case .project: "scope"
+        case .night: "moon.stars"
+        case .series: "square.stack.3d.up"
+        }
     }
 }
 

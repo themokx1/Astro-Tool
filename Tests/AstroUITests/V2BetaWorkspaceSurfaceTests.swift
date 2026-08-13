@@ -101,4 +101,17 @@ struct V2BetaWorkspaceSurfaceTests {
         #expect(store.contains("excludedFrames"))
         #expect(store.contains("triageState"))
     }
+
+    @Test("Global search returns capture series and opens their project")
+    func globalSearchIncludesSeries() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let search = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Search/GlobalSearchStore.swift"))
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        #expect(search.contains("case series"))
+        #expect(search.contains("Series ·"))
+        #expect(search.contains("series.filterName"))
+        #expect(shell.contains("case .series"))
+        #expect(shell.contains("selectProject(result.objectID)"))
+    }
 }

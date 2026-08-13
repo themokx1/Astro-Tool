@@ -4,6 +4,7 @@ import Observation
 public enum GlobalSearchResultKind: String, Sendable {
     case project
     case night
+    case series
 }
 
 public struct GlobalSearchResult: Identifiable, Equatable, Sendable {
@@ -50,6 +51,23 @@ public final class GlobalSearchStore {
                 subtitle: "Night · \($0.projectSummary) · \($0.integrationSummary)"
             )
         })
+        for night in nights.nights {
+            for series in night.snapshot.series {
+                let project = night.snapshot.projects.first { $0.id == series.projectID }
+                let haystack = Self.normalized([
+                    project?.displayName, project?.catalogID, series.filterName,
+                    series.setupDescriptor,
+                    "\(series.exposureSeconds.formatted(.number.precision(.fractionLength(0...1)))) seconds"
+                ].compactMap { $0 }.joined(separator: " "))
+                guard haystack.contains(normalized) else { continue }
+                found.append(GlobalSearchResult(
+                    kind: .series,
+                    objectID: series.projectID,
+                    title: project?.displayName ?? "Capture series",
+                    subtitle: "Series · \([series.filterName, "\(series.exposureSeconds.formatted(.number.precision(.fractionLength(0...1)))) s", series.setupDescriptor].compactMap { $0 }.joined(separator: " · "))"
+                ))
+            }
+        }
         results = found
     }
 
