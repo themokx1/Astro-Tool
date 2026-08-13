@@ -277,6 +277,18 @@ public actor MetadataStore {
         return record
     }
 
+    public func frameDecisions(seriesID: UUID) throws -> [FrameDecisionRecord] {
+        var records: [FrameDecisionRecord] = []
+        try database.query(
+            """
+            SELECT id, series_id, relative_path, verdict, logically_excluded
+            FROM frame_decisions WHERE series_id = ? ORDER BY relative_path, id;
+            """,
+            bind: [.text(seriesID.databaseText)]
+        ) { row in records.append(try Self.frameDecision(from: row)) }
+        return records
+    }
+
     public func result(id: UUID) throws -> ResultRecord? {
         var record: ResultRecord?
         try database.query(
