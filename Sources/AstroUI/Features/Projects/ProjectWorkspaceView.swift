@@ -14,6 +14,7 @@ public struct ProjectWorkspaceView: View {
     let close: () -> Void
     let review: () -> Void
     let results: () -> Void
+    let openNight: (UUID) -> Void
     @State private var section = Section.overview
 
     public var body: some View {
@@ -68,7 +69,7 @@ public struct ProjectWorkspaceView: View {
                 }
             }
         case .nights:
-            ProjectNightsSummary(snapshot: snapshot)
+            ProjectNightsSummary(snapshot: snapshot, openNight: openNight)
         case .series:
             ProjectSeriesSummary(snapshot: snapshot)
         case .results:
@@ -86,13 +87,17 @@ public struct ProjectWorkspaceView: View {
 
 private struct ProjectNightsSummary: View {
     let snapshot: ProjectSnapshot
+    let openNight: (UUID) -> Void
+    @State private var selection: UUID?
     var body: some View {
-        Table(snapshot.nights) {
+        Table(snapshot.nights, selection: $selection) {
             TableColumn("Night") { Text($0.night.localDate).monospacedDigit() }
             TableColumn("Series") { Text($0.series.count.formatted()).monospacedDigit() }
             TableColumn("Usable") { Text($0.usableFrames.formatted()).monospacedDigit() }
             TableColumn("Integration") { Text(duration($0.integrationSeconds)).monospacedDigit() }
-        }.frame(minHeight: 320)
+        }
+        .frame(minHeight: 320)
+        .onChange(of: selection) { _, id in if let id { openNight(id) } }
     }
     private func duration(_ seconds: Double) -> String {
         let minutes = Int(seconds.rounded()) / 60

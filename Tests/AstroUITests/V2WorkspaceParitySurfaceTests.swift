@@ -31,4 +31,19 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(workspace.contains("v2.project.workspace"))
         #expect(shell.contains("case .project(let rawID)"))
     }
+
+    @Test("Project night rows open a dedicated night workspace")
+    func nightWorkspaceContract() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift"))
+        let project = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift"))
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        #expect(workspace.contains("Night ›"))
+        #expect(workspace.contains("Table("))
+        #expect(workspace.contains("Review Frames"))
+        #expect(workspace.contains("v2.night.workspace"))
+        #expect(project.contains("openNight"))
+        #expect(shell.contains("case .night(let rawID)"))
+    }
 }

@@ -503,11 +503,29 @@ private struct DetailHost: View {
                     snapshot: snapshot,
                     close: { router.navigate(to: .projects) },
                     review: { reviewProject(snapshot.project) },
-                    results: { showResults(snapshot.project) }
+                    results: { showResults(snapshot.project) },
+                    openNight: { id in
+                        nightsStore.selectNight(id)
+                        router.navigate(toContent: .night(id.uuidString))
+                    }
                 )
             } else {
                 ProgressView("Loading project…")
                     .task { if let id = UUID(uuidString: rawID) { try? await projectsStore.selectProject(id) } }
+            }
+        case .night(let rawID):
+            if let id = UUID(uuidString: rawID), let row = nightsStore.nights.first(where: { $0.id == id }) {
+                NightWorkspaceView(
+                    row: row,
+                    close: { router.navigate(to: .nights) },
+                    openProject: { project in
+                        Task { try? await projectsStore.selectProject(project.id) }
+                        router.navigate(toContent: .project(project.id.uuidString))
+                    },
+                    reviewProject: reviewProject
+                )
+            } else {
+                ProgressView("Loading night…")
             }
         case .nights:
             NightsView(
