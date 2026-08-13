@@ -39,10 +39,15 @@ public struct InsightsSnapshot: Equatable, Sendable {
     public let topTargets: [TargetCapture]
     public let filterUsage: [FilterUsage]
     public let setupUsage: [SetupUsage]
+    public let rejectedFrameCount: Int
     public let isReadOnly: Bool
     public var bestMonth: MonthlyCapture? { months.max { $0.integrationSeconds < $1.integrationSeconds } }
     public var averageIntegrationPerNight: Double {
         nightCount == 0 ? 0 : integrationSeconds / Double(nightCount)
+    }
+    public var usableFrameCount: Int { max(0, frameCount - rejectedFrameCount) }
+    public var captureEfficiency: Double {
+        frameCount == 0 ? 0 : Double(usableFrameCount) / Double(frameCount)
     }
 }
 
@@ -64,6 +69,7 @@ public struct InsightsQuery: Sendable {
         var targetCount = 0
         var frameCount = 0
         var integrationSeconds = 0.0
+        var rejectedFrameCount = 0
         try db.query(
             """
             SELECT COUNT(DISTINCT target || '|' || session_date), COUNT(DISTINCT target), COUNT(*),
@@ -76,6 +82,15 @@ public struct InsightsQuery: Sendable {
             targetCount = Int(row.int64(1) ?? 0)
             frameCount = Int(row.int64(2) ?? 0)
             integrationSeconds = row.double(3) ?? 0
+        }
+        if try Self.tableExists(db: db, table: "user_verdicts") {
+            try db.query(
+                """
+                SELECT COUNT(*) FROM user_verdicts uv JOIN files f ON f.id = uv.file_id
+                WHERE uv.accepted = 0 AND f.missing = 0 AND f.area = 'sessions'
+                  AND f.role = 'light'\(yearClause);
+                """
+            ) { row in rejectedFrameCount = Int(row.int64(0) ?? 0) }
         }
         var months: [MonthlyCapture] = []
         try db.query(
@@ -138,7 +153,8 @@ public struct InsightsQuery: Sendable {
         return InsightsSnapshot(
             nightCount: nightCount, targetCount: targetCount, frameCount: frameCount,
             integrationSeconds: integrationSeconds, months: months, topTargets: targets,
-            filterUsage: filterUsage, setupUsage: setupUsage, isReadOnly: true
+            filterUsage: filterUsage, setupUsage: setupUsage,
+            rejectedFrameCount: rejectedFrameCount, isReadOnly: true
         )
     }
 
@@ -148,5 +164,13 @@ public struct InsightsQuery: Sendable {
             if let name = row.string(1) { result.insert(name) }
         }
         return result
+    }
+
+    private static func tableExists(db: SQLiteDB, table: String) throws -> Bool {
+        var exists = false
+        try db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1;", bind: [.text(table)]) { _ in
+            exists = true
+        }
+        return exists
     }
 }

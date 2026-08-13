@@ -52,6 +52,7 @@ public struct InsightsView: View {
                     Task { await store.load(rootURL: rootURL, year: year) }
                 }
                 metrics(insight)
+                qualitySummary(insight)
                 HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
                     activityChart(insight).frame(maxWidth: .infinity)
                     targetRanking(insight).frame(width: 320)
@@ -93,6 +94,22 @@ public struct InsightsView: View {
             MetricCard(title: "Light frames", value: "\(insight.frameCount)", detail: "Indexed and present", systemImage: "photo.stack")
             MetricCard(title: "Average night", value: duration(insight.averageIntegrationPerNight), detail: insight.bestMonth.map { "Best month: \($0.month)" } ?? "No monthly data", systemImage: "chart.bar.fill")
         }
+    }
+
+    private func qualitySummary(_ insight: InsightsSnapshot) -> some View {
+        GroupBox("Capture efficiency") {
+            HStack(spacing: AstroTokens.Spacing.spacious) {
+                Label("\(insight.usableFrameCount) usable", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Label("\(insight.rejectedFrameCount) rejected", systemImage: "xmark.circle.fill")
+                    .foregroundStyle(insight.rejectedFrameCount == 0 ? Color.secondary : Color.orange)
+                Spacer()
+                Text(insight.captureEfficiency, format: .percent.precision(.fractionLength(0)))
+                    .font(.title2.weight(.semibold).monospacedDigit())
+            }
+            .padding(8)
+        }
+        .accessibilityIdentifier("v2.insights.quality")
     }
 
     private func filterBreakdown(_ insight: InsightsSnapshot) -> some View {

@@ -114,4 +114,14 @@ struct V2BetaWorkspaceSurfaceTests {
         #expect(shell.contains("case .series"))
         #expect(shell.contains("selectProject(result.objectID)"))
     }
+
+    @Test("Insights shows usable capture efficiency")
+    func insightsShowsCaptureEfficiency() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Insights/InsightsView.swift"))
+        #expect(view.contains("Capture efficiency"))
+        #expect(view.contains("rejectedFrameCount"))
+        #expect(view.contains("v2.insights.quality"))
+    }
 }
