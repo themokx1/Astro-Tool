@@ -124,4 +124,18 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(workspace.contains("saveAnnotation"))
         #expect(!workspace.contains("No project notes yet"))
     }
+
+    @Test("Nights is a native navigable work table")
+    func nightsWorkTableContract() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let nights = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsView.swift"))
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        #expect(nights.contains("Table(store.visibleNights, selection:"))
+        #expect(nights.contains("TableColumn(\"Night\""))
+        #expect(nights.contains("TableColumn(\"Projects\""))
+        #expect(nights.contains("contextMenu(forSelectionType: UUID.self"))
+        #expect(nights.contains("openNight"))
+        #expect(shell.contains("openNight: { id in"))
+    }
 }

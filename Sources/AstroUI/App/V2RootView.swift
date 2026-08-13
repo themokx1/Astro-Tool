@@ -324,8 +324,11 @@ private struct V2Shell: View {
             nightsStore.selectNight(result.objectID)
             router.navigate(to: .nights)
         case .series:
-            router.navigate(to: .projects)
-            Task { try? await projectsStore.selectProject(result.objectID) }
+            guard let series = nightsStore.nights
+                .flatMap(\.snapshot.series)
+                .first(where: { $0.id == result.objectID }) else { return }
+            Task { try? await projectsStore.selectProject(series.projectID) }
+            router.navigate(toContent: .projectSeries(series.id.uuidString))
         }
     }
 
@@ -553,7 +556,11 @@ private struct DetailHost: View {
             NightsView(
                 snapshot: onboardingStore.phase.summary,
                 store: nightsStore,
-                chooseLibrary: chooseLibrary
+                chooseLibrary: chooseLibrary,
+                openNight: { id in
+                    nightsStore.selectNight(id)
+                    router.navigate(toContent: .night(id.uuidString))
+                }
             )
         case .planning:
             PlanningView(createProject: createPlannedProject)

@@ -62,7 +62,7 @@ public final class GlobalSearchStore {
                 guard haystack.contains(normalized) else { continue }
                 found.append(GlobalSearchResult(
                     kind: .series,
-                    objectID: series.projectID,
+                    objectID: series.id,
                     title: project?.displayName ?? "Capture series",
                     subtitle: "Series · \([series.filterName, "\(series.exposureSeconds.formatted(.number.precision(.fractionLength(0...1)))) s", series.setupDescriptor].compactMap { $0 }.joined(separator: " · "))"
                 ))

@@ -5,6 +5,19 @@ public struct NightsView: View {
     let snapshot: LibrarySnapshot?
     @Bindable var store: NightsStore
     let chooseLibrary: () -> Void
+    let openNight: (UUID) -> Void
+
+    public init(
+        snapshot: LibrarySnapshot?,
+        store: NightsStore,
+        chooseLibrary: @escaping () -> Void,
+        openNight: @escaping (UUID) -> Void
+    ) {
+        self.snapshot = snapshot
+        self.store = store
+        self.chooseLibrary = chooseLibrary
+        self.openNight = openNight
+    }
 
     public var body: some View {
         WorkspacePage(eyebrow: "Capture history", title: "Nights", subtitle: "Review each observing night without losing its series boundaries.") {
@@ -35,73 +48,41 @@ public struct NightsView: View {
             }
             if !store.nights.isEmpty {
                 GroupBox("Observed nights") {
-                    VStack(spacing: 0) {
-                        ForEach(store.visibleNights) { night in
-                            Button {
-                                store.selectNight(store.selectedNightID == night.id ? nil : night.id)
-                            } label: {
-                            HStack(alignment: .top, spacing: 14) {
-                                Image(systemName: "moon.stars.fill")
-                                    .foregroundStyle(AstroTokens.Color.spectralViolet)
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Text(night.date).font(.headline.monospacedDigit())
-                                    Text(night.projectSummary).foregroundStyle(.secondary)
-                                    Text("\(night.snapshot.usableFrames)/\(night.snapshot.totalFrames) usable · \(night.integrationSummary) · \(night.seriesCount) series")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if night.triageState != .ready {
-                                    Label(night.triageState.rawValue, systemImage: "exclamationmark.circle.fill")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.orange)
-                                }
-                                Image(systemName: store.selectedNightID == night.id ? "chevron.up" : "chevron.down")
-                                    .foregroundStyle(.secondary)
-                            }
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.vertical, 11)
-                            if store.selectedNightID == night.id {
-                                NightAcquisitionDetail(row: night)
-                            }
-                            if night.id != store.visibleNights.last?.id { Divider() }
+                    Table(store.visibleNights, selection: Binding(
+                        get: { store.selectedNightID },
+                        set: { store.selectNight($0) }
+                    )) {
+                        TableColumn("Night") { night in
+                            Label(night.date, systemImage: "moon.stars.fill")
+                                .font(.headline.monospacedDigit())
+                                .foregroundStyle(AstroTokens.Color.spectralViolet)
                         }
+                        TableColumn("Projects") { Text($0.projectSummary).lineLimit(1) }
+                        TableColumn("Series") { Text($0.seriesCount.formatted()).monospacedDigit() }
+                            .width(min: 55, ideal: 65)
+                        TableColumn("Usable") { Text("\($0.snapshot.usableFrames) / \($0.snapshot.totalFrames)").monospacedDigit() }
+                            .width(min: 70, ideal: 85)
+                        TableColumn("Integration") { Text($0.integrationSummary).monospacedDigit() }
+                            .width(min: 75, ideal: 90)
+                        TableColumn("Triage") { night in
+                            Label(night.triageState.rawValue, systemImage: night.triageState == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                                .foregroundStyle(night.triageState == .ready ? .green : .orange)
+                        }
+                        .width(min: 110, ideal: 125)
                     }
-                    .padding(.horizontal, 8)
+                    .frame(minHeight: 330)
+                    .contextMenu(forSelectionType: UUID.self) { nightIDs in
+                        if let id = nightIDs.first { Button("Open Night") { openNight(id) } }
+                    } primaryAction: { nightIDs in
+                        if let id = nightIDs.first { openNight(id) }
+                    }
+                    .onChange(of: store.selectedNightID) { _, id in if let id { openNight(id) } }
+                    .accessibilityIdentifier("v2.nights.table")
                 }
             }
         }
         .navigationTitle("Nights")
         .accessibilityLabel("Nights")
         .accessibilityIdentifier("v2.detail.nights")
-    }
-}
-
-private struct NightAcquisitionDetail: View {
-    let row: NightRow
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label(row.triageState.rawValue, systemImage: row.triageState == .ready ? "checkmark.circle.fill" : "checklist")
-                Spacer()
-                Text("\(row.excludedFrames) excluded")
-                    .foregroundStyle(.secondary)
-            }
-            .font(.callout.weight(.medium))
-            ForEach(row.snapshot.series, id: \.id) { series in
-                HStack {
-                    Text(row.snapshot.projects.first { $0.id == series.projectID }?.displayName ?? "Unknown project")
-                        .lineLimit(1)
-                    Spacer()
-                    Text([series.filterName, "\(series.exposureSeconds.formatted(.number.precision(.fractionLength(0...1)))) s", series.setupDescriptor]
-                        .compactMap { $0 }.joined(separator: " · "))
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-        }
-        .padding(12)
-        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
-        .accessibilityIdentifier("v2.nights.detail")
     }
 }

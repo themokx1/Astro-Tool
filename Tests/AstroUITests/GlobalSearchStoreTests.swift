@@ -26,5 +26,6 @@ struct GlobalSearchStoreTests {
         await search.search("SV220", projects: projects, nights: nights)
         #expect(search.results.contains { $0.kind == .project && $0.objectID == project.id })
         #expect(search.results.contains { $0.kind == .night && $0.objectID == night.id })
+        #expect(search.results.contains { $0.kind == .series && $0.objectID == series.id })
     }
 }
