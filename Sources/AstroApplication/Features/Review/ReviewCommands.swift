@@ -25,4 +25,27 @@ public struct ReviewCommands: Sendable {
         try await metadata.save(record)
         return record
     }
+
+    @discardableResult
+    public func setVerdict(
+        seriesID: UUID,
+        relativePaths: [String],
+        verdict: FrameVerdict
+    ) async throws -> [FrameDecisionRecord] {
+        let existing = Dictionary(
+            uniqueKeysWithValues: try await metadata.frameDecisions(seriesID: seriesID)
+                .map { ($0.relativePath, $0) }
+        )
+        let records = relativePaths.map { path in
+            FrameDecisionRecord(
+                id: existing[path]?.id ?? UUID(),
+                seriesID: seriesID,
+                relativePath: path,
+                verdict: verdict,
+                logicallyExcluded: verdict == .rejected
+            )
+        }
+        try await metadata.save(MetadataWriteBatch(frameDecisions: records))
+        return records
+    }
 }

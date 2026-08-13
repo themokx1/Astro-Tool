@@ -13,6 +13,26 @@ struct ReviewQueryTests {
         #expect(snapshot.series.first { $0.series.exposureSeconds == 300 }?.series.filterName == "SV220")
     }
 
+    @Test("Bulk review updates every selected frame without changing series identity")
+    func bulkVerdict() async throws {
+        let fixture = try await ReviewFixture.make()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let metadata = fixture.metadata
+        let series = try #require(fixture.series.first { $0.exposureSeconds == 300 })
+        let commands = ReviewCommands(metadata: metadata)
+
+        let updated = try await commands.setVerdict(
+            seriesID: series.id,
+            relativePaths: ["light/SV220_001.fit", "light/SV220_002.fit"],
+            verdict: .rejected
+        )
+
+        #expect(updated.count == 2)
+        #expect(updated.allSatisfy { $0.seriesID == series.id })
+        #expect(updated.allSatisfy { $0.verdict == .rejected && $0.logicallyExcluded })
+        #expect(try await metadata.frameDecisions(seriesID: series.id).count == 2)
+    }
+
     @Test("Rejecting a frame is logical metadata and never moves the source file")
     func rejectPreservesLibraryManifest() async throws {
         let fixture = try await ReviewFixture.make()
