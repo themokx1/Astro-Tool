@@ -183,4 +183,20 @@ struct V2ShellSurfaceTests {
         #expect(!review.contains("QuickLook"))
         #expect(!review.contains("QLThumbnail"))
     }
+
+    @Test("Planning exposes setup, focal length, framing and integration boundaries")
+    func planningWorkspaceContract() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Features/Planning/PlanningView.swift"
+            ),
+            encoding: .utf8
+        )
+        for identifier in [
+            "v2.planning.setup", "v2.planning.focal-length",
+            "v2.planning.recommendations", "v2.planning.integration"
+        ] {
+            #expect(source.contains(identifier))
+        }
+    }
 }

@@ -99,6 +99,12 @@ final class AstroToolLaunchTests: XCTestCase {
             )
         }
 
+        element("v2.sidebar.planning", in: app).click()
+        XCTAssertTrue(element("v2.planning.setup", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("v2.planning.focal-length", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("v2.planning.recommendations", in: app).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("v2.planning.integration", in: app).waitForExistence(timeout: 5))
+
         element("v2.sidebar.home", in: app).click()
         XCTAssertTrue(element("v2.detail.home", in: app).waitForExistence(timeout: 5))
         XCTAssertTrue(element("v2.home.night-context", in: app).waitForExistence(timeout: 5))
