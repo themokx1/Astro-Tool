@@ -58,6 +58,11 @@ public final class ProjectsStore {
         return projects.filter { searchIndex[$0.id, default: ""].contains(needle) }
     }
 
+    public func projectSnapshot(id: UUID) async throws -> ProjectSnapshot? {
+        guard let metadata else { throw ProjectsStoreError.libraryNotOpen }
+        return try await ProjectsQuery(metadata: metadata).project(id: id)
+    }
+
     public func selectProject(_ id: UUID?) async throws {
         selectedProjectID = id
         guard let id else {

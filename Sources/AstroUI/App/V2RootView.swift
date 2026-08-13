@@ -118,9 +118,9 @@ public struct V2RootView: View {
                     }
                     try await projectsStore.open(rootURL: root)
                     try await nightsStore.open(rootURL: root)
-                    homeStore.configure(
+                    await homeStore.configure(
                         libraryName: root.lastPathComponent,
-                        projects: projectsStore.projects,
+                        projectsStore: projectsStore,
                         nightCount: nightsStore.nights.count
                     )
                     libraryPreparationError = nil

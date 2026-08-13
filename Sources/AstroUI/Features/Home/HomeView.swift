@@ -42,7 +42,9 @@ public struct HomeView: View {
                             .font(.title2).foregroundStyle(AstroTokens.Color.spectralBlue)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(project.displayName).font(.headline)
-                            Text(project.phase == .collecting ? "Continue collecting this project on the next suitable night." : "Open the project and plan its next step.")
+                            Text(project.phase == .collecting
+                                ? "Least collected active project · \(duration(store.snapshot.nextProjectIntegrationSeconds)) so far."
+                                : "Open the project and plan its first capture series.")
                                 .font(.callout).foregroundStyle(.secondary)
                         }
                         Spacer()
@@ -55,6 +57,11 @@ public struct HomeView: View {
             }
         }
         .accessibilityIdentifier("v2.home.library-overview")
+    }
+
+    private func duration(_ seconds: Double) -> String {
+        let minutes = Int(seconds.rounded()) / 60
+        return String(format: "%d:%02d", minutes / 60, minutes % 60)
     }
 
     private var header: some View {

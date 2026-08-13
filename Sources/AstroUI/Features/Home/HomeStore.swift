@@ -24,19 +24,22 @@ public struct HomeSnapshot: Equatable, Sendable {
     public let projectCount: Int
     public let nightCount: Int
     public let nextProject: ProjectRecord?
+    public let nextProjectIntegrationSeconds: Double
 
     public init(
         libraryName: String?,
         nightContext: NightContext,
         projectCount: Int = 0,
         nightCount: Int = 0,
-        nextProject: ProjectRecord? = nil
+        nextProject: ProjectRecord? = nil,
+        nextProjectIntegrationSeconds: Double = 0
     ) {
         self.libraryName = libraryName
         self.nightContext = nightContext
         self.projectCount = projectCount
         self.nightCount = nightCount
         self.nextProject = nextProject
+        self.nextProjectIntegrationSeconds = nextProjectIntegrationSeconds
     }
 
     /// Neutral preview content: it conveys the shape of the workspace without
@@ -72,6 +75,31 @@ public final class HomeStore {
             projectCount: projects.count,
             nightCount: nightCount,
             nextProject: nextProject
+        )
+    }
+
+    public func configure(
+        libraryName: String,
+        projectsStore: ProjectsStore,
+        nightCount: Int
+    ) async {
+        let active = projectsStore.projects.filter { $0.phase == .collecting || $0.phase == .planned }
+        var ranked: [(ProjectRecord, Double)] = []
+        for project in active {
+            let integration = (try? await projectsStore.projectSnapshot(id: project.id)?.integrationSeconds) ?? 0
+            ranked.append((project, integration))
+        }
+        let next = ranked.min {
+            if $0.1 != $1.1 { return $0.1 < $1.1 }
+            return $0.0.catalogID < $1.0.catalogID
+        }
+        snapshot = HomeSnapshot(
+            libraryName: libraryName,
+            nightContext: snapshot.nightContext,
+            projectCount: projectsStore.projects.count,
+            nightCount: nightCount,
+            nextProject: next?.0,
+            nextProjectIntegrationSeconds: next?.1 ?? 0
         )
     }
 }
