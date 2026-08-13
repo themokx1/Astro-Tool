@@ -11,12 +11,20 @@ struct NightsQueryTests {
         let m42 = ProjectRecord(id: UUID(), catalogID: "M 42", displayName: "Orion-köd", phase: .collecting)
         let series = [makeSeries(project: ic1396.id, night: night.id, exposure: 30), makeSeries(project: m42.id, night: night.id, exposure: 120)]
         try await metadata.save(MetadataWriteBatch(projects: [ic1396, m42], nights: [night], series: series))
+        try await metadata.save(MetadataWriteBatch(frameDecisions: [
+            FrameDecisionRecord(id: UUID(), seriesID: series[0].id, relativePath: "a.fit", verdict: .accepted, logicallyExcluded: false),
+            FrameDecisionRecord(id: UUID(), seriesID: series[0].id, relativePath: "b.fit", verdict: .rejected, logicallyExcluded: true),
+            FrameDecisionRecord(id: UUID(), seriesID: series[1].id, relativePath: "c.fit", verdict: .undecided, logicallyExcluded: false),
+        ]))
 
         let rows = try await NightsQuery(metadata: metadata).nights()
 
         #expect(rows.count == 1)
         #expect(rows[0].projects.map(\.catalogID) == ["IC 1396", "M 42"])
         #expect(rows[0].series.map(\.exposureSeconds) == [30, 120])
+        #expect(rows[0].totalFrames == 3)
+        #expect(rows[0].usableFrames == 2)
+        #expect(rows[0].integrationSeconds == 150)
     }
 
     private func makeSeries(project: UUID, night: UUID, exposure: Double) -> SeriesRecord {

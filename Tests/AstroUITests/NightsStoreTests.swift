@@ -24,6 +24,9 @@ struct NightsStoreTests {
         #expect(store.nights[0].seriesCount == 2)
         #expect(store.nights[0].exposureSummary == "30 s, 300 s")
         #expect(store.nights[0].projectSummary == "IC 1396")
+        store.selectMonth("2026-08")
+        #expect(store.visibleNights.count == 1)
+        #expect(store.availableMonths == ["2026-08"])
     }
 
     private func makeSeries(project: UUID, night: UUID, exposure: Double) -> SeriesRecord {

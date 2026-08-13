@@ -18,6 +18,10 @@ public struct NightRow: Equatable, Sendable, Identifiable {
         let filters = Array(Set(snapshot.series.compactMap(\.filterName))).sorted()
         return filters.isEmpty ? "No filter metadata" : filters.joined(separator: ", ")
     }
+    public var integrationSummary: String {
+        let minutes = Int(snapshot.integrationSeconds.rounded()) / 60
+        return String(format: "%d:%02d", minutes / 60, minutes % 60)
+    }
 }
 
 @MainActor
@@ -27,11 +31,35 @@ public final class NightsStore {
     public private(set) var nights: [NightRow] = []
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
+    public private(set) var selectedMonth: String?
+    public private(set) var selectedNightID: UUID?
     private let metadataFactory: MetadataFactory
 
     public init(metadataFactory: @escaping MetadataFactory = ProjectsStore.productionMetadata) {
         self.metadataFactory = metadataFactory
     }
+
+    public var availableMonths: [String] {
+        Array(Set(nights.map { String($0.date.prefix(7)) })).sorted(by: >)
+    }
+
+    public var visibleNights: [NightRow] {
+        guard let selectedMonth else { return nights }
+        return nights.filter { $0.date.hasPrefix(selectedMonth) }
+    }
+
+    public var selectedNight: NightRow? {
+        nights.first { $0.id == selectedNightID }
+    }
+
+    public func selectMonth(_ month: String?) {
+        selectedMonth = month
+        if let selectedNightID, !visibleNights.contains(where: { $0.id == selectedNightID }) {
+            self.selectedNightID = nil
+        }
+    }
+
+    public func selectNight(_ id: UUID?) { selectedNightID = id }
 
     public func open(rootURL: URL) async throws {
         isLoading = true
