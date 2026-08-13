@@ -236,6 +236,42 @@ struct V2ShellSurfaceTests {
         #expect(library.contains("v2.library.rescan"))
     }
 
+    @Test("The mutation confirmation route renders the real quarantine-apply sheet, not a placeholder")
+    func mutationConfirmationIsWiredToTheRealSheet() throws {
+        let root = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/App/V2RootView.swift"
+            ),
+            encoding: .utf8
+        )
+
+        #expect(root.contains("MutationConfirmationSheet("))
+        #expect(root.contains("case .mutationConfirmation(let id) = presentation"))
+        #expect(root.contains("pendingMutationPlan"))
+    }
+
+    @Test("The Libraries & Safety settings tab exposes an explicit write-operations toggle wired to LibraryAccessMode")
+    func writeOperationsToggleIsWired() throws {
+        let settings = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Settings/V2SettingsView.swift"
+            ),
+            encoding: .utf8
+        )
+        let root = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/App/V2RootView.swift"
+            ),
+            encoding: .utf8
+        )
+
+        #expect(settings.contains("Enable write operations"))
+        #expect(settings.contains("v2.settings.enable-write-operations"))
+        #expect(settings.contains("v2.library.enableWriteOperations"))
+        #expect(root.contains("v2.library.enableWriteOperations"))
+        #expect(root.contains("libraryAccessMode"))
+    }
+
     @Test("Results expose lineage, publish readiness and an honest empty state")
     func resultsWorkspaceContract() throws {
         let source = try String(

@@ -173,8 +173,16 @@ private struct V2Shell: View {
     @State private var showsSearch = false
     @State private var globalSearch = GlobalSearchStore()
     @State private var newProjectInitialQuery = ""
+    @State private var pendingMutationPlan: LibraryMutationPlan?
+    @State private var pendingMutationRootURL: URL?
+    @State private var pendingMutationAccessMode: LibraryAccessMode = .readOnly
+    @AppStorage("v2.library.enableWriteOperations") private var enableWriteOperations = false
     @Environment(\.openSettings) private var openSettings
     @Environment(OperationHost.self) private var operationHost
+
+    private var libraryAccessMode: LibraryAccessMode {
+        enableWriteOperations ? .mutationEnabled : .readOnly
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -207,7 +215,14 @@ private struct V2Shell: View {
                 convertSession: {
                     conversionRoot = onboardingStore.selectedRoot ?? libraryRootFallback
                 },
-                rescan: performRescan
+                rescan: performRescan,
+                accessMode: libraryAccessMode,
+                presentQuarantineApply: { plan, rootURL, accessMode in
+                    pendingMutationPlan = plan
+                    pendingMutationRootURL = rootURL
+                    pendingMutationAccessMode = accessMode
+                    router.present(.mutationConfirmation(plan.id))
+                }
             )
         }
         .navigationSplitViewStyle(.balanced)
@@ -293,6 +308,19 @@ private struct V2Shell: View {
                         newProjectInitialQuery = ""
                     },
                     didCreate: openCreatedProject
+                )
+            } else if case .mutationConfirmation(let id) = presentation,
+                      let plan = pendingMutationPlan, plan.id == id,
+                      let rootURL = pendingMutationRootURL {
+                MutationConfirmationSheet(
+                    plan: plan,
+                    rootURL: rootURL,
+                    accessMode: pendingMutationAccessMode,
+                    dismiss: {
+                        router.dismissPresentation()
+                        pendingMutationPlan = nil
+                        pendingMutationRootURL = nil
+                    }
                 )
             } else {
                 V2PresentationPlaceholder(route: presentation) {
@@ -524,6 +552,8 @@ private struct DetailHost: View {
     let showResults: (ProjectRecord) -> Void
     let convertSession: () -> Void
     let rescan: () -> Void
+    let accessMode: LibraryAccessMode
+    let presentQuarantineApply: (LibraryMutationPlan, URL, LibraryAccessMode) -> Void
 
     @ViewBuilder
     var body: some View {
@@ -637,10 +667,15 @@ private struct DetailHost: View {
         case .health:
             HealthView(
                 rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary,
-                openCalibration: { router.navigate(toContent: .calibration) }
+                openCalibration: { router.navigate(toContent: .calibration) },
+                accessMode: accessMode,
+                presentQuarantineApply: presentQuarantineApply
             )
         case .calibration:
-            CalibrationView(rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary)
+            CalibrationView(
+                rootURL: onboardingStore.selectedRoot, accessMode: accessMode,
+                chooseLibrary: chooseLibrary
+            )
         default:
             V2EmptyDetail(
                 title: router.primarySection.emptyTitle,

@@ -1,0 +1,171 @@
+@testable import AstroApplication
+@testable import AstroUI
+import CryptoKit
+import Foundation
+import Testing
+
+/// A real library root + a real, isolated `MetadataStore`/journal directory,
+/// so `MutationConfirmationStore` can drive an actual `QuarantineApplyCommand`
+/// (via an injected factory, never `.production`, which would touch the
+/// real user's Application Support/Caches) through apply and rollback.
+@MainActor
+private struct MutationConfirmationFixture {
+    let container: URL
+    let root: URL
+    let journal: URL
+    let metadata: MetadataStore
+    let relativePath: String
+    let content: Data
+    let identity: LibraryIdentity
+
+    static func make() throws -> Self {
+        let container = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AstroMutationConfirmationTests-\(UUID().uuidString)", isDirectory: true)
+        let root = container.appendingPathComponent("Library", isDirectory: true)
+        let journal = container.appendingPathComponent("Journal", isDirectory: true)
+        let relativePath = "stacks/IC1396/process/r_light.fit"
+        let fileURL = root.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o700))],
+            ofItemAtPath: journal.path
+        )
+        let content = Data("residue bytes for the confirmation sheet".utf8)
+        try content.write(to: fileURL)
+        return Self(
+            container: container,
+            root: root,
+            journal: journal,
+            metadata: try MetadataStore.temporary(),
+            relativePath: relativePath,
+            content: content,
+            identity: LibraryIdentity(rootURL: root)
+        )
+    }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: container)
+    }
+
+    func exists(_ relative: String) -> Bool {
+        FileManager.default.fileExists(atPath: root.appendingPathComponent(relative).path)
+    }
+
+    func plan() -> LibraryMutationPlan {
+        let quarantinePath = ".astro_tool/cleanup_quarantine/20261204-000000/\(relativePath)"
+        let fingerprint = SHA256.hash(data: content).map { String(format: "%02x", $0) }.joined()
+        return LibraryMutationPlan(
+            libraryID: identity,
+            revision: QuarantineApplyCommand.revision,
+            entries: [.init(
+                source: root.appendingPathComponent(relativePath),
+                destination: root.appendingPathComponent(quarantinePath),
+                fingerprint: fingerprint
+            )],
+            totalBytes: Int64(content.count),
+            confirmationToken: "confirm-\(UUID().uuidString)"
+        )
+    }
+
+    func commandFactory() -> MutationConfirmationStore.CommandFactory {
+        let journal = journal
+        let metadata = metadata
+        return { rootURL, accessMode in
+            QuarantineApplyCommand(
+                root: rootURL, identity: LibraryIdentity(rootURL: rootURL), accessMode: accessMode,
+                journalDirectory: journal, metadata: metadata
+            )
+        }
+    }
+}
+
+@MainActor
+@Suite("Mutation confirmation sheet state")
+struct MutationConfirmationTests {
+    @Test("Apply stays disabled until the exact confirmation token is typed")
+    func tokenGatesApply() throws {
+        let fixture = try MutationConfirmationFixture.make()
+        defer { fixture.remove() }
+        let plan = fixture.plan()
+        let store = MutationConfirmationStore(
+            plan: plan, rootURL: fixture.root, accessMode: .mutationEnabled,
+            commandFactory: fixture.commandFactory()
+        )
+
+        #expect(!store.canApply)
+        store.confirmationText = "not the token"
+        #expect(!store.canApply)
+        store.confirmationText = plan.confirmationToken
+        #expect(store.canApply)
+    }
+
+    @Test("Apply stays disabled in read-only mode even with the correct token")
+    func readOnlyModeDisablesApplyRegardlessOfToken() throws {
+        let fixture = try MutationConfirmationFixture.make()
+        defer { fixture.remove() }
+        let plan = fixture.plan()
+        let store = MutationConfirmationStore(
+            plan: plan, rootURL: fixture.root, accessMode: .readOnly,
+            commandFactory: fixture.commandFactory()
+        )
+        store.confirmationText = plan.confirmationToken
+
+        #expect(!store.canApply)
+    }
+
+    @Test("Applying with the correct token moves the files and exposes a receipt")
+    func applyingProducesReceiptAndMovesFiles() async throws {
+        let fixture = try MutationConfirmationFixture.make()
+        defer { fixture.remove() }
+        let plan = fixture.plan()
+        let store = MutationConfirmationStore(
+            plan: plan, rootURL: fixture.root, accessMode: .mutationEnabled,
+            commandFactory: fixture.commandFactory()
+        )
+        store.confirmationText = plan.confirmationToken
+
+        await store.apply()
+
+        #expect(store.receipt != nil)
+        #expect(store.errorMessage == nil)
+        #expect(!fixture.exists(fixture.relativePath))
+    }
+
+    @Test("Applying in read-only mode sets an explanatory error and links nothing")
+    func applyingReadOnlySetsErrorAndMovesNothing() async throws {
+        let fixture = try MutationConfirmationFixture.make()
+        defer { fixture.remove() }
+        let plan = fixture.plan()
+        let store = MutationConfirmationStore(
+            plan: plan, rootURL: fixture.root, accessMode: .readOnly,
+            commandFactory: fixture.commandFactory()
+        )
+        store.confirmationText = plan.confirmationToken
+
+        await store.apply()
+
+        #expect(store.receipt == nil)
+        #expect(store.errorMessage != nil)
+        #expect(fixture.exists(fixture.relativePath))
+    }
+
+    @Test("Undo (rollback) after a successful apply restores the original files")
+    func rollbackRestoresFiles() async throws {
+        let fixture = try MutationConfirmationFixture.make()
+        defer { fixture.remove() }
+        let plan = fixture.plan()
+        let store = MutationConfirmationStore(
+            plan: plan, rootURL: fixture.root, accessMode: .mutationEnabled,
+            commandFactory: fixture.commandFactory()
+        )
+        store.confirmationText = plan.confirmationToken
+        await store.apply()
+        #expect(!fixture.exists(fixture.relativePath))
+
+        await store.rollback()
+
+        #expect(store.isRolledBack)
+        #expect(fixture.exists(fixture.relativePath))
+    }
+}

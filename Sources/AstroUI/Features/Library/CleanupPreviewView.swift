@@ -7,19 +7,68 @@ private final class CleanupPreviewStore {
     var snapshot: CleanupPreviewSnapshot?
     var isLoading = false
     var errorMessage: String?
+    var selectedCategories: Set<String> = []
+    var planErrorMessage: String?
 
-    func load(rootURL: URL) async {
+    private var rootURL: URL?
+    private var accessMode: LibraryAccessMode = .readOnly
+
+    func load(rootURL: URL, accessMode: LibraryAccessMode) async {
         isLoading = true
+        self.rootURL = rootURL
+        self.accessMode = accessMode
         defer { isLoading = false }
-        do { snapshot = try await CleanupPreviewQuery.production(rootURL: rootURL).snapshot() }
-        catch { errorMessage = error.localizedDescription }
+        do {
+            snapshot = try await CleanupPreviewQuery.production(rootURL: rootURL, accessMode: accessMode).snapshot()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func toggleSelection(_ category: String) {
+        if selectedCategories.contains(category) {
+            selectedCategories.remove(category)
+        } else {
+            selectedCategories.insert(category)
+        }
+    }
+
+    /// Builds the quarantine plan for whichever groups are currently
+    /// selected -- available regardless of `accessMode` (building a plan
+    /// never writes anything); `QuarantineApplyCommand.apply` is what
+    /// actually gates on write access, once the confirmation sheet is
+    /// shown.
+    func buildPlan() -> LibraryMutationPlan? {
+        guard let rootURL, !selectedCategories.isEmpty else { return nil }
+        planErrorMessage = nil
+        do {
+            return try CleanupPreviewQuery.production(rootURL: rootURL, accessMode: accessMode)
+                .plan(selecting: selectedCategories, confirmationToken: UUID().uuidString)
+        } catch {
+            planErrorMessage = error.localizedDescription
+            return nil
+        }
     }
 }
 
 public struct CleanupPreviewView: View {
     let rootURL: URL
+    let accessMode: LibraryAccessMode
     let dismiss: () -> Void
+    let presentQuarantineApply: (LibraryMutationPlan) -> Void
     @State private var store = CleanupPreviewStore()
+
+    public init(
+        rootURL: URL,
+        accessMode: LibraryAccessMode = .readOnly,
+        dismiss: @escaping () -> Void,
+        presentQuarantineApply: @escaping (LibraryMutationPlan) -> Void = { _ in }
+    ) {
+        self.rootURL = rootURL
+        self.accessMode = accessMode
+        self.dismiss = dismiss
+        self.presentQuarantineApply = presentQuarantineApply
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -41,13 +90,24 @@ public struct CleanupPreviewView: View {
             HStack {
                 Label("Preview only · no files moved", systemImage: "lock.shield").foregroundStyle(.green)
                 Spacer()
-                Text("Quarantine requires a separately approved operation")
-                    .font(.caption).foregroundStyle(.secondary)
+                if accessMode != .mutationEnabled {
+                    Label("Requires write access. Enable write operations in Settings to apply quarantine.", systemImage: "lock.shield")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if let planErrorMessage = store.planErrorMessage {
+                    Text(planErrorMessage).font(.caption).foregroundStyle(.orange)
+                }
+                Button("Apply Quarantine…") {
+                    if let plan = store.buildPlan() { presentQuarantineApply(plan) }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(accessMode != .mutationEnabled || store.selectedCategories.isEmpty)
+                .accessibilityIdentifier("v2.cleanup.apply-quarantine")
             }.padding(16)
         }
         .frame(minWidth: 760, minHeight: 540)
         .background(.background)
-        .task { await store.load(rootURL: rootURL) }
+        .task { await store.load(rootURL: rootURL, accessMode: accessMode) }
         .accessibilityIdentifier("v2.cleanup.preview")
     }
 
@@ -64,8 +124,17 @@ public struct CleanupPreviewView: View {
                 ForEach(snapshot.groups) { group in
                     GroupBox(categoryTitle(group.category)) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("\(group.fileCount) files · \(ByteCountFormatter.string(fromByteCount: group.totalBytes, countStyle: .file))")
-                                .font(.headline)
+                            HStack {
+                                Toggle(isOn: Binding(
+                                    get: { store.selectedCategories.contains(group.category) },
+                                    set: { _ in store.toggleSelection(group.category) }
+                                )) {
+                                    Text("\(group.fileCount) files · \(ByteCountFormatter.string(fromByteCount: group.totalBytes, countStyle: .file))")
+                                        .font(.headline)
+                                }
+                                .toggleStyle(.checkbox)
+                                .accessibilityIdentifier("v2.cleanup.select.\(group.category)")
+                            }
                             ForEach(group.paths, id: \.self) { path in
                                 Label(path, systemImage: "doc").font(.caption.monospaced()).textSelection(.enabled)
                             }
@@ -77,6 +146,7 @@ public struct CleanupPreviewView: View {
                 }
             }.padding(24)
         }
+        .accessibilityIdentifier("v2.cleanup.groups")
     }
 
     private func categoryTitle(_ category: String) -> String {

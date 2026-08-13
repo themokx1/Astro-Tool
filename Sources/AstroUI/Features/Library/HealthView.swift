@@ -6,7 +6,23 @@ public struct HealthView: View {
     let rootURL: URL?
     let chooseLibrary: () -> Void
     let openCalibration: () -> Void
+    let accessMode: LibraryAccessMode
+    let presentQuarantineApply: (LibraryMutationPlan, URL, LibraryAccessMode) -> Void
     @State private var store = LibraryHealthStore()
+
+    public init(
+        rootURL: URL?,
+        chooseLibrary: @escaping () -> Void,
+        openCalibration: @escaping () -> Void,
+        accessMode: LibraryAccessMode = .readOnly,
+        presentQuarantineApply: @escaping (LibraryMutationPlan, URL, LibraryAccessMode) -> Void = { _, _, _ in }
+    ) {
+        self.rootURL = rootURL
+        self.chooseLibrary = chooseLibrary
+        self.openCalibration = openCalibration
+        self.accessMode = accessMode
+        self.presentQuarantineApply = presentQuarantineApply
+    }
     @State private var showsCleanup = false
     @State private var showsSensors = false
     @State private var category: LibraryHealthCategory?
@@ -119,7 +135,14 @@ public struct HealthView: View {
         .accessibilityIdentifier("v2.detail.library.health")
         .overlay {
             if showsCleanup, let rootURL {
-                CleanupPreviewView(rootURL: rootURL) { showsCleanup = false }
+                CleanupPreviewView(
+                    rootURL: rootURL, accessMode: accessMode,
+                    dismiss: { showsCleanup = false },
+                    presentQuarantineApply: { plan in
+                        showsCleanup = false
+                        presentQuarantineApply(plan, rootURL, accessMode)
+                    }
+                )
             } else if showsSensors, let rootURL {
                 SensorProfilesView(rootURL: rootURL) { showsSensors = false }
             }

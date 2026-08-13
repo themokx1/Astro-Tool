@@ -36,12 +36,24 @@ private struct GeneralSettingsView: View {
 
 private struct LibrariesSettingsView: View {
     @AppStorage("v2.library.scanOnOpen") private var scanOnOpen = true
+    @AppStorage("v2.library.enableWriteOperations") private var enableWriteOperations = false
     var body: some View {
         Form {
             Section("Library behavior") {
                 Toggle("Refresh the external index when opening a library", isOn: $scanOnOpen)
-                Label("Image folders are read-only unless you explicitly approve a physical operation.", systemImage: "lock.shield")
                 Label("Metadata and indexes live outside the image library.", systemImage: "internaldrive")
+            }
+            Section("Safety") {
+                Toggle("Enable write operations", isOn: $enableWriteOperations)
+                    .accessibilityIdentifier("v2.settings.enable-write-operations")
+                Label(
+                    enableWriteOperations
+                        ? "Approved operations (quarantine apply, calibration linking) may now write to your library."
+                        : "Image folders are read-only unless you explicitly approve a physical operation.",
+                    systemImage: "lock.shield"
+                )
+                Text("Every write still requires its own separate confirmation — this only unlocks the option.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
     }
