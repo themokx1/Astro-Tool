@@ -173,9 +173,13 @@ public struct LibraryBookmarkStore: @unchecked Sendable {
 
     public static func production(defaults: UserDefaults = .standard) -> Self {
         let key = "v2.library.securityScopedBookmark"
+        let legacyKey = "rootBookmark"
         return Self(
             load: {
-                guard let data = defaults.data(forKey: key) else { return nil }
+                let isLegacy = defaults.data(forKey: key) == nil
+                guard let data = defaults.data(forKey: key)
+                    ?? defaults.data(forKey: legacyKey)
+                else { return nil }
                 var isStale = false
                 guard let url = try? URL(
                     resolvingBookmarkData: data,
@@ -184,8 +188,10 @@ public struct LibraryBookmarkStore: @unchecked Sendable {
                     bookmarkDataIsStale: &isStale
                 ) else {
                     defaults.removeObject(forKey: key)
+                    if isLegacy { defaults.removeObject(forKey: legacyKey) }
                     return nil
                 }
+                if isLegacy { defaults.set(data, forKey: key) }
                 if isStale,
                    let refreshed = try? url.bookmarkData(
                        options: .withSecurityScope,

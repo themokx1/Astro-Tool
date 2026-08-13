@@ -407,6 +407,7 @@ struct V2OnboardingTests {
         #expect(onboardingSource.contains("Choose Image Library…"))
         #expect(onboardingSource.contains("Files stay where they are"))
         #expect(onboardingSource.contains("Application Support"))
+        #expect(onboardingSource.contains("rootBookmark"))
         #expect(onboardingSource.contains("dropDestination"))
         #expect(onboardingSource.contains("keyboardShortcut(.cancelAction)"))
         #expect(onboardingSource.contains("ProgressView(value:"))
