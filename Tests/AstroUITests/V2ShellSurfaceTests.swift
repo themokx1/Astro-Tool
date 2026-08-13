@@ -200,6 +200,21 @@ struct V2ShellSurfaceTests {
         }
     }
 
+    @Test("The shell wires the operation backbone into its toolbar and overlay")
+    func operationBackboneIsWiredIntoTheShell() throws {
+        let root = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/App/V2RootView.swift"
+            ),
+            encoding: .utf8
+        )
+
+        #expect(root.contains("OperationStatusView"))
+        #expect(root.contains("ToastOverlay"))
+        #expect(root.contains("v2.toolbar.operations"))
+        #expect(root.contains("v2.toast-layer"))
+    }
+
     @Test("Results expose lineage, publish readiness and an honest empty state")
     func resultsWorkspaceContract() throws {
         let source = try String(

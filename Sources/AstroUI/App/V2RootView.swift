@@ -54,6 +54,7 @@ public struct V2RootView: View {
     @State private var isOnboardingPresented: Bool
     @State private var libraryPreparationError: String?
     @State private var didRestoreWindowState = false
+    @State private var operationHost = OperationHost(center: OperationCenter())
     @SceneStorage("v2.windowRestoration") private var encodedWindowState = ""
 
     public init(
@@ -91,6 +92,11 @@ public struct V2RootView: View {
             isOnboardingPresented: $isOnboardingPresented,
             libraryPreparationError: $libraryPreparationError
         )
+            .overlay(alignment: .topTrailing) {
+                ToastOverlay()
+                    .accessibilityIdentifier("v2.toast-layer")
+            }
+            .environment(operationHost)
             .onAppear {
                 restoreWindowStateOnce()
             }
@@ -211,6 +217,9 @@ private struct V2Shell: View {
         }
         .toolbar {
             ToolbarItemGroup {
+                OperationStatusView()
+                    .accessibilityIdentifier("v2.toolbar.operations")
+
                 Button(action: { showsSearch.toggle() }) {
                     Label("Search", systemImage: "magnifyingglass")
                 }
