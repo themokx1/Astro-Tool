@@ -272,6 +272,38 @@ struct V2ShellSurfaceTests {
         #expect(root.contains("libraryAccessMode"))
     }
 
+    @Test("Sensor Profiles exposes a real measure action, a history chart, and an honest footer")
+    func sensorProfilesMeasureIsWiredIntoTheView() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Features/Library/SensorProfilesView.swift"
+            ),
+            encoding: .utf8
+        )
+
+        #expect(source.contains("v2.sensor-profiles.measure"))
+        #expect(source.contains("v2.sensor-profiles.measure-start"))
+        #expect(source.contains("v2.sensor-profiles.measure-cancel"))
+        #expect(source.contains("v2.sensor-profiles.history-chart"))
+        #expect(source.contains("v2.sensor-profiles.missing-combos"))
+        #expect(source.contains("Chart("))
+        #expect(source.contains("OperationHost"))
+        // The old "measurement acquisition is not enabled" / "classic
+        // workflow or CLI" claims must be gone now that a real measure flow
+        // exists -- this is the honest-empty-state half of the parity gate.
+        #expect(!source.contains("classic workflow or CLI"))
+        #expect(!source.contains("measurement acquisition is not enabled"))
+
+        let store = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Features/Library/SensorProfilesStore.swift"
+            ),
+            encoding: .utf8
+        )
+        #expect(store.contains("OperationHost"))
+        #expect(store.contains("SensorMeasurementCommand"))
+    }
+
     @Test("Results expose lineage, publish readiness and an honest empty state")
     func resultsWorkspaceContract() throws {
         let source = try String(

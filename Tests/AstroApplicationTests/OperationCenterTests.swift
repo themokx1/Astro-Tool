@@ -13,6 +13,7 @@ struct OperationCenterTests {
             .audit(library: "C"),
             .export(project: "P"),
             .convert(session: "N"),
+            .sensorMeasurement(library: "D"),
         ]
 
         #expect(Set(kinds).count == kinds.count)

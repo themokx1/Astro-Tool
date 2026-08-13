@@ -7,6 +7,7 @@ public enum OperationKind: Hashable, Sendable {
     case audit(library: String)
     case export(project: String)
     case convert(session: String)
+    case sensorMeasurement(library: String)
 }
 
 public enum CancellationPolicy: Hashable, Sendable {
