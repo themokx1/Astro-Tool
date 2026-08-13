@@ -15,6 +15,7 @@ public struct ProjectWorkspaceView: View {
     let review: () -> Void
     let results: () -> Void
     let openNight: (UUID) -> Void
+    let openSeries: (UUID) -> Void
     @State private var section = Section.overview
 
     public var body: some View {
@@ -71,7 +72,7 @@ public struct ProjectWorkspaceView: View {
         case .nights:
             ProjectNightsSummary(snapshot: snapshot, openNight: openNight)
         case .series:
-            ProjectSeriesSummary(snapshot: snapshot)
+            ProjectSeriesSummary(snapshot: snapshot, openSeries: openSeries)
         case .results:
             ContentUnavailableView("Open Results workspace", systemImage: "square.stack.3d.up", description: Text("Use the Results button to inspect stack and processing lineage."))
         case .notes:
@@ -107,12 +108,16 @@ private struct ProjectNightsSummary: View {
 
 private struct ProjectSeriesSummary: View {
     let snapshot: ProjectSnapshot
+    let openSeries: (UUID) -> Void
+    @State private var selection: UUID?
     var body: some View {
-        Table(snapshot.nights.flatMap(\.series)) {
+        Table(snapshot.nights.flatMap(\.series), selection: $selection) {
             TableColumn("Filter") { Text($0.filterName ?? "Unfiltered") }
             TableColumn("Exposure") { Text("\($0.series.exposureSeconds.formatted()) s").monospacedDigit() }
             TableColumn("Setup") { Text($0.series.setupDescriptor).lineLimit(1) }
             TableColumn("Frames") { Text("\($0.usableFrames) / \($0.excludedFrames)").monospacedDigit() }
-        }.frame(minHeight: 320)
+        }
+        .frame(minHeight: 320)
+        .onChange(of: selection) { _, id in if let id { openSeries(id) } }
     }
 }

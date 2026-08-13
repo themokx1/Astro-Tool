@@ -507,6 +507,9 @@ private struct DetailHost: View {
                     openNight: { id in
                         nightsStore.selectNight(id)
                         router.navigate(toContent: .night(id.uuidString))
+                    },
+                    openSeries: { id in
+                        router.navigate(toContent: .projectSeries(id.uuidString))
                     }
                 )
             } else {
@@ -526,6 +529,21 @@ private struct DetailHost: View {
                 )
             } else {
                 ProgressView("Loading night…")
+            }
+        case .projectSeries(let rawID):
+            if let id = UUID(uuidString: rawID),
+               let projectSnapshot = projectsStore.selectedProject,
+               let night = projectSnapshot.nights.first(where: { $0.series.contains(where: { $0.id == id }) }),
+               let item = night.series.first(where: { $0.id == id }) {
+                SeriesWorkspaceView(
+                    item: item,
+                    project: projectSnapshot.project,
+                    night: night.night,
+                    close: { router.navigate(toContent: .project(projectSnapshot.id.uuidString)) },
+                    review: { reviewProject(projectSnapshot.project) }
+                )
+            } else {
+                ProgressView("Loading series…")
             }
         case .nights:
             NightsView(

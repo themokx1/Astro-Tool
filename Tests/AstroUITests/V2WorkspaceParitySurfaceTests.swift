@@ -46,4 +46,18 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(project.contains("openNight"))
         #expect(shell.contains("case .night(let rawID)"))
     }
+
+    @Test("Series rows open a metadata-rich series workspace")
+    func seriesWorkspaceContract() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/SeriesWorkspaceView.swift"))
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        #expect(workspace.contains("Series ›"))
+        #expect(workspace.contains("Passband"))
+        #expect(workspace.contains("Gain / offset"))
+        #expect(workspace.contains("Review Frames"))
+        #expect(workspace.contains("v2.series.workspace"))
+        #expect(shell.contains("case .projectSeries(let rawID)"))
+    }
 }
