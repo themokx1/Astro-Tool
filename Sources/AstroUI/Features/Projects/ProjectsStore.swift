@@ -19,6 +19,8 @@ public final class ProjectsStore {
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
     public private(set) var rootURL: URL?
+    public private(set) var selectedProjectID: UUID?
+    public private(set) var selectedProject: ProjectSnapshot?
 
     private let metadataFactory: MetadataFactory
     private var metadata: MetadataStore?
@@ -36,7 +38,32 @@ public final class ProjectsStore {
             self.metadata = metadata
             self.rootURL = rootURL.standardizedFileURL
             projects = try await metadata.projects()
+            if let selectedProjectID, projects.contains(where: { $0.id == selectedProjectID }) {
+                selectedProject = try await ProjectsQuery(metadata: metadata).project(id: selectedProjectID)
+            } else {
+                selectedProjectID = nil
+                selectedProject = nil
+            }
         } catch {
+            errorMessage = error.localizedDescription
+            throw error
+        }
+    }
+
+    public func selectProject(_ id: UUID?) async throws {
+        selectedProjectID = id
+        guard let id else {
+            selectedProject = nil
+            return
+        }
+        guard let metadata else { throw ProjectsStoreError.libraryNotOpen }
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        do {
+            selectedProject = try await ProjectsQuery(metadata: metadata).project(id: id)
+        } catch {
+            selectedProject = nil
             errorMessage = error.localizedDescription
             throw error
         }

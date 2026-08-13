@@ -39,4 +39,22 @@ struct ProjectsStoreTests {
         #expect(first.id == second.id)
         #expect(store.projects.count == 1)
     }
+
+    @Test("Selecting a project loads its complete acquisition detail")
+    func selectionLoadsProjectDetail() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .collecting
+        )
+        try await metadata.save(project)
+        let store = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        try await store.open(rootURL: root)
+
+        try await store.selectProject(project.id)
+
+        #expect(store.selectedProjectID == project.id)
+        #expect(store.selectedProject?.project == project)
+        #expect(store.errorMessage == nil)
+    }
 }

@@ -40,4 +40,18 @@ struct V2BetaWorkspaceSurfaceTests {
         #expect(shell.contains("Library preparation needs attention"))
         #expect(!shell.contains("_ = try? await Task.detached"))
     }
+
+    @Test("Projects workspace exposes a single understandable acquisition detail")
+    func projectsExposeAcquisitionDetail() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectsView.swift")
+        )
+        #expect(source.contains("v2.projects.detail"))
+        #expect(source.contains("v2.projects.night"))
+        #expect(source.contains("Usable integration"))
+        #expect(source.contains("Excluded"))
+        #expect(source.contains("selectProject"))
+    }
 }

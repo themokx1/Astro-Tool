@@ -15,12 +15,35 @@ public struct ProjectNextAction: Equatable, Sendable {
     public let explanation: String
 }
 
+public struct ProjectSeriesSnapshot: Equatable, Sendable, Identifiable {
+    public let series: SeriesRecord
+    public let totalFrames: Int
+    public let usableFrames: Int
+    public let excludedFrames: Int
+    public let integrationSeconds: Double
+    public var id: UUID { series.id }
+    public var filterName: String? { series.filterName }
+}
+
+public struct ProjectNightSnapshot: Equatable, Sendable, Identifiable {
+    public let night: NightRecord
+    public let series: [ProjectSeriesSnapshot]
+    public var id: UUID { night.id }
+    public var totalFrames: Int { series.reduce(0) { $0 + $1.totalFrames } }
+    public var usableFrames: Int { series.reduce(0) { $0 + $1.usableFrames } }
+    public var integrationSeconds: Double { series.reduce(0) { $0 + $1.integrationSeconds } }
+}
+
 public struct ProjectSnapshot: Equatable, Sendable, Identifiable {
     public let project: ProjectRecord
     public let canonicalFolderName: String
     public let series: [SeriesRecord]
+    public let nights: [ProjectNightSnapshot]
     public let nextAction: ProjectNextAction
     public var id: UUID { project.id }
+    public var totalFrames: Int { nights.reduce(0) { $0 + $1.totalFrames } }
+    public var usableFrames: Int { nights.reduce(0) { $0 + $1.usableFrames } }
+    public var integrationSeconds: Double { nights.reduce(0) { $0 + $1.integrationSeconds } }
 }
 
 public struct ProjectsQuery: Sendable {
@@ -60,6 +83,31 @@ public struct ProjectsQuery: Sendable {
     public func project(id: UUID) async throws -> ProjectSnapshot? {
         guard let project = try await metadata.project(id: id) else { return nil }
         let series = try await metadata.series(projectID: id)
+        let nightByID = Dictionary(uniqueKeysWithValues: try await metadata.nights().map { ($0.id, $0) })
+        var seriesByNight: [UUID: [ProjectSeriesSnapshot]] = [:]
+        for record in series {
+            let decisions = try await metadata.frameDecisions(seriesID: record.id)
+            let usable = decisions.filter { !$0.logicallyExcluded && $0.verdict != .rejected }.count
+            seriesByNight[record.nightID, default: []].append(ProjectSeriesSnapshot(
+                series: record,
+                totalFrames: decisions.count,
+                usableFrames: usable,
+                excludedFrames: decisions.count - usable,
+                integrationSeconds: Double(usable) * record.exposureSeconds
+            ))
+        }
+        let nights = seriesByNight.compactMap { nightID, values -> ProjectNightSnapshot? in
+            guard let night = nightByID[nightID] else { return nil }
+            return ProjectNightSnapshot(
+                night: night,
+                series: values.sorted {
+                    if $0.series.exposureSeconds != $1.series.exposureSeconds {
+                        return $0.series.exposureSeconds < $1.series.exposureSeconds
+                    }
+                    return $0.series.id.uuidString < $1.series.id.uuidString
+                }
+            )
+        }.sorted { $0.night.localDate > $1.night.localDate }
         let canonicalFolder: String
         if let catalog = TargetCatalog.search(project.catalogID, limit: 1)
             .first(where: { $0.designation == project.catalogID }) {
@@ -71,6 +119,7 @@ public struct ProjectsQuery: Sendable {
             project: project,
             canonicalFolderName: canonicalFolder,
             series: series,
+            nights: nights,
             nextAction: nextAction(for: project.phase, seriesCount: series.count)
         )
     }
