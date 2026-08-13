@@ -38,6 +38,10 @@ public struct InsightsView: View {
                     activityChart(insight).frame(maxWidth: .infinity)
                     targetRanking(insight).frame(width: 320)
                 }
+                HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
+                    filterBreakdown(insight).frame(maxWidth: .infinity)
+                    setupBreakdown(insight).frame(maxWidth: .infinity)
+                }
                 Label("Calculated from AstroTool's external read-only index", systemImage: "lock.shield")
                     .font(.caption).foregroundStyle(.secondary)
             } else if store.isLoading {
@@ -69,7 +73,56 @@ public struct InsightsView: View {
             MetricCard(title: "Nights", value: "\(insight.nightCount)", detail: "Capture sessions", systemImage: "moon.stars")
             MetricCard(title: "Targets", value: "\(insight.targetCount)", detail: "Unique objects", systemImage: "scope")
             MetricCard(title: "Light frames", value: "\(insight.frameCount)", detail: "Indexed and present", systemImage: "photo.stack")
+            MetricCard(title: "Average night", value: duration(insight.averageIntegrationPerNight), detail: insight.bestMonth.map { "Best month: \($0.month)" } ?? "No monthly data", systemImage: "chart.bar.fill")
         }
+    }
+
+    private func filterBreakdown(_ insight: InsightsSnapshot) -> some View {
+        GroupBox("Filters and passbands") {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(insight.filterUsage.prefix(8)) { item in
+                    HStack {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                            .foregroundStyle(AstroTokens.Color.spectralViolet)
+                        Text(item.name).lineLimit(1)
+                        Spacer()
+                        Text("\(item.frameCount) · \(duration(item.integrationSeconds))")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                }
+                if insight.filterUsage.isEmpty {
+                    Text("No filter metadata yet").foregroundStyle(.secondary)
+                }
+            }.padding(8)
+        }
+        .accessibilityIdentifier("v2.insights.filters")
+    }
+
+    private func setupBreakdown(_ insight: InsightsSnapshot) -> some View {
+        GroupBox("Equipment usage") {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(insight.setupUsage.prefix(8)) { item in
+                    HStack {
+                        Image(systemName: "camera.aperture")
+                            .foregroundStyle(AstroTokens.Color.spectralBlue)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.camera).lineLimit(1)
+                            if let focalLength = item.focalLength {
+                                Text("\(focalLength.formatted(.number.precision(.fractionLength(0...1)))) mm")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        Text("\(item.frameCount) · \(duration(item.integrationSeconds))")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                }
+                if insight.setupUsage.isEmpty {
+                    Text("No equipment metadata yet").foregroundStyle(.secondary)
+                }
+            }.padding(8)
+        }
+        .accessibilityIdentifier("v2.insights.equipment")
     }
 
     private func activityChart(_ insight: InsightsSnapshot) -> some View {
