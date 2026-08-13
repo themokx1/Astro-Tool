@@ -10,12 +10,24 @@ public enum ProjectsStoreError: LocalizedError, Equatable {
     }
 }
 
+public struct ProjectWorkspaceRow: Identifiable, Equatable, Sendable {
+    public let project: ProjectRecord
+    public let nightCount: Int
+    public let integrationSeconds: Double
+    public let usableFrames: Int
+    public let excludedFrames: Int
+    public let latestNight: String?
+    public let nextAction: String
+    public var id: UUID { project.id }
+}
+
 @MainActor
 @Observable
 public final class ProjectsStore {
     public typealias MetadataFactory = @MainActor @Sendable (URL) throws -> MetadataStore
 
     public private(set) var projects: [ProjectRecord] = []
+    public private(set) var workspaceRows: [ProjectWorkspaceRow] = []
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
     public private(set) var rootURL: URL?
@@ -39,6 +51,7 @@ public final class ProjectsStore {
             self.metadata = metadata
             self.rootURL = rootURL.standardizedFileURL
             projects = try await metadata.projects()
+            workspaceRows = try await Self.makeWorkspaceRows(projects: projects, metadata: metadata)
             searchIndex = try await Self.makeSearchIndex(projects: projects, metadata: metadata)
             if let selectedProjectID, projects.contains(where: { $0.id == selectedProjectID }) {
                 selectedProject = try await ProjectsQuery(metadata: metadata).project(id: selectedProjectID)
@@ -97,6 +110,7 @@ public final class ProjectsStore {
         do {
             try await metadata.save(project)
             projects = try await metadata.projects()
+            workspaceRows = try await Self.makeWorkspaceRows(projects: projects, metadata: metadata)
             errorMessage = nil
             return project
         } catch {
@@ -129,6 +143,26 @@ public final class ProjectsStore {
             result[project.id] = normalized(terms.joined(separator: " "))
         }
         return result
+    }
+
+    private static func makeWorkspaceRows(
+        projects: [ProjectRecord], metadata: MetadataStore
+    ) async throws -> [ProjectWorkspaceRow] {
+        let query = ProjectsQuery(metadata: metadata)
+        var rows: [ProjectWorkspaceRow] = []
+        for project in projects {
+            guard let snapshot = try await query.project(id: project.id) else { continue }
+            rows.append(ProjectWorkspaceRow(
+                project: project,
+                nightCount: snapshot.nights.count,
+                integrationSeconds: snapshot.integrationSeconds,
+                usableFrames: snapshot.usableFrames,
+                excludedFrames: snapshot.totalFrames - snapshot.usableFrames,
+                latestNight: snapshot.nights.map(\.night.localDate).max(),
+                nextAction: snapshot.nextAction.title
+            ))
+        }
+        return rows
     }
 
     private static func normalized(_ value: String) -> String {

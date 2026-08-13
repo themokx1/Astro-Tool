@@ -49,40 +49,50 @@ public struct ProjectsView: View {
 
             if !store.projects.isEmpty {
                 GroupBox("Saved projects") {
-                    VStack(spacing: 0) {
-                        ForEach(visibleProjects, id: \.id) { project in
-                            HStack(spacing: 12) {
-                                Image(systemName: "scope").foregroundStyle(AstroTokens.Color.spectralBlue)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(project.displayName).font(.headline)
-                                    Text(project.catalogID).font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Text(project.phase.rawValue.capitalized)
-                                    .font(.caption.weight(.medium))
-                                    .padding(.horizontal, 8).padding(.vertical, 4)
-                                    .background(.quaternary, in: Capsule())
-                                HStack(spacing: 6) {
-                                    Button(store.selectedProjectID == project.id ? "Hide details" : "Details") {
-                                        Task {
-                                            try? await store.selectProject(
-                                                store.selectedProjectID == project.id ? nil : project.id
-                                            )
-                                        }
-                                    }
-                                    .buttonStyle(.bordered)
-                                    Button("Results") { showResults(project) }.buttonStyle(.bordered)
-                                    Button("Review") { reviewProject(project) }
-                                        .buttonStyle(.bordered)
-                                        .accessibilityLabel("Review \(project.displayName)")
-                                        .accessibilityIdentifier("v2.projects.review")
-                                }
+                    Table(filteredRows, selection: projectSelection) {
+                        TableColumn("Project") { row in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(row.project.displayName).font(.headline)
+                                Text(row.project.catalogID).font(.caption).foregroundStyle(.secondary)
                             }
-                            .padding(.vertical, 10)
-                            if project.id != store.projects.last?.id { Divider() }
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) { open(row.project) }
+                        }
+                        TableColumn("Phase") { row in Text(row.project.phase.rawValue.capitalized) }
+                            .width(min: 85, ideal: 100)
+                        TableColumn("Nights") { row in Text(row.nightCount.formatted()).monospacedDigit() }
+                            .width(60)
+                        TableColumn("Integration") { row in Text(duration(row.integrationSeconds)).monospacedDigit() }
+                            .width(85)
+                        TableColumn("Frames") { row in
+                            Text("\(row.usableFrames) / \(row.excludedFrames)").monospacedDigit()
+                                .help("Usable / excluded")
+                        }.width(80)
+                        TableColumn("Latest") { row in Text(row.latestNight ?? "—").monospacedDigit() }
+                            .width(100)
+                        TableColumn("Next") { row in Text(row.nextAction).lineLimit(1) }
+                        TableColumn("") { row in
+                            HStack(spacing: 4) {
+                                Button { reviewProject(row.project) } label: { Image(systemName: "checklist") }
+                                    .help("Review frames")
+                                Button { showResults(row.project) } label: { Image(systemName: "square.stack.3d.up") }
+                                    .help("Results")
+                            }
+                            .buttonStyle(.borderless)
+                        }.width(58)
+                    }
+                    .frame(minHeight: 280)
+                    .contextMenu(forSelectionType: UUID.self) { ids in
+                        if let id = ids.first, let row = store.workspaceRows.first(where: { $0.id == id }) {
+                            Button("Open Project") { open(row.project) }
+                            Button("Review Frames") { reviewProject(row.project) }
+                            Button("Results") { showResults(row.project) }
+                        }
+                    } primaryAction: { ids in
+                        if let id = ids.first, let row = store.workspaceRows.first(where: { $0.id == id }) {
+                            open(row.project)
                         }
                     }
-                    .padding(.horizontal, 8)
                 }
             }
 
@@ -103,6 +113,27 @@ public struct ProjectsView: View {
         .task(id: store.projects) {
             visibleProjects = (try? await store.search(searchText)) ?? store.projects
         }
+    }
+
+    private var filteredRows: [ProjectWorkspaceRow] {
+        let ids = Set(visibleProjects.map(\.id))
+        return store.workspaceRows.filter { ids.contains($0.id) }
+    }
+
+    private var projectSelection: Binding<UUID?> {
+        Binding(
+            get: { store.selectedProjectID },
+            set: { id in Task { try? await store.selectProject(id) } }
+        )
+    }
+
+    private func open(_ project: ProjectRecord) {
+        Task { try? await store.selectProject(project.id) }
+    }
+
+    private func duration(_ seconds: Double) -> String {
+        let minutes = Int(seconds.rounded()) / 60
+        return String(format: "%d:%02d", minutes / 60, minutes % 60)
     }
 }
 

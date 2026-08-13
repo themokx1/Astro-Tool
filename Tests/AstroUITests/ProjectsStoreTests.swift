@@ -58,6 +58,35 @@ struct ProjectsStoreTests {
         #expect(store.errorMessage == nil)
     }
 
+    @Test("Project workspace rows aggregate acquisition facts and survive reload selection")
+    func workspaceRowsAndStableSelection() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .collecting)
+        let night = NightRecord(id: UUID(), localDate: "2026-08-08", timeZoneID: "Europe/Budapest")
+        let series = SeriesRecord(
+            id: UUID(), projectID: project.id, nightID: night.id, setupID: nil,
+            setupDescriptor: "ASI2600MC · 261 mm", sensorMode: .osc, passband: .dualBand,
+            exposureSeconds: 300, filterName: "SV220", filterID: nil, gain: 100, offset: 50, binning: "1x1"
+        )
+        let frames = (0..<3).map { index in
+            FrameDecisionRecord(id: UUID(), seriesID: series.id, relativePath: "light/\(index).fit", verdict: index == 2 ? .rejected : .accepted, logicallyExcluded: index == 2)
+        }
+        try await metadata.save(MetadataWriteBatch(projects: [project], nights: [night], series: [series], frameDecisions: frames))
+        let store = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+
+        try await store.open(rootURL: root)
+        let row = try #require(store.workspaceRows.first)
+        #expect(row.nightCount == 1)
+        #expect(row.usableFrames == 2)
+        #expect(row.excludedFrames == 1)
+        #expect(row.integrationSeconds == 600)
+        #expect(row.latestNight == "2026-08-08")
+        try await store.selectProject(project.id)
+        try await store.open(rootURL: root)
+        #expect(store.selectedProjectID == project.id)
+    }
+
     @Test("Project search matches catalog name, filter and setup metadata")
     func projectSearchUsesWorkflowMetadata() async throws {
         let metadata = try MetadataStore.temporary()
