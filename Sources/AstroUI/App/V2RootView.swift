@@ -340,14 +340,7 @@ private struct DetailHost: View {
                 chooseLibrary: chooseLibrary
             )
         case .health:
-            V2EmptyDetail(
-                title: "Library health is ready",
-                message: "Explore the Library workspace before read-only health checks arrive.",
-                systemImage: "checkmark.shield",
-                actionTitle: "Explore Library workspace",
-                action: { router.navigate(to: .library) },
-                accessibilityIdentifier: "v2.detail.library.health"
-            )
+            HealthView(rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary)
         default:
             V2EmptyDetail(
                 title: router.primarySection.emptyTitle,
