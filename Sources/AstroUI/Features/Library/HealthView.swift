@@ -23,6 +23,7 @@ public struct HealthView: View {
     @State private var showsCleanup = false
     @State private var showsSensors = false
     @State private var category: LibraryHealthCategory?
+    @State private var selectedFindingID: String?
 
     public var body: some View {
         WorkspacePage(eyebrow: "Read-only diagnostics", title: "Library Health", subtitle: "Actionable calibration and integrity checks without changing source files.") {
@@ -43,28 +44,38 @@ public struct HealthView: View {
                 .pickerStyle(.segmented)
                 .accessibilityIdentifier("v2.health.categories")
                 GroupBox("Health findings") {
-                    VStack(spacing: 0) {
-                        ForEach(snapshot.items.filter { category == nil || $0.category == category }) { item in
-                            HStack(alignment: .top, spacing: 12) {
+                    Table(filteredItems(snapshot), selection: $selectedFindingID) {
+                        TableColumn("Finding") { item in
+                            HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: icon(item.severity)).foregroundStyle(color(item.severity))
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(item.title).font(.headline)
                                     Text(item.detail).font(.callout).foregroundStyle(.secondary)
-                                    if let target = item.target, let date = item.sessionDate {
-                                        Label("\(target) · \(date)", systemImage: "folder")
-                                            .font(.caption.monospaced()).foregroundStyle(.secondary)
-                                            .textSelection(.enabled)
-                                    }
                                 }
-                                Spacer()
-                                VStack(alignment: .trailing, spacing: 4) {
-                                    Text(item.category.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
-                                    Text(nextStep(item.category)).font(.caption2).foregroundStyle(AstroTokens.Color.spectralBlue)
-                                }
-                            }.padding(.vertical, 10)
-                            Divider()
+                                .padding(.vertical, 4)
+                            }
                         }
-                    }.padding(.horizontal, 8)
+                        TableColumn("Target / Night") { item in
+                            Text([item.target, item.sessionDate].compactMap { $0 }.joined(separator: " · ").nilIfEmpty ?? "—")
+                                .font(.callout.monospaced())
+                        }
+                        .width(min: 145, ideal: 190)
+                        TableColumn("Category") { item in
+                            Text(item.category.rawValue.capitalized)
+                        }
+                        .width(min: 90, ideal: 110)
+                        TableColumn("Next step") { item in
+                            Text(nextStep(item.category)).foregroundStyle(AstroTokens.Color.spectralBlue)
+                        }
+                        .width(min: 115, ideal: 145)
+                    }
+                    .frame(minHeight: 250)
+                    .contextMenu(forSelectionType: String.self) { findingIDs in
+                        if let item = filteredItems(snapshot).first(where: { findingIDs.contains($0.id) }) {
+                            healthActionMenu(item)
+                        }
+                    }
+                    .accessibilityIdentifier("v2.health.findings-table")
                 }
                 HStack {
                     Button("Review Cleanup Candidates…") { showsCleanup = true }.buttonStyle(.bordered)
@@ -102,4 +113,24 @@ public struct HealthView: View {
         case .integrity: "No action needed"
         }
     }
+
+    private func filteredItems(_ snapshot: LibraryHealthSnapshot) -> [LibraryHealthItem] {
+        snapshot.items.filter { category == nil || $0.category == category }
+    }
+
+    @ViewBuilder
+    private func healthActionMenu(_ item: LibraryHealthItem) -> some View {
+        switch item.category {
+        case .duplicates, .organization, .storage:
+            Button("Preview Cleanup…") { showsCleanup = true }
+        case .flat, .dark, .bias:
+            Button("Review Sensor Profiles…") { showsSensors = true }
+        case .integrity:
+            Button("No Action Required") {}.disabled(true)
+        }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

@@ -4,6 +4,7 @@ import SwiftUI
 
 public struct PlanningView: View {
     @State private var store = PlanningStore()
+    @State private var selectedTargetID: String?
     let createProject: (String) -> Void
 
     public var body: some View {
@@ -84,10 +85,39 @@ public struct PlanningView: View {
                     ContentUnavailableView.search(text: store.searchText)
                         .frame(minHeight: 220)
                 } else {
-                    LazyVStack(spacing: 0) {
-                        ForEach(store.filteredRecommendations.prefix(80)) { row in
-                            RecommendationRow(row: row, createProject: createProject)
-                            Divider()
+                    Table(store.filteredRecommendations, selection: $selectedTargetID) {
+                        TableColumn("Target") { row in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(displayName(row)).font(.headline)
+                                Text(row.target.kind.rawValue).font(.caption).foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        TableColumn("Framing") { row in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(row.fit.label).fontWeight(.medium)
+                                Text("\((row.frameCoverage * 100), format: .number.precision(.fractionLength(0)))% of short edge")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .width(min: 145, ideal: 180)
+                        TableColumn("Integration") { row in
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text("≈ \(row.integrationHours, format: .number.precision(.fractionLength(1))) h")
+                                    .font(.headline.monospacedDigit())
+                                Text(row.integrationConfidence.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .width(min: 105, ideal: 125)
+                    }
+                    .frame(minHeight: 300)
+                    .contextMenu(forSelectionType: String.self) { targetIDs in
+                        if let row = store.filteredRecommendations.first(where: { targetIDs.contains($0.id) }) {
+                            Button("Plan Selected") { createProject(row.target.designation) }
+                        }
+                    } primaryAction: { targetIDs in
+                        if let row = store.filteredRecommendations.first(where: { targetIDs.contains($0.id) }) {
+                            createProject(row.target.designation)
                         }
                     }
                 }
@@ -96,41 +126,8 @@ public struct PlanningView: View {
         }
         .accessibilityIdentifier("v2.planning.recommendations")
     }
-}
 
-private struct RecommendationRow: View {
-    let row: PlanningRecommendation
-    let createProject: (String) -> Void
-
-    var body: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(displayName).font(.headline)
-                Text(row.target.kind.rawValue).font(.caption).foregroundStyle(.secondary)
-            }
-            .frame(minWidth: 210, alignment: .leading)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(row.fit.label).font(.callout.weight(.medium))
-                Text("\((row.frameCoverage * 100), format: .number.precision(.fractionLength(0)))% of short edge")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 3) {
-                Text("≈ \(row.integrationHours, format: .number.precision(.fractionLength(1))) h")
-                    .font(.headline.monospacedDigit())
-                Text(row.integrationConfidence.rawValue.capitalized)
-                    .font(.caption).foregroundStyle(.secondary)
-                    .help(row.integrationSource)
-            }
-            Button("Plan…") {
-                createProject(row.target.designation)
-            }
-            .buttonStyle(.bordered)
-        }
-        .padding(.vertical, 9)
-    }
-
-    private var displayName: String {
+    private func displayName(_ row: PlanningRecommendation) -> String {
         if let name = row.target.commonNameHU { return "\(row.target.designation) · \(name)" }
         if let name = TargetCatalog.englishName(for: row.target) { return "\(row.target.designation) · \(name)" }
         return row.target.designation

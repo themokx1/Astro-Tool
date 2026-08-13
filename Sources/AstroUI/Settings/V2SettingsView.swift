@@ -71,21 +71,29 @@ private struct EquipmentEvaluationSettingsView: View {
     @State private var model = ""
     @State private var passband = EquipmentFilterPassband.unknown
     @State private var errorMessage: String?
+    @State private var selectedFilterID: UUID?
 
     var body: some View {
         Form {
             Section("Filters") {
                 if store.filters.isEmpty { Text("No filters added yet.").foregroundStyle(.secondary) }
-                ForEach(store.filters) { filter in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text([filter.manufacturer, filter.model].filter { !$0.isEmpty }.joined(separator: " "))
-                            Text(filter.passband.title).font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button(role: .destructive) { store.removeFilter(id: filter.id) } label: { Image(systemName: "trash") }
+                Table(store.filters, selection: $selectedFilterID) {
+                    TableColumn("Filter") { filter in
+                        Text([filter.manufacturer, filter.model].filter { !$0.isEmpty }.joined(separator: " "))
+                    }
+                    TableColumn("Passband") { filter in Text(filter.passband.title) }
+                }
+                .frame(minHeight: 150)
+                .contextMenu(forSelectionType: UUID.self) { filterIDs in
+                    if let id = filterIDs.first {
+                        Button("Remove Filter", role: .destructive) { store.removeFilter(id: id) }
                     }
                 }
+                .accessibilityIdentifier("v2.settings.filters-table")
+                Button("Remove Selected", role: .destructive) {
+                    if let selectedFilterID { store.removeFilter(id: selectedFilterID) }
+                }
+                .disabled(selectedFilterID == nil)
             }
             Section("Add filter") {
                 TextField("Manufacturer, e.g. SVBONY", text: $manufacturer)

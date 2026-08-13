@@ -92,4 +92,24 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(workspace.contains("contextMenu(forSelectionType: UUID.self"))
         #expect(workspace.contains("v2.results.table"))
     }
+
+    @Test("Health, planning, and equipment use actionable work tables")
+    func remainingWorkspaceTablesContract() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let health = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/HealthView.swift"))
+        let planning = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Planning/PlanningView.swift"))
+        let settings = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"))
+        #expect(health.contains("Table(filteredItems(snapshot), selection: $selectedFindingID)"))
+        #expect(health.contains("TableColumn(\"Finding\""))
+        #expect(health.contains("contextMenu(forSelectionType: String.self"))
+        #expect(health.contains("v2.health.findings-table"))
+        #expect(planning.contains("Table(store.filteredRecommendations, selection: $selectedTargetID)"))
+        #expect(planning.contains("TableColumn(\"Target\""))
+        #expect(planning.contains("Plan Selected"))
+        #expect(planning.contains("contextMenu(forSelectionType: String.self"))
+        #expect(settings.contains("Table(store.filters, selection: $selectedFilterID)"))
+        #expect(settings.contains("Remove Selected"))
+        #expect(settings.contains("v2.settings.filters-table"))
+    }
 }
