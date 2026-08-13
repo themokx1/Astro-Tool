@@ -96,4 +96,12 @@ struct ReleasePackagingSurfaceTests {
         #expect(metadataCheck.contains("CHANGELOG.md"))
         #expect(metadataCheck.contains("Release metadata check passed."))
     }
+
+    @Test("Public website identifies the current V2 product")
+    func websiteIdentifiesV2() throws {
+        let homepage = try source("docs/index.html")
+        #expect(homepage.contains("AstroTool 2.0"))
+        #expect(homepage.contains("Project → Night → Series → Frame → Result"))
+        #expect(!homepage.contains("AstroTool 1.0"))
+    }
 }

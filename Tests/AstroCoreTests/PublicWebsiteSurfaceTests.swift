@@ -33,10 +33,10 @@ struct PublicWebsiteSurfaceTests {
         #expect(css.contains("@media"))
     }
 
-    @Test("Homepage describes the real 1.0 product and Universal download")
+    @Test("Homepage describes the real 2.0 product and Universal download")
     func accurateHomepage() throws {
         let html = try source("docs/index.html")
-        #expect(html.contains("AstroTool 1.0"))
+        #expect(html.contains("AstroTool 2.0"))
         #expect(html.contains("Apple Silicon és Intel"))
         #expect(html.contains("A képeid a Maceden maradnak"))
         #expect(html.contains("Az audit nem töröl és nem mozgat"))
