@@ -20,6 +20,7 @@ public struct HealthView: View {
     let rootURL: URL?
     let chooseLibrary: () -> Void
     @State private var store = LibraryHealthStore()
+    @State private var showsCleanup = false
 
     public var body: some View {
         WorkspacePage(eyebrow: "Read-only diagnostics", title: "Library Health", subtitle: "Actionable calibration and integrity checks without changing source files.") {
@@ -45,6 +46,8 @@ public struct HealthView: View {
                         }
                     }.padding(.horizontal, 8)
                 }
+                Button("Review Cleanup Candidates…") { showsCleanup = true }
+                    .buttonStyle(.bordered)
             } else if store.isLoading {
                 ProgressView("Checking library health…").frame(maxWidth: .infinity, minHeight: 280)
             } else {
@@ -59,6 +62,11 @@ public struct HealthView: View {
         .navigationTitle("Library Health")
         .accessibilityLabel("Library Health")
         .accessibilityIdentifier("v2.detail.library.health")
+        .overlay {
+            if showsCleanup, let rootURL {
+                CleanupPreviewView(rootURL: rootURL) { showsCleanup = false }
+            }
+        }
     }
 
     private func icon(_ severity: LibraryHealthSeverity) -> String { severity == .healthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill" }

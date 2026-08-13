@@ -48,6 +48,44 @@ public enum CleanupReport {
     public static func build(db: Database, config: AstroConfig, maxPathsPerGroup: Int = 50) throws -> CleanupSummary {
         let files = try db.allFiles(includeMissing: false)
 
+        return build(files: files, config: config, maxPathsPerGroup: maxPathsPerGroup)
+    }
+
+    /// Opens an already-migrated AstroTool index without creating files or
+    /// changing SQLite journal state. Intended for V2 read-only dashboards.
+    public static func build(
+        readOnlyDatabasePath path: String,
+        config: AstroConfig,
+        maxPathsPerGroup: Int = 50
+    ) throws -> CleanupSummary {
+        let db = try SQLiteDB(readOnlyPath: path)
+        var files: [FileRecord] = []
+        try db.query(
+            """
+            SELECT id, path, size, mtime, ext, kind, area, target, session_date,
+                   role, content_hash, scanned_at, missing, inode, nlink
+            FROM files WHERE missing = 0;
+            """
+        ) { row in
+            files.append(FileRecord(
+                id: row.int64(0), path: row.string(1) ?? "", size: row.int64(2) ?? 0,
+                mtime: row.double(3) ?? 0, ext: row.string(4) ?? "", kind: row.string(5) ?? "",
+                area: row.string(6).flatMap(LibraryArea.init(rawValue:)) ?? .other,
+                target: row.string(7), sessionDate: row.string(8),
+                role: row.string(9).flatMap(FrameRole.init(rawValue:)) ?? .other,
+                contentHash: row.string(10), scannedAt: row.double(11) ?? 0,
+                missing: false, inode: row.int64(13), nlink: row.int64(14)
+            ))
+        }
+        return build(files: files, config: config, maxPathsPerGroup: maxPathsPerGroup)
+    }
+
+    private static func build(
+        files: [FileRecord],
+        config: AstroConfig,
+        maxPathsPerGroup: Int
+    ) -> CleanupSummary {
+
         var groups = residueGroups(files: files, config: config, maxPathsPerGroup: maxPathsPerGroup)
         if let dupGroup = duplicateGroup(files: files, maxPathsPerGroup: maxPathsPerGroup) {
             groups.append(dupGroup)

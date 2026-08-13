@@ -74,6 +74,20 @@ private func group(_ summary: CleanupSummary, category: String) -> CleanupGroup?
     #expect(summary.grandTotalBytes == 2_010_000)
 }
 
+@Test func cleanupReportCanOpenAnExistingIndexStrictlyReadOnly() throws {
+    let fixture = try CleanupFixture.make()
+    defer { fixture.cleanup() }
+    try fixture.db.upsertFile(makeFileRecord(path: "stacks/M42/process/x.fit", size: 4096))
+    let databaseURL = fixture.dbDir.appendingPathComponent("test.sqlite")
+    let before = try FileManager.default.attributesOfItem(atPath: databaseURL.path)[.modificationDate] as? Date
+
+    let summary = try CleanupReport.build(readOnlyDatabasePath: databaseURL.path, config: fixture.config)
+
+    #expect(summary.grandTotalBytes == 4096)
+    #expect(summary.groups.first?.category == "residue-process-dir")
+    #expect(try FileManager.default.attributesOfItem(atPath: databaseURL.path)[.modificationDate] as? Date == before)
+}
+
 @Test func cleanupReportSubcategorizesResidueByExtensionAndProcessDir() throws {
     let fixture = try CleanupFixture.make()
     defer { fixture.cleanup() }
