@@ -154,4 +154,28 @@ struct V2ShellSurfaceTests {
         #expect(!v2Commands.contains("CommandGroup(replacing: .newItem)"))
         #expect(!v2Commands.contains(".keyboardShortcut(\"n\""))
     }
+
+    @Test("Frame review exposes series, quality and inspector boundaries without Quick Look")
+    func reviewWorkspaceContract() throws {
+        let review = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Features/Review/ReviewWorkspace.swift"
+            ),
+            encoding: .utf8
+        )
+        let inspector = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Inspector/SeriesInspector.swift"
+            ),
+            encoding: .utf8
+        )
+
+        for identifier in ["v2.review.workspace", "v2.review.series-list", "v2.review.quality"] {
+            #expect(review.contains(identifier))
+        }
+        #expect(inspector.contains("v2.review.inspector"))
+        #expect(review.contains("Source files are never moved here"))
+        #expect(!review.contains("QuickLook"))
+        #expect(!review.contains("QLThumbnail"))
+    }
 }

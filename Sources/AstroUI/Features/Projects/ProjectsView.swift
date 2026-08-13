@@ -6,6 +6,7 @@ public struct ProjectsView: View {
     @Bindable var store: ProjectsStore
     let createProject: () -> Void
     let chooseLibrary: () -> Void
+    let reviewProject: (ProjectRecord) -> Void
 
     public var body: some View {
         WorkspacePage(
@@ -49,6 +50,9 @@ public struct ProjectsView: View {
                                     .font(.caption.weight(.medium))
                                     .padding(.horizontal, 8).padding(.vertical, 4)
                                     .background(.quaternary, in: Capsule())
+                                Button("Review") { reviewProject(project) }
+                                    .buttonStyle(.bordered)
+                                    .accessibilityLabel("Review \(project.displayName)")
                             }
                             .padding(.vertical, 10)
                             if project.id != store.projects.last?.id { Divider() }

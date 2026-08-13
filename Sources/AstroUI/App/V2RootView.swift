@@ -49,6 +49,7 @@ public struct V2RootView: View {
     @State private var onboardingStore: OnboardingStore
     @State private var projectsStore: ProjectsStore
     @State private var nightsStore: NightsStore
+    @State private var reviewStore: ReviewStore
     @State private var isOnboardingPresented: Bool
     @State private var didRestoreWindowState = false
     @SceneStorage("v2.windowRestoration") private var encodedWindowState = ""
@@ -74,6 +75,11 @@ public struct V2RootView: View {
                 ? ProjectsStore.productionMetadata
                 : ProjectsStore.previewMetadata
         ))
+        _reviewStore = State(initialValue: ReviewStore(
+            metadataFactory: uiTestFixture == nil
+                ? ProjectsStore.productionMetadata
+                : ProjectsStore.previewMetadata
+        ))
         _isOnboardingPresented = State(initialValue: uiTestFixture != nil)
     }
 
@@ -84,6 +90,7 @@ public struct V2RootView: View {
             onboardingStore: onboardingStore,
             projectsStore: projectsStore,
             nightsStore: nightsStore,
+            reviewStore: reviewStore,
             isOnboardingPresented: $isOnboardingPresented
         )
             .onAppear {
@@ -132,7 +139,9 @@ private struct V2Shell: View {
     let onboardingStore: OnboardingStore
     let projectsStore: ProjectsStore
     let nightsStore: NightsStore
+    let reviewStore: ReviewStore
     @Binding var isOnboardingPresented: Bool
+    @State private var reviewDestination: ReviewDestination?
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
@@ -147,7 +156,11 @@ private struct V2Shell: View {
                 onboardingStore: onboardingStore,
                 projectsStore: projectsStore,
                 nightsStore: nightsStore,
-                chooseLibrary: presentOnboarding
+                chooseLibrary: presentOnboarding,
+                reviewProject: { project in
+                    guard let rootURL = onboardingStore.selectedRoot else { return }
+                    reviewDestination = ReviewDestination(id: project.id, rootURL: rootURL)
+                }
             )
         }
         .navigationSplitViewStyle(.balanced)
@@ -201,6 +214,14 @@ private struct V2Shell: View {
                 }
             )
         }
+        .sheet(item: $reviewDestination) { destination in
+            ReviewWorkspace(
+                store: reviewStore,
+                rootURL: destination.rootURL,
+                projectID: destination.id,
+                dismiss: { reviewDestination = nil }
+            )
+        }
         .onOpenURL { url in
             guard let route = AppRoute(deepLink: url) else { return }
             router.open(route)
@@ -211,6 +232,11 @@ private struct V2Shell: View {
         onboardingStore.returnToLibraryChoice()
         isOnboardingPresented = true
     }
+}
+
+private struct ReviewDestination: Identifiable {
+    let id: UUID
+    let rootURL: URL
 }
 
 @MainActor
@@ -271,6 +297,7 @@ private struct DetailHost: View {
     let projectsStore: ProjectsStore
     let nightsStore: NightsStore
     let chooseLibrary: () -> Void
+    let reviewProject: (ProjectRecord) -> Void
 
     @ViewBuilder
     var body: some View {
@@ -282,7 +309,8 @@ private struct DetailHost: View {
                 snapshot: onboardingStore.phase.summary,
                 store: projectsStore,
                 createProject: { router.present(.newProject) },
-                chooseLibrary: chooseLibrary
+                chooseLibrary: chooseLibrary,
+                reviewProject: reviewProject
             )
         case .nights:
             NightsView(
