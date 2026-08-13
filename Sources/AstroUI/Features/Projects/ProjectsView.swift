@@ -250,12 +250,22 @@ private struct ProjectNightSection: View {
 }
 
 public struct NewProjectView: View {
-    @State private var search = ""
+    @State private var search: String
     @State private var selectedID: String?
     @State private var isSaving = false
     @State private var saveError: String?
     @Bindable var store: ProjectsStore
     let dismiss: () -> Void
+
+    public init(
+        store: ProjectsStore,
+        initialQuery: String = "",
+        dismiss: @escaping () -> Void
+    ) {
+        _store = Bindable(store)
+        _search = State(initialValue: initialQuery)
+        self.dismiss = dismiss
+    }
 
     private var matches: [ProjectCatalogMatch] {
         ProjectsQuery.searchCatalog(search, limit: 12)

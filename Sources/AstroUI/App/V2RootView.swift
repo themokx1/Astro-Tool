@@ -164,6 +164,7 @@ private struct V2Shell: View {
     @State private var resultsDestination: ResultsDestination?
     @State private var showsSearch = false
     @State private var globalSearch = GlobalSearchStore()
+    @State private var newProjectInitialQuery = ""
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
@@ -179,6 +180,10 @@ private struct V2Shell: View {
                 projectsStore: projectsStore,
                 nightsStore: nightsStore,
                 chooseLibrary: presentOnboarding,
+                createPlannedProject: { designation in
+                    newProjectInitialQuery = designation
+                    router.present(.newProject)
+                },
                 reviewProject: { project in
                     guard let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback else { return }
                     if router.isInspectorPresented {
@@ -218,7 +223,10 @@ private struct V2Shell: View {
                     )
                 }
 
-                Button(action: { router.present(.newProject) }) {
+                Button(action: {
+                    newProjectInitialQuery = ""
+                    router.present(.newProject)
+                }) {
                     Label("New Project", systemImage: "plus")
                 }
                 .help("Create a project from the astronomical catalog")
@@ -256,8 +264,9 @@ private struct V2Shell: View {
         }
         .sheet(item: $router.presentation) { presentation in
             if presentation == .newProject {
-                NewProjectView(store: projectsStore) {
+                NewProjectView(store: projectsStore, initialQuery: newProjectInitialQuery) {
                     router.dismissPresentation()
+                    newProjectInitialQuery = ""
                 }
             } else {
                 V2PresentationPlaceholder(route: presentation) {
@@ -433,6 +442,7 @@ private struct DetailHost: View {
     let projectsStore: ProjectsStore
     let nightsStore: NightsStore
     let chooseLibrary: () -> Void
+    let createPlannedProject: (String) -> Void
     let reviewProject: (ProjectRecord) -> Void
     let showResults: (ProjectRecord) -> Void
     let convertSession: () -> Void
@@ -467,7 +477,7 @@ private struct DetailHost: View {
                 chooseLibrary: chooseLibrary
             )
         case .planning:
-            PlanningView(createProject: { router.present(.newProject) })
+            PlanningView(createProject: createPlannedProject)
         case .library:
             LibraryView(
                 snapshot: onboardingStore.phase.summary,

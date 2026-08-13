@@ -65,4 +65,16 @@ struct V2BetaWorkspaceSurfaceTests {
         #expect(home.contains("openProject(project)"))
         #expect(shell.contains("projectsStore.selectProject(project.id)"))
     }
+
+    @Test("Planning carries the recommended catalog target into project creation")
+    func planningPrefillsNewProjectFromRecommendation() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let planning = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Planning/PlanningView.swift"))
+        let projects = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectsView.swift"))
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        #expect(planning.contains("createProject(row.target.designation)"))
+        #expect(projects.contains("initialQuery"))
+        #expect(shell.contains("newProjectInitialQuery = designation"))
+    }
 }

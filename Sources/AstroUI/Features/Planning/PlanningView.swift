@@ -4,7 +4,7 @@ import SwiftUI
 
 public struct PlanningView: View {
     @State private var store = PlanningStore()
-    let createProject: () -> Void
+    let createProject: (String) -> Void
 
     public var body: some View {
         WorkspacePage(
@@ -100,7 +100,7 @@ public struct PlanningView: View {
 
 private struct RecommendationRow: View {
     let row: PlanningRecommendation
-    let createProject: () -> Void
+    let createProject: (String) -> Void
 
     var body: some View {
         HStack(spacing: 14) {
@@ -122,7 +122,10 @@ private struct RecommendationRow: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .help(row.integrationSource)
             }
-            Button("Plan…", action: createProject).buttonStyle(.bordered)
+            Button("Plan…") {
+                createProject(row.target.designation)
+            }
+            .buttonStyle(.bordered)
         }
         .padding(.vertical, 9)
     }
