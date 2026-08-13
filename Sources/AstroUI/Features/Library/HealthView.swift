@@ -126,7 +126,7 @@ public struct HealthView: View {
         case .flat, .dark, .bias:
             Button("Review Sensor Profiles…") { showsSensors = true }
         case .integrity:
-            Button("No Action Required") {}.disabled(true)
+            Text("No action required")
         }
     }
 }

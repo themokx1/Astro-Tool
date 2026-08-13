@@ -279,9 +279,6 @@ private struct ArchivePreviewSheet: View {
             HStack {
                 Spacer()
                 Button("Close", action: dismiss).keyboardShortcut(.cancelAction)
-                Button("Move to Archive") {}
-                    .buttonStyle(.borderedProminent)
-                    .disabled(true)
             }
         }
         .padding(AstroTokens.Spacing.spacious)

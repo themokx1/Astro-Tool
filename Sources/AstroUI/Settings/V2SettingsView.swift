@@ -23,13 +23,12 @@ public struct V2SettingsView: View {
 
 private struct GeneralSettingsView: View {
     @AppStorage("v2.general.showGuidance") private var showGuidance = true
-    @AppStorage("v2.general.confirmMutations") private var confirmMutations = true
     var body: some View {
         Form {
             Section("Experience") {
                 Toggle("Show contextual guidance", isOn: $showGuidance)
-                Toggle("Confirm operations that can change files", isOn: $confirmMutations).disabled(true)
-                Text("Destructive confirmations cannot be disabled in this beta.").font(.caption).foregroundStyle(.secondary)
+                Label("Operations that can change files always require confirmation.", systemImage: "lock.shield")
+                Text("This safety rule is part of AstroTool and is not a preference.").font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
     }

@@ -41,7 +41,8 @@ public struct CleanupPreviewView: View {
             HStack {
                 Label("Preview only · no files moved", systemImage: "lock.shield").foregroundStyle(.green)
                 Spacer()
-                Button("Quarantine is not enabled yet") {}.disabled(true)
+                Text("Quarantine requires a separately approved operation")
+                    .font(.caption).foregroundStyle(.secondary)
             }.padding(16)
         }
         .frame(minWidth: 760, minHeight: 540)

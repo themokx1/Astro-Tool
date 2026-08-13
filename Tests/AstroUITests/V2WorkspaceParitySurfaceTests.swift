@@ -138,4 +138,22 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(nights.contains("openNight"))
         #expect(shell.contains("openNight: { id in"))
     }
+
+    @Test("Stable V2 does not present knowingly inert controls")
+    func noInertProductionControls() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let sources = [
+            "Sources/AstroUI/Features/Review/ReviewWorkspace.swift",
+            "Sources/AstroUI/Features/Library/CleanupPreviewView.swift",
+            "Sources/AstroUI/Features/Library/HealthView.swift",
+            "Sources/AstroUI/Settings/V2SettingsView.swift",
+        ]
+        for relative in sources {
+            let source = try String(contentsOf: root.appendingPathComponent(relative))
+            #expect(!source.contains(".disabled(true)"), Comment(rawValue: relative))
+            #expect(!source.contains("Button(\"Move to Archive\") {}"), Comment(rawValue: relative))
+            #expect(!source.contains("Button(\"No Action Required\") {}"), Comment(rawValue: relative))
+        }
+    }
 }
