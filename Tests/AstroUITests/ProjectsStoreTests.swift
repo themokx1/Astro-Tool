@@ -57,4 +57,24 @@ struct ProjectsStoreTests {
         #expect(store.selectedProject?.project == project)
         #expect(store.errorMessage == nil)
     }
+
+    @Test("Project search matches catalog name, filter and setup metadata")
+    func projectSearchUsesWorkflowMetadata() async throws {
+        let metadata = try MetadataStore.temporary()
+        let elephant = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .collecting)
+        let orion = ProjectRecord(id: UUID(), catalogID: "M 42", displayName: "Orion-köd", phase: .processing)
+        let night = NightRecord(id: UUID(), localDate: "2026-08-08", timeZoneID: "Europe/Budapest")
+        let filtered = SeriesRecord(
+            id: UUID(), projectID: elephant.id, nightID: night.id, setupID: nil,
+            setupDescriptor: "ASI2600MC · 261 mm", sensorMode: .osc, passband: .dualBand,
+            exposureSeconds: 300, filterName: "SV220", filterID: nil, gain: 100, offset: 50, binning: "1x1"
+        )
+        try await metadata.save(MetadataWriteBatch(projects: [elephant, orion], nights: [night], series: [filtered]))
+        let store = ProjectsStore(metadataFactory: { _ in metadata })
+        try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        #expect(try await store.search("SV220").map(\.id) == [elephant.id])
+        #expect(try await store.search("processing").map(\.id) == [orion.id])
+        #expect(try await store.search("IC1396").map(\.id) == [elephant.id])
+    }
 }

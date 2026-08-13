@@ -8,6 +8,8 @@ public struct ProjectsView: View {
     let chooseLibrary: () -> Void
     let reviewProject: (ProjectRecord) -> Void
     let showResults: (ProjectRecord) -> Void
+    @State private var searchText = ""
+    @State private var visibleProjects: [ProjectRecord] = []
 
     public var body: some View {
         WorkspacePage(
@@ -37,9 +39,18 @@ public struct ProjectsView: View {
             }
 
             if !store.projects.isEmpty {
+                TextField("Search projects, catalog, filter, setup, or status", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("v2.projects.search")
+                    .onChange(of: searchText) { _, value in
+                        Task { visibleProjects = (try? await store.search(value)) ?? [] }
+                    }
+            }
+
+            if !store.projects.isEmpty {
                 GroupBox("Saved projects") {
                     VStack(spacing: 0) {
-                        ForEach(store.projects, id: \.id) { project in
+                        ForEach(visibleProjects, id: \.id) { project in
                             HStack(spacing: 12) {
                                 Image(systemName: "scope").foregroundStyle(AstroTokens.Color.spectralBlue)
                                 VStack(alignment: .leading, spacing: 2) {
@@ -89,6 +100,9 @@ public struct ProjectsView: View {
         .navigationTitle("Projects")
         .accessibilityLabel("Projects")
         .accessibilityIdentifier("v2.detail.projects")
+        .task(id: store.projects) {
+            visibleProjects = (try? await store.search(searchText)) ?? store.projects
+        }
     }
 }
 
