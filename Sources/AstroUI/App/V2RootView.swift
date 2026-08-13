@@ -501,6 +501,8 @@ private struct ContentColumn: View {
                 if router.primarySection == .library {
                     Label("Health", systemImage: "checkmark.shield")
                         .tag(ContentRoute.health)
+                    Label("Calibration", systemImage: "thermometer.snowflake")
+                        .tag(ContentRoute.calibration)
                 }
             }
         }
@@ -633,7 +635,12 @@ private struct DetailHost: View {
                 chooseLibrary: chooseLibrary
             )
         case .health:
-            HealthView(rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary)
+            HealthView(
+                rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary,
+                openCalibration: { router.navigate(toContent: .calibration) }
+            )
+        case .calibration:
+            CalibrationView(rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary)
         default:
             V2EmptyDetail(
                 title: router.primarySection.emptyTitle,

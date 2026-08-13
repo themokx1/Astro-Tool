@@ -5,6 +5,7 @@ import SwiftUI
 public struct HealthView: View {
     let rootURL: URL?
     let chooseLibrary: () -> Void
+    let openCalibration: () -> Void
     @State private var store = LibraryHealthStore()
     @State private var showsCleanup = false
     @State private var showsSensors = false
@@ -82,6 +83,7 @@ public struct HealthView: View {
                 HStack {
                     Button("Review Cleanup Candidates…") { showsCleanup = true }.buttonStyle(.bordered)
                     Button("Sensor Profiles…") { showsSensors = true }.buttonStyle(.bordered)
+                    Button("Calibration…", action: openCalibration).buttonStyle(.bordered)
                 }
                 GroupBox("Audit run history") {
                     if snapshot.auditRuns.isEmpty {
@@ -153,6 +155,7 @@ public struct HealthView: View {
             Button("Preview Cleanup…") { showsCleanup = true }
         case .flat, .dark, .bias:
             Button("Review Sensor Profiles…") { showsSensors = true }
+            Button("Open Calibration…", action: openCalibration)
         case .integrity:
             Text("No action required")
         }

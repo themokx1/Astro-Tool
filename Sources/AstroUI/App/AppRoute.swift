@@ -55,6 +55,7 @@ public enum ContentRoute: Hashable, Codable, Sendable {
     case planning
     case library
     case health
+    case calibration
     case insights
     case reviewFrame(Int64)
     case result(String)
@@ -65,7 +66,7 @@ public enum ContentRoute: Hashable, Codable, Sendable {
         case .projects, .project, .projectSeries, .result: .projects
         case .nights, .night, .reviewFrame: .nights
         case .planning: .planning
-        case .library, .health: .library
+        case .library, .health, .calibration: .library
         case .insights: .insights
         }
     }
@@ -145,6 +146,7 @@ public enum AppRoute: Hashable, Sendable {
         case ("planning", []): self = .content(.planning)
         case ("library", []): self = .content(.library)
         case ("library", ["health"]): self = .content(.health)
+        case ("library", ["calibration"]): self = .content(.calibration)
         case ("insights", []): self = .content(.insights)
         case ("settings", let parts) where parts.count == 1 && !parts[0].isEmpty:
             self = .presentation(.settingsDeepLink(parts[0]))

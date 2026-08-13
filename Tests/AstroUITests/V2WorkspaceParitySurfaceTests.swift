@@ -129,6 +129,31 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(store.contains("func setShowAcknowledged("))
     }
 
+    @Test("Calibration is a native master-inventory workspace with a gated link-preview")
+    func calibrationWorkspaceContract() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/CalibrationView.swift"))
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/CalibrationStore.swift"))
+        let health = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/HealthView.swift"))
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        let route = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/AppRoute.swift"))
+        #expect(workspace.contains("Table(coverageRows, selection: $selectedCoverageID)"))
+        #expect(workspace.contains("Table(store.masters, selection: $selectedMasterID)"))
+        #expect(workspace.contains("v2.calibration.coverage-table"))
+        #expect(workspace.contains("v2.calibration.masters-table"))
+        #expect(workspace.contains("v2.calibration.link-preview"))
+        #expect(workspace.contains("Requires write access"))
+        #expect(workspace.contains("Show in Finder"))
+        #expect(workspace.contains("activateFileViewerSelecting"))
+        #expect(store.contains("func preparePlan("))
+        #expect(store.contains("func applyPlan("))
+        #expect(health.contains("Calibration…"))
+        #expect(shell.contains("case .calibration:"))
+        #expect(shell.contains("CalibrationView("))
+        #expect(route.contains("case calibration"))
+    }
+
     @Test("Project goals and notes are editable rather than placeholders")
     func projectGoalAndNotesContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -163,6 +188,7 @@ struct V2WorkspaceParitySurfaceTests {
             "Sources/AstroUI/Features/Review/ReviewWorkspace.swift",
             "Sources/AstroUI/Features/Library/CleanupPreviewView.swift",
             "Sources/AstroUI/Features/Library/HealthView.swift",
+            "Sources/AstroUI/Features/Library/CalibrationView.swift",
             "Sources/AstroUI/Settings/V2SettingsView.swift",
         ]
         for relative in sources {
