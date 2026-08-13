@@ -138,4 +138,16 @@ struct V2BetaWorkspaceSurfaceTests {
         #expect(view.contains("Best targets tonight"))
         #expect(view.contains("v2.home.tonight-recommendations"))
     }
+
+    @Test("Nights exposes the next thirty astronomical nights")
+    func nightsShowsPlanningCalendar() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsStore.swift"))
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsView.swift"))
+        #expect(store.contains("Planner.month(nights: 30"))
+        #expect(view.contains("Next 30 nights"))
+        #expect(view.contains("Astronomical planning calendar"))
+        #expect(view.contains("v2.nights.planning-calendar"))
+    }
 }

@@ -1,5 +1,6 @@
 @testable import AstroUI
 import AstroApplication
+import AstroCore
 import Foundation
 import Testing
 
@@ -27,6 +28,28 @@ struct NightsStoreTests {
         store.selectMonth("2026-08")
         #expect(store.visibleNights.count == 1)
         #expect(store.availableMonths == ["2026-08"])
+    }
+
+    @Test("Nights loads the next thirty astronomical planning nights")
+    func loadsPlanningCalendar() async throws {
+        let metadata = try MetadataStore.temporary()
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        let forecast = [NightSummary(
+            date: "2026-08-14", astroDarkHours: 5.2,
+            moonIlluminationPercent: 8,
+            bestTargets: [.init(target: "IC_1396", usableHours: 4.4)]
+        )]
+        let store = NightsStore(
+            metadataFactory: { _ in metadata },
+            calendarProvider: { selectedRoot in
+                #expect(selectedRoot == root)
+                return forecast
+            }
+        )
+
+        try await store.open(rootURL: root)
+
+        #expect(store.planningNights == forecast)
     }
 
     private func makeSeries(project: UUID, night: UUID, exposure: Double) -> SeriesRecord {

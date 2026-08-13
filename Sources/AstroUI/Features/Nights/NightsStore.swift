@@ -1,4 +1,5 @@
 import AstroApplication
+import AstroCore
 import Foundation
 import Observation
 
@@ -34,19 +35,43 @@ public struct NightRow: Equatable, Sendable, Identifiable {
     }
 }
 
+public struct PlanningNightRow: Equatable, Sendable, Identifiable {
+    public let summary: NightSummary
+    public var id: String { summary.date }
+    public var darkHours: String {
+        summary.astroDarkHours.map { "\($0.formatted(.number.precision(.fractionLength(1)))) h" }
+            ?? (summary.note ?? "No astronomical darkness")
+    }
+    public var moon: String {
+        "\(summary.moonIlluminationPercent.formatted(.number.precision(.fractionLength(0))))%"
+    }
+    public var bestTargets: String {
+        summary.bestTargets.map {
+            "\($0.target) (\($0.usableHours.formatted(.number.precision(.fractionLength(1)))) h)"
+        }.joined(separator: ", ")
+    }
+}
+
 @MainActor
 @Observable
 public final class NightsStore {
     public typealias MetadataFactory = @MainActor @Sendable (URL) throws -> MetadataStore
+    public typealias CalendarProvider = @Sendable (URL) async throws -> [NightSummary]
     public private(set) var nights: [NightRow] = []
+    public private(set) var planningNights: [NightSummary] = []
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
     public private(set) var selectedMonth: String?
     public private(set) var selectedNightID: UUID?
     private let metadataFactory: MetadataFactory
+    private let calendarProvider: CalendarProvider
 
-    public init(metadataFactory: @escaping MetadataFactory = ProjectsStore.productionMetadata) {
+    public init(
+        metadataFactory: @escaping MetadataFactory = ProjectsStore.productionMetadata,
+        calendarProvider: @escaping CalendarProvider = NightsStore.productionCalendar
+    ) {
         self.metadataFactory = metadataFactory
+        self.calendarProvider = calendarProvider
     }
 
     public var availableMonths: [String] {
@@ -61,6 +86,8 @@ public final class NightsStore {
     public var selectedNight: NightRow? {
         nights.first { $0.id == selectedNightID }
     }
+
+    public var planningRows: [PlanningNightRow] { planningNights.map(PlanningNightRow.init) }
 
     public var needsReviewCount: Int {
         visibleNights.filter { $0.triageState != .ready }.count
@@ -82,9 +109,22 @@ public final class NightsStore {
         do {
             let metadata = try metadataFactory(rootURL.standardizedFileURL)
             nights = try await NightsQuery(metadata: metadata).nights().map(NightRow.init)
+            planningNights = (try? await calendarProvider(rootURL.standardizedFileURL)) ?? []
         } catch {
             errorMessage = error.localizedDescription
             throw error
         }
+    }
+
+    public static func productionCalendar(rootURL: URL) async throws -> [NightSummary] {
+        try await Task.detached(priority: .utility) {
+            let identity = LibraryIdentity(rootURL: rootURL)
+            let paths = try AppStoragePaths.production(libraryID: identity, libraryRoot: rootURL)
+            let database = try Database(path: paths.indexDatabase.path)
+            let configURL = rootURL.appendingPathComponent(".astro_tool/config.json")
+            var config = (try? AstroConfig.load(from: configURL)) ?? AstroConfig()
+            config.rootPath = rootURL.path
+            return try Planner.month(nights: 30, db: database, config: config)
+        }.value
     }
 }
