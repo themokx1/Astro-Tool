@@ -1,3 +1,4 @@
+import AstroCore
 import Foundation
 
 public struct ReviewCommands: Sendable {
@@ -5,6 +6,10 @@ public struct ReviewCommands: Sendable {
 
     public init(metadata: MetadataStore) {
         self.metadata = metadata
+    }
+
+    public func archivePlan(relativePath: String) throws -> FrameArchivePlan {
+        try FrameArchivePlanner.plan(sourceRelative: relativePath, mode: .archive)
     }
 
     @discardableResult

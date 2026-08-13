@@ -50,6 +50,25 @@ struct ReviewQueryTests {
         #expect(try await LibraryManifest.capture(root: fixture.root) == before)
         #expect(try await fixture.metadata.frameDecision(id: decision.id) == decision)
     }
+
+    @Test("Archive is a separate previewable plan and rejection never implies a move")
+    func archiveRequiresSeparatePlan() async throws {
+        let fixture = try await ReviewFixture.make()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let commands = ReviewCommands(metadata: fixture.metadata)
+        let path = "sessions/IC_1396/2026-08-08/lights/frame.fit"
+
+        _ = try await commands.setVerdict(
+            seriesID: fixture.series[0].id,
+            relativePath: path,
+            verdict: .rejected
+        )
+        let plan = try commands.archivePlan(relativePath: path)
+
+        #expect(plan.sourceRelative == path)
+        #expect(plan.destinationRelative == "sessions/IC_1396/2026-08-08/lights/archive/frame.fit")
+        #expect(plan.mode == .archive)
+    }
 }
 
 private struct ReviewFixture {
