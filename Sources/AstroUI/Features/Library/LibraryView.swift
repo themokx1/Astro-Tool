@@ -5,6 +5,7 @@ public struct LibraryView: View {
     let snapshot: LibrarySnapshot?
     let rootURL: URL?
     let chooseLibrary: () -> Void
+    let convertSession: () -> Void
 
     public var body: some View {
         WorkspacePage(eyebrow: "Local and private", title: "Library", subtitle: "A read-only index of the image folders already on your Mac.") {
@@ -25,8 +26,11 @@ public struct LibraryView: View {
                         Button("Choose Image Library…", action: chooseLibrary)
                             .buttonStyle(.borderedProminent)
                     } else {
-                        Button("Change Library…", action: chooseLibrary)
-                            .buttonStyle(.bordered)
+                        HStack {
+                            Button("Organize One Session…", action: convertSession)
+                                .buttonStyle(.borderedProminent)
+                            Button("Change Library…", action: chooseLibrary).buttonStyle(.bordered)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).padding(8)

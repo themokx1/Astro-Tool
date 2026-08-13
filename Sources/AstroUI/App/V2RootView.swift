@@ -144,6 +144,7 @@ private struct V2Shell: View {
     let libraryRootFallback: URL?
     @Binding var isOnboardingPresented: Bool
     @State private var reviewDestination: ReviewDestination?
+    @State private var conversionRoot: URL?
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
@@ -165,6 +166,9 @@ private struct V2Shell: View {
                         router.toggleInspector()
                     }
                     reviewDestination = ReviewDestination(id: project.id, rootURL: rootURL)
+                },
+                convertSession: {
+                    conversionRoot = onboardingStore.selectedRoot ?? libraryRootFallback
                 }
             )
         }
@@ -204,6 +208,9 @@ private struct V2Shell: View {
                     dismiss: { reviewDestination = nil }
                 )
                 .background(.background)
+            } else if let conversionRoot,
+                      let useCase = try? ConversionUseCase.production(rootURL: conversionRoot) {
+                ConversionWorkspace(useCase: useCase, dismiss: { self.conversionRoot = nil })
             }
         }
         .sheet(item: $router.presentation) { presentation in
@@ -306,6 +313,7 @@ private struct DetailHost: View {
     let nightsStore: NightsStore
     let chooseLibrary: () -> Void
     let reviewProject: (ProjectRecord) -> Void
+    let convertSession: () -> Void
 
     @ViewBuilder
     var body: some View {
@@ -332,7 +340,8 @@ private struct DetailHost: View {
             LibraryView(
                 snapshot: onboardingStore.phase.summary,
                 rootURL: onboardingStore.selectedRoot,
-                chooseLibrary: chooseLibrary
+                chooseLibrary: chooseLibrary,
+                convertSession: convertSession
             )
         case .insights:
             InsightsView(
