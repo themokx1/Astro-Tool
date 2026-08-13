@@ -6,14 +6,20 @@ import SwiftUI
 @Observable
 private final class InsightsStore {
     var snapshot: InsightsSnapshot?
+    var availableYears: [Int] = []
     var errorMessage: String?
     var isLoading = false
 
-    func load(rootURL: URL?) async {
+    func load(rootURL: URL?, year: Int? = nil) async {
         guard let rootURL else { snapshot = nil; return }
         isLoading = true
         defer { isLoading = false }
-        do { snapshot = try await InsightsQuery.production(rootURL: rootURL).snapshot() }
+        do {
+            snapshot = try await InsightsQuery.production(rootURL: rootURL).snapshot(year: year)
+            if year == nil, let snapshot {
+                availableYears = Array(Set(snapshot.months.compactMap { Int($0.month.prefix(4)) })).sorted(by: >)
+            }
+        }
         catch { errorMessage = error.localizedDescription }
     }
 }
@@ -23,6 +29,7 @@ public struct InsightsView: View {
     let rootURL: URL?
     let chooseLibrary: () -> Void
     @State private var store = InsightsStore()
+    @State private var selectedYear: Int?
 
     public init(snapshot: LibrarySnapshot?, rootURL: URL?, chooseLibrary: @escaping () -> Void) {
         self.librarySnapshot = snapshot
@@ -33,6 +40,17 @@ public struct InsightsView: View {
     public var body: some View {
         WorkspacePage(eyebrow: "Long-term signal", title: "Insights", subtitle: "See what you photographed, how much signal you collected, and how your activity changes over time.") {
             if let insight = store.snapshot {
+                Picker("Period", selection: $selectedYear) {
+                    Text("All years").tag(Int?.none)
+                    ForEach(store.availableYears, id: \.self) { year in
+                        Text(String(year)).tag(Optional(year))
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("v2.insights.period")
+                .onChange(of: selectedYear) { _, year in
+                    Task { await store.load(rootURL: rootURL, year: year) }
+                }
                 metrics(insight)
                 HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
                     activityChart(insight).frame(maxWidth: .infinity)
@@ -163,4 +181,5 @@ public struct InsightsView: View {
         let minutes = (Int(seconds) % 3600) / 60
         return hours > 0 ? "\(hours)h \(minutes)m" : "\(minutes)m"
     }
+
 }

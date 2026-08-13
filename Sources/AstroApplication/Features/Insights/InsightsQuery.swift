@@ -57,8 +57,9 @@ public struct InsightsQuery: Sendable {
         return Self(indexDatabaseForTesting: storage.indexDatabase)
     }
 
-    public func snapshot() async throws -> InsightsSnapshot {
+    public func snapshot(year: Int? = nil) async throws -> InsightsSnapshot {
         let db = try SQLiteDB(readOnlyPath: indexDatabase.standardizedFileURL.path)
+        let yearClause = year.map { " AND f.session_date LIKE '\($0)-%'" } ?? ""
         var nightCount = 0
         var targetCount = 0
         var frameCount = 0
@@ -68,7 +69,7 @@ public struct InsightsQuery: Sendable {
             SELECT COUNT(DISTINCT target || '|' || session_date), COUNT(DISTINCT target), COUNT(*),
                    COALESCE(SUM(COALESCE(m.exptime, 0)), 0)
             FROM files f LEFT JOIN fits_meta m ON m.file_id = f.id
-            WHERE f.missing = 0 AND f.area = 'sessions' AND f.role = 'light';
+            WHERE f.missing = 0 AND f.area = 'sessions' AND f.role = 'light'\(yearClause);
             """
         ) { row in
             nightCount = Int(row.int64(0) ?? 0)
@@ -81,7 +82,7 @@ public struct InsightsQuery: Sendable {
             """
             SELECT SUBSTR(f.session_date, 1, 7), COALESCE(SUM(COALESCE(m.exptime, 0)), 0), COUNT(*)
             FROM files f LEFT JOIN fits_meta m ON m.file_id = f.id
-            WHERE f.missing = 0 AND f.area = 'sessions' AND f.role = 'light' AND f.session_date IS NOT NULL
+            WHERE f.missing = 0 AND f.area = 'sessions' AND f.role = 'light' AND f.session_date IS NOT NULL\(yearClause)
             GROUP BY SUBSTR(f.session_date, 1, 7) ORDER BY 1;
             """
         ) { row in
@@ -92,7 +93,7 @@ public struct InsightsQuery: Sendable {
             """
             SELECT f.target, COALESCE(SUM(COALESCE(m.exptime, 0)), 0), COUNT(DISTINCT f.session_date)
             FROM files f LEFT JOIN fits_meta m ON m.file_id = f.id
-            WHERE f.missing = 0 AND f.area = 'sessions' AND f.role = 'light' AND f.target IS NOT NULL
+            WHERE f.missing = 0 AND f.area = 'sessions' AND f.role = 'light' AND f.target IS NOT NULL\(yearClause)
             GROUP BY f.target ORDER BY 2 DESC, f.target COLLATE NOCASE LIMIT 8;
             """
         ) { row in
@@ -105,7 +106,7 @@ public struct InsightsQuery: Sendable {
                 """
                 SELECT m.filter, COUNT(*), COALESCE(SUM(COALESCE(m.exptime, 0)), 0)
                 FROM files f JOIN fits_meta m ON m.file_id = f.id
-                WHERE f.missing = 0 AND f.area = 'sessions' AND f.role = 'light'
+                WHERE f.missing = 0 AND f.area = 'sessions' AND f.role = 'light'\(yearClause)
                   AND m.filter IS NOT NULL AND TRIM(m.filter) <> ''
                 GROUP BY m.filter ORDER BY 3 DESC, 1 COLLATE NOCASE;
                 """
@@ -124,7 +125,7 @@ public struct InsightsQuery: Sendable {
                 SELECT COALESCE(NULLIF(TRIM(m.instrume), ''), 'Unknown camera'), \(focal),
                        COUNT(*), COALESCE(SUM(COALESCE(m.exptime, 0)), 0)
                 FROM files f JOIN fits_meta m ON m.file_id = f.id
-                WHERE f.missing = 0 AND f.area = 'sessions' AND f.role = 'light'
+                WHERE f.missing = 0 AND f.area = 'sessions' AND f.role = 'light'\(yearClause)
                 GROUP BY 1, 2 ORDER BY 4 DESC, 1 COLLATE NOCASE;
                 """
             ) { row in
