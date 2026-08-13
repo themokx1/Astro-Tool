@@ -1,4 +1,5 @@
 import AstroApplication
+import AppKit
 import SwiftUI
 
 @MainActor
@@ -35,7 +36,7 @@ public struct ResultsView: View {
                 ContentUnavailableView("Results unavailable", systemImage: "exclamationmark.triangle", description: Text(error))
             } else if let snapshot = store.snapshot, !snapshot.results.isEmpty {
                 HSplitView {
-                    resultList(snapshot).frame(minWidth: 260, idealWidth: 310)
+                    resultTable(snapshot).frame(minWidth: 440, idealWidth: 560)
                     resultDetail(snapshot).frame(minWidth: 430)
                 }
             } else {
@@ -60,26 +61,114 @@ public struct ResultsView: View {
                 Text("\(project.displayName) · stacks, variants, and provenance").foregroundStyle(.secondary)
             }
             Spacer()
+            if let snapshot = store.snapshot,
+               let result = selectedResult(in: snapshot) {
+                resultActions(result)
+            }
             Button("Close", action: dismiss).keyboardShortcut(.cancelAction)
         }.padding(20)
     }
 
-    private func resultList(_ snapshot: ResultsSnapshot) -> some View {
-        List(snapshot.results, selection: $selectedResultID) { result in
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Label(result.role.rawValue.capitalized, systemImage: result.role == .final ? "checkmark.seal.fill" : "square.stack")
-                    if snapshot.publishableResultID == result.id {
-                        Text("Publishable").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(.green.opacity(0.18), in: Capsule())
-                            .accessibilityIdentifier("v2.results.publishable")
+    private func resultTable(_ snapshot: ResultsSnapshot) -> some View {
+        Table(snapshot.results, selection: $selectedResultID) {
+            TableColumn("Result") { result in
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Label(result.role.rawValue.capitalized, systemImage: result.role == .final ? "checkmark.seal.fill" : "square.stack")
+                            .font(.headline)
+                        if snapshot.publishableResultID == result.id {
+                            Text("Publishable").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(.green.opacity(0.18), in: Capsule())
+                                .accessibilityIdentifier("v2.results.publishable")
+                        }
                     }
-                }.font(.headline)
-                Text(result.relativePath ?? "Path not recorded").font(.caption).foregroundStyle(.secondary).lineLimit(2)
-            }.padding(.vertical, 6).tag(result.id)
+                    Text(result.relativePath ?? "Path not recorded")
+                        .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                }
+                .padding(.vertical, 4)
+            }
+            TableColumn("Created") { result in
+                Text(result.createdAt.formatted(date: .abbreviated, time: .shortened))
+            }
+            .width(min: 125, ideal: 145)
+            TableColumn("Software") { result in
+                Text(softwareLabel(result)).lineLimit(1)
+            }
+            .width(min: 110, ideal: 140)
         }
-        .navigationTitle("Result history")
-        .onAppear { selectedResultID = selectedResultID ?? snapshot.publishableResultID ?? snapshot.results.last?.id }
+        .contextMenu(forSelectionType: UUID.self) { resultIDs in
+            if let result = snapshot.results.first(where: { resultIDs.contains($0.id) }) {
+                resultActionMenu(result)
+            }
+        } primaryAction: { resultIDs in
+            if let result = snapshot.results.first(where: { resultIDs.contains($0.id) }) {
+                openResult(result)
+            }
+        }
+        .accessibilityIdentifier("v2.results.table")
+        .onAppear {
+            selectedResultID = selectedResultID ?? snapshot.publishableResultID ?? snapshot.results.last?.id
+        }
+    }
+
+    private func resultActions(_ result: ResultLineageSnapshot) -> some View {
+        HStack(spacing: 8) {
+            Button("Open Result") { openResult(result) }
+                .disabled(resultURL(for: result) == nil)
+            Menu {
+                resultActionMenu(result)
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+        }
+    }
+
+    @ViewBuilder
+    private func resultActionMenu(_ result: ResultLineageSnapshot) -> some View {
+        Button("Open Result") { openResult(result) }
+            .disabled(resultURL(for: result) == nil)
+        Button("Show in Finder") { revealResult(result) }
+            .disabled(resultURL(for: result) == nil)
+        Divider()
+        Button("Copy Path") { copyPath(result) }
+            .disabled(result.relativePath == nil)
+    }
+
+    private func selectedResult(in snapshot: ResultsSnapshot) -> ResultLineageSnapshot? {
+        snapshot.results.first { $0.id == selectedResultID }
+    }
+
+    private func softwareLabel(_ result: ResultLineageSnapshot) -> String {
+        [result.softwareName, result.softwareVersion]
+            .compactMap { $0 }.joined(separator: " ").nilIfEmpty ?? "Unknown"
+    }
+
+    private func resultURL(for result: ResultLineageSnapshot) -> URL? {
+        guard let relativePath = result.relativePath else { return nil }
+        let canonicalRoot = rootURL.standardizedFileURL
+        let candidate = canonicalRoot.appendingPathComponent(relativePath).standardizedFileURL
+        let allowedPrefix = canonicalRoot.path.hasSuffix("/") ? canonicalRoot.path : canonicalRoot.path + "/"
+        guard candidate.path.hasPrefix(allowedPrefix),
+              FileManager.default.fileExists(atPath: candidate.path) else { return nil }
+        return candidate
+    }
+
+    private func openResult(_ result: ResultLineageSnapshot) {
+        guard let url = resultURL(for: result) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func revealResult(_ result: ResultLineageSnapshot) {
+        guard let url = resultURL(for: result) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    private func copyPath(_ result: ResultLineageSnapshot) {
+        guard let relativePath = result.relativePath else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(relativePath, forType: .string)
     }
 
     @ViewBuilder private func resultDetail(_ snapshot: ResultsSnapshot) -> some View {

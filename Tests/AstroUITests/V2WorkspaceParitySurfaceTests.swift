@@ -76,4 +76,20 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(workspace.contains("apply(.rejected, decisionIDs:"))
         #expect(workspace.contains("Archive preview"))
     }
+
+    @Test("Results is a provenance table with safe file actions")
+    func resultsWorkspaceActionsContract() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Results/ResultsView.swift"))
+        #expect(workspace.contains("Table(snapshot.results, selection: $selectedResultID)"))
+        #expect(workspace.contains("TableColumn(\"Result\""))
+        #expect(workspace.contains("TableColumn(\"Created\""))
+        #expect(workspace.contains("TableColumn(\"Software\""))
+        #expect(workspace.contains("Open Result"))
+        #expect(workspace.contains("Show in Finder"))
+        #expect(workspace.contains("Copy Path"))
+        #expect(workspace.contains("contextMenu(forSelectionType: UUID.self"))
+        #expect(workspace.contains("v2.results.table"))
+    }
 }
