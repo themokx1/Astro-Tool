@@ -46,6 +46,51 @@ struct ScanWorkflowMaterializerTests {
 
         #expect(try await metadata.frameDecision(id: decision.id)?.verdict == .rejected)
     }
+
+    @Test("Real-world session suffixes map to civil nights and non-date folders are ignored")
+    func normalizesSessionFolderDates() async throws {
+        let fixture = try MaterializerFixture.make(sessionDates: [
+            "2026-05-24-2",
+            "2026-03-15-OSC",
+            "2026-03-15_hibas",
+            "2026-02-25_2026-03-15",
+            "light_frame_rating_report_assets",
+        ])
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        let metadata = try MetadataStore.temporary()
+
+        let summary = try await ScanWorkflowMaterializer.materialize(
+            indexDatabase: fixture.indexURL,
+            metadata: metadata
+        )
+
+        #expect(summary.frames == 4)
+        #expect(summary.nights == 3)
+        #expect(Set(try await metadata.nights().map(\.localDate)) == [
+            "2026-02-25", "2026-03-15", "2026-05-24",
+        ])
+    }
+
+    @Test("Sidecars and exposureless intermediates do not become capture series")
+    func ignoresFramesWithoutPositiveExposure() async throws {
+        let fixture = try MaterializerFixture.make(
+            sessionDates: ["2026-06-01"],
+            exposure: 0
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        let metadata = try MetadataStore.temporary()
+
+        let summary = try await ScanWorkflowMaterializer.materialize(
+            indexDatabase: fixture.indexURL,
+            metadata: metadata
+        )
+
+        #expect(summary == ScanWorkflowMaterializationSummary(
+            projects: 0, nights: 0, series: 0, frames: 0
+        ))
+        #expect(try await metadata.projects().isEmpty)
+        #expect(try await metadata.nights().isEmpty)
+    }
 }
 
 private struct MaterializerFixture {
@@ -54,6 +99,10 @@ private struct MaterializerFixture {
     let indexURL: URL
 
     static func make() throws -> Self {
+        try make(sessionDates: nil)
+    }
+
+    static func make(sessionDates: [String]?, exposure customExposure: Double = 30) throws -> Self {
         let container = FileManager.default.temporaryDirectory.appendingPathComponent(
             "AstroTool-Materializer-\(UUID().uuidString)", isDirectory: true
         )
@@ -64,14 +113,22 @@ private struct MaterializerFixture {
         try Data("source image bytes".utf8).write(to: root.appendingPathComponent("source.fit"))
         let indexURL = cache.appendingPathComponent("index.sqlite")
         let db = try Database(path: indexURL.path)
-        for (index, exposure, filter) in [
-            (1, 30.0, nil), (2, 120.0, "SV220"), (3, 300.0, "SV220"), (4, 300.0, "SV220")
-        ] {
-            let path = "sessions/IC_1396_Elephants_Trunk_Nebula/2026-08-08/lights/frame_\(index).fit"
+        let frames: [(Int, Double, String?, String)] = if let sessionDates {
+            sessionDates.enumerated().map { index, date in (index + 1, customExposure, nil, date) }
+        } else {
+            [
+                (1, 30.0, nil, "2026-08-08"),
+                (2, 120.0, "SV220", "2026-08-08"),
+                (3, 300.0, "SV220", "2026-08-08"),
+                (4, 300.0, "SV220", "2026-08-08"),
+            ]
+        }
+        for (index, exposure, filter, sessionDate) in frames {
+            let path = "sessions/IC_1396_Elephants_Trunk_Nebula/\(sessionDate)/lights/frame_\(index).fit"
             let fileID = try db.upsertFile(FileRecord(
                 path: path, size: 1024, mtime: Double(index), ext: "fit", kind: "fits",
                 area: .sessions, target: "IC_1396_Elephants_Trunk_Nebula",
-                sessionDate: "2026-08-08", role: .light, scannedAt: 1
+                sessionDate: sessionDate, role: .light, scannedAt: 1
             ))
             try db.upsertFITSMeta(FITSMetaRecord(
                 fileID: fileID, exptime: exposure, gain: 100, offset: 50,

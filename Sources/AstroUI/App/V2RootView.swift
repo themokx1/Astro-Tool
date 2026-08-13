@@ -51,6 +51,7 @@ public struct V2RootView: View {
     @State private var nightsStore: NightsStore
     @State private var reviewStore: ReviewStore
     @State private var isOnboardingPresented: Bool
+    @State private var libraryPreparationError: String?
     @State private var didRestoreWindowState = false
     @SceneStorage("v2.windowRestoration") private var encodedWindowState = ""
 
@@ -74,6 +75,7 @@ public struct V2RootView: View {
         _nightsStore = State(initialValue: NightsStore(metadataFactory: metadataFactory))
         _reviewStore = State(initialValue: ReviewStore(metadataFactory: metadataFactory))
         _isOnboardingPresented = State(initialValue: uiTestFixture != nil)
+        _libraryPreparationError = State(initialValue: nil)
     }
 
     public var body: some View {
@@ -85,7 +87,8 @@ public struct V2RootView: View {
             nightsStore: nightsStore,
             reviewStore: reviewStore,
             libraryRootFallback: uiTestFixture?.libraryRoot,
-            isOnboardingPresented: $isOnboardingPresented
+            isOnboardingPresented: $isOnboardingPresented,
+            libraryPreparationError: $libraryPreparationError
         )
             .onAppear {
                 restoreWindowStateOnce()
@@ -105,15 +108,20 @@ public struct V2RootView: View {
                 guard let root = onboardingStore.selectedRoot,
                       onboardingStore.phase.summary != nil
                 else { return }
-                if let uiTestFixture {
-                    try? await uiTestFixture.seedReviewMetadata()
-                } else {
-                    _ = try? await Task.detached(priority: .utility) {
-                        try await ScanWorkflowMaterializer.materializeProductionLibrary(rootURL: root)
-                    }.value
+                do {
+                    if let uiTestFixture {
+                        try await uiTestFixture.seedReviewMetadata()
+                    } else {
+                        _ = try await Task.detached(priority: .utility) {
+                            try await ScanWorkflowMaterializer.materializeProductionLibrary(rootURL: root)
+                        }.value
+                    }
+                    try await projectsStore.open(rootURL: root)
+                    try await nightsStore.open(rootURL: root)
+                    libraryPreparationError = nil
+                } catch {
+                    libraryPreparationError = error.localizedDescription
                 }
-                try? await projectsStore.open(rootURL: root)
-                try? await nightsStore.open(rootURL: root)
             }
     }
 
@@ -145,6 +153,7 @@ private struct V2Shell: View {
     let reviewStore: ReviewStore
     let libraryRootFallback: URL?
     @Binding var isOnboardingPresented: Bool
+    @Binding var libraryPreparationError: String?
     @State private var reviewDestination: ReviewDestination?
     @State private var conversionRoot: URL?
     @State private var resultsDestination: ResultsDestination?
@@ -247,6 +256,17 @@ private struct V2Shell: View {
                     openSettings()
                 }
             )
+        }
+        .alert(
+            "Library preparation needs attention",
+            isPresented: Binding(
+                get: { libraryPreparationError != nil },
+                set: { if !$0 { libraryPreparationError = nil } }
+            )
+        ) {
+            Button("OK") { libraryPreparationError = nil }
+        } message: {
+            Text(libraryPreparationError ?? "AstroTool could not prepare Projects and Nights for this library.")
         }
         .onOpenURL { url in
             guard let route = AppRoute(deepLink: url) else { return }

@@ -37,5 +37,7 @@ struct V2BetaWorkspaceSurfaceTests {
         )
         #expect(shell.contains(".task(id: onboardingStore.phase.summary?.libraryID.id)"))
         #expect(!shell.contains(".task(id: onboardingStore.selectedRoot)"))
+        #expect(shell.contains("Library preparation needs attention"))
+        #expect(!shell.contains("_ = try? await Task.detached"))
     }
 }

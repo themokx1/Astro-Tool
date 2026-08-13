@@ -35,11 +35,14 @@ public enum ScanWorkflowMaterializer {
             """
         ) { row in
             guard let path = row.string(0), let target = row.string(1),
-                  let date = row.string(2) else { return }
+                  let rawDate = row.string(2),
+                  let sessionDate = SessionDateParser.parse(rawDate),
+                  let exposure = row.double(4), exposure.isFinite, exposure > 0
+            else { return }
             frames.append(ScannedFrame(
-                path: path, target: target, date: date,
+                path: path, target: target, date: sessionDate.start,
                 fileExtension: row.string(3) ?? "",
-                exposure: row.double(4) ?? 0,
+                exposure: exposure,
                 gain: row.double(5), offset: row.double(6),
                 instrument: nonBlank(row.string(7)), focalLength: row.double(8),
                 filter: nonBlank(row.string(9)), headerJSON: row.string(10)
