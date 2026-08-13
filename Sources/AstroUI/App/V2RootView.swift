@@ -346,6 +346,7 @@ private struct DetailHost: View {
         case .insights:
             InsightsView(
                 snapshot: onboardingStore.phase.summary,
+                rootURL: onboardingStore.selectedRoot,
                 chooseLibrary: chooseLibrary
             )
         case .health:

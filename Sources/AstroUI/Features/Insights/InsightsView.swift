@@ -1,28 +1,113 @@
 import AstroApplication
+import Charts
 import SwiftUI
 
+@MainActor
+@Observable
+private final class InsightsStore {
+    var snapshot: InsightsSnapshot?
+    var errorMessage: String?
+    var isLoading = false
+
+    func load(rootURL: URL?) async {
+        guard let rootURL else { snapshot = nil; return }
+        isLoading = true
+        defer { isLoading = false }
+        do { snapshot = try await InsightsQuery.production(rootURL: rootURL).snapshot() }
+        catch { errorMessage = error.localizedDescription }
+    }
+}
+
 public struct InsightsView: View {
-    let snapshot: LibrarySnapshot?
+    let librarySnapshot: LibrarySnapshot?
+    let rootURL: URL?
     let chooseLibrary: () -> Void
+    @State private var store = InsightsStore()
+
+    public init(snapshot: LibrarySnapshot?, rootURL: URL?, chooseLibrary: @escaping () -> Void) {
+        self.librarySnapshot = snapshot
+        self.rootURL = rootURL
+        self.chooseLibrary = chooseLibrary
+    }
 
     public var body: some View {
-        WorkspacePage(eyebrow: "Long-term signal", title: "Insights", subtitle: "See what you photographed, how much you collected, and where the workflow needs attention.") {
-            HStack(spacing: AstroTokens.Spacing.standard) {
-                MetricCard(title: "Projects", value: snapshot.map { "\($0.projectCount)" } ?? "—", detail: "Library coverage", systemImage: "folder")
-                MetricCard(title: "Nights", value: snapshot.map { "\($0.nightCount)" } ?? "—", detail: "Capture history", systemImage: "moon.stars")
-                MetricCard(title: "Frames", value: snapshot.map { "\($0.frameCount)" } ?? "—", detail: "Indexed material", systemImage: "photo.stack")
-            }
-            GroupBox("Beta dashboard") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("The first beta reports only facts verified by the local index.", systemImage: "checkmark.shield")
-                    Label("Integration time, filter balance, quality trends, and archive savings will appear as their workflow stores connect.", systemImage: "chart.xyaxis.line")
-                    if snapshot == nil { Button("Open Library…", action: chooseLibrary).buttonStyle(.borderedProminent) }
+        WorkspacePage(eyebrow: "Long-term signal", title: "Insights", subtitle: "See what you photographed, how much signal you collected, and how your activity changes over time.") {
+            if let insight = store.snapshot {
+                metrics(insight)
+                HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
+                    activityChart(insight).frame(maxWidth: .infinity)
+                    targetRanking(insight).frame(width: 320)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                Label("Calculated from AstroTool's external read-only index", systemImage: "lock.shield")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if store.isLoading {
+                ProgressView("Calculating capture history…").frame(maxWidth: .infinity, minHeight: 280)
+            } else if rootURL == nil {
+                ContentUnavailableView {
+                    Label("Open a library for insights", systemImage: "chart.xyaxis.line")
+                } description: {
+                    Text("AstroTool will calculate nights, integration time and target history locally.")
+                } actions: {
+                    Button("Open Library…", action: chooseLibrary).buttonStyle(.borderedProminent)
+                }
+            } else {
+                ContentUnavailableView(
+                    "Insights unavailable", systemImage: "exclamationmark.triangle",
+                    description: Text(store.errorMessage ?? "The external index does not contain reportable sessions yet.")
+                )
             }
         }
         .navigationTitle("Insights")
         .accessibilityLabel("Insights")
         .accessibilityIdentifier("v2.detail.insights")
+        .task(id: rootURL) { await store.load(rootURL: rootURL) }
+    }
+
+    private func metrics(_ insight: InsightsSnapshot) -> some View {
+        HStack(spacing: AstroTokens.Spacing.standard) {
+            MetricCard(title: "Integration", value: duration(insight.integrationSeconds), detail: "Verified light exposure", systemImage: "timer")
+            MetricCard(title: "Nights", value: "\(insight.nightCount)", detail: "Capture sessions", systemImage: "moon.stars")
+            MetricCard(title: "Targets", value: "\(insight.targetCount)", detail: "Unique objects", systemImage: "scope")
+            MetricCard(title: "Light frames", value: "\(insight.frameCount)", detail: "Indexed and present", systemImage: "photo.stack")
+        }
+    }
+
+    private func activityChart(_ insight: InsightsSnapshot) -> some View {
+        GroupBox("Capture activity") {
+            Chart(insight.months) { month in
+                BarMark(x: .value("Month", month.month), y: .value("Hours", month.integrationSeconds / 3600))
+                    .foregroundStyle(.blue.gradient)
+                    .cornerRadius(4)
+            }
+            .chartYAxisLabel("Integration hours")
+            .frame(minHeight: 260)
+            .padding(8)
+            .accessibilityIdentifier("v2.insights.activity")
+        }
+    }
+
+    private func targetRanking(_ insight: InsightsSnapshot) -> some View {
+        GroupBox("Most photographed") {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(insight.topTargets.enumerated()), id: \.element.id) { index, target in
+                    HStack {
+                        Text("\(index + 1)").foregroundStyle(.secondary).frame(width: 18)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(target.target).lineLimit(1)
+                            Text("\(duration(target.integrationSeconds)) · \(target.nightCount) nights")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                }
+                if insight.topTargets.isEmpty { Text("No light frames yet").foregroundStyle(.secondary) }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
+        }
+    }
+
+    private func duration(_ seconds: Double) -> String {
+        let hours = Int(seconds) / 3600
+        let minutes = (Int(seconds) % 3600) / 60
+        return hours > 0 ? "\(hours)h \(minutes)m" : "\(minutes)m"
     }
 }
