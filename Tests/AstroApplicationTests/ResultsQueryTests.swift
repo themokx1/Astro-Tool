@@ -39,6 +39,35 @@ struct ResultsQueryTests {
         #expect(detail.sourceResultIDs == [parent.id])
         #expect(snapshot.results.count == 2)
     }
+
+    @Test("Library-wide search entries carry software, role, path, and project name across projects")
+    func librarySearchEntriesCoverEveryProject() async throws {
+        let store = try MetadataStore.temporary()
+        let firstProject = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Elephant's Trunk", phase: .processing)
+        let secondProject = ProjectRecord(id: UUID(), catalogID: "M 31", displayName: "Andromeda Galaxy", phase: .collecting)
+        let firstResult = ResultRecord(
+            id: UUID(), projectID: firstProject.id, parentResultID: nil, kind: .stack, role: .intermediate,
+            relativePath: "stacks/master.fit", createdAt: .now, softwareName: "Siril", softwareVersion: "1.4"
+        )
+        let secondResult = ResultRecord(
+            id: UUID(), projectID: secondProject.id, parentResultID: nil, kind: .processingVariant, role: .final,
+            relativePath: "processed/final.fit", createdAt: .now, softwareName: "PixInsight", softwareVersion: "1.9"
+        )
+        try await store.save(MetadataWriteBatch(projects: [firstProject, secondProject], results: [firstResult, secondResult]))
+
+        let entries = try await ResultsQuery(metadata: store).librarySearchEntries()
+
+        #expect(entries.count == 2)
+        let first = try #require(entries.first { $0.resultID == firstResult.id })
+        #expect(first.projectID == firstProject.id)
+        #expect(first.projectName == firstProject.displayName)
+        #expect(first.role == .intermediate)
+        #expect(first.relativePath == "stacks/master.fit")
+        #expect(first.softwareName == "Siril")
+        let second = try #require(entries.first { $0.resultID == secondResult.id })
+        #expect(second.projectName == secondProject.displayName)
+        #expect(second.role == .final)
+    }
 }
 
 private extension UUID {

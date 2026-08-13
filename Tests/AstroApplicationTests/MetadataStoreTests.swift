@@ -106,6 +106,42 @@ struct MetadataStoreTests {
         #expect(limited[1].findingCount == 3)
     }
 
+    @Test("allResults joins every project's results with the owning project name")
+    func allResultsJoinsProjectNamesAcrossProjects() async throws {
+        let store = try MetadataStore.temporary()
+        let firstProject = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Elephant's Trunk", phase: .processing)
+        let secondProject = ProjectRecord(id: UUID(), catalogID: "M 31", displayName: "Andromeda Galaxy", phase: .collecting)
+        let firstResult = ResultRecord(
+            id: UUID(), projectID: firstProject.id, parentResultID: nil, kind: .stack, role: .intermediate,
+            relativePath: "stacks/master.fit", createdAt: Date(timeIntervalSince1970: 1_786_400_000),
+            softwareName: "Siril", softwareVersion: "1.4"
+        )
+        let secondResult = ResultRecord(
+            id: UUID(), projectID: secondProject.id, parentResultID: nil, kind: .processingVariant, role: .final,
+            relativePath: "processed/final.fit", createdAt: Date(timeIntervalSince1970: 1_786_500_000),
+            softwareName: "PixInsight", softwareVersion: "1.9"
+        )
+        try await store.save(MetadataWriteBatch(
+            projects: [firstProject, secondProject],
+            results: [firstResult, secondResult]
+        ))
+
+        let all = try await store.allResults()
+
+        #expect(all.count == 2)
+        let first = try #require(all.first { $0.result.id == firstResult.id })
+        #expect(first.projectName == firstProject.displayName)
+        let second = try #require(all.first { $0.result.id == secondResult.id })
+        #expect(second.projectName == secondProject.displayName)
+    }
+
+    @Test("allResults on an empty database returns an empty list")
+    func allResultsOnEmptyDatabaseIsEmpty() async throws {
+        let store = try MetadataStore.temporary()
+
+        #expect(try await store.allResults().isEmpty)
+    }
+
     @Test("All UUID workflow records round-trip with stable lineage")
     func metadataRoundTripsStableIdentityAndLineage() async throws {
         let fixture = try StoreFixture.make()

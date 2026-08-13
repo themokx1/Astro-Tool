@@ -2,6 +2,18 @@ import AstroCore
 import Darwin
 import Foundation
 
+/// A single result joined with the display name of the project that owns
+/// it, for library-wide (cross-project) contexts such as global search.
+public struct ResultProjectSummary: Equatable, Sendable {
+    public let result: ResultRecord
+    public let projectName: String
+
+    public init(result: ResultRecord, projectName: String) {
+        self.result = result
+        self.projectName = projectName
+    }
+}
+
 public struct MetadataWriteBatch: Sendable {
     public var projects: [ProjectRecord]
     public var nights: [NightRecord]
@@ -336,6 +348,24 @@ public actor MetadataStore {
             """,
             bind: [.text(projectID.databaseText)]
         ) { row in records.append(try Self.result(from: row)) }
+        return records
+    }
+
+    /// Every result across every project, joined with the owning project's
+    /// display name. Backs library-wide result-content search, which has no
+    /// single project to scope to the way `results(projectID:)` does.
+    public func allResults() throws -> [ResultProjectSummary] {
+        var records: [ResultProjectSummary] = []
+        try database.query(
+            """
+            SELECT results.id, results.project_id, results.parent_result_id, results.kind, results.role,
+                   results.relative_path, results.created_at, results.software_name, results.software_version,
+                   projects.display_name
+            FROM results
+            JOIN projects ON projects.id = results.project_id
+            ORDER BY results.created_at, results.id;
+            """
+        ) { row in records.append(try Self.resultProjectSummary(from: row)) }
         return records
     }
 
@@ -1241,6 +1271,14 @@ public actor MetadataStore {
         )
         try validate(record)
         return record
+    }
+
+    private static func resultProjectSummary(from row: SQLiteRow) throws -> ResultProjectSummary {
+        let record = try Self.result(from: row)
+        guard let projectName = row.string(9) else {
+            throw MetadataStoreError.invalidRecord(table: "results", id: record.id.uuidString)
+        }
+        return ResultProjectSummary(result: record, projectName: projectName)
     }
 
     private static func lineageEdge(from row: SQLiteRow) throws -> LineageEdgeRecord {

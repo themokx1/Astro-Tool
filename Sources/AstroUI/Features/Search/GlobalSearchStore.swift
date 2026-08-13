@@ -9,6 +9,7 @@ public enum GlobalSearchResultKind: String, Sendable {
     case series
     case file
     case note
+    case result
 }
 
 public struct GlobalSearchResult: Identifiable, Equatable, Sendable {
@@ -38,12 +39,18 @@ public struct GlobalSearchResult: Identifiable, Equatable, Sendable {
 @Observable
 public final class GlobalSearchStore {
     public typealias LibrarySearch = @Sendable (String, URL) async throws -> SearchResults
+    public typealias ResultsSearch = @Sendable (URL) async throws -> [ResultSearchEntry]
     public private(set) var results: [GlobalSearchResult] = []
     public private(set) var isSearching = false
     private let librarySearch: LibrarySearch
+    private let resultsSearch: ResultsSearch
 
-    public init(librarySearch: @escaping LibrarySearch = GlobalSearchStore.productionSearch) {
+    public init(
+        librarySearch: @escaping LibrarySearch = GlobalSearchStore.productionSearch,
+        resultsSearch: @escaping ResultsSearch = GlobalSearchStore.productionResultsSearch
+    ) {
         self.librarySearch = librarySearch
+        self.resultsSearch = resultsSearch
     }
 
     public func search(
@@ -116,6 +123,28 @@ public final class GlobalSearchStore {
                 )
             })
         }
+        if let rootURL, let resultEntries = try? await resultsSearch(rootURL) {
+            found.append(contentsOf: resultEntries.filter { entry in
+                let haystack = Self.normalized([
+                    entry.softwareName, entry.softwareVersion, entry.role.rawValue,
+                    entry.kind.rawValue, entry.relativePath, entry.projectName,
+                ].compactMap { $0 }.joined(separator: " "))
+                return haystack.contains(normalized)
+            }.map { entry in
+                let softwareLabel = [entry.softwareName, entry.softwareVersion]
+                    .compactMap { $0 }.joined(separator: " ")
+                let title = softwareLabel.isEmpty
+                    ? (entry.relativePath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Result")
+                    : softwareLabel
+                return GlobalSearchResult(
+                    kind: .result,
+                    objectID: entry.resultID,
+                    title: title,
+                    subtitle: "Result · \(entry.projectName) · \(entry.role.rawValue.capitalized)",
+                    locator: entry.projectID.uuidString
+                )
+            })
+        }
         results = found
     }
 
@@ -135,6 +164,16 @@ public final class GlobalSearchStore {
                 seen.insert("\($0.target)|\($0.date)|\($0.key)").inserted
             })
             return result
+        }.value
+    }
+
+    /// Every result across every project in the library, unfiltered --
+    /// `search(_:)` applies the same normalized, diacritic-insensitive match
+    /// it already uses for nights and series.
+    public static func productionResultsSearch(_ rootURL: URL) async throws -> [ResultSearchEntry] {
+        try await Task.detached(priority: .userInitiated) {
+            let metadata = try await ProjectsStore.productionMetadata(rootURL: rootURL)
+            return try await ResultsQuery(metadata: metadata).librarySearchEntries()
         }.value
     }
 

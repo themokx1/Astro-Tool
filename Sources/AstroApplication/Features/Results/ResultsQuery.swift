@@ -21,6 +21,44 @@ public struct ResultsSnapshot: Equatable, Sendable {
     public let publishableResultID: UUID?
 }
 
+/// A library-wide (cross-project) searchable projection of one result,
+/// naming the project it belongs to so callers -- notably global search --
+/// don't need a project already selected to find or route to it.
+public struct ResultSearchEntry: Equatable, Sendable, Identifiable {
+    public var id: UUID { resultID }
+    public let resultID: UUID
+    public let projectID: UUID
+    public let projectName: String
+    public let kind: ResultKind
+    public let role: ResultRole
+    public let relativePath: String?
+    public let softwareName: String?
+    public let softwareVersion: String?
+    public let createdAt: Date
+
+    public init(
+        resultID: UUID,
+        projectID: UUID,
+        projectName: String,
+        kind: ResultKind,
+        role: ResultRole,
+        relativePath: String?,
+        softwareName: String?,
+        softwareVersion: String?,
+        createdAt: Date
+    ) {
+        self.resultID = resultID
+        self.projectID = projectID
+        self.projectName = projectName
+        self.kind = kind
+        self.role = role
+        self.relativePath = relativePath
+        self.softwareName = softwareName
+        self.softwareVersion = softwareVersion
+        self.createdAt = createdAt
+    }
+}
+
 public struct ResultsQuery: Sendable {
     private let metadata: MetadataStore?
     private let fixtureSnapshot: ResultsSnapshot?
@@ -78,5 +116,25 @@ public struct ResultsQuery: Sendable {
         }
         let publishable = details.filter { $0.role == .final }.max { $0.createdAt < $1.createdAt }?.id
         return .init(projectID: projectID, results: details, publishableResultID: publishable)
+    }
+
+    /// Every result across every project, for library-wide search. Fixture
+    /// instances (used by previews) have no metadata store and report no
+    /// entries; production instances join through `MetadataStore.allResults()`.
+    public func librarySearchEntries() async throws -> [ResultSearchEntry] {
+        guard let metadata else { return [] }
+        return try await metadata.allResults().map { summary in
+            ResultSearchEntry(
+                resultID: summary.result.id,
+                projectID: summary.result.projectID,
+                projectName: summary.projectName,
+                kind: summary.result.kind,
+                role: summary.result.role,
+                relativePath: summary.result.relativePath,
+                softwareName: summary.result.softwareName,
+                softwareVersion: summary.result.softwareVersion,
+                createdAt: summary.result.createdAt
+            )
+        }
     }
 }

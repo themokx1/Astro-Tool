@@ -240,7 +240,7 @@ private struct V2Shell: View {
                 Button(action: { showsSearch.toggle() }) {
                     Label("Search", systemImage: "magnifyingglass")
                 }
-                .help("Search projects, nights, series, files, and notes")
+                .help("Search projects, nights, series, results, files, and notes")
                 .accessibilityIdentifier("v2.toolbar.search")
                 .popover(isPresented: $showsSearch, arrowEdge: .bottom) {
                     GlobalSearchPanel(
@@ -396,6 +396,12 @@ private struct V2Shell: View {
             guard let objectID = result.objectID else { return }
             router.navigate(to: .projects)
             Task { try? await projectsStore.selectProject(objectID) }
+        case .result:
+            guard let objectID = result.objectID,
+                  let locator = result.locator,
+                  let projectID = UUID(uuidString: locator) else { return }
+            Task { try? await projectsStore.selectProject(projectID) }
+            router.navigate(toContent: .result(objectID.uuidString))
         }
     }
 
@@ -418,7 +424,7 @@ private struct GlobalSearchPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TextField("Search projects, nights, files, and notes", text: $query)
+            TextField("Search projects, nights, series, results, files, and notes", text: $query)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("v2.global-search.field")
                 .onChange(of: query) { _, value in
@@ -472,6 +478,7 @@ private struct GlobalSearchPanel: View {
         case .series: "square.stack.3d.up"
         case .file: "doc"
         case .note: "note.text"
+        case .result: "square.stack.3d.up"
         }
     }
 }
