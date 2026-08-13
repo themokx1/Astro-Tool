@@ -165,6 +165,35 @@ public final class OperationHost {
         return didCancel
     }
 
+    /// Reports incremental progress for a still-running operation: updates
+    /// the matching `activeOperations` entry's `completed`/`total` and
+    /// forwards the same numbers to `OperationCenter` so its own state (and
+    /// anything else observing it) stays in sync. Returns `false` -- without
+    /// touching `activeOperations` -- when `id` is not currently running or
+    /// `OperationCenter` rejects the update (e.g. it would move progress
+    /// backward), matching `OperationCenter.progress(_:to:total:)`'s own
+    /// contract.
+    @discardableResult
+    public func reportProgress(id: UUID, completed: Int64, total: Int64? = nil) async -> Bool {
+        guard activeOperations.contains(where: { $0.id == id }) else { return false }
+        guard await center.progress(id, to: completed, total: total) else { return false }
+        guard let index = activeOperations.firstIndex(where: { $0.id == id }) else { return false }
+        activeOperations[index].completed = completed
+        if let total {
+            activeOperations[index].total = total
+        }
+        return true
+    }
+
+    /// Posts a toast that has no associated running operation -- for
+    /// outcomes that never became an `OperationCenter` entry, such as a
+    /// rescan request arriving with no library open. Callers that already
+    /// have an operation in flight should let `run(kind:title:work:)`'s own
+    /// success/failure toast carry the message instead of calling this.
+    public func notify(_ level: ToastLevel, message: String) {
+        enqueueToastNow(level, message)
+    }
+
     public func dismissToast(id: UUID) {
         toasts.removeAll { $0.id == id }
     }
@@ -206,6 +235,10 @@ public final class OperationHost {
     }
 
     private func enqueueToast(_ level: ToastLevel, _ message: String) async {
+        enqueueToastNow(level, message)
+    }
+
+    private func enqueueToastNow(_ level: ToastLevel, _ message: String) {
         let createdAt = clock()
         toasts.append(
             Toast(

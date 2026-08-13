@@ -174,6 +174,7 @@ private struct V2Shell: View {
     @State private var globalSearch = GlobalSearchStore()
     @State private var newProjectInitialQuery = ""
     @Environment(\.openSettings) private var openSettings
+    @Environment(OperationHost.self) private var operationHost
 
     var body: some View {
         NavigationSplitView {
@@ -205,7 +206,8 @@ private struct V2Shell: View {
                 },
                 convertSession: {
                     conversionRoot = onboardingStore.selectedRoot ?? libraryRootFallback
-                }
+                },
+                rescan: performRescan
             )
         }
         .navigationSplitViewStyle(.balanced)
@@ -255,6 +257,13 @@ private struct V2Shell: View {
             }
         }
         .focusedSceneValue(\.appRouter, router)
+        .focusedSceneValue(
+            \.libraryRescan,
+            LibraryRescanCommand(
+                isAvailable: onboardingStore.selectedRoot != nil,
+                action: performRescan
+            )
+        )
         .frame(minWidth: 820, minHeight: 600)
         .overlay {
             if let destination = reviewDestination {
@@ -324,6 +333,13 @@ private struct V2Shell: View {
     private func presentOnboarding() {
         onboardingStore.returnToLibraryChoice()
         isOnboardingPresented = true
+    }
+
+    /// Backs both the ⌘R menu command (`V2AstroToolCommands`, via
+    /// `FocusedValues.libraryRescan`) and the Library workspace's own
+    /// "Rescan" button -- one action, reused rather than duplicated.
+    private func performRescan() {
+        Task { await onboardingStore.rescan(operationHost: operationHost) }
     }
 
     private func openSearchResult(_ result: GlobalSearchResult) {
@@ -505,6 +521,7 @@ private struct DetailHost: View {
     let reviewProject: (ProjectRecord) -> Void
     let showResults: (ProjectRecord) -> Void
     let convertSession: () -> Void
+    let rescan: () -> Void
 
     @ViewBuilder
     var body: some View {
@@ -606,7 +623,8 @@ private struct DetailHost: View {
                 snapshot: onboardingStore.phase.summary,
                 rootURL: onboardingStore.selectedRoot,
                 chooseLibrary: chooseLibrary,
-                convertSession: convertSession
+                convertSession: convertSession,
+                rescan: rescan
             )
         case .insights:
             InsightsView(

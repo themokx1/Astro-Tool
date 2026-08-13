@@ -4,10 +4,37 @@ private struct AppRouterFocusedValueKey: FocusedValueKey {
     typealias Value = AppRouter
 }
 
+/// The menu bar's window onto the global rescan action (⌘R) -- `Commands`
+/// runs outside the view hierarchy, so it cannot hold `OnboardingStore` or
+/// `OperationHost` directly; the active window's `V2Shell` publishes this
+/// instead, the same way it publishes `appRouter`.
+public struct LibraryRescanCommand {
+    public let isAvailable: Bool
+    private let action: () -> Void
+
+    public init(isAvailable: Bool, action: @escaping () -> Void) {
+        self.isAvailable = isAvailable
+        self.action = action
+    }
+
+    public func callAsFunction() {
+        action()
+    }
+}
+
+private struct LibraryRescanFocusedValueKey: FocusedValueKey {
+    typealias Value = LibraryRescanCommand
+}
+
 public extension FocusedValues {
     var appRouter: AppRouter? {
         get { self[AppRouterFocusedValueKey.self] }
         set { self[AppRouterFocusedValueKey.self] = newValue }
+    }
+
+    var libraryRescan: LibraryRescanCommand? {
+        get { self[LibraryRescanFocusedValueKey.self] }
+        set { self[LibraryRescanFocusedValueKey.self] = newValue }
     }
 }
 

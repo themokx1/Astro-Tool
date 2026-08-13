@@ -215,6 +215,27 @@ struct V2ShellSurfaceTests {
         #expect(root.contains("v2.toast-layer"))
     }
 
+    @Test("A global rescan (⌘R) is wired into the menu bar and the Library workspace")
+    func rescanIsWiredIntoCommandsAndLibraryView() throws {
+        let commands = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroToolApp/Views/Commands.swift"
+            ),
+            encoding: .utf8
+        )
+        let v2Commands = try #require(commands.components(separatedBy: "struct V2AstroToolCommands").last)
+        #expect(v2Commands.contains("Rescan"))
+        #expect(v2Commands.contains(".keyboardShortcut(\"r\""))
+
+        let library = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Features/Library/LibraryView.swift"
+            ),
+            encoding: .utf8
+        )
+        #expect(library.contains("v2.library.rescan"))
+    }
+
     @Test("Results expose lineage, publish readiness and an honest empty state")
     func resultsWorkspaceContract() throws {
         let source = try String(

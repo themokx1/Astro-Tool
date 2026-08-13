@@ -6,6 +6,7 @@ public struct LibraryView: View {
     let rootURL: URL?
     let chooseLibrary: () -> Void
     let convertSession: () -> Void
+    let rescan: () -> Void
 
     public var body: some View {
         WorkspacePage(eyebrow: "Local and private", title: "Library", subtitle: "A read-only index of the image folders already on your Mac.") {
@@ -29,6 +30,10 @@ public struct LibraryView: View {
                         HStack {
                             Button("Organize One Session…", action: convertSession)
                                 .buttonStyle(.borderedProminent)
+                            Button("Rescan", systemImage: "arrow.clockwise", action: rescan)
+                                .buttonStyle(.bordered)
+                                .help("Re-read the library folder for new or changed files (⌘R)")
+                                .accessibilityIdentifier("v2.library.rescan")
                             Button("Change Library…", action: chooseLibrary).buttonStyle(.bordered)
                         }
                     }

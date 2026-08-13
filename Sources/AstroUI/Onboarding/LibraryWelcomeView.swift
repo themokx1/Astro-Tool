@@ -350,6 +350,80 @@ public final class OnboardingStore {
         resetToLibraryChoice()
     }
 
+    /// Re-runs the same read-only scan pipeline `openAndScan` uses, against
+    /// the *already open* `selectedRoot`, through `operationHost.run` -- so
+    /// it shows up in `activeOperations`, supports cancel, and reports
+    /// progress the same way any other V2 background job does. Unlike
+    /// `openAndScan` (which owns picking a fresh library, and so resets to
+    /// `.chooseLibrary` if that pick is cancelled or fails), a rescan that
+    /// is cancelled or fails leaves `selectedRoot` and the last known-good
+    /// `phase.summary` completely untouched -- there is no "choice" to roll
+    /// back to, only a refresh that did not complete. `operationHost.run`'s
+    /// own failure toast already surfaces a scan error; only the "nothing to
+    /// rescan" case posts its own (`.info`) notification here.
+    ///
+    /// Matches `run(kind:title:work:)`'s own contract: this returns as soon
+    /// as the operation is registered, without waiting for the scan itself
+    /// to finish -- the progress relay below runs as its own unstructured
+    /// task so a slow or gated scan can never block the caller.
+    public func rescan(operationHost: OperationHost) async {
+        guard let root = selectedRoot else {
+            operationHost.notify(.info, message: "Choose a library before rescanning.")
+            return
+        }
+
+        let kind = OperationKind.scan(library: root.lastPathComponent)
+        guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
+            operationHost.notify(.info, message: "A rescan of this library is already running.")
+            return
+        }
+
+        let progressBuffer = LatestOnboardingProgress()
+        let id = await operationHost.run(
+            kind: kind,
+            title: "Rescanning \(root.lastPathComponent)",
+            cancellation: .cooperative
+        ) { [weak self] in
+            guard let self else { return }
+            try Task.checkCancellation()
+            let storage = try self.storageFactory(root: root)
+            let session = try await self.sessionFactory(root: root, storage: storage)
+            let snapshot = try await session.scan(progress: { progress in
+                progressBuffer.store(progress)
+            })
+            try Task.checkCancellation()
+            await self.applyRescanSnapshot(snapshot, root: root)
+        }
+
+        Task {
+            while operationHost.activeOperations.contains(where: { $0.id == id }) {
+                if let progress = progressBuffer.take() {
+                    await operationHost.reportProgress(
+                        id: id,
+                        completed: Int64(progress.scanned),
+                        total: progress.total.map(Int64.init)
+                    )
+                }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            if let progress = progressBuffer.take() {
+                await operationHost.reportProgress(
+                    id: id,
+                    completed: Int64(progress.scanned),
+                    total: progress.total.map(Int64.init)
+                )
+            }
+        }
+    }
+
+    /// Applies a rescan's result -- but only if the library it was scanning
+    /// is still the one currently open (a `returnToLibraryChoice()` or a new
+    /// `openAndScan` could have superseded it while the rescan was running).
+    private func applyRescanSnapshot(_ snapshot: LibrarySnapshot, root: URL) {
+        guard selectedRoot == root else { return }
+        phase = .summary(snapshot)
+    }
+
     public func continueWithoutPersonalizing() {
         completionChoice = .library
     }

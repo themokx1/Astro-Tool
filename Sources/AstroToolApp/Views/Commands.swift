@@ -266,6 +266,7 @@ struct AstroToolCommands: Commands {
 /// They never reach across windows or depend on the V1 singleton/notifications.
 struct V2AstroToolCommands: Commands {
     @FocusedValue(\.appRouter) private var router
+    @FocusedValue(\.libraryRescan) private var libraryRescan
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
@@ -276,6 +277,20 @@ struct V2AstroToolCommands: Commands {
             Button("New Night…", action: {})
             .disabled(true)
             .help("Available after library workflows arrive")
+
+            Divider()
+
+            // R11 parity: V1's ⌘R "Beolvasás" -- re-runs the same read-only
+            // scan pipeline onboarding used against the already-open
+            // library, through `OperationHost` (shows up in the toolbar's
+            // activity indicator, is cancellable, reports progress).
+            // Disabled with no library open, matching V1's own
+            // `AppState.shared?.db == nil` gate for the equivalent command.
+            Button("Rescan") {
+                libraryRescan?()
+            }
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(libraryRescan?.isAvailable != true)
         }
 
         CommandGroup(after: .toolbar) {

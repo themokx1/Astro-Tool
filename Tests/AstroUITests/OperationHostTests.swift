@@ -81,6 +81,48 @@ struct OperationHostTests {
         #expect(!host.toasts.contains { $0.level == .failure })
     }
 
+    @Test("Reporting progress updates the active projection and forwards to OperationCenter")
+    func reportProgressUpdatesActiveProjectionAndCenter() async throws {
+        let center = OperationCenter()
+        let host = OperationHost(center: center)
+        let gate = AsyncGate()
+
+        let id = await host.run(kind: .scan(library: "A"), title: "Scanning A") {
+            await gate.waitToProceed()
+        }
+
+        let didUpdate = await host.reportProgress(id: id, completed: 40, total: 100)
+
+        #expect(didUpdate)
+        #expect(host.activeOperations.first { $0.id == id }?.completed == 40)
+        #expect(host.activeOperations.first { $0.id == id }?.total == 100)
+        #expect(await center.state(id)?.completed == 40)
+        #expect(await center.state(id)?.total == 100)
+
+        gate.open()
+        try await waitUntil { host.activeOperations.isEmpty }
+    }
+
+    @Test("Reporting progress for an unknown operation is a harmless no-op")
+    func reportProgressForUnknownOperationIsNoOp() async throws {
+        let host = OperationHost(center: OperationCenter())
+
+        let didUpdate = await host.reportProgress(id: UUID(), completed: 10, total: 20)
+
+        #expect(!didUpdate)
+        #expect(host.activeOperations.isEmpty)
+    }
+
+    @Test("A standalone notification posts a toast without a running operation")
+    func standaloneNotificationPostsToastWithoutOperation() async throws {
+        let host = OperationHost(center: OperationCenter())
+
+        host.notify(.info, message: "Choose a library before rescanning.")
+
+        #expect(host.activeOperations.isEmpty)
+        #expect(host.toasts.contains { $0.level == .info && $0.message == "Choose a library before rescanning." })
+    }
+
     @Test("Toasts can be dismissed individually")
     func dismissToastRemovesOnlyThatToast() async throws {
         let host = OperationHost(center: OperationCenter())
