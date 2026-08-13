@@ -121,6 +121,7 @@ public struct V2RootView: View {
                     try await nightsStore.open(rootURL: root)
                     await homeStore.configure(
                         libraryName: root.lastPathComponent,
+                        rootURL: root,
                         projectsStore: projectsStore,
                         nightCount: nightsStore.nights.count
                     )
@@ -508,6 +509,10 @@ private struct DetailHost: View {
                     Task {
                         try? await projectsStore.selectProject(project.id)
                     }
+                },
+                openProjectID: { projectID in
+                    router.navigate(toContent: .project(projectID.uuidString))
+                    Task { try? await projectsStore.selectProject(projectID) }
                 }
             )
         case .projects:

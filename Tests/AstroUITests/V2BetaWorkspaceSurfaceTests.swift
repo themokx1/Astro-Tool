@@ -125,4 +125,17 @@ struct V2BetaWorkspaceSurfaceTests {
         #expect(view.contains("rejectedFrameCount"))
         #expect(view.contains("v2.insights.quality"))
     }
+
+    @Test("Home shows real astronomical tonight recommendations")
+    func homeShowsTonightRecommendations() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Home/HomeStore.swift"))
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Home/HomeView.swift"))
+        #expect(store.contains("Planner.plan"))
+        #expect(store.contains("visibleWindowLocal"))
+        #expect(store.contains("moonSeparationDeg"))
+        #expect(view.contains("Best targets tonight"))
+        #expect(view.contains("v2.home.tonight-recommendations"))
+    }
 }

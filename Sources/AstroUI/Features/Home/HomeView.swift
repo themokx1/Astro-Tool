@@ -5,15 +5,18 @@ public struct HomeView: View {
     @Bindable private var store: HomeStore
     private let chooseLibrary: () -> Void
     private let openProject: (ProjectRecord) -> Void
+    private let openProjectID: (UUID) -> Void
 
     public init(
         store: HomeStore,
         chooseLibrary: @escaping () -> Void,
-        openProject: @escaping (ProjectRecord) -> Void
+        openProject: @escaping (ProjectRecord) -> Void,
+        openProjectID: @escaping (UUID) -> Void = { _ in }
     ) {
         _store = Bindable(store)
         self.chooseLibrary = chooseLibrary
         self.openProject = openProject
+        self.openProjectID = openProjectID
     }
 
     public var body: some View {
@@ -67,8 +70,50 @@ public struct HomeView: View {
                         .foregroundStyle(.secondary).padding(8)
                 }
             }
+            tonightRecommendations
         }
         .accessibilityIdentifier("v2.home.library-overview")
+    }
+
+    private var tonightRecommendations: some View {
+        GroupBox("Best targets tonight") {
+            if store.snapshot.tonightRecommendations.isEmpty {
+                Text("No astronomical recommendation is available yet. Add a site or scan FITS coordinates to enable tonight planning.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(store.snapshot.tonightRecommendations) { recommendation in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(recommendation.displayName).font(.headline)
+                                Text([
+                                    recommendation.visibleWindow.map { "Visible \($0)" },
+                                    recommendation.culmination.map { "Culminates \($0)" },
+                                    recommendation.maxAltitude.map { "\($0.formatted(.number.precision(.fractionLength(0))))° max" }
+                                ].compactMap { $0 }.joined(separator: " · "))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(recommendation.verdict)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(AstroTokens.Color.spectralBlue)
+                            if let projectID = recommendation.projectID {
+                                Button("Open") { openProjectID(projectID) }
+                                    .buttonStyle(.borderless)
+                            }
+                        }
+                        .padding(.vertical, 9)
+                        if recommendation.id != store.snapshot.tonightRecommendations.last?.id {
+                            Divider()
+                        }
+                    }
+                }
+                .padding(.horizontal, 8)
+            }
+        }
+        .accessibilityIdentifier("v2.home.tonight-recommendations")
     }
 
     private func duration(_ seconds: Double) -> String {

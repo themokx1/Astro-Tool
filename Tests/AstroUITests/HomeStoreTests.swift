@@ -1,5 +1,6 @@
 @testable import AstroUI
 import AstroApplication
+import AstroCore
 import Foundation
 import Testing
 
@@ -18,6 +19,39 @@ struct HomeStoreTests {
         #expect(store.snapshot.projectCount == 1)
         #expect(store.snapshot.nightCount == 16)
         #expect(store.snapshot.nextProject == project)
+    }
+
+    @Test("Home ranks real tonight plans and links them to V2 projects")
+    func homeShowsAstronomicalTonightRecommendations() async throws {
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .collecting
+        )
+        let metadata = try MetadataStore.temporary()
+        try await metadata.save(project)
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(tonightProvider: { selectedRoot in
+            #expect(selectedRoot == root)
+            return [TargetPlan(
+                target: "IC_1396", displayName: "Elefántormány-köd",
+                usableIntegrationSeconds: 7200, goalSeconds: 36_000,
+                culminationLocal: "01:14", maxAltitudeDeg: 79,
+                visibleWindowLocal: "22:10–03:36", visibleHours: 5.5,
+                moonIlluminationPercent: 11, moonSeparationDeg: 87,
+                verdict: "ma jó", score: 0.92
+            )]
+        })
+
+        await store.configure(
+            libraryName: "Astro", rootURL: root,
+            projectsStore: projects, nightCount: 1
+        )
+
+        #expect(store.snapshot.tonightRecommendations.count == 1)
+        #expect(store.snapshot.tonightRecommendations[0].projectID == project.id)
+        #expect(store.snapshot.tonightRecommendations[0].visibleWindow == "22:10–03:36")
+        #expect(store.snapshot.tonightRecommendations[0].verdict == "ma jó")
     }
 
     @Test("Home prioritizes the least collected active project")

@@ -1,5 +1,5 @@
 v1_workflow,v2_route,use_case,permission_mode,unit_test,ui_test,cli_report_parity,accessibility,empty_error_state,status,known_gap
-tonight,Home,HomeStore summary and next action,read-only,HomeStoreTests,V2ShellSurfaceTests,CLI unaffected,v2.detail.home,implemented,beta-partial,astronomical tonight recommendations are not fully connected
+tonight,Home,HomeStore summary next action and Planner astronomical ranking,read-only,HomeStoreTests,V2BetaWorkspaceSurfaceTests,plan CLI retained,v2.home.tonight-recommendations,implemented,beta-partial,real visibility culmination altitude Moon-aware verdict and project opening are connected; weather and calibration shopping list remain unavailable
 calendar,Nights,NightsQuery chronological sessions,read-only,NightsQueryTests,NightsStoreTests,nights CLI retained,v2.detail.nights,implemented,beta-partial,calendar grid and date planning are not yet present
 discover,Planning,PlanningQuery catalog and FOV ranking,read-only,PlanningQueryTests,V2ShellSurfaceTests,discovery CLI unaffected,v2.detail.planning,implemented,complete,none
 previous-night,Nights,NightsQuery recent-session rollup,read-only,NightsQueryTests,NightsStoreTests,nights CLI retained,v2.detail.nights,implemented,beta-partial,morning triage health actions are not yet grouped
