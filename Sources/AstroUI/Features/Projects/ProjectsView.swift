@@ -256,15 +256,18 @@ public struct NewProjectView: View {
     @State private var saveError: String?
     @Bindable var store: ProjectsStore
     let dismiss: () -> Void
+    let didCreate: (ProjectRecord) -> Void
 
     public init(
         store: ProjectsStore,
         initialQuery: String = "",
-        dismiss: @escaping () -> Void
+        dismiss: @escaping () -> Void,
+        didCreate: @escaping (ProjectRecord) -> Void = { _ in }
     ) {
         _store = Bindable(store)
         _search = State(initialValue: initialQuery)
         self.dismiss = dismiss
+        self.didCreate = didCreate
     }
 
     private var matches: [ProjectCatalogMatch] {
@@ -338,7 +341,8 @@ public struct NewProjectView: View {
                     saveError = nil
                     Task {
                         do {
-                            _ = try await store.createProject(from: selected)
+                            let project = try await store.createProject(from: selected)
+                            didCreate(project)
                             dismiss()
                         } catch {
                             saveError = error.localizedDescription

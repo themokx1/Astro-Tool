@@ -264,10 +264,15 @@ private struct V2Shell: View {
         }
         .sheet(item: $router.presentation) { presentation in
             if presentation == .newProject {
-                NewProjectView(store: projectsStore, initialQuery: newProjectInitialQuery) {
-                    router.dismissPresentation()
-                    newProjectInitialQuery = ""
-                }
+                NewProjectView(
+                    store: projectsStore,
+                    initialQuery: newProjectInitialQuery,
+                    dismiss: {
+                        router.dismissPresentation()
+                        newProjectInitialQuery = ""
+                    },
+                    didCreate: openCreatedProject
+                )
             } else {
                 V2PresentationPlaceholder(route: presentation) {
                     router.dismissPresentation()
@@ -318,6 +323,13 @@ private struct V2Shell: View {
         case .night:
             nightsStore.selectNight(result.objectID)
             router.navigate(to: .nights)
+        }
+    }
+
+    private func openCreatedProject(_ project: ProjectRecord) {
+        router.navigate(to: .projects)
+        Task {
+            try? await projectsStore.selectProject(project.id)
         }
     }
 }

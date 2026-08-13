@@ -77,4 +77,15 @@ struct V2BetaWorkspaceSurfaceTests {
         #expect(projects.contains("initialQuery"))
         #expect(shell.contains("newProjectInitialQuery = designation"))
     }
+
+    @Test("Creating a project opens its acquisition workspace immediately")
+    func newProjectOpensCreatedProject() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let projects = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectsView.swift"))
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        #expect(projects.contains("didCreate(project)"))
+        #expect(shell.contains("openCreatedProject"))
+        #expect(shell.contains("projectsStore.selectProject(project.id)"))
+    }
 }
