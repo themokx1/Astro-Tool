@@ -441,7 +441,16 @@ private struct DetailHost: View {
     var body: some View {
         switch router.contentRoute {
         case .home:
-            HomeView(store: homeStore, chooseLibrary: chooseLibrary)
+            HomeView(
+                store: homeStore,
+                chooseLibrary: chooseLibrary,
+                openProject: { project in
+                    router.navigate(to: .projects)
+                    Task {
+                        try? await projectsStore.selectProject(project.id)
+                    }
+                }
+            )
         case .projects:
             ProjectsView(
                 snapshot: onboardingStore.phase.summary,

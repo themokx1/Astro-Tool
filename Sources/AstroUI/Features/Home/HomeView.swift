@@ -1,12 +1,19 @@
 import SwiftUI
+import AstroApplication
 
 public struct HomeView: View {
     @Bindable private var store: HomeStore
     private let chooseLibrary: () -> Void
+    private let openProject: (ProjectRecord) -> Void
 
-    public init(store: HomeStore, chooseLibrary: @escaping () -> Void) {
+    public init(
+        store: HomeStore,
+        chooseLibrary: @escaping () -> Void,
+        openProject: @escaping (ProjectRecord) -> Void
+    ) {
         _store = Bindable(store)
         self.chooseLibrary = chooseLibrary
+        self.openProject = openProject
     }
 
     public var body: some View {
@@ -48,6 +55,11 @@ public struct HomeView: View {
                                 .font(.callout).foregroundStyle(.secondary)
                         }
                         Spacer()
+                        Button("Open Project") {
+                            openProject(project)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("v2.home.open-project")
                     }
                     .padding(8)
                 } else {

@@ -54,4 +54,15 @@ struct V2BetaWorkspaceSurfaceTests {
         #expect(source.contains("Excluded"))
         #expect(source.contains("selectProject"))
     }
+
+    @Test("Home recommendation opens the selected project instead of a generic page")
+    func homeRecommendationHasDirectProjectAction() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let home = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Home/HomeView.swift"))
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        #expect(home.contains("Open Project"))
+        #expect(home.contains("openProject(project)"))
+        #expect(shell.contains("projectsStore.selectProject(project.id)"))
+    }
 }
