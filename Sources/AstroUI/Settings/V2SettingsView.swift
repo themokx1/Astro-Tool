@@ -1,0 +1,119 @@
+import SwiftUI
+
+public struct V2SettingsView: View {
+    @State private var store = SettingsStore()
+
+    public init() {}
+
+    public var body: some View {
+        TabView {
+            GeneralSettingsView().tabItem { Label("General", systemImage: "gearshape") }
+            LibrariesSettingsView().tabItem { Label("Libraries & Safety", systemImage: "externaldrive.badge.checkmark") }
+            PlanningSettingsView().tabItem { Label("Planning", systemImage: "sparkles") }
+            EquipmentEvaluationSettingsView(store: store).tabItem { Label("Equipment", systemImage: "camera.aperture") }
+            IntegrationsSupportSettingsView().tabItem { Label("Support", systemImage: "lifepreserver") }
+        }
+        .padding(20)
+        .frame(width: 720, height: 520)
+        .accessibilityIdentifier("v2.settings")
+    }
+}
+
+private struct GeneralSettingsView: View {
+    @AppStorage("v2.general.showGuidance") private var showGuidance = true
+    @AppStorage("v2.general.confirmMutations") private var confirmMutations = true
+    var body: some View {
+        Form {
+            Section("Experience") {
+                Toggle("Show contextual guidance", isOn: $showGuidance)
+                Toggle("Confirm operations that can change files", isOn: $confirmMutations).disabled(true)
+                Text("Destructive confirmations cannot be disabled in this beta.").font(.caption).foregroundStyle(.secondary)
+            }
+        }.formStyle(.grouped)
+    }
+}
+
+private struct LibrariesSettingsView: View {
+    @AppStorage("v2.library.scanOnOpen") private var scanOnOpen = true
+    var body: some View {
+        Form {
+            Section("Library behavior") {
+                Toggle("Refresh the external index when opening a library", isOn: $scanOnOpen)
+                Label("Image folders are read-only unless you explicitly approve a physical operation.", systemImage: "lock.shield")
+                Label("Metadata and indexes live outside the image library.", systemImage: "internaldrive")
+            }
+        }.formStyle(.grouped)
+    }
+}
+
+private struct PlanningSettingsView: View {
+    @AppStorage("v2.planning.referenceHours") private var referenceHours = 10.0
+    @AppStorage("v2.planning.referenceFocalRatio") private var referenceFocalRatio = 5.0
+    @AppStorage("v2.planning.referenceSurfaceBrightness") private var referenceBrightness = 22.0
+    var body: some View {
+        Form {
+            Section("Integration baseline") {
+                LabeledContent("Reference integration") { TextField("Hours", value: $referenceHours, format: .number).frame(width: 90) }
+                LabeledContent("Reference focal ratio") { TextField("f/", value: $referenceFocalRatio, format: .number).frame(width: 90) }
+                LabeledContent("Surface brightness") { TextField("mag/arcsec²", value: $referenceBrightness, format: .number).frame(width: 90) }
+                Text("Default: 10 hours at f/5 and μ22 mag/arcsec². Each target is calculated relative to this baseline.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }.formStyle(.grouped)
+    }
+}
+
+private struct EquipmentEvaluationSettingsView: View {
+    @Bindable var store: SettingsStore
+    @State private var manufacturer = ""
+    @State private var model = ""
+    @State private var passband = EquipmentFilterPassband.unknown
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Form {
+            Section("Filters") {
+                if store.filters.isEmpty { Text("No filters added yet.").foregroundStyle(.secondary) }
+                ForEach(store.filters) { filter in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text([filter.manufacturer, filter.model].filter { !$0.isEmpty }.joined(separator: " "))
+                            Text(filter.passband.title).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(role: .destructive) { store.removeFilter(id: filter.id) } label: { Image(systemName: "trash") }
+                    }
+                }
+            }
+            Section("Add filter") {
+                TextField("Manufacturer, e.g. SVBONY", text: $manufacturer)
+                TextField("Model, e.g. SV220", text: $model)
+                Picker("Passband", selection: $passband) {
+                    ForEach(EquipmentFilterPassband.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
+                Button("Add Filter") {
+                    do {
+                        _ = try store.createFilter(manufacturer: manufacturer, model: model, passband: passband)
+                        manufacturer = ""; model = ""; passband = .unknown; errorMessage = nil
+                    } catch { errorMessage = error.localizedDescription }
+                }.buttonStyle(.borderedProminent)
+            }
+        }.formStyle(.grouped)
+    }
+}
+
+private struct IntegrationsSupportSettingsView: View {
+    var body: some View {
+        Form {
+            Section("Privacy") {
+                Label("All library analysis runs locally on this Mac.", systemImage: "hand.raised")
+                Label("No account or cloud upload is required.", systemImage: "icloud.slash")
+            }
+            Section("Support") {
+                LabeledContent("Release channel", value: "V2 Beta")
+                LabeledContent("Diagnostics", value: "Stored locally")
+            }
+        }.formStyle(.grouped)
+    }
+}

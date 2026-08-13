@@ -46,12 +46,7 @@ struct AstroToolApp: App {
                 SettingsWindow()
                     .environment(appState)
             } else {
-                ContentUnavailableView(
-                    "Settings are not available yet",
-                    systemImage: "gearshape",
-                    description: Text("V2 settings arrive with the remaining workflows.")
-                )
-                .frame(minWidth: 520, minHeight: 360)
+                V2SettingsView()
             }
         }
     }
