@@ -312,6 +312,38 @@ struct V2OnboardingTests {
         #expect(store.phase.summary == snapshot)
     }
 
+    @Test("Dismissing completed onboarding preserves the scanned library")
+    func completedScanIsNotCancelledOnDismissal() async throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let snapshot = LibrarySnapshot(
+            libraryID: LibraryIdentity(rootURL: fixture.root),
+            revision: 1,
+            projectCount: 13,
+            nightCount: 20,
+            frameCount: 8_221
+        )
+        let store = OnboardingStore(
+            sessionFactory: .constant(
+                OnboardingSessionClient(accessMode: .readOnly, scan: { snapshot })
+            ),
+            storageFactory: .temporary(
+                applicationSupport: fixture.applicationSupport,
+                caches: fixture.caches
+            ),
+            securityScopedAccess: .inactive
+        )
+        try await store.openAndScan(fixture.root)
+
+        store.continueWithoutPersonalizing()
+        store.cancelActiveScan()
+
+        #expect(store.completionChoice == .library)
+        #expect(store.phase.summary == snapshot)
+        #expect(store.selectedRoot == fixture.root.standardizedFileURL)
+        #expect(store.indexDatabaseURL != nil)
+    }
+
     @Test("Onboarding surfaces use honest actions and contain no personal defaults")
     func sourceSafetyAndActions() throws {
         let sourceRoot = repositoryRoot.appendingPathComponent("Sources/AstroUI")

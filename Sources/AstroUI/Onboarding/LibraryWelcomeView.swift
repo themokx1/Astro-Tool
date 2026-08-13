@@ -255,6 +255,7 @@ public final class OnboardingStore {
     }
 
     public func cancelActiveScan() {
+        guard phase.isScanning else { return }
         activeOperationID = nil
         resetToLibraryChoice()
     }
