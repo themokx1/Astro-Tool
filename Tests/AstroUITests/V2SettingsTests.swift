@@ -5,6 +5,18 @@ import Testing
 
 @MainActor
 struct V2SettingsTests {
+    @Test("V2 support can preview and copy privacy-safe diagnostics")
+    func supportDiagnosticsSurface() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"))
+        #expect(source.contains("SupportDiagnostics"))
+        #expect(source.contains("Generate Diagnostics"))
+        #expect(source.contains("Copy Diagnostics"))
+        #expect(source.contains("NSPasteboard.general"))
+        #expect(source.contains("v2.settings.diagnostics"))
+    }
+
     @Test("A filter created in settings is immediately available to inline selectors")
     func sharedFilterInventory() throws {
         let suite = "AstroTool-V2SettingsTests-\(UUID().uuidString)"

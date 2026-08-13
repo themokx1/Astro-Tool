@@ -1,3 +1,5 @@
+import AppKit
+import AstroCore
 import SwiftUI
 
 public struct V2SettingsView: View {
@@ -104,6 +106,9 @@ private struct EquipmentEvaluationSettingsView: View {
 }
 
 private struct IntegrationsSupportSettingsView: View {
+    @State private var diagnostics: SupportDiagnostics?
+    @State private var copied = false
+
     var body: some View {
         Form {
             Section("Privacy") {
@@ -112,8 +117,46 @@ private struct IntegrationsSupportSettingsView: View {
             }
             Section("Support") {
                 LabeledContent("Release channel", value: "V2 Beta")
-                LabeledContent("Diagnostics", value: "Stored locally")
+                LabeledContent("Diagnostics", value: "Privacy-safe and local")
+                HStack {
+                    Button("Generate Diagnostics") { generateDiagnostics() }
+                    Button("Copy Diagnostics") { copyDiagnostics() }
+                        .disabled(diagnostics == nil)
+                    if copied { Label("Copied", systemImage: "checkmark") .foregroundStyle(.green) }
+                }
+                if let diagnostics {
+                    ScrollView {
+                        Text(diagnostics.plainText)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 180)
+                }
             }
-        }.formStyle(.grouped)
+        }
+        .formStyle(.grouped)
+        .accessibilityIdentifier("v2.settings.diagnostics")
+    }
+
+    private func generateDiagnostics() {
+        diagnostics = SupportDiagnostics(
+            databaseSchemaVersion: nil,
+            libraryConnected: false,
+            targetCount: 0,
+            sessionCount: 0,
+            filterProfileCount: 0,
+            sensorProfileCount: 0,
+            weatherEnabled: false,
+            recentOperations: []
+        )
+        copied = false
+    }
+
+    private func copyDiagnostics() {
+        guard let diagnostics else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(diagnostics.plainText, forType: .string)
+        copied = true
     }
 }
