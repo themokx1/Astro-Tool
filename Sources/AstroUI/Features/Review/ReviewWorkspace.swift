@@ -7,6 +7,7 @@ public struct ReviewWorkspace: View {
     let projectID: UUID
     let dismiss: () -> Void
     @State private var selectedDecisionIDs: Set<UUID> = []
+    @State private var archivePreview: ReviewArchivePlan?
 
     public init(
         store: ReviewStore,
@@ -72,9 +73,12 @@ public struct ReviewWorkspace: View {
             frameReview
                 .frame(minWidth: 430, maxWidth: .infinity)
             if let selectedSeries = store.selectedSeries {
-                SeriesInspector(snapshot: selectedSeries)
+                inspector(for: selectedSeries)
                     .frame(minWidth: 250, idealWidth: 280, maxWidth: 340)
             }
+        }
+        .sheet(item: $archivePreview) { plan in
+            ArchivePreviewSheet(plan: plan) { archivePreview = nil }
         }
     }
 
@@ -115,6 +119,10 @@ public struct ReviewWorkspace: View {
                 }
                 .padding(AstroTokens.Spacing.standard)
                 Divider()
+                QualityDistribution(snapshot: selected)
+                    .padding(.horizontal, AstroTokens.Spacing.standard)
+                    .padding(.vertical, 10)
+                Divider()
                 if selected.decisions.isEmpty {
                     ContentUnavailableView {
                         Label("No reviewed frames", systemImage: "photo.on.rectangle.angled")
@@ -140,12 +148,27 @@ public struct ReviewWorkspace: View {
         HStack(spacing: 8) {
             Button("Accept") { apply(.accepted, in: selected) }
                 .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
+                .keyboardShortcut("a", modifiers: [.command, .shift])
             Button("Reset") { apply(.undecided, in: selected) }
                 .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
             Button("Reject") { apply(.rejected, in: selected) }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
                 .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+        }
+    }
+
+    @ViewBuilder
+    private func inspector(for selected: ReviewSeriesSnapshot) -> some View {
+        if selectedDecisionIDs.count == 1,
+           let id = selectedDecisionIDs.first,
+           let decision = selected.decisions.first(where: { $0.id == id }) {
+            FrameInspector(decision: decision) {
+                archivePreview = try? store.archivePlan(for: decision)
+            }
+        } else {
+            SeriesInspector(snapshot: selected)
         }
     }
 
@@ -165,6 +188,75 @@ public struct ReviewWorkspace: View {
             series.filterName,
             series.sensorMode.rawValue.uppercased()
         ].compactMap { $0 }.joined(separator: " · ")
+    }
+}
+
+private struct QualityDistribution: View {
+    let snapshot: ReviewSeriesSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Review distribution").font(.caption.weight(.semibold))
+                Spacer()
+                Text("\(snapshot.decisions.count) indexed").font(.caption).foregroundStyle(.secondary)
+            }
+            GeometryReader { geometry in
+                HStack(spacing: 2) {
+                    segment(count: snapshot.acceptedCount, totalWidth: geometry.size.width, color: .green)
+                    segment(count: snapshot.undecidedCount, totalWidth: geometry.size.width, color: .gray)
+                    segment(count: snapshot.rejectedCount, totalWidth: geometry.size.width, color: .red)
+                }
+            }
+            .frame(height: 8)
+            .clipShape(Capsule())
+            .accessibilityLabel(
+                "\(snapshot.acceptedCount) accepted, \(snapshot.undecidedCount) undecided, \(snapshot.rejectedCount) rejected"
+            )
+        }
+    }
+
+    private func segment(count: Int, totalWidth: Double, color: Color) -> some View {
+        color.frame(width: snapshot.decisions.isEmpty
+            ? (color == .gray ? totalWidth : 0)
+            : totalWidth * Double(count) / Double(snapshot.decisions.count))
+    }
+}
+
+private struct ArchivePreviewSheet: View {
+    let plan: ReviewArchivePlan
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
+            Label("Archive preview", systemImage: "archivebox")
+                .font(.title2.weight(.semibold))
+            Text("No file has moved. Review the exact source and destination first.")
+                .foregroundStyle(.secondary)
+            GroupBox("Planned move") {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                    GridRow { Text("From").foregroundStyle(.secondary); Text(plan.sourceRelative).monospaced() }
+                    GridRow { Text("To").foregroundStyle(.secondary); Text(plan.destinationRelative).monospaced() }
+                }
+                .textSelection(.enabled)
+                .padding(8)
+            }
+            Label(
+                "Applying archive moves will be enabled only after write access is explicitly granted.",
+                systemImage: "lock.shield"
+            )
+            .font(.callout).foregroundStyle(.orange)
+            HStack {
+                Spacer()
+                Button("Close", action: dismiss).keyboardShortcut(.cancelAction)
+                Button("Move to Archive") {}
+                    .buttonStyle(.borderedProminent)
+                    .disabled(true)
+            }
+        }
+        .padding(AstroTokens.Spacing.spacious)
+        .frame(minWidth: 620, minHeight: 360)
+        .accessibilityIdentifier("v2.review.archive-preview")
     }
 }
 

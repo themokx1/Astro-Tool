@@ -1,6 +1,25 @@
 import AstroCore
 import Foundation
 
+public enum ReviewArchiveMode: String, Equatable, Sendable {
+    case archive
+    case restore
+}
+
+public struct ReviewArchivePlan: Equatable, Sendable, Identifiable {
+    public let id: String
+    public let sourceRelative: String
+    public let destinationRelative: String
+    public let mode: ReviewArchiveMode
+
+    public init(sourceRelative: String, destinationRelative: String, mode: ReviewArchiveMode) {
+        self.id = "\(mode.rawValue)|\(sourceRelative)|\(destinationRelative)"
+        self.sourceRelative = sourceRelative
+        self.destinationRelative = destinationRelative
+        self.mode = mode
+    }
+}
+
 public struct ReviewCommands: Sendable {
     private let metadata: MetadataStore
 
@@ -8,8 +27,13 @@ public struct ReviewCommands: Sendable {
         self.metadata = metadata
     }
 
-    public func archivePlan(relativePath: String) throws -> FrameArchivePlan {
-        try FrameArchivePlanner.plan(sourceRelative: relativePath, mode: .archive)
+    public func archivePlan(relativePath: String) throws -> ReviewArchivePlan {
+        let plan = try FrameArchivePlanner.plan(sourceRelative: relativePath, mode: .archive)
+        return ReviewArchivePlan(
+            sourceRelative: plan.sourceRelative,
+            destinationRelative: plan.destinationRelative,
+            mode: .archive
+        )
     }
 
     @discardableResult

@@ -84,4 +84,9 @@ public final class ReviewStore {
             throw error
         }
     }
+
+    public func archivePlan(for decision: FrameDecisionRecord) throws -> ReviewArchivePlan {
+        guard let metadata else { throw ReviewStoreError.reviewNotOpen }
+        return try ReviewCommands(metadata: metadata).archivePlan(relativePath: decision.relativePath)
+    }
 }
