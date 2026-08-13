@@ -89,4 +89,26 @@ public final class ReviewStore {
         guard let metadata else { throw ReviewStoreError.reviewNotOpen }
         return try ReviewCommands(metadata: metadata).archivePlan(relativePath: decision.relativePath)
     }
+
+    public func assignFilter(_ filter: EquipmentFilter) async throws {
+        guard let metadata, let projectID else { throw ReviewStoreError.reviewNotOpen }
+        guard let selected = selectedSeries?.series else { throw ReviewStoreError.seriesNotSelected }
+        let passband: SeriesPassband = switch filter.passband {
+        case .broadband: .broadband
+        case .dualBand: .dualBand
+        case .narrowband: .narrowband
+        case .unknown: .unknown
+        }
+        let displayName = [filter.manufacturer, filter.model].filter { !$0.isEmpty }.joined(separator: " ")
+        let updated = SeriesRecord(
+            id: selected.id, projectID: selected.projectID, nightID: selected.nightID,
+            setupID: selected.setupID, setupDescriptor: selected.setupDescriptor,
+            sensorMode: selected.sensorMode, passband: passband,
+            exposureSeconds: selected.exposureSeconds, filterName: displayName,
+            filterID: filter.id.uuidString.lowercased(), gain: selected.gain,
+            offset: selected.offset, binning: selected.binning
+        )
+        try await metadata.save(updated)
+        snapshot = try await ReviewQuery(metadata: metadata).project(projectID)
+    }
 }

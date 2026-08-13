@@ -34,6 +34,20 @@ struct ReviewStoreTests {
         #expect(store.selectedSeries?.decisions.allSatisfy(\.logicallyExcluded) == true)
         #expect(store.selectedSeriesID == fixture.series[2].id)
     }
+
+    @Test("An equipment filter can be assigned inline to the selected series")
+    func assignFilterInline() async throws {
+        let fixture = try await ReviewStoreFixture.make()
+        let store = ReviewStore(metadataFactory: { _ in fixture.metadata })
+        try await store.open(rootURL: fixture.root, projectID: fixture.project.id)
+        let filter = EquipmentFilter(id: UUID(), manufacturer: "SVBONY", model: "SV220", passband: .dualBand)
+
+        try await store.assignFilter(filter)
+
+        #expect(store.selectedSeries?.series.filterName == "SVBONY SV220")
+        #expect(store.selectedSeries?.series.passband == .dualBand)
+        #expect(store.selectedSeries?.series.filterID == filter.id.uuidString.lowercased())
+    }
 }
 
 private struct ReviewStoreFixture {

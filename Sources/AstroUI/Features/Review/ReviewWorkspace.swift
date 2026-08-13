@@ -168,7 +168,9 @@ public struct ReviewWorkspace: View {
                 archivePreview = try? store.archivePlan(for: decision)
             }
         } else {
-            SeriesInspector(snapshot: selected)
+            SeriesInspector(snapshot: selected) { filter in
+                Task { try? await store.assignFilter(filter) }
+            }
         }
     }
 

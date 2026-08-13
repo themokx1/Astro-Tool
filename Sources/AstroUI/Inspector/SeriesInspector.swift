@@ -3,9 +3,16 @@ import SwiftUI
 
 public struct SeriesInspector: View {
     public let snapshot: ReviewSeriesSnapshot
+    public let assignFilter: (EquipmentFilter) -> Void
+    @State private var settings = SettingsStore()
+    @State private var manufacturer = ""
+    @State private var model = ""
+    @State private var newFilterPassband = EquipmentFilterPassband.unknown
+    @State private var filterError: String?
 
-    public init(snapshot: ReviewSeriesSnapshot) {
+    public init(snapshot: ReviewSeriesSnapshot, assignFilter: @escaping (EquipmentFilter) -> Void = { _ in }) {
         self.snapshot = snapshot
+        self.assignFilter = assignFilter
     }
 
     public var body: some View {
@@ -15,6 +22,26 @@ public struct SeriesInspector: View {
                 LabeledContent("Sensor", value: snapshot.series.sensorMode.rawValue.uppercased())
                 LabeledContent("Passband", value: passband)
                 LabeledContent("Filter", value: snapshot.series.filterName ?? "No filter recorded")
+                Menu("Choose Filter…") {
+                    if settings.filters.isEmpty { Text("No saved filters") }
+                    ForEach(settings.filters) { filter in
+                        Button(filterTitle(filter)) { assignFilter(filter) }
+                    }
+                }
+                DisclosureGroup("Add a new filter") {
+                    TextField("Manufacturer", text: $manufacturer)
+                    TextField("Model", text: $model)
+                    Picker("Passband", selection: $newFilterPassband) {
+                        ForEach(EquipmentFilterPassband.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    if let filterError { Text(filterError).foregroundStyle(.red) }
+                    Button("Save and Use") {
+                        do {
+                            let filter = try settings.createFilter(manufacturer: manufacturer, model: model, passband: newFilterPassband)
+                            assignFilter(filter); manufacturer = ""; model = ""; newFilterPassband = .unknown; filterError = nil
+                        } catch { filterError = error.localizedDescription }
+                    }
+                }
             }
             Section("Setup") {
                 LabeledContent("Equipment", value: snapshot.series.setupDescriptor)
@@ -44,5 +71,9 @@ public struct SeriesInspector: View {
         snapshot.series.passband.rawValue
             .replacingOccurrences(of: "_", with: " ")
             .capitalized
+    }
+
+    private func filterTitle(_ filter: EquipmentFilter) -> String {
+        [filter.manufacturer, filter.model].filter { !$0.isEmpty }.joined(separator: " ")
     }
 }
