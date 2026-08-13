@@ -162,6 +162,8 @@ private struct V2Shell: View {
     @State private var reviewDestination: ReviewDestination?
     @State private var conversionRoot: URL?
     @State private var resultsDestination: ResultsDestination?
+    @State private var showsSearch = false
+    @State private var globalSearch = GlobalSearchStore()
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
@@ -202,6 +204,20 @@ private struct V2Shell: View {
         }
         .toolbar {
             ToolbarItemGroup {
+                Button(action: { showsSearch.toggle() }) {
+                    Label("Search", systemImage: "magnifyingglass")
+                }
+                .help("Search projects and observing nights")
+                .accessibilityIdentifier("v2.toolbar.search")
+                .popover(isPresented: $showsSearch, arrowEdge: .bottom) {
+                    GlobalSearchPanel(
+                        store: globalSearch,
+                        projects: projectsStore,
+                        nights: nightsStore,
+                        open: openSearchResult
+                    )
+                }
+
                 Button(action: { router.present(.newProject) }) {
                     Label("New Project", systemImage: "plus")
                 }
@@ -282,6 +298,69 @@ private struct V2Shell: View {
     private func presentOnboarding() {
         onboardingStore.returnToLibraryChoice()
         isOnboardingPresented = true
+    }
+
+    private func openSearchResult(_ result: GlobalSearchResult) {
+        showsSearch = false
+        switch result.kind {
+        case .project:
+            router.navigate(to: .projects)
+            Task { try? await projectsStore.selectProject(result.objectID) }
+        case .night:
+            nightsStore.selectNight(result.objectID)
+            router.navigate(to: .nights)
+        }
+    }
+}
+
+@MainActor
+private struct GlobalSearchPanel: View {
+    @Bindable var store: GlobalSearchStore
+    let projects: ProjectsStore
+    let nights: NightsStore
+    let open: (GlobalSearchResult) -> Void
+    @State private var query = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Search projects and nights", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("v2.global-search.field")
+                .onChange(of: query) { _, value in
+                    Task { await store.search(value, projects: projects, nights: nights) }
+                }
+            if query.isEmpty {
+                Label("Try a target, date, filter, setup, or status.", systemImage: "sparkle.magnifyingglass")
+                    .font(.callout).foregroundStyle(.secondary).padding(.vertical, 18)
+            } else if store.results.isEmpty, !store.isSearching {
+                ContentUnavailableView.search(text: query).frame(minHeight: 120)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(store.results) { result in
+                            Button { open(result) } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: result.kind == .project ? "scope" : "moon.stars")
+                                        .foregroundStyle(AstroTokens.Color.spectralBlue)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(result.title).font(.headline)
+                                        Text(result.subtitle).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "arrow.forward")
+                                }
+                                .contentShape(Rectangle()).padding(8)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }.frame(maxHeight: 280)
+            }
+        }
+        .padding(14)
+        .frame(width: 430)
+        .frame(minHeight: 100)
+        .accessibilityIdentifier("v2.global-search")
     }
 }
 
