@@ -94,10 +94,12 @@ public struct V2RootView: View {
                 persist(state)
             }
             .task(id: uiTestFixture?.libraryRoot) {
-                guard let uiTestFixture,
-                      onboardingStore.phase == .chooseLibrary
-                else { return }
-                try? await onboardingStore.openAndScan(uiTestFixture.libraryRoot)
+                guard onboardingStore.phase == .chooseLibrary else { return }
+                if let uiTestFixture {
+                    try? await onboardingStore.openAndScan(uiTestFixture.libraryRoot)
+                } else {
+                    _ = try? await onboardingStore.restoreSavedLibrary()
+                }
             }
             .task(id: onboardingStore.phase.summary?.libraryID.id) {
                 guard let root = onboardingStore.selectedRoot,

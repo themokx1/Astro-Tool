@@ -152,6 +152,65 @@ public struct SecurityScopedAccess: Sendable {
     )
 }
 
+public struct LibraryBookmarkStore: @unchecked Sendable {
+    private let loadURL: () -> URL?
+    private let saveURL: (URL) -> Void
+    private let clearURL: () -> Void
+
+    public init(
+        load: @escaping () -> URL?,
+        save: @escaping (URL) -> Void,
+        clear: @escaping () -> Void
+    ) {
+        loadURL = load
+        saveURL = save
+        clearURL = clear
+    }
+
+    public func load() -> URL? { loadURL()?.standardizedFileURL }
+    public func save(_ url: URL) { saveURL(url.standardizedFileURL) }
+    public func clear() { clearURL() }
+
+    public static func production(defaults: UserDefaults = .standard) -> Self {
+        let key = "v2.library.securityScopedBookmark"
+        return Self(
+            load: {
+                guard let data = defaults.data(forKey: key) else { return nil }
+                var isStale = false
+                guard let url = try? URL(
+                    resolvingBookmarkData: data,
+                    options: .withSecurityScope,
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &isStale
+                ) else {
+                    defaults.removeObject(forKey: key)
+                    return nil
+                }
+                if isStale,
+                   let refreshed = try? url.bookmarkData(
+                       options: .withSecurityScope,
+                       includingResourceValuesForKeys: nil,
+                       relativeTo: nil
+                   ) {
+                    defaults.set(refreshed, forKey: key)
+                }
+                return url
+            },
+            save: { url in
+                guard let data = try? url.bookmarkData(
+                    options: .withSecurityScope,
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                ) else { return }
+                defaults.set(data, forKey: key)
+            },
+            clear: { defaults.removeObject(forKey: key) }
+        )
+    }
+
+    public static let inactive = Self(load: { nil }, save: { _ in }, clear: {})
+}
+
 public enum OnboardingStoreError: Error, Equatable, Sendable {
     case mutationAccessUnsupported
     case notDirectory
@@ -171,16 +230,19 @@ public final class OnboardingStore {
     private let sessionFactory: OnboardingSessionFactory
     private let storageFactory: OnboardingStorageFactory
     private let securityScopedAccess: SecurityScopedAccess
+    private let bookmarkStore: LibraryBookmarkStore
     private var activeOperationID: UUID?
 
     public init(
         sessionFactory: OnboardingSessionFactory = .production,
         storageFactory: OnboardingStorageFactory = .production,
-        securityScopedAccess: SecurityScopedAccess = .production
+        securityScopedAccess: SecurityScopedAccess = .production,
+        bookmarkStore: LibraryBookmarkStore = .production()
     ) {
         self.sessionFactory = sessionFactory
         self.storageFactory = storageFactory
         self.securityScopedAccess = securityScopedAccess
+        self.bookmarkStore = bookmarkStore
         phase = .chooseLibrary
         selectedRoot = nil
         indexDatabaseURL = nil
@@ -235,6 +297,7 @@ public final class OnboardingStore {
             }
             guard isActive(operationID) else { return }
             phase = .summary(snapshot)
+            bookmarkStore.save(root)
         } catch is CancellationError {
             if isActive(operationID) {
                 activeOperationID = nil
@@ -252,6 +315,18 @@ public final class OnboardingStore {
     public func returnToLibraryChoice() {
         activeOperationID = nil
         resetToLibraryChoice()
+    }
+
+    @discardableResult
+    public func restoreSavedLibrary() async throws -> Bool {
+        guard phase == .chooseLibrary, let root = bookmarkStore.load() else { return false }
+        do {
+            try await openAndScan(root)
+            return true
+        } catch {
+            bookmarkStore.clear()
+            throw error
+        }
     }
 
     public func cancelActiveScan() {

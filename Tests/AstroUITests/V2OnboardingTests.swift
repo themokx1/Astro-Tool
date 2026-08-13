@@ -344,6 +344,42 @@ struct V2OnboardingTests {
         #expect(store.indexDatabaseURL != nil)
     }
 
+    @Test("A chosen library is restored from its bookmark on the next launch")
+    func savedLibraryRestoresAcrossStoreInstances() async throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let bookmarks = InMemoryLibraryBookmarks()
+        let snapshot = LibrarySnapshot(
+            libraryID: LibraryIdentity(rootURL: fixture.root),
+            revision: 4,
+            projectCount: 13,
+            nightCount: 20,
+            frameCount: 8_221
+        )
+        let makeStore = {
+            OnboardingStore(
+                sessionFactory: .constant(
+                    OnboardingSessionClient(accessMode: .readOnly, scan: { snapshot })
+                ),
+                storageFactory: .temporary(
+                    applicationSupport: fixture.applicationSupport,
+                    caches: fixture.caches
+                ),
+                securityScopedAccess: .inactive,
+                bookmarkStore: bookmarks.client
+            )
+        }
+
+        let firstLaunch = makeStore()
+        try await firstLaunch.openAndScan(fixture.root)
+        #expect(bookmarks.savedURL == fixture.root.standardizedFileURL)
+
+        let nextLaunch = makeStore()
+        #expect(try await nextLaunch.restoreSavedLibrary())
+        #expect(nextLaunch.phase.summary == snapshot)
+        #expect(nextLaunch.selectedRoot == fixture.root.standardizedFileURL)
+    }
+
     @Test("Onboarding surfaces use honest actions and contain no personal defaults")
     func sourceSafetyAndActions() throws {
         let sourceRoot = repositoryRoot.appendingPathComponent("Sources/AstroUI")
@@ -479,6 +515,23 @@ private final class ScopedAccessProbe: @unchecked Sendable {
 
     private func recordStop(_ url: URL) {
         lock.withLock { stopped.append(url) }
+    }
+}
+
+private final class InMemoryLibraryBookmarks: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedURL: URL?
+
+    var client: LibraryBookmarkStore {
+        LibraryBookmarkStore(
+            load: { [weak self] in self?.lock.withLock { self?.storedURL } ?? nil },
+            save: { [weak self] url in self?.lock.withLock { self?.storedURL = url } },
+            clear: { [weak self] in self?.lock.withLock { self?.storedURL = nil } }
+        )
+    }
+
+    var savedURL: URL? {
+        lock.withLock { storedURL }
     }
 }
 

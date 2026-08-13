@@ -125,7 +125,8 @@ public struct V2UITestFixture: Sendable {
                     libraryRoot: root
                 )
             },
-            securityScopedAccess: .inactive
+            securityScopedAccess: .inactive,
+            bookmarkStore: .inactive
         )
     }
 }
