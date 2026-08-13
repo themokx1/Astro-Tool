@@ -33,11 +33,15 @@ struct LibraryHealthQueryTests {
 
         let snapshot = try await LibraryHealthQuery(indexDatabaseForTesting: storage.indexDatabase).snapshot()
         #expect(snapshot.sessionCount == 1)
-        #expect(snapshot.calibrationIssues == 1)
+        #expect(snapshot.calibrationIssues == 2)
         #expect(snapshot.duplicateFiles == 1)
         #expect(snapshot.organizationIssues == 1)
         #expect(snapshot.items.contains { $0.category == .duplicates })
         #expect(snapshot.items.contains { $0.category == .organization })
+        let flat = try #require(snapshot.items.first { $0.category == .flat })
+        #expect(flat.target == "IC_1396")
+        #expect(flat.sessionDate == "2026-08-08")
+        #expect(snapshot.items.contains { $0.category == .dark && $0.sessionDate == "2026-08-08" })
         #expect(snapshot.isReadOnly)
     }
 }

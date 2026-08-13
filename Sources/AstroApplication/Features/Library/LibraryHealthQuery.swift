@@ -6,6 +6,15 @@ public enum LibraryHealthSeverity: String, Sendable { case healthy, info, warnin
 public struct LibraryHealthItem: Equatable, Sendable, Identifiable {
     public let id: String; public let category: LibraryHealthCategory; public let severity: LibraryHealthSeverity
     public let title: String; public let detail: String
+    public let target: String?; public let sessionDate: String?
+
+    public init(
+        id: String, category: LibraryHealthCategory, severity: LibraryHealthSeverity,
+        title: String, detail: String, target: String? = nil, sessionDate: String? = nil
+    ) {
+        self.id = id; self.category = category; self.severity = severity
+        self.title = title; self.detail = detail; self.target = target; self.sessionDate = sessionDate
+    }
 }
 public struct LibraryHealthSnapshot: Equatable, Sendable {
     public let sessionCount: Int; public let calibrationIssues: Int
@@ -35,27 +44,38 @@ public struct LibraryHealthQuery: Sendable {
 
     private static func readSnapshot(indexDatabase: URL) throws -> LibraryHealthSnapshot {
         let db = try SQLiteDB(readOnlyPath: indexDatabase.standardizedFileURL.path)
-        var sessions: [(String, String, Int, Int)] = []
+        var sessions: [(String, String, Int, Int, Int)] = []
         try db.query(
             """
             SELECT target, session_date,
                    SUM(CASE WHEN role = 'light' THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN role = 'flat' THEN 1 ELSE 0 END)
+                   SUM(CASE WHEN role = 'flat' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN role = 'dark' THEN 1 ELSE 0 END)
             FROM files
             WHERE missing = 0 AND area = 'sessions'
               AND target IS NOT NULL AND session_date IS NOT NULL
             GROUP BY target, session_date ORDER BY session_date DESC, target;
             """
         ) { row in
-            sessions.append((row.string(0) ?? "", row.string(1) ?? "", Int(row.int64(2) ?? 0), Int(row.int64(3) ?? 0)))
+            sessions.append((row.string(0) ?? "", row.string(1) ?? "", Int(row.int64(2) ?? 0), Int(row.int64(3) ?? 0), Int(row.int64(4) ?? 0)))
         }
         let missingFlats = sessions.filter { $0.2 > 0 && $0.3 == 0 }
-        var items = missingFlats.map { target, date, lights, _ in
+        let missingDarks = sessions.filter { $0.2 > 0 && $0.4 == 0 }
+        var items = missingFlats.map { target, date, lights, _, _ in
             LibraryHealthItem(
                 id: "flat|\(target)|\(date)", category: .flat, severity: .warning,
-                title: "Flat missing · \(date)", detail: "\(target): \(lights) light frame has no session flat."
+                title: "Flat missing · \(date)", detail: "\(target): \(lights) light frame has no session flat.",
+                target: target, sessionDate: date
             )
         }
+        items.append(contentsOf: missingDarks.map { target, date, lights, _, _ in
+            LibraryHealthItem(
+                id: "dark|\(target)|\(date)", category: .dark, severity: .warning,
+                title: "Dark coverage needs review · \(date)",
+                detail: "\(target): \(lights) light frame has no session dark; check the calibration library.",
+                target: target, sessionDate: date
+            )
+        })
         var duplicateFiles = 0
         if try tableHasColumn(db, table: "files", column: "content_hash") {
             try db.query(
@@ -94,7 +114,7 @@ public struct LibraryHealthQuery: Sendable {
             title: "Source library protected", detail: "This health scan opened only AstroTool's external index."
         ))
         return LibraryHealthSnapshot(
-            sessionCount: sessions.count, calibrationIssues: missingFlats.count,
+            sessionCount: sessions.count, calibrationIssues: missingFlats.count + missingDarks.count,
             duplicateFiles: duplicateFiles, organizationIssues: organizationIssues,
             items: items, isReadOnly: true
         )

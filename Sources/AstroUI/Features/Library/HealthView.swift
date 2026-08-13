@@ -50,6 +50,11 @@ public struct HealthView: View {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(item.title).font(.headline)
                                     Text(item.detail).font(.callout).foregroundStyle(.secondary)
+                                    if let target = item.target, let date = item.sessionDate {
+                                        Label("\(target) · \(date)", systemImage: "folder")
+                                            .font(.caption.monospaced()).foregroundStyle(.secondary)
+                                            .textSelection(.enabled)
+                                    }
                                 }
                                 Spacer()
                                 VStack(alignment: .trailing, spacing: 4) {
