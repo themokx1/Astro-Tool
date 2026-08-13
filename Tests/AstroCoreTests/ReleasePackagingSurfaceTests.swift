@@ -30,6 +30,12 @@ struct ReleasePackagingSurfaceTests {
         #expect(installer.contains("AstroTool.failed-install"))
         #expect(installer.contains("ditto"))
         #expect(installer.contains("mv \"$BACKUP_APP\" \"$DESTINATION_APP\""))
+        #expect(installer.contains("verify_installed_app"))
+        #expect(installer.contains("CFBundleShortVersionString"))
+        #expect(installer.contains("CFBundleIdentifier"))
+        #expect(installer.contains("codesign --verify --deep --strict"))
+        #expect(installer.contains("Contents/Resources/astrotool"))
+        #expect(installer.contains("lipo -archs"))
     }
 
     @Test("CI proves a neutral app launch and a selected empty-library first-run path")
