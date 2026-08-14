@@ -93,7 +93,15 @@ public struct PlanningView: View {
                     Toggle("Useful framing only", isOn: $store.usefulFramingOnly)
                         .toggleStyle(.checkbox)
                 }
-                if store.filteredRecommendations.isEmpty {
+                if store.recommendations.isEmpty && store.isComputing {
+                    // The first `refresh()` (kicked off by `PlanningStore.init`)
+                    // hasn't landed yet -- an honest "still computing" state,
+                    // not a false "no matches" claim (part of the build 20013
+                    // crash fix: `recommendations` is now computed off the
+                    // main actor, so it is briefly empty on first load).
+                    ProgressView("Finding matches…")
+                        .frame(minHeight: 220)
+                } else if store.filteredRecommendations.isEmpty {
                     ContentUnavailableView.search(text: store.searchText)
                         .frame(minHeight: 220)
                 } else {
