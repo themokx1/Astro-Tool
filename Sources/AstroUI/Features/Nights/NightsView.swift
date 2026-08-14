@@ -1,7 +1,15 @@
-import AppKit
 import AstroApplication
 import SwiftUI
-import UniformTypeIdentifiers
+
+/// One session's identity for `NightNoteSheet.item`-driven presentation --
+/// `Identifiable` so `.sheet(item:)` can key off `(target, date)` without a
+/// separate `Bool` flag going stale relative to which night it was opened
+/// for.
+struct NightNoteEditingTarget: Identifiable, Equatable {
+    let target: String
+    let date: String
+    var id: String { "\(target)|\(date)" }
+}
 
 public struct NightsView: View {
     private enum Mode: String, CaseIterable {
@@ -11,23 +19,32 @@ public struct NightsView: View {
     let snapshot: LibrarySnapshot?
     let rootURL: URL?
     @Bindable var store: NightsStore
+    let accessMode: LibraryAccessMode
     let chooseLibrary: () -> Void
     let openNight: (UUID) -> Void
-    @Environment(OperationHost.self) private var operationHost
+    let openCalibration: () -> Void
+    let openInsights: (String?) -> Void
     @State private var mode: Mode = .history
+    @State private var noteEditorTarget: NightNoteEditingTarget?
 
     public init(
         snapshot: LibrarySnapshot?,
         rootURL: URL? = nil,
         store: NightsStore,
+        accessMode: LibraryAccessMode = .readOnly,
         chooseLibrary: @escaping () -> Void,
-        openNight: @escaping (UUID) -> Void
+        openNight: @escaping (UUID) -> Void,
+        openCalibration: @escaping () -> Void = {},
+        openInsights: @escaping (String?) -> Void = { _ in }
     ) {
         self.snapshot = snapshot
         self.rootURL = rootURL
         self.store = store
+        self.accessMode = accessMode
         self.chooseLibrary = chooseLibrary
         self.openNight = openNight
+        self.openCalibration = openCalibration
+        self.openInsights = openInsights
     }
 
     public var body: some View {
@@ -88,10 +105,8 @@ public struct NightsView: View {
                     }
                     .frame(minHeight: 330)
                     .contextMenu(forSelectionType: UUID.self) { nightIDs in
-                        if let id = nightIDs.first { Button("Open Night") { openNight(id) } }
                         if let id = nightIDs.first, let night = store.nights.first(where: { $0.id == id }) {
-                            Button("Night Report…") { exportNightReport(night) }
-                                .disabled(rootURL == nil || night.snapshot.projects.first == nil)
+                            actionMenu(for: night, openNight: { openNight(id) })
                         }
                     } primaryAction: { nightIDs in
                         if let id = nightIDs.first { openNight(id) }
@@ -126,28 +141,40 @@ public struct NightsView: View {
         .navigationTitle("Nights")
         .accessibilityLabel("Nights")
         .accessibilityIdentifier("v2.detail.nights")
+        .sheet(item: $noteEditorTarget) { editing in
+            if let rootURL {
+                NightNoteSheet(
+                    rootURL: rootURL, target: editing.target, date: editing.date,
+                    accessMode: accessMode, dismiss: { noteEditorTarget = nil }
+                )
+            }
+        }
     }
 
-    /// Same night-report export `NightWorkspaceView`'s `ExportMenu` offers,
-    /// reachable directly from a night's row context menu without opening
-    /// the workspace first -- V1's per-session "Éjszaka-riport készítése"
-    /// context-menu item had the same "act on the row, don't force a
-    /// navigation" shape.
-    private func exportNightReport(_ night: NightRow) {
-        guard let rootURL, let project = night.snapshot.projects.first else { return }
-        let target = ProjectsQuery.canonicalFolderName(for: project)
-        do {
-            let export = try ExportService.production(rootURL: rootURL).nightReport(target: target, date: night.date)
-            let panel = NSSavePanel()
-            panel.title = "Night Report…"
-            panel.nameFieldStringValue = export.suggestedFilename
-            panel.allowedContentTypes = [.html]
-            panel.canCreateDirectories = true
-            guard panel.runModal() == .OK, let url = panel.url else { return }
-            try ExportFileWriter.write(content: export.content, to: url)
-            operationHost.notify(.success, message: "Exported \(url.lastPathComponent)")
-        } catch {
-            operationHost.notify(.failure, message: "Night Report failed: \(error.localizedDescription)")
+    /// `NightActionMenu`'s shared action set for one night row -- V1's
+    /// per-session "Éjszaka-riport készítése" context-menu item had the
+    /// same "act on the row, don't force a navigation first" shape; this
+    /// extends that same idea to every action the menu now offers.
+    @ViewBuilder
+    private func actionMenu(for night: NightRow, openNight: @escaping () -> Void) -> some View {
+        if let project = night.snapshot.projects.first {
+            NightActionMenu(
+                target: ProjectsQuery.canonicalFolderName(for: project),
+                date: night.date,
+                setupDescriptor: night.snapshot.series.first?.setupDescriptor,
+                nightID: night.id,
+                rootURL: rootURL,
+                openNight: openNight,
+                editNotes: {
+                    noteEditorTarget = NightNoteEditingTarget(
+                        target: ProjectsQuery.canonicalFolderName(for: project), date: night.date
+                    )
+                },
+                openCalibration: openCalibration,
+                openInsights: openInsights
+            )
+        } else {
+            Button("Open Night", action: openNight)
         }
     }
 }

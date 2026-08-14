@@ -9,22 +9,32 @@ public struct NightWorkspaceView: View {
     }
     let row: NightRow
     let rootURL: URL?
+    let accessMode: LibraryAccessMode
     let close: () -> Void
     let openProject: (ProjectRecord) -> Void
     let reviewProject: (ProjectRecord) -> Void
+    let openCalibration: () -> Void
+    let openInsights: (String?) -> Void
+    @State private var isEditingNotes = false
 
     public init(
         row: NightRow,
         rootURL: URL? = nil,
+        accessMode: LibraryAccessMode = .readOnly,
         close: @escaping () -> Void,
         openProject: @escaping (ProjectRecord) -> Void,
-        reviewProject: @escaping (ProjectRecord) -> Void
+        reviewProject: @escaping (ProjectRecord) -> Void,
+        openCalibration: @escaping () -> Void = {},
+        openInsights: @escaping (String?) -> Void = { _ in }
     ) {
         self.row = row
         self.rootURL = rootURL
+        self.accessMode = accessMode
         self.close = close
         self.openProject = openProject
         self.reviewProject = reviewProject
+        self.openCalibration = openCalibration
+        self.openInsights = openInsights
     }
 
     public var body: some View {
@@ -40,6 +50,21 @@ public struct NightWorkspaceView: View {
                 Spacer()
                 ExportMenu(items: nightExportItems, accessibilityID: "v2.nights.export")
                 if let project = row.snapshot.projects.first {
+                    Menu {
+                        NightActionMenu(
+                            target: ProjectsQuery.canonicalFolderName(for: project),
+                            date: row.date,
+                            setupDescriptor: row.snapshot.series.first?.setupDescriptor,
+                            nightID: row.id,
+                            rootURL: rootURL,
+                            editNotes: { isEditingNotes = true },
+                            openCalibration: openCalibration,
+                            openInsights: openInsights
+                        )
+                    } label: {
+                        Label("Night Actions", systemImage: "ellipsis.circle")
+                    }
+                    .accessibilityIdentifier("v2.night.workspace.actions")
                     Button("Review Frames") { reviewProject(project) }
                     Button("Open Project") { openProject(project) }.buttonStyle(.borderedProminent)
                 }
@@ -68,6 +93,14 @@ public struct NightWorkspaceView: View {
         .background(AstroTokens.Color.graphite.opacity(0.36))
         .navigationTitle(row.date)
         .accessibilityIdentifier("v2.night.workspace")
+        .sheet(isPresented: $isEditingNotes) {
+            if let rootURL, let project = row.snapshot.projects.first {
+                NightNoteSheet(
+                    rootURL: rootURL, target: ProjectsQuery.canonicalFolderName(for: project), date: row.date,
+                    accessMode: accessMode, dismiss: { isEditingNotes = false }
+                )
+            }
+        }
     }
 
     /// This night's report (`AppState.exportNightReport`'s V2 equivalent) --

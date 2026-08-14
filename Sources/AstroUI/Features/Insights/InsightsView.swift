@@ -29,14 +29,27 @@ public struct InsightsView: View {
     let librarySnapshot: LibrarySnapshot?
     let rootURL: URL?
     let chooseLibrary: () -> Void
+    /// Consumed once, on this view's very first appearance -- `NightActionMenu`'s
+    /// "Open in Insights" action presets the Setup Trends filter to the
+    /// night's own setup via `AppRouter.navigateToInsights(presetSetupFilter:)`
+    /// / `pendingInsightsSetupFilter`. `nil` leaves `selectedSetup` at its
+    /// usual "All setups" default.
+    let initialSetupFilter: String?
     @State private var store = InsightsStore()
     @State private var selectedYear: Int?
     @State private var selectedSetup: String?
 
-    public init(snapshot: LibrarySnapshot?, rootURL: URL?, chooseLibrary: @escaping () -> Void) {
+    public init(
+        snapshot: LibrarySnapshot?,
+        rootURL: URL?,
+        initialSetupFilter: String? = nil,
+        chooseLibrary: @escaping () -> Void
+    ) {
         self.librarySnapshot = snapshot
         self.rootURL = rootURL
+        self.initialSetupFilter = initialSetupFilter
         self.chooseLibrary = chooseLibrary
+        _selectedSetup = State(initialValue: initialSetupFilter)
     }
 
     public var body: some View {

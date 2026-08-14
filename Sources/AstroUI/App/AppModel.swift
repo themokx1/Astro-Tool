@@ -43,6 +43,14 @@ public final class AppRouter {
     public private(set) var inspectorSelection: LibrarySelection?
     public var isInspectorPresented: Bool
     public var presentation: PresentationRoute?
+    /// A setup descriptor `InsightsView` should preset its own "Setup"
+    /// filter to on next appearance -- set by `NightActionMenu`'s "Open in
+    /// Insights" action right before navigating to `.insights`, and
+    /// consumed (read once, then cleared) by `InsightsView` itself so it
+    /// doesn't linger and re-apply on some LATER, unrelated visit to
+    /// Insights. `nil` leaves Insights' own filter untouched (its default
+    /// "All setups").
+    public var pendingInsightsSetupFilter: String?
 
     public init() {
         primarySection = .home
@@ -50,6 +58,7 @@ public final class AppRouter {
         inspectorSelection = nil
         isInspectorPresented = true
         presentation = nil
+        pendingInsightsSetupFilter = nil
     }
 
     public init(
@@ -57,6 +66,7 @@ public final class AppRouter {
         validator: RouteRestorationValidator
     ) {
         presentation = nil
+        pendingInsightsSetupFilter = nil
 
         let routeIsConsistent = state.contentRoute.primarySection == state.primarySection
         let routeIsAvailable = state.contentRoute.selection == nil
@@ -106,6 +116,15 @@ public final class AppRouter {
         contentRoute = route
         inspectorSelection = route.selection
         isInspectorPresented = inspectorSelection != nil
+    }
+
+    /// `NightActionMenu`'s "Open in Insights" action: stashes `setupFilter`
+    /// for `InsightsView` to pick up on this navigation, then navigates
+    /// there -- see `pendingInsightsSetupFilter`'s own doc comment for why
+    /// this is a one-shot handoff rather than persistent state.
+    public func navigateToInsights(presetSetupFilter setupFilter: String?) {
+        pendingInsightsSetupFilter = setupFilter
+        navigate(toContent: .insights)
     }
 
     public func open(_ route: AppRoute) {

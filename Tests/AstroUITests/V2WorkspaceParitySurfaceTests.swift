@@ -273,6 +273,9 @@ struct V2WorkspaceParitySurfaceTests {
             "Sources/AstroUI/Features/Library/HealthView.swift",
             "Sources/AstroUI/Features/Library/CalibrationView.swift",
             "Sources/AstroUI/Settings/V2SettingsView.swift",
+            "Sources/AstroUI/Features/Nights/NightActionMenu.swift",
+            "Sources/AstroUI/Features/Nights/NightsView.swift",
+            "Sources/AstroUI/Features/Nights/NightWorkspaceView.swift",
         ]
         for relative in sources {
             let source = try String(contentsOf: root.appendingPathComponent(relative))

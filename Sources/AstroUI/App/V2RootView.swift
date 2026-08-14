@@ -613,6 +613,7 @@ private struct DetailHost: View {
                 ProjectWorkspaceView(
                     snapshot: snapshot,
                     rootURL: onboardingStore.selectedRoot,
+                    accessMode: accessMode,
                     annotation: projectsStore.selectedProjectAnnotation,
                     close: { router.navigate(to: .projects) },
                     review: { reviewProject(snapshot.project) },
@@ -624,6 +625,8 @@ private struct DetailHost: View {
                     openSeries: { id in
                         router.navigate(toContent: .projectSeries(id.uuidString))
                     },
+                    openCalibration: { router.navigate(toContent: .calibration) },
+                    openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) },
                     saveAnnotation: { goal, notes in
                         try await projectsStore.saveSelectedProjectAnnotation(goalHours: goal, notes: notes)
                     }
@@ -637,12 +640,15 @@ private struct DetailHost: View {
                 NightWorkspaceView(
                     row: row,
                     rootURL: onboardingStore.selectedRoot,
+                    accessMode: accessMode,
                     close: { router.navigate(to: .nights) },
                     openProject: { project in
                         Task { try? await projectsStore.selectProject(project.id) }
                         router.navigate(toContent: .project(project.id.uuidString))
                     },
-                    reviewProject: reviewProject
+                    reviewProject: reviewProject,
+                    openCalibration: { router.navigate(toContent: .calibration) },
+                    openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) }
                 )
             } else {
                 ProgressView("Loading night…")
@@ -667,11 +673,14 @@ private struct DetailHost: View {
                 snapshot: onboardingStore.phase.summary,
                 rootURL: onboardingStore.selectedRoot,
                 store: nightsStore,
+                accessMode: accessMode,
                 chooseLibrary: chooseLibrary,
                 openNight: { id in
                     nightsStore.selectNight(id)
                     router.navigate(toContent: .night(id.uuidString))
-                }
+                },
+                openCalibration: { router.navigate(toContent: .calibration) },
+                openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) }
             )
         case .planning:
             PlanningView(createProject: createPlannedProject)
@@ -687,8 +696,10 @@ private struct DetailHost: View {
             InsightsView(
                 snapshot: onboardingStore.phase.summary,
                 rootURL: onboardingStore.selectedRoot,
+                initialSetupFilter: router.pendingInsightsSetupFilter,
                 chooseLibrary: chooseLibrary
             )
+            .onAppear { router.pendingInsightsSetupFilter = nil }
         case .health:
             HealthView(
                 rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary,

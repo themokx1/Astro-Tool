@@ -13,11 +13,14 @@ public struct ProjectWorkspaceView: View {
 
     let snapshot: ProjectSnapshot
     let rootURL: URL?
+    let accessMode: LibraryAccessMode
     let close: () -> Void
     let review: () -> Void
     let results: () -> Void
     let openNight: (UUID) -> Void
     let openSeries: (UUID) -> Void
+    let openCalibration: () -> Void
+    let openInsights: (String?) -> Void
     let annotation: ProjectAnnotationRecord?
     let saveAnnotation: (Double?, String) async throws -> Void
     @State private var section = Section.overview
@@ -29,22 +32,28 @@ public struct ProjectWorkspaceView: View {
     public init(
         snapshot: ProjectSnapshot,
         rootURL: URL? = nil,
+        accessMode: LibraryAccessMode = .readOnly,
         annotation: ProjectAnnotationRecord?,
         close: @escaping () -> Void,
         review: @escaping () -> Void,
         results: @escaping () -> Void,
         openNight: @escaping (UUID) -> Void,
         openSeries: @escaping (UUID) -> Void,
+        openCalibration: @escaping () -> Void = {},
+        openInsights: @escaping (String?) -> Void = { _ in },
         saveAnnotation: @escaping (Double?, String) async throws -> Void
     ) {
         self.snapshot = snapshot
         self.rootURL = rootURL
+        self.accessMode = accessMode
         self.annotation = annotation
         self.close = close
         self.review = review
         self.results = results
         self.openNight = openNight
         self.openSeries = openSeries
+        self.openCalibration = openCalibration
+        self.openInsights = openInsights
         self.saveAnnotation = saveAnnotation
         _goalHours = State(initialValue: annotation?.integrationGoalHours)
         _projectNotes = State(initialValue: annotation?.notes ?? "")
@@ -144,7 +153,10 @@ public struct ProjectWorkspaceView: View {
                 }
             }
         case .nights:
-            ProjectNightsSummary(snapshot: snapshot, openNight: openNight)
+            ProjectNightsSummary(
+                snapshot: snapshot, rootURL: rootURL, accessMode: accessMode,
+                openNight: openNight, openCalibration: openCalibration, openInsights: openInsights
+            )
         case .series:
             ProjectSeriesSummary(snapshot: snapshot, openSeries: openSeries)
         case .results:
@@ -196,8 +208,14 @@ public struct ProjectWorkspaceView: View {
 
 private struct ProjectNightsSummary: View {
     let snapshot: ProjectSnapshot
+    let rootURL: URL?
+    let accessMode: LibraryAccessMode
     let openNight: (UUID) -> Void
+    let openCalibration: () -> Void
+    let openInsights: (String?) -> Void
     @State private var selection: UUID?
+    @State private var noteEditorTarget: NightNoteEditingTarget?
+
     var body: some View {
         Table(snapshot.nights, selection: $selection) {
             TableColumn("Night") { Text($0.night.localDate).monospacedDigit() }
@@ -206,7 +224,34 @@ private struct ProjectNightsSummary: View {
             TableColumn("Integration") { Text(duration($0.integrationSeconds)).monospacedDigit() }
         }
         .frame(minHeight: 320)
+        .contextMenu(forSelectionType: UUID.self) { nightIDs in
+            if let id = nightIDs.first, let night = snapshot.nights.first(where: { $0.id == id }) {
+                NightActionMenu(
+                    target: snapshot.canonicalFolderName,
+                    date: night.night.localDate,
+                    setupDescriptor: night.series.first?.series.setupDescriptor,
+                    nightID: night.id,
+                    rootURL: rootURL,
+                    openNight: { openNight(id) },
+                    editNotes: {
+                        noteEditorTarget = NightNoteEditingTarget(
+                            target: snapshot.canonicalFolderName, date: night.night.localDate
+                        )
+                    },
+                    openCalibration: openCalibration,
+                    openInsights: openInsights
+                )
+            }
+        }
         .onChange(of: selection) { _, id in if let id { openNight(id) } }
+        .sheet(item: $noteEditorTarget) { editing in
+            if let rootURL {
+                NightNoteSheet(
+                    rootURL: rootURL, target: editing.target, date: editing.date,
+                    accessMode: accessMode, dismiss: { noteEditorTarget = nil }
+                )
+            }
+        }
     }
     private func duration(_ seconds: Double) -> String {
         let minutes = Int(seconds.rounded()) / 60
