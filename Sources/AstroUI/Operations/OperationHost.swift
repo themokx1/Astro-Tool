@@ -288,6 +288,101 @@ public final class OperationHost {
     }
 }
 
+/// One `(completed, total)` progress reading -- the value type
+/// `OperationHost.relayProgress` polls and forwards to
+/// `reportProgress(id:completed:total:)`. `total == nil` means "not yet
+/// known" and, per `reportProgress`'s own contract, leaves whatever total is
+/// already recorded untouched rather than clobbering it with a bogus zero.
+public struct OperationProgress: Equatable, Sendable {
+    public var completed: Int64
+    public var total: Int64?
+
+    public init(completed: Int64, total: Int64? = nil) {
+        self.completed = completed
+        self.total = total
+    }
+}
+
+/// A throttled relay between a progress source that may update far faster
+/// than any human perceives (or than a `@Observable` store should be mutated
+/// at) and whatever is consuming it. Introduced to replace five near-
+/// identical hand-rolled poll loops -- `LibraryHealthStore.verifyIntegrity`,
+/// `SensorProfilesStore.measure`, `ReviewStore.rateSelectedSeries`,
+/// `OnboardingStore.rescan`, and `OnboardingStore.openAndScan` -- each of
+/// which polled its own progress box every 20-50ms and pushed straight into
+/// `@Observable` state (`OperationHost.activeOperations` or
+/// `OnboardingStore.phase`), so every observer (shell toolbar,
+/// `OperationStatusView`, `HealthView`, `ReviewWorkspace`, four onboarding
+/// views) re-rendered at 20-50 Hz for the entire duration of any long-running
+/// operation -- exactly while the UI most needed to stay responsive.
+///
+/// `ProgressRelay.run` polls `read()` every `interval` while `isActive()`
+/// holds, calling `apply(_:)` only when the read value actually differs from
+/// the last one applied -- mirrors `OperationHost.expireToasts`'s own same-
+/// value guard: `@Observable` registers a mutation (and so notifies every
+/// observer) on any write, even one that changes nothing, so applying an
+/// unchanged value on every tick would still invalidate every observer at
+/// the throttle rate for no reason. Once `isActive()` goes false, it
+/// performs exactly one more `read()`/`apply()` if that final value hasn't
+/// already been applied -- so a value that changed between the last tick and
+/// the underlying work finishing is never simply dropped on the floor.
+@MainActor
+public enum ProgressRelay {
+    /// Fast enough to read as smooth progress, slow enough that the
+    /// `@Observable` mutation it drives fires at most 5x/second instead of
+    /// the 20-50 Hz the five hand-rolled loops it replaces used to run at.
+    public static let defaultInterval: Duration = .milliseconds(200)
+
+    @discardableResult
+    public static func run<Value: Equatable & Sendable>(
+        interval: Duration = defaultInterval,
+        while isActive: @escaping @MainActor @Sendable () -> Bool,
+        read: @escaping @Sendable () -> Value,
+        apply: @escaping @MainActor @Sendable (Value) async -> Void
+    ) -> Task<Void, Never> {
+        Task { @MainActor in
+            var lastApplied: Value?
+            while isActive() {
+                let value = read()
+                if value != lastApplied {
+                    await apply(value)
+                    lastApplied = value
+                }
+                try? await Task.sleep(for: interval)
+            }
+            let final = read()
+            if final != lastApplied {
+                await apply(final)
+            }
+        }
+    }
+}
+
+extension OperationHost {
+    /// Convenience over `ProgressRelay.run` for the common case every V2
+    /// background job needs: relaying a synchronous progress source into
+    /// `reportProgress(id:completed:total:)` while `id` remains in
+    /// `activeOperations`, at a throttled cadence instead of a hand-rolled
+    /// hot poll loop.
+    @discardableResult
+    public func relayProgress(
+        id: UUID,
+        interval: Duration = ProgressRelay.defaultInterval,
+        read: @escaping @Sendable () -> OperationProgress
+    ) -> Task<Void, Never> {
+        ProgressRelay.run(
+            interval: interval,
+            while: { [weak self] in
+                self?.activeOperations.contains(where: { $0.id == id }) ?? false
+            },
+            read: read,
+            apply: { [weak self] progress in
+                _ = await self?.reportProgress(id: id, completed: progress.completed, total: progress.total)
+            }
+        )
+    }
+}
+
 /// Lets `OperationCenter`'s synchronous `CancellationHandler` reach the
 /// `Task.detached` running a given operation's `work`, without needing the
 /// task to exist yet at the moment the handler closure is created (the

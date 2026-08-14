@@ -289,20 +289,20 @@ public final class OnboardingStore {
                 throw OnboardingStoreError.mutationAccessUnsupported
             }
             let progressBuffer = LatestOnboardingProgress()
-            let progressPoller = Task { @MainActor [weak self] in
-                while !Task.isCancelled {
-                    if let progress = progressBuffer.take() {
-                        self?.receiveProgress(progress, operationID: operationID)
-                    }
-                    try? await Task.sleep(for: .milliseconds(50))
+            let progressPoller = ProgressRelay.run(
+                while: { !Task.isCancelled },
+                read: { progressBuffer.peek() },
+                apply: { [weak self] progress in
+                    guard let progress else { return }
+                    self?.receiveProgress(progress, operationID: operationID)
                 }
-            }
+            )
             defer { progressPoller.cancel() }
             let snapshot = try await session.scan(progress: { progress in
                 progressBuffer.store(progress)
             })
             try Task.checkCancellation()
-            if let progress = progressBuffer.take() {
+            if let progress = progressBuffer.peek() {
                 receiveProgress(progress, operationID: operationID)
             }
             guard isActive(operationID) else { return }
@@ -395,24 +395,12 @@ public final class OnboardingStore {
             await self.applyRescanSnapshot(snapshot, root: root)
         }
 
-        Task {
-            while operationHost.activeOperations.contains(where: { $0.id == id }) {
-                if let progress = progressBuffer.take() {
-                    await operationHost.reportProgress(
-                        id: id,
-                        completed: Int64(progress.scanned),
-                        total: progress.total.map(Int64.init)
-                    )
-                }
-                try? await Task.sleep(for: .milliseconds(20))
-            }
-            if let progress = progressBuffer.take() {
-                await operationHost.reportProgress(
-                    id: id,
-                    completed: Int64(progress.scanned),
-                    total: progress.total.map(Int64.init)
-                )
-            }
+        operationHost.relayProgress(id: id) {
+            let progress = progressBuffer.peek()
+            return OperationProgress(
+                completed: Int64(progress?.scanned ?? 0),
+                total: progress?.total.map(Int64.init)
+            )
         }
     }
 
@@ -677,10 +665,11 @@ private final class LatestOnboardingProgress: @unchecked Sendable {
         lock.withLock { latest = progress }
     }
 
-    func take() -> LibraryScanProgress? {
-        lock.withLock {
-            defer { latest = nil }
-            return latest
-        }
+    /// Non-destructive read of the latest stored value -- unlike a
+    /// consuming `take()`, this can be polled repeatedly by `ProgressRelay`
+    /// without losing the last known value between ticks that see no new
+    /// `store(_:)` call.
+    func peek() -> LibraryScanProgress? {
+        lock.withLock { latest }
     }
 }

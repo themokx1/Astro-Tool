@@ -206,15 +206,9 @@ public final class LibraryHealthStore {
                 await self?.refresh()
             }
 
-            Task {
-                while operationHost.activeOperations.contains(where: { $0.id == id }) {
-                    let progress = box.current
-                    await operationHost.reportProgress(
-                        id: id, completed: progress.done,
-                        total: progress.total > 0 ? progress.total : nil
-                    )
-                    try? await Task.sleep(for: .milliseconds(20))
-                }
+            operationHost.relayProgress(id: id) {
+                let progress = box.current
+                return OperationProgress(completed: progress.done, total: progress.total > 0 ? progress.total : nil)
             }
         } catch {
             operationHost.notify(.failure, message: "Integrity verification failed: \(error.localizedDescription)")

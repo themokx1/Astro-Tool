@@ -273,6 +273,139 @@ struct OperationHostTests {
         #expect(counter.value == 1)
         #expect(host.toasts.isEmpty)
     }
+
+    // MARK: - Systemic S2: throttled progress relay
+    //
+    // Five hand-rolled poll loops (`LibraryHealthStore.verifyIntegrity`,
+    // `SensorProfilesStore.measure`, `ReviewStore.rateSelectedSeries`,
+    // `OnboardingStore.rescan`, `OnboardingStore.openAndScan`) each mutated
+    // shared `@Observable` state at 20-50 Hz -- far faster than any human
+    // perceives, and every observer (shell toolbar, `OperationStatusView`,
+    // `HealthView`, `ReviewWorkspace`, onboarding views) re-rendered at that
+    // rate for the entire duration of any long-running operation. These
+    // tests pin `ProgressRelay`'s replacement contract.
+
+    @Test("ProgressRelay.run throttles application to the polling interval, not to how often the underlying value changes")
+    func progressRelayThrottlesToPollingInterval() async throws {
+        let source = ThreadSafeBox(0)
+        let applyCalls = ThreadSafeBox(0)
+        let active = ThreadSafeBox(true)
+
+        let task = ProgressRelay.run(
+            interval: .milliseconds(20),
+            while: { active.value },
+            read: { source.value },
+            apply: { _ in applyCalls.value += 1 }
+        )
+
+        // Hammer the source far faster than the relay can poll -- simulates
+        // the 50 Hz hand-rolled loops this replaces pushing a fresh value on
+        // every tick of the underlying work.
+        let mutator = Task.detached {
+            for i in 1...300 {
+                source.value = i
+                try? await Task.sleep(for: .milliseconds(1))
+            }
+        }
+        try await Task.sleep(for: .milliseconds(150))
+        active.value = false
+        _ = await mutator.value
+        await task.value
+
+        // ~150ms at a 20ms interval is at most ~8-9 ticks plus one final
+        // flush -- nowhere near the 300 individual changes the source went
+        // through underneath it.
+        #expect(applyCalls.value >= 1)
+        #expect(applyCalls.value < 20)
+    }
+
+    @Test("ProgressRelay.run always applies the final value once isActive() goes false, even if it changed after the last tick")
+    func progressRelayAppliesFinalValueOnCompletion() async throws {
+        let source = ThreadSafeBox(OperationProgress(completed: 0))
+        let active = ThreadSafeBox(true)
+        let appliedValues = ThreadSafeArray<OperationProgress>()
+
+        let task = ProgressRelay.run(
+            interval: .milliseconds(500), // deliberately long: no natural tick should fire in this test's short window
+            while: { active.value },
+            read: { source.value },
+            apply: { value in appliedValues.append(value) }
+        )
+
+        try await Task.sleep(for: .milliseconds(30)) // let the relay start and apply its first (initial) value
+        source.value = OperationProgress(completed: 99, total: 100) // changes AFTER the last tick, before completion
+        active.value = false // signal "the underlying work has completed"
+        await task.value
+
+        #expect(appliedValues.values.last == OperationProgress(completed: 99, total: 100))
+    }
+
+    @Test("ProgressRelay.run applies an unchanging value exactly once, no matter how many polling intervals elapse")
+    func progressRelayDoesNotReapplyAnUnchangingValue() async throws {
+        let applyCalls = ThreadSafeBox(0)
+        let active = ThreadSafeBox(true)
+
+        let task = ProgressRelay.run(
+            interval: .milliseconds(10),
+            while: { active.value },
+            read: { OperationProgress(completed: 5, total: 10) }, // never changes
+            apply: { _ in applyCalls.value += 1 }
+        )
+
+        // Several polling intervals' worth of time, all reading the same
+        // unchanging value.
+        try await Task.sleep(for: .milliseconds(80))
+        active.value = false
+        await task.value
+
+        // Exactly one application: the first (nil -> (5, 10)). The unchanged
+        // final flush is skipped, and none of the ~8 intervening ticks
+        // re-applied it either.
+        #expect(applyCalls.value == 1)
+    }
+
+    @Test("relayProgress forwards progress to OperationCenter at a throttled rate and flushes the final value")
+    func relayProgressIntegratesWithOperationHostAndCenter() async throws {
+        let center = OperationCenter()
+        let host = OperationHost(center: center)
+        let gate = AsyncGate()
+        let progress = ThreadSafeBox(OperationProgress(completed: 0, total: 100))
+
+        let id = await host.run(kind: .verify(library: "A"), title: "Verifying A") {
+            await gate.waitToProceed()
+        }
+
+        let relay = host.relayProgress(id: id, interval: .milliseconds(10)) { progress.value }
+
+        try await waitUntil { host.activeOperations.first { $0.id == id }?.completed == 0 }
+        progress.value = OperationProgress(completed: 100, total: 100)
+
+        gate.open()
+        try await waitUntil { host.activeOperations.isEmpty }
+        _ = await relay.value
+
+        #expect(await center.state(id)?.phase == .succeeded)
+    }
+
+    @Test("None of the five files with hand-rolled progress pollers still hot-polls every 20-50ms")
+    func noHandRolledHotPollLoopsRemain() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let files = [
+            "Sources/AstroUI/Features/Library/LibraryHealthStore.swift",
+            "Sources/AstroUI/Features/Library/SensorProfilesStore.swift",
+            "Sources/AstroUI/Features/Review/ReviewStore.swift",
+            "Sources/AstroUI/Onboarding/LibraryWelcomeView.swift",
+        ]
+        for relativePath in files {
+            let source = try String(
+                contentsOf: root.appendingPathComponent(relativePath),
+                encoding: .utf8
+            )
+            #expect(!source.contains(".milliseconds(20)"), "\(relativePath) still hot-polls at 20ms")
+            #expect(!source.contains(".milliseconds(50)"), "\(relativePath) still hot-polls at 50ms")
+        }
+    }
 }
 
 /// Polls a MainActor-isolated condition until it becomes true, bounded so a
@@ -334,6 +467,28 @@ private final class AsyncGate: @unchecked Sendable {
 private final class NotificationCounter: @unchecked Sendable {
     private(set) var value = 0
     func increment() { value += 1 }
+}
+
+/// A thread-safe single-value box for `ProgressRelay` tests -- `read`/`apply`
+/// closures run inside the relay's own `Task`, concurrently with whatever
+/// mutates the source value, so a plain captured `var` isn't safe here.
+private final class ThreadSafeBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: Value
+    init(_ value: Value) { _value = value }
+    var value: Value {
+        get { lock.withLock { _value } }
+        set { lock.withLock { _value = newValue } }
+    }
+}
+
+/// A thread-safe append-only log of applied values, for asserting on the
+/// full sequence `ProgressRelay.run`'s `apply` closure was called with.
+private final class ThreadSafeArray<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _values: [Value] = []
+    func append(_ value: Value) { lock.withLock { _values.append(value) } }
+    var values: [Value] { lock.withLock { _values } }
 }
 
 private final class ObservedFlag: @unchecked Sendable {

@@ -95,12 +95,8 @@ public final class SensorProfilesStore {
                 await self?.refreshAfterMeasurement(query: query)
             }
 
-            Task {
-                while operationHost.activeOperations.contains(where: { $0.id == id }) {
-                    await operationHost.reportProgress(id: id, completed: counter.current)
-                    try? await Task.sleep(for: .milliseconds(20))
-                }
-                await operationHost.reportProgress(id: id, completed: counter.current)
+            operationHost.relayProgress(id: id) {
+                OperationProgress(completed: counter.current)
             }
         } catch {
             operationHost.notify(.failure, message: "Sensor measurement failed: \(error.localizedDescription)")
