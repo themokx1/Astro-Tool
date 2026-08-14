@@ -118,14 +118,32 @@ public final class PlanningStore {
         self.defaults = defaults
         self.computeRecommendations = computeRecommendations
         self.catalogSearch = catalogSearch
+        let initial = safeSetups.first(where: \.isDefault) ?? safeSetups[0]
+        selectedSetupID = initial.id
+        focalLength = initial.defaultFocalLengthMM
+        lastObservedReferenceHours = defaults.double(forKey: Self.referenceHoursKey)
+        lastObservedReferenceFocalRatio = defaults.double(forKey: Self.referenceFocalRatioKey)
+        lastObservedReferenceSurfaceBrightness = defaults.double(forKey: Self.referenceSurfaceBrightnessKey)
+    }
+
+    /// Registers the Planning baseline fallbacks.
+    ///
+    /// This deliberately does NOT live in `init`. `UserDefaults.register`
+    /// posts `UserDefaults.didChangeNotification`, and SwiftUI re-evaluates
+    /// `PlanningView`'s `@State` default expression -- i.e. constructs a
+    /// throwaway store -- on every view construction. Registering from `init`
+    /// therefore posted a defaults-change notification once per render, which
+    /// invalidates every `@AppStorage` property in the mounted tree
+    /// (`V2RootView`, `HomeView`, `V2SettingsView`); the shell re-rendered,
+    /// Planning re-rendered, and the next throwaway store posted again. That
+    /// closed the loop behind the build 20017 Planning freeze, measured at
+    /// 99% CPU on Planning while Home and Projects sat at 0%.
+    private func registerReferenceDefaults() {
         defaults.register(defaults: [
             Self.referenceHoursKey: IntegrationTimeModel.referenceHours,
             Self.referenceFocalRatioKey: 5.0,
             Self.referenceSurfaceBrightnessKey: IntegrationTimeModel.referenceSurfaceBrightness,
         ])
-        let initial = safeSetups.first(where: \.isDefault) ?? safeSetups[0]
-        selectedSetupID = initial.id
-        focalLength = initial.defaultFocalLengthMM
         lastObservedReferenceHours = defaults.double(forKey: Self.referenceHoursKey)
         lastObservedReferenceFocalRatio = defaults.double(forKey: Self.referenceFocalRatioKey)
         lastObservedReferenceSurfaceBrightness = defaults.double(forKey: Self.referenceSurfaceBrightnessKey)
@@ -143,6 +161,7 @@ public final class PlanningStore {
     public func activate() {
         guard !isActivated else { return }
         isActivated = true
+        registerReferenceDefaults()
         observeDefaultsChanges()
         refresh()
     }

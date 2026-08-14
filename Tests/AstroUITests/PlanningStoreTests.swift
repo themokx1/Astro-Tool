@@ -37,6 +37,38 @@ struct PlanningStoreTests {
     // recommendation compute launched one discarded background pipeline run
     // per render. Construction must therefore be free of side effects;
     // activation is explicit and idempotent.
+    // Build 20017 STILL froze on Planning, and only on Planning (measured:
+    // Home 0% CPU, Projects 0% CPU, Planning 99%). `PlanningStore.init` called
+    // `UserDefaults.register(defaults:)`, and SwiftUI re-evaluates
+    // `PlanningView`'s `@State private var store = PlanningStore()` default
+    // expression on every view construction. Each discarded construction
+    // therefore posted `UserDefaults.didChangeNotification`, which invalidates
+    // every `@AppStorage` property in the mounted tree (V2RootView, HomeView,
+    // V2SettingsView) -- so the shell re-rendered, which re-rendered Planning,
+    // which constructed another store, which posted again: an endless loop.
+    // Construction must be silent; registration happens once, in `activate()`.
+    @Test("Constructing a store posts no UserDefaults change notification")
+    func constructionDoesNotPostDefaultsNotification() async throws {
+        let suite = "AstroTool-PlanningStoreTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let posts = CallCounter()
+        let observer = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: defaults,
+            queue: nil
+        ) { _ in posts.increment() }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        // Stand in for SwiftUI re-evaluating the @State default expression.
+        for _ in 0..<5 {
+            _ = PlanningStore(setups: [.apsCReference], defaults: defaults)
+        }
+
+        #expect(posts.current == 0)
+    }
+
     @Test("Constructing a store computes nothing until activate() is called")
     func constructionHasNoSideEffects() async {
         let counter = CallCounter()
