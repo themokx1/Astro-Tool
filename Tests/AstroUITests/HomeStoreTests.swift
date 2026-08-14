@@ -77,6 +77,50 @@ struct HomeStoreTests {
         #expect(store.snapshot.nextProjectIntegrationSeconds == 30)
     }
 
+    @Test("Home renders whatever the night-context provider reports, honestly, instead of a fixed fake dusk/dawn plot")
+    func configureUsesNightContextProviderResult() async throws {
+        // V2 UI/UX audit (2026-08-14) section 4: `HomeStore.configure` used
+        // to carry `snapshot.nightContext` forward completely unchanged, so
+        // `NightContextRail` always drew the same hardcoded-geometry dusk/
+        // observation-window/dawn plot no matter what library was open.
+        // `nightContextProvider` is the injection point that lets
+        // `configure` ask for the real, per-library context (real site
+        // coordinates resolved -> real dusk/dawn; no resolvable site ->
+        // an honest "not configured" state) without this test needing a
+        // real FITS-backed library.
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let expected = HomeSnapshot.NightContext(
+            isConfigured: true, leadingLabel: "Dusk 21:04", centerLabel: "3h 12m to dawn",
+            trailingLabel: "Dawn 05:16", nowFraction: 0.4
+        )
+        let store = HomeStore(
+            tonightProvider: { _ in [] },
+            nightContextProvider: { selectedRoot in
+                #expect(selectedRoot == root)
+                return expected
+            }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+
+        #expect(store.snapshot.nightContext == expected)
+    }
+
+    @Test("An unresolvable night context (no site, no rootURL) falls back to the honest unconfigured state")
+    func configureFallsBackToUnconfiguredNightContext() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let store = HomeStore()
+
+        await store.configure(libraryName: "Astro", projectsStore: projects, nightCount: 0)
+
+        #expect(store.snapshot.nightContext == .unconfigured)
+        #expect(store.snapshot.nightContext.isConfigured == false)
+    }
+
     private func makeSeries(project: UUID, night: UUID, exposure: Double) -> SeriesRecord {
         SeriesRecord(id: UUID(), projectID: project, nightID: night, setupID: nil,
             setupDescriptor: "Test", sensorMode: .osc, passband: .broadband,

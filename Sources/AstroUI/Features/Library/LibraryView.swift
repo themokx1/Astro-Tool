@@ -7,6 +7,19 @@ public struct LibraryView: View {
     let chooseLibrary: () -> Void
     let convertSession: () -> Void
     let rescan: () -> Void
+    /// V2 UI/UX audit (2026-08-14) section 4: this view used to render a
+    /// hardcoded "Read-only access" label unconditionally, even when
+    /// `v2.library.enableWriteOperations` is on -- exactly this page's own
+    /// promise is "your files are safe", so it must not misreport its own
+    /// access mode. Reads the same `UserDefaults` key `V2RootView`'s
+    /// `libraryAccessMode` and `HealthView`/`CalibrationView` already use,
+    /// rather than needing a new initializer parameter threaded through
+    /// `V2RootView`'s `LibraryView(...)` call site.
+    @AppStorage("v2.library.enableWriteOperations") private var enableWriteOperations = false
+
+    private var accessMode: LibraryAccessMode {
+        enableWriteOperations ? .mutationEnabled : .readOnly
+    }
 
     public var body: some View {
         Group {
@@ -32,7 +45,11 @@ public struct LibraryView: View {
                                 .font(.headline)
                             if let rootURL {
                                 Text(rootURL.path).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-                                Label("Read-only access", systemImage: "lock.shield").foregroundStyle(.green)
+                                if accessMode == .mutationEnabled {
+                                    Label("Writable", systemImage: "lock.open").foregroundStyle(.secondary)
+                                } else {
+                                    Label("Read-only access", systemImage: "lock.shield").foregroundStyle(.secondary)
+                                }
                             }
                             HStack {
                                 Button("Organize One Session…", action: convertSession)

@@ -1,3 +1,4 @@
+import AppKit
 import AstroApplication
 import AstroCore
 import Observation
@@ -168,7 +169,7 @@ public struct HealthView: View {
                     }
                     .width(min: 90, ideal: 110)
                     TableColumn("Next step") { item in
-                        Text(nextStep(item.category)).foregroundStyle(AstroTokens.Color.spectralBlue)
+                        Text(nextStep(item)).foregroundStyle(AstroTokens.Color.spectralBlue)
                     }
                     .width(min: 115, ideal: 145)
                 }
@@ -283,12 +284,29 @@ public struct HealthView: View {
 
     private func icon(_ severity: LibraryHealthSeverity) -> String { severity == .healthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill" }
     private func color(_ severity: LibraryHealthSeverity) -> Color { severity == .healthy ? .green : .orange }
-    private func nextStep(_ category: LibraryHealthCategory) -> String {
-        switch category {
-        case .flat, .dark, .bias: "Review calibration"
-        case .duplicates, .organization, .storage: "Preview cleanup"
-        case .integrity: "No action needed"
+    /// V2 UI/UX audit (2026-08-14) section 4: integrity findings used to get
+    /// "No action needed" for the whole `.integrity` category regardless of
+    /// severity -- but a checksum mismatch (severity != `.healthy`) is
+    /// exactly what `VerifyIntegritySheet` (below, same file) already says
+    /// means "restore from backup". Only the genuinely healthy "source
+    /// library protected" item gets the reassuring copy; anything else in
+    /// this category gets the honest guidance instead.
+    private func nextStep(_ item: LibraryHealthItem) -> String {
+        switch item.category {
+        case .flat, .dark, .bias: return "Review calibration"
+        case .duplicates, .organization, .storage: return "Preview cleanup"
+        case .integrity: return item.severity == .healthy ? "No action needed" : "Restore from backup"
         }
+    }
+
+    /// A cheap, real action for a non-healthy integrity finding: this health
+    /// scan never learned a specific file path for the mismatch (it is
+    /// read-only against the library in every sense), so the honest thing it
+    /// CAN do is point the user at the library root itself rather than
+    /// silently offering nothing.
+    private func revealLibraryInFinder() {
+        guard let rootURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([rootURL])
     }
 
     private func filteredItems(_ snapshot: LibraryHealthSnapshot) -> [LibraryHealthItem] {
@@ -304,7 +322,13 @@ public struct HealthView: View {
             Button("Review Sensor Profiles…", action: openSensorProfiles)
             Button("Open Calibration…", action: openCalibration)
         case .integrity:
-            Text("No action required")
+            if item.severity == .healthy {
+                Text("No action required")
+            } else {
+                Text("Restore this file from a backup copy")
+                Button("Reveal Library in Finder…", action: revealLibraryInFinder)
+                    .disabled(rootURL == nil)
+            }
         }
         Divider()
         if item.isAcknowledged {

@@ -17,20 +17,44 @@ public struct HomeTonightRecommendation: Equatable, Sendable, Identifiable {
 }
 
 public struct HomeSnapshot: Equatable, Sendable {
+    /// V2 UI/UX audit (2026-08-14) section 4: this used to be three plain
+    /// strings with no way to say "there is nothing real to show yet" --
+    /// `HomeStore.configure` therefore always carried the very first
+    /// (hardcoded) value forward unchanged, and `NightContextRail` drew a
+    /// fixed-geometry dusk/observation-window/dawn plot that never reflected
+    /// any actual site or time. `isConfigured` is the honest flag: `false`
+    /// means no site could be resolved (no explicit `AstroConfig.site`, no
+    /// FITS-median fallback) for this library, so the rail must say so
+    /// instead of drawing a plot. `nowFraction` (0...1) is only meaningful
+    /// when configured -- where "now" sits between dusk and dawn tonight --
+    /// and `nil` whenever `now` falls outside that window (before dusk /
+    /// after dawn) or the window can't be computed.
     public struct NightContext: Equatable, Sendable {
+        public let isConfigured: Bool
         public let leadingLabel: String
         public let centerLabel: String
         public let trailingLabel: String
+        public let nowFraction: Double?
 
         public init(
+            isConfigured: Bool,
             leadingLabel: String,
             centerLabel: String,
-            trailingLabel: String
+            trailingLabel: String,
+            nowFraction: Double? = nil
         ) {
+            self.isConfigured = isConfigured
             self.leadingLabel = leadingLabel
             self.centerLabel = centerLabel
             self.trailingLabel = trailingLabel
+            self.nowFraction = nowFraction
         }
+
+        /// Neutral, honest default: no site has been resolved for the open
+        /// library (or none is open yet), so there is nothing real to plot.
+        public static let unconfigured = NightContext(
+            isConfigured: false, leadingLabel: "Dusk", centerLabel: "Site not configured", trailingLabel: "Dawn"
+        )
     }
 
     public let libraryName: String?
@@ -63,11 +87,7 @@ public struct HomeSnapshot: Equatable, Sendable {
     /// inventing a home location, equipment profile, or observation target.
     public static let unconfigured = HomeSnapshot(
         libraryName: nil,
-        nightContext: NightContext(
-            leadingLabel: "Dusk",
-            centerLabel: "Observation window",
-            trailingLabel: "Dawn"
-        )
+        nightContext: .unconfigured
     )
 }
 
@@ -76,6 +96,13 @@ public struct HomeSnapshot: Equatable, Sendable {
 public final class HomeStore {
     public typealias TonightProvider = @Sendable (URL) async throws -> [TargetPlan]
     public typealias CalibCoverageProvider = @Sendable (URL) async throws -> [CalibNeed]
+    /// Resolves tonight's honest night context for an open library -- real
+    /// dusk/dawn (from the site the planner itself would resolve: explicit
+    /// config, else the FITS-median fallback) when a site is available,
+    /// `.unconfigured` otherwise. Injectable for the same reason
+    /// `tonightProvider`/`calibCoverageProvider` are: it lets tests supply a
+    /// fixed result without needing a real FITS-backed library on disk.
+    public typealias NightContextProvider = @Sendable (URL) async throws -> HomeSnapshot.NightContext
     public private(set) var snapshot: HomeSnapshot
     /// The full plan `tonightRecommendations` was sliced from (`prefix(8)`,
     /// display-only) -- kept around so the "Export Plan" menu
@@ -90,15 +117,18 @@ public final class HomeStore {
     public private(set) var calibShoppingItems: [CalibShoppingList.Item] = []
     private let tonightProvider: TonightProvider
     private let calibCoverageProvider: CalibCoverageProvider
+    private let nightContextProvider: NightContextProvider
 
     public init(
         snapshot: HomeSnapshot = .unconfigured,
         tonightProvider: @escaping TonightProvider = HomeStore.productionTonight,
-        calibCoverageProvider: @escaping CalibCoverageProvider = HomeStore.productionCalibCoverage
+        calibCoverageProvider: @escaping CalibCoverageProvider = HomeStore.productionCalibCoverage,
+        nightContextProvider: @escaping NightContextProvider = HomeStore.productionNightContext
     ) {
         self.snapshot = snapshot
         self.tonightProvider = tonightProvider
         self.calibCoverageProvider = calibCoverageProvider
+        self.nightContextProvider = nightContextProvider
     }
 
     public func replaceSnapshot(_ snapshot: HomeSnapshot) {
@@ -157,9 +187,19 @@ public final class HomeStore {
                 score: plan.score
             )
         }
+        // V2 UI/UX audit (2026-08-14) section 4: this used to carry
+        // `snapshot.nightContext` forward completely unchanged, so the home
+        // screen's night rail never reflected the library actually open --
+        // it now asks `nightContextProvider` for the real answer (or the
+        // honest `.unconfigured` state) every time a library opens.
+        let nightContext: HomeSnapshot.NightContext = if let rootURL {
+            (try? await nightContextProvider(rootURL)) ?? .unconfigured
+        } else {
+            .unconfigured
+        }
         snapshot = HomeSnapshot(
             libraryName: libraryName,
-            nightContext: snapshot.nightContext,
+            nightContext: nightContext,
             projectCount: projectsStore.projects.count,
             nightCount: nightCount,
             nextProject: next?.0,
@@ -177,6 +217,68 @@ public final class HomeStore {
             var config = (try? AstroConfig.load(from: configURL)) ?? AstroConfig()
             config.rootPath = rootURL.path
             return try Planner.plan(db: database, config: config)
+        }.value
+    }
+
+    /// Resolves tonight's real dusk/dawn window from whatever site the
+    /// planner itself would use -- `Planner.resolveSite` (explicit
+    /// `AstroConfig.site`/`sites`, else the FITS-median fallback across the
+    /// library's own scanned lights), so this never invents a location the
+    /// rest of the app doesn't already treat as authoritative. Falls back to
+    /// the honest `.unconfigured` state when no site resolves at all (a
+    /// fresh library with no site set and no FITS coordinates yet), or when
+    /// tonight's Sun never crosses twilight at this site (`astronomicalTwilight`
+    /// returns `nil` dusk/dawn).
+    public static func productionNightContext(rootURL: URL) async throws -> HomeSnapshot.NightContext {
+        try await Task.detached(priority: .utility) {
+            let identity = LibraryIdentity(rootURL: rootURL)
+            let paths = try AppStoragePaths.production(libraryID: identity, libraryRoot: rootURL)
+            let database = try Database(path: paths.indexDatabase.path)
+            let configURL = rootURL.appendingPathComponent(".astro_tool/config.json")
+            var config = (try? AstroConfig.load(from: configURL)) ?? AstroConfig()
+            config.rootPath = rootURL.path
+            let site = try Planner.resolveSite(db: database, config: config)
+            guard let latitudeDeg = site.latitudeDeg, let longitudeDeg = site.longitudeDeg else {
+                return .unconfigured
+            }
+
+            let now = Date()
+            let timeZone = TimeZone.current
+            let twilight = SunMoon.astronomicalTwilight(
+                nightOf: now, latDeg: latitudeDeg, lonDeg: longitudeDeg, timeZone: timeZone
+            )
+            guard let duskUTC = twilight.duskUTC, let dawnUTC = twilight.dawnUTC else {
+                return HomeSnapshot.NightContext(
+                    isConfigured: true, leadingLabel: "Dusk", centerLabel: "No astronomical night tonight at this latitude",
+                    trailingLabel: "Dawn"
+                )
+            }
+
+            let formatter = DateFormatter()
+            formatter.dateStyle = .none
+            formatter.timeStyle = .short
+            formatter.timeZone = timeZone
+            let leadingLabel = "Dusk \(formatter.string(from: duskUTC))"
+            let trailingLabel = "Dawn \(formatter.string(from: dawnUTC))"
+            let windowSeconds = dawnUTC.timeIntervalSince(duskUTC)
+            let nowFraction: Double? = windowSeconds > 0
+                ? min(max(now.timeIntervalSince(duskUTC) / windowSeconds, 0), 1)
+                : nil
+
+            let centerLabel: String
+            if now < duskUTC {
+                centerLabel = "Before tonight's dusk"
+            } else if now > dawnUTC {
+                centerLabel = "After tonight's dawn"
+            } else {
+                let remainingMinutes = Int(dawnUTC.timeIntervalSince(now) / 60)
+                centerLabel = "\(remainingMinutes / 60)h \(remainingMinutes % 60)m to dawn"
+            }
+
+            return HomeSnapshot.NightContext(
+                isConfigured: true, leadingLabel: leadingLabel, centerLabel: centerLabel,
+                trailingLabel: trailingLabel, nowFraction: nowFraction
+            )
         }.value
     }
 

@@ -201,6 +201,14 @@ public struct HomeView: View {
     }
 }
 
+/// V2 UI/UX audit (2026-08-14) section 4: this used to draw a dusk/
+/// observation-window/dawn timeline from hardcoded, fixed fractions of the
+/// available width, with permanently fixed labels -- nothing ever supplied
+/// it real data, so it read as a genuine plot while always showing the same
+/// thing regardless of which library was open or what time it was. It now
+/// renders `context`'s own `isConfigured` flag honestly: a real dusk-to-dawn
+/// bar with a real "now" marker when a site resolved, or a plain
+/// unconfigured state -- never a decorative fake plot.
 private struct NightContextRail: View {
     let context: HomeSnapshot.NightContext
 
@@ -210,48 +218,55 @@ private struct NightContextRail: View {
                 Label("Night context", systemImage: "moon.stars")
                     .font(.headline)
                 Spacer()
-                Text("Site not set")
+                if !context.isConfigured {
+                    Text("Site not set")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if context.isConfigured {
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        AstroTokens.Color.spectralBlue.opacity(0.45),
+                                        AstroTokens.Color.spectralViolet.opacity(0.88),
+                                        AstroTokens.Color.spectralBlue.opacity(0.45),
+                                    ],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .frame(height: 2)
+                        if let nowFraction = context.nowFraction {
+                            Circle()
+                                .fill(AstroTokens.Color.spectralViolet)
+                                .frame(width: 7, height: 7)
+                                .offset(x: proxy.size.width * nowFraction - 3.5)
+                        }
+                    }
+                    .frame(maxHeight: .infinity)
+                }
+                .frame(height: 12)
+
+                HStack {
+                    Text(context.leadingLabel)
+                    Spacer()
+                    Text(context.centerLabel)
+                    Spacer()
+                    Text(context.trailingLabel)
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            } else {
+                Text("No observing site is resolved for this library yet, so tonight's dusk-to-dawn window can't be shown here. AstroTool derives it automatically from your FITS files' own site coordinates once they're indexed.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(AstroTokens.Color.hairline)
-                        .frame(height: 2)
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    AstroTokens.Color.spectralBlue.opacity(0.45),
-                                    AstroTokens.Color.spectralViolet.opacity(0.88),
-                                    AstroTokens.Color.spectralBlue.opacity(0.45),
-                                ],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: proxy.size.width * 0.58, height: 2)
-                        .offset(x: proxy.size.width * 0.21)
-                    Circle()
-                        .fill(AstroTokens.Color.spectralViolet)
-                        .frame(width: 7, height: 7)
-                        .offset(x: proxy.size.width * 0.495)
-                }
-                .frame(maxHeight: .infinity)
-            }
-            .frame(height: 12)
-
-            HStack {
-                Text(context.leadingLabel)
-                Spacer()
-                Text(context.centerLabel)
-                Spacer()
-                Text(context.trailingLabel)
-            }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
         }
         .padding(AstroTokens.Spacing.standard)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
@@ -261,7 +276,9 @@ private struct NightContextRail: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "Night context: \(context.leadingLabel), \(context.centerLabel), \(context.trailingLabel). Site not set."
+            context.isConfigured
+                ? "Night context: \(context.leadingLabel), \(context.centerLabel), \(context.trailingLabel)."
+                : "Night context: no site configured for this library yet."
         )
         .accessibilityIdentifier("v2.home.night-context")
     }

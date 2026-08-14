@@ -74,7 +74,12 @@ public struct PlanningView: View {
 
     private var baselineCard: some View {
         HStack(spacing: AstroTokens.Spacing.standard) {
-            MetricCard(title: "Reference", value: "10 h", detail: "APS-C · f/5 · μ 22", systemImage: "timer")
+            MetricCard(
+                title: "Reference",
+                value: "\(store.referenceHours.formatted(.number.precision(.fractionLength(0...1)))) h",
+                detail: "f/\(store.referenceFocalRatio.formatted(.number.precision(.fractionLength(0...1)))) · μ \(store.referenceSurfaceBrightness.formatted(.number.precision(.fractionLength(0...1))))",
+                systemImage: "timer"
+            )
             MetricCard(
                 title: "Focal length", value: "\(store.focalLength.formatted(.number.precision(.fractionLength(0)))) mm",
                 detail: store.selectedSetup.cameraName, systemImage: "camera.aperture"
