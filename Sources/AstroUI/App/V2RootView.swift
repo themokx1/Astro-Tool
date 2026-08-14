@@ -320,7 +320,12 @@ private struct V2Shell: View {
                 }
             } else if let conversionRoot,
                       let useCase = try? ConversionUseCase.production(rootURL: conversionRoot) {
-                ConversionWorkspace(useCase: useCase, dismiss: { self.conversionRoot = nil })
+                ConversionWorkspace(
+                    useCase: useCase,
+                    rootURL: conversionRoot,
+                    accessMode: libraryAccessMode,
+                    dismiss: { self.conversionRoot = nil }
+                )
             }
         }
         .sheet(item: $router.presentation) { presentation in

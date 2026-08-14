@@ -206,6 +206,55 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(route.contains("case calibration"))
     }
 
+    @Test("Session conversion is editable, resolves ambiguities, and applies/undoes through the V1 engine")
+    func conversionWorkspaceAppliesAndUndoesThroughEngine() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/ConversionWorkspace.swift"))
+        let command = try String(contentsOf: root.appendingPathComponent("Sources/AstroApplication/Features/Library/SessionConversionCommand.swift"))
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+
+        // Editable proposal fields.
+        #expect(workspace.contains("TextField(\"Group name\""))
+        #expect(workspace.contains("Picker(\"Sensor\""))
+        #expect(workspace.contains("Picker(\"Signal\""))
+        #expect(workspace.contains("TextField(\"Filter\""))
+        #expect(workspace.contains("v2.conversion.group-name"))
+        #expect(workspace.contains("v2.conversion.group-sensor"))
+        #expect(workspace.contains("v2.conversion.group-signal"))
+        #expect(workspace.contains("v2.conversion.group-filter"))
+
+        // Mandatory ambiguity-resolution step.
+        #expect(workspace.contains("v2.conversion.ambiguity-step"))
+        #expect(workspace.contains("case resolve"))
+        #expect(workspace.contains("store.plan?.ambiguities.isEmpty ?? true"))
+
+        // Apply/undo, gated on write access, with confirmation dialogs stating file counts.
+        #expect(workspace.contains("v2.conversion.apply"))
+        #expect(workspace.contains("v2.conversion.undo"))
+        #expect(workspace.contains("Requires write access"))
+        #expect(workspace.contains(".disabled(store.accessMode != .mutationEnabled || !plan.canApply)"))
+        #expect(workspace.contains("confirmationDialog("))
+        #expect(workspace.contains("summary.fileAssignmentCount"))
+        #expect(workspace.contains("summary.moveCount"))
+        #expect(workspace.contains("Show Receipt in Finder"))
+        #expect(workspace.contains("FrameThumbnailCell.resolvedURL"))
+        #expect(workspace.contains("activateFileViewerSelecting"))
+
+        // No stale "preview only" wording remains now that apply/undo are real.
+        #expect(!workspace.contains("Preview only"))
+
+        // The command wraps the V1 engine directly -- no new mover invented.
+        #expect(command.contains("SessionConversionExecutor.apply"))
+        #expect(command.contains("SessionConversionExecutor.rollback"))
+        #expect(command.contains("SessionConversionPlanner.plan"))
+        #expect(command.contains("SessionConversionPlanner.resolving"))
+        #expect(command.contains("LibraryMutationError.readOnly"))
+
+        #expect(shell.contains("ConversionWorkspace("))
+        #expect(shell.contains("accessMode: libraryAccessMode"))
+    }
+
     @Test("Project goals and notes are editable rather than placeholders")
     func projectGoalAndNotesContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
