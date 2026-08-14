@@ -19,6 +19,10 @@ public final class PlanningStore {
     /// itself instrumentable. `@Sendable` because it runs inside
     /// `Task.detached`, off the main actor -- see `refresh()`.
     public typealias RecommendationsComputer = @Sendable (PlanningQuery) -> [PlanningRecommendation]
+    /// Runs `TargetCatalog.search` for `filteredRecommendations`. Injectable
+    /// for the same reason `computeRecommendations` is: it lets tests count
+    /// invocations without needing `TargetCatalog` itself to be mockable.
+    public typealias CatalogSearch = @Sendable (String) -> [CatalogTarget]
 
     public let setups: [ImagingSetupProfile]
     /// AppKit's Picker re-asserts the bound selection during its own update
@@ -34,8 +38,27 @@ public final class PlanningStore {
         }
     }
     public private(set) var focalLength: Double
-    public var searchText = ""
-    public var usefulFramingOnly = true
+    /// Same-value guard: a SwiftUI `TextField` binding can re-assert the
+    /// current text during its own update pass, and `didSet` fires on every
+    /// assignment -- equal values included. `@Observable` reports a mutation
+    /// regardless of equality, so an unguarded didSet here would re-run
+    /// `TargetCatalog.search` (and re-notify every observer) on every such
+    /// redundant re-assertion -- same reason `selectedSetupID`'s own
+    /// `didSet` above is guarded.
+    public var searchText = "" {
+        didSet {
+            guard oldValue != searchText else { return }
+            recomputeFilteredRecommendations()
+        }
+    }
+    /// Same-value guard as `searchText` above -- a `Toggle` binding
+    /// re-asserts its current value the same way.
+    public var usefulFramingOnly = true {
+        didSet {
+            guard oldValue != usefulFramingOnly else { return }
+            recomputeFilteredRecommendations()
+        }
+    }
 
     /// The full recommendation pipeline's most recent result -- STORED, not
     /// computed. Build 20013 shipped a crash (and, with the underlying
@@ -76,6 +99,7 @@ public final class PlanningStore {
     private var lastObservedReferenceHours: Double
     private var lastObservedReferenceFocalRatio: Double
     private var lastObservedReferenceSurfaceBrightness: Double
+    private let catalogSearch: CatalogSearch
     /// `nonisolated(unsafe)`: only ever mutated on the main actor (`init`),
     /// but `deinit` is always `nonisolated` (it may run on any thread), so
     /// it needs to read this without a MainActor-isolation check. Safe --
@@ -86,12 +110,14 @@ public final class PlanningStore {
     public init(
         setups: [ImagingSetupProfile] = PlanningStore.defaultSetups,
         defaults: UserDefaults = .standard,
-        computeRecommendations: @escaping RecommendationsComputer = { $0.recommendations() }
+        computeRecommendations: @escaping RecommendationsComputer = { $0.recommendations() },
+        catalogSearch: @escaping CatalogSearch = { TargetCatalog.search($0, limit: TargetCatalog.all.count) }
     ) {
         let safeSetups = setups.isEmpty ? PlanningStore.defaultSetups : setups
         self.setups = safeSetups
         self.defaults = defaults
         self.computeRecommendations = computeRecommendations
+        self.catalogSearch = catalogSearch
         defaults.register(defaults: [
             Self.referenceHoursKey: IntegrationTimeModel.referenceHours,
             Self.referenceFocalRatioKey: 5.0,
@@ -145,21 +171,15 @@ public final class PlanningStore {
     public var referenceFocalRatio: Double { defaults.double(forKey: Self.referenceFocalRatioKey) }
     public var referenceSurfaceBrightness: Double { defaults.double(forKey: Self.referenceSurfaceBrightnessKey) }
 
-    /// Cheap filter (O(n) over at most 217 rows) over the already-computed
-    /// `recommendations` -- fine to stay a computed property, unlike
-    /// `recommendations` itself, which runs the actual pipeline.
-    public var filteredRecommendations: [PlanningRecommendation] {
-        var rows = recommendations
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !query.isEmpty {
-            let matchingIDs = Set(TargetCatalog.search(query, limit: TargetCatalog.all.count).map(\.designation))
-            rows = rows.filter { matchingIDs.contains($0.target.designation) }
-        }
-        if usefulFramingOnly {
-            rows = rows.filter { $0.fit != .tooSmall && $0.fit != .mosaic }
-        }
-        return rows
-    }
+    /// Cached filter over `recommendations` -- STORED, not computed, for the
+    /// identical reason `recommendations` itself is: `PlanningView.body`
+    /// reads this 3+ times per layout pass (the "Useful matches" metric
+    /// card, the `isEmpty` branch, and the `Table`'s data source), and this
+    /// used to be a computed property that ran a full 217-target
+    /// `TargetCatalog.search` on every single one of those reads. It is now
+    /// recomputed only when an input actually changes (`recommendations`,
+    /// `searchText`, or `usefulFramingOnly`), via `recomputeFilteredRecommendations()`.
+    public private(set) var filteredRecommendations: [PlanningRecommendation] = []
 
     public func setFocalLength(_ value: Double) {
         let clamped = min(max(value, selectedSetup.focalLengthMinMM), selectedSetup.focalLengthMaxMM)
@@ -200,9 +220,29 @@ public final class PlanningStore {
             guard let self, generation == self.recomputeGeneration else { return }
             self.recommendations = result
             self.isComputing = false
+            self.recomputeFilteredRecommendations()
         }
         pendingRefresh = task
         return task
+    }
+
+    /// Recomputes `filteredRecommendations` from the current
+    /// `recommendations`/`searchText`/`usefulFramingOnly` -- called whenever
+    /// any of those three actually changes, never on a mere property read.
+    /// `TargetCatalog.search` (via the injected `catalogSearch`) only runs
+    /// when `searchText` is non-empty, matching its prior behavior; the
+    /// `usefulFramingOnly` filter is a cheap array pass either way.
+    private func recomputeFilteredRecommendations() {
+        var rows = recommendations
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty {
+            let matchingIDs = Set(catalogSearch(query).map(\.designation))
+            rows = rows.filter { matchingIDs.contains($0.target.designation) }
+        }
+        if usefulFramingOnly {
+            rows = rows.filter { $0.fit != .tooSmall && $0.fit != .mosaic }
+        }
+        filteredRecommendations = rows
     }
 
     private func adoptSelectedSetupDefaults() {

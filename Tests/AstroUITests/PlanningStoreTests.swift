@@ -320,6 +320,137 @@ struct PlanningStoreTests {
         #expect(source.contains("public private(set) var recommendations: [PlanningRecommendation] = []"))
         #expect(!source.contains("public var recommendations: [PlanningRecommendation] {"))
     }
+
+    // MARK: - Finding 3.2: filteredRecommendations caching
+    //
+    // `filteredRecommendations` ran a full 217-target `TargetCatalog.search`
+    // as a COMPUTED property, and `PlanningView.body` reads it 3+ times per
+    // layout pass -- the identical defect class as `recommendations` above,
+    // one property lower in the same pipeline. These tests pin the fix:
+    // `filteredRecommendations` is a STORED property, recomputed only on an
+    // actual input change (`recommendations`, `searchText`,
+    // `usefulFramingOnly`), with same-value writes to the latter two as
+    // observable no-ops.
+
+    @Test("Repeated reads of filteredRecommendations do not re-run the catalog search")
+    func filteredRecommendationsAreNotRecomputedOnRepeatedPropertyAccess() async {
+        let searchCounter = CallCounter()
+        let store = PlanningStore(setups: [.apsCReference]) { query in
+            query.recommendations()
+        } catalogSearch: { query in
+            searchCounter.increment()
+            return TargetCatalog.search(query, limit: TargetCatalog.all.count)
+        }
+        store.activate()
+        await store.pendingRefresh?.value
+        #expect(searchCounter.current == 0) // empty searchText never searches the catalog
+
+        store.searchText = "andromeda"
+        #expect(searchCounter.current == 1)
+
+        // Simulate `PlanningView.body`'s 3+ reads per layout pass.
+        _ = store.filteredRecommendations
+        _ = store.filteredRecommendations.count
+        _ = store.filteredRecommendations.isEmpty
+        _ = store.filteredRecommendations
+        _ = store.filteredRecommendations
+
+        #expect(searchCounter.current == 1)
+    }
+
+    @Test("Changing searchText triggers exactly one catalog search")
+    func searchTextChangeTriggersExactlyOneCatalogSearch() async {
+        let searchCounter = CallCounter()
+        let store = PlanningStore(setups: [.apsCReference]) { query in
+            query.recommendations()
+        } catalogSearch: { query in
+            searchCounter.increment()
+            return TargetCatalog.search(query, limit: TargetCatalog.all.count)
+        }
+        store.activate()
+        await store.pendingRefresh?.value
+
+        store.searchText = "andromeda"
+        #expect(searchCounter.current == 1)
+
+        store.searchText = "andromeda galaxy"
+        #expect(searchCounter.current == 2)
+    }
+
+    @Test("Same-value writes to searchText/usefulFramingOnly do not recompute or mutate filteredRecommendations")
+    func sameValueWritesToFilterInputsAreObservableNoOps() async {
+        let searchCounter = CallCounter()
+        let store = PlanningStore(setups: [.apsCReference]) { query in
+            query.recommendations()
+        } catalogSearch: { query in
+            searchCounter.increment()
+            return TargetCatalog.search(query, limit: TargetCatalog.all.count)
+        }
+        store.activate()
+        await store.pendingRefresh?.value
+        store.searchText = "andromeda"
+        #expect(searchCounter.current == 1)
+        let beforeReassertion = store.filteredRecommendations
+
+        let mutations = CallCounter()
+        withObservationTracking {
+            _ = store.filteredRecommendations
+        } onChange: {
+            mutations.increment()
+        }
+
+        // Simulate a TextField/Toggle re-asserting their current values --
+        // AppKit does this during its own update pass.
+        store.searchText = "andromeda"
+        store.usefulFramingOnly = store.usefulFramingOnly
+
+        #expect(mutations.current == 0)
+        #expect(searchCounter.current == 1)
+        #expect(store.filteredRecommendations == beforeReassertion)
+    }
+
+    @Test("A genuine change to usefulFramingOnly still recomputes filteredRecommendations")
+    func usefulFramingOnlyChangeStillRecomputes() async {
+        let store = PlanningStore(setups: [.apsCReference])
+        store.activate()
+        await store.pendingRefresh?.value
+        // No search filter active -- the full, unfiltered recommendation set
+        // spans all 217 catalog targets, so toggling the useful-framing
+        // filter is guaranteed to change which rows survive.
+        let withUsefulFilter = store.filteredRecommendations
+
+        store.usefulFramingOnly = false
+        let withoutUsefulFilter = store.filteredRecommendations
+
+        #expect(withoutUsefulFilter.count >= withUsefulFilter.count)
+        #expect(withoutUsefulFilter != withUsefulFilter)
+    }
+
+    @Test("filteredRecommendations reflects a fresh recommendations pipeline result after refresh")
+    func filteredRecommendationsTracksRecommendationsAcrossRefresh() async {
+        let store = PlanningStore(setups: [.apsCReference])
+        store.activate()
+        await store.pendingRefresh?.value
+        let initialFiltered = store.filteredRecommendations
+
+        store.setFocalLength(400)
+        await store.pendingRefresh?.value
+
+        #expect(store.filteredRecommendations != initialFiltered)
+        #expect(store.filteredRecommendations.allSatisfy { $0.fit != .tooSmall && $0.fit != .mosaic })
+    }
+
+    @Test("filteredRecommendations is a stored property, not a computed one that re-runs TargetCatalog.search per access")
+    func filteredRecommendationsIsStoredNotComputed() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Planning/PlanningStore.swift"),
+            encoding: .utf8
+        )
+        #expect(source.contains("public private(set) var filteredRecommendations: [PlanningRecommendation] = []"))
+        #expect(!source.contains("public var filteredRecommendations: [PlanningRecommendation] {"))
+    }
 }
 
 private extension ImagingSetupProfile {
