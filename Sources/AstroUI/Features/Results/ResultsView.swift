@@ -160,6 +160,7 @@ public struct ResultsView: View {
         HStack(spacing: 8) {
             Button("Open Result") { openResult(result) }
                 .disabled(resultURL(for: result) == nil)
+                .help("Open this result's file with its default application")
             Menu {
                 resultActionMenu(result)
             } label: {

@@ -92,7 +92,10 @@ public struct ProjectWorkspaceView: View {
             Spacer()
             ExportMenu(items: projectExportItems, accessibilityID: "v2.project.export")
             Button("Review Frames", action: review)
-            Button("Results", action: results).buttonStyle(.borderedProminent)
+                .help("Open the frame-by-frame review workspace for this project")
+            Button("Results", action: results)
+                .buttonStyle(.borderedProminent)
+                .help("Inspect stacks, processed variants, and their provenance")
         }
         .padding(AstroTokens.Spacing.spacious)
     }

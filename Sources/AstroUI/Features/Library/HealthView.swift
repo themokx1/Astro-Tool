@@ -53,11 +53,13 @@ public struct HealthView: View {
                         Task { await store.runAudit(mode: .full, rootURL: rootURL, operationHost: operationHost) }
                     }
                     .disabled(rootURL == nil || runningAuditOperation != nil)
+                    .help("Scan the library for calibration gaps, duplicates, and organization issues")
                     .accessibilityIdentifier("v2.health.run-audit")
 
                     Button("Verify Integrity…") { showsVerifySheet = true }
                         .buttonStyle(.bordered)
                         .disabled(rootURL == nil || runningVerifyOperation != nil)
+                        .help("Re-hash indexed files and compare against their stored checksums")
                         .accessibilityIdentifier("v2.health.verify")
 
                     Spacer()

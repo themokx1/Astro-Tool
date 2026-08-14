@@ -141,6 +141,7 @@ public struct CalibrationView: View {
     private func coverageActionMenu(_ row: CalibrationCoverageRow) -> some View {
         Button("Preview Link…") { preparePreview(for: row) }
             .disabled(row.need.sessions.isEmpty)
+            .help("Preview which sessions would link to a matching master dark")
     }
 
     @ViewBuilder
@@ -217,6 +218,7 @@ public struct CalibrationView: View {
                     Button("Apply Link") { Task { await store.applyPlan() } }
                         .buttonStyle(.borderedProminent)
                         .disabled(store.accessMode != .mutationEnabled || plan.items.isEmpty)
+                        .help("Link the matched master calibration files into this session")
                 }
             } else if let planErrorMessage = store.planErrorMessage {
                 Text(planErrorMessage).foregroundStyle(.orange)
