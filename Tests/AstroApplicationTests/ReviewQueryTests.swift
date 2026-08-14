@@ -11,6 +11,7 @@ struct ReviewQueryTests {
         #expect(snapshot.series.map(\.series.exposureSeconds) == [5, 30, 120, 300])
         #expect(snapshot.series.first { $0.series.exposureSeconds == 120 }?.series.filterName == "SV220")
         #expect(snapshot.series.first { $0.series.exposureSeconds == 300 }?.series.filterName == "SV220")
+        #expect(snapshot.series.allSatisfy { $0.nightLocalDate == "2026-08-08" })
     }
 
     @Test("Bulk review updates every selected frame without changing series identity")

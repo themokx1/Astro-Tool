@@ -162,15 +162,27 @@ public final class Rater {
     /// Returns `[]` immediately if no such frames are on record. `progress`,
     /// when given, is called once per frame as it finishes (cache hit,
     /// freshly measured, or skipped for being unreadable) with
-    /// `(completedCount, totalCount)`. `force`, when `true`, treats every
-    /// frame as a cache miss -- see `rate(target:date:progress:)`'s own
-    /// cache-hit/staleness doc comment above the loop for why a plain
-    /// `inputSig` match isn't always enough on its own.
+    /// `(completedCount, totalCount)`, and is now allowed to `throw` --
+    /// R12-W3T1 widened this from a plain non-throwing closure the exact
+    /// same way `SensorProfiler.measure`'s own `progress` already does, so a
+    /// caller (`FrameRatingCommand`) can turn a `throw CancellationError()`
+    /// inside its own wrapping closure into a stop that lands BETWEEN two
+    /// frames -- never mid-frame, since the throw only happens right after
+    /// one frame's outcome (cache hit, self-heal, fresh measurement, or
+    /// unreadable-skip) is already durably upserted (or was already durable
+    /// from a previous run) and BEFORE the next frame's own work starts. This
+    /// is source-compatible with every existing non-throwing closure literal
+    /// call site (Swift widens a non-throwing closure to a `throws`
+    /// parameter automatically), so `AppState`/`astrotool`'s call sites are
+    /// unchanged. `force`, when `true`, treats every frame as a cache miss --
+    /// see `rate(target:date:progress:)`'s own cache-hit/staleness doc
+    /// comment above the loop for why a plain `inputSig` match isn't always
+    /// enough on its own.
     public func rate(
         target: String,
         date: String? = nil,
         force: Bool = false,
-        progress: (@Sendable (Int, Int) -> Void)? = nil
+        progress: (@Sendable (Int, Int) throws -> Void)? = nil
     ) throws -> [FrameScore] {
         let frames = try db.allFiles(includeMissing: false).filter { file in
             file.area == .sessions && file.role == .light && file.target == target
@@ -192,126 +204,152 @@ public final class Rater {
         let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
 
         for file in frames {
-            defer {
-                done += 1
-                progress?(done, total)
-            }
-            guard let fileID = file.id else { continue }
-
-            // Needed for exposure-group scoring (exptime) and the FWHM-over-
-            // night trend chart (dateObs) regardless of cache hit/miss.
-            let meta = try db.fitsMeta(fileID: fileID)
-            let exptime = meta?.exptime
-            let dateObs = meta?.dateObs
-            let cohort = Self.cohortDescriptor(
+            let entry = try processFrame(
                 file: file,
-                meta: meta,
-                resolver: captureResolver
+                captureResolver: captureResolver,
+                workDir: workDir,
+                root: root,
+                force: force
             )
-
-            let inputSig = "\(file.size)-\(Int(file.mtime.rounded()))"
-            let cached = try db.rating(fileID: fileID)
-            let cacheValid = !force && cached != nil && cached!.inputSig == inputSig
-            let isFZ = file.ext.lowercased() == "fz"
-
-            if cacheValid {
-                let cachedRow = cached!
-                let stale = Self.staleness(of: cachedRow, isFZ: isFZ, providerAvailable: provider != nil)
-
-                if !stale.native && !stale.metrics {
-                    // TRUE cache hit -- reuse the stored row untouched,
-                    // neither `NativeStats` nor the provider is invoked.
-                    rated.append((file, cachedRow, exptime, dateObs, cohort))
-                    continue
-                }
-
-                // Self-heal (item 1's real bug): this row's `inputSig`
-                // matches, but it's missing data a healthy pipeline would
-                // have filled in -- e.g. a rating written before `bg_00..11`
-                // existed, or before the Siril adapter was fixed. Only the
-                // missing PART is (re)computed; every already-present value
-                // that this pass doesn't touch is carried over unchanged
-                // (never erased) via `RatingRecord.merging`.
-                let url = root.appendingPathComponent(file.path)
-
-                var nativeStats: NativeFrameStats?
-                if stale.native {
-                    do {
-                        nativeStats = try autoreleasepool { try NativeStats.compute(url: url) }
-                    } catch {
-                        continue
-                    }
-                }
-
-                var metrics: StarMetrics?
-                if stale.metrics {
-                    metrics = try? provider?.metrics(for: url, workDir: workDir)
-                }
-
-                let record = cachedRow.merging(
-                    nativeStats: nativeStats, metrics: metrics,
-                    sirilVersion: provider?.version, inputSig: inputSig
-                )
-                try db.upsertRating(record)
-                rated.append((file, record, exptime, dateObs, cohort))
-                continue
+            if let entry {
+                rated.append(entry)
             }
-
-            let url = root.appendingPathComponent(file.path)
-
-            // `.fz` (Rice-compressed) frames are never handed to
-            // `NativeStats` -- it rejects them anyway (see
-            // `NativeStats.compute`'s compressed-layout guard), but this is
-            // defense in depth: don't even attempt the read. Siril *can*
-            // read `.fz` directly, so the provider still runs; the frame is
-            // still rated, just with `background`/`saturatedFraction` left
-            // `nil` (scoring already renormalizes weights over whichever
-            // metrics are actually present for a frame).
-            var nativeStats: NativeFrameStats?
-            if !isFZ {
-                do {
-                    // `NativeStats.compute(url:)` loads the whole frame
-                    // into memory to read its pixels. Wrapping just the
-                    // call in `autoreleasepool` ensures that buffer (and
-                    // any autoreleased bridging temporaries underneath it)
-                    // is freed as soon as this frame's stats are computed,
-                    // rather than lingering for the rest of a large batch
-                    // -- `nativeStats` itself is a plain struct with no
-                    // Foundation object references, so it's safe to return
-                    // out of the pool.
-                    nativeStats = try autoreleasepool { try NativeStats.compute(url: url) }
-                } catch {
-                    // Can't even read the pixel data -- skip this frame but
-                    // keep rating the rest of the batch.
-                    continue
-                }
-            }
-
-            let metrics = try? provider?.metrics(for: url, workDir: workDir)
-
-            let record = RatingRecord(
-                fileID: fileID,
-                fwhm: metrics?.fwhm,
-                roundness: metrics?.roundness,
-                starCount: metrics?.starCount,
-                background: nativeStats?.backgroundMedian,
-                saturatedFraction: nativeStats?.saturatedFraction,
-                score: nil,
-                ratedAt: Date().timeIntervalSince1970,
-                sirilVersion: provider?.version,
-                inputSig: inputSig,
-                bg00: nativeStats?.backgroundMedian00,
-                bg01: nativeStats?.backgroundMedian01,
-                bg10: nativeStats?.backgroundMedian10,
-                bg11: nativeStats?.backgroundMedian11
-            )
-            try db.upsertRating(record)
-            rated.append((file, record, exptime, dateObs, cohort))
+            done += 1
+            // Deliberately OUTSIDE any `defer` (a `defer` body cannot itself
+            // `throw`): this is the one point between two frames' work where
+            // a throwing `progress` can stop the batch, with this frame's
+            // outcome already durably upserted.
+            try progress?(done, total)
         }
 
         guard !rated.isEmpty else { return [] }
 
         return try score(rated)
+    }
+
+    /// One frame's worth of `rate(target:date:force:progress:)`'s loop body,
+    /// extracted verbatim (R12-W3T1) so the outer loop can call `try
+    /// progress?(...)` exactly once per frame at a single, well-known point
+    /// between frames, instead of relying on a non-throwing `defer` to fire
+    /// it on every exit path. Returns `nil` for every case the original loop
+    /// used to `continue` on (no `fileID`, an unreadable frame); returns the
+    /// same `rated` tuple the original loop used to `append` otherwise.
+    private func processFrame(
+        file: FileRecord,
+        captureResolver: CaptureResolver,
+        workDir: URL,
+        root: URL,
+        force: Bool
+    ) throws -> (file: FileRecord, record: RatingRecord, exptime: Double?, dateObs: String?, cohort: RatingCohortDescriptor)? {
+        guard let fileID = file.id else { return nil }
+
+        // Needed for exposure-group scoring (exptime) and the FWHM-over-
+        // night trend chart (dateObs) regardless of cache hit/miss.
+        let meta = try db.fitsMeta(fileID: fileID)
+        let exptime = meta?.exptime
+        let dateObs = meta?.dateObs
+        let cohort = Self.cohortDescriptor(
+            file: file,
+            meta: meta,
+            resolver: captureResolver
+        )
+
+        let inputSig = "\(file.size)-\(Int(file.mtime.rounded()))"
+        let cached = try db.rating(fileID: fileID)
+        let cacheValid = !force && cached != nil && cached!.inputSig == inputSig
+        let isFZ = file.ext.lowercased() == "fz"
+
+        if cacheValid {
+            let cachedRow = cached!
+            let stale = Self.staleness(of: cachedRow, isFZ: isFZ, providerAvailable: provider != nil)
+
+            if !stale.native && !stale.metrics {
+                // TRUE cache hit -- reuse the stored row untouched,
+                // neither `NativeStats` nor the provider is invoked.
+                return (file, cachedRow, exptime, dateObs, cohort)
+            }
+
+            // Self-heal (item 1's real bug): this row's `inputSig`
+            // matches, but it's missing data a healthy pipeline would
+            // have filled in -- e.g. a rating written before `bg_00..11`
+            // existed, or before the Siril adapter was fixed. Only the
+            // missing PART is (re)computed; every already-present value
+            // that this pass doesn't touch is carried over unchanged
+            // (never erased) via `RatingRecord.merging`.
+            let url = root.appendingPathComponent(file.path)
+
+            var nativeStats: NativeFrameStats?
+            if stale.native {
+                do {
+                    nativeStats = try autoreleasepool { try NativeStats.compute(url: url) }
+                } catch {
+                    return nil
+                }
+            }
+
+            var metrics: StarMetrics?
+            if stale.metrics {
+                metrics = try? provider?.metrics(for: url, workDir: workDir)
+            }
+
+            let record = cachedRow.merging(
+                nativeStats: nativeStats, metrics: metrics,
+                sirilVersion: provider?.version, inputSig: inputSig
+            )
+            try db.upsertRating(record)
+            return (file, record, exptime, dateObs, cohort)
+        }
+
+        let url = root.appendingPathComponent(file.path)
+
+        // `.fz` (Rice-compressed) frames are never handed to
+        // `NativeStats` -- it rejects them anyway (see
+        // `NativeStats.compute`'s compressed-layout guard), but this is
+        // defense in depth: don't even attempt the read. Siril *can*
+        // read `.fz` directly, so the provider still runs; the frame is
+        // still rated, just with `background`/`saturatedFraction` left
+        // `nil` (scoring already renormalizes weights over whichever
+        // metrics are actually present for a frame).
+        var nativeStats: NativeFrameStats?
+        if !isFZ {
+            do {
+                // `NativeStats.compute(url:)` loads the whole frame
+                // into memory to read its pixels. Wrapping just the
+                // call in `autoreleasepool` ensures that buffer (and
+                // any autoreleased bridging temporaries underneath it)
+                // is freed as soon as this frame's stats are computed,
+                // rather than lingering for the rest of a large batch
+                // -- `nativeStats` itself is a plain struct with no
+                // Foundation object references, so it's safe to return
+                // out of the pool.
+                nativeStats = try autoreleasepool { try NativeStats.compute(url: url) }
+            } catch {
+                // Can't even read the pixel data -- skip this frame but
+                // keep rating the rest of the batch.
+                return nil
+            }
+        }
+
+        let metrics = try? provider?.metrics(for: url, workDir: workDir)
+
+        let record = RatingRecord(
+            fileID: fileID,
+            fwhm: metrics?.fwhm,
+            roundness: metrics?.roundness,
+            starCount: metrics?.starCount,
+            background: nativeStats?.backgroundMedian,
+            saturatedFraction: nativeStats?.saturatedFraction,
+            score: nil,
+            ratedAt: Date().timeIntervalSince1970,
+            sirilVersion: provider?.version,
+            inputSig: inputSig,
+            bg00: nativeStats?.backgroundMedian00,
+            bg01: nativeStats?.backgroundMedian01,
+            bg10: nativeStats?.backgroundMedian10,
+            bg11: nativeStats?.backgroundMedian11
+        )
+        try db.upsertRating(record)
+        return (file, record, exptime, dateObs, cohort)
     }
 
     // MARK: - Cached scores, read-only (R9-D6)

@@ -1,4 +1,5 @@
 import AstroApplication
+import AstroCore
 import SwiftUI
 
 public struct ReviewWorkspace: View {
@@ -8,6 +9,10 @@ public struct ReviewWorkspace: View {
     let dismiss: () -> Void
     @State private var selectedDecisionIDs: Set<UUID> = []
     @State private var archivePreview: ReviewArchivePlan?
+    @State private var sortOrder: [KeyPathComparator<ReviewFrameRow>] = [KeyPathComparator(\.scoreSortKey, order: .reverse)]
+    @State private var selectedCaptureSlug: String?
+    @State private var selectedNightFilter: String?
+    @Environment(OperationHost.self) private var operationHost
 
     public init(
         store: ReviewStore,
@@ -83,16 +88,32 @@ public struct ReviewWorkspace: View {
     }
 
     private func seriesList(_ series: [ReviewSeriesSnapshot]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("CAPTURE SERIES").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            if series.isEmpty {
+        let nights = Array(Set(series.map(\.nightLocalDate))).sorted()
+        let visible = series.filter { selectedNightFilter == nil || $0.nightLocalDate == selectedNightFilter }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("CAPTURE SERIES").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Spacer()
+                if nights.count > 1 {
+                    Menu(selectedNightFilter ?? "All nights") {
+                        Button("All nights") { selectedNightFilter = nil }
+                        Divider()
+                        ForEach(nights, id: \.self) { night in
+                            Button(night) { selectedNightFilter = night }
+                        }
+                    }
+                    .font(.caption)
+                    .accessibilityIdentifier("v2.review.session-filter")
+                }
+            }
+            if visible.isEmpty {
                 ContentUnavailableView(
                     "No series yet",
                     systemImage: "square.stack.3d.up.slash",
                     description: Text("Add or import capture metadata to begin review.")
                 )
             } else {
-                List(series, selection: Binding(
+                List(visible, selection: Binding(
                     get: { store.selectedSeriesID },
                     set: { if let id = $0 { store.selectSeries(id) } }
                 )) { item in
@@ -108,6 +129,7 @@ public struct ReviewWorkspace: View {
     @ViewBuilder
     private var frameReview: some View {
         if let selected = store.selectedSeries {
+            let rows = qualityRows(for: selected)
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -118,6 +140,30 @@ public struct ReviewWorkspace: View {
                     reviewActions(selected)
                 }
                 .padding(AstroTokens.Spacing.standard)
+                Divider()
+                HStack(spacing: 10) {
+                    rateFramesMenu(selected)
+                    if !captureSlugs(in: selected).isEmpty {
+                        Menu(selectedCaptureSlug ?? "All capture groups") {
+                            Button("All capture groups") { selectedCaptureSlug = nil }
+                            Divider()
+                            ForEach(captureSlugs(in: selected), id: \.self) { slug in
+                                Button(slug) { selectedCaptureSlug = slug }
+                            }
+                        }
+                        .font(.caption)
+                        .accessibilityIdentifier("v2.review.capture-group-filter")
+                    }
+                    Spacer()
+                    if let running = runningRatingOperation {
+                        ProgressView().controlSize(.small)
+                        Text("Rating frames…").font(.caption).foregroundStyle(.secondary)
+                        Button("Cancel") { Task { await operationHost.cancel(id: running.id) } }
+                            .buttonStyle(.borderless)
+                    }
+                }
+                .padding(.horizontal, AstroTokens.Spacing.standard)
+                .padding(.vertical, 8)
                 Divider()
                 QualityDistribution(snapshot: selected)
                     .padding(.horizontal, AstroTokens.Spacing.standard)
@@ -131,27 +177,63 @@ public struct ReviewWorkspace: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    Table(selected.decisions, selection: $selectedDecisionIDs) {
-                        TableColumn("Frame") { decision in
+                    Table(rows, selection: $selectedDecisionIDs, sortOrder: $sortOrder) {
+                        TableColumn("Frame") { row in
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(URL(fileURLWithPath: decision.relativePath).lastPathComponent)
+                                Text(URL(fileURLWithPath: row.decision.relativePath).lastPathComponent)
                                     .font(.body.monospaced())
-                                Text(decision.relativePath)
+                                Text(row.decision.relativePath)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                             }
                             .padding(.vertical, 3)
                         }
-                        TableColumn("Decision") { decision in
-                            FrameVerdictLabel(decision: decision)
+                        TableColumn("Decision") { row in
+                            FrameVerdictLabel(decision: row.decision)
                         }
                         .width(min: 105, ideal: 120)
-                        TableColumn("Library status") { decision in
-                            Text(decision.logicallyExcluded ? "Excluded" : "Included")
-                                .foregroundStyle(decision.logicallyExcluded ? .red : .secondary)
+                        TableColumn("Library status") { row in
+                            Text(row.decision.logicallyExcluded ? "Excluded" : "Included")
+                                .foregroundStyle(row.decision.logicallyExcluded ? .red : .secondary)
                         }
                         .width(min: 100, ideal: 115)
+                        TableColumn("Score", value: \.scoreSortKey) { row in
+                            HStack(spacing: 4) {
+                                if row.isOutlier {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(.orange)
+                                        .help("Outlier: scores well below this session's other frames")
+                                }
+                                Text(Self.formatted(row.score, fractionDigits: 2))
+                            }
+                            .accessibilityIdentifier("v2.review.quality-columns")
+                        }
+                        .width(min: 70, ideal: 85)
+                        TableColumn("FWHM", value: \.fwhmSortKey) { row in
+                            Text(Self.formatted(row.fwhm, fractionDigits: 2))
+                        }
+                        .width(min: 55, ideal: 65)
+                        TableColumn("Roundness", value: \.roundnessSortKey) { row in
+                            Text(Self.formatted(row.roundness, fractionDigits: 2))
+                        }
+                        .width(min: 70, ideal: 85)
+                        TableColumn("Background", value: \.backgroundSortKey) { row in
+                            Text(Self.formatted(row.background, fractionDigits: 0))
+                        }
+                        .width(min: 70, ideal: 90)
+                        TableColumn("Sat. %", value: \.saturatedFractionSortKey) { row in
+                            Text(row.saturatedFraction.map { "\(($0 * 100).formatted(.number.precision(.fractionLength(1))))%" } ?? "—")
+                        }
+                        .width(min: 55, ideal: 65)
+                        TableColumn("Percentile") { row in
+                            HStack(spacing: 6) {
+                                PercentileDot(result: row.quality?.libraryPercentile)
+                                Text(row.percentile.map { "\($0)" } ?? "—")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .width(min: 60, ideal: 75)
                     }
                     .contextMenu(forSelectionType: UUID.self) { decisionIDs in
                         Button("Accept") { apply(.accepted, decisionIDs: decisionIDs, in: selected) }
@@ -166,6 +248,50 @@ public struct ReviewWorkspace: View {
         } else {
             ContentUnavailableView("Select a series", systemImage: "square.stack.3d.up")
         }
+    }
+
+    /// Every frame decision of `selected`, joined with its measured quality
+    /// (`store.qualityByPath`, keyed by `relativePath`) and narrowed by
+    /// `selectedCaptureSlug` when one is chosen -- the Table's own data
+    /// source, so sorting/filtering only ever touches this one array.
+    private func qualityRows(for selected: ReviewSeriesSnapshot) -> [ReviewFrameRow] {
+        selected.decisions
+            .map { ReviewFrameRow(decision: $0, quality: store.quality(for: $0.relativePath)) }
+            .filter { selectedCaptureSlug == nil || $0.captureSlug == selectedCaptureSlug }
+            .sorted(using: sortOrder)
+    }
+
+    private func captureSlugs(in selected: ReviewSeriesSnapshot) -> [String] {
+        Array(Set(selected.decisions.compactMap { store.quality(for: $0.relativePath)?.captureSlug })).sorted()
+    }
+
+    private var runningRatingOperation: OperationHost.ActiveOperation? {
+        guard let selectedSeriesID = store.selectedSeriesID else { return nil }
+        let kind = OperationKind.rate(series: selectedSeriesID.uuidString)
+        return operationHost.activeOperations.first { $0.kind == kind }
+    }
+
+    private func rateFramesMenu(_ selected: ReviewSeriesSnapshot) -> some View {
+        Menu {
+            Button("Full Re-measure (Siril + native)") {
+                Task { await store.rateSelectedSeries(mode: .fullReMeasure, operationHost: operationHost) }
+            }
+            Button("Native Only (no Siril)") {
+                Task { await store.rateSelectedSeries(mode: .nativeOnly, operationHost: operationHost) }
+            }
+        } label: {
+            Label("Rate Frames…", systemImage: "star.leadinghalf.filled")
+        } primaryAction: {
+            Task { await store.rateSelectedSeries(mode: .nativeOnly, operationHost: operationHost) }
+        }
+        .disabled(selected.decisions.isEmpty || runningRatingOperation != nil)
+        .fixedSize()
+        .accessibilityIdentifier("v2.review.rate")
+    }
+
+    private static func formatted(_ value: Double?, fractionDigits: Int) -> String {
+        guard let value else { return "—" }
+        return value.formatted(.number.precision(.fractionLength(fractionDigits)))
     }
 
     private func reviewActions(_ selected: ReviewSeriesSnapshot) -> some View {
@@ -284,6 +410,68 @@ private struct ArchivePreviewSheet: View {
         .padding(AstroTokens.Spacing.spacious)
         .frame(minWidth: 620, minHeight: 360)
         .accessibilityIdentifier("v2.review.archive-preview")
+    }
+}
+
+/// A `FrameDecisionRecord` joined with its measured quality
+/// (`FrameQualityMetrics`, when any exists) for the frame table -- mirrors
+/// V1 `QualitySegment.Row`'s "flatten for `Table`, expose `xxxSortKey`
+/// computed properties defaulting missing values to `-.infinity`" pattern,
+/// so `KeyPathComparator` (which requires `Comparable`, not
+/// `Comparable?`) can sort a column with unmeasured frames in it -- an
+/// unmeasured frame always sorts as if it scored below every measured one,
+/// regardless of sort direction.
+private struct ReviewFrameRow: Identifiable {
+    let decision: FrameDecisionRecord
+    let quality: FrameQualityMetrics?
+
+    var id: UUID { decision.id }
+    var fwhm: Double? { quality?.fwhm }
+    var roundness: Double? { quality?.roundness }
+    var background: Double? { quality?.background }
+    var saturatedFraction: Double? { quality?.saturatedFraction }
+    var score: Double? { quality?.score }
+    var isOutlier: Bool { quality?.isOutlier ?? false }
+    var percentile: Int? { quality?.libraryPercentile?.percentile }
+    var captureSlug: String? { quality?.captureSlug }
+
+    var scoreSortKey: Double { score ?? -.infinity }
+    var fwhmSortKey: Double { fwhm ?? -.infinity }
+    var roundnessSortKey: Double { roundness ?? -.infinity }
+    var backgroundSortKey: Double { background ?? -.infinity }
+    var saturatedFractionSortKey: Double { saturatedFraction ?? -.infinity }
+}
+
+/// A small color dot showing where a frame's score falls within this
+/// library's own score distribution -- green/yellow/orange for
+/// best/middle/worst third (`PercentileBand`), gray with no color judgment
+/// at all for a low sample. Renders nothing when `result` is `nil` (the
+/// frame has no score to rank, e.g. never rated).
+private struct PercentileDot: View {
+    let result: LibraryPercentileResult?
+
+    var body: some View {
+        if let result {
+            Circle()
+                .fill(result.isLowSample ? Color.gray : Self.color(for: result.band))
+                .frame(width: 7, height: 7)
+                .help(Self.tooltipText(result))
+        }
+    }
+
+    private static func color(for band: PercentileBand) -> Color {
+        switch band {
+        case .best: .green
+        case .middle: .yellow
+        case .worst: .orange
+        }
+    }
+
+    private static func tooltipText(_ result: LibraryPercentileResult) -> String {
+        if result.isLowSample {
+            return "Too few rated frames in this library yet (\(result.sampleCount)/\(LibraryPercentiles.minimumSampleSize))"
+        }
+        return "Percentile \(result.percentile) across every rated frame in this library."
     }
 }
 

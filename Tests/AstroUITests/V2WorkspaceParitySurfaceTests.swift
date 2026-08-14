@@ -66,7 +66,7 @@ struct V2WorkspaceParitySurfaceTests {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/ReviewWorkspace.swift"))
-        #expect(workspace.contains("Table(selected.decisions, selection: $selectedDecisionIDs)"))
+        #expect(workspace.contains("Table(rows, selection: $selectedDecisionIDs, sortOrder: $sortOrder)"))
         #expect(workspace.contains("TableColumn(\"Frame\""))
         #expect(workspace.contains("TableColumn(\"Decision\""))
         #expect(workspace.contains("TableColumn(\"Library status\""))
@@ -75,6 +75,27 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(workspace.contains("apply(.undecided, decisionIDs:"))
         #expect(workspace.contains("apply(.rejected, decisionIDs:"))
         #expect(workspace.contains("Archive preview"))
+    }
+
+    @Test("Frame review shows measured quality columns and can run frame rating")
+    func frameReviewQualityContract() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/ReviewWorkspace.swift"))
+        #expect(workspace.contains("TableColumn(\"Score\", value: \\.scoreSortKey)"))
+        #expect(workspace.contains("TableColumn(\"FWHM\", value: \\.fwhmSortKey)"))
+        #expect(workspace.contains("TableColumn(\"Roundness\", value: \\.roundnessSortKey)"))
+        #expect(workspace.contains("TableColumn(\"Background\", value: \\.backgroundSortKey)"))
+        #expect(workspace.contains("TableColumn(\"Percentile\")"))
+        #expect(workspace.contains("v2.review.quality-columns"))
+        #expect(workspace.contains("v2.review.rate"))
+        #expect(workspace.contains("Rate Frames…"))
+        #expect(workspace.contains("Full Re-measure (Siril + native)"))
+        #expect(workspace.contains("Native Only (no Siril)"))
+        #expect(workspace.contains("rateSelectedSeries(mode:"))
+        #expect(workspace.contains("v2.review.capture-group-filter"))
+        #expect(workspace.contains("v2.review.session-filter"))
+        #expect(workspace.contains("row.isOutlier"))
     }
 
     @Test("Results is a provenance table with safe file actions")
