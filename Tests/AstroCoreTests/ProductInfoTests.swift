@@ -18,7 +18,7 @@ import Testing
         #expect(ProductInfo.bundleIdentifier == "io.github.themokx1.AstroTool")
         #expect(ProductInfo.legacyBundleIdentifier == "com.zoltanpalotai.astrotool")
         #expect(Int(ProductInfo.build) != nil)
-        #expect(ProductInfo.displayVersion == "2.0.0 Release Candidate 2 (20011)")
+        #expect(ProductInfo.displayVersion == "2.0.0 Release Candidate 2 (20012)")
     }
 
     @Test func releaseConsumersUseTheSharedProductInfo() throws {
