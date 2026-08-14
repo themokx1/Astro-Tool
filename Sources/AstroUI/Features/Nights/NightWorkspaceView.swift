@@ -36,34 +36,11 @@ public struct NightWorkspaceView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Night › \(row.date)").font(.caption.weight(.semibold)).foregroundStyle(AstroTokens.Color.spectralViolet)
-                    Text(row.projectSummary).font(.title2.weight(.semibold))
-                    Text("\(row.snapshot.usableFrames) usable · \(row.excludedFrames) excluded · \(row.integrationSummary)")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
-                ExportMenu(items: nightExportItems, accessibilityID: "v2.nights.export")
-                if let project = row.snapshot.projects.first {
-                    Menu {
-                        NightActionMenu(
-                            target: ProjectsQuery.canonicalFolderName(for: project),
-                            date: row.date,
-                            setupDescriptor: row.snapshot.series.first?.setupDescriptor,
-                            nightID: row.id,
-                            rootURL: rootURL,
-                            editNotes: { isEditingNotes = true },
-                            openCalibration: openCalibration,
-                            openInsights: openInsights
-                        )
-                    } label: {
-                        Label("Night Actions", systemImage: "ellipsis.circle")
-                    }
-                    .accessibilityIdentifier("v2.night.workspace.actions")
-                    Button("Review Frames") { reviewProject(project) }
-                    Button("Open Project") { openProject(project) }.buttonStyle(.borderedProminent)
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Night › \(row.date)").font(.caption.weight(.semibold)).foregroundStyle(AstroTokens.Color.spectralViolet)
+                Text(row.projectSummary).font(.title2.weight(.semibold))
+                Text("\(row.snapshot.usableFrames) usable · \(row.excludedFrames) excluded · \(row.integrationSummary)")
+                    .font(.callout).foregroundStyle(.secondary)
             }
             .padding(AstroTokens.Spacing.spacious)
             Divider()
@@ -97,6 +74,12 @@ public struct NightWorkspaceView: View {
                 )
             }
         }
+        // Wave 4 Task 2: Export/Night Actions/Review Frames/Open Project
+        // used to be an in-body button row in this same header -- they now
+        // render in the shell's own stable toolbar (see `WorkspaceActions`'s
+        // doc comment), so the header above keeps only identity plus the
+        // global breadcrumb above it.
+        .focusedSceneValue(\.workspaceActions, workspaceActions)
     }
 
     /// This night's report (`AppState.exportNightReport`'s V2 equivalent) --
@@ -112,5 +95,45 @@ public struct NightWorkspaceView: View {
                 return (export.content, export.suggestedFilename, [])
             },
         ]
+    }
+
+    private var workspaceActions: WorkspaceActions {
+        var items: [WorkspaceActionItem] = [
+            .custom(id: "v2.nights.export") {
+                ExportMenu(items: nightExportItems, accessibilityID: "v2.nights.export")
+            },
+        ]
+        if let project = row.snapshot.projects.first {
+            items.append(.custom(id: "v2.night.workspace.actions") {
+                Menu {
+                    NightActionMenu(
+                        target: ProjectsQuery.canonicalFolderName(for: project),
+                        date: row.date,
+                        setupDescriptor: row.snapshot.series.first?.setupDescriptor,
+                        nightID: row.id,
+                        rootURL: rootURL,
+                        editNotes: { isEditingNotes = true },
+                        openCalibration: openCalibration,
+                        openInsights: openInsights
+                    )
+                } label: {
+                    Label("Night Actions", systemImage: "ellipsis.circle")
+                }
+                .accessibilityIdentifier("v2.night.workspace.actions")
+            })
+            items.append(.button(WorkspaceAction(
+                id: "v2.night.review",
+                title: "Review Frames",
+                systemImage: "checkmark.rectangle.stack",
+                action: { reviewProject(project) }
+            )))
+            items.append(.button(WorkspaceAction(
+                id: "v2.night.open-project",
+                title: "Open Project",
+                systemImage: "folder",
+                action: { openProject(project) }
+            )))
+        }
+        return WorkspaceActions(items)
     }
 }

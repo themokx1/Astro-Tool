@@ -105,18 +105,26 @@ struct V2ShellSurfaceTests {
 
     @Test("Every sidebar route exposes a stable detail identifier and title")
     func stableDetailAutomationContract() throws {
-        let root = try String(
-            contentsOf: repositoryRoot.appendingPathComponent(
-                "Sources/AstroUI/App/V2RootView.swift"
-            ),
-            encoding: .utf8
-        )
+        // Wave 4 Task 2: `V2RootView` no longer carries its own dead
+        // `PrimarySection.detailAccessibilityIdentifier` helper (removed as
+        // part of the two-column shell cleanup -- it was never actually
+        // APPLIED to any view, only kept alive so this test's old
+        // `root.contains(...)` grep would pass). Each feature view already
+        // applies its own `v2.detail.*` identifier directly to itself; this
+        // test now reads THOSE files instead of grepping the dead helper.
         let home = try String(
             contentsOf: repositoryRoot.appendingPathComponent(
                 "Sources/AstroUI/Features/Home/HomeView.swift"
             ),
             encoding: .utf8
         )
+        let featureFiles: [(route: String, path: String)] = [
+            ("projects", "Sources/AstroUI/Features/Projects/ProjectsView.swift"),
+            ("nights", "Sources/AstroUI/Features/Nights/NightsView.swift"),
+            ("planning", "Sources/AstroUI/Features/Planning/PlanningView.swift"),
+            ("library", "Sources/AstroUI/Features/Library/LibraryView.swift"),
+            ("insights", "Sources/AstroUI/Features/Insights/InsightsView.swift"),
+        ]
         let uiTest = try String(
             contentsOf: repositoryRoot.appendingPathComponent(
                 "UITests/AstroToolUITests/AstroToolLaunchTests.swift"
@@ -125,8 +133,9 @@ struct V2ShellSurfaceTests {
         )
 
         #expect(home.contains("v2.detail.home"))
-        for route in ["projects", "nights", "planning", "library", "insights"] {
-            #expect(root.contains("v2.detail.\(route)"))
+        for (route, path) in featureFiles {
+            let source = try String(contentsOf: repositoryRoot.appendingPathComponent(path), encoding: .utf8)
+            #expect(source.contains("v2.detail.\(route)"))
             #expect(uiTest.contains("v2.detail.\(route)"))
         }
         for title in [

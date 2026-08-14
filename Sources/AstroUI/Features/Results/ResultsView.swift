@@ -66,6 +66,10 @@ public struct ResultsView: View {
         .background(.background)
         .task { await store.load(rootURL: rootURL, projectID: project.id) }
         .accessibilityIdentifier("v2.results.workspace")
+        // Wave 4 Task 2: the Export Stack List menu used to be an in-body
+        // button in this header -- it now renders in the shell's own stable
+        // toolbar (see `WorkspaceActions`'s doc comment).
+        .focusedSceneValue(\.workspaceActions, workspaceActions)
     }
 
     private var header: some View {
@@ -76,12 +80,19 @@ public struct ResultsView: View {
                 Text("\(project.displayName) · stacks, variants, and provenance").foregroundStyle(.secondary)
             }
             Spacer()
-            ExportMenu(items: stackListExportItems, accessibilityID: "v2.results.export")
             if let snapshot = store.snapshot,
                let result = selectedResult(in: snapshot) {
                 resultActions(result)
             }
         }.padding(20)
+    }
+
+    private var workspaceActions: WorkspaceActions {
+        WorkspaceActions([
+            .custom(id: "v2.results.export") {
+                ExportMenu(items: stackListExportItems, accessibilityID: "v2.results.export")
+            },
+        ])
     }
 
     /// The project's latest-night stack list (`AppState.exportStackList`'s

@@ -9,15 +9,11 @@ public struct SeriesWorkspaceView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Project › \(project.catalogID) › Night › \(night.localDate) › Series › \(exposure)")
-                        .font(.caption.weight(.semibold)).foregroundStyle(AstroTokens.Color.spectralViolet)
-                    Text(seriesTitle).font(.title2.weight(.semibold))
-                    Text(item.series.setupDescriptor).font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Review Frames", action: review).buttonStyle(.borderedProminent)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Project › \(project.catalogID) › Night › \(night.localDate) › Series › \(exposure)")
+                    .font(.caption.weight(.semibold)).foregroundStyle(AstroTokens.Color.spectralViolet)
+                Text(seriesTitle).font(.title2.weight(.semibold))
+                Text(item.series.setupDescriptor).font(.callout).foregroundStyle(.secondary)
             }
             .padding(AstroTokens.Spacing.spacious)
             Divider()
@@ -45,6 +41,21 @@ public struct SeriesWorkspaceView: View {
         .background(AstroTokens.Color.graphite.opacity(0.36))
         .navigationTitle(seriesTitle)
         .accessibilityIdentifier("v2.series.workspace")
+        // Wave 4 Task 2: "Review Frames" used to be an in-body button in
+        // this same header -- it now renders in the shell's own stable
+        // toolbar (see `WorkspaceActions`'s doc comment).
+        .focusedSceneValue(\.workspaceActions, workspaceActions)
+    }
+
+    private var workspaceActions: WorkspaceActions {
+        WorkspaceActions([
+            .button(WorkspaceAction(
+                id: "v2.series.review",
+                title: "Review Frames",
+                systemImage: "checkmark.rectangle.stack",
+                action: review
+            )),
+        ])
     }
 
     private func row(_ label: String, _ value: String) -> some View {

@@ -194,6 +194,12 @@ private struct V2Shell: View {
     @AppStorage("v2.library.enableWriteOperations") private var enableWriteOperations = false
     @Environment(\.openSettings) private var openSettings
     @Environment(OperationHost.self) private var operationHost
+    /// Wave 4 Task 2: whatever the CURRENT route's workspace published as its
+    /// own primary actions (Export, Review Frames, Run Audit, ...) -- read
+    /// here so the shell's own fixed toolbar can render them in one stable
+    /// place, rather than each workspace drawing its own in-body action row.
+    /// See `WorkspaceActions`'s own doc comment for the full rationale.
+    @FocusedValue(\.workspaceActions) private var workspaceActions
 
     private var libraryAccessMode: LibraryAccessMode {
         enableWriteOperations ? .mutationEnabled : .readOnly
@@ -202,8 +208,6 @@ private struct V2Shell: View {
     var body: some View {
         NavigationSplitView {
             V2Sidebar(router: router, badges: sidebarBadges)
-        } content: {
-            ContentColumn(router: router)
         } detail: {
             DetailHost(
                 router: router,
@@ -242,6 +246,14 @@ private struct V2Shell: View {
             )
         }
         .toolbar {
+            // Wave 4 Task 2: the current route's own workspace actions --
+            // rendered FIRST, before the shell's own permanent Search/New
+            // Project/Inspector controls, so a workspace's context actions
+            // read left-to-right as "what THIS screen can do" followed by
+            // "what the whole app can always do".
+            ToolbarItemGroup {
+                workspaceActionsToolbarContent
+            }
             ToolbarItemGroup {
                 OperationStatusView()
                     .accessibilityIdentifier("v2.toolbar.operations")
@@ -388,6 +400,35 @@ private struct V2Shell: View {
     private func presentOnboarding() {
         onboardingStore.returnToLibraryChoice()
         isOnboardingPresented = true
+    }
+
+    /// Wave 4 Task 2: renders whatever the current route's workspace
+    /// published through the `workspaceActions` focused value -- `nil`/empty
+    /// (Home, Insights, Planning, a section root with nothing pushed) simply
+    /// renders nothing, so the toolbar quietly shrinks back to just its
+    /// permanent controls. The wrapping `HStack` carries the container
+    /// accessibility identifier automation looks for; each item then carries
+    /// its OWN identifier, exactly like every other toolbar control here.
+    @ViewBuilder
+    private var workspaceActionsToolbarContent: some View {
+        if let items = workspaceActions?.items, !items.isEmpty {
+            HStack(spacing: 8) {
+                ForEach(items) { item in
+                    switch item {
+                    case .button(let action):
+                        Button(action: action.callAsFunction) {
+                            Label(action.title, systemImage: action.systemImage)
+                        }
+                        .disabled(action.isDisabled)
+                        .help(action.help ?? "")
+                        .accessibilityIdentifier(action.id)
+                    case .renderedView(_, let view):
+                        view()
+                    }
+                }
+            }
+            .accessibilityIdentifier("v2.toolbar.workspace-actions")
+        }
     }
 
     /// Wave 3 Task 7: the sidebar's `.badge()` counts (Nights
@@ -542,6 +583,14 @@ private struct GlobalSearchPanel: View {
 private struct V2Sidebar: View {
     @Bindable var router: AppRouter
     let badges: SidebarBadgeStore
+    /// Wave 4 Task 2: Library's own sub-pages (Health, Calibration) used to
+    /// be a separate middle-column list -- now that the shell is a plain
+    /// two-column split (sidebar + detail), they are nested rows
+    /// under the Library row instead, the same "disclosure group under its
+    /// parent section" shape a Finder-style sidebar uses. Expanded by
+    /// default so the child rows -- and their accessibility identifiers --
+    /// are always reachable without an extra disclosure click first.
+    @State private var isLibraryExpanded = true
 
     /// Routes every sidebar click through `router.navigate(to:)` rather than
     /// binding straight to the (now `private(set)`) `primarySection` --
@@ -561,30 +610,81 @@ private struct V2Sidebar: View {
     var body: some View {
         List(selection: sectionSelection) {
             ForEach(PrimarySection.allCases, id: \.self) { section in
-                Label(section.title, systemImage: section.systemImage)
-                    .tag(section)
-                    .accessibilityLabel(section.title)
-                    .accessibilityIdentifier("v2.sidebar.\(section.rawValue)")
-                    .badge(badgeCount(for: section))
-                    .help(badgeHelp(for: section) ?? "")
-                    // Wave 3 Task 7: `.badge()` itself accepts no
-                    // accessibility identifier, so a zero-size marker
-                    // carries `v2.sidebar.badge.*` for automation --
-                    // present only while the count it describes is
-                    // non-zero, so its mere existence already answers
-                    // "is there a badge showing right now".
-                    .overlay(alignment: .trailing) {
-                        if badgeCount(for: section) > 0 {
-                            Color.clear
-                                .frame(width: 1, height: 1)
-                                .accessibilityIdentifier(badgeAccessibilityIdentifier(for: section))
-                        }
+                if section == .library {
+                    DisclosureGroup(isExpanded: $isLibraryExpanded) {
+                        libraryChildRow(
+                            title: "Health",
+                            systemImage: "checkmark.shield",
+                            route: .health,
+                            accessibilityID: "v2.sidebar.library.health"
+                        )
+                        libraryChildRow(
+                            title: "Calibration",
+                            systemImage: "thermometer.snowflake",
+                            route: .calibration,
+                            accessibilityID: "v2.sidebar.library.calibration"
+                        )
+                    } label: {
+                        sectionRow(section)
                     }
+                } else {
+                    sectionRow(section)
+                }
             }
         }
         .navigationTitle("AstroTool")
         .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
         .listStyle(.sidebar)
+    }
+
+    private func sectionRow(_ section: PrimarySection) -> some View {
+        Label(section.title, systemImage: section.systemImage)
+            .tag(section)
+            .accessibilityLabel(section.title)
+            .accessibilityIdentifier("v2.sidebar.\(section.rawValue)")
+            .badge(badgeCount(for: section))
+            .help(badgeHelp(for: section) ?? "")
+            // Wave 3 Task 7: `.badge()` itself accepts no accessibility
+            // identifier, so a zero-size marker carries `v2.sidebar.badge.*`
+            // for automation -- present only while the count it describes
+            // is non-zero, so its mere existence already answers "is there
+            // a badge showing right now".
+            .overlay(alignment: .trailing) {
+                if badgeCount(for: section) > 0 {
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .accessibilityIdentifier(badgeAccessibilityIdentifier(for: section))
+                }
+            }
+    }
+
+    /// A Library child row (Health/Calibration) -- clicking it always lands
+    /// the user directly on that page: `router.navigate(to: .library)` first
+    /// (a no-op section switch when Library is already active, or -- per
+    /// `AppRouter.navigate(to:)`'s own "re-click pops to root" rule when it's
+    /// ALREADY active -- clears any stale push first), then `push(route)`
+    /// puts exactly this one page on top. Either way the child row's own
+    /// page is what ends up on screen, never a stale sibling underneath it.
+    private func libraryChildRow(
+        title: String,
+        systemImage: String,
+        route: ContentRoute,
+        accessibilityID: String
+    ) -> some View {
+        Button {
+            router.navigate(to: .library)
+            router.push(route)
+        } label: {
+            Label(title, systemImage: systemImage)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isCurrentLibraryChild(route) ? AstroTokens.Color.spectralBlue : .primary)
+        .accessibilityLabel(title)
+        .accessibilityIdentifier(accessibilityID)
+    }
+
+    private func isCurrentLibraryChild(_ route: ContentRoute) -> Bool {
+        router.primarySection == .library && router.currentSectionPath.last == route
     }
 
     private func badgeCount(for section: PrimarySection) -> Int {
@@ -611,39 +711,6 @@ private struct V2Sidebar: View {
         case .library: "v2.sidebar.badge.library"
         default: ""
         }
-    }
-}
-
-@MainActor
-private struct ContentColumn: View {
-    @Bindable var router: AppRouter
-
-    private var selection: Binding<ContentRoute?> {
-        Binding(
-            get: { router.contentRoute },
-            set: { route in
-                guard let route else { return }
-                router.navigate(toContent: route)
-            }
-        )
-    }
-
-    var body: some View {
-        List(selection: selection) {
-            Section(router.primarySection.title) {
-                Label("Overview", systemImage: "rectangle.grid.1x2")
-                    .tag(router.primarySection.rootRoute)
-
-                if router.primarySection == .library {
-                    Label("Health", systemImage: "checkmark.shield")
-                        .tag(ContentRoute.health)
-                    Label("Calibration", systemImage: "thermometer.snowflake")
-                        .tag(ContentRoute.calibration)
-                }
-            }
-        }
-        .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 300)
-        .accessibilityLabel("\(router.primarySection.title) navigation")
     }
 }
 
@@ -687,6 +754,19 @@ private struct DetailHost: View {
                     destination(for: route).id(route)
                 }
         }
+        // Wave 4 Task 2: the breadcrumb sits ABOVE the pushed content, in a
+        // `.safeAreaInset` rather than inside `destination(for:)` itself --
+        // that keeps it OUTSIDE the region that swaps/re-identifies per
+        // route, so it stays visually stable (no flash/re-layout) while the
+        // stack underneath it pushes and pops.
+        .safeAreaInset(edge: .top) {
+            BreadcrumbBar(
+                sectionTitle: router.primarySection.title,
+                path: router.currentSectionPath,
+                label: breadcrumbLabel,
+                select: { crumbID in BreadcrumbModel.select(crumbID, on: router) }
+            )
+        }
         .toolbarRole(.editor)
     }
 
@@ -695,6 +775,62 @@ private struct DetailHost: View {
             get: { router.currentSectionPath },
             set: { router.currentSectionPath = $0 }
         )
+    }
+
+    /// Resolves one pushed `ContentRoute` to the human-readable label its
+    /// breadcrumb crumb shows -- lives here (not in `BreadcrumbBar` itself)
+    /// because this is where `projectsStore`/`nightsStore` already are; the
+    /// bar itself stays a dumb renderer of whatever label this returns. A
+    /// project/night/series id that can't be resolved yet (e.g. mid-load,
+    /// same moment `destination(for:)` below shows its own "Loading…" state)
+    /// falls back to a generic noun rather than showing a raw identifier.
+    private func breadcrumbLabel(for route: ContentRoute) -> String {
+        switch route {
+        case .home: "Home"
+        case .projects: "Projects"
+        case .project(let rawID):
+            projectDisplayName(for: rawID) ?? "Project"
+        case .projectSeries(let rawID):
+            seriesLabel(for: rawID) ?? "Series"
+        case .nights: "Nights"
+        case .night(let rawID):
+            nightLabel(for: rawID) ?? "Night"
+        case .planning: "Planning"
+        case .library: "Library"
+        case .health: "Health"
+        case .calibration: "Calibration"
+        case .insights: "Insights"
+        case .reviewFrame: "Frame Review"
+        case .result: "Result"
+        case .review: "Review"
+        case .resultsWorkspace: "Results"
+        case .conversion: "Organize Session"
+        case .cleanup: "Cleanup"
+        case .sensorProfiles: "Sensor Profiles"
+        }
+    }
+
+    private func projectDisplayName(for rawID: String) -> String? {
+        guard let id = UUID(uuidString: rawID) else { return nil }
+        if let selected = projectsStore.selectedProject, selected.id == id {
+            return selected.project.displayName
+        }
+        return projectsStore.projects.first { $0.id == id }?.displayName
+    }
+
+    private func nightLabel(for rawID: String) -> String? {
+        guard let id = UUID(uuidString: rawID) else { return nil }
+        return nightsStore.nights.first { $0.id == id }?.date
+    }
+
+    private func seriesLabel(for rawID: String) -> String? {
+        guard let id = UUID(uuidString: rawID),
+              let projectSnapshot = projectsStore.selectedProject,
+              let night = projectSnapshot.nights.first(where: { $0.series.contains { $0.id == id } }),
+              let item = night.series.first(where: { $0.id == id })
+        else { return nil }
+        let exposure = "\(item.series.exposureSeconds.formatted(.number.precision(.fractionLength(0...1))))s"
+        return [item.series.filterName, exposure].compactMap { $0 }.joined(separator: " · ")
     }
 
     @ViewBuilder
@@ -995,39 +1131,6 @@ private extension PrimarySection {
         case .planning: "calendar"
         case .library: "photo.on.rectangle.angled"
         case .insights: "chart.xyaxis.line"
-        }
-    }
-
-    var emptyTitle: String {
-        switch self {
-        case .home: "Home"
-        case .projects: "No projects yet"
-        case .nights: "No observing nights yet"
-        case .planning: "No plan selected"
-        case .library: "No library open"
-        case .insights: "No insights yet"
-        }
-    }
-
-    var emptyMessage: String {
-        switch self {
-        case .home: "Explore the Library workspace to begin."
-        case .projects: "Explore the Library workspace before project workflows arrive."
-        case .nights: "Explore the Library workspace before night workflows arrive."
-        case .planning: "Explore the Library workspace before planning workflows arrive."
-        case .library: "Return home while the library picker is being prepared."
-        case .insights: "Explore the Library workspace before insights become available."
-        }
-    }
-
-    var detailAccessibilityIdentifier: String {
-        switch self {
-        case .home: "v2.detail.home"
-        case .projects: "v2.detail.projects"
-        case .nights: "v2.detail.nights"
-        case .planning: "v2.detail.planning"
-        case .library: "v2.detail.library"
-        case .insights: "v2.detail.insights"
         }
     }
 }

@@ -49,26 +49,6 @@ public struct HealthView: View {
                     MetricCard(title: "Organization", value: "\(snapshot.organizationIssues)", detail: "Reviewable residue", systemImage: "tray.full")
                     MetricCard(title: "Access", value: snapshot.isReadOnly ? "Read only" : "Writable", detail: "Images protected", systemImage: "lock.shield")
                 }
-                HStack {
-                    Menu("Run Audit") {
-                        Button("Fast (Skip Duplicate Scan)") {
-                            Task { await store.runAudit(mode: .fast, rootURL: rootURL, operationHost: operationHost) }
-                        }
-                    } primaryAction: {
-                        Task { await store.runAudit(mode: .full, rootURL: rootURL, operationHost: operationHost) }
-                    }
-                    .disabled(rootURL == nil || runningAuditOperation != nil)
-                    .help("Scan the library for calibration gaps, duplicates, and organization issues")
-                    .accessibilityIdentifier("v2.health.run-audit")
-
-                    Button("Verify Integrity…") { showsVerifySheet = true }
-                        .buttonStyle(.bordered)
-                        .disabled(rootURL == nil || runningVerifyOperation != nil)
-                        .help("Re-hash indexed files and compare against their stored checksums")
-                        .accessibilityIdentifier("v2.health.verify")
-
-                    Spacer()
-                }
                 if let running = runningAuditOperation {
                     HStack {
                         ProgressView().controlSize(.small)
@@ -144,11 +124,7 @@ public struct HealthView: View {
                     }
                     .accessibilityIdentifier("v2.health.findings-table")
                 }
-                HStack {
-                    Button("Review Cleanup Candidates…", action: openCleanup).buttonStyle(.bordered)
-                    Button("Sensor Profiles…", action: openSensorProfiles).buttonStyle(.bordered)
-                    Button("Calibration…", action: openCalibration).buttonStyle(.bordered)
-                }
+                Button("Calibration…", action: openCalibration).buttonStyle(.bordered)
                 GroupBox("Audit run history") {
                     if snapshot.auditRuns.isEmpty {
                         Text("No recorded audit runs yet.").foregroundStyle(.secondary)
@@ -198,6 +174,47 @@ public struct HealthView: View {
                 onCancel: { showsVerifySheet = false }
             )
         }
+        // Wave 4 Task 2: Run Audit/Verify Integrity/Cleanup/Sensor Profiles
+        // used to be an in-body button row above -- they now render in the
+        // shell's own stable toolbar (see `WorkspaceActions`'s doc comment).
+        .focusedSceneValue(\.workspaceActions, workspaceActions)
+    }
+
+    private var workspaceActions: WorkspaceActions {
+        WorkspaceActions([
+            .custom(id: "v2.health.run-audit") {
+                Menu("Run Audit") {
+                    Button("Fast (Skip Duplicate Scan)") {
+                        Task { await store.runAudit(mode: .fast, rootURL: rootURL, operationHost: operationHost) }
+                    }
+                } primaryAction: {
+                    Task { await store.runAudit(mode: .full, rootURL: rootURL, operationHost: operationHost) }
+                }
+                .disabled(rootURL == nil || runningAuditOperation != nil)
+                .help("Scan the library for calibration gaps, duplicates, and organization issues")
+                .accessibilityIdentifier("v2.health.run-audit")
+            },
+            .button(WorkspaceAction(
+                id: "v2.health.verify",
+                title: "Verify Integrity…",
+                systemImage: "checkmark.shield",
+                help: "Re-hash indexed files and compare against their stored checksums",
+                isDisabled: rootURL == nil || runningVerifyOperation != nil,
+                action: { showsVerifySheet = true }
+            )),
+            .button(WorkspaceAction(
+                id: "v2.health.cleanup",
+                title: "Cleanup Preview",
+                systemImage: "archivebox",
+                action: openCleanup
+            )),
+            .button(WorkspaceAction(
+                id: "v2.health.sensor-profiles",
+                title: "Sensor Profiles",
+                systemImage: "sensor",
+                action: openSensorProfiles
+            )),
+        ])
     }
 
     private var runningAuditOperation: OperationHost.ActiveOperation? {

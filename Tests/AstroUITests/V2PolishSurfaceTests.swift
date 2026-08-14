@@ -109,11 +109,20 @@ struct V2PolishSurfaceTests {
 
     @Test("Primary toolbar controls in the main workspaces carry .help( tooltips")
     func primaryToolbarControlsHaveTooltips() throws {
+        // Wave 4 Task 2: `ProjectWorkspaceView`'s own Review Frames/Results
+        // buttons moved out of its body into structured `WorkspaceAction`
+        // values (a plain `help: String?` data field, not a `.help(`
+        // modifier call) -- the shell's own toolbar (`V2RootView`, already
+        // in this list) is what actually calls `.help(action.help ?? "")`
+        // to render their tooltips now, so that's where this gate reads
+        // them from for that workspace. `HealthView`/`ReviewWorkspace`
+        // still wrap their own menu-shaped actions (Run Audit, Rate Frames)
+        // as literal inline view code passed to the toolbar, so their
+        // `.help(` calls stay put in their own files untouched.
         let toolbarFiles = [
             "Sources/AstroUI/Features/Review/ReviewWorkspace.swift",
             "Sources/AstroUI/Features/Library/HealthView.swift",
             "Sources/AstroUI/Features/Library/CalibrationView.swift",
-            "Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift",
             "Sources/AstroUI/Features/Results/ResultsView.swift",
             "Sources/AstroUI/App/V2RootView.swift",
         ]

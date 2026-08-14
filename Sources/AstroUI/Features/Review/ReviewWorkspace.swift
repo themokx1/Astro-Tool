@@ -79,6 +79,27 @@ public struct ReviewWorkspace: View {
             }
         }
         .accessibilityIdentifier("v2.review.workspace")
+        // Wave 4 Task 2: Rate Frames/Review Frames… (blink) used to be an
+        // in-body button row of the per-series "Frames" panel below -- they
+        // now render in the shell's own stable toolbar (see
+        // `WorkspaceActions`'s doc comment). Empty (no items) whenever no
+        // series is selected, exactly matching that row's own old
+        // conditional visibility.
+        .focusedSceneValue(\.workspaceActions, workspaceActions)
+    }
+
+    private var workspaceActions: WorkspaceActions {
+        guard let selected = store.selectedSeries else { return WorkspaceActions([]) }
+        return WorkspaceActions([
+            .custom(id: "v2.review.rate") { rateFramesMenu(selected) },
+            .button(WorkspaceAction(
+                id: "v2.review.blink",
+                title: "Review Frames…",
+                systemImage: "eye",
+                isDisabled: selected.decisions.isEmpty,
+                action: { openBlinkReview(selected) }
+            )),
+        ])
     }
 
     /// Opens the blink-review sheet on `selected`'s frames, in EXACTLY the
@@ -201,10 +222,6 @@ public struct ReviewWorkspace: View {
                 .padding(AstroTokens.Spacing.standard)
                 Divider()
                 HStack(spacing: 10) {
-                    rateFramesMenu(selected)
-                    Button("Review Frames…") { openBlinkReview(selected) }
-                        .disabled(selected.decisions.isEmpty)
-                        .accessibilityIdentifier("v2.review.blink")
                     if !captureSlugs(in: selected).isEmpty {
                         Menu(selectedCaptureSlug ?? "All capture groups") {
                             Button("All capture groups") { selectedCaptureSlug = nil }

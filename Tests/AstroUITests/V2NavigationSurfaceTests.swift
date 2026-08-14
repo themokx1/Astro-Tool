@@ -156,4 +156,65 @@ struct V2NavigationSurfaceTests {
         let assignmentsRange = try #require(functionBody.range(of: "selectedProjectID = id\n            selectedProject = snapshot\n            selectedProjectAnnotation = annotation"))
         #expect(!functionBody[assignmentsRange].contains("await"))
     }
+
+    // MARK: Wave 4 Task 2 -- two-column shell, stable toolbar actions, breadcrumb
+
+    @Test("The shell is a plain two-column split -- the old ContentColumn middle list is gone")
+    func contentColumnIsGone() throws {
+        let root = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(!root.contains("ContentColumn"))
+    }
+
+    @Test("Library's own sub-pages are sidebar child rows, not a separate middle column")
+    func librarySubPagesAreSidebarChildRows() throws {
+        let root = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(root.contains("v2.sidebar.library.health"))
+        #expect(root.contains("v2.sidebar.library.calibration"))
+        #expect(root.contains("DisclosureGroup"))
+    }
+
+    @Test("The shell's stable toolbar renders the current route's own workspace actions")
+    func shellTogglesRenderTheWorkspaceActionsFocusedValue() throws {
+        let root = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(root.contains("@FocusedValue(\\.workspaceActions)"))
+        #expect(root.contains("v2.toolbar.workspace-actions"))
+    }
+
+    @Test("A clickable breadcrumb sits above the pushed content in the detail column")
+    func breadcrumbBarIsWiredIntoTheDetailColumn() throws {
+        let root = try contents("Sources/AstroUI/App/V2RootView.swift")
+        let breadcrumb = try contents("Sources/AstroUI/App/BreadcrumbBar.swift")
+        #expect(root.contains("BreadcrumbBar("))
+        #expect(root.contains(".safeAreaInset(edge: .top)"))
+        #expect(breadcrumb.contains("v2.breadcrumb"))
+    }
+
+    @Test("ProjectWorkspaceView's header carries only identity -- its old action buttons are gone")
+    func projectWorkspaceHeaderHasNoActionButtons() throws {
+        let project = try contents("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift")
+        // The old in-body buttons are gone by exact call shape...
+        #expect(!project.contains("Button(\"Review Frames\", action: review)"))
+        #expect(!project.contains("Button(\"Results\", action: results)"))
+        // ...and each moved action is now published as a structured
+        // `WorkspaceAction`/`WorkspaceActionItem` with its own stable id,
+        // reachable through the shell's own toolbar instead.
+        #expect(project.contains("v2.project.review"))
+        #expect(project.contains("v2.project.results"))
+        #expect(project.contains(".focusedSceneValue(\\.workspaceActions, workspaceActions)"))
+    }
+
+    @Test("Every workspace publishing toolbar actions does so through the WorkspaceActions focused value")
+    func everyWorkspacePublishesWorkspaceActions() throws {
+        for path in [
+            "Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift",
+            "Sources/AstroUI/Features/Nights/NightWorkspaceView.swift",
+            "Sources/AstroUI/Features/Projects/SeriesWorkspaceView.swift",
+            "Sources/AstroUI/Features/Library/HealthView.swift",
+            "Sources/AstroUI/Features/Review/ReviewWorkspace.swift",
+            "Sources/AstroUI/Features/Results/ResultsView.swift",
+        ] {
+            let source = try contents(path)
+            #expect(source.contains(".focusedSceneValue(\\.workspaceActions,"), "\(path) does not publish WorkspaceActions")
+        }
+    }
 }

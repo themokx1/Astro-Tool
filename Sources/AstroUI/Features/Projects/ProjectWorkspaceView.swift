@@ -73,26 +73,46 @@ public struct ProjectWorkspaceView: View {
         .background(AstroTokens.Color.graphite.opacity(0.36))
         .navigationTitle(snapshot.project.displayName)
         .accessibilityIdentifier("v2.project.workspace")
+        // Wave 4 Task 2: this workspace's own primary actions (Export,
+        // Review Frames, Results) used to be an in-body button row in
+        // `header` below -- they now render in the shell's own stable
+        // toolbar instead (see `WorkspaceActions`'s doc comment), so the
+        // header keeps ONLY identity (the eyebrow/title/summary) plus the
+        // global breadcrumb above it.
+        .focusedSceneValue(\.workspaceActions, workspaceActions)
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Project › \(snapshot.project.catalogID)")
-                    .font(.caption.weight(.semibold)).foregroundStyle(AstroTokens.Color.spectralBlue)
-                Text(snapshot.project.displayName).font(.title2.weight(.semibold))
-                Text("\(duration(snapshot.integrationSeconds)) usable · \(snapshot.nights.count) nights · \(snapshot.series.count) series")
-                    .font(.callout).foregroundStyle(.secondary)
-            }
-            Spacer()
-            ExportMenu(items: projectExportItems, accessibilityID: "v2.project.export")
-            Button("Review Frames", action: review)
-                .help("Open the frame-by-frame review workspace for this project")
-            Button("Results", action: results)
-                .buttonStyle(.borderedProminent)
-                .help("Inspect stacks, processed variants, and their provenance")
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Project › \(snapshot.project.catalogID)")
+                .font(.caption.weight(.semibold)).foregroundStyle(AstroTokens.Color.spectralBlue)
+            Text(snapshot.project.displayName).font(.title2.weight(.semibold))
+            Text("\(duration(snapshot.integrationSeconds)) usable · \(snapshot.nights.count) nights · \(snapshot.series.count) series")
+                .font(.callout).foregroundStyle(.secondary)
         }
         .padding(AstroTokens.Spacing.spacious)
+    }
+
+    private var workspaceActions: WorkspaceActions {
+        WorkspaceActions([
+            .custom(id: "v2.project.export") {
+                ExportMenu(items: projectExportItems, accessibilityID: "v2.project.export")
+            },
+            .button(WorkspaceAction(
+                id: "v2.project.review",
+                title: "Review Frames",
+                systemImage: "checkmark.rectangle.stack",
+                help: "Open the frame-by-frame review workspace for this project",
+                action: review
+            )),
+            .button(WorkspaceAction(
+                id: "v2.project.results",
+                title: "Results",
+                systemImage: "square.stack.3d.up",
+                help: "Inspect stacks, processed variants, and their provenance",
+                action: results
+            )),
+        ])
     }
 
     /// Acquisition (all three V1 formats), the target report, and the latest
