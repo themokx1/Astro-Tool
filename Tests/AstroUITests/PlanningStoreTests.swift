@@ -30,9 +30,38 @@ private final class CallCounter: @unchecked Sendable {
 
 @MainActor
 struct PlanningStoreTests {
+    // Build 20015 shipped a Planning freeze caused by a side-effectful
+    // `init`: `PlanningView`'s `@State private var store = PlanningStore()`
+    // default value is re-evaluated on every view construction (every
+    // enclosing render pass), so an `init` that kicked off a full
+    // recommendation compute launched one discarded background pipeline run
+    // per render. Construction must therefore be free of side effects;
+    // activation is explicit and idempotent.
+    @Test("Constructing a store computes nothing until activate() is called")
+    func constructionHasNoSideEffects() async {
+        let counter = CallCounter()
+        let store = PlanningStore(setups: [.apsCReference]) { query in
+            counter.increment()
+            return query.recommendations()
+        }
+        #expect(store.pendingRefresh == nil)
+        #expect(counter.current == 0)
+
+        store.activate()
+        await store.pendingRefresh?.value
+        #expect(counter.current == 1)
+
+        // Idempotent: a second activate (e.g. `.task` re-running after an
+        // `.id(route)` identity reset recreated the store anyway) is a no-op.
+        store.activate()
+        await store.pendingRefresh?.value
+        #expect(counter.current == 1)
+    }
+
     @Test("Changing focal length recalculates framing and preserves useful-first ordering")
     func focalLengthRecalculatesRecommendations() async {
         let store = PlanningStore(setups: [.apsCReference])
+        store.activate()
         await store.pendingRefresh?.value
         let initial = store.recommendations
 
@@ -47,6 +76,7 @@ struct PlanningStoreTests {
     @Test("Search accepts catalog and Hungarian target names")
     func targetSearchIsLocalized() async {
         let store = PlanningStore(setups: [.apsCReference])
+        store.activate()
         await store.pendingRefresh?.value
 
         store.searchText = "elefántormány"
@@ -60,6 +90,7 @@ struct PlanningStoreTests {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let baseline = PlanningStore(setups: [.apsCReference], defaults: defaults)
+        baseline.activate()
         await baseline.pendingRefresh?.value
         let baselineHours = try #require(baseline.recommendations.first?.integrationHours)
         // `PlanningStore` reads `UserDefaults` live rather than caching, so
@@ -69,6 +100,7 @@ struct PlanningStoreTests {
 
         defaults.set(initialReferenceHours * 2, forKey: PlanningStore.referenceHoursKey)
         let doubled = PlanningStore(setups: [.apsCReference], defaults: defaults)
+        doubled.activate()
         await doubled.pendingRefresh?.value
 
         #expect(doubled.referenceHours == initialReferenceHours * 2)
@@ -82,6 +114,7 @@ struct PlanningStoreTests {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = PlanningStore(setups: [.apsCReference], defaults: defaults)
+        store.activate()
 
         #expect(store.referenceHours == IntegrationTimeModel.referenceHours)
         #expect(store.referenceFocalRatio == 5)
@@ -107,6 +140,7 @@ struct PlanningStoreTests {
             counter.increment()
             return query.recommendations()
         }
+        store.activate()
         await store.pendingRefresh?.value
         #expect(counter.current == 1)
 
@@ -128,6 +162,7 @@ struct PlanningStoreTests {
             counter.increment()
             return query.recommendations()
         }
+        store.activate()
         await store.pendingRefresh?.value
         #expect(counter.current == 1)
 
@@ -145,6 +180,7 @@ struct PlanningStoreTests {
             counter.increment()
             return query.recommendations()
         }
+        store.activate()
         await store.pendingRefresh?.value
         #expect(counter.current == 1)
 
@@ -165,6 +201,7 @@ struct PlanningStoreTests {
             counter.increment()
             return query.recommendations()
         }
+        store.activate()
         await store.pendingRefresh?.value
         #expect(counter.current == 1)
 
@@ -194,6 +231,7 @@ struct PlanningStoreTests {
             }
             return query.recommendations()
         }
+        store.activate()
 
         store.setFocalLength(300)
         await store.pendingRefresh?.value
@@ -214,6 +252,7 @@ struct PlanningStoreTests {
             Thread.sleep(forTimeInterval: 0.05)
             return query.recommendations()
         }
+        store.activate()
 
         // No suspension point has occurred yet, so the detached compute
         // Task kicked off by `init` cannot have run at all -- this read is

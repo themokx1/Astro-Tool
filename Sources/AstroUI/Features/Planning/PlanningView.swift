@@ -20,6 +20,7 @@ public struct PlanningView: View {
         .navigationTitle("Planning")
         .accessibilityLabel("Planning")
         .accessibilityIdentifier("v2.detail.planning")
+        .task { store.activate() }
     }
 
     /// Backs the "Camera and optics" header's ⓘ button.

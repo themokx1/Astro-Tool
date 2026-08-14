@@ -97,6 +97,20 @@ public final class PlanningStore {
         lastObservedReferenceHours = defaults.double(forKey: Self.referenceHoursKey)
         lastObservedReferenceFocalRatio = defaults.double(forKey: Self.referenceFocalRatioKey)
         lastObservedReferenceSurfaceBrightness = defaults.double(forKey: Self.referenceSurfaceBrightnessKey)
+    }
+
+    /// `init` must stay free of side effects: `PlanningView` holds this store
+    /// as `@State private var store = PlanningStore()`, and SwiftUI
+    /// re-evaluates that default value on every view construction -- one per
+    /// enclosing render pass -- keeping only the first instance. A
+    /// side-effectful `init` therefore launches one discarded full-pipeline
+    /// compute per render (the build 20015 Planning freeze). The view calls
+    /// this from `.task`, which runs once per view identity.
+    private var isActivated = false
+
+    public func activate() {
+        guard !isActivated else { return }
+        isActivated = true
         observeDefaultsChanges()
         refresh()
     }
