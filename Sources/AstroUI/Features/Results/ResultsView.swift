@@ -71,6 +71,18 @@ public struct ResultsView: View {
 
     private func resultTable(_ snapshot: ResultsSnapshot) -> some View {
         Table(snapshot.results, selection: $selectedResultID) {
+            TableColumn("Preview") { result in
+                if let relativePath = result.relativePath {
+                    FrameThumbnailCell(rootURL: rootURL, relativePath: relativePath)
+                } else {
+                    Image(systemName: "photo")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                        .opacity(0.35)
+                        .frame(width: 28, height: 28)
+                }
+            }
+            .width(min: 36, ideal: 36, max: 36)
             TableColumn("Result") { result in
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
@@ -105,6 +117,14 @@ public struct ResultsView: View {
                 openResult(result)
             }
         }
+        .background(QuickLookSpacebarMonitor(
+            isEnabled: { selectedResultID != nil },
+            onSpace: {
+                if let result = selectedResult(in: snapshot) {
+                    quickLook(result)
+                }
+            }
+        ))
         .accessibilityIdentifier("v2.results.table")
         .onAppear {
             selectedResultID = selectedResultID ?? snapshot.publishableResultID ?? snapshot.results.last?.id
@@ -130,6 +150,8 @@ public struct ResultsView: View {
         Button("Open Result") { openResult(result) }
             .disabled(resultURL(for: result) == nil)
         Button("Show in Finder") { revealResult(result) }
+            .disabled(resultURL(for: result) == nil)
+        Button("Quick Look") { quickLook(result) }
             .disabled(resultURL(for: result) == nil)
         Divider()
         Button("Copy Path") { copyPath(result) }
@@ -163,6 +185,11 @@ public struct ResultsView: View {
     private func revealResult(_ result: ResultLineageSnapshot) {
         guard let url = resultURL(for: result) else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    private func quickLook(_ result: ResultLineageSnapshot) {
+        guard let url = resultURL(for: result) else { return }
+        QuickLookPreviewController.shared.preview(url)
     }
 
     private func copyPath(_ result: ResultLineageSnapshot) {

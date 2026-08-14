@@ -156,7 +156,7 @@ struct V2ShellSurfaceTests {
         #expect(!v2Commands.contains(".keyboardShortcut(\"n\""))
     }
 
-    @Test("Frame review exposes series, quality and inspector boundaries without Quick Look")
+    @Test("Frame review exposes series, quality, inspector, and visual-review boundaries")
     func reviewWorkspaceContract() throws {
         let review = try String(
             contentsOf: repositoryRoot.appendingPathComponent(
@@ -180,8 +180,14 @@ struct V2ShellSurfaceTests {
         #expect(review.contains("keyboardShortcut(\"a\""))
         #expect(review.contains("keyboardShortcut(\"r\""))
         #expect(review.contains("Source files are never moved here"))
-        #expect(!review.contains("QuickLook"))
-        #expect(!review.contains("QLThumbnail"))
+        // R10-B1/Wave-3-Task-2: visual frame review (blink + thumbnails +
+        // QuickLook) is now connected -- this workspace deliberately DOES
+        // reference `QuickLookSpacebarMonitor`/`FrameThumbnailCell` below,
+        // unlike the earlier "no visual review yet" contract this test used
+        // to enforce.
+        #expect(review.contains("v2.review.blink"))
+        #expect(review.contains("QuickLookSpacebarMonitor("))
+        #expect(review.contains("FrameThumbnailCell("))
     }
 
     @Test("Planning exposes setup, focal length, framing and integration boundaries")

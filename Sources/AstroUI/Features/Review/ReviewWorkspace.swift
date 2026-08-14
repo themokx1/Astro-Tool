@@ -12,6 +12,7 @@ public struct ReviewWorkspace: View {
     @State private var sortOrder: [KeyPathComparator<ReviewFrameRow>] = [KeyPathComparator(\.scoreSortKey, order: .reverse)]
     @State private var selectedCaptureSlug: String?
     @State private var selectedNightFilter: String?
+    @State private var blinkReviewStore: FrameBlinkReviewStore?
     @Environment(OperationHost.self) private var operationHost
 
     public init(
@@ -51,7 +52,54 @@ public struct ReviewWorkspace: View {
             try? await store.open(rootURL: rootURL, projectID: projectID)
         }
         .onChange(of: store.selectedSeriesID) { _, _ in selectedDecisionIDs.removeAll() }
+        .onChange(of: store.snapshot) { _, _ in
+            guard let blinkReviewStore, let selected = store.selectedSeries else { return }
+            blinkReviewStore.refresh(decisions: qualityRows(for: selected).map(\.decision))
+        }
+        .sheet(isPresented: Binding(
+            get: { blinkReviewStore != nil },
+            set: { if !$0 { blinkReviewStore = nil } }
+        )) {
+            if let blinkReviewStore {
+                FrameBlinkReview(
+                    store: blinkReviewStore,
+                    rootURL: rootURL,
+                    qualityLookup: { store.quality(for: $0) },
+                    dismiss: { self.blinkReviewStore = nil }
+                )
+            }
+        }
         .accessibilityIdentifier("v2.review.workspace")
+    }
+
+    /// Opens the blink-review sheet on `selected`'s frames, in EXACTLY the
+    /// order/filter the frame table is currently showing (`qualityRows`
+    /// already applies `selectedCaptureSlug` + `sortOrder`) -- mirrors V1
+    /// `FrameReviewSheet`'s own "never re-sorts or re-filters" contract.
+    /// Starts on the single selected row when there is one, otherwise the
+    /// first frame.
+    private func openBlinkReview(_ selected: ReviewSeriesSnapshot) {
+        let rows = qualityRows(for: selected)
+        guard !rows.isEmpty else { return }
+        let initialPath = selectedDecisionIDs.count == 1
+            ? rows.first(where: { selectedDecisionIDs.contains($0.decision.id) })?.decision.relativePath
+            : nil
+        blinkReviewStore = FrameBlinkReviewStore(
+            decisions: rows.map(\.decision),
+            initialRelativePath: initialPath,
+            verdictHandler: { path, verdict in
+                try await store.setVerdict(relativePaths: [path], verdict: verdict)
+            }
+        )
+    }
+
+    private func quickLookSelectedFrame(_ selected: ReviewSeriesSnapshot) {
+        guard selectedDecisionIDs.count == 1,
+              let id = selectedDecisionIDs.first,
+              let decision = selected.decisions.first(where: { $0.id == id }),
+              let url = FrameThumbnailCell.resolvedURL(rootURL: rootURL, relativePath: decision.relativePath)
+        else { return }
+        QuickLookPreviewController.shared.preview(url)
     }
 
     private var header: some View {
@@ -143,6 +191,9 @@ public struct ReviewWorkspace: View {
                 Divider()
                 HStack(spacing: 10) {
                     rateFramesMenu(selected)
+                    Button("Review Frames…") { openBlinkReview(selected) }
+                        .disabled(selected.decisions.isEmpty)
+                        .accessibilityIdentifier("v2.review.blink")
                     if !captureSlugs(in: selected).isEmpty {
                         Menu(selectedCaptureSlug ?? "All capture groups") {
                             Button("All capture groups") { selectedCaptureSlug = nil }
@@ -178,6 +229,10 @@ public struct ReviewWorkspace: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     Table(rows, selection: $selectedDecisionIDs, sortOrder: $sortOrder) {
+                        TableColumn("Preview") { row in
+                            FrameThumbnailCell(rootURL: rootURL, relativePath: row.decision.relativePath)
+                        }
+                        .width(min: 36, ideal: 36, max: 36)
                         TableColumn("Frame") { row in
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(URL(fileURLWithPath: row.decision.relativePath).lastPathComponent)
@@ -240,7 +295,14 @@ public struct ReviewWorkspace: View {
                         Button("Reset Decision") { apply(.undecided, decisionIDs: decisionIDs, in: selected) }
                         Divider()
                         Button("Reject") { apply(.rejected, decisionIDs: decisionIDs, in: selected) }
+                        Divider()
+                        Button("Quick Look") { quickLookSelectedFrame(selected) }
+                            .disabled(decisionIDs.count != 1)
                     }
+                    .background(QuickLookSpacebarMonitor(
+                        isEnabled: { selectedDecisionIDs.count == 1 },
+                        onSpace: { quickLookSelectedFrame(selected) }
+                    ))
                     .accessibilityIdentifier("v2.review.frames-table")
                 }
             }

@@ -98,6 +98,37 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(workspace.contains("row.isOutlier"))
     }
 
+    @Test("Frame review offers a visual blink sheet with thumbnails and QuickLook")
+    func frameReviewVisualReviewContract() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/ReviewWorkspace.swift"))
+        let results = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Results/ResultsView.swift"))
+        let blink = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/FrameBlinkReview.swift"))
+        let thumbnail = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/FrameThumbnailCell.swift"))
+        let quickLook = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/QuickLookSupport.swift"))
+        #expect(workspace.contains("v2.review.blink"))
+        #expect(workspace.contains("Review Frames…"))
+        #expect(workspace.contains("openBlinkReview"))
+        #expect(workspace.contains("FrameBlinkReview("))
+        #expect(workspace.contains("FrameThumbnailCell(rootURL:"))
+        #expect(workspace.contains("QuickLookSpacebarMonitor("))
+        #expect(workspace.contains("QuickLookPreviewController.shared.preview"))
+        #expect(results.contains("FrameThumbnailCell(rootURL:"))
+        #expect(results.contains("QuickLookSpacebarMonitor("))
+        #expect(results.contains("QuickLookPreviewController.shared.preview"))
+        #expect(results.contains("Quick Look"))
+        #expect(blink.contains("public final class FrameBlinkReviewStore"))
+        #expect(blink.contains("keyboardShortcut(\"a\""))
+        #expect(blink.contains("keyboardShortcut(\"x\""))
+        #expect(blink.contains("keyboardShortcut(\"u\""))
+        #expect(blink.contains("keyboardShortcut(.leftArrow"))
+        #expect(blink.contains("keyboardShortcut(.rightArrow"))
+        #expect(thumbnail.contains("public struct FrameThumbnailCell"))
+        #expect(thumbnail.contains("QLThumbnailGenerator"))
+        #expect(quickLook.contains("QLPreviewPanel"))
+    }
+
     @Test("Results is a provenance table with safe file actions")
     func resultsWorkspaceActionsContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
