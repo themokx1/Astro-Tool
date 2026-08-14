@@ -165,7 +165,6 @@ public struct NightsView: View {
             } primaryAction: { nightIDs in
                 if let id = nightIDs.first { openNight(id) }
             }
-            .onChange(of: store.selectedNightID) { _, id in if let id { openNight(id) } }
             .accessibilityIdentifier("v2.nights.table")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -333,8 +333,9 @@ private struct ProjectNightsSummary: View {
                     openInsights: openInsights
                 )
             }
+        } primaryAction: { nightIDs in
+            if let id = nightIDs.first { openNight(id) }
         }
-        .onChange(of: selection) { _, id in if let id { openNight(id) } }
         .sheet(item: $noteEditorTarget) { editing in
             if let rootURL {
                 NightNoteSheet(
@@ -362,6 +363,12 @@ private struct ProjectSeriesSummary: View {
             TableColumn("Frames") { Text("\($0.usableFrames) / \($0.excludedFrames)").monospacedDigit() }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: selection) { _, id in if let id { openSeries(id) } }
+        .contextMenu(forSelectionType: UUID.self) { seriesIDs in
+            if let id = seriesIDs.first {
+                Button("Open Series") { openSeries(id) }
+            }
+        } primaryAction: { seriesIDs in
+            if let id = seriesIDs.first { openSeries(id) }
+        }
     }
 }

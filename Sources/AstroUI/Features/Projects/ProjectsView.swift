@@ -151,14 +151,18 @@ public struct ProjectsView: View {
         return store.workspaceRows.filter { ids.contains($0.id) }
     }
 
+    /// V2 UI/UX audit (2026-08-14) systemic pattern S3: this setter used to
+    /// ALSO call `openProject`, alongside the table's own double-click
+    /// `primaryAction:` (below) -- a double-click therefore pushed the
+    /// project route twice, and it was impossible to select a row without
+    /// immediately navigating away from it (breaking its context menu and
+    /// arrow-key traversal). Selecting now only ever updates selection
+    /// state; only `primaryAction:` (double-click) navigates.
     private var projectSelection: Binding<UUID?> {
         Binding(
             get: { store.selectedProjectID },
             set: { id in
                 Task { try? await store.selectProject(id) }
-                if let id, let project = store.projects.first(where: { $0.id == id }) {
-                    openProject(project)
-                }
             }
         )
     }
