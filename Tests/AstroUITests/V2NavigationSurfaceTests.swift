@@ -175,10 +175,17 @@ struct V2NavigationSurfaceTests {
         #expect(root.contains("DisclosureGroup"))
     }
 
-    @Test("The shell's stable toolbar renders the current route's own workspace actions")
+    @Test("The shell's stable toolbar renders the current route's own workspace actions from the shared WorkspaceActionCenter")
     func shellTogglesRenderTheWorkspaceActionsFocusedValue() throws {
         let root = try contents("Sources/AstroUI/App/V2RootView.swift")
-        #expect(root.contains("@FocusedValue(\\.workspaceActions)"))
+        // Wave 4 (post-20014) fix: this used to be
+        // `@FocusedValue(\.workspaceActions)`, republished from every
+        // workspace's `body` on every evaluation -- see
+        // `WorkspaceActionCenter`'s own doc comment for the invalidation
+        // storm that caused. The shell now reads a shared `@Observable`
+        // environment object instead, updated only on discrete workspace
+        // lifecycle/state-change events.
+        #expect(root.contains("@Environment(WorkspaceActionCenter.self)"))
         #expect(root.contains("v2.toolbar.workspace-actions"))
     }
 
@@ -202,10 +209,10 @@ struct V2NavigationSurfaceTests {
         // reachable through the shell's own toolbar instead.
         #expect(project.contains("v2.project.review"))
         #expect(project.contains("v2.project.results"))
-        #expect(project.contains(".focusedSceneValue(\\.workspaceActions, workspaceActions)"))
+        #expect(project.contains("workspaceActionCenter.publish(owner:"))
     }
 
-    @Test("Every workspace publishing toolbar actions does so through the WorkspaceActions focused value")
+    @Test("Every workspace publishing toolbar actions does so through WorkspaceActionCenter, not from body")
     func everyWorkspacePublishesWorkspaceActions() throws {
         for path in [
             "Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift",
@@ -216,7 +223,17 @@ struct V2NavigationSurfaceTests {
             "Sources/AstroUI/Features/Results/ResultsView.swift",
         ] {
             let source = try contents(path)
-            #expect(source.contains(".focusedSceneValue(\\.workspaceActions,"), "\(path) does not publish WorkspaceActions")
+            // Wave 4 (post-20014) fix: no workspace may publish through
+            // `.focusedSceneValue(\.workspaceActions, ...)` any more -- that
+            // mechanism republished on every `body` evaluation with no
+            // equality check of its own, which is what caused the 100% CPU
+            // invalidation storm (see `WorkspaceActionCenter`'s own doc
+            // comment). Every workspace instead publishes to the shared
+            // `WorkspaceActionCenter` from `.onAppear`/`.onChange(of:)` and
+            // clears its own contribution from `.onDisappear`.
+            #expect(!source.contains(".focusedSceneValue(\\.workspaceActions,"), "\(path) still publishes through the old focused-value mechanism")
+            #expect(source.contains("workspaceActionCenter.publish(owner:"), "\(path) does not publish to WorkspaceActionCenter")
+            #expect(source.contains("workspaceActionCenter.clear(owner:"), "\(path) does not clear its own WorkspaceActionCenter contribution")
         }
     }
 
@@ -229,10 +246,14 @@ struct V2NavigationSurfaceTests {
 
         // The publish must be reachable only through a branch keyed on
         // `showsHeader` -- when embedded (`showsHeader == false`, as
-        // `ProjectResultsPane` renders it), NO view in this file may apply
-        // `.focusedSceneValue(\.workspaceActions, ...)`, or it would shadow
+        // `ProjectResultsPane` renders it), NO view in this file may ever
+        // call `workspaceActionCenter.publish`/`.clear`, or it would shadow
         // the parent `ProjectWorkspaceView`'s own Export/Review Frames/
-        // Results actions in the shell's stable toolbar.
+        // Results actions in the shell's stable toolbar. (Wave 4
+        // (post-20014) fix: this gate used to key off
+        // `.focusedSceneValue(\.workspaceActions, ...)`; the mechanism
+        // changed, but the embedding hazard -- and this test's intent -- did
+        // not.)
         #expect(results.contains("if showsHeader {"))
 
         // Bound the scan to `ResultsView`'s OWN `body` (skipping past the
@@ -252,8 +273,8 @@ struct V2NavigationSurfaceTests {
         let elseRange = try #require(bodyText.range(of: "} else {"))
         let elseBranch = String(bodyText[elseRange.upperBound...])
         #expect(
-            !elseBranch.contains("focusedSceneValue"),
-            "The embedded (showsHeader: false) branch must not publish WorkspaceActions"
+            !elseBranch.contains("workspaceActionCenter"),
+            "The embedded (showsHeader: false) branch must not touch WorkspaceActionCenter at all"
         )
     }
 

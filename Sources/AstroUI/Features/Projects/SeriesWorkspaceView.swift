@@ -21,6 +21,13 @@ public struct SeriesWorkspaceView: View {
     let night: NightRecord
     let review: () -> Void
     @State private var tab = Tab.overview
+    @Environment(WorkspaceActionCenter.self) private var workspaceActionCenter
+    /// Wave 4 (post-20014) fix: see `ProjectWorkspaceView.actionOwner`'s own
+    /// doc comment -- same reasoning here. This view is a navigation-stack
+    /// LEAF (see this type's own doc comment above), so unlike the other
+    /// workspaces it has no deeper `.onChange(of:)` hook to add: its own
+    /// actions never vary within one instance's lifetime.
+    @State private var actionOwner = UUID().uuidString
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -48,7 +55,11 @@ public struct SeriesWorkspaceView: View {
         // toolbar (see `WorkspaceActions`'s doc comment). Wave 4 Task 3
         // removed the redundant chained "Project"/"Series" eyebrow prefix that
         // used to duplicate the now-global breadcrumb.
-        .focusedSceneValue(\.workspaceActions, workspaceActions)
+        // Wave 4 (post-20014) fix: published from `.onAppear` rather than
+        // from `body` itself -- see `WorkspaceActionCenter`'s own doc
+        // comment.
+        .onAppear { workspaceActionCenter.publish(owner: actionOwner, workspaceActions) }
+        .onDisappear { workspaceActionCenter.clear(owner: actionOwner) }
     }
 
     @ViewBuilder private var content: some View {

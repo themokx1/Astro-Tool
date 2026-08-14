@@ -59,10 +59,23 @@ struct NightActionMenuTests {
 
     @Test("The night workspace toolbar surfaces the shared action menu")
     func nightWorkspaceWiresSharedMenu() throws {
+        // Wave 4 (post-20014) fix: `NightWorkspaceView` no longer constructs
+        // `NightActionMenu(...)` (or any view at all) for its toolbar action
+        // -- it builds a plain `WorkspaceActionNightMenu` DATA payload and
+        // hands it to the shared `WorkspaceActionCenter`; the shell's own
+        // stable toolbar (`V2RootView`) is what actually calls
+        // `NightActionMenu(...)` from that data (see
+        // `WorkspaceActionItem`'s own doc comment for why the old
+        // `.custom(id:view:)` -- which DID build the view inline here --
+        // was the very mechanism that caused the invalidation storm this
+        // fixes).
         let workspace = try read("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift")
-        #expect(workspace.contains("NightActionMenu("))
+        #expect(workspace.contains("WorkspaceActionNightMenu("))
         #expect(workspace.contains("v2.night.workspace.actions"))
         #expect(workspace.contains("NightNoteSheet("))
+
+        let root = try read("Sources/AstroUI/App/V2RootView.swift")
+        #expect(root.contains("NightActionMenu("))
     }
 
     @Test("The project workspace's Nights tab wires the shared action menu into every row's context menu")

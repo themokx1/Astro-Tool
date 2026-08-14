@@ -53,6 +53,19 @@ public enum ExportMenuItem: Identifiable {
     }
 }
 
+/// Wave 4 (post-20014) fix: `WorkspaceActionExportMenu` -- the data-driven
+/// export-menu payload `WorkspaceActionCenter` compares to decide whether a
+/// republish actually changed anything -- needs `ExportMenuItem` to be
+/// `Equatable`. Every case's own `id` already uniquely identifies it within
+/// one menu's item list (see `id`'s own doc comment), so comparing by `id`
+/// alone is enough; the `make`/render closures are neither comparable nor
+/// worth comparing.
+extension ExportMenuItem: Equatable {
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.id == rhs.id
+    }
+}
+
 /// A reusable "Export" `Menu` -- every V2 export surface (Project workspace,
 /// Night workspace, Home's tonight section, Results) builds the exact same
 /// component, differing only in which `ExportMenuItem`s they pass in. Wires

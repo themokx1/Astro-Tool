@@ -115,20 +115,34 @@ struct V2PolishSurfaceTests {
         // modifier call) -- the shell's own toolbar (`V2RootView`, already
         // in this list) is what actually calls `.help(action.help ?? "")`
         // to render their tooltips now, so that's where this gate reads
-        // them from for that workspace. `HealthView`/`ReviewWorkspace`
-        // still wrap their own menu-shaped actions (Run Audit, Rate Frames)
-        // as literal inline view code passed to the toolbar, so their
-        // `.help(` calls stay put in their own files untouched.
-        let toolbarFiles = [
+        // them from for that workspace. `ReviewWorkspace`/`CalibrationView`/
+        // `ResultsView` each still carry an UNRELATED literal `.help(` call
+        // of their own (an outlier/percentile-dot tooltip, a calibration
+        // preview/link tooltip, an "Open Result" tooltip respectively), so
+        // those stay checked for the literal modifier.
+        //
+        // Wave 4 (post-20014) fix: `HealthView`'s "Run Audit" tooltip moved
+        // the same way Review Frames/Results did above -- Run Audit is now
+        // a fully data-driven `WorkspaceActionMenu(help: ...)` published to
+        // `WorkspaceActionCenter` (see that type's own doc comment for why
+        // its OLD `.custom(id:) { ... .help(...) }` closure-based shape was
+        // the very thing that caused the invalidation storm this fixes), so
+        // `HealthView.swift` itself no longer contains a literal `.help(`
+        // call at all -- its tooltip text lives in a plain `help:` argument
+        // instead, and `V2RootView` (already in this list) is what actually
+        // renders it via `.help(menu.help ?? "")`.
+        let literalHelpFiles = [
             "Sources/AstroUI/Features/Review/ReviewWorkspace.swift",
-            "Sources/AstroUI/Features/Library/HealthView.swift",
             "Sources/AstroUI/Features/Library/CalibrationView.swift",
             "Sources/AstroUI/Features/Results/ResultsView.swift",
             "Sources/AstroUI/App/V2RootView.swift",
         ]
-        for path in toolbarFiles {
+        for path in literalHelpFiles {
             let source = try contents(path)
             #expect(source.contains(".help("), "\(path) has no .help( tooltip")
         }
+
+        let health = try contents("Sources/AstroUI/Features/Library/HealthView.swift")
+        #expect(health.contains("help: \"Scan the library"), "HealthView no longer carries its Run Audit tooltip text")
     }
 }

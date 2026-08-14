@@ -61,6 +61,10 @@ public struct ResultsView: View {
     let showsHeader: Bool
     @State private var store = ResultsStore()
     @State private var selectedResultID: UUID?
+    @Environment(WorkspaceActionCenter.self) private var workspaceActionCenter
+    /// Wave 4 (post-20014) fix: see `ProjectWorkspaceView.actionOwner`'s own
+    /// doc comment -- same reasoning here.
+    @State private var actionOwner = UUID().uuidString
 
     public init(rootURL: URL, project: ProjectRecord, showsHeader: Bool = true) {
         self.rootURL = rootURL
@@ -68,19 +72,18 @@ public struct ResultsView: View {
         self.showsHeader = showsHeader
     }
 
-    // Wave 4 navigation-rework code-review fix: publishing
-    // `.focusedSceneValue(\.workspaceActions, ...)` used to be unconditional
-    // on the view below, so when this same content is embedded (`showsHeader
-    // == false`, as `ProjectResultsPane` renders it on the project
-    // workspace's own Results tab) it shadowed `ProjectWorkspaceView`'s own
-    // published actions (Export/Review Frames/Results) the moment that tab
-    // was showing -- the shell's toolbar silently lost two of its three
-    // buttons. SwiftUI has no "conditional modifier" that cleanly removes a
-    // focused-scene key once applied, so the fix branches at `body`'s own
-    // top level instead: the modifier is only ever attached to the tree at
+    // Wave 4 navigation-rework code-review fix: publishing workspace actions
+    // used to be unconditional on the view below, so when this same content
+    // is embedded (`showsHeader == false`, as `ProjectResultsPane` renders it
+    // on the project workspace's own Results tab) it shadowed
+    // `ProjectWorkspaceView`'s own published actions (Export/Review Frames/
+    // Results) the moment that tab was showing -- the shell's toolbar
+    // silently lost two of its three buttons. The fix branches at `body`'s
+    // own top level: the publish hooks are only ever attached to the tree at
     // all on the STANDALONE route (`showsHeader == true`); the embedded
-    // branch renders the identical `workspaceContent` with no such modifier
-    // anywhere underneath it.
+    // branch renders the identical `workspaceContent` with none of them
+    // anywhere underneath it, so it never calls `workspaceActionCenter
+    // .publish`/`.clear` at all -- it simply never becomes an owner.
     public var body: some View {
         if showsHeader {
             workspaceContent
@@ -88,10 +91,24 @@ public struct ResultsView: View {
                 // in-body button in this header -- it now renders in the
                 // shell's own stable toolbar (see `WorkspaceActions`'s doc
                 // comment).
-                .focusedSceneValue(\.workspaceActions, workspaceActions)
+                // Wave 4 (post-20014) fix: published from discrete
+                // lifecycle/state-change events rather than from `body`
+                // itself -- see `WorkspaceActionCenter`'s own doc comment.
+                // `store.canonicalFolderName`/`store.latestNightDate` start
+                // `nil` and are filled in asynchronously by `store.load`
+                // (below), so both are watched explicitly rather than
+                // relying on some unrelated re-render to catch them landing.
+                .onAppear { publishWorkspaceActions() }
+                .onChange(of: store.canonicalFolderName) { _, _ in publishWorkspaceActions() }
+                .onChange(of: store.latestNightDate) { _, _ in publishWorkspaceActions() }
+                .onDisappear { workspaceActionCenter.clear(owner: actionOwner) }
         } else {
             workspaceContent
         }
+    }
+
+    private func publishWorkspaceActions() {
+        workspaceActionCenter.publish(owner: actionOwner, workspaceActions)
     }
 
     @ViewBuilder
@@ -145,9 +162,9 @@ public struct ResultsView: View {
 
     private var workspaceActions: WorkspaceActions {
         WorkspaceActions([
-            .custom(id: "v2.results.export") {
-                ExportMenu(items: stackListExportItems, accessibilityID: "v2.results.export")
-            },
+            .exportMenu(WorkspaceActionExportMenu(
+                id: "v2.results.export", items: stackListExportItems, accessibilityID: "v2.results.export"
+            )),
         ])
     }
 

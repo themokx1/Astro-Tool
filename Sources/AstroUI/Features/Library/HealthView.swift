@@ -16,6 +16,10 @@ public struct HealthView: View {
     let openSensorProfiles: () -> Void
     @Bindable var store: LibraryHealthStore
     @Environment(OperationHost.self) private var operationHost
+    @Environment(WorkspaceActionCenter.self) private var workspaceActionCenter
+    /// Wave 4 (post-20014) fix: see `ProjectWorkspaceView.actionOwner`'s own
+    /// doc comment -- same reasoning here.
+    @State private var actionOwner = UUID().uuidString
 
     public init(
         rootURL: URL?,
@@ -177,23 +181,40 @@ public struct HealthView: View {
         // Wave 4 Task 2: Run Audit/Verify Integrity/Cleanup/Sensor Profiles
         // used to be an in-body button row above -- they now render in the
         // shell's own stable toolbar (see `WorkspaceActions`'s doc comment).
-        .focusedSceneValue(\.workspaceActions, workspaceActions)
+        // Wave 4 (post-20014) fix: published from discrete lifecycle/state-
+        // change events rather than from `body` itself -- see
+        // `WorkspaceActionCenter`'s own doc comment. `runningAuditOperation`/
+        // `runningVerifyOperation` (below) derive from
+        // `operationHost.activeOperations`, which changes independently of
+        // any route/selection change whenever an audit/verify run
+        // starts or finishes -- that is watched here explicitly rather than
+        // relying on some unrelated re-render to catch it.
+        .onAppear { publishWorkspaceActions() }
+        .onChange(of: rootURL) { _, _ in publishWorkspaceActions() }
+        .onChange(of: operationHost.activeOperations) { _, _ in publishWorkspaceActions() }
+        .onDisappear { workspaceActionCenter.clear(owner: actionOwner) }
+    }
+
+    private func publishWorkspaceActions() {
+        workspaceActionCenter.publish(owner: actionOwner, workspaceActions)
     }
 
     private var workspaceActions: WorkspaceActions {
         WorkspaceActions([
-            .custom(id: "v2.health.run-audit") {
-                Menu("Run Audit") {
-                    Button("Fast (Skip Duplicate Scan)") {
+            .menu(WorkspaceActionMenu(
+                id: "v2.health.run-audit",
+                title: "Run Audit",
+                help: "Scan the library for calibration gaps, duplicates, and organization issues",
+                isDisabled: rootURL == nil || runningAuditOperation != nil,
+                items: [
+                    WorkspaceMenuItem(id: "v2.health.run-audit.fast", title: "Fast (Skip Duplicate Scan)") {
                         Task { await store.runAudit(mode: .fast, rootURL: rootURL, operationHost: operationHost) }
-                    }
-                } primaryAction: {
+                    },
+                ],
+                primaryAction: {
                     Task { await store.runAudit(mode: .full, rootURL: rootURL, operationHost: operationHost) }
                 }
-                .disabled(rootURL == nil || runningAuditOperation != nil)
-                .help("Scan the library for calibration gaps, duplicates, and organization issues")
-                .accessibilityIdentifier("v2.health.run-audit")
-            },
+            )),
             .button(WorkspaceAction(
                 id: "v2.health.verify",
                 title: "Verify Integrity…",

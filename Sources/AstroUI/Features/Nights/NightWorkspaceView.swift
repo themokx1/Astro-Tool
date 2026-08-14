@@ -18,6 +18,10 @@ public struct NightWorkspaceView: View {
     /// `ProjectWorkspaceView.router` -- see that view's own doc comment.
     @Bindable var router: AppRouter
     @State private var isEditingNotes = false
+    @Environment(WorkspaceActionCenter.self) private var workspaceActionCenter
+    /// Wave 4 (post-20014) fix: see `ProjectWorkspaceView.actionOwner`'s own
+    /// doc comment -- same reasoning here.
+    @State private var actionOwner = UUID().uuidString
 
     public init(
         row: NightRow,
@@ -75,7 +79,17 @@ public struct NightWorkspaceView: View {
         // doc comment), so the header above keeps only identity plus the
         // global breadcrumb above it (Wave 4 Task 3 removed the redundant
         // "Night" eyebrow prefix that used to duplicate that breadcrumb).
-        .focusedSceneValue(\.workspaceActions, workspaceActions)
+        // Wave 4 (post-20014) fix: published from discrete lifecycle/state-
+        // change events rather than from `body` itself -- see
+        // `WorkspaceActionCenter`'s own doc comment.
+        .onAppear { publishWorkspaceActions() }
+        .onChange(of: rootURL) { _, _ in publishWorkspaceActions() }
+        .onChange(of: row) { _, _ in publishWorkspaceActions() }
+        .onDisappear { workspaceActionCenter.clear(owner: actionOwner) }
+    }
+
+    private func publishWorkspaceActions() {
+        workspaceActionCenter.publish(owner: actionOwner, workspaceActions)
     }
 
     /// Wave 4 Task 3: the flat one-scroll layout is now four segmented
@@ -167,28 +181,22 @@ public struct NightWorkspaceView: View {
 
     private var workspaceActions: WorkspaceActions {
         var items: [WorkspaceActionItem] = [
-            .custom(id: "v2.nights.export") {
-                ExportMenu(items: nightExportItems, accessibilityID: "v2.nights.export")
-            },
+            .exportMenu(WorkspaceActionExportMenu(
+                id: "v2.nights.export", items: nightExportItems, accessibilityID: "v2.nights.export"
+            )),
         ]
         if let project = row.snapshot.projects.first {
-            items.append(.custom(id: "v2.night.workspace.actions") {
-                Menu {
-                    NightActionMenu(
-                        target: ProjectsQuery.canonicalFolderName(for: project),
-                        date: row.date,
-                        setupDescriptor: row.snapshot.series.first?.setupDescriptor,
-                        nightID: row.id,
-                        rootURL: rootURL,
-                        editNotes: { isEditingNotes = true },
-                        openCalibration: openCalibration,
-                        openInsights: openInsights
-                    )
-                } label: {
-                    Label("Night Actions", systemImage: "ellipsis.circle")
-                }
-                .accessibilityIdentifier("v2.night.workspace.actions")
-            })
+            items.append(.nightActionsMenu(WorkspaceActionNightMenu(
+                id: "v2.night.workspace.actions",
+                target: ProjectsQuery.canonicalFolderName(for: project),
+                date: row.date,
+                setupDescriptor: row.snapshot.series.first?.setupDescriptor,
+                nightID: row.id,
+                rootURL: rootURL,
+                editNotes: { isEditingNotes = true },
+                openCalibration: openCalibration,
+                openInsights: openInsights
+            )))
             items.append(.button(WorkspaceAction(
                 id: "v2.night.review",
                 title: "Review Frames",

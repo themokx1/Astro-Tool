@@ -56,6 +56,11 @@ public struct V2RootView: View {
     @State private var libraryPreparationError: String?
     @State private var didRestoreWindowState = false
     @State private var operationHost = OperationHost(center: OperationCenter())
+    /// Wave 4 (post-20014) fix: owned here (once per window, same lifetime
+    /// as `operationHost`) and handed down through the environment -- see
+    /// `WorkspaceActionCenter`'s own doc comment for why this replaced the
+    /// old `FocusedValues.workspaceActions` mechanism.
+    @State private var workspaceActionCenter = WorkspaceActionCenter()
     @SceneStorage("v2.windowRestoration") private var encodedWindowState = ""
     /// Gates the automatic restore-and-scan of the last bookmarked library
     /// at launch (see the first `.task` below) -- default `true` preserves
@@ -105,6 +110,7 @@ public struct V2RootView: View {
                     .accessibilityIdentifier("v2.toast-layer")
             }
             .environment(operationHost)
+            .environment(workspaceActionCenter)
             .onAppear {
                 restoreWindowStateOnce()
             }
@@ -198,8 +204,12 @@ private struct V2Shell: View {
     /// own primary actions (Export, Review Frames, Run Audit, ...) -- read
     /// here so the shell's own fixed toolbar can render them in one stable
     /// place, rather than each workspace drawing its own in-body action row.
-    /// See `WorkspaceActions`'s own doc comment for the full rationale.
-    @FocusedValue(\.workspaceActions) private var workspaceActions
+    /// Wave 4 (post-20014) fix: this used to be `@FocusedValue(\.workspaceActions)`
+    /// -- see `WorkspaceActionCenter`'s own doc comment for why that caused
+    /// an invalidation storm and why an `@Observable` environment object,
+    /// updated only on discrete workspace lifecycle/state-change events,
+    /// replaced it.
+    @Environment(WorkspaceActionCenter.self) private var workspaceActionCenter
 
     private var libraryAccessMode: LibraryAccessMode {
         enableWriteOperations ? .mutationEnabled : .readOnly
@@ -403,15 +413,16 @@ private struct V2Shell: View {
     }
 
     /// Wave 4 Task 2: renders whatever the current route's workspace
-    /// published through the `workspaceActions` focused value -- `nil`/empty
-    /// (Home, Insights, Planning, a section root with nothing pushed) simply
+    /// published to the shared `WorkspaceActionCenter` -- empty (Home,
+    /// Insights, Planning, a section root with nothing pushed) simply
     /// renders nothing, so the toolbar quietly shrinks back to just its
     /// permanent controls. The wrapping `HStack` carries the container
     /// accessibility identifier automation looks for; each item then carries
     /// its OWN identifier, exactly like every other toolbar control here.
     @ViewBuilder
     private var workspaceActionsToolbarContent: some View {
-        if let items = workspaceActions?.items, !items.isEmpty {
+        let items = workspaceActionCenter.actions.items
+        if !items.isEmpty {
             HStack(spacing: 8) {
                 ForEach(items) { item in
                     switch item {
@@ -422,12 +433,82 @@ private struct V2Shell: View {
                         .disabled(action.isDisabled)
                         .help(action.help ?? "")
                         .accessibilityIdentifier(action.id)
-                    case .renderedView(_, let view):
-                        view()
+                    case .menu(let menu):
+                        workspaceMenu(menu)
+                    case .exportMenu(let export):
+                        ExportMenu(items: export.items, accessibilityID: export.accessibilityID)
+                    case .nightActionsMenu(let night):
+                        Menu {
+                            NightActionMenu(
+                                target: night.target,
+                                date: night.date,
+                                setupDescriptor: night.setupDescriptor,
+                                nightID: night.nightID,
+                                rootURL: night.rootURL,
+                                editNotes: night.editNotes,
+                                openCalibration: night.openCalibration,
+                                openInsights: night.openInsights
+                            )
+                        } label: {
+                            Label("Night Actions", systemImage: "ellipsis.circle")
+                        }
+                        .accessibilityIdentifier(night.id)
                     }
                 }
             }
             .accessibilityIdentifier("v2.toolbar.workspace-actions")
+        }
+    }
+
+    /// Builds the actual SwiftUI split-button `Menu` for a data-driven
+    /// `WorkspaceActionMenu` (Health's "Run Audit", Review's
+    /// "Rate Frames…") -- two near-identical branches only because `Menu`'s
+    /// `primaryAction:`-carrying initializer is a distinct overload from the
+    /// plain one, not because the two menus differ in shape otherwise.
+    @ViewBuilder
+    private func workspaceMenu(_ menu: WorkspaceActionMenu) -> some View {
+        Group {
+            if menu.hasPrimaryAction {
+                Menu {
+                    menuItems(menu)
+                } label: {
+                    workspaceMenuLabel(menu)
+                } primaryAction: {
+                    menu.performPrimaryAction()
+                }
+            } else {
+                Menu {
+                    menuItems(menu)
+                } label: {
+                    workspaceMenuLabel(menu)
+                }
+            }
+        }
+        .disabled(menu.isDisabled)
+        .help(menu.help ?? "")
+        .accessibilityIdentifier(menu.id)
+    }
+
+    @ViewBuilder
+    private func menuItems(_ menu: WorkspaceActionMenu) -> some View {
+        ForEach(menu.items) { item in
+            Button(action: item.callAsFunction) {
+                if let systemImage = item.systemImage {
+                    Label(item.title, systemImage: systemImage)
+                } else {
+                    Text(item.title)
+                }
+            }
+            .disabled(item.isDisabled)
+        }
+    }
+
+    @ViewBuilder
+    private func workspaceMenuLabel(_ menu: WorkspaceActionMenu) -> some View {
+        if let systemImage = menu.systemImage {
+            Label(menu.title, systemImage: systemImage)
+        } else {
+            Text(menu.title)
         }
     }
 

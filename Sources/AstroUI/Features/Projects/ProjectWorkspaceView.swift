@@ -24,6 +24,16 @@ public struct ProjectWorkspaceView: View {
     @State private var projectNotes: String
     @State private var saveError: String?
     @State private var isSaving = false
+    @Environment(WorkspaceActionCenter.self) private var workspaceActionCenter
+    /// Wave 4 (post-20014) fix: this view's own stable identity within
+    /// `WorkspaceActionCenter` -- see that type's own doc comment for why
+    /// publishing is now owner-keyed rather than a per-body-pass focused
+    /// value. A fresh token per view instance is exactly right here: `.id
+    /// (route)` (see `DetailHost`'s own doc comment) recreates this view --
+    /// and therefore this token -- every time the pushed project changes,
+    /// while an in-place re-render (the SAME project, new `snapshot`
+    /// content) keeps the same token/owner.
+    @State private var actionOwner = UUID().uuidString
 
     public init(
         snapshot: ProjectSnapshot,
@@ -83,7 +93,17 @@ public struct ProjectWorkspaceView: View {
         // header keeps ONLY identity (title/summary) plus the global
         // breadcrumb above it (Wave 4 Task 3 removed the redundant
         // "Project" eyebrow prefix that used to duplicate that breadcrumb).
-        .focusedSceneValue(\.workspaceActions, workspaceActions)
+        // Wave 4 (post-20014) fix: published from discrete lifecycle/state-
+        // change events rather than from `body` itself -- see
+        // `WorkspaceActionCenter`'s own doc comment.
+        .onAppear { publishWorkspaceActions() }
+        .onChange(of: rootURL) { _, _ in publishWorkspaceActions() }
+        .onChange(of: snapshot) { _, _ in publishWorkspaceActions() }
+        .onDisappear { workspaceActionCenter.clear(owner: actionOwner) }
+    }
+
+    private func publishWorkspaceActions() {
+        workspaceActionCenter.publish(owner: actionOwner, workspaceActions)
     }
 
     private var header: some View {
@@ -97,9 +117,9 @@ public struct ProjectWorkspaceView: View {
 
     private var workspaceActions: WorkspaceActions {
         WorkspaceActions([
-            .custom(id: "v2.project.export") {
-                ExportMenu(items: projectExportItems, accessibilityID: "v2.project.export")
-            },
+            .exportMenu(WorkspaceActionExportMenu(
+                id: "v2.project.export", items: projectExportItems, accessibilityID: "v2.project.export"
+            )),
             .button(WorkspaceAction(
                 id: "v2.project.review",
                 title: "Review Frames",

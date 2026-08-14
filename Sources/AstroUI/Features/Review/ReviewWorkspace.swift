@@ -13,6 +13,10 @@ public struct ReviewWorkspace: View {
     @State private var selectedNightFilter: String?
     @State private var blinkReviewStore: FrameBlinkReviewStore?
     @Environment(OperationHost.self) private var operationHost
+    @Environment(WorkspaceActionCenter.self) private var workspaceActionCenter
+    /// Wave 4 (post-20014) fix: see `ProjectWorkspaceView.actionOwner`'s own
+    /// doc comment -- same reasoning here.
+    @State private var actionOwner = UUID().uuidString
 
     public init(
         store: ReviewStore,
@@ -49,9 +53,10 @@ public struct ReviewWorkspace: View {
             try? await store.open(rootURL: rootURL, projectID: projectID)
         }
         // Wave 3 Task 7: the Actions menu's "Rate Frames in Review" --
-        // mirrors `rateFramesMenu`'s own primary action (native-only rate of
-        // the selected series), `isAvailable` mirroring that button's own
-        // `.disabled` condition.
+        // mirrors the toolbar's own "Rate Frames…" menu primary action
+        // (native-only rate of the selected series, built by
+        // `workspaceActions` below), `isAvailable` mirroring that menu's own
+        // `isDisabled` condition.
         .focusedSceneValue(
             \.reviewRate,
             ReviewRateCommand(
@@ -85,13 +90,42 @@ public struct ReviewWorkspace: View {
         // `WorkspaceActions`'s doc comment). Empty (no items) whenever no
         // series is selected, exactly matching that row's own old
         // conditional visibility.
-        .focusedSceneValue(\.workspaceActions, workspaceActions)
+        // Wave 4 (post-20014) fix: published from discrete lifecycle/state-
+        // change events rather than from `body` itself -- see
+        // `WorkspaceActionCenter`'s own doc comment. `runningRatingOperation`
+        // (below) derives from `operationHost.activeOperations`, which
+        // changes independently of series selection whenever a rating run
+        // starts or finishes.
+        .onAppear { publishWorkspaceActions() }
+        .onChange(of: store.selectedSeries) { _, _ in publishWorkspaceActions() }
+        .onChange(of: operationHost.activeOperations) { _, _ in publishWorkspaceActions() }
+        .onDisappear { workspaceActionCenter.clear(owner: actionOwner) }
+    }
+
+    private func publishWorkspaceActions() {
+        workspaceActionCenter.publish(owner: actionOwner, workspaceActions)
     }
 
     private var workspaceActions: WorkspaceActions {
         guard let selected = store.selectedSeries else { return WorkspaceActions([]) }
         return WorkspaceActions([
-            .custom(id: "v2.review.rate") { rateFramesMenu(selected) },
+            .menu(WorkspaceActionMenu(
+                id: "v2.review.rate",
+                title: "Rate Frames…",
+                systemImage: "star.leadinghalf.filled",
+                isDisabled: selected.decisions.isEmpty || runningRatingOperation != nil,
+                items: [
+                    WorkspaceMenuItem(id: "v2.review.rate.full", title: "Full Re-measure (Siril + native)") {
+                        Task { await store.rateSelectedSeries(mode: .fullReMeasure, operationHost: operationHost) }
+                    },
+                    WorkspaceMenuItem(id: "v2.review.rate.native", title: "Native Only (no Siril)") {
+                        Task { await store.rateSelectedSeries(mode: .nativeOnly, operationHost: operationHost) }
+                    },
+                ],
+                primaryAction: {
+                    Task { await store.rateSelectedSeries(mode: .nativeOnly, operationHost: operationHost) }
+                }
+            )),
             .button(WorkspaceAction(
                 id: "v2.review.blink",
                 title: "Review Frames…",
@@ -359,24 +393,6 @@ public struct ReviewWorkspace: View {
         guard let selectedSeriesID = store.selectedSeriesID else { return nil }
         let kind = OperationKind.rate(series: selectedSeriesID.uuidString)
         return operationHost.activeOperations.first { $0.kind == kind }
-    }
-
-    private func rateFramesMenu(_ selected: ReviewSeriesSnapshot) -> some View {
-        Menu {
-            Button("Full Re-measure (Siril + native)") {
-                Task { await store.rateSelectedSeries(mode: .fullReMeasure, operationHost: operationHost) }
-            }
-            Button("Native Only (no Siril)") {
-                Task { await store.rateSelectedSeries(mode: .nativeOnly, operationHost: operationHost) }
-            }
-        } label: {
-            Label("Rate Frames…", systemImage: "star.leadinghalf.filled")
-        } primaryAction: {
-            Task { await store.rateSelectedSeries(mode: .nativeOnly, operationHost: operationHost) }
-        }
-        .disabled(selected.decisions.isEmpty || runningRatingOperation != nil)
-        .fixedSize()
-        .accessibilityIdentifier("v2.review.rate")
     }
 
     /// Backs the "Frames" header's ⓘ button -- what the measured quality
