@@ -230,6 +230,26 @@ struct V2ShellSurfaceTests {
         #expect(root.contains("v2.toast-layer"))
     }
 
+    // Freeze diagnosis (build 20017, live-sampled): `ToastOverlay` is mounted
+    // on the root view, and its `.task` used to run `while !Task.isCancelled`
+    // forever, mutating `OperationHost` state once a second even with zero
+    // toasts -- an unconditional 1 Hz invalidation of the entire shell. Pins
+    // the fix so the forever-poll shape cannot regress: toast expiry must be
+    // event-driven (scheduled only while toasts actually exist), not a
+    // perpetual timer loop.
+    @Test("ToastOverlay's expiry timer is event-driven, not a forever-poll")
+    func toastOverlayHasNoUnconditionalPollingLoop() throws {
+        let overlay = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Operations/ToastOverlay.swift"
+            ),
+            encoding: .utf8
+        )
+
+        #expect(!overlay.contains("while !Task.isCancelled"))
+        #expect(!overlay.contains("while true"))
+    }
+
     @Test("A global rescan (⌘R) is wired into the menu bar and the Library workspace")
     func rescanIsWiredIntoCommandsAndLibraryView() throws {
         let commands = try String(

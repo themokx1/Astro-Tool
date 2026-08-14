@@ -202,7 +202,19 @@ public final class OperationHost {
     /// a real timer in production (`ToastOverlay`) and called directly with a
     /// synthetic `now` in tests -- either way this method itself never reads
     /// the wall clock, so its behavior is fully deterministic.
+    ///
+    /// The `contains(where:)` guard below is load-bearing, not an
+    /// optimization: `@Observable`'s generated `_modify` accessor registers a
+    /// mutation (and so notifies every observer) on ANY write to `toasts`,
+    /// even a `removeAll(where:)` that ends up removing nothing. Without the
+    /// guard, `ToastOverlay`'s per-second poll would touch this
+    /// root-mounted store's observable state every single tick forever, even
+    /// with zero toasts -- exactly the unconditional 1 Hz invalidation that
+    /// froze the V2 shell (diagnosed by sampling the live frozen process at
+    /// build 20017). Reading `toasts` here (the `contains` check) does not
+    /// itself notify -- only the write below does.
     public func expireToasts(now: Date) {
+        guard toasts.contains(where: { $0.expiresAt <= now }) else { return }
         toasts.removeAll { $0.expiresAt <= now }
     }
 

@@ -1,5 +1,6 @@
 import AstroApplication
 import Foundation
+import Observation
 import Testing
 
 @testable import AstroUI
@@ -199,6 +200,79 @@ struct OperationHostTests {
         host.expireToasts(now: now)
         #expect(host.toasts.isEmpty)
     }
+
+    // Freeze diagnosis (build 20017, live-sampled): `ToastOverlay`'s `.task`
+    // called `expireToasts(now:)` once a second FOREVER, even with zero
+    // toasts, because `toasts.removeAll { ... }` goes through `@Observable`'s
+    // `_modify` accessor unconditionally -- that registers a mutation (and so
+    // notifies every observer) even when nothing was actually removed. Since
+    // `ToastOverlay` sits on the root view, that one notification per second
+    // invalidated the entire shell forever. These three tests pin
+    // `expireToasts(now:)` to the honest contract: touch `toasts` (and so
+    // notify) ONLY when a toast is actually removed.
+    @Test("expireToasts is an observable no-op when there are no toasts at all")
+    func expireToastsWithNoToastsDoesNotNotify() async throws {
+        let host = OperationHost(center: OperationCenter())
+        let counter = NotificationCounter()
+
+        withObservationTracking {
+            _ = host.toasts
+        } onChange: {
+            counter.increment()
+        }
+
+        host.expireToasts(now: Date())
+
+        // Give an (incorrect) notification a moment to land before asserting
+        // its absence -- `withObservationTracking`'s `onChange` fires
+        // synchronously on mutation, but this guards against any accidental
+        // async indirection creeping in later.
+        try await Task.sleep(nanoseconds: 20_000_000)
+        #expect(counter.value == 0)
+    }
+
+    @Test("expireToasts is an observable no-op when every toast is still unexpired")
+    func expireToastsWithOnlyUnexpiredToastsDoesNotNotify() async throws {
+        var now = Date(timeIntervalSince1970: 0)
+        let host = OperationHost(center: OperationCenter(), clock: { now }, toastLifetime: { _ in 10 })
+        _ = await host.run(kind: .export(project: "P"), title: "Exporting P") {}
+        try await waitUntil { !host.toasts.isEmpty }
+
+        let counter = NotificationCounter()
+        withObservationTracking {
+            _ = host.toasts
+        } onChange: {
+            counter.increment()
+        }
+
+        now = now.addingTimeInterval(1) // well within the 10s lifetime
+        host.expireToasts(now: now)
+
+        try await Task.sleep(nanoseconds: 20_000_000)
+        #expect(counter.value == 0)
+        #expect(!host.toasts.isEmpty)
+    }
+
+    @Test("expireToasts removes an actually-expired toast and DOES notify observers")
+    func expireToastsRemovesExpiredToastAndNotifies() async throws {
+        var now = Date(timeIntervalSince1970: 0)
+        let host = OperationHost(center: OperationCenter(), clock: { now }, toastLifetime: { _ in 4 })
+        _ = await host.run(kind: .export(project: "P"), title: "Exporting P") {}
+        try await waitUntil { !host.toasts.isEmpty }
+
+        let counter = NotificationCounter()
+        withObservationTracking {
+            _ = host.toasts
+        } onChange: {
+            counter.increment()
+        }
+
+        now = now.addingTimeInterval(10) // past the 4s lifetime
+        host.expireToasts(now: now)
+
+        #expect(counter.value == 1)
+        #expect(host.toasts.isEmpty)
+    }
 }
 
 /// Polls a MainActor-isolated condition until it becomes true, bounded so a
@@ -250,6 +324,16 @@ private final class AsyncGate: @unchecked Sendable {
             }
         }
     }
+}
+
+/// `withObservationTracking`'s `onChange` closure is `@Sendable` -- this
+/// tiny reference-type counter is what these tests mutate from inside it
+/// instead of a plain captured `var` (mirrors `WorkspaceActionsTests`'s
+/// `NotificationCounter`, redefined locally here since it is file-private
+/// there).
+private final class NotificationCounter: @unchecked Sendable {
+    private(set) var value = 0
+    func increment() { value += 1 }
 }
 
 private final class ObservedFlag: @unchecked Sendable {
