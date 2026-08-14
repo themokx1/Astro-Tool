@@ -123,3 +123,25 @@ Ezek külön kiemelést érdemelnek, mert a termék hitelességét rombolják:
 A fagyás azért juthatott el a felhasználóig, mert **a 2086 unit-teszt egyike sem méri a felület válaszidejét**. Ezért a UI-harness minden navigációs lépése mostantól **válaszidő-küszöböt** kap (12 s): a „fagy" nem tud elrejtőzni egy nagyvonalú timeout mögé, hanem konkrét, mérhető hibaüzenet lesz belőle. A harness négy tesztre bomlik: shell-navigáció, Planning ismételt belépés + slider-húzás, Library-algyerekek + projekt-drilldown, inspector.
 
 Emellett strukturális kapu-tesztek pinnelik a rendszerszintű javításokat (nincs `Table` görgető konténerben; nincs feltétel nélküli polling-ciklus), hogy a mintát ne lehessen véletlenül visszahozni.
+
+---
+
+## 8. Utólagos kiegészítés — az igazi gyökérok (2026-08-15)
+
+Az 1. szakaszban leírt két hiba valós volt és javítva lett, de a fagyás **így is megmaradt**. A döntő mérés az volt, hogy az appot a `-UITestInitialSection` kapcsolóval, a **valódi könyvtárral**, szekciónként indítottam:
+
+| Szekció | CPU 30 s-nál |
+|---|---|
+| Home | 0,0% |
+| Projects | 0,0% |
+| **Planning** | **99,1%** |
+
+Tehát Planning-specifikus. (A fixture-könyvtárral azért mértünk korábban 0%-ot, mert ott egy onboarding-lap takarja a nézetet — hamis negatív.)
+
+A mintavételezés a `PlanningStore.init`-et és a `handleDefaultsChange`-t mutatta forrónak. Az ok:
+
+**`PlanningStore.init` meghívta a `UserDefaults.register(defaults:)`-t.** Ez `didChangeNotification`-t posztol. A SwiftUI viszont a `PlanningView`-ban lévő `@State private var store = PlanningStore()` alapérték-kifejezést **minden view-konstrukciónál** kiértékeli (csak az első példányt tartja meg). Így minden renderben született egy eldobott store, amely posztolt egy defaults-változást, ami **invalidálta az összes `@AppStorage`-ot** a felcsatolt fában (`V2RootView`, `HomeView`, `V2SettingsView`) → a shell újrarenderelt → a Planning újrarenderelt → újabb eldobott store → újabb notifikáció. Végtelen hurok.
+
+A javítás: a regisztráció az egyszeri `activate()`-be került. Mérés utána: **0,0% 30 és 90 másodpercnél**, valódi könyvtárral, Planningon.
+
+**Általánosítható szabály:** egy `@State`-ben tartott store `init`-je legyen teljesen néma — ne posztoljon notifikációt, ne írjon `UserDefaults`-ba, ne regisztráljon observert, ne indítson munkát. Minden ilyen az explicit, idempotens `activate()`-be való, amit a nézet `.task`-ja hív.
