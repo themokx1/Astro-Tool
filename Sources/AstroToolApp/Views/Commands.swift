@@ -268,6 +268,9 @@ struct V2AstroToolCommands: Commands {
     @FocusedValue(\.appRouter) private var router
     @FocusedValue(\.libraryRescan) private var libraryRescan
     @FocusedValue(\.libraryAudit) private var libraryAudit
+    @FocusedValue(\.sensorMeasure) private var sensorMeasure
+    @FocusedValue(\.reviewRate) private var reviewRate
+    @FocusedValue(\.globalSearchFocus) private var globalSearchFocus
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
@@ -311,6 +314,26 @@ struct V2AstroToolCommands: Commands {
                 libraryAudit?(.fast)
             }
             .disabled(libraryAudit?.isAvailable != true)
+
+            Divider()
+
+            // Wave 3 Task 7: same "run it straight through `OperationHost`,
+            // no confirm sheet" shortcut `libraryAudit`/`libraryRescan`
+            // already give the menu bar -- available whenever Sensor
+            // Profiles (`SensorProfilesView`) is on screen.
+            Button("Measure Sensors") {
+                sensorMeasure?()
+            }
+            .disabled(sensorMeasure?.isAvailable != true)
+
+            // Available whenever the Review workspace is open with a
+            // capture series selected that has frames to rate and no
+            // rating run already in flight for it -- mirrors that
+            // workspace's own "Rate Frames…" primary action (native-only).
+            Button("Rate Frames in Review") {
+                reviewRate?()
+            }
+            .disabled(reviewRate?.isAvailable != true)
         }
 
         CommandGroup(after: .toolbar) {
@@ -329,6 +352,54 @@ struct V2AstroToolCommands: Commands {
             }
             .keyboardShortcut("i", modifiers: [.command, .option])
             .disabled(router == nil)
+        }
+
+        // Wave 3 Task 7: ⌘F -- opens/focuses the shell's own global search
+        // popover, through a focused value rather than `NotificationCenter`
+        // (unlike V1's "Kereső fókuszálása", which V2's own root view is
+        // forbidden from using at all). Same menu location V1 used for its
+        // equivalent command.
+        CommandGroup(after: .pasteboard) {
+            Button("Find") {
+                globalSearchFocus?()
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            .disabled(globalSearchFocus?.isAvailable != true)
+        }
+
+        // Wave 3 Task 7: V2's own Help menu -- Glossary/Folder
+        // Structure/First Steps present the real V2 sheets
+        // (`AppRouter.present(_:)`, rendered by `V2RootView`'s own
+        // `.sheet(item:)`), Documentation/Support/Source open
+        // `ProductInfo`'s URLs, matching V1's equivalent Help menu one
+        // for one.
+        CommandGroup(replacing: .help) {
+            Button("Glossary") {
+                router?.present(.glossary(nil))
+            }
+            .disabled(router == nil)
+
+            Button("Folder Structure") {
+                router?.present(.folderStructure)
+            }
+            .disabled(router == nil)
+
+            Button("First Steps") {
+                router?.present(.firstSteps)
+            }
+            .disabled(router == nil)
+
+            Divider()
+
+            Button("Documentation") {
+                NSWorkspace.shared.open(tutorialURL)
+            }
+            Button("Support") {
+                NSWorkspace.shared.open(URL(string: ProductInfo.supportURL)!)
+            }
+            Button("Source Code") {
+                NSWorkspace.shared.open(URL(string: ProductInfo.sourceURL)!)
+            }
         }
     }
 }

@@ -88,12 +88,24 @@ public enum PresentationRoute: Hashable, Sendable, Identifiable {
     case newNight
     case mutationConfirmation(UUID)
     case settingsDeepLink(String)
+    /// Wave 3 Task 7: Help ▸ Glossary -- `anchor`, when set, is the exact
+    /// term name `GlossaryView` scrolls straight to (used by
+    /// `MetricInfoButton`'s per-metric "In the Glossary" links); `nil` opens
+    /// at the top, same as the plain Help-menu entry point.
+    case glossary(String?)
+    /// Wave 3 Task 7: Help ▸ Folder Structure.
+    case folderStructure
+    /// Wave 3 Task 7: Help ▸ First Steps.
+    case firstSteps
 
     public enum ID: Hashable, Sendable {
         case newProject
         case newNight
         case mutationConfirmation(UUID)
         case settingsDeepLink(String)
+        case glossary
+        case folderStructure
+        case firstSteps
     }
 
     public var id: ID {
@@ -102,6 +114,9 @@ public enum PresentationRoute: Hashable, Sendable, Identifiable {
         case .newNight: .newNight
         case .mutationConfirmation(let id): .mutationConfirmation(id)
         case .settingsDeepLink(let destination): .settingsDeepLink(destination)
+        case .glossary: .glossary
+        case .folderStructure: .folderStructure
+        case .firstSteps: .firstSteps
         }
     }
 }

@@ -22,8 +22,15 @@ public struct PlanningView: View {
         .accessibilityIdentifier("v2.detail.planning")
     }
 
+    /// Backs the "Camera and optics" header's ⓘ button.
+    private static let setupMetricInfo: [MetricInfoButton.Metric] = [
+        .init(title: "Field of view (FOV)", explanation: "The area of sky your sensor and optics cover, in degrees wide by degrees tall.", glossaryTerm: "Field of view (FOV) / framing fit"),
+        .init(title: "Focal length", explanation: "The optical system's focal length in millimeters. A longer focal length gives a narrower, more magnified field of view."),
+        .init(title: "Integration", explanation: "The estimated total exposure time needed for a clean result at this setup's framing and sky conditions.", glossaryTerm: "Integration (gross vs. real)"),
+    ]
+
     private var setupBar: some View {
-        GroupBox("Camera and optics") {
+        GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Picker("Setup", selection: $store.selectedSetupID) {
@@ -54,6 +61,11 @@ public struct PlanningView: View {
                 }
             }
             .padding(8)
+        } label: {
+            HStack(spacing: 6) {
+                Text("Camera and optics")
+                MetricInfoButton(metrics: Self.setupMetricInfo)
+            }
         }
     }
 

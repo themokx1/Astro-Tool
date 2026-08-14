@@ -51,6 +51,18 @@ public struct ReviewWorkspace: View {
         .task(id: projectID) {
             try? await store.open(rootURL: rootURL, projectID: projectID)
         }
+        // Wave 3 Task 7: the Actions menu's "Rate Frames in Review" --
+        // mirrors `rateFramesMenu`'s own primary action (native-only rate of
+        // the selected series), `isAvailable` mirroring that button's own
+        // `.disabled` condition.
+        .focusedSceneValue(
+            \.reviewRate,
+            ReviewRateCommand(
+                isAvailable: (store.selectedSeries.map { !$0.decisions.isEmpty } ?? false)
+                    && runningRatingOperation == nil,
+                action: { Task { await store.rateSelectedSeries(mode: .nativeOnly, operationHost: operationHost) } }
+            )
+        )
         .onChange(of: store.selectedSeriesID) { _, _ in selectedDecisionIDs.removeAll() }
         .onChange(of: store.snapshot) { _, _ in
             guard let blinkReviewStore, let selected = store.selectedSeries else { return }
@@ -181,7 +193,10 @@ public struct ReviewWorkspace: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Frames").font(.headline)
+                        HStack(spacing: 6) {
+                            Text("Frames").font(.headline)
+                            MetricInfoButton(metrics: Self.qualityMetricInfo)
+                        }
                         Text(seriesSubtitle(selected.series)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -350,6 +365,17 @@ public struct ReviewWorkspace: View {
         .fixedSize()
         .accessibilityIdentifier("v2.review.rate")
     }
+
+    /// Backs the "Frames" header's ⓘ button -- what the measured quality
+    /// columns mean, per V1's `QualitySegment`-era explanations.
+    private static let qualityMetricInfo: [MetricInfoButton.Metric] = [
+        .init(title: "Score", explanation: "This library's overall quality ranking for the frame, combining FWHM, roundness, background, and saturation into one number. Higher is better. The outlier flag next to a low score uses this library's z-score threshold.", glossaryTerm: "z-score"),
+        .init(title: "FWHM", explanation: "Full Width at Half Maximum -- how sharp the stars are. A smaller value is a sharper frame.", glossaryTerm: "FWHM"),
+        .init(title: "Roundness", explanation: "How far star shapes deviate from a perfect circle. A high value can mean coma, trailing, or a guiding error.", glossaryTerm: "Roundness"),
+        .init(title: "Background", explanation: "The measured sky-background level for the frame, in ADU unless a sensor profile makes e⁻/s/″² available.", glossaryTerm: "ADU"),
+        .init(title: "Sat. %", explanation: "The fraction of pixels at or near the sensor's saturation point -- a high value can mean an overexposed core or a bright satellite trail."),
+        .init(title: "Percentile", explanation: "How this frame's score compares to every other frame measured in this library."),
+    ]
 
     private static func formatted(_ value: Double?, fractionDigits: Int) -> String {
         guard let value else { return "—" }

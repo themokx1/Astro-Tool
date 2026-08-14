@@ -81,6 +81,18 @@ public struct SensorProfilesView: View {
         .sheet(isPresented: $showsMeasureSheet) {
             SensorMeasureConfirmSheet(store: store, operationHost: operationHost, dismiss: { showsMeasureSheet = false })
         }
+        // Wave 3 Task 7: the Actions menu's "Measure Sensors" -- runs the
+        // measurement straight through `OperationHost`, the same
+        // "skip the confirm sheet" shortcut the menu bar's Rescan/Run Audit
+        // items already give (this view's own button still opens the
+        // explanatory confirm sheet first).
+        .focusedSceneValue(
+            \.sensorMeasure,
+            SensorMeasureCommand(
+                isAvailable: true,
+                action: { Task { await store.measure(operationHost: operationHost) } }
+            )
+        )
         .accessibilityIdentifier("v2.sensor-profiles")
     }
 

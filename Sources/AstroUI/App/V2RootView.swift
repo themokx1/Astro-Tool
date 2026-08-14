@@ -193,6 +193,7 @@ private struct V2Shell: View {
     @State private var pendingMutationPlan: LibraryMutationPlan?
     @State private var pendingMutationRootURL: URL?
     @State private var pendingMutationAccessMode: LibraryAccessMode = .readOnly
+    @State private var sidebarBadges = SidebarBadgeStore()
     @AppStorage("v2.library.enableWriteOperations") private var enableWriteOperations = false
     @Environment(\.openSettings) private var openSettings
     @Environment(OperationHost.self) private var operationHost
@@ -203,7 +204,7 @@ private struct V2Shell: View {
 
     var body: some View {
         NavigationSplitView {
-            V2Sidebar(router: router)
+            V2Sidebar(router: router, badges: sidebarBadges)
         } content: {
             ContentColumn(router: router)
         } detail: {
@@ -304,6 +305,17 @@ private struct V2Shell: View {
                 action: performAudit
             )
         )
+        .focusedSceneValue(
+            \.globalSearchFocus,
+            GlobalSearchFocusCommand(isAvailable: true, action: { showsSearch = true })
+        )
+        .onChange(of: operationHost.recentOutcomes) { _, outcomes in
+            guard let latest = outcomes.first, latest.phase == .succeeded else { return }
+            switch latest.kind {
+            case .scan, .audit: refreshSidebarBadges()
+            default: break
+            }
+        }
         .frame(minWidth: 820, minHeight: 600)
         .overlay {
             if let destination = reviewDestination {
@@ -352,6 +364,12 @@ private struct V2Shell: View {
                         pendingMutationRootURL = nil
                     }
                 )
+            } else if case .glossary(let anchor) = presentation {
+                GlossaryView(anchor: anchor, dismiss: router.dismissPresentation)
+            } else if presentation == .folderStructure {
+                FolderStructureHelpView(dismiss: router.dismissPresentation)
+            } else if presentation == .firstSteps {
+                FirstStepsView(router: router, dismiss: router.dismissPresentation)
             } else {
                 V2PresentationPlaceholder(route: presentation) {
                     router.dismissPresentation()
@@ -386,11 +404,26 @@ private struct V2Shell: View {
             guard let route = AppRoute(deepLink: url) else { return }
             router.open(route)
         }
+        .onAppear { refreshSidebarBadges() }
+        .onChange(of: nightsStore.nights) { _, _ in refreshSidebarBadges() }
     }
 
     private func presentOnboarding() {
         onboardingStore.returnToLibraryChoice()
         isOnboardingPresented = true
+    }
+
+    /// Wave 3 Task 7: the sidebar's `.badge()` counts (Nights
+    /// needing-review, Library findings-needing-attention). Recomputed on
+    /// appear, whenever `nightsStore.nights` changes (which is exactly what
+    /// happens right after a library finishes opening), and after a
+    /// rescan/audit operation succeeds (the `.onChange(of:
+    /// operationHost.recentOutcomes)` above) -- kept intentionally simple,
+    /// per the plan: no incremental diffing, just re-read the current state.
+    private func refreshSidebarBadges() {
+        guard let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback else { return }
+        let nights = nightsStore.nights
+        Task { await sidebarBadges.refresh(rootURL: rootURL, nights: nights) }
     }
 
     /// Backs both the ⌘R menu command (`V2AstroToolCommands`, via
@@ -539,6 +572,7 @@ private struct ResultsDestination: Identifiable {
 @MainActor
 private struct V2Sidebar: View {
     @Bindable var router: AppRouter
+    let badges: SidebarBadgeStore
 
     var body: some View {
         List(selection: $router.primarySection) {
@@ -547,11 +581,52 @@ private struct V2Sidebar: View {
                     .tag(section)
                     .accessibilityLabel(section.title)
                     .accessibilityIdentifier("v2.sidebar.\(section.rawValue)")
+                    .badge(badgeCount(for: section))
+                    .help(badgeHelp(for: section) ?? "")
+                    // Wave 3 Task 7: `.badge()` itself accepts no
+                    // accessibility identifier, so a zero-size marker
+                    // carries `v2.sidebar.badge.*` for automation --
+                    // present only while the count it describes is
+                    // non-zero, so its mere existence already answers
+                    // "is there a badge showing right now".
+                    .overlay(alignment: .trailing) {
+                        if badgeCount(for: section) > 0 {
+                            Color.clear
+                                .frame(width: 1, height: 1)
+                                .accessibilityIdentifier(badgeAccessibilityIdentifier(for: section))
+                        }
+                    }
             }
         }
         .navigationTitle("AstroTool")
         .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
         .listStyle(.sidebar)
+    }
+
+    private func badgeCount(for section: PrimarySection) -> Int {
+        switch section {
+        case .nights: badges.nightsNeedingAttention
+        case .library: badges.libraryAttentionCount
+        default: 0
+        }
+    }
+
+    private func badgeHelp(for section: PrimarySection) -> String? {
+        switch section {
+        case .nights where badges.nightsNeedingAttention > 0:
+            "\(badges.nightsNeedingAttention) night(s) need review"
+        case .library where badges.libraryAttentionCount > 0:
+            "\(badges.libraryAttentionCount) health finding(s) need attention, including calibration gaps"
+        default: nil
+        }
+    }
+
+    private func badgeAccessibilityIdentifier(for section: PrimarySection) -> String {
+        switch section {
+        case .nights: "v2.sidebar.badge.nights"
+        case .library: "v2.sidebar.badge.library"
+        default: ""
+        }
     }
 }
 
@@ -812,6 +887,9 @@ private struct V2PresentationPlaceholder: View {
         case .newNight: "New Night"
         case .mutationConfirmation: "Confirm Change"
         case .settingsDeepLink: "Settings"
+        case .glossary: "Glossary"
+        case .folderStructure: "Folder Structure"
+        case .firstSteps: "First Steps"
         }
     }
 
@@ -821,6 +899,9 @@ private struct V2PresentationPlaceholder: View {
         case .newNight: "moon.stars"
         case .mutationConfirmation: "checkmark.shield"
         case .settingsDeepLink: "gearshape"
+        case .glossary: "character.book.closed"
+        case .folderStructure: "folder"
+        case .firstSteps: "checklist"
         }
     }
 }

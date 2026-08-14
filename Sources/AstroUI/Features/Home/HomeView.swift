@@ -86,6 +86,7 @@ public struct HomeView: View {
         } label: {
             HStack {
                 Text("Best targets tonight")
+                MetricInfoButton(metrics: Self.tonightMetricInfo)
                 Spacer()
                 ExportMenu(
                     title: "Export Plan",
@@ -155,6 +156,13 @@ public struct HomeView: View {
             .padding(.horizontal, 8)
         }
     }
+
+    /// Backs the "Best targets tonight" header's ⓘ button.
+    private static let tonightMetricInfo: [MetricInfoButton.Metric] = [
+        .init(title: "Culmination", explanation: "When the target crosses the meridian at its highest altitude this night -- usually the best time to capture it.", glossaryTerm: "Culmination"),
+        .init(title: "Max altitude", explanation: "The target's highest point above the horizon tonight. A higher altitude means a shorter, clearer path through the atmosphere.", glossaryTerm: "Airmass"),
+        .init(title: "Verdict", explanation: "A short, honest summary of tonight's visibility for this target, combining its visible window and altitude."),
+    ]
 
     private func duration(_ seconds: Double) -> String {
         let minutes = Int(seconds.rounded()) / 60
