@@ -8,7 +8,7 @@ import Foundation
 public enum ProductInfo: Sendable {
     public static let name = "AstroTool"
     public static let version = "2.0.0"
-    public static let build = "20010"
+    public static let build = "20011"
     public static let releaseChannel = "Release Candidate 2"
     public static let bundleIdentifier = "io.github.themokx1.AstroTool"
     public static let legacyBundleIdentifier = "com.zoltanpalotai.astrotool"
