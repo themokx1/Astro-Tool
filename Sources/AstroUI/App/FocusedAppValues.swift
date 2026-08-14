@@ -1,3 +1,4 @@
+import AstroApplication
 import SwiftUI
 
 private struct AppRouterFocusedValueKey: FocusedValueKey {
@@ -26,6 +27,27 @@ private struct LibraryRescanFocusedValueKey: FocusedValueKey {
     typealias Value = LibraryRescanCommand
 }
 
+/// The menu bar's window onto "Run Audit" (⌥⌘A) -- same shape as
+/// `LibraryRescanCommand`, just parameterized by `AuditRunMode` so the same
+/// command backs both the primary (full) menu item and the "fast" one.
+public struct LibraryAuditCommand {
+    public let isAvailable: Bool
+    private let action: (AuditRunMode) -> Void
+
+    public init(isAvailable: Bool, action: @escaping (AuditRunMode) -> Void) {
+        self.isAvailable = isAvailable
+        self.action = action
+    }
+
+    public func callAsFunction(_ mode: AuditRunMode) {
+        action(mode)
+    }
+}
+
+private struct LibraryAuditFocusedValueKey: FocusedValueKey {
+    typealias Value = LibraryAuditCommand
+}
+
 public extension FocusedValues {
     var appRouter: AppRouter? {
         get { self[AppRouterFocusedValueKey.self] }
@@ -35,6 +57,11 @@ public extension FocusedValues {
     var libraryRescan: LibraryRescanCommand? {
         get { self[LibraryRescanFocusedValueKey.self] }
         set { self[LibraryRescanFocusedValueKey.self] = newValue }
+    }
+
+    var libraryAudit: LibraryAuditCommand? {
+        get { self[LibraryAuditFocusedValueKey.self] }
+        set { self[LibraryAuditFocusedValueKey.self] = newValue }
     }
 }
 

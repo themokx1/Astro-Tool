@@ -5,6 +5,7 @@ public enum OperationKind: Hashable, Sendable {
     case loadHome(library: String)
     case rate(series: String)
     case audit(library: String)
+    case verify(library: String)
     case export(project: String)
     case convert(session: String)
     case sensorMeasurement(library: String)

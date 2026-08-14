@@ -51,6 +51,7 @@ public struct V2RootView: View {
     @State private var projectsStore: ProjectsStore
     @State private var nightsStore: NightsStore
     @State private var reviewStore: ReviewStore
+    @State private var libraryHealthStore = LibraryHealthStore()
     @State private var isOnboardingPresented: Bool
     @State private var libraryPreparationError: String?
     @State private var didRestoreWindowState = false
@@ -94,6 +95,7 @@ public struct V2RootView: View {
             projectsStore: projectsStore,
             nightsStore: nightsStore,
             reviewStore: reviewStore,
+            libraryHealthStore: libraryHealthStore,
             libraryRootFallback: uiTestFixture?.libraryRoot,
             isOnboardingPresented: $isOnboardingPresented,
             libraryPreparationError: $libraryPreparationError
@@ -178,6 +180,7 @@ private struct V2Shell: View {
     let projectsStore: ProjectsStore
     let nightsStore: NightsStore
     let reviewStore: ReviewStore
+    let libraryHealthStore: LibraryHealthStore
     let libraryRootFallback: URL?
     @Binding var isOnboardingPresented: Bool
     @Binding var libraryPreparationError: String?
@@ -210,6 +213,7 @@ private struct V2Shell: View {
                 onboardingStore: onboardingStore,
                 projectsStore: projectsStore,
                 nightsStore: nightsStore,
+                libraryHealthStore: libraryHealthStore,
                 chooseLibrary: presentOnboarding,
                 createPlannedProject: { designation in
                     newProjectInitialQuery = designation
@@ -291,6 +295,13 @@ private struct V2Shell: View {
             LibraryRescanCommand(
                 isAvailable: onboardingStore.selectedRoot != nil,
                 action: performRescan
+            )
+        )
+        .focusedSceneValue(
+            \.libraryAudit,
+            LibraryAuditCommand(
+                isAvailable: onboardingStore.selectedRoot != nil,
+                action: performAudit
             )
         )
         .frame(minWidth: 820, minHeight: 600)
@@ -382,6 +393,18 @@ private struct V2Shell: View {
     /// "Rescan" button -- one action, reused rather than duplicated.
     private func performRescan() {
         Task { await onboardingStore.rescan(operationHost: operationHost) }
+    }
+
+    /// Backs both the ⌥⌘A menu command (`V2AstroToolCommands`, via
+    /// `FocusedValues.libraryAudit`) and the Library Health workspace's own
+    /// "Run Audit" split button -- one action, reused rather than
+    /// duplicated, the same shape `performRescan` already uses.
+    private func performAudit(mode: AuditRunMode) {
+        Task {
+            await libraryHealthStore.runAudit(
+                mode: mode, rootURL: onboardingStore.selectedRoot, operationHost: operationHost
+            )
+        }
     }
 
     private func openSearchResult(_ result: GlobalSearchResult) {
@@ -567,6 +590,7 @@ private struct DetailHost: View {
     let onboardingStore: OnboardingStore
     let projectsStore: ProjectsStore
     let nightsStore: NightsStore
+    let libraryHealthStore: LibraryHealthStore
     let chooseLibrary: () -> Void
     let createPlannedProject: (String) -> Void
     let reviewProject: (ProjectRecord) -> Void
@@ -705,7 +729,8 @@ private struct DetailHost: View {
                 rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary,
                 openCalibration: { router.navigate(toContent: .calibration) },
                 accessMode: accessMode,
-                presentQuarantineApply: presentQuarantineApply
+                presentQuarantineApply: presentQuarantineApply,
+                store: libraryHealthStore
             )
         case .calibration:
             CalibrationView(

@@ -242,6 +242,59 @@ struct V2ShellSurfaceTests {
         #expect(library.contains("v2.library.rescan"))
     }
 
+    @Test("Run Audit (⌥⌘A) is wired into the menu bar and Library Health's split button/verify sheet")
+    func auditIsWiredIntoCommandsAndHealthView() throws {
+        let commands = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroToolApp/Views/Commands.swift"
+            ),
+            encoding: .utf8
+        )
+        let v2Commands = try #require(commands.components(separatedBy: "struct V2AstroToolCommands").last)
+        #expect(v2Commands.contains("Run Audit"))
+        #expect(v2Commands.contains(".keyboardShortcut(\"a\", modifiers: [.command, .option])"))
+        #expect(v2Commands.contains("libraryAudit?(.full)"))
+        #expect(v2Commands.contains("libraryAudit?(.fast)"))
+
+        let focusedValues = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/App/FocusedAppValues.swift"
+            ),
+            encoding: .utf8
+        )
+        #expect(focusedValues.contains("var libraryAudit: LibraryAuditCommand?"))
+
+        let rootView = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/App/V2RootView.swift"
+            ),
+            encoding: .utf8
+        )
+        #expect(rootView.contains("\\.libraryAudit"))
+
+        let health = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Features/Library/HealthView.swift"
+            ),
+            encoding: .utf8
+        )
+        #expect(health.contains("v2.health.run-audit"))
+        #expect(health.contains("v2.health.verify"))
+        #expect(health.contains("v2.health.verify.sample"))
+        #expect(health.contains("v2.health.verify.fill-missing"))
+        #expect(health.contains("v2.health.verify.confirm"))
+        #expect(health.contains("primaryAction:"))
+
+        let store = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Features/Library/LibraryHealthStore.swift"
+            ),
+            encoding: .utf8
+        )
+        #expect(store.contains("func runAudit("))
+        #expect(store.contains("func verifyIntegrity("))
+    }
+
     @Test("The mutation confirmation route renders the real quarantine-apply sheet, not a placeholder")
     func mutationConfirmationIsWiredToTheRealSheet() throws {
         let root = try String(

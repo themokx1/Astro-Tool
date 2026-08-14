@@ -267,6 +267,7 @@ struct AstroToolCommands: Commands {
 struct V2AstroToolCommands: Commands {
     @FocusedValue(\.appRouter) private var router
     @FocusedValue(\.libraryRescan) private var libraryRescan
+    @FocusedValue(\.libraryAudit) private var libraryAudit
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
@@ -291,6 +292,25 @@ struct V2AstroToolCommands: Commands {
             }
             .keyboardShortcut("r", modifiers: .command)
             .disabled(libraryRescan?.isAvailable != true)
+        }
+
+        // Wave 3 parity: V1's "Audit futtatása" (⌥⌘A) / "Duplikátum-keresés
+        // nélkül auditálás" -- same `LibraryHealthStore.runAudit`
+        // (`OperationHost`-backed: toolbar progress, cancel, success/failure
+        // toast) whichever page happens to be showing, exactly the way
+        // `libraryRescan` already reaches its own action regardless of the
+        // active page.
+        CommandMenu("Actions") {
+            Button("Run Audit") {
+                libraryAudit?(.full)
+            }
+            .keyboardShortcut("a", modifiers: [.command, .option])
+            .disabled(libraryAudit?.isAvailable != true)
+
+            Button("Run Audit (Fast, Skip Duplicate Scan)") {
+                libraryAudit?(.fast)
+            }
+            .disabled(libraryAudit?.isAvailable != true)
         }
 
         CommandGroup(after: .toolbar) {

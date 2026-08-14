@@ -1,4 +1,5 @@
 import AstroApplication
+import AstroCore
 import Observation
 import SwiftUI
 
@@ -8,23 +9,27 @@ public struct HealthView: View {
     let openCalibration: () -> Void
     let accessMode: LibraryAccessMode
     let presentQuarantineApply: (LibraryMutationPlan, URL, LibraryAccessMode) -> Void
-    @State private var store = LibraryHealthStore()
+    @Bindable var store: LibraryHealthStore
+    @Environment(OperationHost.self) private var operationHost
 
     public init(
         rootURL: URL?,
         chooseLibrary: @escaping () -> Void,
         openCalibration: @escaping () -> Void,
         accessMode: LibraryAccessMode = .readOnly,
-        presentQuarantineApply: @escaping (LibraryMutationPlan, URL, LibraryAccessMode) -> Void = { _, _, _ in }
+        presentQuarantineApply: @escaping (LibraryMutationPlan, URL, LibraryAccessMode) -> Void = { _, _, _ in },
+        store: LibraryHealthStore = LibraryHealthStore()
     ) {
         self.rootURL = rootURL
         self.chooseLibrary = chooseLibrary
         self.openCalibration = openCalibration
         self.accessMode = accessMode
         self.presentQuarantineApply = presentQuarantineApply
+        self.store = store
     }
     @State private var showsCleanup = false
     @State private var showsSensors = false
+    @State private var showsVerifySheet = false
     @State private var category: LibraryHealthCategory?
     @State private var selectedFindingID: String?
     @State private var acknowledgeRequest: AcknowledgeRequest?
@@ -38,6 +43,42 @@ public struct HealthView: View {
                     MetricCard(title: "Duplicates", value: "\(snapshot.duplicateFiles)", detail: "Additional copies", systemImage: "square.on.square")
                     MetricCard(title: "Organization", value: "\(snapshot.organizationIssues)", detail: "Reviewable residue", systemImage: "tray.full")
                     MetricCard(title: "Access", value: snapshot.isReadOnly ? "Read only" : "Writable", detail: "Images protected", systemImage: "lock.shield")
+                }
+                HStack {
+                    Menu("Run Audit") {
+                        Button("Fast (Skip Duplicate Scan)") {
+                            Task { await store.runAudit(mode: .fast, rootURL: rootURL, operationHost: operationHost) }
+                        }
+                    } primaryAction: {
+                        Task { await store.runAudit(mode: .full, rootURL: rootURL, operationHost: operationHost) }
+                    }
+                    .disabled(rootURL == nil || runningAuditOperation != nil)
+                    .accessibilityIdentifier("v2.health.run-audit")
+
+                    Button("Verify Integrity…") { showsVerifySheet = true }
+                        .buttonStyle(.bordered)
+                        .disabled(rootURL == nil || runningVerifyOperation != nil)
+                        .accessibilityIdentifier("v2.health.verify")
+
+                    Spacer()
+                }
+                if let running = runningAuditOperation {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text(running.title).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Cancel") { Task { await operationHost.cancel(id: running.id) } }
+                    }
+                }
+                if let running = runningVerifyOperation {
+                    HStack {
+                        ProgressView(value: running.total.map { Double(running.completed) / Double(max($0, 1)) })
+                            .controlSize(.small)
+                            .frame(maxWidth: 160)
+                        Text(running.title).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Cancel") { Task { await operationHost.cancel(id: running.id) } }
+                    }
                 }
                 HStack {
                     Picker("Category", selection: $category) {
@@ -155,6 +196,27 @@ public struct HealthView: View {
                 acknowledgeRequest = nil
             }
         }
+        .sheet(isPresented: $showsVerifySheet) {
+            VerifyIntegritySheet(
+                onConfirm: { options in
+                    showsVerifySheet = false
+                    Task { await store.verifyIntegrity(options: options, rootURL: rootURL, operationHost: operationHost) }
+                },
+                onCancel: { showsVerifySheet = false }
+            )
+        }
+    }
+
+    private var runningAuditOperation: OperationHost.ActiveOperation? {
+        guard let rootURL else { return nil }
+        let kind = OperationKind.audit(library: rootURL.standardizedFileURL.path)
+        return operationHost.activeOperations.first { $0.kind == kind }
+    }
+
+    private var runningVerifyOperation: OperationHost.ActiveOperation? {
+        guard let rootURL else { return nil }
+        let kind = OperationKind.verify(library: rootURL.standardizedFileURL.path)
+        return operationHost.activeOperations.first { $0.kind == kind }
     }
 
     private func icon(_ severity: LibraryHealthSeverity) -> String { severity == .healthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill" }
@@ -226,6 +288,53 @@ private struct AcknowledgeFindingSheet: View {
         }
         .padding(AstroTokens.Spacing.section)
         .frame(width: 420)
+    }
+}
+
+/// V1's "Integritás-ellenőrzés" confirmation sheet (`VerifyConfirmationSheet`)
+/// folded into one action: its "Csak minta (10%)" toggle and "Hiányzó
+/// összegek pótlása" button become two independent toggles here (see
+/// `AuditRunCommand.VerifyRunOptions`'s own doc comment for why V2 combines
+/// them into a single "Verify" instead of two separate buttons).
+private struct VerifyIntegritySheet: View {
+    let onConfirm: (VerifyRunOptions) -> Void
+    let onCancel: () -> Void
+    @State private var sampleOnly = false
+    @State private var fillMissingChecksums = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+            Text("Verify Integrity").font(.title3.bold())
+            Text(
+                "Re-reads every indexed, previously-hashed file and compares it against its stored "
+                    + "checksum. Read-only -- nothing is repaired, moved, or deleted; a mismatch is only "
+                    + "ever flagged for you to restore from backup."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Toggle("Sample only (10%)", isOn: $sampleOnly)
+                .accessibilityIdentifier("v2.health.verify.sample")
+            Toggle("Fill missing checksums first", isOn: $fillMissingChecksums)
+                .accessibilityIdentifier("v2.health.verify.fill-missing")
+
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                Button("Verify") {
+                    onConfirm(VerifyRunOptions(
+                        sampleFraction: sampleOnly ? 0.1 : nil,
+                        fillMissingChecksums: fillMissingChecksums
+                    ))
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("v2.health.verify.confirm")
+            }
+        }
+        .padding(AstroTokens.Spacing.section)
+        .frame(width: 460)
     }
 }
 
