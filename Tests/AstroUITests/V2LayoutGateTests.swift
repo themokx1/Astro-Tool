@@ -77,6 +77,28 @@ struct V2LayoutGateTests {
         #expect(components.contains("struct WorkspacePage"))
     }
 
+    /// V2 UI/UX audit (2026-08-14) systemic pattern S6: every page rendered
+    /// through `WorkspacePage`/`WorkspaceTablePage` showed its own name
+    /// three times -- the global `BreadcrumbBar`, this container's own
+    /// uppercased eyebrow + `.largeTitle` title, and each view's own
+    /// `.navigationTitle` -- burning ~120pt of the first screenful on pure
+    /// chrome. The Wave-4 cleanup already removed the equivalent eyebrows
+    /// from the pushed Project/Night/Series workspaces (see
+    /// `V2NavigationSurfaceTests`); this pins the same fix for the shared
+    /// container both of them (and every other route) render through. The
+    /// subtitle survives -- it carries real per-page guidance the
+    /// breadcrumb/title never did.
+    @Test("WorkspacePage and WorkspaceTablePage no longer render a redundant eyebrow + large title above the subtitle")
+    func containersDoNotTripleLabelThePage() throws {
+        let components = try source(at: "Sources/AstroUI/Features/Workspace/WorkspaceComponents.swift")
+        #expect(!components.contains("eyebrow.uppercased()"), "the uppercased eyebrow line must be gone from both containers")
+        #expect(!components.contains(".largeTitle.weight(.semibold)"), "the duplicated large title must be gone from both containers")
+        // The subtitle is real per-page guidance -- it must survive in both.
+        #expect(components.contains("Text(subtitle)"))
+        let subtitleOccurrences = components.components(separatedBy: "Text(subtitle)").count - 1
+        #expect(subtitleOccurrences == 2, "both WorkspacePage and WorkspaceTablePage should still render their subtitle")
+    }
+
     @Test("No Table anywhere in AstroUI is wrapped in a minHeight band-aid meant to give it height inside a ScrollView")
     func noTableCarriesAMinHeightBandAid() throws {
         let sourcesRoot = repositoryRoot.appendingPathComponent("Sources/AstroUI")

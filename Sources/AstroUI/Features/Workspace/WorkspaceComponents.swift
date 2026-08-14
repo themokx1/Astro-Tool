@@ -22,17 +22,17 @@ struct WorkspacePage<Content: View>: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
-                VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
-                    Text(eyebrow.uppercased())
-                        .font(.caption.weight(.semibold))
-                        .tracking(1.3)
-                        .foregroundStyle(AstroTokens.Color.spectralBlue)
-                    Text(title)
-                        .font(.largeTitle.weight(.semibold))
-                    Text(subtitle)
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                }
+                // V2 UI/UX audit (2026-08-14) systemic pattern S6: this used
+                // to also render an uppercased eyebrow and a `.largeTitle`
+                // page title here, directly beneath the global
+                // `BreadcrumbBar` and alongside each view's own
+                // `.navigationTitle` -- the same page name shown three
+                // times, burning ~120pt of the first screenful on chrome.
+                // The subtitle survives: it carries real per-page guidance
+                // the breadcrumb/title never did.
+                Text(subtitle)
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
                 content
             }
             .frame(maxWidth: 920, alignment: .leading)
@@ -88,18 +88,13 @@ struct WorkspaceTablePage<Toolbar: View, TableContent: View, Footer: View>: View
 
     var body: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
-            VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
-                Text(eyebrow.uppercased())
-                    .font(.caption.weight(.semibold))
-                    .tracking(1.3)
-                    .foregroundStyle(AstroTokens.Color.spectralBlue)
-                Text(title)
-                    .font(.largeTitle.weight(.semibold))
-                Text(subtitle)
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: 920, alignment: .leading)
+            // V2 UI/UX audit (2026-08-14) systemic pattern S6: same fix as
+            // `WorkspacePage` above -- see its own doc comment. The subtitle
+            // survives; the redundant eyebrow + large title do not.
+            Text(subtitle)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: 920, alignment: .leading)
 
             toolbar
 
