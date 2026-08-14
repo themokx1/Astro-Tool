@@ -33,9 +33,13 @@ private final class ResultsStore {
 public struct ResultsView: View {
     let rootURL: URL
     let project: ProjectRecord
-    let dismiss: () -> Void
     @State private var store = ResultsStore()
     @State private var selectedResultID: UUID?
+
+    public init(rootURL: URL, project: ProjectRecord) {
+        self.rootURL = rootURL
+        self.project = project
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -77,7 +81,6 @@ public struct ResultsView: View {
                let result = selectedResult(in: snapshot) {
                 resultActions(result)
             }
-            Button("Close", action: dismiss).keyboardShortcut(.cancelAction)
         }.padding(20)
     }
 

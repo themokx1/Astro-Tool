@@ -59,14 +59,32 @@ public enum ContentRoute: Hashable, Codable, Sendable {
     case insights
     case reviewFrame(Int64)
     case result(String)
+    /// Wave 4 Task 1: the frame-review workspace as a route (was a
+    /// window-covering `.overlay` in `V2Shell` -- see the navigation rework
+    /// plan). Carries the project whose capture series are being reviewed;
+    /// `ReviewWorkspace` resolves everything else itself from `rootURL` +
+    /// `projectID`.
+    case review(projectID: UUID)
+    /// Wave 4 Task 1: the results/lineage workspace as a route (was the
+    /// `.overlay`-presented `ResultsView`).
+    case resultsWorkspace(projectID: UUID)
+    /// Wave 4 Task 1: the session-conversion wizard as a route (was the
+    /// `.overlay`-presented `ConversionWorkspace`).
+    case conversion
+    /// Wave 4 Task 1: the cleanup/quarantine preview as a route (was nested
+    /// inside `HealthView`'s own `.overlay`).
+    case cleanup
+    /// Wave 4 Task 1: the sensor-profiles workspace as a route (was nested
+    /// inside `HealthView`'s own `.overlay`).
+    case sensorProfiles
 
     public var primarySection: PrimarySection {
         switch self {
         case .home: .home
-        case .projects, .project, .projectSeries, .result: .projects
+        case .projects, .project, .projectSeries, .result, .review, .resultsWorkspace: .projects
         case .nights, .night, .reviewFrame: .nights
         case .planning: .planning
-        case .library, .health, .calibration: .library
+        case .library, .health, .calibration, .conversion, .cleanup, .sensorProfiles: .library
         case .insights: .insights
         }
     }

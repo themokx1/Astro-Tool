@@ -12,14 +12,12 @@ import SwiftUI
 /// exposes its measurement history as a small Swift Charts sparkline.
 public struct SensorProfilesView: View {
     let rootURL: URL
-    let dismiss: () -> Void
     @State private var store = SensorProfilesStore()
     @State private var showsMeasureSheet = false
     @Environment(OperationHost.self) private var operationHost
 
-    public init(rootURL: URL, dismiss: @escaping () -> Void) {
+    public init(rootURL: URL) {
         self.rootURL = rootURL
-        self.dismiss = dismiss
     }
 
     public var body: some View {
@@ -34,7 +32,6 @@ public struct SensorProfilesView: View {
                 Button("Measure Sensors…") { showsMeasureSheet = true }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("v2.sensor-profiles.measure")
-                Button("Close", action: dismiss).keyboardShortcut(.cancelAction)
             }.padding(20)
             Divider()
             Group {

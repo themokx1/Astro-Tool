@@ -14,7 +14,6 @@ public struct ProjectWorkspaceView: View {
     let snapshot: ProjectSnapshot
     let rootURL: URL?
     let accessMode: LibraryAccessMode
-    let close: () -> Void
     let review: () -> Void
     let results: () -> Void
     let openNight: (UUID) -> Void
@@ -34,7 +33,6 @@ public struct ProjectWorkspaceView: View {
         rootURL: URL? = nil,
         accessMode: LibraryAccessMode = .readOnly,
         annotation: ProjectAnnotationRecord?,
-        close: @escaping () -> Void,
         review: @escaping () -> Void,
         results: @escaping () -> Void,
         openNight: @escaping (UUID) -> Void,
@@ -47,7 +45,6 @@ public struct ProjectWorkspaceView: View {
         self.rootURL = rootURL
         self.accessMode = accessMode
         self.annotation = annotation
-        self.close = close
         self.review = review
         self.results = results
         self.openNight = openNight
@@ -80,8 +77,6 @@ public struct ProjectWorkspaceView: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
-            Button(action: close) { Label("Projects", systemImage: "chevron.left") }
-                .buttonStyle(.borderless)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Project › \(snapshot.project.catalogID)")
                     .font(.caption.weight(.semibold)).foregroundStyle(AstroTokens.Color.spectralBlue)

@@ -204,17 +204,21 @@ struct AppRouterTests {
         #expect(!router.isInspectorPresented)
     }
 
-    @Test("Clearing selection returns to the current section root")
+    @Test("Clearing selection returns to the current section root without touching the inspector")
     func selectionClearing() {
         let router = AppRouter()
         router.select(.result("stack-1"))
+        #expect(router.isInspectorPresented)
 
         router.clearSelection()
 
         #expect(router.primarySection == .projects)
         #expect(router.contentRoute == .projects)
         #expect(router.inspectorSelection == nil)
-        #expect(!router.isInspectorPresented)
+        // Wave 4 Task 1: navigation is decoupled from inspector visibility --
+        // clearing a selection no longer forces the inspector closed, unlike
+        // the old coupled behavior.
+        #expect(router.isInspectorPresented)
     }
 
     @Test("Inspector toggle changes only presentation visibility")
@@ -249,6 +253,136 @@ struct AppRouterTests {
         #expect(AppRoute(deepLink: controlIDURL) == nil)
         #expect(AppRoute(deepLink: encodedSlashURL) == nil)
         #expect(AppRoute(deepLink: extraComponentURL) == nil)
+    }
+
+    // MARK: Wave 4 Task 1 -- router stack
+
+    @Test("Push appends onto the active section's own stack; contentRoute reads its top")
+    func pushAppendsOntoTheActiveSectionStack() {
+        let router = AppRouter()
+        router.navigate(to: .projects)
+
+        router.push(.project("m31"))
+        #expect(router.contentRoute == .project("m31"))
+        #expect(router.currentSectionPath == [.project("m31")])
+
+        router.push(.projectSeries("m31-lrgb"))
+        #expect(router.contentRoute == .projectSeries("m31-lrgb"))
+        #expect(router.currentSectionPath == [.project("m31"), .projectSeries("m31-lrgb")])
+    }
+
+    @Test("Pop removes the top of the active section's stack; a no-op at the root")
+    func popRemovesTheTopOfTheStack() {
+        let router = AppRouter()
+        router.navigate(to: .projects)
+        router.push(.project("m31"))
+        router.push(.projectSeries("m31-lrgb"))
+
+        router.pop()
+        #expect(router.contentRoute == .project("m31"))
+
+        router.pop()
+        #expect(router.contentRoute == .projects)
+
+        router.pop()
+        #expect(router.contentRoute == .projects)
+    }
+
+    @Test("popToRoot clears the active section's whole stack in one step")
+    func popToRootClearsTheWholeStack() {
+        let router = AppRouter()
+        router.navigate(to: .projects)
+        router.push(.project("m31"))
+        router.push(.projectSeries("m31-lrgb"))
+
+        router.popToRoot()
+
+        #expect(router.contentRoute == .projects)
+        #expect(router.currentSectionPath.isEmpty)
+    }
+
+    @Test("Switching sections preserves each section's own stack independently")
+    func switchingSectionsPreservesEachStack() {
+        let router = AppRouter()
+        router.navigate(to: .projects)
+        router.push(.project("m31"))
+
+        router.navigate(to: .insights)
+        #expect(router.contentRoute == .insights)
+
+        router.navigate(to: .nights)
+        router.push(.night("2026-08-10"))
+        #expect(router.contentRoute == .night("2026-08-10"))
+
+        router.navigate(to: .projects)
+        #expect(router.contentRoute == .project("m31"), "Projects' own stack survived visiting other sections")
+
+        router.navigate(to: .nights)
+        #expect(router.contentRoute == .night("2026-08-10"), "Nights' own stack survived too")
+    }
+
+    @Test("Re-selecting the already-active section from the sidebar pops it to root")
+    func sameSectionReclickPopsToRoot() {
+        let router = AppRouter()
+        router.navigate(to: .projects)
+        router.push(.project("m31"))
+        router.push(.projectSeries("m31-lrgb"))
+
+        router.navigate(to: .projects)
+
+        #expect(router.contentRoute == .projects)
+        #expect(router.currentSectionPath.isEmpty)
+    }
+
+    @Test("Navigating never forces the inspector open or closed")
+    func navigationNeverTogglesTheInspector() {
+        let openRouter = AppRouter()
+        openRouter.isInspectorPresented = true
+        openRouter.navigate(to: .projects)
+        openRouter.push(.project("m31"))
+        openRouter.navigate(to: .nights)
+        openRouter.navigate(to: .projects)
+        #expect(openRouter.isInspectorPresented)
+
+        let closedRouter = AppRouter()
+        closedRouter.isInspectorPresented = false
+        closedRouter.navigate(to: .projects)
+        closedRouter.push(.project("m31"))
+        closedRouter.navigate(to: .nights)
+        closedRouter.navigate(to: .projects)
+        #expect(!closedRouter.isInspectorPresented)
+    }
+
+    @Test("A restored route rebuilds a one-entry stack the native Back chevron can pop")
+    func restorationRebuildsAPoppableStack() {
+        let state = WindowRestorationState(
+            primarySection: .projects,
+            contentRoute: .project("m31"),
+            selection: .project("m31"),
+            isInspectorPresented: true
+        )
+
+        let router = AppRouter(restoring: state, validator: .allowingAll)
+
+        #expect(router.contentRoute == .project("m31"))
+        #expect(router.currentSectionPath == [.project("m31")])
+
+        router.pop()
+        #expect(router.contentRoute == .projects)
+    }
+
+    @Test("Restoring a section's own root route leaves an empty stack, not a one-entry loop")
+    func restorationOfARootRouteLeavesAnEmptyStack() {
+        let state = WindowRestorationState(
+            primarySection: .projects,
+            contentRoute: .projects,
+            selection: nil
+        )
+
+        let router = AppRouter(restoring: state, validator: .allowingAll)
+
+        #expect(router.contentRoute == .projects)
+        #expect(router.currentSectionPath.isEmpty)
     }
 
     @Test("Focused commands act on the active window only")

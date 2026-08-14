@@ -8,7 +8,12 @@ public struct HealthView: View {
     let chooseLibrary: () -> Void
     let openCalibration: () -> Void
     let accessMode: LibraryAccessMode
-    let presentQuarantineApply: (LibraryMutationPlan, URL, LibraryAccessMode) -> Void
+    /// Wave 4 Task 1: Cleanup Preview and Sensor Profiles are now routes
+    /// `V2RootView`'s `DetailHost` pushes (they used to be nested inside
+    /// this view's own `.overlay`) -- these two just ask the router to push
+    /// them.
+    let openCleanup: () -> Void
+    let openSensorProfiles: () -> Void
     @Bindable var store: LibraryHealthStore
     @Environment(OperationHost.self) private var operationHost
 
@@ -17,18 +22,18 @@ public struct HealthView: View {
         chooseLibrary: @escaping () -> Void,
         openCalibration: @escaping () -> Void,
         accessMode: LibraryAccessMode = .readOnly,
-        presentQuarantineApply: @escaping (LibraryMutationPlan, URL, LibraryAccessMode) -> Void = { _, _, _ in },
+        openCleanup: @escaping () -> Void = {},
+        openSensorProfiles: @escaping () -> Void = {},
         store: LibraryHealthStore = LibraryHealthStore()
     ) {
         self.rootURL = rootURL
         self.chooseLibrary = chooseLibrary
         self.openCalibration = openCalibration
         self.accessMode = accessMode
-        self.presentQuarantineApply = presentQuarantineApply
+        self.openCleanup = openCleanup
+        self.openSensorProfiles = openSensorProfiles
         self.store = store
     }
-    @State private var showsCleanup = false
-    @State private var showsSensors = false
     @State private var showsVerifySheet = false
     @State private var category: LibraryHealthCategory?
     @State private var selectedFindingID: String?
@@ -140,8 +145,8 @@ public struct HealthView: View {
                     .accessibilityIdentifier("v2.health.findings-table")
                 }
                 HStack {
-                    Button("Review Cleanup Candidates…") { showsCleanup = true }.buttonStyle(.bordered)
-                    Button("Sensor Profiles…") { showsSensors = true }.buttonStyle(.bordered)
+                    Button("Review Cleanup Candidates…", action: openCleanup).buttonStyle(.bordered)
+                    Button("Sensor Profiles…", action: openSensorProfiles).buttonStyle(.bordered)
                     Button("Calibration…", action: openCalibration).buttonStyle(.bordered)
                 }
                 GroupBox("Audit run history") {
@@ -176,20 +181,6 @@ public struct HealthView: View {
         .navigationTitle("Library Health")
         .accessibilityLabel("Library Health")
         .accessibilityIdentifier("v2.detail.library.health")
-        .overlay {
-            if showsCleanup, let rootURL {
-                CleanupPreviewView(
-                    rootURL: rootURL, accessMode: accessMode,
-                    dismiss: { showsCleanup = false },
-                    presentQuarantineApply: { plan in
-                        showsCleanup = false
-                        presentQuarantineApply(plan, rootURL, accessMode)
-                    }
-                )
-            } else if showsSensors, let rootURL {
-                SensorProfilesView(rootURL: rootURL) { showsSensors = false }
-            }
-        }
         .sheet(item: $acknowledgeRequest) { request in
             AcknowledgeFindingSheet(item: request.item) { note in
                 Task { await store.acknowledge(request.item, note: note) }
@@ -239,9 +230,9 @@ public struct HealthView: View {
     private func healthActionMenu(_ item: LibraryHealthItem) -> some View {
         switch item.category {
         case .duplicates, .organization, .storage:
-            Button("Preview Cleanup…") { showsCleanup = true }
+            Button("Preview Cleanup…", action: openCleanup)
         case .flat, .dark, .bias:
-            Button("Review Sensor Profiles…") { showsSensors = true }
+            Button("Review Sensor Profiles…", action: openSensorProfiles)
             Button("Open Calibration…", action: openCalibration)
         case .integrity:
             Text("No action required")

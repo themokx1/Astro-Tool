@@ -6,7 +6,6 @@ public struct ReviewWorkspace: View {
     @Bindable var store: ReviewStore
     let rootURL: URL
     let projectID: UUID
-    let dismiss: () -> Void
     @State private var selectedDecisionIDs: Set<UUID> = []
     @State private var archivePreview: ReviewArchivePlan?
     @State private var sortOrder: [KeyPathComparator<ReviewFrameRow>] = [KeyPathComparator(\.scoreSortKey, order: .reverse)]
@@ -18,13 +17,11 @@ public struct ReviewWorkspace: View {
     public init(
         store: ReviewStore,
         rootURL: URL,
-        projectID: UUID,
-        dismiss: @escaping () -> Void
+        projectID: UUID
     ) {
         self.store = store
         self.rootURL = rootURL
         self.projectID = projectID
-        self.dismiss = dismiss
     }
 
     public var body: some View {
@@ -126,7 +123,6 @@ public struct ReviewWorkspace: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Done", action: dismiss).keyboardShortcut(.cancelAction)
         }
         .padding(AstroTokens.Spacing.standard)
     }

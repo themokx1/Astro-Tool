@@ -86,8 +86,8 @@ public final class ProjectsStore {
     }
 
     public func selectProject(_ id: UUID?) async throws {
-        selectedProjectID = id
         guard let id else {
+            selectedProjectID = nil
             selectedProject = nil
             selectedProjectAnnotation = nil
             return
@@ -97,10 +97,27 @@ public final class ProjectsStore {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            selectedProject = try await ProjectsQuery(metadata: metadata).project(id: id)
-            selectedProjectAnnotation = try await metadata.projectAnnotation(projectID: id)
+            // Wave 4 Task 1 data-bug fix: both queries are `await`ed into
+            // locals FIRST, then `selectedProjectID`/`selectedProject`/
+            // `selectedProjectAnnotation` are all assigned back-to-back with
+            // no `await` between them. The previous version assigned
+            // `selectedProject` and then `await`ed the annotation query
+            // separately -- a suspension point sat between the two writes,
+            // so a view reading both `@Observable` properties (like
+            // `ProjectWorkspaceView`) could observe the new project's
+            // snapshot alongside the PREVIOUS project's (or no) annotation,
+            // blanking out real notes for a frame. Assigning every published
+            // property in one synchronous block makes that combination
+            // unobservable.
+            let snapshot = try await ProjectsQuery(metadata: metadata).project(id: id)
+            let annotation = try await metadata.projectAnnotation(projectID: id)
+            selectedProjectID = id
+            selectedProject = snapshot
+            selectedProjectAnnotation = annotation
         } catch {
+            selectedProjectID = id
             selectedProject = nil
+            selectedProjectAnnotation = nil
             errorMessage = error.localizedDescription
             throw error
         }

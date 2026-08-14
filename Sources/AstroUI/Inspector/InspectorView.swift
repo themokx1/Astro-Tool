@@ -332,7 +332,12 @@ private struct SeriesSummaryPanel: View {
 /// global-search hit or a deep link, both of which select the owning
 /// project first), so this degrades to an honest placeholder rather than
 /// querying with no store or no project to scope the lookup to.
-private struct ResultInspectorPanel: View {
+///
+/// Wave 4 Task 1: also reused directly as `V2RootView`'s
+/// `.navigationDestination` content for the `.result(String)` route (a
+/// lean provenance panel, per the navigation-rework plan) -- not `private`
+/// so `V2RootView.swift` can construct it too.
+struct ResultInspectorPanel: View {
     let resultIDString: String
     let metadataStore: MetadataStore?
     let projectID: UUID?

@@ -199,19 +199,16 @@ public struct ConversionWorkspace: View {
     @State private var confirmingUndo = false
     let rootURL: URL
     let accessMode: LibraryAccessMode
-    let dismiss: () -> Void
     @Environment(OperationHost.self) private var operationHost
 
     public init(
         useCase: ConversionUseCase,
         rootURL: URL,
-        accessMode: LibraryAccessMode = .readOnly,
-        dismiss: @escaping () -> Void
+        accessMode: LibraryAccessMode = .readOnly
     ) {
         _store = State(initialValue: ConversionStore(useCase: useCase))
         self.rootURL = rootURL
         self.accessMode = accessMode
-        self.dismiss = dismiss
     }
 
     /// Only includes the ambiguity-resolution step while the current plan
@@ -263,7 +260,6 @@ public struct ConversionWorkspace: View {
             )
             .font(.caption)
             .foregroundStyle(.secondary)
-            Button("Close", action: dismiss).keyboardShortcut(.cancelAction)
         }.padding(20)
     }
 
@@ -602,6 +598,13 @@ public struct ConversionWorkspace: View {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
+    /// The wizard's own step Back/Continue -- unrelated to the surrounding
+    /// `NavigationStack`'s native Back chevron (that leaves the whole
+    /// workspace; this moves between the wizard's internal steps). Wave 4
+    /// Task 1: the final "Apply" step no longer shows a trailing "Done"
+    /// button that used to dismiss the workspace outright -- Apply/Undo are
+    /// already the real actionable controls inside `operationsSummary`, and
+    /// leaving is now the native Back chevron.
     private var footer: some View {
         HStack {
             if stepIndex > 0 { Button("Back") { stepIndex -= 1 } }
@@ -610,8 +613,6 @@ public struct ConversionWorkspace: View {
                 Button("Continue") { stepIndex += 1 }
                     .buttonStyle(.borderedProminent)
                     .disabled(!canContinue)
-            } else {
-                Button("Done", action: dismiss).buttonStyle(.borderedProminent)
             }
         }.padding(16)
     }

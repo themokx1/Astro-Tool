@@ -184,9 +184,6 @@ private struct V2Shell: View {
     let libraryRootFallback: URL?
     @Binding var isOnboardingPresented: Bool
     @Binding var libraryPreparationError: String?
-    @State private var reviewDestination: ReviewDestination?
-    @State private var conversionRoot: URL?
-    @State private var resultsDestination: ResultsDestination?
     @State private var showsSearch = false
     @State private var globalSearch = GlobalSearchStore()
     @State private var newProjectInitialQuery = ""
@@ -214,25 +211,13 @@ private struct V2Shell: View {
                 onboardingStore: onboardingStore,
                 projectsStore: projectsStore,
                 nightsStore: nightsStore,
+                reviewStore: reviewStore,
                 libraryHealthStore: libraryHealthStore,
+                libraryRootFallback: libraryRootFallback,
                 chooseLibrary: presentOnboarding,
                 createPlannedProject: { designation in
                     newProjectInitialQuery = designation
                     router.present(.newProject)
-                },
-                reviewProject: { project in
-                    guard let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback else { return }
-                    if router.isInspectorPresented {
-                        router.toggleInspector()
-                    }
-                    reviewDestination = ReviewDestination(id: project.id, rootURL: rootURL)
-                },
-                showResults: { project in
-                    guard let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback else { return }
-                    resultsDestination = ResultsDestination(project: project, rootURL: rootURL)
-                },
-                convertSession: {
-                    conversionRoot = onboardingStore.selectedRoot ?? libraryRootFallback
                 },
                 rescan: performRescan,
                 accessMode: libraryAccessMode,
@@ -322,29 +307,6 @@ private struct V2Shell: View {
             }
         }
         .frame(minWidth: 820, minHeight: 600)
-        .overlay {
-            if let destination = reviewDestination {
-                ReviewWorkspace(
-                    store: reviewStore,
-                    rootURL: destination.rootURL,
-                    projectID: destination.id,
-                    dismiss: { reviewDestination = nil }
-                )
-                .background(.background)
-            } else if let destination = resultsDestination {
-                ResultsView(rootURL: destination.rootURL, project: destination.project) {
-                    resultsDestination = nil
-                }
-            } else if let conversionRoot,
-                      let useCase = try? ConversionUseCase.production(rootURL: conversionRoot) {
-                ConversionWorkspace(
-                    useCase: useCase,
-                    rootURL: conversionRoot,
-                    accessMode: libraryAccessMode,
-                    dismiss: { self.conversionRoot = nil }
-                )
-            }
-        }
         .sheet(item: $router.presentation) { presentation in
             if presentation == .newProject {
                 NewProjectView(
@@ -576,24 +538,28 @@ private struct GlobalSearchPanel: View {
     }
 }
 
-private struct ReviewDestination: Identifiable {
-    let id: UUID
-    let rootURL: URL
-}
-
-private struct ResultsDestination: Identifiable {
-    var id: UUID { project.id }
-    let project: ProjectRecord
-    let rootURL: URL
-}
-
 @MainActor
 private struct V2Sidebar: View {
     @Bindable var router: AppRouter
     let badges: SidebarBadgeStore
 
+    /// Routes every sidebar click through `router.navigate(to:)` rather than
+    /// binding straight to the (now `private(set)`) `primarySection` --
+    /// this is what gives a re-click on the already-active section its
+    /// "pop to root" behavior (see `AppRouter.navigate(to:)`'s own doc
+    /// comment), which a raw property binding could not express.
+    private var sectionSelection: Binding<PrimarySection?> {
+        Binding(
+            get: { router.primarySection },
+            set: { section in
+                guard let section else { return }
+                router.navigate(to: section)
+            }
+        )
+    }
+
     var body: some View {
-        List(selection: $router.primarySection) {
+        List(selection: sectionSelection) {
             ForEach(PrimarySection.allCases, id: \.self) { section in
                 Label(section.title, systemImage: section.systemImage)
                     .tag(section)
@@ -688,20 +654,52 @@ private struct DetailHost: View {
     let onboardingStore: OnboardingStore
     let projectsStore: ProjectsStore
     let nightsStore: NightsStore
+    let reviewStore: ReviewStore
     let libraryHealthStore: LibraryHealthStore
+    let libraryRootFallback: URL?
     let chooseLibrary: () -> Void
     let createPlannedProject: (String) -> Void
-    let reviewProject: (ProjectRecord) -> Void
-    let showResults: (ProjectRecord) -> Void
-    let convertSession: () -> Void
     let rescan: () -> Void
     let accessMode: LibraryAccessMode
     let presentQuarantineApply: (LibraryMutationPlan, URL, LibraryAccessMode) -> Void
     let libraryFindingsChanged: () -> Void
 
-    @ViewBuilder
+    /// Wave 4 Task 1: the detail column is a real `NavigationStack` bound to
+    /// the active section's own push stack (`AppRouter.currentSectionPath`)
+    /// -- the section's root view (`destination(for:)` applied to that
+    /// section's own root route) is the stack's root content, and every
+    /// other `ContentRoute` (drill-downs AND what used to be
+    /// window-covering `.overlay`s: Review/Results/Conversion/Cleanup/
+    /// Sensor Profiles) is a `navigationDestination`, reachable with the
+    /// native Back chevron. This replaces the old flat `switch
+    /// router.contentRoute` that swapped the ENTIRE detail view on every
+    /// route change with no history at all.
     var body: some View {
-        switch router.contentRoute {
+        NavigationStack(path: pathBinding) {
+            destination(for: router.primarySection.rootRoute)
+                .navigationDestination(for: ContentRoute.self) { route in
+                    // `.id(route)` resets any pushed workspace's own
+                    // `@State` per route -- without it, SwiftUI reuses the
+                    // same view identity across e.g. `.project(A)` ->
+                    // `.project(B)`, and V1-era `@State` (a selected tab, an
+                    // unsaved edit) leaked between projects (the
+                    // navigation-rework plan's diagnosis).
+                    destination(for: route).id(route)
+                }
+        }
+        .toolbarRole(.editor)
+    }
+
+    private var pathBinding: Binding<[ContentRoute]> {
+        Binding(
+            get: { router.currentSectionPath },
+            set: { router.currentSectionPath = $0 }
+        )
+    }
+
+    @ViewBuilder
+    private func destination(for route: ContentRoute) -> some View {
+        switch route {
         case .home:
             HomeView(
                 store: homeStore,
@@ -714,7 +712,7 @@ private struct DetailHost: View {
                     }
                 },
                 openProjectID: { projectID in
-                    router.navigate(toContent: .project(projectID.uuidString))
+                    router.push(.project(projectID.uuidString))
                     Task { try? await projectsStore.selectProject(projectID) }
                 }
             )
@@ -724,11 +722,11 @@ private struct DetailHost: View {
                 store: projectsStore,
                 createProject: { router.present(.newProject) },
                 chooseLibrary: chooseLibrary,
-                reviewProject: reviewProject,
-                showResults: showResults,
+                reviewProject: { project in router.push(.review(projectID: project.id)) },
+                showResults: { project in router.push(.resultsWorkspace(projectID: project.id)) },
                 openProject: { project in
                     Task { try? await projectsStore.selectProject(project.id) }
-                    router.navigate(toContent: .project(project.id.uuidString))
+                    router.push(.project(project.id.uuidString))
                 }
             )
         case .project(let rawID):
@@ -738,17 +736,16 @@ private struct DetailHost: View {
                     rootURL: onboardingStore.selectedRoot,
                     accessMode: accessMode,
                     annotation: projectsStore.selectedProjectAnnotation,
-                    close: { router.navigate(to: .projects) },
-                    review: { reviewProject(snapshot.project) },
-                    results: { showResults(snapshot.project) },
+                    review: { router.push(.review(projectID: snapshot.project.id)) },
+                    results: { router.push(.resultsWorkspace(projectID: snapshot.project.id)) },
                     openNight: { id in
                         nightsStore.selectNight(id)
-                        router.navigate(toContent: .night(id.uuidString))
+                        router.push(.night(id.uuidString))
                     },
                     openSeries: { id in
-                        router.navigate(toContent: .projectSeries(id.uuidString))
+                        router.push(.projectSeries(id.uuidString))
                     },
-                    openCalibration: { router.navigate(toContent: .calibration) },
+                    openCalibration: { router.push(.calibration) },
                     openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) },
                     saveAnnotation: { goal, notes in
                         try await projectsStore.saveSelectedProjectAnnotation(goalHours: goal, notes: notes)
@@ -764,13 +761,12 @@ private struct DetailHost: View {
                     row: row,
                     rootURL: onboardingStore.selectedRoot,
                     accessMode: accessMode,
-                    close: { router.navigate(to: .nights) },
                     openProject: { project in
                         Task { try? await projectsStore.selectProject(project.id) }
-                        router.navigate(toContent: .project(project.id.uuidString))
+                        router.push(.project(project.id.uuidString))
                     },
-                    reviewProject: reviewProject,
-                    openCalibration: { router.navigate(toContent: .calibration) },
+                    reviewProject: { project in router.push(.review(projectID: project.id)) },
+                    openCalibration: { router.push(.calibration) },
                     openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) }
                 )
             } else {
@@ -785,8 +781,7 @@ private struct DetailHost: View {
                     item: item,
                     project: projectSnapshot.project,
                     night: night.night,
-                    close: { router.navigate(toContent: .project(projectSnapshot.id.uuidString)) },
-                    review: { reviewProject(projectSnapshot.project) }
+                    review: { router.push(.review(projectID: projectSnapshot.project.id)) }
                 )
             } else {
                 ProgressView("Loading series…")
@@ -800,9 +795,9 @@ private struct DetailHost: View {
                 chooseLibrary: chooseLibrary,
                 openNight: { id in
                     nightsStore.selectNight(id)
-                    router.navigate(toContent: .night(id.uuidString))
+                    router.push(.night(id.uuidString))
                 },
-                openCalibration: { router.navigate(toContent: .calibration) },
+                openCalibration: { router.push(.calibration) },
                 openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) }
             )
         case .planning:
@@ -812,7 +807,7 @@ private struct DetailHost: View {
                 snapshot: onboardingStore.phase.summary,
                 rootURL: onboardingStore.selectedRoot,
                 chooseLibrary: chooseLibrary,
-                convertSession: convertSession,
+                convertSession: { router.push(.conversion) },
                 rescan: rescan
             )
         case .insights:
@@ -826,9 +821,10 @@ private struct DetailHost: View {
         case .health:
             HealthView(
                 rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary,
-                openCalibration: { router.navigate(toContent: .calibration) },
+                openCalibration: { router.push(.calibration) },
                 accessMode: accessMode,
-                presentQuarantineApply: presentQuarantineApply,
+                openCleanup: { router.push(.cleanup) },
+                openSensorProfiles: { router.push(.sensorProfiles) },
                 store: libraryHealthStore
             )
         case .calibration:
@@ -837,25 +833,78 @@ private struct DetailHost: View {
                 chooseLibrary: chooseLibrary,
                 onLibraryFindingsChanged: libraryFindingsChanged
             )
-        default:
+        case .reviewFrame:
+            // Wave 4 Task 1: no production call site constructs
+            // `.reviewFrame(_:)` today -- its `Int64` payload cannot be
+            // resolved back to an owning project/series without a
+            // frame -> project lookup this router does not have (see
+            // `LibrarySelection.frame`'s own doc comment and
+            // `InspectorView.framePanel()`'s matching placeholder). Rather
+            // than the old flat switch's silent `default` -> empty view,
+            // this is an honest placeholder that also offers a real way
+            // back to where frame review IS reachable from.
             V2EmptyDetail(
-                title: router.primarySection.emptyTitle,
-                message: router.primarySection == .library
-                    ? "Choose a folder to build a local, read-only index. Your image files stay untouched."
-                    : router.primarySection.emptyMessage,
-                systemImage: router.primarySection.systemImage,
-                actionTitle: router.primarySection == .library
-                    ? "Choose Image Library…"
-                    : "Explore Library workspace",
-                action: {
-                    if router.primarySection == .library {
-                        chooseLibrary()
-                    } else {
-                        router.navigate(to: .library)
-                    }
-                },
-                accessibilityIdentifier: router.primarySection.detailAccessibilityIdentifier
+                title: "Frame Review",
+                message: "Frame review opens from a project's own \"Review Frames\" action -- a bare frame identifier alone can't be resolved back to its project.",
+                systemImage: "photo",
+                actionTitle: "Go to Projects",
+                action: { router.navigate(to: .projects) },
+                accessibilityIdentifier: "v2.detail.review-frame"
             )
+        case .result(let rawID):
+            ResultInspectorPanel(
+                resultIDString: rawID,
+                metadataStore: projectsStore.metadataStore,
+                projectID: projectsStore.selectedProjectID
+            )
+            .navigationTitle("Result")
+        case .review(let projectID):
+            if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback {
+                ReviewWorkspace(store: reviewStore, rootURL: rootURL, projectID: projectID)
+            } else {
+                noLibraryPlaceholder(title: "Review", systemImage: "checkmark.rectangle.stack")
+            }
+        case .resultsWorkspace(let projectID):
+            if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback,
+               let project = projectsStore.projects.first(where: { $0.id == projectID }) {
+                ResultsView(rootURL: rootURL, project: project)
+            } else {
+                noLibraryPlaceholder(title: "Results", systemImage: "square.stack.3d.up")
+            }
+        case .conversion:
+            if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback,
+               let useCase = try? ConversionUseCase.production(rootURL: rootURL) {
+                ConversionWorkspace(useCase: useCase, rootURL: rootURL, accessMode: accessMode)
+            } else {
+                noLibraryPlaceholder(title: "Organize Session", systemImage: "square.split.2x1")
+            }
+        case .cleanup:
+            if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback {
+                CleanupPreviewView(
+                    rootURL: rootURL,
+                    accessMode: accessMode,
+                    presentQuarantineApply: { plan in presentQuarantineApply(plan, rootURL, accessMode) }
+                )
+            } else {
+                noLibraryPlaceholder(title: "Cleanup Preview", systemImage: "archivebox")
+            }
+        case .sensorProfiles:
+            if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback {
+                SensorProfilesView(rootURL: rootURL)
+            } else {
+                noLibraryPlaceholder(title: "Sensor Profiles", systemImage: "sensor")
+            }
+        }
+    }
+
+    private func noLibraryPlaceholder(title: String, systemImage: String) -> some View {
+        ContentUnavailableView {
+            Label(title, systemImage: systemImage)
+        } description: {
+            Text("Choose an image library first.")
+        } actions: {
+            Button("Choose Image Library…", action: chooseLibrary)
+                .buttonStyle(.borderedProminent)
         }
     }
 }

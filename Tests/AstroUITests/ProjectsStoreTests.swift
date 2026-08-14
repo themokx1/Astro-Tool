@@ -103,6 +103,39 @@ struct ProjectsStoreTests {
         #expect(store.selectedProjectID == project.id)
     }
 
+    @Test("Switching selection between projects never leaves the annotation mismatched with the selected snapshot")
+    func selectingProjectsNeverObservesMismatchedAnnotation() async throws {
+        // Wave 4 Task 1 data-bug fix: `selectProject` used to assign
+        // `selectedProject` and `selectedProjectAnnotation` with an `await`
+        // in between, so a view reading both `@Observable` properties could
+        // catch the new project's snapshot paired with the PREVIOUS
+        // project's (or no) annotation -- blanking out real notes. This
+        // regression test selects a project WITH saved notes, then a
+        // project WITHOUT any, then back to the first, and checks that at
+        // every point `selectedProjectAnnotation` (when non-nil) actually
+        // belongs to `selectedProject`.
+        let metadata = try MetadataStore.temporary()
+        let annotated = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .collecting)
+        let bare = ProjectRecord(id: UUID(), catalogID: "M 42", displayName: "Orion-köd", phase: .collecting)
+        try await metadata.save(annotated)
+        try await metadata.save(bare)
+        let store = ProjectsStore(metadataFactory: { _ in metadata })
+        try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+        try await store.selectProject(annotated.id)
+        try await store.saveSelectedProjectAnnotation(goalHours: 10, notes: "Needs more Ha data")
+
+        try await store.selectProject(bare.id)
+        #expect(store.selectedProject?.id == bare.id)
+        if let annotation = store.selectedProjectAnnotation {
+            #expect(annotation.projectID == bare.id, "Stale annotation from the previous project leaked through")
+        }
+
+        try await store.selectProject(annotated.id)
+        #expect(store.selectedProject?.id == annotated.id)
+        #expect(store.selectedProjectAnnotation?.projectID == annotated.id)
+        #expect(store.selectedProjectAnnotation?.notes == "Needs more Ha data")
+    }
+
     @Test("Project search matches catalog name, filter and setup metadata")
     func projectSearchUsesWorkflowMetadata() async throws {
         let metadata = try MetadataStore.temporary()

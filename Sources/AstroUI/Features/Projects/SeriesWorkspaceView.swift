@@ -5,13 +5,11 @@ public struct SeriesWorkspaceView: View {
     let item: ProjectSeriesSnapshot
     let project: ProjectRecord
     let night: NightRecord
-    let close: () -> Void
     let review: () -> Void
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
-                Button(action: close) { Label("Project", systemImage: "chevron.left") }.buttonStyle(.borderless)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Project › \(project.catalogID) › Night › \(night.localDate) › Series › \(exposure)")
                         .font(.caption.weight(.semibold)).foregroundStyle(AstroTokens.Color.spectralViolet)

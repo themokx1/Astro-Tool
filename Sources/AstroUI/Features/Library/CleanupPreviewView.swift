@@ -54,19 +54,16 @@ private final class CleanupPreviewStore {
 public struct CleanupPreviewView: View {
     let rootURL: URL
     let accessMode: LibraryAccessMode
-    let dismiss: () -> Void
     let presentQuarantineApply: (LibraryMutationPlan) -> Void
     @State private var store = CleanupPreviewStore()
 
     public init(
         rootURL: URL,
         accessMode: LibraryAccessMode = .readOnly,
-        dismiss: @escaping () -> Void,
         presentQuarantineApply: @escaping (LibraryMutationPlan) -> Void = { _ in }
     ) {
         self.rootURL = rootURL
         self.accessMode = accessMode
-        self.dismiss = dismiss
         self.presentQuarantineApply = presentQuarantineApply
     }
 
@@ -78,7 +75,7 @@ public struct CleanupPreviewView: View {
                     Text("Cleanup Preview").font(.title2.bold())
                     Text("Review candidates before any quarantine operation.").foregroundStyle(.secondary)
                 }
-                Spacer(); Button("Close", action: dismiss).keyboardShortcut(.cancelAction)
+                Spacer()
             }.padding(20)
             Divider()
             Group {

@@ -10,7 +10,6 @@ public struct NightWorkspaceView: View {
     let row: NightRow
     let rootURL: URL?
     let accessMode: LibraryAccessMode
-    let close: () -> Void
     let openProject: (ProjectRecord) -> Void
     let reviewProject: (ProjectRecord) -> Void
     let openCalibration: () -> Void
@@ -21,7 +20,6 @@ public struct NightWorkspaceView: View {
         row: NightRow,
         rootURL: URL? = nil,
         accessMode: LibraryAccessMode = .readOnly,
-        close: @escaping () -> Void,
         openProject: @escaping (ProjectRecord) -> Void,
         reviewProject: @escaping (ProjectRecord) -> Void,
         openCalibration: @escaping () -> Void = {},
@@ -30,7 +28,6 @@ public struct NightWorkspaceView: View {
         self.row = row
         self.rootURL = rootURL
         self.accessMode = accessMode
-        self.close = close
         self.openProject = openProject
         self.reviewProject = reviewProject
         self.openCalibration = openCalibration
@@ -40,7 +37,6 @@ public struct NightWorkspaceView: View {
     public var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
-                Button(action: close) { Label("Nights", systemImage: "chevron.left") }.buttonStyle(.borderless)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Night › \(row.date)").font(.caption.weight(.semibold)).foregroundStyle(AstroTokens.Color.spectralViolet)
                     Text(row.projectSummary).font(.title2.weight(.semibold))

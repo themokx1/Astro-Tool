@@ -31,15 +31,18 @@ public struct RouteRestorationValidator: Sendable {
 @MainActor
 @Observable
 public final class AppRouter {
-    public var primarySection: PrimarySection {
-        didSet {
-            guard primarySection != oldValue else { return }
-            contentRoute = primarySection.rootRoute
-            inspectorSelection = nil
-            isInspectorPresented = false
-        }
-    }
-    public private(set) var contentRoute: ContentRoute
+    /// Wave 4 Task 1: navigation used to be a single scalar `contentRoute`
+    /// that every route change replaced outright -- no back button, no
+    /// per-section history, and forced inspector open/close on every
+    /// navigation (see the navigation-rework plan's diagnosis). Each
+    /// section now keeps its OWN push/pop stack here; switching sections
+    /// preserves whatever stack that section already had, exactly like
+    /// macOS `NavigationSplitView` + `NavigationStack` sidebar apps behave.
+    /// `contentRoute` below is a computed read of "whichever section is
+    /// active, its own current top-of-stack" so every existing call site
+    /// that only ever read `contentRoute` keeps compiling and working.
+    private var paths: [PrimarySection: [ContentRoute]] = [:]
+    public private(set) var primarySection: PrimarySection
     public private(set) var inspectorSelection: LibrarySelection?
     public var isInspectorPresented: Bool
     public var presentation: PresentationRoute?
@@ -52,9 +55,25 @@ public final class AppRouter {
     /// "All setups").
     public var pendingInsightsSetupFilter: String?
 
+    /// The active section's current top-of-stack, or that section's own
+    /// stable root when nothing has been pushed onto it yet.
+    public var contentRoute: ContentRoute {
+        paths[primarySection]?.last ?? primarySection.rootRoute
+    }
+
+    /// The active section's full push stack -- what a `NavigationStack`
+    /// hosted in the detail column binds its own `path:` to (see
+    /// `V2RootView`'s `DetailHost`). Reading/writing this always operates
+    /// on whichever section is currently active; SwiftUI's own pop
+    /// gesture/native Back button writes a shorter array back through this
+    /// exact accessor.
+    public var currentSectionPath: [ContentRoute] {
+        get { paths[primarySection] ?? [] }
+        set { paths[primarySection] = newValue }
+    }
+
     public init() {
         primarySection = .home
-        contentRoute = .home
         inspectorSelection = nil
         isInspectorPresented = true
         presentation = nil
@@ -67,10 +86,27 @@ public final class AppRouter {
     ) {
         presentation = nil
         pendingInsightsSetupFilter = nil
+        paths = [:]
 
         let routeIsConsistent = state.contentRoute.primarySection == state.primarySection
         let routeIsAvailable = state.contentRoute.selection == nil
             || validator.isAvailable(state.contentRoute)
+
+        // `WindowRestorationState` carries only the single last-visited
+        // route per window, not a full per-section stack, so restoration
+        // rebuilds a one-entry stack for the restored section (or an empty
+        // stack when the restored route WAS that section's own root) --
+        // "at least the last route", the lightweight half of the plan's
+        // restoration contract. A future `WindowRestorationState` revision
+        // could widen this to the full stack; that is a storage-schema
+        // change out of this task's scope. Resolved into locals first (not
+        // `self.primarySection`/`self.paths` reads) since Swift's two-phase
+        // init forbids using `self` before every stored property has been
+        // assigned once.
+        let resolvedSection: PrimarySection
+        let resolvedPath: [ContentRoute]
+        let resolvedSelection: LibrarySelection?
+        let resolvedInspectorPresented: Bool
 
         if let selection = state.selection,
            routeIsConsistent,
@@ -78,20 +114,27 @@ public final class AppRouter {
            validator.isAvailable(selection),
            selection.primarySection == state.primarySection,
            selection.contentRoute == state.contentRoute {
-            primarySection = selection.primarySection
-            contentRoute = selection.contentRoute
-            inspectorSelection = selection
-            isInspectorPresented = state.isInspectorPresented
+            resolvedSection = selection.primarySection
+            resolvedPath = state.contentRoute == state.primarySection.rootRoute ? [] : [state.contentRoute]
+            resolvedSelection = selection
+            resolvedInspectorPresented = state.isInspectorPresented
         } else if state.selection == nil, routeIsConsistent, routeIsAvailable {
-            primarySection = state.primarySection
-            contentRoute = state.contentRoute
-            inspectorSelection = nil
-            isInspectorPresented = state.isInspectorPresented
+            resolvedSection = state.primarySection
+            resolvedPath = state.contentRoute == state.primarySection.rootRoute ? [] : [state.contentRoute]
+            resolvedSelection = nil
+            resolvedInspectorPresented = state.isInspectorPresented
         } else {
-            primarySection = state.primarySection
-            contentRoute = state.primarySection.rootRoute
-            inspectorSelection = nil
-            isInspectorPresented = false
+            resolvedSection = state.primarySection
+            resolvedPath = []
+            resolvedSelection = nil
+            resolvedInspectorPresented = false
+        }
+
+        primarySection = resolvedSection
+        inspectorSelection = resolvedSelection
+        isInspectorPresented = resolvedInspectorPresented
+        if !resolvedPath.isEmpty {
+            paths[resolvedSection] = resolvedPath
         }
     }
 
@@ -104,18 +147,54 @@ public final class AppRouter {
         )
     }
 
-    public func navigate(to section: PrimarySection) {
+    /// Pushes `route` onto its own section's stack, switching to that
+    /// section first if needed -- switching sections here never clears the
+    /// destination section's existing stack (drilling into a project, then
+    /// jumping to Insights and back, still finds that project workspace
+    /// exactly where it was left). Does NOT touch `isInspectorPresented`
+    /// either way (Wave 4 Task 1: navigation is decoupled from inspector
+    /// visibility -- see the plan's diagnosis of the old forced-open/forced-
+    /// closed coupling); `inspectorSelection` is still kept in sync with
+    /// the pushed route, same as before.
+    public func push(_ route: ContentRoute) {
+        let section = route.primarySection
         primarySection = section
-        contentRoute = section.rootRoute
+        var path = paths[section] ?? []
+        path.append(route)
+        paths[section] = path
+        inspectorSelection = route.selection
+    }
+
+    /// Pops the active section's stack by one -- the programmatic
+    /// equivalent of the native Back chevron/swipe-back gesture. A no-op at
+    /// the section root.
+    public func pop() {
+        var path = paths[primarySection] ?? []
+        guard !path.isEmpty else { return }
+        path.removeLast()
+        paths[primarySection] = path
+    }
+
+    /// Clears the active section's entire stack back to its root.
+    public func popToRoot() {
+        paths[primarySection] = []
+    }
+
+    /// Switches to `section`. Re-selecting the ALREADY-active section (a
+    /// sidebar re-click) pops that section back to its root -- the standard
+    /// macOS sidebar pattern; switching to a genuinely different section
+    /// leaves it exactly where its own stack last was.
+    public func navigate(to section: PrimarySection) {
+        if section == primarySection {
+            popToRoot()
+        } else {
+            primarySection = section
+        }
         inspectorSelection = nil
-        isInspectorPresented = false
     }
 
     public func navigate(toContent route: ContentRoute) {
-        primarySection = route.primarySection
-        contentRoute = route
-        inspectorSelection = route.selection
-        isInspectorPresented = inspectorSelection != nil
+        push(route)
     }
 
     /// `NightActionMenu`'s "Open in Insights" action: stashes `setupFilter`
@@ -136,16 +215,13 @@ public final class AppRouter {
     }
 
     public func select(_ selection: LibrarySelection) {
-        primarySection = selection.primarySection
-        contentRoute = selection.contentRoute
-        inspectorSelection = selection
+        push(selection.contentRoute)
         isInspectorPresented = true
     }
 
     public func clearSelection() {
         inspectorSelection = nil
-        contentRoute = primarySection.rootRoute
-        isInspectorPresented = false
+        popToRoot()
     }
 
     public func reconcileSelection(isAvailable: (LibrarySelection) -> Bool) {
