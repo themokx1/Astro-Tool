@@ -58,6 +58,49 @@ struct PlanningStoreTests {
         #expect(counter.current == 1)
     }
 
+    // Build 20016 still froze on Planning: AppKit's Picker re-asserts the
+    // bound selection during its own update pass, and a Swift `didSet` fires
+    // on EVERY assignment -- equal values included. `@Observable` then
+    // reports a mutation regardless of equality, which invalidates the view,
+    // which re-runs the Picker update, which writes again: an infinite
+    // SwiftUI transaction loop (`GraphHost.flushTransactions` at 99% CPU,
+    // confirmed by sampling the live frozen process). Same-value writes must
+    // therefore be observable no-ops.
+    @Test("Same-value writes to setup, focal length and refresh inputs do not mutate or recompute")
+    func sameValueWritesAreObservableNoOps() async {
+        let counter = CallCounter()
+        let store = PlanningStore(setups: [.apsCReference, .canonR8Zoom]) { query in
+            counter.increment()
+            return query.recommendations()
+        }
+        store.activate()
+        await store.pendingRefresh?.value
+        #expect(counter.current == 1)
+
+        let mutations = CallCounter()
+        withObservationTracking {
+            _ = store.selectedSetupID
+            _ = store.focalLength
+            _ = store.isComputing
+        } onChange: {
+            mutations.increment()
+        }
+
+        // Simulate the Picker/Slider re-asserting the current values.
+        store.selectedSetupID = store.selectedSetupID
+        store.setFocalLength(store.focalLength)
+        await store.pendingRefresh?.value
+
+        #expect(mutations.current == 0)
+        #expect(counter.current == 1)
+
+        // A genuine change must still recompute.
+        store.selectedSetupID = ImagingSetupProfile.canonR8Zoom.id
+        await store.pendingRefresh?.value
+        #expect(mutations.current > 0)
+        #expect(counter.current == 2)
+    }
+
     @Test("Changing focal length recalculates framing and preserves useful-first ordering")
     func focalLengthRecalculatesRecommendations() async {
         let store = PlanningStore(setups: [.apsCReference])

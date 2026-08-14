@@ -21,8 +21,14 @@ public final class PlanningStore {
     public typealias RecommendationsComputer = @Sendable (PlanningQuery) -> [PlanningRecommendation]
 
     public let setups: [ImagingSetupProfile]
+    /// AppKit's Picker re-asserts the bound selection during its own update
+    /// pass, and `didSet` fires on every assignment -- equal values included.
+    /// `@Observable` reports a mutation regardless of equality, so an
+    /// unguarded didSet here closes an infinite view-invalidation loop
+    /// (the build 20016 Planning freeze). Same-value writes must be no-ops.
     public var selectedSetupID: String {
         didSet {
+            guard oldValue != selectedSetupID else { return }
             adoptSelectedSetupDefaults()
             refresh()
         }
@@ -156,7 +162,12 @@ public final class PlanningStore {
     }
 
     public func setFocalLength(_ value: Double) {
-        focalLength = min(max(value, selectedSetup.focalLengthMinMM), selectedSetup.focalLengthMaxMM)
+        let clamped = min(max(value, selectedSetup.focalLengthMinMM), selectedSetup.focalLengthMaxMM)
+        // Same-value guard: the zoom Slider re-asserts its bound value during
+        // view updates; writing an equal value would still count as an
+        // observable mutation and re-invalidate the view (see selectedSetupID).
+        guard clamped != focalLength else { return }
+        focalLength = clamped
         refresh()
     }
 
