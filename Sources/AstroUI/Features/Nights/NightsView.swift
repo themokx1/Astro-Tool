@@ -65,7 +65,7 @@ public struct NightsView: View {
     }
 
     private var nightsWorkspace: some View {
-        WorkspacePage(eyebrow: "Capture history", title: "Nights", subtitle: "Review each observing night without losing its series boundaries.") {
+        WorkspaceTablePage(eyebrow: "Capture history", title: "Nights", subtitle: "Review each observing night without losing its series boundaries.") {
             Picker("View", selection: $mode) {
                 ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
@@ -95,64 +95,8 @@ public struct NightsView: View {
                 .pickerStyle(.segmented)
                 .accessibilityIdentifier("v2.nights.calendar")
             }
-            if mode == .history, !store.nights.isEmpty {
-                GroupBox("Observed nights") {
-                    Table(store.visibleNights, selection: Binding(
-                        get: { store.selectedNightID },
-                        set: { store.selectNight($0) }
-                    )) {
-                        TableColumn("Night") { night in
-                            Label(night.date, systemImage: "moon.stars.fill")
-                                .font(.headline.monospacedDigit())
-                                .foregroundStyle(AstroTokens.Color.spectralViolet)
-                        }
-                        TableColumn("Projects") { Text($0.projectSummary).lineLimit(1) }
-                        TableColumn("Series") { Text($0.seriesCount.formatted()).monospacedDigit() }
-                            .width(min: 55, ideal: 65)
-                        TableColumn("Usable") { Text("\($0.snapshot.usableFrames) / \($0.snapshot.totalFrames)").monospacedDigit() }
-                            .width(min: 70, ideal: 85)
-                        TableColumn("Integration") { Text($0.integrationSummary).monospacedDigit() }
-                            .width(min: 75, ideal: 90)
-                        TableColumn("Triage") { night in
-                            Label(night.triageState.rawValue, systemImage: night.triageState == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                                .foregroundStyle(night.triageState == .ready ? .green : .orange)
-                        }
-                        .width(min: 110, ideal: 125)
-                    }
-                    .frame(minHeight: 330)
-                    .contextMenu(forSelectionType: UUID.self) { nightIDs in
-                        if let id = nightIDs.first, let night = store.nights.first(where: { $0.id == id }) {
-                            actionMenu(for: night, openNight: { openNight(id) })
-                        }
-                    } primaryAction: { nightIDs in
-                        if let id = nightIDs.first { openNight(id) }
-                    }
-                    .onChange(of: store.selectedNightID) { _, id in if let id { openNight(id) } }
-                    .accessibilityIdentifier("v2.nights.table")
-                }
-            }
-            if mode == .calendar {
-                GroupBox("Astronomical planning calendar") {
-                    if store.planningRows.isEmpty {
-                        ContentUnavailableView(
-                            "Planning calendar unavailable",
-                            systemImage: "calendar.badge.exclamationmark",
-                            description: Text("Add an observing site or scan FITS site coordinates to calculate the next 30 nights.")
-                        )
-                        .frame(minHeight: 260)
-                    } else {
-                        Table(store.planningRows) {
-                            TableColumn("Night") { Text($0.summary.date).font(.headline.monospacedDigit()) }
-                            TableColumn("Darkness") { Text($0.darkHours) }
-                            TableColumn("Moon") { Text($0.moon).monospacedDigit() }
-                                .width(min: 65, ideal: 75)
-                            TableColumn("Best target windows") { Text($0.bestTargets.isEmpty ? "No usable target window" : $0.bestTargets).lineLimit(1) }
-                        }
-                        .frame(minHeight: 390)
-                        .accessibilityIdentifier("v2.nights.planning-calendar")
-                    }
-                }
-            }
+        } table: {
+            tableContent
         }
         .navigationTitle("Nights")
         .accessibilityLabel("Nights")
@@ -165,6 +109,81 @@ public struct NightsView: View {
                 )
             }
         }
+    }
+
+    /// The two table-hosting `Mode`s already act as a swap, not a stack --
+    /// `mode`'s own segmented control (in the fixed toolbar above) picks
+    /// exactly one of these at a time, so there is never more than one
+    /// `Table` materialized here, and it always gets the whole table region.
+    @ViewBuilder
+    private var tableContent: some View {
+        if mode == .history, !store.nights.isEmpty {
+            observedNightsTable
+        } else if mode == .calendar {
+            if store.planningRows.isEmpty {
+                ContentUnavailableView(
+                    "Planning calendar unavailable",
+                    systemImage: "calendar.badge.exclamationmark",
+                    description: Text("Add an observing site or scan FITS site coordinates to calculate the next 30 nights.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                calendarTable
+            }
+        }
+    }
+
+    private var observedNightsTable: some View {
+        GroupBox("Observed nights") {
+            Table(store.visibleNights, selection: Binding(
+                get: { store.selectedNightID },
+                set: { store.selectNight($0) }
+            )) {
+                TableColumn("Night") { night in
+                    Label(night.date, systemImage: "moon.stars.fill")
+                        .font(.headline.monospacedDigit())
+                        .foregroundStyle(AstroTokens.Color.spectralViolet)
+                }
+                TableColumn("Projects") { Text($0.projectSummary).lineLimit(1) }
+                TableColumn("Series") { Text($0.seriesCount.formatted()).monospacedDigit() }
+                    .width(min: 55, ideal: 65)
+                TableColumn("Usable") { Text("\($0.snapshot.usableFrames) / \($0.snapshot.totalFrames)").monospacedDigit() }
+                    .width(min: 70, ideal: 85)
+                TableColumn("Integration") { Text($0.integrationSummary).monospacedDigit() }
+                    .width(min: 75, ideal: 90)
+                TableColumn("Triage") { night in
+                    Label(night.triageState.rawValue, systemImage: night.triageState == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                        .foregroundStyle(night.triageState == .ready ? .green : .orange)
+                }
+                .width(min: 110, ideal: 125)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contextMenu(forSelectionType: UUID.self) { nightIDs in
+                if let id = nightIDs.first, let night = store.nights.first(where: { $0.id == id }) {
+                    actionMenu(for: night, openNight: { openNight(id) })
+                }
+            } primaryAction: { nightIDs in
+                if let id = nightIDs.first { openNight(id) }
+            }
+            .onChange(of: store.selectedNightID) { _, id in if let id { openNight(id) } }
+            .accessibilityIdentifier("v2.nights.table")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var calendarTable: some View {
+        GroupBox("Astronomical planning calendar") {
+            Table(store.planningRows) {
+                TableColumn("Night") { Text($0.summary.date).font(.headline.monospacedDigit()) }
+                TableColumn("Darkness") { Text($0.darkHours) }
+                TableColumn("Moon") { Text($0.moon).monospacedDigit() }
+                    .width(min: 65, ideal: 75)
+                TableColumn("Best target windows") { Text($0.bestTargets.isEmpty ? "No usable target window" : $0.bestTargets).lineLimit(1) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityIdentifier("v2.nights.planning-calendar")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// `NightActionMenu`'s shared action set for one night row -- V1's

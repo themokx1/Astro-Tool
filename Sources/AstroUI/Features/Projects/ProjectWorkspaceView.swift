@@ -77,6 +77,14 @@ public struct ProjectWorkspaceView: View {
             .padding(.vertical, AstroTokens.Spacing.standard)
             if router.projectTab == .results {
                 resultsContent
+            } else if router.projectTab == .nights || router.projectTab == .series {
+                // Deliberately NOT inside the `ScrollView` below, for the
+                // same reason `.results` above already isn't: a `Table`
+                // proposed an unbounded height cannot virtualize its rows --
+                // see `WorkspaceTablePage`'s own doc comment for the same
+                // fix applied to the main table-hosting workspaces.
+                tableTabContent
+                    .padding(AstroTokens.Spacing.spacious)
             } else {
                 ScrollView {
                     content.padding(AstroTokens.Spacing.spacious)
@@ -200,6 +208,22 @@ public struct ProjectWorkspaceView: View {
         }
     }
 
+    /// `.nights` and `.series` render here (via `body`'s own `if` above),
+    /// not inside `content`'s `ScrollView`, since both host a `Table`.
+    @ViewBuilder private var tableTabContent: some View {
+        switch router.projectTab {
+        case .nights:
+            ProjectNightsSummary(
+                snapshot: snapshot, rootURL: rootURL, accessMode: accessMode,
+                openNight: openNight, openCalibration: openCalibration, openInsights: openInsights
+            )
+        case .series:
+            ProjectSeriesSummary(snapshot: snapshot, openSeries: openSeries)
+        default:
+            EmptyView()
+        }
+    }
+
     @ViewBuilder private var content: some View {
         switch router.projectTab {
         case .overview:
@@ -214,13 +238,13 @@ public struct ProjectWorkspaceView: View {
                     Text(snapshot.nextAction.explanation).foregroundStyle(.secondary)
                 }
             }
-        case .nights:
-            ProjectNightsSummary(
-                snapshot: snapshot, rootURL: rootURL, accessMode: accessMode,
-                openNight: openNight, openCalibration: openCalibration, openInsights: openInsights
-            )
-        case .series:
-            ProjectSeriesSummary(snapshot: snapshot, openSeries: openSeries)
+        case .nights, .series:
+            // `body` above renders `tableTabContent` directly for these tabs
+            // (each hosts a `Table`, which must not sit inside this switch's
+            // own `ScrollView`), so this branch is never actually reached --
+            // kept only so the switch stays exhaustive without a catch-all
+            // `default:`.
+            EmptyView()
         case .results:
             // `body` above renders `resultsContent` directly for this tab
             // (Results manages its own `HSplitView`/`Table` scrolling and
@@ -290,7 +314,7 @@ private struct ProjectNightsSummary: View {
             TableColumn("Usable") { Text($0.usableFrames.formatted()).monospacedDigit() }
             TableColumn("Integration") { Text(duration($0.integrationSeconds)).monospacedDigit() }
         }
-        .frame(minHeight: 320)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contextMenu(forSelectionType: UUID.self) { nightIDs in
             if let id = nightIDs.first, let night = snapshot.nights.first(where: { $0.id == id }) {
                 NightActionMenu(
@@ -337,7 +361,7 @@ private struct ProjectSeriesSummary: View {
             TableColumn("Setup") { Text($0.series.setupDescriptor).lineLimit(1) }
             TableColumn("Frames") { Text("\($0.usableFrames) / \($0.excludedFrames)").monospacedDigit() }
         }
-        .frame(minHeight: 320)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: selection) { _, id in if let id { openSeries(id) } }
     }
 }

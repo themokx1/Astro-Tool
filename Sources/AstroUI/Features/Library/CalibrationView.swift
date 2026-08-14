@@ -18,11 +18,25 @@ private struct CalibrationCoverageRow: Identifiable {
 }
 
 public struct CalibrationView: View {
+    /// The two tables this workspace hosts used to be stacked in one
+    /// scrolling page. Per the freeze diagnosis (build 20017), a `Table`
+    /// nested in a `ScrollView` gets an unbounded proposed height and
+    /// cannot virtualize -- and stacking TWO such tables doubled the cost.
+    /// This segmented control swaps between them instead, so exactly one
+    /// `Table` is materialized at a time and it gets the whole table
+    /// region's bounded height.
+    private enum Section: String, CaseIterable, Identifiable {
+        case coverage = "Session coverage"
+        case masters = "Master darks"
+        var id: String { rawValue }
+    }
+
     let rootURL: URL?
     let accessMode: LibraryAccessMode
     let chooseLibrary: () -> Void
     let onLibraryFindingsChanged: (() -> Void)?
     @State private var store = CalibrationStore()
+    @State private var selectedSection: Section = .coverage
     @State private var selectedCoverageID: String?
     @State private var selectedMasterID: String?
     @State private var showsLinkPreview = false
@@ -44,27 +58,14 @@ public struct CalibrationView: View {
     }
 
     public var body: some View {
-        WorkspacePage(
+        WorkspaceTablePage(
             eyebrow: "Read-only inventory · explicit linking",
             title: "Calibration",
             subtitle: "Master-dark inventory and per-session linking, applied only through WriteGuard."
         ) {
-            if let rootURL {
-                if store.isLoading {
-                    ProgressView("Reading calibration coverage…").frame(maxWidth: .infinity, minHeight: 280)
-                } else {
-                    workspace(rootURL: rootURL)
-                }
-            } else {
-                ContentUnavailableView {
-                    Label("No library open", systemImage: "externaldrive.badge.questionmark")
-                } description: {
-                    Text(store.errorMessage ?? "Choose an image library to review calibration coverage.")
-                } actions: {
-                    Button("Choose Image Library…", action: chooseLibrary).buttonStyle(.borderedProminent)
-                }
-                .frame(minHeight: 300)
-            }
+            toolbarContent
+        } table: {
+            tableContent
         }
         .task(id: rootURL) {
             if let rootURL { await store.load(rootURL: rootURL, accessMode: accessMode) }
@@ -81,21 +82,56 @@ public struct CalibrationView: View {
     }
 
     @ViewBuilder
-    private func workspace(rootURL: URL) -> some View {
-        HStack(spacing: AstroTokens.Spacing.standard) {
-            MetricCard(
-                title: "Coverage gaps", value: "\(store.coverage.filter { $0.matchedMasterPath == nil }.count)",
-                detail: "Combos without a master", systemImage: "exclamationmark.triangle"
-            )
-            MetricCard(
-                title: "Master darks", value: "\(store.masters.count)",
-                detail: "Inventoried directories", systemImage: "archivebox"
-            )
-            MetricCard(
-                title: "Access", value: store.accessMode == .mutationEnabled ? "Writable" : "Read only",
-                detail: "Images protected", systemImage: "lock.shield"
-            )
+    private var toolbarContent: some View {
+        if rootURL != nil, !store.isLoading {
+            HStack(spacing: AstroTokens.Spacing.standard) {
+                MetricCard(
+                    title: "Coverage gaps", value: "\(store.coverage.filter { $0.matchedMasterPath == nil }.count)",
+                    detail: "Combos without a master", systemImage: "exclamationmark.triangle"
+                )
+                MetricCard(
+                    title: "Master darks", value: "\(store.masters.count)",
+                    detail: "Inventoried directories", systemImage: "archivebox"
+                )
+                MetricCard(
+                    title: "Access", value: store.accessMode == .mutationEnabled ? "Writable" : "Read only",
+                    detail: "Images protected", systemImage: "lock.shield"
+                )
+            }
+            Picker("Section", selection: $selectedSection) {
+                ForEach(Section.allCases) { section in
+                    Text(section.rawValue).tag(section)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("v2.calibration.section")
         }
+    }
+
+    @ViewBuilder
+    private var tableContent: some View {
+        if let rootURL {
+            if store.isLoading {
+                ProgressView("Reading calibration coverage…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                switch selectedSection {
+                case .coverage: coverageTable
+                case .masters: mastersTable(rootURL: rootURL)
+                }
+            }
+        } else {
+            ContentUnavailableView {
+                Label("No library open", systemImage: "externaldrive.badge.questionmark")
+            } description: {
+                Text(store.errorMessage ?? "Choose an image library to review calibration coverage.")
+            } actions: {
+                Button("Choose Image Library…", action: chooseLibrary).buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var coverageTable: some View {
         GroupBox("Session coverage") {
             Table(coverageRows, selection: $selectedCoverageID) {
                 TableColumn("Combo") { row in
@@ -113,7 +149,7 @@ public struct CalibrationView: View {
                         .lineLimit(1)
                 }
             }
-            .frame(minHeight: 180)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contextMenu(forSelectionType: String.self) { ids in
                 if let row = coverageRows.first(where: { ids.contains($0.id) }) {
                     coverageActionMenu(row)
@@ -121,6 +157,10 @@ public struct CalibrationView: View {
             }
             .accessibilityIdentifier("v2.calibration.coverage-table")
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func mastersTable(rootURL: URL) -> some View {
         GroupBox("Master darks") {
             Table(store.masters, selection: $selectedMasterID) {
                 TableColumn("Path") { master in
@@ -137,7 +177,7 @@ public struct CalibrationView: View {
                 TableColumn("Status") { master in masterStatus(master) }
                     .width(min: 140, ideal: 180)
             }
-            .frame(minHeight: 180)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contextMenu(forSelectionType: CalibrationMasterInfo.ID.self) { ids in
                 if let master = store.masters.first(where: { ids.contains($0.id) }) {
                     masterActionMenu(master, rootURL: rootURL)
@@ -145,6 +185,7 @@ public struct CalibrationView: View {
             }
             .accessibilityIdentifier("v2.calibration.masters-table")
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder

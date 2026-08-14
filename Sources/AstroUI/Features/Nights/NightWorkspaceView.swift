@@ -58,8 +58,18 @@ public struct NightWorkspaceView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal, AstroTokens.Spacing.spacious)
             .padding(.vertical, AstroTokens.Spacing.standard)
-            ScrollView {
-                content.padding(AstroTokens.Spacing.spacious)
+            if router.nightTab == .series {
+                // Deliberately NOT inside the `ScrollView` below: a `Table`
+                // proposed an unbounded height (as it would be inside a
+                // ScrollView) cannot virtualize its rows -- see
+                // `WorkspaceTablePage`'s own doc comment for the same fix
+                // applied to the main table-hosting workspaces.
+                seriesTable
+                    .padding(AstroTokens.Spacing.spacious)
+            } else {
+                ScrollView {
+                    content.padding(AstroTokens.Spacing.spacious)
+                }
             }
         }
         .background(AstroTokens.Color.graphite.opacity(0.36))
@@ -124,16 +134,11 @@ public struct NightWorkspaceView: View {
                 }
             }
         case .series:
-            Table(row.snapshot.series.map(SeriesRow.init)) {
-                TableColumn("Project") { series in
-                    Text(row.snapshot.projects.first { $0.id == series.series.projectID }?.displayName ?? "Unknown")
-                }
-                TableColumn("Filter") { Text($0.series.filterName ?? "Unfiltered") }
-                TableColumn("Exposure") { Text("\($0.series.exposureSeconds.formatted()) s").monospacedDigit() }
-                TableColumn("Setup") { Text($0.series.setupDescriptor).lineLimit(1) }
-                TableColumn("Mode") { Text($0.series.passband.rawValue.replacingOccurrences(of: "_", with: " ").capitalized) }
-            }
-            .frame(minHeight: 360)
+            // `body` above renders `seriesTable` directly for this tab (a
+            // `Table` must never sit inside this switch's own `ScrollView`),
+            // so this branch is never actually reached -- kept only so the
+            // switch stays exhaustive without a catch-all `default:`.
+            EmptyView()
         case .frames:
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
                 Text("Frame review is per-project. Pick a project captured this night to review its frames.")
@@ -162,6 +167,19 @@ public struct NightWorkspaceView: View {
                     .disabled(rootURL == nil || row.snapshot.projects.first == nil)
             }
         }
+    }
+
+    private var seriesTable: some View {
+        Table(row.snapshot.series.map(SeriesRow.init)) {
+            TableColumn("Project") { series in
+                Text(row.snapshot.projects.first { $0.id == series.series.projectID }?.displayName ?? "Unknown")
+            }
+            TableColumn("Filter") { Text($0.series.filterName ?? "Unfiltered") }
+            TableColumn("Exposure") { Text("\($0.series.exposureSeconds.formatted()) s").monospacedDigit() }
+            TableColumn("Setup") { Text($0.series.setupDescriptor).lineLimit(1) }
+            TableColumn("Mode") { Text($0.series.passband.rawValue.replacingOccurrences(of: "_", with: " ").capitalized) }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// This night's report (`AppState.exportNightReport`'s V2 equivalent) --

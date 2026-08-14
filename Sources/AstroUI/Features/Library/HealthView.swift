@@ -44,118 +44,12 @@ public struct HealthView: View {
     @State private var acknowledgeRequest: AcknowledgeRequest?
 
     public var body: some View {
-        WorkspacePage(eyebrow: "Read-only diagnostics", title: "Library Health", subtitle: "Actionable calibration and integrity checks without changing source files.") {
-            if let snapshot = store.snapshot {
-                HStack(spacing: AstroTokens.Spacing.standard) {
-                    MetricCard(title: "Sessions", value: "\(snapshot.sessionCount)", detail: "Indexed nights", systemImage: "moon.stars")
-                    MetricCard(title: "Calibration", value: "\(snapshot.calibrationIssues)", detail: "Needs attention", systemImage: "exclamationmark.triangle")
-                    MetricCard(title: "Duplicates", value: "\(snapshot.duplicateFiles)", detail: "Additional copies", systemImage: "square.on.square")
-                    MetricCard(title: "Organization", value: "\(snapshot.organizationIssues)", detail: "Reviewable residue", systemImage: "tray.full")
-                    MetricCard(title: "Access", value: snapshot.isReadOnly ? "Read only" : "Writable", detail: "Images protected", systemImage: "lock.shield")
-                }
-                if let running = runningAuditOperation {
-                    HStack {
-                        ProgressView().controlSize(.small)
-                        Text(running.title).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Cancel") { Task { await operationHost.cancel(id: running.id) } }
-                    }
-                }
-                if let running = runningVerifyOperation {
-                    HStack {
-                        ProgressView(value: running.total.map { Double(running.completed) / Double(max($0, 1)) })
-                            .controlSize(.small)
-                            .frame(maxWidth: 160)
-                        Text(running.title).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Cancel") { Task { await operationHost.cancel(id: running.id) } }
-                    }
-                }
-                HStack {
-                    Picker("Category", selection: $category) {
-                        Text("All findings").tag(LibraryHealthCategory?.none)
-                        ForEach(LibraryHealthCategory.allCases, id: \.rawValue) { value in
-                            Text(value.rawValue.capitalized).tag(Optional(value))
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .accessibilityIdentifier("v2.health.categories")
-                    Toggle("Show Acknowledged", isOn: Binding(
-                        get: { store.showAcknowledged },
-                        set: { value in Task { await store.setShowAcknowledged(value) } }
-                    ))
-                    .toggleStyle(.checkbox)
-                    .accessibilityIdentifier("v2.health.show-acknowledged")
-                }
-                GroupBox("Health findings") {
-                    Table(filteredItems(snapshot), selection: $selectedFindingID) {
-                        TableColumn("Finding") { item in
-                            HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: icon(item.severity)).foregroundStyle(color(item.severity))
-                                VStack(alignment: .leading, spacing: 3) {
-                                    HStack(spacing: 6) {
-                                        Text(item.title).font(.headline)
-                                        if item.isAcknowledged {
-                                            Label("Acknowledged", systemImage: "checkmark.seal")
-                                                .font(.caption).foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    Text(item.detail).font(.callout).foregroundStyle(.secondary)
-                                }
-                                .padding(.vertical, 4)
-                            }
-                            .opacity(item.isAcknowledged ? 0.6 : 1)
-                        }
-                        TableColumn("Target / Night") { item in
-                            Text([item.target, item.sessionDate].compactMap { $0 }.joined(separator: " · ").nilIfEmpty ?? "—")
-                                .font(.callout.monospaced())
-                        }
-                        .width(min: 145, ideal: 190)
-                        TableColumn("Category") { item in
-                            Text(item.category.rawValue.capitalized)
-                        }
-                        .width(min: 90, ideal: 110)
-                        TableColumn("Next step") { item in
-                            Text(nextStep(item.category)).foregroundStyle(AstroTokens.Color.spectralBlue)
-                        }
-                        .width(min: 115, ideal: 145)
-                    }
-                    .frame(minHeight: 250)
-                    .contextMenu(forSelectionType: String.self) { findingIDs in
-                        if let item = filteredItems(snapshot).first(where: { findingIDs.contains($0.id) }) {
-                            healthActionMenu(item)
-                        }
-                    }
-                    .accessibilityIdentifier("v2.health.findings-table")
-                }
-                Button("Calibration…", action: openCalibration).buttonStyle(.bordered)
-                GroupBox("Audit run history") {
-                    if snapshot.auditRuns.isEmpty {
-                        Text("No recorded audit runs yet.").foregroundStyle(.secondary)
-                    } else {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(Array(snapshot.auditRuns.enumerated()), id: \.offset) { _, run in
-                                HStack {
-                                    Text(run.ranAt, style: .date).font(.callout.monospaced())
-                                    Text("\(run.findingCount) finding(s)").foregroundStyle(.secondary)
-                                    Spacer()
-                                    Text("+\(run.newCount) new").foregroundStyle(.orange)
-                                    Text("−\(run.resolvedCount) resolved").foregroundStyle(.green)
-                                }
-                            }
-                        }
-                    }
-                }
-                .accessibilityIdentifier("v2.health.audit-history")
-            } else if store.isLoading {
-                ProgressView("Checking library health…").frame(maxWidth: .infinity, minHeight: 280)
-            } else {
-                ContentUnavailableView {
-                    Label("No library open", systemImage: "externaldrive.badge.questionmark")
-                } description: { Text(store.errorMessage ?? "Choose an image library to run read-only health checks.") }
-                actions: { Button("Choose Image Library…", action: chooseLibrary).buttonStyle(.borderedProminent) }
-                .frame(minHeight: 300)
-            }
+        WorkspaceTablePage(eyebrow: "Read-only diagnostics", title: "Library Health", subtitle: "Actionable calibration and integrity checks without changing source files.") {
+            toolbarContent
+        } table: {
+            tableContent
+        } footer: {
+            footerContent
         }
         .task(id: rootURL) { if let rootURL { await store.load(rootURL: rootURL) } }
         .navigationTitle("Library Health")
@@ -193,6 +87,143 @@ public struct HealthView: View {
         .onChange(of: rootURL) { _, _ in publishWorkspaceActions() }
         .onChange(of: operationHost.activeOperations) { _, _ in publishWorkspaceActions() }
         .onDisappear { workspaceActionCenter.clear(owner: actionOwner) }
+    }
+
+    @ViewBuilder
+    private var toolbarContent: some View {
+        if let snapshot = store.snapshot {
+            HStack(spacing: AstroTokens.Spacing.standard) {
+                MetricCard(title: "Sessions", value: "\(snapshot.sessionCount)", detail: "Indexed nights", systemImage: "moon.stars")
+                MetricCard(title: "Calibration", value: "\(snapshot.calibrationIssues)", detail: "Needs attention", systemImage: "exclamationmark.triangle")
+                MetricCard(title: "Duplicates", value: "\(snapshot.duplicateFiles)", detail: "Additional copies", systemImage: "square.on.square")
+                MetricCard(title: "Organization", value: "\(snapshot.organizationIssues)", detail: "Reviewable residue", systemImage: "tray.full")
+                MetricCard(title: "Access", value: snapshot.isReadOnly ? "Read only" : "Writable", detail: "Images protected", systemImage: "lock.shield")
+            }
+            if let running = runningAuditOperation {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text(running.title).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Cancel") { Task { await operationHost.cancel(id: running.id) } }
+                }
+            }
+            if let running = runningVerifyOperation {
+                HStack {
+                    ProgressView(value: running.total.map { Double(running.completed) / Double(max($0, 1)) })
+                        .controlSize(.small)
+                        .frame(maxWidth: 160)
+                    Text(running.title).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Cancel") { Task { await operationHost.cancel(id: running.id) } }
+                }
+            }
+            HStack {
+                Picker("Category", selection: $category) {
+                    Text("All findings").tag(LibraryHealthCategory?.none)
+                    ForEach(LibraryHealthCategory.allCases, id: \.rawValue) { value in
+                        Text(value.rawValue.capitalized).tag(Optional(value))
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("v2.health.categories")
+                Toggle("Show Acknowledged", isOn: Binding(
+                    get: { store.showAcknowledged },
+                    set: { value in Task { await store.setShowAcknowledged(value) } }
+                ))
+                .toggleStyle(.checkbox)
+                .accessibilityIdentifier("v2.health.show-acknowledged")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tableContent: some View {
+        if let snapshot = store.snapshot {
+            GroupBox("Health findings") {
+                Table(filteredItems(snapshot), selection: $selectedFindingID) {
+                    TableColumn("Finding") { item in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: icon(item.severity)).foregroundStyle(color(item.severity))
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text(item.title).font(.headline)
+                                    if item.isAcknowledged {
+                                        Label("Acknowledged", systemImage: "checkmark.seal")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                                Text(item.detail).font(.callout).foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .opacity(item.isAcknowledged ? 0.6 : 1)
+                    }
+                    TableColumn("Target / Night") { item in
+                        Text([item.target, item.sessionDate].compactMap { $0 }.joined(separator: " · ").nilIfEmpty ?? "—")
+                            .font(.callout.monospaced())
+                    }
+                    .width(min: 145, ideal: 190)
+                    TableColumn("Category") { item in
+                        Text(item.category.rawValue.capitalized)
+                    }
+                    .width(min: 90, ideal: 110)
+                    TableColumn("Next step") { item in
+                        Text(nextStep(item.category)).foregroundStyle(AstroTokens.Color.spectralBlue)
+                    }
+                    .width(min: 115, ideal: 145)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contextMenu(forSelectionType: String.self) { findingIDs in
+                    if let item = filteredItems(snapshot).first(where: { findingIDs.contains($0.id) }) {
+                        healthActionMenu(item)
+                    }
+                }
+                .accessibilityIdentifier("v2.health.findings-table")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if store.isLoading {
+            ProgressView("Checking library health…").frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ContentUnavailableView {
+                Label("No library open", systemImage: "externaldrive.badge.questionmark")
+            } description: { Text(store.errorMessage ?? "Choose an image library to run read-only health checks.") }
+            actions: { Button("Choose Image Library…", action: chooseLibrary).buttonStyle(.borderedProminent) }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// Bounded to its own scroll region -- the audit-run history could grow
+    /// without limit over a library's lifetime, and unlike the findings
+    /// table above it, this list is not a virtualizing control.
+    @ViewBuilder
+    private var footerContent: some View {
+        if let snapshot = store.snapshot {
+            HStack {
+                Button("Calibration…", action: openCalibration).buttonStyle(.bordered)
+                Spacer()
+            }
+            GroupBox("Audit run history") {
+                if snapshot.auditRuns.isEmpty {
+                    Text("No recorded audit runs yet.").foregroundStyle(.secondary)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(snapshot.auditRuns.enumerated()), id: \.offset) { _, run in
+                                HStack {
+                                    Text(run.ranAt, style: .date).font(.callout.monospaced())
+                                    Text("\(run.findingCount) finding(s)").foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text("+\(run.newCount) new").foregroundStyle(.orange)
+                                    Text("−\(run.resolvedCount) resolved").foregroundStyle(.green)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 140)
+                }
+            }
+            .accessibilityIdentifier("v2.health.audit-history")
+        }
     }
 
     private func publishWorkspaceActions() {

@@ -8,13 +8,15 @@ public struct PlanningView: View {
     let createProject: (String) -> Void
 
     public var body: some View {
-        WorkspacePage(
+        WorkspaceTablePage(
             eyebrow: "Next clear night",
             title: "Planning",
             subtitle: "Choose a setup first, then compare honest framing and integration estimates."
         ) {
             setupBar
             baselineCard
+            searchBar
+        } table: {
             recommendationList
         }
         .navigationTitle("Planning")
@@ -85,15 +87,18 @@ public struct PlanningView: View {
         .accessibilityIdentifier("v2.planning.integration")
     }
 
+    private var searchBar: some View {
+        HStack {
+            TextField("Catalog number, English or Hungarian name", text: $store.searchText)
+                .textFieldStyle(.roundedBorder)
+            Toggle("Useful framing only", isOn: $store.usefulFramingOnly)
+                .toggleStyle(.checkbox)
+        }
+    }
+
     private var recommendationList: some View {
         GroupBox("Target recommendations") {
-            VStack(spacing: 12) {
-                HStack {
-                    TextField("Catalog number, English or Hungarian name", text: $store.searchText)
-                        .textFieldStyle(.roundedBorder)
-                    Toggle("Useful framing only", isOn: $store.usefulFramingOnly)
-                        .toggleStyle(.checkbox)
-                }
+            Group {
                 if store.recommendations.isEmpty && store.isComputing {
                     // The first `refresh()` (kicked off by `PlanningStore.init`)
                     // hasn't landed yet -- an honest "still computing" state,
@@ -101,10 +106,10 @@ public struct PlanningView: View {
                     // crash fix: `recommendations` is now computed off the
                     // main actor, so it is briefly empty on first load).
                     ProgressView("Finding matches…")
-                        .frame(minHeight: 220)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if store.filteredRecommendations.isEmpty {
                     ContentUnavailableView.search(text: store.searchText)
-                        .frame(minHeight: 220)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     Table(store.filteredRecommendations, selection: $selectedTargetID) {
                         TableColumn("Target") { row in
@@ -131,7 +136,7 @@ public struct PlanningView: View {
                         }
                         .width(min: 105, ideal: 125)
                     }
-                    .frame(minHeight: 300)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contextMenu(forSelectionType: String.self) { targetIDs in
                         if let row = store.filteredRecommendations.first(where: { targetIDs.contains($0.id) }) {
                             Button("Plan Selected") { createProject(row.target.designation) }
@@ -145,6 +150,7 @@ public struct PlanningView: View {
             }
             .padding(8)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("v2.planning.recommendations")
     }
 

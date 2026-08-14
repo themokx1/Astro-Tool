@@ -137,7 +137,13 @@ private struct EquipmentEvaluationSettingsView: View {
                     }
                     TableColumn("Passband") { filter in Text(filter.passband.title) }
                 }
-                .frame(minHeight: 150)
+                // A `maxHeight` cap, not a `minHeight` floor: this table sits
+                // in a `Form` `Section`, not a `ScrollView`, so it is not the
+                // ScrollView-nesting shape the freeze diagnosis (build 20017)
+                // describes -- but capping it still keeps a long
+                // user-managed filter list from pushing the rest of the
+                // settings tab off screen.
+                .frame(maxHeight: 220)
                 .contextMenu(forSelectionType: UUID.self) { filterIDs in
                     if let id = filterIDs.first {
                         Button("Remove Filter", role: .destructive) { store.removeFilter(id: id) }

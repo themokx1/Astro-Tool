@@ -30,7 +30,7 @@ public struct ProjectsView: View {
     }
 
     private var projectsWorkspace: some View {
-        WorkspacePage(
+        WorkspaceTablePage(
             eyebrow: "Your sky",
             title: "Projects",
             subtitle: "One target, every night, series, stack, and result — kept together."
@@ -59,72 +59,90 @@ public struct ProjectsView: View {
                         Task { visibleProjects = (try? await store.search(value)) ?? [] }
                     }
             }
-
-            if !store.projects.isEmpty {
-                GroupBox("Saved projects") {
-                    Table(filteredRows, selection: projectSelection) {
-                        TableColumn("Project") { row in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(row.project.displayName).font(.headline)
-                                Text(row.project.catalogID).font(.caption).foregroundStyle(.secondary)
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture(count: 2) { openProject(row.project) }
-                        }
-                        TableColumn("Phase") { row in Text(row.project.phase.rawValue.capitalized) }
-                            .width(min: 85, ideal: 100)
-                        TableColumn("Nights") { row in Text(row.nightCount.formatted()).monospacedDigit() }
-                            .width(60)
-                        TableColumn("Integration") { row in Text(duration(row.integrationSeconds)).monospacedDigit() }
-                            .width(85)
-                        TableColumn("Frames") { row in
-                            Text("\(row.usableFrames) / \(row.excludedFrames)").monospacedDigit()
-                                .help("Usable / excluded")
-                        }.width(80)
-                        TableColumn("Latest") { row in Text(row.latestNight ?? "—").monospacedDigit() }
-                            .width(100)
-                        TableColumn("Next") { row in Text(row.nextAction).lineLimit(1) }
-                        TableColumn("") { row in
-                            HStack(spacing: 4) {
-                                Button { reviewProject(row.project) } label: { Image(systemName: "checklist") }
-                                    .help("Review frames")
-                                Button { showResults(row.project) } label: { Image(systemName: "square.stack.3d.up") }
-                                    .help("Results")
-                            }
-                            .buttonStyle(.borderless)
-                        }.width(58)
-                    }
-                    .frame(minHeight: 280)
-                    .contextMenu(forSelectionType: UUID.self) { ids in
-                        if let id = ids.first, let row = store.workspaceRows.first(where: { $0.id == id }) {
-                            Button("Open Project") { openProject(row.project) }
-                            Button("Review Frames") { reviewProject(row.project) }
-                            Button("Results") { showResults(row.project) }
-                        }
-                    } primaryAction: { ids in
-                        if let id = ids.first, let row = store.workspaceRows.first(where: { $0.id == id }) {
-                            openProject(row.project)
-                        }
-                    }
-                }
-            }
-
-            if store.isLoading, store.selectedProjectID != nil, store.selectedProject == nil {
-                ProgressView("Loading project…")
-                    .frame(maxWidth: .infinity, minHeight: 120)
-            } else if let detail = store.selectedProject {
-                ProjectAcquisitionDetail(
-                    snapshot: detail,
-                    review: { reviewProject(detail.project) },
-                    results: { showResults(detail.project) }
-                )
-            }
+        } table: {
+            tableContent
+        } footer: {
+            detailFooter
         }
         .navigationTitle("Projects")
         .accessibilityLabel("Projects")
         .accessibilityIdentifier("v2.detail.projects")
         .task(id: store.projects) {
             visibleProjects = (try? await store.search(searchText)) ?? store.projects
+        }
+    }
+
+    @ViewBuilder
+    private var tableContent: some View {
+        if !store.projects.isEmpty {
+            GroupBox("Saved projects") {
+                Table(filteredRows, selection: projectSelection) {
+                    TableColumn("Project") { row in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.project.displayName).font(.headline)
+                            Text(row.project.catalogID).font(.caption).foregroundStyle(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) { openProject(row.project) }
+                    }
+                    TableColumn("Phase") { row in Text(row.project.phase.rawValue.capitalized) }
+                        .width(min: 85, ideal: 100)
+                    TableColumn("Nights") { row in Text(row.nightCount.formatted()).monospacedDigit() }
+                        .width(60)
+                    TableColumn("Integration") { row in Text(duration(row.integrationSeconds)).monospacedDigit() }
+                        .width(85)
+                    TableColumn("Frames") { row in
+                        Text("\(row.usableFrames) / \(row.excludedFrames)").monospacedDigit()
+                            .help("Usable / excluded")
+                    }.width(80)
+                    TableColumn("Latest") { row in Text(row.latestNight ?? "—").monospacedDigit() }
+                        .width(100)
+                    TableColumn("Next") { row in Text(row.nextAction).lineLimit(1) }
+                    TableColumn("") { row in
+                        HStack(spacing: 4) {
+                            Button { reviewProject(row.project) } label: { Image(systemName: "checklist") }
+                                .help("Review frames")
+                            Button { showResults(row.project) } label: { Image(systemName: "square.stack.3d.up") }
+                                .help("Results")
+                        }
+                        .buttonStyle(.borderless)
+                    }.width(58)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contextMenu(forSelectionType: UUID.self) { ids in
+                    if let id = ids.first, let row = store.workspaceRows.first(where: { $0.id == id }) {
+                        Button("Open Project") { openProject(row.project) }
+                        Button("Review Frames") { reviewProject(row.project) }
+                        Button("Results") { showResults(row.project) }
+                    }
+                } primaryAction: { ids in
+                    if let id = ids.first, let row = store.workspaceRows.first(where: { $0.id == id }) {
+                        openProject(row.project)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// Bounded to its own scroll region rather than left to grow freely --
+    /// unlike the table above it, this is not a virtualizing control, so an
+    /// explicit cap keeps a project with many nights/series from pushing the
+    /// table region down to nothing.
+    @ViewBuilder
+    private var detailFooter: some View {
+        if store.isLoading, store.selectedProjectID != nil, store.selectedProject == nil {
+            ProgressView("Loading project…")
+                .frame(maxWidth: .infinity, minHeight: 80)
+        } else if let detail = store.selectedProject {
+            ScrollView {
+                ProjectAcquisitionDetail(
+                    snapshot: detail,
+                    review: { reviewProject(detail.project) },
+                    results: { showResults(detail.project) }
+                )
+            }
+            .frame(maxHeight: 340)
         }
     }
 
