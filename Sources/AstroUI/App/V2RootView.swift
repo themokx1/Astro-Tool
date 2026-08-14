@@ -248,6 +248,10 @@ private struct V2Shell: View {
         .inspector(isPresented: $router.isInspectorPresented) {
             InspectorView(
                 selection: router.inspectorSelection,
+                rootURL: onboardingStore.selectedRoot ?? libraryRootFallback,
+                projectsStore: projectsStore,
+                nightsStore: nightsStore,
+                reviewStore: reviewStore,
                 hideInspector: router.toggleInspector
             )
         }
