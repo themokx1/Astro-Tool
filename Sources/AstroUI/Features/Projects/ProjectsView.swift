@@ -13,6 +13,23 @@ public struct ProjectsView: View {
     @State private var visibleProjects: [ProjectRecord] = []
 
     public var body: some View {
+        if snapshot == nil {
+            ContentUnavailableView {
+                Label("No library open", systemImage: "folder")
+            } description: {
+                Text("Open a library to keep every target's nights, series, stacks, and results together.")
+            } actions: {
+                Button("Open Library…", action: chooseLibrary).buttonStyle(.borderedProminent)
+            }
+            .navigationTitle("Projects")
+            .accessibilityLabel("Projects")
+            .accessibilityIdentifier("v2.detail.projects")
+        } else {
+            projectsWorkspace
+        }
+    }
+
+    private var projectsWorkspace: some View {
         WorkspacePage(
             eyebrow: "Your sky",
             title: "Projects",
@@ -27,16 +44,11 @@ public struct ProjectsView: View {
                 VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
                     Label("Search by catalog number, English name, or Hungarian name.", systemImage: "sparkle.magnifyingglass")
                     Label("AstroTool proposes one canonical folder name to prevent duplicates.", systemImage: "checkmark.seal")
-                    HStack {
-                        Button("New Project…", action: createProject)
-                            .buttonStyle(.borderedProminent)
-                        if snapshot == nil {
-                            Button("Open Library…", action: chooseLibrary)
-                        }
-                    }
+                    Button("New Project…", action: createProject)
+                        .buttonStyle(.borderedProminent)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8)
+                .padding(AstroTokens.Spacing.compact)
             }
 
             if !store.projects.isEmpty {
@@ -200,7 +212,7 @@ private struct ProjectAcquisitionDetail: View {
                     ProjectNightSection(snapshot: night)
                 }
             }
-            .padding(8)
+            .padding(AstroTokens.Spacing.compact)
         } label: {
             Label("Project acquisition", systemImage: "rectangle.stack")
         }

@@ -48,6 +48,23 @@ public struct NightsView: View {
     }
 
     public var body: some View {
+        if snapshot == nil {
+            ContentUnavailableView {
+                Label("No library open", systemImage: "moon.stars")
+            } description: {
+                Text("Open a library to review each observing night without losing its series boundaries.")
+            } actions: {
+                Button("Open Library…", action: chooseLibrary).buttonStyle(.borderedProminent)
+            }
+            .navigationTitle("Nights")
+            .accessibilityLabel("Nights")
+            .accessibilityIdentifier("v2.detail.nights")
+        } else {
+            nightsWorkspace
+        }
+    }
+
+    private var nightsWorkspace: some View {
         WorkspacePage(eyebrow: "Capture history", title: "Nights", subtitle: "Review each observing night without losing its series boundaries.") {
             Picker("View", selection: $mode) {
                 ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -61,12 +78,11 @@ public struct NightsView: View {
             }
             .accessibilityIdentifier("v2.nights.triage")
             if mode == .history { GroupBox("Session model") {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
                     Label("A night can contain multiple OSC, narrowband, exposure, and filter series.", systemImage: "square.stack.3d.up")
                     Label("Quality and reports stay comparable per series and roll up to the night.", systemImage: "chart.line.uptrend.xyaxis")
-                    if snapshot == nil { Button("Open Library…", action: chooseLibrary).buttonStyle(.borderedProminent) }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(AstroTokens.Spacing.compact)
             } }
             if mode == .history, !store.availableMonths.isEmpty {
                 Picker("Month", selection: Binding(
