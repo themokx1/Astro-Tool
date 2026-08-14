@@ -151,7 +151,7 @@ public struct CalibrationView: View {
     }
 
     private func masterStatus(_ master: CalibrationMasterInfo) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: AstroTokens.Spacing.compact) {
             if master.isStale {
                 Label("Stale", systemImage: "clock.badge.exclamationmark").foregroundStyle(.orange)
             }

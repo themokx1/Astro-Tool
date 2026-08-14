@@ -174,7 +174,7 @@ public struct ProjectWorkspaceView: View {
                             Text("hours").foregroundStyle(.secondary)
                         }
                     }
-                    .padding(8)
+                    .padding(AstroTokens.Spacing.compact)
                 }
                 GroupBox("Project notes") {
                     TextEditor(text: $projectNotes)

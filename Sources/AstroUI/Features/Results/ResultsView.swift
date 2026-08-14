@@ -243,15 +243,15 @@ public struct ResultsView: View {
                             if let parent = result.parentResultID {
                                 Text("Parent · \(parent.uuidString)").font(.caption.monospaced()).foregroundStyle(.secondary)
                             }
-                        }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                        }.frame(maxWidth: .infinity, alignment: .leading).padding(AstroTokens.Spacing.compact)
                     }.accessibilityIdentifier("v2.results.lineage")
                     GroupBox("File") {
                         Text(result.relativePath ?? "No path recorded")
                             .font(.callout.monospaced()).textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(AstroTokens.Spacing.compact)
                     }
                     Spacer()
-                }.padding(24)
+                }.padding(AstroTokens.Spacing.section)
             }
         } else {
             ContentUnavailableView("Select a result", systemImage: "square.stack.3d.up")
