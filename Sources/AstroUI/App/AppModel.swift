@@ -230,10 +230,26 @@ public final class AppRouter {
     /// mode `push(_:)`'s own fix addresses, just from the opposite
     /// direction). This is what keeps Back "sane" after a deep link: one pop
     /// always lands on that section's own root.
+    ///
+    /// V2 UI/UX audit 3.1 -- this used to push UNCONDITIONALLY, even when
+    /// `route` IS the destination section's own root route (every plain
+    /// `astrotool://home|projects|nights|planning|library|insights` deep
+    /// link, and `NightActionMenu`'s "Open in Insights"). That produced a
+    /// one-entry stack sitting on top of the very route the section already
+    /// starts on: a "Insights › Insights" breadcrumb, a Back chevron to a
+    /// visually identical page, and the section's own `.task` load running
+    /// twice. Landing on a root route now just resets the stack and switches
+    /// sections -- exactly what `push(route)` would have produced anyway
+    /// (`contentRoute` already falls back to `section.rootRoute` on an empty
+    /// stack), just without the redundant entry.
     public func navigate(toContent route: ContentRoute) {
         let section = route.primarySection
         paths[section] = []
         primarySection = section
+        guard route != section.rootRoute else {
+            inspectorSelection = nil
+            return
+        }
         push(route)
     }
 

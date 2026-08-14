@@ -510,6 +510,58 @@ struct AppRouterTests {
         #expect(restoredLegacy.nightTab == .overview)
     }
 
+    // MARK: V2 UI/UX audit 3.1 -- navigate(toContent:) must not push a
+    // section's OWN root route onto itself
+
+    @Test("Navigating to a section's own root route leaves an EMPTY path -- no self-push", arguments: [
+        (PrimarySection.home, ContentRoute.home),
+        (.projects, .projects),
+        (.nights, .nights),
+        (.planning, .planning),
+        (.library, .library),
+        (.insights, .insights),
+    ])
+    func navigateToContentOnASectionsOwnRootRouteDoesNotPush(section: PrimarySection, rootRoute: ContentRoute) {
+        let router = AppRouter()
+        // Start somewhere else entirely so switching sections is observable.
+        router.navigate(to: .home)
+
+        router.navigate(toContent: rootRoute)
+
+        #expect(router.primarySection == section)
+        #expect(router.contentRoute == rootRoute)
+        #expect(
+            router.currentSectionPath.isEmpty,
+            "Navigating to \(section)'s own root route must not push a redundant entry onto its stack"
+        )
+    }
+
+    @Test("Navigating to a section's own root route from a non-empty stack in that SAME section still collapses to an empty path")
+    func navigateToContentOnOwnRootRouteFromWithinTheSameSectionCollapsesTheStack() {
+        let router = AppRouter()
+        router.navigate(to: .projects)
+        router.push(.project("m31"))
+        router.push(.projectSeries("m31-lrgb"))
+
+        router.navigate(toContent: .projects)
+
+        #expect(router.primarySection == .projects)
+        #expect(router.contentRoute == .projects)
+        #expect(router.currentSectionPath.isEmpty)
+    }
+
+    @Test("Navigating to a non-root route still pushes exactly one entry")
+    func navigateToContentOnANonRootRouteStillPushesOneEntry() {
+        let router = AppRouter()
+        router.navigate(to: .home)
+
+        router.navigate(toContent: .project("m31"))
+
+        #expect(router.primarySection == .projects)
+        #expect(router.currentSectionPath == [.project("m31")])
+        #expect(router.contentRoute == .project("m31"))
+    }
+
     @Test("Focused commands act on the active window only")
     func focusedCommandsResolveActiveWindow() {
         let firstWindow = AppRouter()
