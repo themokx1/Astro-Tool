@@ -21,15 +21,22 @@ public struct CalibrationView: View {
     let rootURL: URL?
     let accessMode: LibraryAccessMode
     let chooseLibrary: () -> Void
+    let onLibraryFindingsChanged: (() -> Void)?
     @State private var store = CalibrationStore()
     @State private var selectedCoverageID: String?
     @State private var selectedMasterID: String?
     @State private var showsLinkPreview = false
 
-    public init(rootURL: URL?, accessMode: LibraryAccessMode = .readOnly, chooseLibrary: @escaping () -> Void) {
+    public init(
+        rootURL: URL?,
+        accessMode: LibraryAccessMode = .readOnly,
+        chooseLibrary: @escaping () -> Void,
+        onLibraryFindingsChanged: (() -> Void)? = nil
+    ) {
         self.rootURL = rootURL
         self.accessMode = accessMode
         self.chooseLibrary = chooseLibrary
+        self.onLibraryFindingsChanged = onLibraryFindingsChanged
     }
 
     private var coverageRows: [CalibrationCoverageRow] {
@@ -61,6 +68,9 @@ public struct CalibrationView: View {
         }
         .task(id: rootURL) {
             if let rootURL { await store.load(rootURL: rootURL, accessMode: accessMode) }
+        }
+        .onAppear {
+            store.onLibraryFindingsChanged = onLibraryFindingsChanged
         }
         .navigationTitle("Calibration")
         .accessibilityLabel("Calibration")

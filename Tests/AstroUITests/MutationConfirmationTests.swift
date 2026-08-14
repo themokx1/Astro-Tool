@@ -168,4 +168,42 @@ struct MutationConfirmationTests {
         #expect(store.isRolledBack)
         #expect(fixture.exists(fixture.relativePath))
     }
+
+    @Test("A successful apply and a successful rollback each fire onLibraryFindingsChanged so the sidebar badge can refresh")
+    func applyAndRollbackFireLibraryFindingsChanged() async throws {
+        let fixture = try MutationConfirmationFixture.make()
+        defer { fixture.remove() }
+        let plan = fixture.plan()
+        let store = MutationConfirmationStore(
+            plan: plan, rootURL: fixture.root, accessMode: .mutationEnabled,
+            commandFactory: fixture.commandFactory()
+        )
+        store.confirmationText = plan.confirmationToken
+        var changeCount = 0
+        store.onLibraryFindingsChanged = { changeCount += 1 }
+
+        await store.apply()
+        #expect(changeCount == 1)
+
+        await store.rollback()
+        #expect(changeCount == 2)
+    }
+
+    @Test("A failed apply (read-only mode) does not fire onLibraryFindingsChanged")
+    func failedApplyDoesNotFireLibraryFindingsChanged() async throws {
+        let fixture = try MutationConfirmationFixture.make()
+        defer { fixture.remove() }
+        let plan = fixture.plan()
+        let store = MutationConfirmationStore(
+            plan: plan, rootURL: fixture.root, accessMode: .readOnly,
+            commandFactory: fixture.commandFactory()
+        )
+        store.confirmationText = plan.confirmationToken
+        var changeCount = 0
+        store.onLibraryFindingsChanged = { changeCount += 1 }
+
+        await store.apply()
+
+        #expect(changeCount == 0)
+    }
 }

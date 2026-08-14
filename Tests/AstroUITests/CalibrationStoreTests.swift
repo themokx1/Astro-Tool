@@ -164,4 +164,52 @@ struct CalibrationStoreTests {
         let destFile = fixture.libraryDir.appendingPathComponent("sessions/T1/2026-01-10/darks/master1.fit")
         #expect(FileManager.default.fileExists(atPath: destFile.path))
     }
+
+    @Test("A successful apply fires onLibraryFindingsChanged so the sidebar badge can refresh")
+    func applyingPlanFiresLibraryFindingsChanged() async throws {
+        let fixture = try CalibStoreFixture.make()
+        defer { fixture.cleanup() }
+        try fixture.writeFITSMaster("calibration_library/darks/300sec_-10deg/master1.fit")
+        try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, setTemp: -10.0)
+        try fixture.scan()
+
+        let store = CalibrationStore(
+            queryFactory: { _ in CalibrationQuery(db: fixture.db, config: fixture.config) },
+            commandFactory: { _, accessMode in
+                CalibrationLinkCommand(db: fixture.db, config: fixture.config, root: fixture.libraryDir, accessMode: accessMode)
+            }
+        )
+        await store.load(rootURL: fixture.libraryDir, accessMode: .mutationEnabled)
+        await store.preparePlan(target: "T1", date: "2026-01-10")
+        var changeCount = 0
+        store.onLibraryFindingsChanged = { changeCount += 1 }
+
+        await store.applyPlan()
+
+        #expect(changeCount == 1)
+    }
+
+    @Test("A read-only-rejected apply does not fire onLibraryFindingsChanged")
+    func readOnlyRejectedApplyDoesNotFireLibraryFindingsChanged() async throws {
+        let fixture = try CalibStoreFixture.make()
+        defer { fixture.cleanup() }
+        try fixture.writeFITSMaster("calibration_library/darks/300sec_-10deg/master1.fit")
+        try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, setTemp: -10.0)
+        try fixture.scan()
+
+        let store = CalibrationStore(
+            queryFactory: { _ in CalibrationQuery(db: fixture.db, config: fixture.config) },
+            commandFactory: { _, accessMode in
+                CalibrationLinkCommand(db: fixture.db, config: fixture.config, root: fixture.libraryDir, accessMode: accessMode)
+            }
+        )
+        await store.load(rootURL: fixture.libraryDir, accessMode: .readOnly)
+        await store.preparePlan(target: "T1", date: "2026-01-10")
+        var changeCount = 0
+        store.onLibraryFindingsChanged = { changeCount += 1 }
+
+        await store.applyPlan()
+
+        #expect(changeCount == 0)
+    }
 }

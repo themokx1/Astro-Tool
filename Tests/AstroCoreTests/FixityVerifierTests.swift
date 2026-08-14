@@ -369,6 +369,37 @@ private struct VerifyFixture {
     #expect(progressCalls.map(\.done) == [1, 2, 3])
 }
 
+/// R12-W3 fix: `progress` widened to `throws` so a caller (`AuditRunCommand`)
+/// can stop a verify pass between two files rather than only at its outer
+/// phase boundary. A throw after the first file must (a) actually propagate
+/// out of `verify(...)` and (b) leave the file already processed durably
+/// reflected in the partial state a caller could still observe -- mirrors
+/// `Rater.rate`'s own cooperative-cancellation contract.
+@Test func fixityVerifierProgressCallbackCanThrowToStopMidBatch() throws {
+    let fixture = try VerifyFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 0..<3 {
+        let path = "sessions/M31/2026-01-01/lights/f\(i).fit"
+        let url = fixture.url(path)
+        try writeFile(at: url, bytes: Array(repeating: UInt8(i), count: 1024))
+        let stat = try statInfo(url)
+        let hash = try DuplicateFinder.sha256Hash(of: url)
+        try fixture.db.upsertFile(makeFileRecord(path: path, size: stat.size, mtime: stat.mtime, contentHash: hash))
+    }
+
+    let recorder = ProgressRecorder()
+    #expect(throws: CancellationError.self) {
+        _ = try FixityVerifier.verify(db: fixture.db, config: fixture.config) { done, total in
+            recorder.record(done, total)
+            if done == 1 { throw CancellationError() }
+        }
+    }
+
+    // Stopped right after the first file -- never reached the second/third.
+    #expect(recorder.calls.count == 1)
+}
+
 // MARK: - findings(from:) / summarize(_:)
 
 @Test func fixityVerifierFindingsMapsEachStatusToTheRightSeverityAndCategory() throws {
@@ -577,6 +608,34 @@ private struct VerifyFixture {
     let m31 = try FixityVerifier.coverage(db: fixture.db, target: "M31")
     #expect(m31.tracked == 2)
     #expect(m31.hashed == 2)
+}
+
+/// Same widened-to-`throws` contract as `verify(...)`'s own progress hook --
+/// a throw after the first file stops `baseline(...)` before it ever reaches
+/// the second, while the first file's hash (already durably `upsertFile`d
+/// before `progress` is called for it) stays written.
+@Test func fixityBaselineProgressCallbackCanThrowToStopMidBatch() throws {
+    let fixture = try VerifyFixture.make()
+    defer { fixture.cleanup() }
+
+    for index in 0..<3 {
+        let path = "sessions/M31/2026-01-01/lights/f\(index).fit"
+        let url = fixture.url(path)
+        try writeFile(at: url, bytes: Array(repeating: UInt8(index + 1), count: 1024))
+        let stat = try statInfo(url)
+        try fixture.db.upsertFile(makeFileRecord(path: path, size: stat.size, mtime: stat.mtime, contentHash: nil, target: "M31"))
+    }
+
+    let recorder = ProgressRecorder()
+    #expect(throws: CancellationError.self) {
+        _ = try FixityVerifier.baseline(db: fixture.db, config: fixture.config) { done, total in
+            recorder.record(done, total)
+            if done == 1 { throw CancellationError() }
+        }
+    }
+
+    #expect(recorder.calls.count == 1)
+    #expect(try FixityVerifier.coverage(db: fixture.db).hashed == 1)
 }
 
 @Test func fixityBaselineContinuesPastUnreadableFiles() throws {

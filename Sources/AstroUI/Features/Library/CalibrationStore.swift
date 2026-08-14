@@ -25,6 +25,11 @@ public final class CalibrationStore {
     public private(set) var isPlanning = false
     public private(set) var planErrorMessage: String?
     public private(set) var lastReceipt: CalibrationLinkReceipt?
+    /// Fired after `applyPlan()` succeeds -- lets `V2RootView` keep the
+    /// sidebar's Library badge fresh without this store needing to know
+    /// anything about `SidebarBadgeStore` itself (wave 3 follow-up fix: the
+    /// badge previously never refreshed after linking a calibration master).
+    public var onLibraryFindingsChanged: (() -> Void)?
 
     private let queryFactory: QueryFactory
     private let commandFactory: CommandFactory
@@ -96,6 +101,7 @@ public final class CalibrationStore {
                 coverage = (try? query.coverage()) ?? coverage
                 masters = (try? query.masterInventory()) ?? masters
             }
+            onLibraryFindingsChanged?()
         } catch LibraryMutationError.readOnly {
             planErrorMessage = "Requires write access. Enable write operations in Settings to link calibration files."
         } catch {

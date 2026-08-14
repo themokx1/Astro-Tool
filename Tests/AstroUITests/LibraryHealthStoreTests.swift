@@ -50,6 +50,27 @@ struct LibraryHealthStoreTests {
         #expect(!revoked.isAcknowledged)
     }
 
+    @Test("Acknowledging and revoking each fire onLibraryFindingsChanged so the sidebar badge can refresh")
+    func acknowledgeAndRevokeFireLibraryFindingsChanged() async throws {
+        let fixture = try Self.makeFixture()
+        let store = LibraryHealthStore(
+            metadataFactory: { _ in fixture.metadata },
+            queryFactory: { _, metadata in
+                LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: metadata)
+            }
+        )
+        await store.load(rootURL: fixture.root)
+        let flatItem = try #require(store.snapshot?.items.first { $0.category == .flat })
+        var changeCount = 0
+        store.onLibraryFindingsChanged = { changeCount += 1 }
+
+        await store.acknowledge(flatItem, note: "known gap")
+        #expect(changeCount == 1)
+
+        await store.revokeAcknowledgement(flatItem)
+        #expect(changeCount == 2)
+    }
+
     @Test("Running a full audit records history and refreshes the snapshot with a success toast")
     func runAuditRecordsHistoryAndRefreshes() async throws {
         let fixture = try Self.makeFixture()

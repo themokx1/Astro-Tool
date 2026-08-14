@@ -146,6 +146,34 @@ struct AuditRunCommandTests {
         #expect(try await fixture.metadata.auditRunHistory().isEmpty)
     }
 
+    @Test("A cancel that lands mid-run (after a few progress ticks, not just at the start/end phase boundary) stops the audit early and records no history")
+    func cancellationMidRunStopsEarlyAndRecordsNoHistory() async throws {
+        let fixture = try AuditCommandFixture.make()
+        defer { fixture.cleanup() }
+
+        try fixture.writeFile("sessions/T1/2026-01-10/lights/light1.fit", bytes: Data("light".utf8))
+        try fixture.scan()
+
+        // `runAudit` itself only ever checks `isCancelled` twice at its own
+        // phase boundaries (immediately before starting, and right after
+        // `engine.run` returns) -- that's 2 calls. Before R12-W3's fix,
+        // `AuditEngine.run` never called `isCancelled` at all in between, so
+        // a canceller that only flips true on its 3rd-or-later call would
+        // never actually fire (the audit would run to completion and record
+        // history) -- exactly the bug this test guards against. After the
+        // fix, `AuditEngine.run` ticks `progress` once per rule (20 rules by
+        // default), and `runAudit` wraps that tick with its own
+        // `isCancelled` check, so the 3rd call now lands on the SECOND
+        // rule's tick, well before all 20 rules (let alone the duplicate
+        // scan) finish.
+        let canceller = CancelAfterN(threshold: 3)
+        await #expect(throws: CancellationError.self) {
+            try await fixture.command().runAudit(mode: .full, isCancelled: { canceller.check() })
+        }
+
+        #expect(try await fixture.metadata.auditRunHistory().isEmpty)
+    }
+
     @Test("Filling missing checksums baselines every tracked file")
     func fillMissingChecksumsBaselinesAllFiles() throws {
         let fixture = try AuditCommandFixture.make()
@@ -196,5 +224,67 @@ struct AuditRunCommandTests {
         #expect(sampledOutcome.summary.checked == 2)
         #expect(sampledOutcome.summary.checked < fullOutcome.summary.checked)
         #expect(sampledOutcome.baselineHashed == 0)
+    }
+
+    @Test("A cancel that lands mid-verify (after a few per-file progress ticks) stops the run early")
+    func verifyCancellationMidRunStopsEarly() throws {
+        let fixture = try AuditCommandFixture.make()
+        defer { fixture.cleanup() }
+
+        for index in 0..<5 {
+            try fixture.writeFile(
+                "sessions/T1/2026-01-10/lights/light\(index).fit",
+                bytes: Data("light-\(index)".utf8)
+            )
+        }
+        try fixture.scan()
+
+        // Baseline every file first so all 5 are eligible for the verify
+        // pass below.
+        _ = try fixture.command().runVerify(
+            options: VerifyRunOptions(sampleFraction: nil, fillMissingChecksums: true)
+        )
+
+        // With `fillMissingChecksums: false` here, `runVerify` itself only
+        // checks `isCancelled` twice at its own phase boundaries (before
+        // starting, and -- since the baseline step is skipped -- once more
+        // immediately after, before the verify pass). Before R12-W3's fix,
+        // `FixityVerifier.verify`'s own per-file `progress` callback never
+        // checked `isCancelled` at all, so a canceller that only flips true
+        // on its 3rd-or-later call would never fire (all 5 files would be
+        // verified normally). After the fix, `runVerify` wraps `progress`
+        // with an `isCancelled` check, so the 3rd call lands on the FIRST
+        // file's own per-file tick, well before all 5 files are checked.
+        let canceller = CancelAfterN(threshold: 3)
+        #expect(throws: CancellationError.self) {
+            _ = try fixture.command().runVerify(
+                options: VerifyRunOptions(sampleFraction: nil, fillMissingChecksums: false),
+                isCancelled: { canceller.check() }
+            )
+        }
+    }
+}
+
+/// Flips to reporting `true` only once it has been called `threshold` times
+/// -- simulates a user's cancel request landing mid-run (after a few
+/// progress ticks) rather than before the very first check, so a caller is
+/// proven to react to cancellation between two units of work, not just at
+/// its own outer phase boundaries. Backed by an `NSLock` (same shape as
+/// `AuditTests`' own `TickCounter`) since a plain captured `var` can't be
+/// mutated from inside a `@Sendable` closure under strict concurrency
+/// checking.
+private final class CancelAfterN: @unchecked Sendable {
+    private let lock = NSLock()
+    private var callCount = 0
+    private let threshold: Int
+
+    init(threshold: Int) {
+        self.threshold = threshold
+    }
+
+    func check() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        callCount += 1
+        return callCount >= threshold
     }
 }

@@ -37,6 +37,15 @@ public final class LibraryHealthStore {
     /// `OperationHost`'s own generic success toast, without re-querying
     /// anything. `nil` before the first verify run this session.
     public private(set) var lastVerifySummary: FixityVerifier.Summary?
+    /// Fired after `acknowledge`/`revokeAcknowledgement` each succeed --
+    /// lets `V2RootView` keep the sidebar's Library badge fresh without this
+    /// store needing to know anything about `SidebarBadgeStore` itself
+    /// (wave 3 follow-up fix: the badge previously only refreshed on
+    /// appear/nights-change/scan+audit success, going stale after an ack or
+    /// revoke). `runAudit`/`verifyIntegrity` don't also call this: those
+    /// already refresh the badge through `OperationHost`'s own
+    /// `recentOutcomes` success path in `V2RootView`.
+    public var onLibraryFindingsChanged: (() -> Void)?
 
     private let metadataFactory: MetadataFactory
     private let queryFactory: QueryFactory
@@ -88,6 +97,7 @@ public final class LibraryHealthStore {
             )
             errorMessage = nil
             await refresh()
+            onLibraryFindingsChanged?()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -102,6 +112,7 @@ public final class LibraryHealthStore {
             )
             errorMessage = nil
             await refresh()
+            onLibraryFindingsChanged?()
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -594,6 +594,107 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
     #expect(seenRunIDs == Set(runIDs.suffix(3)))
 }
 
+// MARK: - Cooperative cancellation (R12-W3 fix): `progress` widened to `throws`
+
+/// Thread-safe tick counter for the `@Sendable` `progress` callback -- a
+/// plain captured `var` can't be mutated from inside a `@Sendable` closure
+/// under strict concurrency checking, even though `AuditEngine.run` only
+/// ever calls it synchronously on the calling thread (same shape
+/// `FixityVerifierTests`' own `ProgressRecorder` uses).
+private final class TickCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value = 0
+    var value: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _value
+    }
+    @discardableResult
+    func increment() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        _value += 1
+        return _value
+    }
+}
+
+/// `AuditEngine.run`'s own rule-evaluation loop now ticks `progress` once per
+/// rule (in addition to forwarding `DuplicateFinder`'s own per-file ticks,
+/// see the next test) -- a caller (`AuditRunCommand`) can turn a `throw
+/// CancellationError()` inside its own wrapping closure into a stop that
+/// lands between two rules, never waiting for every rule (and the duplicate
+/// scan) to finish first the way only checking `isCancelled` at the outer
+/// phase boundary would.
+@Test func auditEngineRunProgressCallbackThrowsToStopBetweenRules() throws {
+    let libraryDir = try makeTempDir("empty-lib")
+    let dbDir = try makeTempDir("empty-db")
+    defer {
+        try? FileManager.default.removeItem(at: libraryDir)
+        try? FileManager.default.removeItem(at: dbDir)
+    }
+    let db = try Database(path: dbDir.appendingPathComponent("test.sqlite").path)
+    var config = AstroConfig()
+    config.rootPath = libraryDir.path
+
+    let engine = AuditEngine(config: config, db: db)
+    let counter = TickCounter()
+    #expect(throws: CancellationError.self) {
+        _ = try engine.run(includeDuplicates: false) {
+            if counter.increment() == 2 { throw CancellationError() }
+        }
+    }
+
+    // Stopped after the second rule -- never reached the rest of the 20.
+    #expect(counter.value == 2)
+    #expect(counter.value < AuditEngine.defaultRules().count)
+}
+
+/// `DuplicateFinder.findDuplicates`'s own per-file hash ticks (`onPrefixHash`/
+/// `onFullHash`) are forwarded through the SAME `progress` hook
+/// `AuditEngine.run` ticks once per rule with -- so a full audit's
+/// cancellation point reaches into the slow duplicate-hashing pass itself,
+/// not just between rules (the rules alone are fast, in-memory, and
+/// evaluating all 20 of them is not where a real audit's wall-clock time
+/// goes; the hash scan is).
+@Test func auditEngineRunForwardsDuplicateFinderTicksThroughTheSameProgressHook() throws {
+    let libraryDir = try makeTempDir("dup-lib")
+    let dbDir = try makeTempDir("dup-db")
+    defer {
+        try? FileManager.default.removeItem(at: libraryDir)
+        try? FileManager.default.removeItem(at: dbDir)
+    }
+    let db = try Database(path: dbDir.appendingPathComponent("test.sqlite").path)
+    var config = AstroConfig()
+    config.rootPath = libraryDir.path
+
+    // Two identical, uncached, >= 1 MiB files -- exactly what forces
+    // `DuplicateFinder` to actually hash something (see its own doc comment
+    // on the size floor and two-tier prefix/full scheme).
+    let payload = Data(repeating: 0xAB, count: 1_100_000)
+    let dup1 = libraryDir.appendingPathComponent("stacks/A/2026-01-01/dup1.fit")
+    let dup2 = libraryDir.appendingPathComponent("stacks/A/2026-01-01/dup2.fit")
+    try FileManager.default.createDirectory(at: dup1.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try payload.write(to: dup1)
+    try payload.write(to: dup2)
+
+    let scanner = LibraryScanner(config: config, db: db)
+    _ = try scanner.scan()
+
+    let ruleCount = AuditEngine.defaultRules().count
+    let engine = AuditEngine(config: config, db: db)
+    let counter = TickCounter()
+    // Cancel two ticks past the rule loop's own boundary -- only reachable
+    // if `DuplicateFinder`'s per-file ticks really do flow through this same
+    // callback rather than being invisible to it.
+    let cancelAt = ruleCount + 2
+    #expect(throws: CancellationError.self) {
+        _ = try engine.run(includeDuplicates: true) {
+            if counter.increment() == cancelAt { throw CancellationError() }
+        }
+    }
+
+    #expect(counter.value == cancelAt)
+    #expect(counter.value > ruleCount)
+}
+
 // MARK: - Diff against the previous run (R11-T8/F6 integration)
 
 @Test func auditEnginePersistsDuplicateSettingAndDecodesLegacyConfig() throws {

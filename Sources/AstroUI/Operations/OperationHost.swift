@@ -130,7 +130,7 @@ public final class OperationHost {
                     await self.finalize(id: id, kind: kind, title: title, phase: .succeeded)
                     await self.enqueueToast(.success, "\(title) finished.")
                 } else {
-                    await self.reconcileRaceOutcome(id: id, kind: kind, title: title)
+                    await self.reconcileSuccessRace(id: id, kind: kind, title: title)
                 }
             } catch is CancellationError {
                 await self.finalize(id: id, kind: kind, title: title, phase: .cancelled)
@@ -220,7 +220,7 @@ public final class OperationHost {
         }
     }
 
-    /// Reached when `work` finished (successfully or by throwing) but the
+    /// Reached when `work` threw a plain (non-cancellation) `Error` but the
     /// center no longer reports `.running` for `id` -- almost always because
     /// `cancel(id:)` won between the last cooperative check and this point.
     /// Rather than guess, defer to whatever `OperationCenter` actually
@@ -232,6 +232,30 @@ public final class OperationHost {
         if recordedPhase != .cancelled {
             await enqueueToast(.info, "\(title) ended unexpectedly.")
         }
+    }
+
+    /// Reached when `work` returned successfully (no throw at all) but the
+    /// center no longer reports `.running` for `id` -- `cancel(id:)` already
+    /// flipped it to `.cancelled` between the work's last cooperative check
+    /// and this point, yet the work went on to actually finish anyway (it
+    /// either ignored cancellation or won a genuine race against it). The
+    /// honest outcome here is success, not the cancellation the center
+    /// happened to record first: unlike `reconcileRaceOutcome` above (which
+    /// defers to whatever got recorded), this forces the center's own state
+    /// to `.succeeded` via `forceSucceed` and tells the user, rather than
+    /// silently swallowing a completed operation as a cancellation with no
+    /// toast at all.
+    private func reconcileSuccessRace(id: UUID, kind: OperationKind, title: String) async {
+        let recordedPhase = await center.state(id)?.phase
+        guard recordedPhase == .cancelled else {
+            // Some other outcome got there first (e.g. a stray `fail(id:)`
+            // call from elsewhere) -- defer to it rather than overwrite it.
+            await reconcileRaceOutcome(id: id, kind: kind, title: title)
+            return
+        }
+        await center.forceSucceed(id)
+        await finalize(id: id, kind: kind, title: title, phase: .succeeded)
+        await enqueueToast(.success, "\(title) finished.")
     }
 
     private func enqueueToast(_ level: ToastLevel, _ message: String) async {

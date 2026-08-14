@@ -86,15 +86,18 @@ public struct VerifyRunOutcome: Equatable, Sendable {
 /// itself (the same reasoning `SensorMeasurementCommand`'s own doc comment
 /// gives for skipping that gate).
 ///
-/// Neither `AuditEngine.run` nor `FixityVerifier.baseline`/`.run` exposes a
-/// per-item, cooperatively-cancellable progress hook the way
-/// `SensorProfiler.measure`/`Rater.rate` do (a full audit -- rules plus
-/// duplicate hashing -- runs as one synchronous unit; verify's own
-/// `progress` callback is real per-file feedback but isn't itself
-/// throwing/cancellable). So `isCancelled` here is checked only at the
-/// natural phase boundaries this command has -- immediately before starting,
-/// and (for verify) between the baseline step and the verify pass -- rather
-/// than between every single file the way `FrameRatingCommand` manages.
+/// `AuditEngine.run` and `FixityVerifier.baseline`/`.run` each expose a
+/// per-item, cooperatively-cancellable `progress` hook (R12-W3 fix) the same
+/// shape `SensorProfiler.measure`/`Rater.rate` already do: `AuditEngine.run`
+/// ticks once per rule AND once per file `DuplicateFinder` hashes;
+/// `FixityVerifier.baseline`/`.run` tick once per file. Both hooks are
+/// `throws`, so -- mirroring `FrameRatingCommand.run`'s own wrapping
+/// closure -- `runAudit`/`runVerify` below turn a cooperative
+/// `isCancelled` check inside that per-item tick into a
+/// `throw CancellationError()`, letting a cancel request land BETWEEN two
+/// rules/files instead of only at this command's own outer phase boundaries
+/// (immediately before starting, and -- for verify -- between the baseline
+/// step and the verify pass).
 public struct AuditRunCommand: Sendable {
     private let db: Database
     private let config: AstroConfig
@@ -141,7 +144,9 @@ public struct AuditRunCommand: Sendable {
         if let isCancelled, isCancelled() { throw CancellationError() }
 
         let engine = AuditEngine(config: config, db: db)
-        let (runID, findings) = try engine.run(includeDuplicates: mode == .full)
+        let (runID, findings) = try engine.run(includeDuplicates: mode == .full) {
+            if let isCancelled, isCancelled() { throw CancellationError() }
+        }
 
         if let isCancelled, isCancelled() { throw CancellationError() }
 
@@ -163,10 +168,21 @@ public struct AuditRunCommand: Sendable {
     ) throws -> VerifyRunOutcome {
         if let isCancelled, isCancelled() { throw CancellationError() }
 
+        // Wraps the caller's own (non-throwing) `progress` with a
+        // per-file `isCancelled` check, then forwards it to both
+        // `FixityVerifier.baseline` and `.run` below -- mirrors
+        // `FrameRatingCommand.run`'s own wrapping closure over `Rater.rate`'s
+        // `progress`, so a cancel request lands between two files instead of
+        // only at this method's own outer phase boundaries.
+        let cooperativeProgress: @Sendable (Int, Int) throws -> Void = { done, total in
+            if let isCancelled, isCancelled() { throw CancellationError() }
+            progress?(done, total)
+        }
+
         var baselineHashed = 0
         var baselineErrors: [FixityVerifier.BaselineResult] = []
         if options.fillMissingChecksums {
-            let baseline = try FixityVerifier.baseline(db: db, config: config, progress: progress)
+            let baseline = try FixityVerifier.baseline(db: db, config: config, progress: cooperativeProgress)
             baselineHashed = baseline.hashed
             baselineErrors = baseline.errors
         }
@@ -177,7 +193,7 @@ public struct AuditRunCommand: Sendable {
             max(1, min(100, Int((fraction * 100).rounded())))
         }
         let (runID, results, _) = try FixityVerifier.run(
-            db: db, config: config, samplePercent: samplePercent, progress: progress
+            db: db, config: config, samplePercent: samplePercent, progress: cooperativeProgress
         )
         return VerifyRunOutcome(
             runID: runID, summary: FixityVerifier.summarize(results),

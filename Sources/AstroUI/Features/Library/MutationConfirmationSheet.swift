@@ -24,6 +24,12 @@ public final class MutationConfirmationStore {
     public private(set) var receipt: MutationReceipt?
     public private(set) var isRolledBack = false
     public private(set) var errorMessage: String?
+    /// Fired after `apply()`/`rollback()` each succeed -- lets `V2RootView`
+    /// keep the sidebar's Library badge fresh without this store needing to
+    /// know anything about `SidebarBadgeStore` itself (wave 3 follow-up fix:
+    /// the badge previously never refreshed after a quarantine apply or
+    /// rollback at all).
+    public var onLibraryFindingsChanged: (() -> Void)?
 
     private let commandFactory: CommandFactory
 
@@ -61,6 +67,7 @@ public final class MutationConfirmationStore {
         do {
             let command = try commandFactory(rootURL, accessMode)
             receipt = try await command.apply(plan, confirmation: confirmationText)
+            onLibraryFindingsChanged?()
         } catch LibraryMutationError.readOnly {
             errorMessage = "Requires write access. Enable write operations in Settings to apply this quarantine."
         } catch {
@@ -77,6 +84,7 @@ public final class MutationConfirmationStore {
             let command = try commandFactory(rootURL, accessMode)
             try await command.rollback(receiptID: receipt.id)
             isRolledBack = true
+            onLibraryFindingsChanged?()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -98,12 +106,15 @@ public struct MutationConfirmationSheet: View {
         plan: LibraryMutationPlan,
         rootURL: URL,
         accessMode: LibraryAccessMode,
-        dismiss: @escaping () -> Void
+        dismiss: @escaping () -> Void,
+        onLibraryFindingsChanged: (() -> Void)? = nil
     ) {
         self.dismiss = dismiss
-        _store = State(initialValue: MutationConfirmationStore(
+        let store = MutationConfirmationStore(
             plan: plan, rootURL: rootURL, accessMode: accessMode
-        ))
+        )
+        store.onLibraryFindingsChanged = onLibraryFindingsChanged
+        _store = State(initialValue: store)
     }
 
     private var quarantineDestinationDirectory: String {

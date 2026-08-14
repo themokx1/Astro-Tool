@@ -241,7 +241,8 @@ private struct V2Shell: View {
                     pendingMutationRootURL = rootURL
                     pendingMutationAccessMode = accessMode
                     router.present(.mutationConfirmation(plan.id))
-                }
+                },
+                libraryFindingsChanged: refreshSidebarBadges
             )
         }
         .navigationSplitViewStyle(.balanced)
@@ -316,7 +317,7 @@ private struct V2Shell: View {
         .onChange(of: operationHost.recentOutcomes) { _, outcomes in
             guard let latest = outcomes.first, latest.phase == .succeeded else { return }
             switch latest.kind {
-            case .scan, .audit: refreshSidebarBadges()
+            case .scan, .audit, .verify: refreshSidebarBadges()
             default: break
             }
         }
@@ -366,7 +367,8 @@ private struct V2Shell: View {
                         router.dismissPresentation()
                         pendingMutationPlan = nil
                         pendingMutationRootURL = nil
-                    }
+                    },
+                    onLibraryFindingsChanged: refreshSidebarBadges
                 )
             } else if case .glossary(let anchor) = presentation {
                 GlossaryView(anchor: anchor, dismiss: router.dismissPresentation)
@@ -408,7 +410,16 @@ private struct V2Shell: View {
             guard let route = AppRoute(deepLink: url) else { return }
             router.open(route)
         }
-        .onAppear { refreshSidebarBadges() }
+        .onAppear {
+            refreshSidebarBadges()
+            // Wave 3 follow-up fix: `LibraryHealthStore.acknowledge`/
+            // `revokeAcknowledgement` previously never touched the sidebar
+            // badge at all -- wiring this callback keeps it in sync with
+            // those actions the same way `MutationConfirmationSheet`/
+            // `CalibrationView` above are wired for quarantine apply/
+            // rollback and calibration link apply.
+            libraryHealthStore.onLibraryFindingsChanged = refreshSidebarBadges
+        }
         .onChange(of: nightsStore.nights) { _, _ in refreshSidebarBadges() }
     }
 
@@ -420,10 +431,13 @@ private struct V2Shell: View {
     /// Wave 3 Task 7: the sidebar's `.badge()` counts (Nights
     /// needing-review, Library findings-needing-attention). Recomputed on
     /// appear, whenever `nightsStore.nights` changes (which is exactly what
-    /// happens right after a library finishes opening), and after a
-    /// rescan/audit operation succeeds (the `.onChange(of:
-    /// operationHost.recentOutcomes)` above) -- kept intentionally simple,
-    /// per the plan: no incremental diffing, just re-read the current state.
+    /// happens right after a library finishes opening), after a
+    /// rescan/audit/verify operation succeeds (the `.onChange(of:
+    /// operationHost.recentOutcomes)` above), and after ack/revoke,
+    /// quarantine apply/rollback, or a calibration link apply (via each
+    /// store's own `onLibraryFindingsChanged` callback, wired below) --
+    /// kept intentionally simple, per the plan: no incremental diffing, just
+    /// re-read the current state.
     private func refreshSidebarBadges() {
         guard let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback else { return }
         let nights = nightsStore.nights
@@ -683,6 +697,7 @@ private struct DetailHost: View {
     let rescan: () -> Void
     let accessMode: LibraryAccessMode
     let presentQuarantineApply: (LibraryMutationPlan, URL, LibraryAccessMode) -> Void
+    let libraryFindingsChanged: () -> Void
 
     @ViewBuilder
     var body: some View {
@@ -819,7 +834,8 @@ private struct DetailHost: View {
         case .calibration:
             CalibrationView(
                 rootURL: onboardingStore.selectedRoot, accessMode: accessMode,
-                chooseLibrary: chooseLibrary
+                chooseLibrary: chooseLibrary,
+                onLibraryFindingsChanged: libraryFindingsChanged
             )
         default:
             V2EmptyDetail(

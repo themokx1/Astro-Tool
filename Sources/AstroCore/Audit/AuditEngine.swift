@@ -122,7 +122,28 @@ public final class AuditEngine {
     /// an `AuditRule` (it needs DB write access to cache content hashes,
     /// which the read-only `AuditContext` doesn't provide), so it's invoked
     /// directly here instead of through `rules`.
-    public func run(includeDuplicates: Bool = true) throws -> (runID: Int64, findings: [Finding]) {
+    ///
+    /// `progress`, when given, is called once per rule evaluated AND once
+    /// per file `DuplicateFinder` hashes (R12-W3 fix) -- a single unified
+    /// tick, since a caller (`AuditRunCommand`) cancelling cooperatively
+    /// doesn't need to distinguish which phase it's in, only that it gets a
+    /// chance to stop BETWEEN two units of work rather than only before this
+    /// call starts or after it returns. The rule loop alone is fast,
+    /// in-memory work; the real wall-clock cost of a full audit is
+    /// `DuplicateFinder`'s hashing, so forwarding its own per-file ticks
+    /// here (rather than only ticking once per rule) is what actually lets
+    /// cancellation land inside a long-running audit, not just around it.
+    /// `progress` is allowed to `throw` (mirrors `Rater.rate`/
+    /// `FixityVerifier.verify`'s own widened contract): a throw propagates
+    /// immediately, before any finding is persisted and before `finishRun`
+    /// runs, leaving this run's own `runs` row unfinished (`finished_at IS
+    /// NULL`) -- already-ignored by every query that only looks at
+    /// finished runs. Source-compatible with every existing non-throwing
+    /// closure literal call site.
+    public func run(
+        includeDuplicates: Bool = true,
+        progress: (@Sendable () throws -> Void)? = nil
+    ) throws -> (runID: Int64, findings: [Finding]) {
         let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
         let directories = try DirectoryLister.listDirectories(root: root, config: config)
         let files = try db.allFiles(includeMissing: false)
@@ -155,12 +176,15 @@ public final class AuditEngine {
         var findings: [Finding] = []
         for rule in rules {
             findings.append(contentsOf: rule.evaluate(ctx))
+            try progress?()
         }
 
         findings = Self.suppressRedundantFindings(findings)
 
         if includeDuplicates {
-            findings.append(contentsOf: try DuplicateFinder.findDuplicates(db: db, config: config))
+            findings.append(contentsOf: try DuplicateFinder.findDuplicates(
+                db: db, config: config, onPrefixHash: progress, onFullHash: progress
+            ))
         }
 
         for finding in findings {

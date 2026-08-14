@@ -81,6 +81,51 @@ struct OperationHostTests {
         #expect(!host.toasts.contains { $0.level == .failure })
     }
 
+    @Test("Work that ignores cancellation and completes anyway is recorded as succeeded, with a visible toast -- not silently swallowed as cancelled")
+    func workThatOutrunsCancellationIsRecordedAsSucceededNotSilentlyCancelled() async throws {
+        let center = OperationCenter()
+        let host = OperationHost(center: center)
+        let gate = AsyncGate()
+        let started = ObservedFlag()
+
+        let id = await host.run(
+            kind: .audit(library: "A"),
+            title: "Auditing A",
+            cancellation: .cooperative
+        ) {
+            // Deliberately ignores `Task.isCancelled` -- simulates the exact
+            // race the finding describes: `OperationCenter.cancel` flips the
+            // entry's phase to `.cancelled` and calls the cancel handler,
+            // but the work itself has already passed its last cooperative
+            // check and finishes normally right after.
+            started.set(true)
+            await gate.waitToProceed()
+        }
+
+        try await waitUntil { started.value }
+
+        // Cancel directly through `OperationCenter`, not `OperationHost.cancel`
+        // -- for a `.cooperative` op the host's own `cancel(id:)` awaits the
+        // run task's completion, which would deadlock here since the work
+        // hasn't been released yet. Calling the center directly
+        // deterministically reproduces the exact race the finding
+        // describes: the center's own state flips to `.cancelled` strictly
+        // BEFORE the ignored-cancellation work goes on to finish, rather
+        // than leaving the ordering to chance.
+        let didCancel = await center.cancel(id)
+        #expect(didCancel)
+        #expect(await center.state(id)?.phase == .cancelled)
+
+        gate.open()
+        try await waitUntil { host.activeOperations.isEmpty }
+
+        // The work actually completed successfully -- the honest outcome is
+        // success, not a silently-swallowed cancellation.
+        #expect(await center.state(id)?.phase == .succeeded)
+        #expect(host.toasts.contains { $0.level == .success })
+        #expect(!host.toasts.contains { $0.message.contains("unexpectedly") })
+    }
+
     @Test("Reporting progress updates the active projection and forwards to OperationCenter")
     func reportProgressUpdatesActiveProjectionAndCenter() async throws {
         let center = OperationCenter()

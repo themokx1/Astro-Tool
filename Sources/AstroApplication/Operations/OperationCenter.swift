@@ -70,6 +70,26 @@ public actor OperationCenter {
         transition(id, to: .failed, errorMessage: message)
     }
 
+    /// Forces `id`'s phase to `.succeeded` regardless of its current phase
+    /// (unlike `finish(_:)`, which only transitions out of `.running`) --
+    /// the one honest fix-up for the race where `cancel(_:)` already flipped
+    /// an entry to `.cancelled` right before its work finished anyway: the
+    /// work DID succeed, so the recorded outcome should say so, not keep the
+    /// premature `.cancelled` the race left behind. Returns `false` only
+    /// when `id` is not a known entry at all.
+    @discardableResult
+    public func forceSucceed(_ id: UUID) -> Bool {
+        guard var entry = entries[id] else { return false }
+        let now = nextTimestamp(after: entry.state.updatedAt)
+        entry.state.phase = .succeeded
+        entry.state.errorMessage = nil
+        entry.state.updatedAt = now
+        entry.state.finishedAt = entry.state.finishedAt ?? now
+        entry.cancelHandler = nil
+        entries[id] = entry
+        return true
+    }
+
     @discardableResult
     public func cancel(_ id: UUID) async -> Bool {
         guard var entry = entries[id], entry.state.phase == .running else {

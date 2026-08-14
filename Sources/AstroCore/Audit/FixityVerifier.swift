@@ -272,7 +272,14 @@ public enum FixityVerifier {
     /// `progress`, when given, is called once per file as it finishes with
     /// `(completedCount, totalCount)` -- mirrors `Rater.rate(...)`'s own
     /// progress contract, so both the CLI and the app's
-    /// `beginOperation`/`progressText` plumbing handle it identically.
+    /// `beginOperation`/`progressText` plumbing handle it identically. Also
+    /// mirrors `Rater.rate`'s own `throws` widening (R12-W3): a caller
+    /// (`AuditRunCommand`) can turn a `throw CancellationError()` inside its
+    /// own wrapping closure into a stop that lands BETWEEN two files, with
+    /// every file reported so far already reflected in `results` -- never
+    /// mid-file. Source-compatible with every existing non-throwing closure
+    /// literal call site (Swift widens a non-throwing closure to a `throws`
+    /// parameter automatically).
     public static func verify(
         db: Database,
         config: AstroConfig,
@@ -280,7 +287,7 @@ public enum FixityVerifier {
         path: String? = nil,
         samplePercent: Int? = nil,
         seed: UInt64? = nil,
-        progress: (@Sendable (Int, Int) -> Void)? = nil
+        progress: (@Sendable (Int, Int) throws -> Void)? = nil
     ) throws -> [FileResult] {
         let files = try eligibleFiles(db: db, config: config, target: target, path: path, samplePercent: samplePercent, seed: seed)
         guard !files.isEmpty else { return [] }
@@ -292,40 +299,41 @@ public enum FixityVerifier {
         results.reserveCapacity(files.count)
 
         for file in files {
-            defer {
-                done += 1
-                progress?(done, total)
-            }
             // `eligibleFiles` already filtered to non-nil `contentHash`, so
             // this is never actually nil -- guarding rather than force-
             // unwrapping just to stay defensive against a future caller
             // building `files` some other way.
-            guard let storedHash = file.contentHash else { continue }
-
-            let fileURL = root.appendingPathComponent(file.path)
-            do {
-                let currentHash = try autoreleasepool { try DuplicateFinder.sha256Hash(of: fileURL) }
-                if currentHash == storedHash {
-                    results.append(FileResult(file: file, status: .ok))
-                    continue
+            if let storedHash = file.contentHash {
+                let fileURL = root.appendingPathComponent(file.path)
+                do {
+                    let currentHash = try autoreleasepool { try DuplicateFinder.sha256Hash(of: fileURL) }
+                    if currentHash == storedHash {
+                        results.append(FileResult(file: file, status: .ok))
+                    } else {
+                        let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                        let currentSize = resourceValues.fileSize.map(Int64.init)
+                        let currentMTime = resourceValues.contentModificationDate?.timeIntervalSince1970
+                        results.append(FileResult(
+                            file: file,
+                            status: classifyMismatch(
+                                file: file,
+                                oldHash: storedHash,
+                                newHash: currentHash,
+                                currentSize: currentSize,
+                                currentMTime: currentMTime
+                            )
+                        ))
+                    }
+                } catch {
+                    results.append(FileResult(file: file, status: .readError(describeReadError(error))))
                 }
-
-                let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-                let currentSize = resourceValues.fileSize.map(Int64.init)
-                let currentMTime = resourceValues.contentModificationDate?.timeIntervalSince1970
-                results.append(FileResult(
-                    file: file,
-                    status: classifyMismatch(
-                        file: file,
-                        oldHash: storedHash,
-                        newHash: currentHash,
-                        currentSize: currentSize,
-                        currentMTime: currentMTime
-                    )
-                ))
-            } catch {
-                results.append(FileResult(file: file, status: .readError(describeReadError(error))))
             }
+            // Deliberately OUTSIDE any `defer` (a `defer` body cannot itself
+            // `throw`): this is the one point between two files' work where
+            // a throwing `progress` can stop the batch, with this file's
+            // outcome already durably appended to `results`.
+            done += 1
+            try progress?(done, total)
         }
         return results
     }
@@ -421,7 +429,7 @@ public enum FixityVerifier {
         path: String? = nil,
         samplePercent: Int? = nil,
         seed: UInt64? = nil,
-        progress: (@Sendable (Int, Int) -> Void)? = nil
+        progress: (@Sendable (Int, Int) throws -> Void)? = nil
     ) throws -> (runID: Int64, results: [FileResult], findings: [Finding]) {
         let initialMetadata = RunMetadata(
             astroConfig: config, samplePercent: samplePercent, summary: nil
@@ -508,13 +516,15 @@ public enum FixityVerifier {
     /// itself has for a mid-run error) -- one unreadable file must not stop
     /// every OTHER file in scope from getting its baseline hash.
     /// `progress`, when given, mirrors `verify(...)`'s own `(completedCount,
-    /// totalCount)` contract.
+    /// totalCount)` contract, including its `throws` widening (R12-W3): a
+    /// throw lands between two files, after the current one's hash (if any)
+    /// is already durably `upsertFile`d.
     public static func baseline(
         db: Database,
         config: AstroConfig,
         target: String? = nil,
         path: String? = nil,
-        progress: (@Sendable (Int, Int) -> Void)? = nil
+        progress: (@Sendable (Int, Int) throws -> Void)? = nil
     ) throws -> (hashed: Int, errors: [BaselineResult]) {
         let files = try baselineEligibleFiles(db: db, config: config, target: target, path: path)
         guard !files.isEmpty else { return (0, []) }
@@ -526,10 +536,6 @@ public enum FixityVerifier {
         var errors: [BaselineResult] = []
 
         for file in files {
-            defer {
-                done += 1
-                progress?(done, total)
-            }
             let fileURL = root.appendingPathComponent(file.path)
             do {
                 let hash = try autoreleasepool { try DuplicateFinder.sha256Hash(of: fileURL) }
@@ -540,6 +546,10 @@ public enum FixityVerifier {
             } catch {
                 errors.append(BaselineResult(path: file.path, readError: describeReadError(error)))
             }
+            // Deliberately OUTSIDE any `defer` -- see `verify(...)`'s own
+            // identical comment above.
+            done += 1
+            try progress?(done, total)
         }
         return (hashed, errors)
     }
