@@ -5,6 +5,14 @@ import SwiftUI
 
 public struct AppUILaunchSelection: Equatable, Sendable {
     public let usesV2: Bool
+    /// V2 UI/UX audit task 4: `-UITestInitialSection <home|projects|nights|
+    /// planning|library|insights>` opens the app straight into that section
+    /// with an empty path -- mainly so a runtime freeze/performance check
+    /// (e.g. Planning) doesn't need a scripted click-through of the sidebar
+    /// first. An unknown value or the argument's absence both resolve to
+    /// `nil`, which leaves today's behavior (start on Home, or on whatever
+    /// window restoration already resolved) completely unchanged.
+    public let initialSection: PrimarySection?
 
     public init(
         arguments: [String],
@@ -22,6 +30,7 @@ public struct AppUILaunchSelection: Equatable, Sendable {
         } else {
             usesV2 = true
         }
+        initialSection = Self.parsedInitialSection(arguments: arguments)
     }
 
     public static var current: AppUILaunchSelection {
@@ -38,6 +47,20 @@ public struct AppUILaunchSelection: Equatable, Sendable {
         case "0", "false", "no", "off": false
         default: nil
         }
+    }
+
+    /// A pure parse over `arguments` -- no filesystem/process-environment
+    /// access beyond the array itself, so it is trivially unit-testable
+    /// without a running app. `PrimarySection`'s raw values already ARE the
+    /// exact lowercase section names the argument's contract documents, so
+    /// this is a direct `rawValue` lookup: absent argument, argument with no
+    /// following value, or a value that matches no case all resolve to
+    /// `nil` alike.
+    private static func parsedInitialSection(arguments: [String]) -> PrimarySection? {
+        guard let index = arguments.firstIndex(of: "-UITestInitialSection") else { return nil }
+        let valueIndex = arguments.index(after: index)
+        guard valueIndex < arguments.endIndex else { return nil }
+        return PrimarySection(rawValue: arguments[valueIndex])
     }
 }
 
@@ -71,11 +94,16 @@ public struct V2RootView: View {
 
     public init(
         appModel: AppModel,
-        uiTestFixture: V2UITestFixture? = nil
+        uiTestFixture: V2UITestFixture? = nil,
+        initialSection: PrimarySection? = nil
     ) {
         self.appModel = appModel
         self.uiTestFixture = uiTestFixture
-        _router = State(initialValue: appModel.makeRouter())
+        let router = appModel.makeRouter()
+        if let initialSection {
+            router.navigate(to: initialSection)
+        }
+        _router = State(initialValue: router)
         _homeStore = State(initialValue: HomeStore())
         _onboardingStore = State(
             initialValue: uiTestFixture?.makeOnboardingStore() ?? OnboardingStore()
@@ -980,8 +1008,16 @@ private struct DetailHost: View {
                     }
                 )
             } else {
-                ProgressView("Loading project…")
-                    .task { if let id = UUID(uuidString: rawID) { try? await projectsStore.selectProject(id) } }
+                RoutePendingLoadView(
+                    loadingMessage: "Loading project…",
+                    failureTitle: "Couldn't Load Project",
+                    errorMessage: projectsStore.errorMessage,
+                    load: {
+                        if let id = UUID(uuidString: rawID) {
+                            try? await projectsStore.selectProject(id)
+                        }
+                    }
+                )
             }
         case .night(let rawID):
             if let id = UUID(uuidString: rawID), let row = nightsStore.nights.first(where: { $0.id == id }) {
@@ -1001,7 +1037,22 @@ private struct DetailHost: View {
                     openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) }
                 )
             } else {
-                ProgressView("Loading night…")
+                // V2 UI/UX audit, section 5 ("Végtelen töltő"): this branch
+                // used to have no recovery `.task` at all -- if the nights
+                // list failed to load (or simply had not loaded yet) when a
+                // route landed straight on `.night(rawID)`, this spun
+                // forever with no error and no retry.
+                RoutePendingLoadView(
+                    loadingMessage: "Loading night…",
+                    failureTitle: "Couldn't Load Night",
+                    errorMessage: nightsStore.errorMessage,
+                    load: {
+                        guard nightsStore.nights.first(where: { $0.id == UUID(uuidString: rawID) }) == nil,
+                              let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback
+                        else { return }
+                        try? await nightsStore.open(rootURL: rootURL)
+                    }
+                )
             }
         case .projectSeries(let rawID):
             if let id = UUID(uuidString: rawID),
@@ -1023,14 +1074,18 @@ private struct DetailHost: View {
                 // already-open metadata store (a series route only carries
                 // its own id, not its project's), then selects it so the
                 // `if` branch above can render on the next observation.
-                ProgressView("Loading series…")
-                    .task {
+                RoutePendingLoadView(
+                    loadingMessage: "Loading series…",
+                    failureTitle: "Couldn't Load Series",
+                    errorMessage: projectsStore.errorMessage,
+                    load: {
                         guard let id = UUID(uuidString: rawID),
                               let metadataStore = projectsStore.metadataStore else { return }
                         if let record = try? await metadataStore.series(id: id) {
                             try? await projectsStore.selectProject(record.projectID)
                         }
                     }
+                )
             }
         case .nights:
             NightsView(
@@ -1118,9 +1173,8 @@ private struct DetailHost: View {
                 noLibraryPlaceholder(title: "Results", systemImage: "square.stack.3d.up")
             }
         case .conversion:
-            if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback,
-               let useCase = try? ConversionUseCase.production(rootURL: rootURL) {
-                ConversionWorkspace(useCase: useCase, rootURL: rootURL, accessMode: accessMode)
+            if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback {
+                ConversionDestinationView(rootURL: rootURL, accessMode: accessMode)
             } else {
                 noLibraryPlaceholder(title: "Organize Session", systemImage: "square.split.2x1")
             }
@@ -1151,6 +1205,95 @@ private struct DetailHost: View {
         } actions: {
             Button("Choose Image Library…", action: chooseLibrary)
                 .buttonStyle(.borderedProminent)
+        }
+    }
+}
+
+/// V2 UI/UX audit 3.3 -- `ConversionUseCase.production(rootURL:)` used to be
+/// constructed directly inside `DetailHost.destination(for:)`'s body switch,
+/// which runs `resolvingSymlinksInPath()` over several storage paths (dozens
+/// of `stat`/`readlink` syscalls) on EVERY body evaluation for as long as the
+/// `.conversion` route is on screen, not just once. This wrapper hoists that
+/// construction into its own `.task(id: rootURL)`, which only (re-)runs when
+/// `rootURL` actually changes -- mirroring how `CalibrationView`/`HealthView`
+/// take an already-resolved value/injected factory rather than resolving
+/// storage paths from their own body.
+private struct ConversionDestinationView: View {
+    let rootURL: URL
+    let accessMode: LibraryAccessMode
+    @State private var useCase: ConversionUseCase?
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let useCase {
+                ConversionWorkspace(useCase: useCase, rootURL: rootURL, accessMode: accessMode)
+            } else if failed {
+                ContentUnavailableView {
+                    Label("Organize Session", systemImage: "square.split.2x1")
+                } description: {
+                    Text("The session index for this library could not be opened.")
+                } actions: {
+                    Button("Retry") { failed = false }
+                }
+            } else {
+                ProgressView("Preparing session index…")
+            }
+        }
+        .task(id: "\(rootURL.path)-\(failed)") {
+            guard !failed else { return }
+            if let resolved = try? ConversionUseCase.production(rootURL: rootURL) {
+                useCase = resolved
+            } else {
+                failed = true
+            }
+        }
+    }
+}
+
+/// V2 UI/UX audit, section 5 ("Végtelen töltő") -- a uniform "loading ->
+/// content or honest failure with Retry" gate for the pushed detail routes
+/// (`.project`, `.night`, `.projectSeries`) whose real content depends on an
+/// async recovery load that can fail. Each of those three used to render an
+/// unconditional `ProgressView` as the `else` branch of their own `if let
+/// ... {} else {}`, with no failure path at all -- a failed (or, for
+/// `.night`, never-even-attempted) load spun forever with no error message
+/// and no way to retry, even though the owning store's `errorMessage` was
+/// already sitting there unrendered. Owns a single local `hasFinishedAttempt`
+/// flag so "still loading" and "attempted and failed" are never confused: a
+/// bare `nil`/missing row while `hasFinishedAttempt` is still `false` is a
+/// spinner; once the recovery closure returns, this always flips to `true`,
+/// so a still-missing row at that point is an honest, retryable failure, not
+/// a permanent spinner. `.id(route)` on the destination view (see
+/// `DetailHost`'s own doc comment) gives every distinct route push a fresh
+/// `hasFinishedAttempt`, so navigating to a DIFFERENT project/night/series
+/// always starts back at the spinner, never at a stale sibling's failure.
+private struct RoutePendingLoadView: View {
+    let loadingMessage: String
+    let failureTitle: String
+    let errorMessage: String?
+    let load: () async -> Void
+
+    @State private var hasFinishedAttempt = false
+
+    var body: some View {
+        Group {
+            if hasFinishedAttempt {
+                ContentUnavailableView {
+                    Label(failureTitle, systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(errorMessage ?? "This could not be loaded.")
+                } actions: {
+                    Button("Retry") { hasFinishedAttempt = false }
+                }
+            } else {
+                ProgressView(loadingMessage)
+            }
+        }
+        .task(id: hasFinishedAttempt) {
+            guard !hasFinishedAttempt else { return }
+            await load()
+            hasFinishedAttempt = true
         }
     }
 }

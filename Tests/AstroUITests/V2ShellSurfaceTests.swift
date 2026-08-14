@@ -34,6 +34,50 @@ struct V2ShellSurfaceTests {
         )
     }
 
+    // MARK: V2 UI/UX audit task 4 -- a launch argument that opens a section
+    // directly, enabling runtime verification (e.g. of the Planning freeze)
+    // without clicking through the sidebar by hand.
+
+    @Test("-UITestInitialSection parses a valid section, rejects an unknown value, and is nil when absent -- a pure function, no running app required", arguments: [
+        (arguments: ["AstroToolApp", "-UITestInitialSection", "planning"], expected: PrimarySection.planning as PrimarySection?),
+        (arguments: ["AstroToolApp", "-UITestInitialSection", "library"], expected: PrimarySection.library as PrimarySection?),
+        (arguments: ["AstroToolApp", "-UITestInitialSection", "home"], expected: PrimarySection.home as PrimarySection?),
+        (arguments: ["AstroToolApp", "-UITestInitialSection", "projects"], expected: PrimarySection.projects as PrimarySection?),
+        (arguments: ["AstroToolApp", "-UITestInitialSection", "nights"], expected: PrimarySection.nights as PrimarySection?),
+        (arguments: ["AstroToolApp", "-UITestInitialSection", "insights"], expected: PrimarySection.insights as PrimarySection?),
+        (arguments: ["AstroToolApp", "-UITestInitialSection", "bogus-section"], expected: nil as PrimarySection?),
+        (arguments: ["AstroToolApp", "-UITestInitialSection"], expected: nil as PrimarySection?),
+        (arguments: ["AstroToolApp"], expected: nil as PrimarySection?),
+    ])
+    func initialSectionLaunchArgumentParsing(arguments: [String], expected: PrimarySection?) {
+        #expect(
+            AppUILaunchSelection(
+                arguments: arguments,
+                environment: [:],
+                isDevelopmentBuild: true
+            ).initialSection == expected
+        )
+    }
+
+    @Test("V2RootView opens with the requested initial section and an empty path when one was parsed")
+    func v2RootViewWiresTheInitialSectionArgument() throws {
+        let root = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"),
+            encoding: .utf8
+        )
+        #expect(root.contains("initialSection: PrimarySection?"))
+        #expect(root.contains("router.navigate(to: initialSection)"))
+    }
+
+    @Test("The app entry point passes its parsed initial section into V2RootView")
+    func appEntryPointPassesTheInitialSectionArgument() throws {
+        let appEntry = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroToolApp/AstroToolApp.swift"),
+            encoding: .utf8
+        )
+        #expect(appEntry.contains("initialSection: launchSelection.initialSection"))
+    }
+
     @Test("The shell uses native split-view, inspector, and window-scoped routing")
     func shellSurface() throws {
         let sourceURL = repositoryRoot.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift")

@@ -23,7 +23,11 @@ struct AstroToolApp: App {
     var body: some Scene {
         WindowGroup {
             if launchSelection.usesV2 {
-                V2RootView(appModel: appModel, uiTestFixture: uiTestFixture)
+                V2RootView(
+                    appModel: appModel,
+                    uiTestFixture: uiTestFixture,
+                    initialSection: launchSelection.initialSection
+                )
             } else if let appState {
                 RootView()
                     .environment(appState)

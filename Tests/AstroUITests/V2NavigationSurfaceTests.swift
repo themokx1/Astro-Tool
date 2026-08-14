@@ -298,10 +298,10 @@ struct V2NavigationSurfaceTests {
         )
         let caseBody = String(root[caseRange.upperBound..<nextCaseRange.lowerBound])
 
-        #expect(caseBody.contains("ProgressView(\"Loading series…\")"))
+        #expect(caseBody.contains("loadingMessage: \"Loading series…\""))
         #expect(
-            caseBody.contains(".task {"),
-            "The .projectSeries fallback must self-heal a cold restore, exactly like .project's own fallback task"
+            caseBody.contains("RoutePendingLoadView("),
+            "The .projectSeries fallback must self-heal a cold restore through the shared retry-capable loading gate, like .project's own fallback already does"
         )
         #expect(caseBody.contains("metadataStore"), "The recovery must resolve the series via the already-open metadata store")
         #expect(caseBody.contains("selectProject"))
@@ -329,10 +329,13 @@ struct V2NavigationSurfaceTests {
             "Expected only the four global-search jumps to still proactively select; found \(occurrences)"
         )
 
-        // The `.project` destination's own single-loader fallback task must
-        // still be exactly there, untouched.
+        // The `.project` destination's own single-loader fallback must still
+        // be exactly there, untouched -- now driven through
+        // `RoutePendingLoadView`'s `load` closure (V2 UI/UX audit, section 5)
+        // rather than a bare `.task`, but still the one and only place this
+        // exact recovery call lives.
         #expect(root.contains(
-            ".task { if let id = UUID(uuidString: rawID) { try? await projectsStore.selectProject(id) } }"
+            "load: {\n                        if let id = UUID(uuidString: rawID) {\n                            try? await projectsStore.selectProject(id)\n                        }\n                    }"
         ))
     }
 
@@ -371,5 +374,55 @@ struct V2NavigationSurfaceTests {
         let model = try contents("Sources/AstroUI/App/AppModel.swift")
         #expect(model.contains("var projectTab: ProjectWorkspaceTab"))
         #expect(model.contains("var nightTab: NightWorkspaceTab"))
+    }
+
+    // MARK: V2 UI/UX audit 3.3 -- no filesystem work in the body switch
+
+    @Test("DetailHost's destination(for:) switch never constructs ConversionUseCase.production itself -- that resolves several stat/readlink syscalls per body pass")
+    func destinationSwitchDoesNotConstructConversionUseCaseDirectly() throws {
+        let root = try contents("Sources/AstroUI/App/V2RootView.swift")
+
+        let destinationStart = try #require(root.range(of: "private func destination(for route: ContentRoute)"))
+        let destinationEnd = try #require(root.range(of: "\n    private func noLibraryPlaceholder"))
+        let destinationSwitch = String(root[destinationStart.lowerBound..<destinationEnd.lowerBound])
+
+        #expect(
+            !destinationSwitch.contains("ConversionUseCase.production("),
+            "ConversionUseCase.production(rootURL:) must be hoisted out of the per-body-pass destination switch into the destination view's own .task"
+        )
+        #expect(root.contains("ConversionUseCase.production("), "the construction must still happen somewhere, just not in the switch")
+    }
+
+    // MARK: V2 UI/UX audit 5 -- failed project/night/series loads must not
+    // spin forever
+
+    @Test("The project, night, and series recovery fallbacks each offer an honest failure state with a Retry action, not an unconditional spinner")
+    func projectNightAndSeriesRecoveryFallbacksHaveARetryableFailureState() throws {
+        let root = try contents("Sources/AstroUI/App/V2RootView.swift")
+
+        let destinationStart = try #require(root.range(of: "private func destination(for route: ContentRoute)"))
+        let destinationEnd = try #require(root.range(of: "\n    private func noLibraryPlaceholder"))
+        let destinationSwitch = String(root[destinationStart.lowerBound..<destinationEnd.lowerBound])
+
+        // Each of the three fallbacks must route through a shared gate that
+        // renders a `ContentUnavailableView` + Retry once the recovery
+        // attempt has actually finished, rather than the bare `ProgressView`
+        // fallback with no failure branch the audit found.
+        let projectCaseRange = try #require(destinationSwitch.range(of: "case .project(let rawID):"))
+        let nightCaseRange = try #require(destinationSwitch.range(of: "case .night(let rawID):"))
+        let seriesCaseRange = try #require(destinationSwitch.range(of: "case .projectSeries(let rawID):"))
+        let nightsCaseRange = try #require(destinationSwitch.range(of: "\n        case .nights:"))
+
+        let projectCaseBody = String(destinationSwitch[projectCaseRange.upperBound..<nightCaseRange.lowerBound])
+        let nightCaseBody = String(destinationSwitch[nightCaseRange.upperBound..<seriesCaseRange.lowerBound])
+        let seriesCaseBody = String(destinationSwitch[seriesCaseRange.upperBound..<nightsCaseRange.lowerBound])
+
+        for (name, body) in [("project", projectCaseBody), ("night", nightCaseBody), ("series", seriesCaseBody)] {
+            #expect(body.contains("RoutePendingLoadView("), "\(name)'s fallback must render through the shared retry-capable loading gate")
+        }
+
+        #expect(root.contains("struct RoutePendingLoadView"))
+        #expect(root.contains("ContentUnavailableView"))
+        #expect(root.contains("Button(\"Retry\")"))
     }
 }
