@@ -126,6 +126,14 @@ private struct EquipmentEvaluationSettingsView: View {
     @State private var passband = EquipmentFilterPassband.unknown
     @State private var errorMessage: String?
     @State private var selectedFilterID: UUID?
+    /// V2 UI/UX audit (2026-08-14) section 5: "Remove Filter" and "Remove
+    /// Selected" used to call `store.removeFilter` immediately, with no
+    /// confirmation and no undo, while every other destructive path in V2
+    /// (quarantine's typed token, conversion's undo `confirmationDialog`) is
+    /// gated. Both actions now only stage a pending removal here; the
+    /// dialog below names the filter and is the only place that actually
+    /// calls `removeFilter`.
+    @State private var pendingFilterRemoval: EquipmentFilter?
 
     var body: some View {
         Form {
@@ -145,15 +153,32 @@ private struct EquipmentEvaluationSettingsView: View {
                 // settings tab off screen.
                 .frame(maxHeight: 220)
                 .contextMenu(forSelectionType: UUID.self) { filterIDs in
-                    if let id = filterIDs.first {
-                        Button("Remove Filter", role: .destructive) { store.removeFilter(id: id) }
+                    if let id = filterIDs.first, let filter = store.filters.first(where: { $0.id == id }) {
+                        Button("Remove Filter…", role: .destructive) { pendingFilterRemoval = filter }
                     }
                 }
                 .accessibilityIdentifier("v2.settings.filters-table")
-                Button("Remove Selected", role: .destructive) {
-                    if let selectedFilterID { store.removeFilter(id: selectedFilterID) }
+                Button("Remove Selected…", role: .destructive) {
+                    if let selectedFilterID, let filter = store.filters.first(where: { $0.id == selectedFilterID }) {
+                        pendingFilterRemoval = filter
+                    }
                 }
                 .disabled(selectedFilterID == nil)
+            }
+            .confirmationDialog(
+                pendingFilterRemoval.map { removalTitle(for: $0) } ?? "Remove this filter?",
+                isPresented: Binding(
+                    get: { pendingFilterRemoval != nil },
+                    set: { isPresented in if !isPresented { pendingFilterRemoval = nil } }
+                )
+            ) {
+                Button("Remove Filter", role: .destructive) {
+                    if let pendingFilterRemoval { store.removeFilter(id: pendingFilterRemoval.id) }
+                    pendingFilterRemoval = nil
+                }
+                Button("Cancel", role: .cancel) { pendingFilterRemoval = nil }
+            } message: {
+                Text("This removes the saved equipment filter from your inventory. This cannot be undone.")
             }
             Section("Add filter") {
                 TextField("Manufacturer, e.g. SVBONY", text: $manufacturer)
@@ -170,6 +195,11 @@ private struct EquipmentEvaluationSettingsView: View {
                 }.buttonStyle(.borderedProminent)
             }
         }.formStyle(.grouped)
+    }
+
+    private func removalTitle(for filter: EquipmentFilter) -> String {
+        let name = [filter.manufacturer, filter.model].filter { !$0.isEmpty }.joined(separator: " ")
+        return "Remove \"\(name)\"?"
     }
 }
 

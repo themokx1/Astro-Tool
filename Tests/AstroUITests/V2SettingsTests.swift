@@ -172,6 +172,36 @@ struct V2SettingsTests {
         #expect(SeriesFilterChoices(settings: store).filters.contains(filter))
     }
 
+    @Test("Removing a saved equipment filter requires confirmation, like every other destructive V2 path")
+    func filterRemovalRequiresConfirmation() throws {
+        // V2 UI/UX audit (2026-08-14) section 5: "Remove Filter" (context
+        // menu, role: .destructive) and "Remove Selected" both used to call
+        // `store.removeFilter` immediately -- no confirmation, no undo --
+        // while every other destructive path in V2 (quarantine's typed
+        // token, conversion's undo `confirmationDialog`) is gated. Both
+        // buttons must now only stage a pending removal; the actual
+        // `store.removeFilter` call must happen inside a
+        // `.confirmationDialog`.
+        let source = try contents("Sources/AstroUI/Settings/V2SettingsView.swift")
+        #expect(source.contains(".confirmationDialog("), "filter removal must be gated behind a confirmation dialog")
+
+        guard let dialogStart = source.range(of: ".confirmationDialog(") else {
+            Issue.record("no confirmationDialog found")
+            return
+        }
+        let dialogBody = String(source[dialogStart.lowerBound...].prefix(600))
+        #expect(dialogBody.contains("store.removeFilter"), "the confirmation dialog's own action is where removeFilter must actually be called")
+
+        // Neither destructive button may call removeFilter directly from
+        // its own action closure -- that would skip the dialog entirely.
+        #expect(!source.contains(#"Button("Remove Filter", role: .destructive) { store.removeFilter(id: id) }"#))
+        #expect(!source.contains("if let selectedFilterID { store.removeFilter(id: selectedFilterID) }"))
+    }
+
+    private func contents(_ relativePath: String) throws -> String {
+        try String(contentsOf: repositoryRoot.appendingPathComponent(relativePath), encoding: .utf8)
+    }
+
     @Test("Blank or duplicate filters are rejected without changing inventory")
     func filterValidation() throws {
         let suite = "AstroTool-V2SettingsTests-\(UUID().uuidString)"
