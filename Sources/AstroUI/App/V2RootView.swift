@@ -658,13 +658,14 @@ private struct V2Sidebar: View {
             }
     }
 
-    /// A Library child row (Health/Calibration) -- clicking it always lands
-    /// the user directly on that page: `router.navigate(to: .library)` first
-    /// (a no-op section switch when Library is already active, or -- per
-    /// `AppRouter.navigate(to:)`'s own "re-click pops to root" rule when it's
-    /// ALREADY active -- clears any stale push first), then `push(route)`
-    /// puts exactly this one page on top. Either way the child row's own
-    /// page is what ends up on screen, never a stale sibling underneath it.
+    /// A Library child row (Health/Calibration) -- a sidebar jump, so it
+    /// goes through `navigate(toContent:)` rather than a raw `push(_:)`:
+    /// clicking it always resets Library's stack and lands the user
+    /// directly on that page, whether Library was already active (with some
+    /// other page pushed) or not (with some OLD Library stack from an
+    /// earlier visit still sitting underneath) -- either way the child row's
+    /// own page is what ends up on screen, never a stale sibling underneath
+    /// it.
     private func libraryChildRow(
         title: String,
         systemImage: String,
@@ -672,8 +673,7 @@ private struct V2Sidebar: View {
         accessibilityID: String
     ) -> some View {
         Button {
-            router.navigate(to: .library)
-            router.push(route)
+            router.navigate(toContent: route)
         } label: {
             Label(title, systemImage: systemImage)
         }
@@ -848,8 +848,13 @@ private struct DetailHost: View {
                     }
                 },
                 openProjectID: { projectID in
+                    // Wave 4 navigation-rework code-review fix: no proactive
+                    // `selectProject` here anymore -- the pushed `.project`
+                    // destination's own recovery `.task` below is the single
+                    // loader now, so this push site racing its own call
+                    // against that task's (the "triple concurrent
+                    // selectProject per project open" finding) is gone.
                     router.push(.project(projectID.uuidString))
-                    Task { try? await projectsStore.selectProject(projectID) }
                 }
             )
         case .projects:
@@ -861,7 +866,12 @@ private struct DetailHost: View {
                 reviewProject: { project in router.push(.review(projectID: project.id)) },
                 showResults: { project in router.push(.resultsWorkspace(projectID: project.id)) },
                 openProject: { project in
-                    Task { try? await projectsStore.selectProject(project.id) }
+                    // Wave 4 navigation-rework code-review fix: same single-
+                    // loader change as `openProjectID` above -- the pushed
+                    // `.project` destination's own recovery task handles
+                    // loading; this site (and the `ProjectsView` selection
+                    // binding's own single-click load, which drives the
+                    // inline detail panel on THIS page) no longer race it.
                     router.push(.project(project.id.uuidString))
                 }
             )
@@ -900,7 +910,9 @@ private struct DetailHost: View {
                     accessMode: accessMode,
                     router: router,
                     openProject: { project in
-                        Task { try? await projectsStore.selectProject(project.id) }
+                        // Wave 4 navigation-rework code-review fix: same
+                        // single-loader change as the Home/Projects push
+                        // sites above.
                         router.push(.project(project.id.uuidString))
                     },
                     reviewProject: { project in router.push(.review(projectID: project.id)) },
@@ -922,7 +934,22 @@ private struct DetailHost: View {
                     review: { router.push(.review(projectID: projectSnapshot.project.id)) }
                 )
             } else {
+                // Wave 4 navigation-rework code-review fix: unlike `.project`
+                // just above, this branch used to have no recovery `.task`
+                // at all -- restoring a window straight into a pushed series
+                // route (nothing selected yet) left this spinner showing
+                // forever. Resolves the series' OWN owning project via the
+                // already-open metadata store (a series route only carries
+                // its own id, not its project's), then selects it so the
+                // `if` branch above can render on the next observation.
                 ProgressView("Loading series…")
+                    .task {
+                        guard let id = UUID(uuidString: rawID),
+                              let metadataStore = projectsStore.metadataStore else { return }
+                        if let record = try? await metadataStore.series(id: id) {
+                            try? await projectsStore.selectProject(record.projectID)
+                        }
+                    }
             }
         case .nights:
             NightsView(

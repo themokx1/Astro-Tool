@@ -38,6 +38,25 @@ public final class ProjectsStore {
 
     private let metadataFactory: MetadataFactory
     private var metadata: MetadataStore?
+    /// Wave 4 navigation-rework code-review fix: bumped at the start of
+    /// EVERY `selectProject` call and captured into that call's own local
+    /// `generation` -- if a later call has since bumped this past that
+    /// captured value by the time this call's `await`ed queries return, this
+    /// call's own completion is stale and must not overwrite whatever the
+    /// later call already wrote. Guards against the "triple concurrent
+    /// selectProject per project open" race: several push sites used to each
+    /// fire their own proactive `selectProject` alongside the pushed
+    /// destination's own recovery task, so on a fast A -> B re-navigation
+    /// whichever call's queries happened to finish LAST won, regardless of
+    /// which project was actually opened last.
+    private var selectionGeneration = 0
+    /// Test-only hook: when set, `selectProject` awaits this closure (keyed
+    /// by the id about to be loaded) right before running its metadata
+    /// queries -- lets `ProjectsStoreTests` deterministically pause one
+    /// call's completion behind another's to exercise the generation guard
+    /// above without needing a genuinely slow query. `nil` (the default, and
+    /// the only value ever set in production) is a complete no-op.
+    var testOnlySelectionDelay: ((UUID) async -> Void)?
     /// Exposes the already-open store for the current root so other V2
     /// surfaces (Settings' Support tab diagnostics) can query it directly
     /// instead of opening a second confined connection to the same
@@ -93,9 +112,12 @@ public final class ProjectsStore {
             return
         }
         guard let metadata else { throw ProjectsStoreError.libraryNotOpen }
+        selectionGeneration += 1
+        let generation = selectionGeneration
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
+        if let testOnlySelectionDelay { await testOnlySelectionDelay(id) }
         do {
             // Wave 4 Task 1 data-bug fix: both queries are `await`ed into
             // locals FIRST, then `selectedProjectID`/`selectedProject`/
@@ -111,10 +133,16 @@ public final class ProjectsStore {
             // unobservable.
             let snapshot = try await ProjectsQuery(metadata: metadata).project(id: id)
             let annotation = try await metadata.projectAnnotation(projectID: id)
+            // Wave 4 navigation-rework code-review fix: a NEWER call may
+            // have already bumped `selectionGeneration` while this call's
+            // queries were in flight -- if so, this completion is stale and
+            // must not clobber whatever that newer call already wrote.
+            guard generation == selectionGeneration else { return }
             selectedProjectID = id
             selectedProject = snapshot
             selectedProjectAnnotation = annotation
         } catch {
+            guard generation == selectionGeneration else { throw error }
             selectedProjectID = id
             selectedProject = nil
             selectedProjectAnnotation = nil

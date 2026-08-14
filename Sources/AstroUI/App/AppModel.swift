@@ -167,21 +167,28 @@ public final class AppRouter {
         )
     }
 
-    /// Pushes `route` onto its own section's stack, switching to that
-    /// section first if needed -- switching sections here never clears the
-    /// destination section's existing stack (drilling into a project, then
-    /// jumping to Insights and back, still finds that project workspace
-    /// exactly where it was left). Does NOT touch `isInspectorPresented`
-    /// either way (Wave 4 Task 1: navigation is decoupled from inspector
-    /// visibility -- see the plan's diagnosis of the old forced-open/forced-
-    /// closed coupling); `inspectorSelection` is still kept in sync with
-    /// the pushed route, same as before.
+    /// Pushes `route` onto the CURRENTLY ACTIVE section's own stack --
+    /// deliberately does NOT switch `primarySection`, even when `route`'s own
+    /// nominal `primarySection` differs (e.g. a night's "Open Calibration"
+    /// action pushes `.calibration`, whose own section is `.library`, while
+    /// the user stays on the Nights journey). A mid-journey drill-down is
+    /// owned by the journey the user is ON, not by the route's own nominal
+    /// section -- switching sections here used to hijack the window over to
+    /// a foreign section and land the native Back chevron on THAT section's
+    /// own unrelated, possibly-stale stack (the navigation-rework code
+    /// review's critical finding). `navigate(to:)` remains the only section
+    /// switcher for a plain sidebar click; `navigate(toContent:)` below is
+    /// the switching counterpart for deep links/global-search jumps, which
+    /// (unlike this journey-preserving `push`) ARE meant to jump sections.
+    /// Does NOT touch `isInspectorPresented` either way (Wave 4 Task 1:
+    /// navigation is decoupled from inspector visibility -- see the plan's
+    /// diagnosis of the old forced-open/forced-closed coupling);
+    /// `inspectorSelection` is still kept in sync with the pushed route,
+    /// same as before.
     public func push(_ route: ContentRoute) {
-        let section = route.primarySection
-        primarySection = section
-        var path = paths[section] ?? []
+        var path = paths[primarySection] ?? []
         path.append(route)
-        paths[section] = path
+        paths[primarySection] = path
         inspectorSelection = route.selection
     }
 
@@ -213,7 +220,20 @@ public final class AppRouter {
         inspectorSelection = nil
     }
 
+    /// Switches to `route`'s own section and lands EXACTLY on `route` -- the
+    /// deep-link/global-search-jump counterpart to journey-preserving
+    /// `push(_:)` above. Always resets the destination section's stack to
+    /// root first (even when that section is already active): an external
+    /// jump has no relationship to whatever that section's stack last held,
+    /// so leaving stale entries underneath the jumped-to route would make
+    /// the native Back chevron pop into an unrelated stack (the same failure
+    /// mode `push(_:)`'s own fix addresses, just from the opposite
+    /// direction). This is what keeps Back "sane" after a deep link: one pop
+    /// always lands on that section's own root.
     public func navigate(toContent route: ContentRoute) {
+        let section = route.primarySection
+        paths[section] = []
+        primarySection = section
         push(route)
     }
 
@@ -235,7 +255,11 @@ public final class AppRouter {
     }
 
     public func select(_ selection: LibrarySelection) {
-        push(selection.contentRoute)
+        // Deep-link selection (the `frames`/`series`/`results` URL schemes,
+        // via `open(_:)` below) is an external jump exactly like
+        // `navigate(toContent:)`, so it gets the same switch-and-reset
+        // semantics rather than `push(_:)`'s journey-preserving one.
+        navigate(toContent: selection.contentRoute)
         isInspectorPresented = true
     }
 

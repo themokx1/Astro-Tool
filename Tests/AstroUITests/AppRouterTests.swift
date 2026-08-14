@@ -301,6 +301,63 @@ struct AppRouterTests {
         #expect(router.currentSectionPath.isEmpty)
     }
 
+    // MARK: Wave 4 navigation-rework code-review fix -- cross-section push
+    // no longer hijacks primarySection
+
+    @Test("Pushing a foreign-section route mid-journey keeps the CURRENT section active and appends to ITS own stack")
+    func pushingAForeignSectionRouteStaysInTheActiveSection() {
+        let router = AppRouter()
+        router.navigate(to: .nights)
+        router.push(.night("2026-08-10"))
+
+        // `.calibration`'s OWN nominal section is `.library` (see
+        // `ContentRoute.primarySection`), but this is a mid-journey
+        // drill-down from a night's own "Open Calibration" action -- it must
+        // land on top of the CURRENT (nights) stack, not hijack the window
+        // over to Library.
+        router.push(.calibration)
+
+        #expect(router.primarySection == .nights, "A mid-journey push must not hijack the active section")
+        #expect(router.currentSectionPath == [.night("2026-08-10"), .calibration])
+        #expect(router.contentRoute == .calibration)
+
+        router.pop()
+        #expect(router.contentRoute == .night("2026-08-10"), "Back must return to the night, not some unrelated Library stack")
+        #expect(router.primarySection == .nights)
+    }
+
+    @Test("navigate(toContent:) still switches to the route's own section and resets it to just that route -- the deep-link/global-search jump semantics")
+    func navigateToContentStillSwitchesSection() {
+        let router = AppRouter()
+        router.navigate(to: .nights)
+        router.push(.night("2026-08-10"))
+
+        router.navigate(toContent: .projectSeries("m31-lrgb"))
+
+        #expect(router.primarySection == .projects)
+        #expect(router.currentSectionPath == [.projectSeries("m31-lrgb")])
+        #expect(router.contentRoute == .projectSeries("m31-lrgb"))
+
+        // The nights stack this jump left behind is untouched.
+        router.navigate(to: .nights)
+        #expect(router.contentRoute == .night("2026-08-10"))
+    }
+
+    @Test("navigate(toContent:) resets the destination section's own stack even when it is already the active section")
+    func navigateToContentResetsEvenTheAlreadyActiveSection() {
+        let router = AppRouter()
+        router.navigate(to: .projects)
+        router.push(.project("m31"))
+
+        router.navigate(toContent: .projectSeries("ngc-1"))
+
+        #expect(router.primarySection == .projects)
+        #expect(
+            router.currentSectionPath == [.projectSeries("ngc-1")],
+            "The old project stack must not linger underneath a fresh deep-linked jump"
+        )
+    }
+
     @Test("Switching sections preserves each section's own stack independently")
     func switchingSectionsPreservesEachStack() {
         let router = AppRouter()

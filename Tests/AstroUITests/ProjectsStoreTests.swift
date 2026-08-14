@@ -136,6 +136,69 @@ struct ProjectsStoreTests {
         #expect(store.selectedProjectAnnotation?.notes == "Needs more Ha data")
     }
 
+    @Test("Resolving a series id back to its owning project (the .projectSeries restore-recovery path) lands selectProject on the right project")
+    func seriesRecoveryResolvesToOwningProject() async throws {
+        // Mirrors exactly what `.projectSeries`'s recovery `.task` in
+        // `V2RootView.DetailHost` does when a window restores directly into
+        // a pushed series route with nothing selected yet: resolve the
+        // series' owning project via the already-open metadata store, then
+        // select it.
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .collecting)
+        let night = NightRecord(id: UUID(), localDate: "2026-08-08", timeZoneID: "Europe/Budapest")
+        let series = SeriesRecord(
+            id: UUID(), projectID: project.id, nightID: night.id, setupID: nil,
+            setupDescriptor: "ASI2600MC · 261 mm", sensorMode: .osc, passband: .dualBand,
+            exposureSeconds: 300, filterName: "SV220", filterID: nil, gain: 100, offset: 50, binning: "1x1"
+        )
+        try await metadata.save(MetadataWriteBatch(projects: [project], nights: [night], series: [series]))
+        let store = ProjectsStore(metadataFactory: { _ in metadata })
+        try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        let record = try #require(try await store.metadataStore?.series(id: series.id))
+        try await store.selectProject(record.projectID)
+
+        #expect(store.selectedProjectID == project.id)
+        #expect(store.selectedProject?.project == project)
+    }
+
+    @Test("A slower, earlier selectProject(A) does not clobber a faster, later selectProject(B) that finishes first")
+    func selectProjectGuardsAgainstStaleOutOfOrderCompletion() async throws {
+        // Wave 4 navigation-rework code-review fix: a project can be opened
+        // through up to three concurrent `selectProject` calls today (the
+        // pushed destination's own recovery task plus proactive calls at
+        // the push sites) -- on a fast A -> B re-navigation, whichever call
+        // happens to finish LAST used to win regardless of which one was
+        // started last, so a slow completion for the FIRST project could
+        // silently overwrite the correctly-selected second one. This drives
+        // that exact shape directly against the store: start `selectProject`
+        // for project A, hold it paused (via the test-only delay hook)
+        // right before its metadata queries, let `selectProject(B)` run to
+        // completion first, THEN release A -- the generation guard inside
+        // `selectProject` must make sure A's now-stale completion does not
+        // overwrite B's already-current selection.
+        let metadata = try MetadataStore.temporary()
+        let projectA = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "A", phase: .collecting)
+        let projectB = ProjectRecord(id: UUID(), catalogID: "M 42", displayName: "B", phase: .collecting)
+        try await metadata.save(MetadataWriteBatch(projects: [projectA, projectB]))
+        let store = ProjectsStore(metadataFactory: { _ in metadata })
+        try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        let race = SelectionRace()
+        store.testOnlySelectionDelay = { id in
+            if id == projectA.id { await race.enterAndWaitToProceed() }
+        }
+
+        let staleSelection = Task { try await store.selectProject(projectA.id) }
+        await race.waitForEntry()
+        try await store.selectProject(projectB.id)
+        await race.proceed()
+        try await staleSelection.value
+
+        #expect(store.selectedProjectID == projectB.id, "The later call (B) must win regardless of which call's queries finished last")
+        #expect(store.selectedProject?.project == projectB)
+    }
+
     @Test("Project search matches catalog name, filter and setup metadata")
     func projectSearchUsesWorkflowMetadata() async throws {
         let metadata = try MetadataStore.temporary()
@@ -154,5 +217,40 @@ struct ProjectsStoreTests {
         #expect(try await store.search("SV220").map(\.id) == [elephant.id])
         #expect(try await store.search("processing").map(\.id) == [orion.id])
         #expect(try await store.search("IC1396").map(\.id) == [elephant.id])
+    }
+}
+
+/// A two-step rendezvous for `selectProjectGuardsAgainstStaleOutOfOrderCompletion`
+/// above: lets the test deterministically pause `ProjectsStore`'s slow call
+/// right before its metadata queries (`enterAndWaitToProceed`), confirm it has
+/// actually reached that point (`waitForEntry`), run the fast call to
+/// completion, and only THEN release the slow one (`proceed`) -- proving the
+/// generation guard, not lucky scheduling, is what keeps the final state
+/// correct. Same continuation-based gate shape as `OperationHostTests`' own
+/// `AsyncGate`/`LibraryRescanTests`' own `RescanGate`, just with an added
+/// "has it actually entered yet" signal neither of those needed.
+private actor SelectionRace {
+    private var hasEntered = false
+    private var canProceed = false
+    private var enteredContinuation: CheckedContinuation<Void, Never>?
+    private var proceedContinuation: CheckedContinuation<Void, Never>?
+
+    func waitForEntry() async {
+        if hasEntered { return }
+        await withCheckedContinuation { enteredContinuation = $0 }
+    }
+
+    func enterAndWaitToProceed() async {
+        hasEntered = true
+        enteredContinuation?.resume()
+        enteredContinuation = nil
+        if canProceed { return }
+        await withCheckedContinuation { proceedContinuation = $0 }
+    }
+
+    func proceed() {
+        canProceed = true
+        proceedContinuation?.resume()
+        proceedContinuation = nil
     }
 }

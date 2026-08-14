@@ -220,6 +220,101 @@ struct V2NavigationSurfaceTests {
         }
     }
 
+    // MARK: Wave 4 navigation-rework code-review fix -- ResultsView must not
+    // publish WorkspaceActions when embedded
+
+    @Test("ResultsView only publishes WorkspaceActions on its standalone route -- the embedded project-tab pane must not shadow ProjectWorkspaceView's own toolbar actions")
+    func resultsViewGatesWorkspaceActionsPublishBehindShowsHeader() throws {
+        let results = try contents("Sources/AstroUI/Features/Results/ResultsView.swift")
+
+        // The publish must be reachable only through a branch keyed on
+        // `showsHeader` -- when embedded (`showsHeader == false`, as
+        // `ProjectResultsPane` renders it), NO view in this file may apply
+        // `.focusedSceneValue(\.workspaceActions, ...)`, or it would shadow
+        // the parent `ProjectWorkspaceView`'s own Export/Review Frames/
+        // Results actions in the shell's stable toolbar.
+        #expect(results.contains("if showsHeader {"))
+
+        // Bound the scan to `ResultsView`'s OWN `body` (skipping past the
+        // sibling `ProjectResultsPane.body` earlier in the file, which is
+        // an unrelated one-liner), then up to the first blank line, which
+        // separates it from the next member, so an UNRELATED `else` inside
+        // some other property later in the file can't be mistaken for
+        // this one.
+        let structRange = try #require(results.range(of: "public struct ResultsView: View {"))
+        let bodyRange = try #require(
+            results.range(of: "public var body: some View {", range: structRange.upperBound..<results.endIndex)
+        )
+        let bodyTail = String(results[bodyRange.upperBound...])
+        let bodyEnd = try #require(bodyTail.range(of: "\n\n"))
+        let bodyText = String(bodyTail[bodyTail.startIndex..<bodyEnd.lowerBound])
+
+        let elseRange = try #require(bodyText.range(of: "} else {"))
+        let elseBranch = String(bodyText[elseRange.upperBound...])
+        #expect(
+            !elseBranch.contains("focusedSceneValue"),
+            "The embedded (showsHeader: false) branch must not publish WorkspaceActions"
+        )
+    }
+
+    // MARK: Wave 4 navigation-rework code-review fix -- .projectSeries needs
+    // a recovery task, same as .project already has
+
+    @Test("A restored .projectSeries route recovers via a task that resolves its owning project, like .project's own fallback already does")
+    func projectSeriesDestinationHasARecoveryTask() throws {
+        let root = try contents("Sources/AstroUI/App/V2RootView.swift")
+
+        // `.projectSeries` also appears (by name only, no body) in
+        // `breadcrumbLabel(for:)` earlier in the file -- scope the search to
+        // `destination(for:)`'s own switch so that unrelated match isn't
+        // picked up instead.
+        let destinationRange = try #require(root.range(of: "private func destination(for route: ContentRoute)"))
+        let caseRange = try #require(
+            root.range(of: "case .projectSeries(let rawID):", range: destinationRange.upperBound..<root.endIndex)
+        )
+        let nextCaseRange = try #require(
+            root.range(of: "\n        case .nights:", range: caseRange.upperBound..<root.endIndex)
+        )
+        let caseBody = String(root[caseRange.upperBound..<nextCaseRange.lowerBound])
+
+        #expect(caseBody.contains("ProgressView(\"Loading series…\")"))
+        #expect(
+            caseBody.contains(".task {"),
+            "The .projectSeries fallback must self-heal a cold restore, exactly like .project's own fallback task"
+        )
+        #expect(caseBody.contains("metadataStore"), "The recovery must resolve the series via the already-open metadata store")
+        #expect(caseBody.contains("selectProject"))
+    }
+
+    // MARK: Wave 4 navigation-rework code-review fix -- one selectProject
+    // loader per project open, not three racing ones
+
+    @Test("Pushing into a project no longer fires a redundant proactive selectProject at the push site -- the pushed .project destination's own recovery task is the single loader")
+    func projectPushSitesDoNotDuplicateSelectProject() throws {
+        let root = try contents("Sources/AstroUI/App/V2RootView.swift")
+
+        let redundantPattern = "Task { try? await projectsStore.selectProject("
+        let occurrences = root.components(separatedBy: redundantPattern).count - 1
+        // The legitimate survivors are all `openSearchResult` global-search
+        // jumps (`.project`, `.series`, `.note`, `.result`) -- none of them
+        // push `.project(id)` (they jump to the Projects section root, or to
+        // `.projectSeries`/`.result` instead), so the `.project` destination's
+        // own recovery task never runs for them and each needs its own
+        // proactive select. The Home/Projects/Night sites that DO push
+        // straight onto `.project(id)` must no longer duplicate that
+        // destination's own fallback `.task`.
+        #expect(
+            occurrences == 4,
+            "Expected only the four global-search jumps to still proactively select; found \(occurrences)"
+        )
+
+        // The `.project` destination's own single-loader fallback task must
+        // still be exactly there, untouched.
+        #expect(root.contains(
+            ".task { if let id = UUID(uuidString: rawID) { try? await projectsStore.selectProject(id) } }"
+        ))
+    }
+
     // MARK: Wave 4 Task 3 -- router-backed tabs, a real Results tab
 
     @Test("ProjectWorkspaceView binds its segmented tab to the router, not local @State")

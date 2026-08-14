@@ -68,7 +68,34 @@ public struct ResultsView: View {
         self.showsHeader = showsHeader
     }
 
+    // Wave 4 navigation-rework code-review fix: publishing
+    // `.focusedSceneValue(\.workspaceActions, ...)` used to be unconditional
+    // on the view below, so when this same content is embedded (`showsHeader
+    // == false`, as `ProjectResultsPane` renders it on the project
+    // workspace's own Results tab) it shadowed `ProjectWorkspaceView`'s own
+    // published actions (Export/Review Frames/Results) the moment that tab
+    // was showing -- the shell's toolbar silently lost two of its three
+    // buttons. SwiftUI has no "conditional modifier" that cleanly removes a
+    // focused-scene key once applied, so the fix branches at `body`'s own
+    // top level instead: the modifier is only ever attached to the tree at
+    // all on the STANDALONE route (`showsHeader == true`); the embedded
+    // branch renders the identical `workspaceContent` with no such modifier
+    // anywhere underneath it.
     public var body: some View {
+        if showsHeader {
+            workspaceContent
+                // Wave 4 Task 2: the Export Stack List menu used to be an
+                // in-body button in this header -- it now renders in the
+                // shell's own stable toolbar (see `WorkspaceActions`'s doc
+                // comment).
+                .focusedSceneValue(\.workspaceActions, workspaceActions)
+        } else {
+            workspaceContent
+        }
+    }
+
+    @ViewBuilder
+    private var workspaceContent: some View {
         VStack(spacing: 0) {
             if showsHeader {
                 header
@@ -99,10 +126,6 @@ public struct ResultsView: View {
         // pushed `.resultsWorkspace(projectID:)` route apart from this same
         // content hosted inline in a project's own tab.
         .accessibilityIdentifier(showsHeader ? "v2.results.workspace" : "v2.project.results.pane")
-        // Wave 4 Task 2: the Export Stack List menu used to be an in-body
-        // button in this header -- it now renders in the shell's own stable
-        // toolbar (see `WorkspaceActions`'s doc comment).
-        .focusedSceneValue(\.workspaceActions, workspaceActions)
     }
 
     private var header: some View {
