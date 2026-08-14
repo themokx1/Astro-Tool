@@ -582,6 +582,7 @@ private struct DetailHost: View {
         case .home:
             HomeView(
                 store: homeStore,
+                rootURL: onboardingStore.selectedRoot,
                 chooseLibrary: chooseLibrary,
                 openProject: { project in
                     router.navigate(to: .projects)
@@ -611,6 +612,7 @@ private struct DetailHost: View {
             if let id = UUID(uuidString: rawID), let snapshot = projectsStore.selectedProject, snapshot.id == id {
                 ProjectWorkspaceView(
                     snapshot: snapshot,
+                    rootURL: onboardingStore.selectedRoot,
                     annotation: projectsStore.selectedProjectAnnotation,
                     close: { router.navigate(to: .projects) },
                     review: { reviewProject(snapshot.project) },
@@ -634,6 +636,7 @@ private struct DetailHost: View {
             if let id = UUID(uuidString: rawID), let row = nightsStore.nights.first(where: { $0.id == id }) {
                 NightWorkspaceView(
                     row: row,
+                    rootURL: onboardingStore.selectedRoot,
                     close: { router.navigate(to: .nights) },
                     openProject: { project in
                         Task { try? await projectsStore.selectProject(project.id) }
@@ -662,6 +665,7 @@ private struct DetailHost: View {
         case .nights:
             NightsView(
                 snapshot: onboardingStore.phase.summary,
+                rootURL: onboardingStore.selectedRoot,
                 store: nightsStore,
                 chooseLibrary: chooseLibrary,
                 openNight: { id in

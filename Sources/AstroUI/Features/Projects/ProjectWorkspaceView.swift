@@ -1,5 +1,6 @@
 import AstroApplication
 import SwiftUI
+import UniformTypeIdentifiers
 
 public struct ProjectWorkspaceView: View {
     public enum Section: String, CaseIterable {
@@ -11,6 +12,7 @@ public struct ProjectWorkspaceView: View {
     }
 
     let snapshot: ProjectSnapshot
+    let rootURL: URL?
     let close: () -> Void
     let review: () -> Void
     let results: () -> Void
@@ -26,6 +28,7 @@ public struct ProjectWorkspaceView: View {
 
     public init(
         snapshot: ProjectSnapshot,
+        rootURL: URL? = nil,
         annotation: ProjectAnnotationRecord?,
         close: @escaping () -> Void,
         review: @escaping () -> Void,
@@ -35,6 +38,7 @@ public struct ProjectWorkspaceView: View {
         saveAnnotation: @escaping (Double?, String) async throws -> Void
     ) {
         self.snapshot = snapshot
+        self.rootURL = rootURL
         self.annotation = annotation
         self.close = close
         self.review = review
@@ -77,10 +81,52 @@ public struct ProjectWorkspaceView: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
             Spacer()
+            ExportMenu(items: projectExportItems, accessibilityID: "v2.project.export")
             Button("Review Frames", action: review)
             Button("Results", action: results).buttonStyle(.borderedProminent)
         }
         .padding(AstroTokens.Spacing.spacious)
+    }
+
+    /// Acquisition (all three V1 formats), the target report, and the latest
+    /// night's stack list -- every project-scoped export V1's per-target
+    /// context menu offered (`AppState.exportAcquisition`/`exportTargetReport`/
+    /// `exportStackList`), all through `ExportService`. `[]` when no library
+    /// is open at all (`rootURL == nil`, never true once a project workspace
+    /// is actually reachable, but `ExportMenu` degrades to disabled rather
+    /// than assume).
+    private var projectExportItems: [ExportMenuItem] {
+        guard let rootURL else { return [] }
+        let target = snapshot.canonicalFolderName
+        let latestNightDate = snapshot.nights.first?.night.localDate
+        var items: [ExportMenuItem] = [
+            .file(title: "Acquisition (AstroBin CSV)…", systemImage: "tablecells", contentType: .commaSeparatedText) {
+                let export = try ExportService.production(rootURL: rootURL).acquisitionExport(target: target, format: .astrobin)
+                return (export.content, export.suggestedFilename, export.unmappedFilters)
+            },
+            .file(title: "Acquisition (CSV)…", systemImage: "tablecells", contentType: .commaSeparatedText) {
+                let export = try ExportService.production(rootURL: rootURL).acquisitionExport(target: target, format: .csv)
+                return (export.content, export.suggestedFilename, export.unmappedFilters)
+            },
+            .file(title: "Acquisition (Markdown)…", systemImage: "doc.text", contentType: .init(filenameExtension: "md") ?? .plainText) {
+                let export = try ExportService.production(rootURL: rootURL).acquisitionExport(target: target, format: .md)
+                return (export.content, export.suggestedFilename, export.unmappedFilters)
+            },
+            .divider,
+            .file(title: "Target Report…", systemImage: "doc.richtext", contentType: .html) {
+                let export = try ExportService.production(rootURL: rootURL).targetReport(target: target)
+                return (export.content, export.suggestedFilename, [])
+            },
+        ]
+        if let latestNightDate {
+            items.append(
+                .file(title: "Stack List (Latest Night)…", systemImage: "square.stack.3d.up", contentType: .commaSeparatedText) {
+                    let export = try ExportService.production(rootURL: rootURL).stackList(target: target, date: latestNightDate)
+                    return (export.content, export.suggestedFilename, [])
+                }
+            )
+        }
+        return items
     }
 
     @ViewBuilder private var content: some View {

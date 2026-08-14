@@ -1,5 +1,7 @@
+import AppKit
 import AstroApplication
 import SwiftUI
+import UniformTypeIdentifiers
 
 public struct NightsView: View {
     private enum Mode: String, CaseIterable {
@@ -7,18 +9,22 @@ public struct NightsView: View {
         case calendar = "Next 30 nights"
     }
     let snapshot: LibrarySnapshot?
+    let rootURL: URL?
     @Bindable var store: NightsStore
     let chooseLibrary: () -> Void
     let openNight: (UUID) -> Void
+    @Environment(OperationHost.self) private var operationHost
     @State private var mode: Mode = .history
 
     public init(
         snapshot: LibrarySnapshot?,
+        rootURL: URL? = nil,
         store: NightsStore,
         chooseLibrary: @escaping () -> Void,
         openNight: @escaping (UUID) -> Void
     ) {
         self.snapshot = snapshot
+        self.rootURL = rootURL
         self.store = store
         self.chooseLibrary = chooseLibrary
         self.openNight = openNight
@@ -83,6 +89,10 @@ public struct NightsView: View {
                     .frame(minHeight: 330)
                     .contextMenu(forSelectionType: UUID.self) { nightIDs in
                         if let id = nightIDs.first { Button("Open Night") { openNight(id) } }
+                        if let id = nightIDs.first, let night = store.nights.first(where: { $0.id == id }) {
+                            Button("Night Report…") { exportNightReport(night) }
+                                .disabled(rootURL == nil || night.snapshot.projects.first == nil)
+                        }
                     } primaryAction: { nightIDs in
                         if let id = nightIDs.first { openNight(id) }
                     }
@@ -116,5 +126,28 @@ public struct NightsView: View {
         .navigationTitle("Nights")
         .accessibilityLabel("Nights")
         .accessibilityIdentifier("v2.detail.nights")
+    }
+
+    /// Same night-report export `NightWorkspaceView`'s `ExportMenu` offers,
+    /// reachable directly from a night's row context menu without opening
+    /// the workspace first -- V1's per-session "Éjszaka-riport készítése"
+    /// context-menu item had the same "act on the row, don't force a
+    /// navigation" shape.
+    private func exportNightReport(_ night: NightRow) {
+        guard let rootURL, let project = night.snapshot.projects.first else { return }
+        let target = ProjectsQuery.canonicalFolderName(for: project)
+        do {
+            let export = try ExportService.production(rootURL: rootURL).nightReport(target: target, date: night.date)
+            let panel = NSSavePanel()
+            panel.title = "Night Report…"
+            panel.nameFieldStringValue = export.suggestedFilename
+            panel.allowedContentTypes = [.html]
+            panel.canCreateDirectories = true
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            try ExportFileWriter.write(content: export.content, to: url)
+            operationHost.notify(.success, message: "Exported \(url.lastPathComponent)")
+        } catch {
+            operationHost.notify(.failure, message: "Night Report failed: \(error.localizedDescription)")
+        }
     }
 }

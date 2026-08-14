@@ -80,6 +80,24 @@ public struct ProjectsQuery: Sendable {
         }
     }
 
+    /// `project.catalogID` resolved to its on-disk library folder name --
+    /// `TargetCatalog.canonicalFolderName` when the catalog ID still
+    /// resolves to a known catalog entry, else a plain `Sanitizer.sanitize`
+    /// fallback (a project can outlive a catalog entry, e.g. a renamed or
+    /// removed designation). Shared by `project(id:)` (`ProjectSnapshot.
+    /// canonicalFolderName`) and any other caller that needs the raw
+    /// library/folder key a `ProjectRecord` maps to -- e.g. V2's
+    /// `ExportService` call sites, which need this same key rather than
+    /// `catalogID` itself to address `AcquisitionExport`/`NightReport`/
+    /// `TargetReport`/`StackList`.
+    public static func canonicalFolderName(for project: ProjectRecord) -> String {
+        if let catalog = TargetCatalog.search(project.catalogID, limit: 1)
+            .first(where: { $0.designation == project.catalogID }) {
+            return TargetCatalog.canonicalFolderName(for: catalog)
+        }
+        return Sanitizer.sanitize(project.catalogID)
+    }
+
     public func project(id: UUID) async throws -> ProjectSnapshot? {
         guard let project = try await metadata.project(id: id) else { return nil }
         let series = try await metadata.series(projectID: id)
@@ -108,16 +126,9 @@ public struct ProjectsQuery: Sendable {
                 }
             )
         }.sorted { $0.night.localDate > $1.night.localDate }
-        let canonicalFolder: String
-        if let catalog = TargetCatalog.search(project.catalogID, limit: 1)
-            .first(where: { $0.designation == project.catalogID }) {
-            canonicalFolder = TargetCatalog.canonicalFolderName(for: catalog)
-        } else {
-            canonicalFolder = Sanitizer.sanitize(project.catalogID)
-        }
         return ProjectSnapshot(
             project: project,
-            canonicalFolderName: canonicalFolder,
+            canonicalFolderName: Self.canonicalFolderName(for: project),
             series: series,
             nights: nights,
             nextAction: nextAction(for: project.phase, seriesCount: series.count)

@@ -1,8 +1,10 @@
 import SwiftUI
 import AstroApplication
+import UniformTypeIdentifiers
 
 public struct HomeView: View {
     @Bindable private var store: HomeStore
+    private let rootURL: URL?
     private let chooseLibrary: () -> Void
     private let openProject: (ProjectRecord) -> Void
     private let openProjectID: (UUID) -> Void
@@ -10,11 +12,13 @@ public struct HomeView: View {
 
     public init(
         store: HomeStore,
+        rootURL: URL? = nil,
         chooseLibrary: @escaping () -> Void,
         openProject: @escaping (ProjectRecord) -> Void,
         openProjectID: @escaping (UUID) -> Void = { _ in }
     ) {
         _store = Bindable(store)
+        self.rootURL = rootURL
         self.chooseLibrary = chooseLibrary
         self.openProject = openProject
         self.openProjectID = openProjectID
@@ -77,44 +81,79 @@ public struct HomeView: View {
     }
 
     private var tonightRecommendations: some View {
-        GroupBox("Best targets tonight") {
-            if store.snapshot.tonightRecommendations.isEmpty {
-                Text("No astronomical recommendation is available yet. Add a site or scan FITS coordinates to enable tonight planning.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(store.snapshot.tonightRecommendations) { recommendation in
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(recommendation.displayName).font(.headline)
-                                Text([
-                                    recommendation.visibleWindow.map { "Visible \($0)" },
-                                    recommendation.culmination.map { "Culminates \($0)" },
-                                    recommendation.maxAltitude.map { "\($0.formatted(.number.precision(.fractionLength(0))))° max" }
-                                ].compactMap { $0 }.joined(separator: " · "))
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Text(recommendation.verdict)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(AstroTokens.Color.spectralBlue)
-                            if let projectID = recommendation.projectID {
-                                Button("Open") { openProjectID(projectID) }
-                                    .buttonStyle(.borderless)
-                            }
-                        }
-                        .padding(.vertical, 9)
-                        if recommendation.id != store.snapshot.tonightRecommendations.last?.id {
-                            Divider()
-                        }
-                    }
-                }
-                .padding(.horizontal, 8)
+        GroupBox {
+            planExportMenu
+        } label: {
+            HStack {
+                Text("Best targets tonight")
+                Spacer()
+                ExportMenu(
+                    title: "Export Plan",
+                    systemImage: "square.and.arrow.up",
+                    items: planExportItems,
+                    accessibilityID: "v2.home.plan-export"
+                )
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
         }
         .accessibilityIdentifier("v2.home.tonight-recommendations")
+    }
+
+    private var planExportItems: [ExportMenuItem] {
+        guard let rootURL else { return [] }
+        let plans = store.tonightPlans
+        let shoppingItems = store.calibShoppingItems
+        return [
+            .file(title: "Plan CSV…", systemImage: "tablecells", contentType: .commaSeparatedText) {
+                let export = try ExportService.production(rootURL: rootURL).planCSV(plans: plans)
+                return (export.content, export.suggestedFilename, [])
+            },
+            .clipboard(title: "Copy Plan", systemImage: "doc.on.clipboard") {
+                try ExportService.production(rootURL: rootURL).planClipboardText(plans: plans)
+            },
+            .clipboard(title: "Copy Calibration Shopping List", systemImage: "list.bullet.clipboard") {
+                try ExportService.production(rootURL: rootURL).calibShoppingListMarkdown(items: shoppingItems)
+            },
+        ]
+    }
+
+    @ViewBuilder private var planExportMenu: some View {
+        if store.snapshot.tonightRecommendations.isEmpty {
+            Text("No astronomical recommendation is available yet. Add a site or scan FITS coordinates to enable tonight planning.")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+        } else {
+            VStack(spacing: 0) {
+                ForEach(store.snapshot.tonightRecommendations) { recommendation in
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(recommendation.displayName).font(.headline)
+                            Text([
+                                recommendation.visibleWindow.map { "Visible \($0)" },
+                                recommendation.culmination.map { "Culminates \($0)" },
+                                recommendation.maxAltitude.map { "\($0.formatted(.number.precision(.fractionLength(0))))° max" }
+                            ].compactMap { $0 }.joined(separator: " · "))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(recommendation.verdict)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(AstroTokens.Color.spectralBlue)
+                        if let projectID = recommendation.projectID {
+                            Button("Open") { openProjectID(projectID) }
+                                .buttonStyle(.borderless)
+                        }
+                    }
+                    .padding(.vertical, 9)
+                    if recommendation.id != store.snapshot.tonightRecommendations.last?.id {
+                        Divider()
+                    }
+                }
+            }
+            .padding(.horizontal, 8)
+        }
     }
 
     private func duration(_ seconds: Double) -> String {

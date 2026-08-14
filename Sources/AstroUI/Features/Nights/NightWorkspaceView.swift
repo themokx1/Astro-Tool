@@ -1,5 +1,6 @@
 import AstroApplication
 import SwiftUI
+import UniformTypeIdentifiers
 
 public struct NightWorkspaceView: View {
     private struct SeriesRow: Identifiable {
@@ -7,9 +8,24 @@ public struct NightWorkspaceView: View {
         var id: UUID { series.id }
     }
     let row: NightRow
+    let rootURL: URL?
     let close: () -> Void
     let openProject: (ProjectRecord) -> Void
     let reviewProject: (ProjectRecord) -> Void
+
+    public init(
+        row: NightRow,
+        rootURL: URL? = nil,
+        close: @escaping () -> Void,
+        openProject: @escaping (ProjectRecord) -> Void,
+        reviewProject: @escaping (ProjectRecord) -> Void
+    ) {
+        self.row = row
+        self.rootURL = rootURL
+        self.close = close
+        self.openProject = openProject
+        self.reviewProject = reviewProject
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -22,6 +38,7 @@ public struct NightWorkspaceView: View {
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
+                ExportMenu(items: nightExportItems, accessibilityID: "v2.nights.export")
                 if let project = row.snapshot.projects.first {
                     Button("Review Frames") { reviewProject(project) }
                     Button("Open Project") { openProject(project) }.buttonStyle(.borderedProminent)
@@ -51,5 +68,20 @@ public struct NightWorkspaceView: View {
         .background(AstroTokens.Color.graphite.opacity(0.36))
         .navigationTitle(row.date)
         .accessibilityIdentifier("v2.night.workspace")
+    }
+
+    /// This night's report (`AppState.exportNightReport`'s V2 equivalent) --
+    /// `[]` when no library is open, or this night has no project at all to
+    /// resolve a library/folder key from.
+    private var nightExportItems: [ExportMenuItem] {
+        guard let rootURL, let project = row.snapshot.projects.first else { return [] }
+        let target = ProjectsQuery.canonicalFolderName(for: project)
+        let date = row.date
+        return [
+            .file(title: "Night Report…", systemImage: "doc.richtext", contentType: .html) {
+                let export = try ExportService.production(rootURL: rootURL).nightReport(target: target, date: date)
+                return (export.content, export.suggestedFilename, [])
+            },
+        ]
     }
 }

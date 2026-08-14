@@ -1,6 +1,7 @@
 import AstroApplication
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 @Observable
@@ -8,6 +9,12 @@ private final class ResultsStore {
     var snapshot: ResultsSnapshot?
     var isLoading = false
     var errorMessage: String?
+    /// This project's own library/folder key and most recent night, loaded
+    /// alongside `snapshot` -- everything the "Export Stack List" menu item
+    /// needs to call `ExportService.stackList(target:date:)`, without the
+    /// export menu having to know how to resolve either on its own.
+    var canonicalFolderName: String?
+    var latestNightDate: String?
 
     func load(rootURL: URL, projectID: UUID) async {
         isLoading = true
@@ -15,6 +22,10 @@ private final class ResultsStore {
         do {
             let metadata = try ProjectsStore.productionMetadata(rootURL: rootURL)
             snapshot = try await ResultsQuery(metadata: metadata).snapshot(projectID: projectID)
+            if let projectSnapshot = try await ProjectsQuery(metadata: metadata).project(id: projectID) {
+                canonicalFolderName = projectSnapshot.canonicalFolderName
+                latestNightDate = projectSnapshot.nights.first?.night.localDate
+            }
         } catch { errorMessage = error.localizedDescription }
     }
 }
@@ -61,12 +72,26 @@ public struct ResultsView: View {
                 Text("\(project.displayName) · stacks, variants, and provenance").foregroundStyle(.secondary)
             }
             Spacer()
+            ExportMenu(items: stackListExportItems, accessibilityID: "v2.results.export")
             if let snapshot = store.snapshot,
                let result = selectedResult(in: snapshot) {
                 resultActions(result)
             }
             Button("Close", action: dismiss).keyboardShortcut(.cancelAction)
         }.padding(20)
+    }
+
+    /// The project's latest-night stack list (`AppState.exportStackList`'s
+    /// V2 equivalent) -- `[]` until `store.load` has resolved this project's
+    /// own library/folder key and most recent night.
+    private var stackListExportItems: [ExportMenuItem] {
+        guard let target = store.canonicalFolderName, let date = store.latestNightDate else { return [] }
+        return [
+            .file(title: "Stack List…", systemImage: "square.stack.3d.up", contentType: .commaSeparatedText) {
+                let export = try ExportService.production(rootURL: rootURL).stackList(target: target, date: date)
+                return (export.content, export.suggestedFilename, [])
+            },
+        ]
     }
 
     private func resultTable(_ snapshot: ResultsSnapshot) -> some View {

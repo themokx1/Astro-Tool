@@ -232,6 +232,37 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(shell.contains("openNight: { id in"))
     }
 
+    @Test("Every V1 export path has a V2 export menu reaching the same content engines")
+    func exportMenusReachEveryWorkspace() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let service = try String(contentsOf: root.appendingPathComponent("Sources/AstroApplication/Features/Exports/ExportService.swift"))
+        let menu = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Exports/ExportMenu.swift"))
+        let project = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift"))
+        let night = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift"))
+        let home = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Home/HomeView.swift"))
+        let results = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Results/ResultsView.swift"))
+
+        #expect(service.contains("AcquisitionExport.render"))
+        #expect(service.contains("TargetReport.render"))
+        #expect(service.contains("NightReport.render"))
+        #expect(service.contains("StackList.select"))
+        #expect(service.contains("PlanExport.renderCSV"))
+        #expect(service.contains("PlanExport.renderClipboardText"))
+        #expect(service.contains("CalibShoppingList.markdown"))
+        #expect(menu.contains("public struct ExportMenu"))
+        #expect(menu.contains("ExportFileWriter"))
+
+        #expect(project.contains("ExportMenu("))
+        #expect(project.contains("v2.project.export"))
+        #expect(night.contains("ExportMenu("))
+        #expect(night.contains("v2.nights.export"))
+        #expect(home.contains("ExportMenu("))
+        #expect(home.contains("v2.home.plan-export"))
+        #expect(results.contains("ExportMenu("))
+        #expect(results.contains("v2.results.export"))
+    }
+
     @Test("Stable V2 does not present knowingly inert controls")
     func noInertProductionControls() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()

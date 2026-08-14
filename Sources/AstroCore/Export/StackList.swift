@@ -958,6 +958,32 @@ public enum StackList {
         return removed
     }
 
+    /// Renders `selection`'s manifest as CSV -- byte-identical to what
+    /// `export`/`exportToDirectory` would write to their own `manifest.csv`
+    /// for the same selection -- but pure: no filesystem access, no
+    /// hardlinking. For a caller (V2's `ExportService`) that wants the
+    /// human-readable "what got selected and why" record to hand to a
+    /// user-chosen `NSSavePanel` destination without materializing the
+    /// stacklist tree on disk at all. `linkedNameByPath` is computed the
+    /// exact same way `export` computes it for each of its own branches
+    /// (`disambiguatedFileNames`, per-filter-bucket when `perFilter` is
+    /// populated, over the whole selection otherwise), so this manifest's
+    /// `linked_name` column matches byte-for-byte what a real, subsequent
+    /// `export` would actually name each hardlink.
+    public static func renderManifest(_ selection: StackSelection, libraryRoot: URL) -> String {
+        var linkedNameByPath: [String: String] = [:]
+        if let perFilter = selection.perFilter, !perFilter.isEmpty {
+            for filterSelection in perFilter {
+                for (path, name) in disambiguatedFileNames(forPaths: filterSelection.selectedPaths) {
+                    linkedNameByPath[path] = name
+                }
+            }
+        } else {
+            linkedNameByPath = disambiguatedFileNames(forPaths: selection.selectedPaths)
+        }
+        return renderManifestCSV(selection.manifest, libraryRoot: libraryRoot, linkedNameByPath: linkedNameByPath)
+    }
+
     /// `<sanitized target>-<date>` -- the stacklist directory's own name
     /// under `.astro_tool/stacklists/`. Reuses `Sanitizer` (same convention
     /// `add_new_session.sh`/`SessionCreator` use for target folder names) so

@@ -75,15 +75,30 @@ public struct HomeSnapshot: Equatable, Sendable {
 @Observable
 public final class HomeStore {
     public typealias TonightProvider = @Sendable (URL) async throws -> [TargetPlan]
+    public typealias CalibCoverageProvider = @Sendable (URL) async throws -> [CalibNeed]
     public private(set) var snapshot: HomeSnapshot
+    /// The full plan `tonightRecommendations` was sliced from (`prefix(8)`,
+    /// display-only) -- kept around so the "Export Plan" menu
+    /// (`v2.home.plan-export`) can hand `ExportService.planCSV`/
+    /// `planClipboardText` every planned target, not just the ones shown on
+    /// screen.
+    public private(set) var tonightPlans: [TargetPlan] = []
+    /// Tonight's calibration shopping list (`CalibShoppingList.build`), for
+    /// the same export menu's "Copy Shopping List" item -- same actionable +
+    /// relevant-tonight filtering V1's "Kalibrációs teendők ma estére" card
+    /// already applies.
+    public private(set) var calibShoppingItems: [CalibShoppingList.Item] = []
     private let tonightProvider: TonightProvider
+    private let calibCoverageProvider: CalibCoverageProvider
 
     public init(
         snapshot: HomeSnapshot = .unconfigured,
-        tonightProvider: @escaping TonightProvider = HomeStore.productionTonight
+        tonightProvider: @escaping TonightProvider = HomeStore.productionTonight,
+        calibCoverageProvider: @escaping CalibCoverageProvider = HomeStore.productionCalibCoverage
     ) {
         self.snapshot = snapshot
         self.tonightProvider = tonightProvider
+        self.calibCoverageProvider = calibCoverageProvider
     }
 
     public func replaceSnapshot(_ snapshot: HomeSnapshot) {
@@ -122,6 +137,13 @@ public final class HomeStore {
         } else {
             []
         }
+        tonightPlans = plans
+        let coverage: [CalibNeed] = if let rootURL {
+            (try? await calibCoverageProvider(rootURL)) ?? []
+        } else {
+            []
+        }
+        calibShoppingItems = CalibShoppingList.build(coverage: coverage, plans: plans)
         let recommendations = plans.prefix(8).map { plan in
             HomeTonightRecommendation(
                 projectID: Self.projectID(for: plan, projects: projectsStore.projects),
@@ -155,6 +177,17 @@ public final class HomeStore {
             var config = (try? AstroConfig.load(from: configURL)) ?? AstroConfig()
             config.rootPath = rootURL.path
             return try Planner.plan(db: database, config: config)
+        }.value
+    }
+
+    /// Darks + flats concatenated into one list -- same "one merged coverage
+    /// list" convention V1's `AppState.loadCalibBundle` already documents for
+    /// itself, needed here only as `CalibShoppingList.build`'s own `coverage`
+    /// input.
+    public static func productionCalibCoverage(rootURL: URL) async throws -> [CalibNeed] {
+        let query = try CalibrationQuery.production(rootURL: rootURL)
+        return try await Task.detached(priority: .utility) {
+            try query.coverage() + query.flatCoverage()
         }.value
     }
 
