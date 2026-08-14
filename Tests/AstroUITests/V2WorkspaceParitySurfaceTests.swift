@@ -20,13 +20,19 @@ struct V2WorkspaceParitySurfaceTests {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift"))
+        let route = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/AppRoute.swift"))
         let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
-        #expect(workspace.contains("Project ›"))
-        #expect(workspace.contains("Overview"))
-        #expect(workspace.contains("Nights"))
-        #expect(workspace.contains("Series"))
-        #expect(workspace.contains("Results"))
-        #expect(workspace.contains("Notes"))
+        // Wave 4 Task 3: the "Project › …" eyebrow is gone (redundant with
+        // the global BreadcrumbBar), and the tab enum itself moved to
+        // `AppRoute.swift` as router-owned `ProjectWorkspaceTab` -- its
+        // cases are what carry the "Overview"/"Nights"/"Series"/"Results"/
+        // "Notes" labels now.
+        #expect(!workspace.contains("Project ›"))
+        #expect(route.contains("case overview = \"Overview\""))
+        #expect(route.contains("case nights = \"Nights\""))
+        #expect(route.contains("case series = \"Series\""))
+        #expect(route.contains("case results = \"Results\""))
+        #expect(route.contains("case notes = \"Notes\""))
         #expect(workspace.contains("Review Frames"))
         #expect(workspace.contains("v2.project.workspace"))
         #expect(shell.contains("case .project(let rawID)"))
@@ -39,7 +45,9 @@ struct V2WorkspaceParitySurfaceTests {
         let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift"))
         let project = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift"))
         let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
-        #expect(workspace.contains("Night ›"))
+        // Wave 4 Task 3: the "Night › …" eyebrow is gone (redundant with the
+        // global BreadcrumbBar).
+        #expect(!workspace.contains("Night ›"))
         #expect(workspace.contains("Table("))
         #expect(workspace.contains("Review Frames"))
         #expect(workspace.contains("v2.night.workspace"))
@@ -53,7 +61,9 @@ struct V2WorkspaceParitySurfaceTests {
             .deletingLastPathComponent().deletingLastPathComponent()
         let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/SeriesWorkspaceView.swift"))
         let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
-        #expect(workspace.contains("Series ›"))
+        // Wave 4 Task 3: the "Project › … › Series › …" eyebrow is gone
+        // (redundant with the global BreadcrumbBar).
+        #expect(!workspace.contains("Series ›"))
         #expect(workspace.contains("Passband"))
         #expect(workspace.contains("Gain / offset"))
         #expect(workspace.contains("Review Frames"))

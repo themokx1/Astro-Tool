@@ -227,16 +227,53 @@ public struct WindowRestorationState: Codable, Equatable, Sendable {
     public var contentRoute: ContentRoute
     public var selection: LibrarySelection?
     public var isInspectorPresented: Bool
+    /// Wave 4 Task 3: the project/night workspace's own last-selected tab.
+    /// `Optional` (rather than a defaulted non-optional) so a state blob
+    /// encoded before this task shipped -- which has no `projectTab`/
+    /// `nightTab` key at all -- still decodes: synthesized `Decodable`
+    /// treats a missing key on an `Optional` property as `nil`, no custom
+    /// `init(from:)` required. `AppRouter`'s own restoring `init` maps `nil`
+    /// back to `.overview`, its own default.
+    public var projectTab: ProjectWorkspaceTab?
+    public var nightTab: NightWorkspaceTab?
 
     public init(
         primarySection: PrimarySection,
         contentRoute: ContentRoute,
         selection: LibrarySelection?,
-        isInspectorPresented: Bool = false
+        isInspectorPresented: Bool = false,
+        projectTab: ProjectWorkspaceTab? = nil,
+        nightTab: NightWorkspaceTab? = nil
     ) {
         self.primarySection = primarySection
         self.contentRoute = contentRoute
         self.selection = selection
         self.isInspectorPresented = isInspectorPresented
+        self.projectTab = projectTab
+        self.nightTab = nightTab
     }
+}
+
+/// The `ProjectWorkspaceView` segmented picker's own tabs -- lives here
+/// (rather than nested inside the view, its previous location as a private
+/// `Section` enum) because `AppRouter` (this file's sibling `AppModel.swift`)
+/// now owns the SELECTED tab as a plain router property, so a project
+/// pushed, then navigated away from and back to, keeps whichever tab was
+/// showing (Wave 4 Task 3 -- see the navigation-rework plan). `String`
+/// raw values are the exact segmented-picker labels.
+public enum ProjectWorkspaceTab: String, CaseIterable, Hashable, Codable, Sendable {
+    case overview = "Overview"
+    case nights = "Nights"
+    case series = "Series"
+    case results = "Results"
+    case notes = "Notes"
+}
+
+/// `NightWorkspaceView`'s own segmented tabs, router-owned for the same
+/// reason as `ProjectWorkspaceTab` above.
+public enum NightWorkspaceTab: String, CaseIterable, Hashable, Codable, Sendable {
+    case overview = "Overview"
+    case series = "Series"
+    case frames = "Frames"
+    case notes = "Notes"
 }

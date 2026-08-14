@@ -385,6 +385,74 @@ struct AppRouterTests {
         #expect(router.currentSectionPath.isEmpty)
     }
 
+    // MARK: Wave 4 Task 3 -- router-backed workspace tabs
+
+    @Test("A router is born with both workspace tabs on their overview default")
+    func routerDefaultsBothWorkspaceTabsToOverview() {
+        let router = AppRouter()
+
+        #expect(router.projectTab == .overview)
+        #expect(router.nightTab == .overview)
+    }
+
+    @Test("The project workspace tab survives pushing into a night and popping back")
+    func projectTabSurvivesPushingIntoANightAndPoppingBack() {
+        let router = AppRouter()
+        router.navigate(to: .projects)
+        router.push(.project("m31"))
+
+        router.projectTab = .series
+
+        router.push(.night("2026-08-10"))
+        #expect(router.projectTab == .series, "Pushing a DIFFERENT section's route must not reset the project tab")
+
+        router.pop()
+        #expect(router.projectTab == .series)
+    }
+
+    @Test("The night workspace tab survives navigating away to another section and back")
+    func nightTabSurvivesNavigatingAwayAndBack() {
+        let router = AppRouter()
+        router.navigate(to: .nights)
+        router.push(.night("2026-08-10"))
+
+        router.nightTab = .frames
+
+        router.navigate(to: .insights)
+        router.navigate(to: .nights)
+
+        #expect(router.nightTab == .frames)
+    }
+
+    @Test("Workspace tabs round-trip through window restoration; a legacy blob with neither key restores the overview default")
+    func workspaceTabsRoundTripThroughRestoration() throws {
+        let state = WindowRestorationState(
+            primarySection: .projects,
+            contentRoute: .project("m31"),
+            selection: .project("m31"),
+            isInspectorPresented: true,
+            projectTab: .notes,
+            nightTab: .frames
+        )
+
+        let restored = AppRouter(restoring: state, validator: .allowingAll)
+        #expect(restored.projectTab == .notes)
+        #expect(restored.nightTab == .frames)
+
+        let legacyState = WindowRestorationState(
+            primarySection: .projects,
+            contentRoute: .project("m31"),
+            selection: .project("m31"),
+            isInspectorPresented: true
+        )
+        #expect(legacyState.projectTab == nil)
+        #expect(legacyState.nightTab == nil)
+
+        let restoredLegacy = AppRouter(restoring: legacyState, validator: .allowingAll)
+        #expect(restoredLegacy.projectTab == .overview)
+        #expect(restoredLegacy.nightTab == .overview)
+    }
+
     @Test("Focused commands act on the active window only")
     func focusedCommandsResolveActiveWindow() {
         let firstWindow = AppRouter()

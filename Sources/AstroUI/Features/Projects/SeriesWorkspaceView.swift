@@ -2,40 +2,42 @@ import AstroApplication
 import SwiftUI
 
 public struct SeriesWorkspaceView: View {
+    /// Wave 4 Task 3: unlike `ProjectWorkspaceView`/`NightWorkspaceView`,
+    /// this tab is plain local `@State`, not a router property. A series is
+    /// a LEAF of the navigation stack -- nothing is ever pushed on top of
+    /// it, so `.id(route)` (see `DetailHost`'s doc comment) only ever resets
+    /// this state when the route itself changes to a DIFFERENT series,
+    /// which should reasonably start that different series back on
+    /// Overview anyway. Router-backed state would only earn its keep if a
+    /// deeper push-and-pop-back could reset it first, which cannot happen
+    /// here.
+    private enum Tab: String, CaseIterable {
+        case overview = "Overview"
+        case frames = "Frames"
+    }
+
     let item: ProjectSeriesSnapshot
     let project: ProjectRecord
     let night: NightRecord
     let review: () -> Void
+    @State private var tab = Tab.overview
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Project › \(project.catalogID) › Night › \(night.localDate) › Series › \(exposure)")
-                    .font(.caption.weight(.semibold)).foregroundStyle(AstroTokens.Color.spectralViolet)
                 Text(seriesTitle).font(.title2.weight(.semibold))
                 Text(item.series.setupDescriptor).font(.callout).foregroundStyle(.secondary)
             }
             .padding(AstroTokens.Spacing.spacious)
             Divider()
+            Picker("Series section", selection: $tab) {
+                ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, AstroTokens.Spacing.spacious)
+            .padding(.vertical, AstroTokens.Spacing.standard)
             ScrollView {
-                VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
-                    HStack(spacing: AstroTokens.Spacing.standard) {
-                        MetricCard(title: "Usable", value: item.usableFrames.formatted(), detail: "\(item.excludedFrames) excluded", systemImage: "photo.stack")
-                        MetricCard(title: "Integration", value: duration(item.integrationSeconds), detail: "\(item.totalFrames) total frames", systemImage: "timer")
-                        MetricCard(title: "Exposure", value: exposure, detail: item.series.binning, systemImage: "camera.shutter.button")
-                    }
-                    GroupBox("Capture settings") {
-                        Grid(alignment: .leading, horizontalSpacing: 32, verticalSpacing: 12) {
-                            row("Sensor mode", item.series.sensorMode.rawValue.uppercased())
-                            row("Passband", item.series.passband.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                            row("Filter", item.series.filterName ?? "Unfiltered")
-                            row("Setup", item.series.setupDescriptor)
-                            row("Gain / offset", gainOffset)
-                            row("Binning", item.series.binning)
-                        }.padding(8)
-                    }
-                }
-                .padding(AstroTokens.Spacing.spacious)
+                content.padding(AstroTokens.Spacing.spacious)
             }
         }
         .background(AstroTokens.Color.graphite.opacity(0.36))
@@ -43,8 +45,40 @@ public struct SeriesWorkspaceView: View {
         .accessibilityIdentifier("v2.series.workspace")
         // Wave 4 Task 2: "Review Frames" used to be an in-body button in
         // this same header -- it now renders in the shell's own stable
-        // toolbar (see `WorkspaceActions`'s doc comment).
+        // toolbar (see `WorkspaceActions`'s doc comment). Wave 4 Task 3
+        // removed the redundant chained "Project"/"Series" eyebrow prefix that
+        // used to duplicate the now-global breadcrumb.
         .focusedSceneValue(\.workspaceActions, workspaceActions)
+    }
+
+    @ViewBuilder private var content: some View {
+        switch tab {
+        case .overview:
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
+                HStack(spacing: AstroTokens.Spacing.standard) {
+                    MetricCard(title: "Usable", value: item.usableFrames.formatted(), detail: "\(item.excludedFrames) excluded", systemImage: "photo.stack")
+                    MetricCard(title: "Integration", value: duration(item.integrationSeconds), detail: "\(item.totalFrames) total frames", systemImage: "timer")
+                    MetricCard(title: "Exposure", value: exposure, detail: item.series.binning, systemImage: "camera.shutter.button")
+                }
+                GroupBox("Capture settings") {
+                    Grid(alignment: .leading, horizontalSpacing: 32, verticalSpacing: 12) {
+                        row("Sensor mode", item.series.sensorMode.rawValue.uppercased())
+                        row("Passband", item.series.passband.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
+                        row("Filter", item.series.filterName ?? "Unfiltered")
+                        row("Setup", item.series.setupDescriptor)
+                        row("Gain / offset", gainOffset)
+                        row("Binning", item.series.binning)
+                    }.padding(8)
+                }
+            }
+        case .frames:
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
+                Text("\(item.usableFrames) usable · \(item.excludedFrames) excluded frames in this series.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Button("Review Frames") { review() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
     }
 
     private var workspaceActions: WorkspaceActions {

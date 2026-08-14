@@ -55,6 +55,20 @@ public final class AppRouter {
     /// "All setups").
     public var pendingInsightsSetupFilter: String?
 
+    /// Wave 4 Task 3: the project/night workspace's own last-selected
+    /// segmented tab, owned here (a plain router property) rather than as
+    /// `@State` inside `ProjectWorkspaceView`/`NightWorkspaceView` -- those
+    /// views are re-identified with `.id(route)` on every push (see
+    /// `DetailHost`'s own doc comment), which resets `@State` per route, so
+    /// a `@State` tab selection would silently reset to `.overview` every
+    /// time the user drilled into a night/series and popped back. Router
+    /// state survives that `.id()` reset because the router itself is not
+    /// re-created; it is exactly the same reference `DetailHost` has always
+    /// held. Not keyed per-project/per-night on purpose -- the plan calls
+    /// for one persisted tab per session, not one per visited project.
+    public var projectTab: ProjectWorkspaceTab
+    public var nightTab: NightWorkspaceTab
+
     /// The active section's current top-of-stack, or that section's own
     /// stable root when nothing has been pushed onto it yet.
     public var contentRoute: ContentRoute {
@@ -78,6 +92,8 @@ public final class AppRouter {
         isInspectorPresented = true
         presentation = nil
         pendingInsightsSetupFilter = nil
+        projectTab = .overview
+        nightTab = .overview
     }
 
     public init(
@@ -133,6 +149,8 @@ public final class AppRouter {
         primarySection = resolvedSection
         inspectorSelection = resolvedSelection
         isInspectorPresented = resolvedInspectorPresented
+        projectTab = state.projectTab ?? .overview
+        nightTab = state.nightTab ?? .overview
         if !resolvedPath.isEmpty {
             paths[resolvedSection] = resolvedPath
         }
@@ -143,7 +161,9 @@ public final class AppRouter {
             primarySection: primarySection,
             contentRoute: contentRoute,
             selection: inspectorSelection,
-            isInspectorPresented: isInspectorPresented
+            isInspectorPresented: isInspectorPresented,
+            projectTab: projectTab,
+            nightTab: nightTab
         )
     }
 

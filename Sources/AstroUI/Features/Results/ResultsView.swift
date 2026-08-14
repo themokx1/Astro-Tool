@@ -30,11 +30,20 @@ private final class ResultsStore {
     }
 }
 
-public struct ResultsView: View {
+/// Wave 4 Task 3: `ProjectWorkspaceView`'s own Results tab hosts this exact
+/// table/detail/QuickLook content, scoped to its project, instead of the
+/// `ContentUnavailableView` placeholder that used to tell the reader to
+/// press a separate "Results" button. Rather than duplicate `ResultsStore`
+/// and every table/detail helper into a second type, `ResultsView` itself
+/// grew a `showsHeader` switch: the full `.resultsWorkspace(projectID:)`
+/// route shows its own title/icon/quick-actions header (`showsHeader:
+/// true`, `ResultsView`'s own default), while `ProjectResultsPane` renders
+/// the identical content with that header suppressed -- the tab's own
+/// segmented picker is already the "what am I looking at" context, so a
+/// second "Results" headline immediately under it would be redundant.
+public struct ProjectResultsPane: View {
     let rootURL: URL
     let project: ProjectRecord
-    @State private var store = ResultsStore()
-    @State private var selectedResultID: UUID?
 
     public init(rootURL: URL, project: ProjectRecord) {
         self.rootURL = rootURL
@@ -42,9 +51,29 @@ public struct ResultsView: View {
     }
 
     public var body: some View {
+        ResultsView(rootURL: rootURL, project: project, showsHeader: false)
+    }
+}
+
+public struct ResultsView: View {
+    let rootURL: URL
+    let project: ProjectRecord
+    let showsHeader: Bool
+    @State private var store = ResultsStore()
+    @State private var selectedResultID: UUID?
+
+    public init(rootURL: URL, project: ProjectRecord, showsHeader: Bool = true) {
+        self.rootURL = rootURL
+        self.project = project
+        self.showsHeader = showsHeader
+    }
+
+    public var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            if showsHeader {
+                header
+                Divider()
+            }
             if store.isLoading {
                 ProgressView("Reading result lineage…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = store.errorMessage {
@@ -65,7 +94,11 @@ public struct ResultsView: View {
         .frame(minWidth: 780, minHeight: 560)
         .background(.background)
         .task { await store.load(rootURL: rootURL, projectID: project.id) }
-        .accessibilityIdentifier("v2.results.workspace")
+        // Wave 4 Task 3: a distinct identifier while embedded (no header) as
+        // `ProjectWorkspaceView`'s Results tab, so UI automation can tell the
+        // pushed `.resultsWorkspace(projectID:)` route apart from this same
+        // content hosted inline in a project's own tab.
+        .accessibilityIdentifier(showsHeader ? "v2.results.workspace" : "v2.project.results.pane")
         // Wave 4 Task 2: the Export Stack List menu used to be an in-body
         // button in this header -- it now renders in the shell's own stable
         // toolbar (see `WorkspaceActions`'s doc comment).

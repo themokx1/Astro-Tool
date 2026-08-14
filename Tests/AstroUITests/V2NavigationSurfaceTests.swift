@@ -112,7 +112,7 @@ struct V2NavigationSurfaceTests {
         #expect(!sensorProfiles.contains("Button(\"Close\", action: dismiss)"))
     }
 
-    @Test("Hand-rolled back-chevron buttons are gone from the pushed project/night/series workspaces")
+    @Test("Hand-rolled back-chevron buttons and redundant eyebrow text are gone from the pushed project/night/series workspaces")
     func handRolledBackChevronsAreGone() throws {
         let project = try contents("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift")
         let night = try contents("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift")
@@ -121,12 +121,14 @@ struct V2NavigationSurfaceTests {
         #expect(!project.contains("systemImage: \"chevron.left\""))
         #expect(!night.contains("systemImage: \"chevron.left\""))
         #expect(!series.contains("systemImage: \"chevron.left\""))
-        // The breadcrumb-style eyebrow text itself is untouched (Task 2
-        // turns it into a clickable breadcrumb) -- only the manual button
-        // wrapping it is gone.
-        #expect(project.contains("Project ›"))
-        #expect(night.contains("Night ›"))
-        #expect(series.contains("Project ›"))
+        // Wave 4 Task 3: the breadcrumb-style eyebrow text ("Project › …",
+        // "Night › …", the series header's "Project › … › Series › …") is
+        // now REDUNDANT with the global `BreadcrumbBar` Task 2 wired above
+        // the detail stack, so it is gone entirely rather than kept as dead
+        // decoration.
+        #expect(!project.contains("Project ›"))
+        #expect(!night.contains("Night ›"))
+        #expect(!series.contains("Project ›"))
     }
 
     @Test("AppRouter exposes a push/pop stack API and a computed contentRoute")
@@ -216,5 +218,42 @@ struct V2NavigationSurfaceTests {
             let source = try contents(path)
             #expect(source.contains(".focusedSceneValue(\\.workspaceActions,"), "\(path) does not publish WorkspaceActions")
         }
+    }
+
+    // MARK: Wave 4 Task 3 -- router-backed tabs, a real Results tab
+
+    @Test("ProjectWorkspaceView binds its segmented tab to the router, not local @State")
+    func projectWorkspaceViewBindsTheRouterTab() throws {
+        let project = try contents("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift")
+        #expect(!project.contains("@State private var section"))
+        #expect(project.contains("selection: $router.projectTab"))
+        #expect(project.contains("router: AppRouter"))
+    }
+
+    @Test("The project workspace's Results tab hosts real per-project results content, not a placeholder telling the reader to press a button elsewhere")
+    func projectResultsTabHostsRealContent() throws {
+        let project = try contents("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift")
+        let results = try contents("Sources/AstroUI/Features/Results/ResultsView.swift")
+        #expect(!project.contains("Open Results workspace"))
+        #expect(!project.contains("Use the Results button to inspect stack and processing lineage."))
+        #expect(project.contains("ProjectResultsPane("))
+        #expect(results.contains("public struct ProjectResultsPane: View"))
+    }
+
+    @Test("NightWorkspaceView and SeriesWorkspaceView each present a segmented Picker over their own tabs")
+    func nightAndSeriesWorkspacesHaveSegmentedPickers() throws {
+        let night = try contents("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift")
+        let series = try contents("Sources/AstroUI/Features/Projects/SeriesWorkspaceView.swift")
+
+        #expect(night.contains(".pickerStyle(.segmented)"))
+        #expect(night.contains("selection: $router.nightTab"))
+        #expect(series.contains(".pickerStyle(.segmented)"))
+    }
+
+    @Test("AppRouter carries a project tab and a night tab, both defaulting to overview")
+    func appRouterCarriesWorkspaceTabs() throws {
+        let model = try contents("Sources/AstroUI/App/AppModel.swift")
+        #expect(model.contains("var projectTab: ProjectWorkspaceTab"))
+        #expect(model.contains("var nightTab: NightWorkspaceTab"))
     }
 }

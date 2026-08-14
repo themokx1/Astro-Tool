@@ -3,14 +3,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 public struct ProjectWorkspaceView: View {
-    public enum Section: String, CaseIterable {
-        case overview = "Overview"
-        case nights = "Nights"
-        case series = "Series"
-        case results = "Results"
-        case notes = "Notes"
-    }
-
     let snapshot: ProjectSnapshot
     let rootURL: URL?
     let accessMode: LibraryAccessMode
@@ -22,7 +14,12 @@ public struct ProjectWorkspaceView: View {
     let openInsights: (String?) -> Void
     let annotation: ProjectAnnotationRecord?
     let saveAnnotation: (Double?, String) async throws -> Void
-    @State private var section = Section.overview
+    /// Wave 4 Task 3: the segmented tab used to be `@State` here, which
+    /// `.id(route)` (see `DetailHost`'s doc comment) resets on every push --
+    /// so drilling into a night and popping back silently reset the tab to
+    /// Overview. It is now `router.projectTab`, a plain property on the
+    /// router the view does not own the identity of, so it survives.
+    @Bindable var router: AppRouter
     @State private var goalHours: Double?
     @State private var projectNotes: String
     @State private var saveError: String?
@@ -33,6 +30,7 @@ public struct ProjectWorkspaceView: View {
         rootURL: URL? = nil,
         accessMode: LibraryAccessMode = .readOnly,
         annotation: ProjectAnnotationRecord?,
+        router: AppRouter,
         review: @escaping () -> Void,
         results: @escaping () -> Void,
         openNight: @escaping (UUID) -> Void,
@@ -45,6 +43,7 @@ public struct ProjectWorkspaceView: View {
         self.rootURL = rootURL
         self.accessMode = accessMode
         self.annotation = annotation
+        self.router = router
         self.review = review
         self.results = results
         self.openNight = openNight
@@ -60,14 +59,18 @@ public struct ProjectWorkspaceView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            Picker("Project section", selection: $section) {
-                ForEach(Section.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            Picker("Project section", selection: $router.projectTab) {
+                ForEach(ProjectWorkspaceTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, AstroTokens.Spacing.spacious)
             .padding(.vertical, AstroTokens.Spacing.standard)
-            ScrollView {
-                content.padding(AstroTokens.Spacing.spacious)
+            if router.projectTab == .results {
+                resultsContent
+            } else {
+                ScrollView {
+                    content.padding(AstroTokens.Spacing.spacious)
+                }
             }
         }
         .background(AstroTokens.Color.graphite.opacity(0.36))
@@ -77,15 +80,14 @@ public struct ProjectWorkspaceView: View {
         // Review Frames, Results) used to be an in-body button row in
         // `header` below -- they now render in the shell's own stable
         // toolbar instead (see `WorkspaceActions`'s doc comment), so the
-        // header keeps ONLY identity (the eyebrow/title/summary) plus the
-        // global breadcrumb above it.
+        // header keeps ONLY identity (title/summary) plus the global
+        // breadcrumb above it (Wave 4 Task 3 removed the redundant
+        // "Project" eyebrow prefix that used to duplicate that breadcrumb).
         .focusedSceneValue(\.workspaceActions, workspaceActions)
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Project › \(snapshot.project.catalogID)")
-                .font(.caption.weight(.semibold)).foregroundStyle(AstroTokens.Color.spectralBlue)
             Text(snapshot.project.displayName).font(.title2.weight(.semibold))
             Text("\(duration(snapshot.integrationSeconds)) usable · \(snapshot.nights.count) nights · \(snapshot.series.count) series")
                 .font(.callout).foregroundStyle(.secondary)
@@ -156,8 +158,30 @@ public struct ProjectWorkspaceView: View {
         return items
     }
 
+    /// The Results tab -- Wave 4 Task 3: this used to be a
+    /// `ContentUnavailableView` telling the reader to press the (separate)
+    /// "Results" toolbar button instead of actually showing anything.
+    /// `ProjectResultsPane` is the exact same table/detail/QuickLook content
+    /// `ResultsView`'s own `.resultsWorkspace(projectID:)` route renders,
+    /// scoped to this project, so the tab now hosts the real thing rather
+    /// than pointing elsewhere. Deliberately NOT wrapped in the outer
+    /// `ScrollView` the other tabs use -- the pane manages its own
+    /// `HSplitView`/`Table` scrolling exactly like the full Results route
+    /// does.
+    @ViewBuilder private var resultsContent: some View {
+        if let rootURL {
+            ProjectResultsPane(rootURL: rootURL, project: snapshot.project)
+        } else {
+            ContentUnavailableView(
+                "No library open",
+                systemImage: "square.stack.3d.up.slash",
+                description: Text("Open a library to inspect this project's stacks and processed variants.")
+            )
+        }
+    }
+
     @ViewBuilder private var content: some View {
-        switch section {
+        switch router.projectTab {
         case .overview:
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
                 HStack(spacing: AstroTokens.Spacing.standard) {
@@ -178,7 +202,12 @@ public struct ProjectWorkspaceView: View {
         case .series:
             ProjectSeriesSummary(snapshot: snapshot, openSeries: openSeries)
         case .results:
-            ContentUnavailableView("Open Results workspace", systemImage: "square.stack.3d.up", description: Text("Use the Results button to inspect stack and processing lineage."))
+            // `body` above renders `resultsContent` directly for this tab
+            // (Results manages its own `HSplitView`/`Table` scrolling and
+            // should not be nested inside this switch's own `ScrollView`),
+            // so this branch is never actually reached -- kept only so the
+            // switch stays exhaustive without a catch-all `default:`.
+            EmptyView()
         case .notes:
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
                 GroupBox("Acquisition goal") {

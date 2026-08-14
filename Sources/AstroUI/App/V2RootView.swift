@@ -872,6 +872,7 @@ private struct DetailHost: View {
                     rootURL: onboardingStore.selectedRoot,
                     accessMode: accessMode,
                     annotation: projectsStore.selectedProjectAnnotation,
+                    router: router,
                     review: { router.push(.review(projectID: snapshot.project.id)) },
                     results: { router.push(.resultsWorkspace(projectID: snapshot.project.id)) },
                     openNight: { id in
@@ -897,6 +898,7 @@ private struct DetailHost: View {
                     row: row,
                     rootURL: onboardingStore.selectedRoot,
                     accessMode: accessMode,
+                    router: router,
                     openProject: { project in
                         Task { try? await projectsStore.selectProject(project.id) }
                         router.push(.project(project.id.uuidString))
