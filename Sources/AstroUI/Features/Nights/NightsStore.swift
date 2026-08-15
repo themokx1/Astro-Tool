@@ -38,6 +38,12 @@ public struct NightRow: Equatable, Sendable, Identifiable {
 public struct PlanningNightRow: Equatable, Sendable, Identifiable {
     public let summary: NightSummary
     public var id: String { summary.date }
+    /// `KeyPathComparator` needs a non-optional `Comparable` value --
+    /// `astroDarkHours` is `nil` on nights that never reach true
+    /// astronomical darkness (`NightSummary.astroDarkHours`'s own doc
+    /// comment), which sorts lowest (as if darkness were 0h) rather than
+    /// crashing the column's sort.
+    public var astroDarkHoursSortKey: Double { summary.astroDarkHours ?? -1 }
     public var darkHours: String {
         summary.astroDarkHours.map { "\($0.formatted(.number.precision(.fractionLength(1)))) h" }
             ?? (summary.note ?? "No astronomical darkness")
@@ -78,16 +84,57 @@ public final class NightsStore {
         Array(Set(nights.map { String($0.date.prefix(7)) })).sorted(by: >)
     }
 
-    public var visibleNights: [NightRow] {
-        guard let selectedMonth else { return nights }
-        return nights.filter { $0.date.hasPrefix(selectedMonth) }
+    /// V2 UI/UX audit (2026-08-14) systemic pattern S7: the observed-nights
+    /// table's header used to look clickable and do nothing. Default is
+    /// newest night first -- `NightsQuery.nights()` already returns that
+    /// order, so this default reproduces today's behavior exactly; only a
+    /// user click changes it.
+    public private(set) var sortOrder: [KeyPathComparator<NightRow>] = [
+        KeyPathComparator(\NightRow.date, order: .reverse)
+    ]
+    /// Cached, re-sorted/filtered on every input change (`nights`,
+    /// `selectedMonth`, `sortOrder`) -- never re-derived from `body`, which
+    /// is the render-path cost that froze this app repeatedly (see
+    /// `PlanningStore.filteredRecommendations`'s own doc comment for the
+    /// same fix applied first).
+    public private(set) var visibleNights: [NightRow] = []
+
+    private func recomputeVisibleNights() {
+        var rows = selectedMonth.map { month in nights.filter { $0.date.hasPrefix(month) } } ?? nights
+        if !sortOrder.isEmpty { rows.sort(using: sortOrder) }
+        visibleNights = rows
+    }
+
+    public func setSortOrder(_ newValue: [KeyPathComparator<NightRow>]) {
+        guard newValue != sortOrder else { return }
+        sortOrder = newValue
+        recomputeVisibleNights()
     }
 
     public var selectedNight: NightRow? {
         nights.first { $0.id == selectedNightID }
     }
 
-    public var planningRows: [PlanningNightRow] { planningNights.map(PlanningNightRow.init) }
+    /// The planning calendar's own sort -- default soonest-night-first,
+    /// which is also the order `Planner.month` already returns.
+    public private(set) var planningSortOrder: [KeyPathComparator<PlanningNightRow>] = [
+        KeyPathComparator(\PlanningNightRow.summary.date, order: .forward)
+    ]
+    /// Cached the same way as `visibleNights`, re-sorted on `planningNights`/
+    /// `planningSortOrder` changes.
+    public private(set) var planningRows: [PlanningNightRow] = []
+
+    private func recomputePlanningRows() {
+        var rows = planningNights.map(PlanningNightRow.init)
+        if !planningSortOrder.isEmpty { rows.sort(using: planningSortOrder) }
+        planningRows = rows
+    }
+
+    public func setPlanningSortOrder(_ newValue: [KeyPathComparator<PlanningNightRow>]) {
+        guard newValue != planningSortOrder else { return }
+        planningSortOrder = newValue
+        recomputePlanningRows()
+    }
 
     public var needsReviewCount: Int {
         visibleNights.filter { $0.triageState != .ready }.count
@@ -95,6 +142,7 @@ public final class NightsStore {
 
     public func selectMonth(_ month: String?) {
         selectedMonth = month
+        recomputeVisibleNights()
         if let selectedNightID, !visibleNights.contains(where: { $0.id == selectedNightID }) {
             self.selectedNightID = nil
         }
@@ -110,6 +158,8 @@ public final class NightsStore {
             let metadata = try metadataFactory(rootURL.standardizedFileURL)
             nights = try await NightsQuery(metadata: metadata).nights().map(NightRow.init)
             planningNights = (try? await calendarProvider(rootURL.standardizedFileURL)) ?? []
+            recomputeVisibleNights()
+            recomputePlanningRows()
         } catch {
             errorMessage = error.localizedDescription
             throw error

@@ -26,6 +26,16 @@ public struct NightsView: View {
     let openInsights: (String?) -> Void
     @State private var mode: Mode = .history
     @State private var noteEditorTarget: NightNoteEditingTarget?
+    /// Mirrors `NightsStore.sortOrder`/`planningSortOrder`. The tables need
+    /// a `Binding`, but the actual re-sorting happens in the store's cached
+    /// recompute -- never in `body` (see `PlanningView.sortOrder`'s own doc
+    /// comment for why).
+    @State private var sortOrder: [KeyPathComparator<NightRow>] = [
+        KeyPathComparator(\NightRow.date, order: .reverse)
+    ]
+    @State private var planningSortOrder: [KeyPathComparator<PlanningNightRow>] = [
+        KeyPathComparator(\PlanningNightRow.summary.date, order: .forward)
+    ]
 
     public init(
         snapshot: LibrarySnapshot?,
@@ -101,6 +111,8 @@ public struct NightsView: View {
         .navigationTitle("Nights")
         .accessibilityLabel("Nights")
         .accessibilityIdentifier("v2.detail.nights")
+        .onChange(of: sortOrder) { _, newValue in store.setSortOrder(newValue) }
+        .onChange(of: planningSortOrder) { _, newValue in store.setPlanningSortOrder(newValue) }
         .sheet(item: $noteEditorTarget) { editing in
             if let rootURL {
                 NightNoteSheet(
@@ -138,20 +150,20 @@ public struct NightsView: View {
             Table(store.visibleNights, selection: Binding(
                 get: { store.selectedNightID },
                 set: { store.selectNight($0) }
-            )) {
-                TableColumn("Night") { night in
+            ), sortOrder: $sortOrder) {
+                TableColumn("Night", value: \NightRow.date) { night in
                     Label(night.date, systemImage: "moon.stars.fill")
                         .font(.headline.monospacedDigit())
                         .foregroundStyle(AstroTokens.Color.spectralViolet)
                 }
                 TableColumn("Projects") { Text($0.projectSummary).lineLimit(1) }
-                TableColumn("Series") { Text($0.seriesCount.formatted()).monospacedDigit() }
+                TableColumn("Series", value: \NightRow.seriesCount) { Text($0.seriesCount.formatted()).monospacedDigit() }
                     .width(min: 55, ideal: 65)
-                TableColumn("Usable") { Text("\($0.snapshot.usableFrames) / \($0.snapshot.totalFrames)").monospacedDigit() }
+                TableColumn("Usable", value: \NightRow.snapshot.usableFrames) { Text("\($0.snapshot.usableFrames) / \($0.snapshot.totalFrames)").monospacedDigit() }
                     .width(min: 70, ideal: 85)
-                TableColumn("Integration") { Text($0.integrationSummary).monospacedDigit() }
+                TableColumn("Integration", value: \NightRow.snapshot.integrationSeconds) { Text($0.integrationSummary).monospacedDigit() }
                     .width(min: 75, ideal: 90)
-                TableColumn("Triage") { night in
+                TableColumn("Triage", value: \NightRow.triageState.rawValue) { night in
                     Label(night.triageState.rawValue, systemImage: night.triageState == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                         .foregroundStyle(night.triageState == .ready ? AstroTokens.Color.success : AstroTokens.Color.warning)
                 }
@@ -172,10 +184,10 @@ public struct NightsView: View {
 
     private var calendarTable: some View {
         GroupBox("Astronomical planning calendar") {
-            Table(store.planningRows) {
-                TableColumn("Night") { Text($0.summary.date).font(.headline.monospacedDigit()) }
-                TableColumn("Darkness") { Text($0.darkHours) }
-                TableColumn("Moon") { Text($0.moon).monospacedDigit() }
+            Table(store.planningRows, sortOrder: $planningSortOrder) {
+                TableColumn("Night", value: \PlanningNightRow.summary.date) { Text($0.summary.date).font(.headline.monospacedDigit()) }
+                TableColumn("Darkness", value: \PlanningNightRow.astroDarkHoursSortKey) { Text($0.darkHours) }
+                TableColumn("Moon", value: \PlanningNightRow.summary.moonIlluminationPercent) { Text($0.moon).monospacedDigit() }
                     .width(min: 65, ideal: 75)
                 TableColumn("Best target windows") { Text($0.bestTargets.isEmpty ? "No usable target window" : $0.bestTargets).lineLimit(1) }
             }
