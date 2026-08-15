@@ -115,7 +115,131 @@ private struct PlanningSettingsView: View {
                 Text("Applied to every Planning recommendation's integration estimate.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            ExtendedCatalogSettingsSection()
         }.formStyle(.grouped)
+    }
+}
+
+/// Opt-in "wider catalog" section (wave-5 Task 5): same posture as the
+/// Open-Meteo weather integration -- OFF by default, and Settings itself
+/// states exactly what a query sends (catalogue names/coordinates only,
+/// never anything about the user's own library). Drives its own private
+/// `OperationHost`/`OperationCenter` pair rather than reaching for the main
+/// window's shared one: Settings is built inside `AstroToolApp`'s separate
+/// `Settings { }` scene (see `AstroToolApp.swift`), never a child of the
+/// `WindowGroup` that owns `V2RootView`'s `OperationHost`, so there is no
+/// shared instance to borrow here.
+private struct ExtendedCatalogSettingsSection: View {
+    @AppStorage("v2.settings.extended-catalog") private var extendedCatalogEnabled = false
+    @State private var store = ExtendedCatalogUpdateStore()
+
+    var body: some View {
+        Section("Extended target catalog") {
+            Toggle("Look up additional targets online (SIMBAD/VizieR)", isOn: $extendedCatalogEnabled)
+                .accessibilityIdentifier("v2.settings.extended-catalog")
+            Text(
+                "When on, \"Update Catalog\" sends only catalogue names and coordinates (e.g. \"IC 4604\") to SIMBAD/VizieR -- never your library's files, paths, targets, or notes. Downloaded objects are cached on this Mac; Planning keeps working offline afterward."
+            )
+            .font(.caption).foregroundStyle(.secondary)
+
+            if let activeOperation = store.operationHost.activeOperations.first(where: { $0.kind == .catalogFetch }) {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Updating catalog…")
+                    Spacer()
+                    Button("Cancel") { Task { await store.operationHost.cancel(id: activeOperation.id) } }
+                        .accessibilityIdentifier("v2.settings.update-catalog-cancel")
+                }
+            } else {
+                HStack {
+                    Button("Update Catalog") { Task { await store.startUpdate() } }
+                        .disabled(!extendedCatalogEnabled)
+                        .accessibilityIdentifier("v2.settings.update-catalog")
+                    Text(catalogStatusText)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if let errorMessage = store.lastErrorMessage {
+                Text(errorMessage).font(.caption).foregroundStyle(.red)
+            }
+            Text("This research has made use of the SIMBAD database and the VizieR catalogue access tool, CDS, Strasbourg, France.")
+                .font(.caption2).foregroundStyle(.secondary)
+                .accessibilityIdentifier("v2.settings.extended-catalog-attribution")
+        }
+    }
+
+    private var catalogStatusText: String {
+        guard let count = store.cachedTargetCount, let fetchedAt = store.lastFetchedAt else {
+            return "Not downloaded yet — Planning uses the built-in 217-object catalog."
+        }
+        return "\(count) cached targets, updated \(fetchedAt.formatted(date: .abbreviated, time: .shortened))."
+    }
+}
+
+/// Runs the extended-catalog download through `OperationHost` (progress +
+/// cooperative cancel) and persists the result via `CatalogCache` -- the
+/// "download once, then work offline" contract `CatalogFetcher`'s own doc
+/// comment describes. `cache`/`fetcherFactory` are injectable purely for
+/// tests; production callers get the real Application-Support-backed cache
+/// and `URLSession`-backed fetcher.
+@MainActor
+@Observable
+final class ExtendedCatalogUpdateStore {
+    let operationHost = OperationHost(center: OperationCenter())
+    private(set) var lastFetchedAt: Date?
+    private(set) var cachedTargetCount: Int?
+    private(set) var lastErrorMessage: String?
+
+    private let cache: CatalogCache
+    private let fetcherFactory: @Sendable () -> CatalogFetcher
+
+    init(
+        cache: CatalogCache = ExtendedCatalogUpdateStore.productionCache(),
+        fetcherFactory: @escaping @Sendable () -> CatalogFetcher = { CatalogFetcher() }
+    ) {
+        self.cache = cache
+        self.fetcherFactory = fetcherFactory
+        reloadCachedSummary()
+    }
+
+    private static func productionCache() -> CatalogCache {
+        let fileURL = (try? CatalogCache.productionFileURL())
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("extended-catalog-fallback.json")
+        return CatalogCache(fileURL: fileURL)
+    }
+
+    func reloadCachedSummary() {
+        guard let payload = cache.load() else {
+            lastFetchedAt = nil
+            cachedTargetCount = nil
+            return
+        }
+        lastFetchedAt = payload.fetchedAt
+        cachedTargetCount = payload.targets.count
+    }
+
+    func startUpdate() async {
+        lastErrorMessage = nil
+        let fetcher = fetcherFactory()
+        let cache = self.cache
+        _ = await operationHost.run(kind: .catalogFetch, title: "Updating catalog", cancellation: .cooperative) { [weak self] in
+            do {
+                let targets = try await fetcher.fetchAll(isCancelled: { Task.isCancelled })
+                try Task.checkCancellation()
+                let payload = CatalogCachePayload(fetchedAt: Date(), targets: targets)
+                try cache.save(payload)
+                await self?.reloadCachedSummary()
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                await self?.recordError(error)
+                throw error
+            }
+        }
+    }
+
+    private func recordError(_ error: Error) {
+        lastErrorMessage = "Could not update the catalog: \(error.localizedDescription). The built-in catalog is unaffected."
     }
 }
 
@@ -259,6 +383,8 @@ private struct IntegrationsSupportSettingsView: View {
                 Label("All library analysis runs locally on this Mac.", systemImage: "hand.raised")
                 Label("No account or cloud upload is required.", systemImage: "icloud.slash")
                 Link("Privacy notice", destination: URL(string: ProductInfo.privacyURL)!)
+                Text("If the opt-in extended target catalog (Planning tab) is enabled, catalogue names/coordinates only are sent to SIMBAD/VizieR: \"This research has made use of the SIMBAD database and the VizieR catalogue access tool, CDS, Strasbourg, France.\"")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Support") {
                 LabeledContent("Release channel", value: ProductInfo.releaseChannel)

@@ -148,6 +148,13 @@ A részletes referencia: [docs/cli.html](docs/cli.html).
 - A képek, FITS-metaadatok, index, pontozások és jegyzetek helyben maradnak.
 - Az Open-Meteo időjárás alapból ki van kapcsolva; bekapcsolásakor csak a
   kiválasztott hely koordinátája kerül az időjárási szolgáltatáshoz.
+- A bővített célpont-katalógus (SIMBAD/VizieR) alapból ki van kapcsolva;
+  bekapcsolásakor és a "Katalógus frissítése" művelet futtatásakor kizárólag
+  katalógusnevek és koordináták kerülnek a szolgáltatáshoz, a könyvtár
+  fájljai, elérési útjai vagy jegyzetei soha. Az első letöltés után a
+  Planning offline is működik a letöltött adatokkal. Lásd
+  [docs/DATA-SOURCES.md](docs/DATA-SOURCES.md) az ellenőrzött katalógus-
+  azonosítókért és a kötelező CDS-attribúcióért.
 - A támogatási diagnosztika nem tartalmaz könyvtárútvonalat, fájlnevet,
   célpontot, koordinátát, jegyzetet, FITS-fejlécet vagy hibaüzenetet.
 

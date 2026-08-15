@@ -214,4 +214,84 @@ struct V2SettingsTests {
         #expect(throws: SettingsStoreError.self) { try store.createFilter(manufacturer: "svbony", model: "sv220", passband: .dualBand) }
         #expect(store.filters.count == 1)
     }
+
+    // MARK: - Extended target catalog (wave-5 Task 5): opt-in, default off
+
+    @Test("The extended-catalog toggle defaults to OFF, same posture as the Open-Meteo weather integration")
+    func extendedCatalogTogglesDefaultsToOff() throws {
+        let source = try contents("Sources/AstroUI/Settings/V2SettingsView.swift")
+        #expect(source.contains("@AppStorage(\"v2.settings.extended-catalog\") private var extendedCatalogEnabled = false"))
+    }
+
+    @Test("Settings states plainly that only catalogue names/coordinates leave the machine, and carries the required SIMBAD/VizieR attribution")
+    func extendedCatalogSurfaceAndAttribution() throws {
+        let source = try contents("Sources/AstroUI/Settings/V2SettingsView.swift")
+        #expect(source.contains("v2.settings.extended-catalog"))
+        #expect(source.contains("v2.settings.update-catalog"))
+        #expect(source.contains("never your library's files, paths, targets, or notes"))
+        #expect(source.contains("This research has made use of the SIMBAD database and the VizieR catalogue access tool, CDS, Strasbourg, France."))
+    }
+
+    @Test("The Update Catalog action is disabled while the toggle is off")
+    func updateCatalogButtonDisabledWhenToggleOff() throws {
+        let source = try contents("Sources/AstroUI/Settings/V2SettingsView.swift")
+        #expect(source.contains(".disabled(!extendedCatalogEnabled)"))
+    }
+
+    @Test("The catalog update runs through OperationHost with cooperative cancellation")
+    func updateCatalogRunsThroughOperationHost() throws {
+        let source = try contents("Sources/AstroUI/Settings/V2SettingsView.swift")
+        #expect(source.contains("operationHost.run(kind: .catalogFetch"))
+        #expect(source.contains("cancellation: .cooperative"))
+        #expect(source.contains("v2.settings.update-catalog-cancel"))
+    }
+
+    @Test("ExtendedCatalogUpdateStore reflects a saved cache and updates it after a fixture-driven fetch, never the network")
+    func extendedCatalogUpdateStoreReflectsCacheAndFetches() async throws {
+        let cacheURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AstroTool-ExtendedCatalogTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("extended-catalog-v1.json")
+        defer { try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent()) }
+        let cache = CatalogCache(fileURL: cacheURL)
+
+        let store = ExtendedCatalogUpdateStore(
+            cache: cache,
+            fetcherFactory: {
+                CatalogFetcher(transport: { url in
+                    // `fetchAll()` queries all six sources; the SIMBAD
+                    // (Abell planetary nebulae) request must get valid JSON
+                    // back, everything else can share the one Sharpless-
+                    // shaped fixture (only `.sharpless` actually parses a
+                    // row out of it -- the rest legitimately yield zero,
+                    // which is fine for this plumbing test).
+                    if url.host?.contains("simbad") == true {
+                        return Data(#"{"data":[]}"#.utf8)
+                    }
+                    return Data("""
+                    Sh2	_RAJ2000	_DEJ2000	Diam
+                     	deg	deg	arcmin
+                    ----	----------	----------	----
+                       1	239.713380	-26.120461	 150
+                    """.utf8)
+                })
+            }
+        )
+
+        #expect(store.cachedTargetCount == nil)
+        #expect(store.lastFetchedAt == nil)
+
+        await store.startUpdate()
+        // OperationHost's own `run` starts the work on a detached task and
+        // returns as soon as it's registered -- give it a moment to finish
+        // before asserting on its outcome (matching `OperationHostTests`'
+        // own `waitUntil` pattern, inlined here to avoid a cross-module
+        // dependency on that test helper).
+        for _ in 0..<50 where store.cachedTargetCount == nil {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        #expect(store.cachedTargetCount == 1)
+        #expect(store.lastFetchedAt != nil)
+        #expect(cache.load()?.targets.first?.designation == "Sh2-1")
+    }
 }
