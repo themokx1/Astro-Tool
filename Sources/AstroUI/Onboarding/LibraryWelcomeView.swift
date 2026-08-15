@@ -344,6 +344,72 @@ public final class OnboardingStore {
         }
     }
 
+    /// Runs `openAndScan(_:)` registered with `operationHost` -- so the very
+    /// first (launch-time) scan of a library shows up in `activeOperations`
+    /// (toolbar progress + Cancel), exactly like `rescan(operationHost:)`
+    /// already does for a manual re-scan. Production launch/library-pick call
+    /// sites should prefer this over the raw `openAndScan(_:)`, which today is
+    /// only ever observed by the onboarding sheet (`LibraryWelcomeView`) --
+    /// not presented at all outside UI tests, so its progress/failure was
+    /// otherwise invisible (V2 UI/UX audit section 2.2). Fire-and-forget, same
+    /// contract as `run(kind:title:work:)` itself: returns once the operation
+    /// is registered, not once the scan finishes -- `phase`/`selectedRoot`
+    /// still report the eventual outcome, same as calling `openAndScan`
+    /// directly.
+    public func openAndScan(_ rootURL: URL, through operationHost: OperationHost) async {
+        await runScan(rootURL, through: operationHost, clearBookmarkOnFailure: false)
+    }
+
+    /// The `operationHost`-routed counterpart to `restoreSavedLibrary()` --
+    /// same "no saved bookmark, or already past `.chooseLibrary`" no-op
+    /// contract, and the same "clear the bookmark so a permanently broken
+    /// path doesn't keep silently failing at every future launch" behavior,
+    /// just surfaced through the toolbar instead of invisibly.
+    @discardableResult
+    public func restoreSavedLibrary(through operationHost: OperationHost) async -> Bool {
+        guard phase == .chooseLibrary, let root = bookmarkStore.load() else { return false }
+        await runScan(root, through: operationHost, clearBookmarkOnFailure: true)
+        return true
+    }
+
+    private func runScan(_ rootURL: URL, through operationHost: OperationHost, clearBookmarkOnFailure: Bool) async {
+        let kind = OperationKind.scan(library: rootURL.lastPathComponent)
+        guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else { return }
+        let id = await operationHost.run(
+            kind: kind,
+            title: "Scanning \(rootURL.lastPathComponent)",
+            cancellation: .cooperative
+        ) { [weak self] in
+            do {
+                try await self?.openAndScan(rootURL)
+            } catch {
+                if clearBookmarkOnFailure { self?.bookmarkStore.clear() }
+                throw error
+            }
+        }
+        // `ProgressRelay.run`/`relayProgress`'s own `read` closure is plain
+        // `@Sendable`, not `@MainActor` -- it cannot touch `phase` (MainActor-
+        // isolated) directly, only a thread-safe box like the scan's own
+        // internal `LatestOnboardingProgress` (not reachable from out here,
+        // since `openAndScan(_:)` owns it privately). A small `@MainActor`
+        // poll loop reads `phase.scanProgress` directly instead -- same
+        // throttle cadence as `ProgressRelay.defaultInterval`, stops on its
+        // own once `id` leaves `activeOperations` (operation finished or was
+        // cancelled), so there is nothing to store/cancel explicitly here.
+        Task { @MainActor [weak self, weak operationHost] in
+            while let operationHost, operationHost.activeOperations.contains(where: { $0.id == id }) {
+                if let self, let progress = self.phase.scanProgress {
+                    _ = await operationHost.reportProgress(
+                        id: id,
+                        completed: Int64(progress.scanned),
+                        total: progress.total.map(Int64.init)
+                    )
+                }
+                try? await Task.sleep(for: ProgressRelay.defaultInterval)
+            }
+        }
+    }
+
     public func cancelActiveScan() {
         guard phase.isScanning else { return }
         activeOperationID = nil

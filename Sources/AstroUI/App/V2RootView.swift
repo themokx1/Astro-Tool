@@ -131,7 +131,8 @@ public struct V2RootView: View {
             libraryHealthStore: libraryHealthStore,
             libraryRootFallback: uiTestFixture?.libraryRoot,
             isOnboardingPresented: $isOnboardingPresented,
-            libraryPreparationError: $libraryPreparationError
+            libraryPreparationError: $libraryPreparationError,
+            retryLibraryPreparation: retryLibraryPreparation
         )
             .overlay(alignment: .topTrailing) {
                 ToastOverlay()
@@ -146,38 +147,30 @@ public struct V2RootView: View {
                 persist(state)
             }
             .task(id: uiTestFixture?.libraryRoot) {
+                // Restoring the last library at launch used to call
+                // `restoreSavedLibrary()` directly -- a raw, unrouted scan
+                // nobody outside the (never-presented-in-production)
+                // onboarding sheet could see: no toolbar progress, no Cancel,
+                // and a failure set `phase = .accessProblem` invisibly (V2
+                // UI/UX audit section 2.2). Routing it through
+                // `operationHost` is what makes launch scanning show up in
+                // the toolbar's status control exactly like a manual rescan
+                // already does. The UI-test-fixture branch is left calling
+                // the raw, awaited `openAndScan(_:)` -- scripted UI tests
+                // rely on this task not returning until that fixture scan has
+                // actually finished.
                 guard onboardingStore.phase == .chooseLibrary else { return }
                 if let uiTestFixture {
                     try? await onboardingStore.openAndScan(uiTestFixture.libraryRoot)
                 } else if scanOnOpen {
-                    _ = try? await onboardingStore.restoreSavedLibrary()
+                    await onboardingStore.restoreSavedLibrary(through: operationHost)
                 }
             }
             .task(id: onboardingStore.phase.summary?.libraryID.id) {
                 guard let root = onboardingStore.selectedRoot,
                       onboardingStore.phase.summary != nil
                 else { return }
-                do {
-                    if let uiTestFixture {
-                        try await uiTestFixture.seedReviewMetadata()
-                    } else {
-                        _ = try await Task.detached(priority: .utility) {
-                            try await ScanWorkflowMaterializer.materializeProductionLibrary(rootURL: root)
-                        }.value
-                    }
-                    try await projectsStore.open(rootURL: root)
-                    try await nightsStore.open(rootURL: root)
-                    await homeStore.configure(
-                        libraryName: root.lastPathComponent,
-                        rootURL: root,
-                        projectsStore: projectsStore,
-                        nightCount: nightsStore.nights.count
-                    )
-                    appModel.libraryDidOpen(rootURL: root, metadataStore: projectsStore.metadataStore)
-                    libraryPreparationError = nil
-                } catch {
-                    libraryPreparationError = error.localizedDescription
-                }
+                await prepareLibrary(root: root)
             }
             .onChange(of: appModel.pendingLibrarySwitchURL) { _, url in
                 guard let url else { return }
@@ -186,6 +179,69 @@ public struct V2RootView: View {
                     appModel.clearPendingLibrarySwitch()
                 }
             }
+    }
+
+    /// Runs the post-scan "prepare this library" pipeline (materialize
+    /// planned-project/night records, open `projectsStore`/`nightsStore`,
+    /// configure `homeStore`) through `operationHost` -- so it shows up as a
+    /// named, cancellable-looking operation in the toolbar, exactly like
+    /// `ScanWorkflowMaterializer.materializeProductionLibrary` running inside
+    /// it should (V2 UI/UX audit section 2.2). Unlike a plain rescan/audit,
+    /// this pipeline's OUTCOME still has to drive local state
+    /// (`appModel.libraryDidOpen`, `libraryPreparationError`) rather than
+    /// just a toast, so it awaits `operationHost.outcome(of:)` instead of
+    /// firing and forgetting.
+    private func prepareLibrary(root: URL) async {
+        let kind = OperationKind.loadHome(library: root.lastPathComponent)
+        guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else { return }
+        let projectsStore = self.projectsStore
+        let nightsStore = self.nightsStore
+        let homeStore = self.homeStore
+        let uiTestFixture = self.uiTestFixture
+        let id = await operationHost.run(
+            kind: kind,
+            title: "Preparing \(root.lastPathComponent)",
+            cancellation: .unavailable
+        ) {
+            if let uiTestFixture {
+                try await uiTestFixture.seedReviewMetadata()
+            } else {
+                _ = try await Task.detached(priority: .utility) {
+                    try await ScanWorkflowMaterializer.materializeProductionLibrary(rootURL: root)
+                }.value
+            }
+            try await projectsStore.open(rootURL: root)
+            try await nightsStore.open(rootURL: root)
+            await homeStore.configure(
+                libraryName: root.lastPathComponent,
+                rootURL: root,
+                projectsStore: projectsStore,
+                nightCount: nightsStore.nights.count
+            )
+        }
+        let phase = await operationHost.outcome(of: id)
+        // The library that finished preparing might not be the one still
+        // selected any more (a `Choose Another Library…`/library switch
+        // raced this pipeline) -- only apply the outcome if it is.
+        guard onboardingStore.selectedRoot == root else { return }
+        switch phase {
+        case .succeeded:
+            appModel.libraryDidOpen(rootURL: root, metadataStore: projectsStore.metadataStore)
+            libraryPreparationError = nil
+        case .failed:
+            libraryPreparationError = await operationHost.errorMessage(for: id)
+                ?? "AstroTool could not prepare Projects and Nights for this library."
+        case .cancelled, .running:
+            break
+        }
+    }
+
+    /// Backs the "Retry" action on the "Library preparation needs attention"
+    /// alert -- re-runs `prepareLibrary` against whatever library is still
+    /// selected (the same one that just failed).
+    private func retryLibraryPreparation() {
+        guard let root = onboardingStore.selectedRoot else { return }
+        Task { await prepareLibrary(root: root) }
     }
 
     private func restoreWindowStateOnce() {
@@ -218,6 +274,7 @@ private struct V2Shell: View {
     let libraryRootFallback: URL?
     @Binding var isOnboardingPresented: Bool
     @Binding var libraryPreparationError: String?
+    let retryLibraryPreparation: () -> Void
     @State private var showsSearch = false
     @State private var globalSearch = GlobalSearchStore()
     @State private var newProjectInitialQuery = ""
@@ -273,6 +330,25 @@ private struct V2Shell: View {
             )
         }
         .navigationSplitViewStyle(.balanced)
+        .overlay {
+            // V2 UI/UX audit section 2.2: `phase.accessProblemMessage` used
+            // to be set by `OnboardingStore.openAndScan` and read by nobody
+            // -- the onboarding sheet that WOULD render it
+            // (`LibraryWelcomeView.accessProblem(_:)`) is never presented in
+            // production (`isOnboardingPresented` only starts `true` under a
+            // UI-test fixture), so a restore failure (unmounted volume,
+            // stale bookmark) just left the shell looking broken with no
+            // explanation and no way back in. This renders that same honest
+            // state directly in the main window, with the same two recovery
+            // actions the sheet's own version offers.
+            if let message = onboardingStore.phase.accessProblemMessage {
+                LibraryAccessProblemBanner(
+                    message: message,
+                    retry: retryLibraryAccess,
+                    chooseAnotherLibrary: presentOnboarding
+                )
+            }
+        }
         .inspector(isPresented: $router.isInspectorPresented) {
             InspectorView(
                 selection: router.inspectorSelection,
@@ -415,7 +491,21 @@ private struct V2Shell: View {
                 set: { if !$0 { libraryPreparationError = nil } }
             )
         ) {
-            Button("OK") { libraryPreparationError = nil }
+            // V2 UI/UX audit section 2.2: this alert used to leave only
+            // "OK" -- dismissing it left the library half-open (scanned, but
+            // Projects/Nights never populated) with no way back in short of
+            // quitting and relaunching. "Retry" re-runs the exact same
+            // preparation pipeline; "Choose Another Library…" is the same
+            // escape hatch the access-problem banner offers.
+            Button("Retry") {
+                libraryPreparationError = nil
+                retryLibraryPreparation()
+            }
+            Button("Choose Another Library…") {
+                libraryPreparationError = nil
+                presentOnboarding()
+            }
+            Button("Cancel", role: .cancel) { libraryPreparationError = nil }
         } message: {
             Text(libraryPreparationError ?? "AstroTool could not prepare Projects and Nights for this library.")
         }
@@ -439,6 +529,15 @@ private struct V2Shell: View {
     private func presentOnboarding() {
         onboardingStore.returnToLibraryChoice()
         isOnboardingPresented = true
+    }
+
+    /// Backs the access-problem banner's "Retry" action -- re-attempts the
+    /// exact same scan against `selectedRoot` (still set even though the
+    /// scan failed), routed through `operationHost` so it shows up in the
+    /// toolbar exactly like the original attempt did.
+    private func retryLibraryAccess() {
+        guard let root = onboardingStore.selectedRoot else { return }
+        Task { await onboardingStore.openAndScan(root, through: operationHost) }
     }
 
     /// Wave 4 Task 2: renders whatever the current route's workspace
@@ -1328,6 +1427,35 @@ private struct V2EmptyDetail: View {
         .background(AstroTokens.Color.graphite.opacity(0.36))
         .accessibilityLabel(title)
         .accessibilityIdentifier(accessibilityIdentifier)
+    }
+}
+
+/// V2 UI/UX audit section 2.2: the main-window rendering of
+/// `OnboardingPhase.accessProblem(_:)` -- previously set by
+/// `OnboardingStore.openAndScan` and displayed by nobody outside the
+/// onboarding sheet (which production never presents). Mirrors
+/// `LibraryWelcomeView.accessProblem(_:)`'s own two recovery actions, minus
+/// its "Close" (there is no sheet here to dismiss).
+private struct LibraryAccessProblemBanner: View {
+    let message: String
+    let retry: () -> Void
+    let chooseAnotherLibrary: () -> Void
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Library access needs attention", systemImage: "folder.badge.questionmark")
+        } description: {
+            Text(message)
+        } actions: {
+            Button("Retry", action: retry)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("v2.shell.access-problem.retry")
+            Button("Choose Another Library…", action: chooseAnotherLibrary)
+                .accessibilityIdentifier("v2.shell.access-problem.choose-another-library")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.regularMaterial)
+        .accessibilityIdentifier("v2.shell.access-problem")
     }
 }
 

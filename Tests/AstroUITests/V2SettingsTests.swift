@@ -144,7 +144,12 @@ struct V2SettingsTests {
         let source = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
         #expect(source.contains("@AppStorage(\"v2.library.scanOnOpen\")"))
         #expect(source.contains("else if scanOnOpen"))
-        #expect(source.contains("restoreSavedLibrary()"))
+        // V2 UI/UX audit section 2.2: the raw, unrouted `restoreSavedLibrary()`
+        // used to leave the launch-time scan invisible (no toolbar progress,
+        // no Cancel) -- it now goes through `operationHost`, exactly like a
+        // manual rescan already does (`LibraryLaunchScanTests` covers the
+        // behavior itself).
+        #expect(source.contains("restoreSavedLibrary(through: operationHost)"))
     }
 
     @Test("showGuidance actually gates guidance captions in Home and Settings")

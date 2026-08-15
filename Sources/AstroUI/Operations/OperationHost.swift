@@ -185,6 +185,36 @@ public final class OperationHost {
         return true
     }
 
+    /// Awaits the outcome of an operation started via `run`, unlike `run`
+    /// itself (which returns as soon as registration lands, never waiting for
+    /// `work` to finish). Introduced for the launch-time "prepare this
+    /// library" pipeline (`V2RootView.prepareLibrary`): unlike a rescan/audit/
+    /// sensor-measurement (fire-and-forget, only a toast on completion), that
+    /// pipeline still needs to react inline to success/failure (recording the
+    /// library as open, or surfacing a retryable error) while ALSO being
+    /// visible/cancellable through the toolbar exactly like every other
+    /// operation. Safe to call after `id` has already finished: `runningTasks`
+    /// no longer holds it, so this returns immediately from `recentOutcomes`.
+    /// `.failed` is the fallback for an `id` this host never registered at all
+    /// (a caller bug), matching `reconcileRaceOutcome`'s own "defer to
+    /// whatever actually got recorded, else assume the worst" stance.
+    public func outcome(of id: UUID) async -> OperationPhase {
+        if let task = runningTasks[id] {
+            await task.value
+        }
+        return recentOutcomes.first(where: { $0.id == id })?.phase ?? .failed
+    }
+
+    /// The human-readable failure message `OperationCenter` recorded for
+    /// `id`, if any -- `ActiveOperation`/`OutcomeRecord` deliberately don't
+    /// carry this (a toast already renders it once, and most callers need
+    /// nothing more), but `outcome(of:)`'s callers that show their own
+    /// dedicated failure UI (an alert with Retry, not just a toast) need the
+    /// actual text, not just the phase.
+    public func errorMessage(for id: UUID) async -> String? {
+        await center.state(id)?.errorMessage
+    }
+
     /// Posts a toast that has no associated running operation -- for
     /// outcomes that never became an `OperationCenter` entry, such as a
     /// rescan request arriving with no library open. Callers that already

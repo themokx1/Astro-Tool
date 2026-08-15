@@ -54,6 +54,63 @@ struct OperationHostTests {
         #expect(host.toasts.contains { $0.level == .failure && $0.message.contains("boom") })
     }
 
+    // MARK: - `outcome(of:)`/`errorMessage(for:)` (Task 2: the launch-scan
+    // preparation pipeline needs to react inline to a `run`-registered
+    // operation's actual result, unlike every other fire-and-forget caller).
+
+    @Test("outcome(of:) awaits a still-running operation and reports its final phase")
+    func outcomeAwaitsAStillRunningOperation() async throws {
+        let host = OperationHost(center: OperationCenter())
+        let gate = AsyncGate()
+
+        let id = await host.run(kind: .loadHome(library: "A"), title: "Preparing A") {
+            await gate.waitToProceed()
+        }
+
+        async let outcome = host.outcome(of: id)
+        try await waitUntil { host.activeOperations.contains { $0.id == id } }
+        gate.open()
+
+        #expect(await outcome == .succeeded)
+        #expect(!host.activeOperations.contains { $0.id == id })
+    }
+
+    @Test("outcome(of:) reports .failed for an operation whose work threw")
+    func outcomeReportsFailed() async throws {
+        struct Boom: Error {}
+        let host = OperationHost(center: OperationCenter())
+
+        let id = await host.run(kind: .loadHome(library: "A"), title: "Preparing A") {
+            throw Boom()
+        }
+
+        #expect(await host.outcome(of: id) == .failed)
+    }
+
+    @Test("outcome(of:) called after an operation already finished still returns the recorded phase")
+    func outcomeAfterAlreadyFinished() async throws {
+        let host = OperationHost(center: OperationCenter())
+        let id = await host.run(kind: .loadHome(library: "A"), title: "Preparing A") {}
+        try await waitUntil { host.activeOperations.isEmpty }
+
+        #expect(await host.outcome(of: id) == .succeeded)
+    }
+
+    @Test("errorMessage(for:) surfaces the actual thrown error's description for a failed operation")
+    func errorMessageSurfacesTheFailureText() async throws {
+        struct Boom: Error, LocalizedError {
+            var errorDescription: String? { "disk full" }
+        }
+        let host = OperationHost(center: OperationCenter())
+        let id = await host.run(kind: .loadHome(library: "A"), title: "Preparing A") {
+            throw Boom()
+        }
+
+        _ = await host.outcome(of: id)
+
+        #expect(await host.errorMessage(for: id) == "disk full")
+    }
+
     @Test("Cancelling cooperative work ends it as cancelled, not a failure blaming the work")
     func cancelEndsWorkAsCancelledWithoutBlamingFailureToast() async throws {
         let center = OperationCenter()
