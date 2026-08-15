@@ -40,6 +40,13 @@ public enum SettingsStoreError: LocalizedError, Equatable {
 @Observable
 public final class SettingsStore {
     public private(set) var filters: [EquipmentFilter]
+    /// V2 UI/UX audit (2026-08-14) systemic pattern S7: the filters table's
+    /// header used to look clickable and do nothing. Default is
+    /// manufacturer then model, both ascending.
+    public private(set) var sortOrder: [KeyPathComparator<EquipmentFilter>] = [
+        KeyPathComparator(\EquipmentFilter.manufacturer, order: .forward),
+        KeyPathComparator(\EquipmentFilter.model, order: .forward),
+    ]
     private let defaults: UserDefaults
     private static let filtersKey = "v2.equipment.filters"
 
@@ -47,6 +54,18 @@ public final class SettingsStore {
         self.defaults = defaults
         filters = defaults.data(forKey: Self.filtersKey)
             .flatMap { try? JSONDecoder().decode([EquipmentFilter].self, from: $0) } ?? []
+        sortFilters()
+    }
+
+    public func setSortOrder(_ newValue: [KeyPathComparator<EquipmentFilter>]) {
+        guard newValue != sortOrder else { return }
+        sortOrder = newValue
+        sortFilters()
+    }
+
+    private func sortFilters() {
+        guard !sortOrder.isEmpty else { return }
+        filters.sort(using: sortOrder)
     }
 
     @discardableResult
@@ -64,6 +83,7 @@ public final class SettingsStore {
         }) else { throw SettingsStoreError.duplicateFilter }
         let filter = EquipmentFilter(id: UUID(), manufacturer: manufacturer, model: model, passband: passband)
         filters.append(filter)
+        sortFilters()
         persist()
         return filter
     }

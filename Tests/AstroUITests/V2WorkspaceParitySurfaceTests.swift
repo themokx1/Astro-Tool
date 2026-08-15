@@ -182,7 +182,9 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(planning.contains("TableColumn(\"Moon\", value: \\.moonFactor)"))
         #expect(planning.contains("Plan Selected"))
         #expect(planning.contains("contextMenu(forSelectionType: String.self"))
-        #expect(settings.contains("Table(store.filters, selection: $selectedFilterID)"))
+        // V2 UI/UX audit (2026-08-14) systemic pattern S7: sortable since
+        // the v2/v2.1 follow-up.
+        #expect(settings.contains("Table(store.filters, selection: $selectedFilterID, sortOrder: $sortOrder)"))
         #expect(settings.contains("Remove Selected"))
         #expect(settings.contains("v2.settings.filters-table"))
     }

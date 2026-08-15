@@ -279,17 +279,26 @@ private struct EquipmentEvaluationSettingsView: View {
     /// dialog below names the filter and is the only place that actually
     /// calls `removeFilter`.
     @State private var pendingFilterRemoval: EquipmentFilter?
+    /// Mirrors `SettingsStore.sortOrder`. The table needs a `Binding`, but
+    /// the actual re-sort happens in the store's own `filters` (see
+    /// `PlanningView.sortOrder`'s own doc comment for why that split
+    /// exists).
+    @State private var sortOrder: [KeyPathComparator<EquipmentFilter>] = [
+        KeyPathComparator(\EquipmentFilter.manufacturer, order: .forward),
+        KeyPathComparator(\EquipmentFilter.model, order: .forward),
+    ]
 
     var body: some View {
         Form {
             Section("Filters") {
                 if store.filters.isEmpty { Text("No filters added yet.").foregroundStyle(.secondary) }
-                Table(store.filters, selection: $selectedFilterID) {
-                    TableColumn("Filter") { filter in
+                Table(store.filters, selection: $selectedFilterID, sortOrder: $sortOrder) {
+                    TableColumn("Filter", value: \EquipmentFilter.manufacturer) { filter in
                         Text([filter.manufacturer, filter.model].filter { !$0.isEmpty }.joined(separator: " "))
                     }
-                    TableColumn("Passband") { filter in Text(filter.passband.title) }
+                    TableColumn("Passband", value: \EquipmentFilter.passband.title) { filter in Text(filter.passband.title) }
                 }
+                .onChange(of: sortOrder) { _, newValue in store.setSortOrder(newValue) }
                 // A `maxHeight` cap, not a `minHeight` floor: this table sits
                 // in a `Form` `Section`, not a `ScrollView`, so it is not the
                 // ScrollView-nesting shape the freeze diagnosis (build 20017)
