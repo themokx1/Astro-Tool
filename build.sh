@@ -59,14 +59,36 @@ chmod +x "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/Resources/astrotool"
 # executable -- it is NOT folded into the executable or auto-discovered by
 # `Bundle.main` inside a hand-assembled `.app`. `Bundle.main`'s lookup for
 # `<locale>.lproj/Localizable.strings` only checks directly under
-# `Contents/Resources/`, so every top-level `*.lproj` from that bundle must
-# be copied there explicitly -- without this, the hu localization silently
-# never loads no matter how many keys `hu.lproj/Localizable.strings` has.
+# `Contents/Resources/`, so every `*.lproj` from that bundle must be copied
+# there explicitly -- without this, the hu localization silently never loads
+# no matter how many keys `hu.lproj/Localizable.strings` has.
+#
+# Where the `.lproj` folders actually sit INSIDE that resource bundle
+# differs by build kind: a plain debug build emits them flat at the
+# bundle's own root (`Astro-Tool_AstroToolApp.bundle/hu.lproj`), but this
+# script's own multi-arch release build (`-c release --arch arm64 --arch
+# x86_64`, landing under `.build/apple/Products/Release`) emits a full
+# nested bundle structure instead (`.../Astro-Tool_AstroToolApp.bundle/
+# Contents/Resources/hu.lproj`). An earlier version of this script only
+# checked the flat, debug-build layout: it found the resource bundle
+# (so the "not found" guard below never fired) but its `*.lproj` glob
+# matched nothing under the real release layout, so the copy loop
+# silently did nothing and every release build shipped with no Hungarian
+# localization at all despite `hu.lproj/Localizable.strings` existing and
+# being fully populated. Searching recursively for `*.lproj` directories
+# anywhere inside the resource bundle, instead of assuming one fixed
+# layout, is what makes this robust to both.
 RESOURCE_BUNDLE="$(find "$BIN_PATH" -maxdepth 1 -iname "*_${APP_EXECUTABLE_TARGET}.bundle" -print -quit)"
 if [ -n "$RESOURCE_BUNDLE" ] && [ -d "$RESOURCE_BUNDLE" ]; then
-    for lproj in "$RESOURCE_BUNDLE"/*.lproj; do
-        [ -d "$lproj" ] && cp -R "$lproj" "$APP/Contents/Resources/"
-    done
+    COPIED_ANY_LPROJ=0
+    while IFS= read -r -d '' lproj; do
+        cp -R "$lproj" "$APP/Contents/Resources/"
+        COPIED_ANY_LPROJ=1
+    done < <(find "$RESOURCE_BUNDLE" -iname "*.lproj" -type d -print0)
+    if [ "$COPIED_ANY_LPROJ" != "1" ]; then
+        echo "ERROR: found the ${APP_EXECUTABLE_TARGET} resource bundle at $RESOURCE_BUNDLE but no *.lproj directory inside it -- localization would silently be missing from the app." >&2
+        exit 1
+    fi
 else
     echo "ERROR: could not find the ${APP_EXECUTABLE_TARGET} resource bundle under $BIN_PATH -- localization would silently be missing from the app." >&2
     exit 1
