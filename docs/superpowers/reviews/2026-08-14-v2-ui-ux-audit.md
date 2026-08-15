@@ -145,3 +145,26 @@ A mintavételezés a `PlanningStore.init`-et és a `handleDefaultsChange`-t muta
 A javítás: a regisztráció az egyszeri `activate()`-be került. Mérés utána: **0,0% 30 és 90 másodpercnél**, valódi könyvtárral, Planningon.
 
 **Általánosítható szabály:** egy `@State`-ben tartott store `init`-je legyen teljesen néma — ne posztoljon notifikációt, ne írjon `UserDefaults`-ba, ne regisztráljon observert, ne indítson munkát. Minden ilyen az explicit, idempotens `activate()`-be való, amit a nézet `.task`-ja hív.
+
+---
+
+## 9. Utólagos kiegészítés — a Planning-oldal figyelmen kívül hagyta a valós eget (2026-08-15)
+
+Felhasználói visszajelzés: a Planning oldal 2026. augusztus 15-én **"IC 434 · Lófej-köd (Horsehead)" célt "Good framing, ≈ 4.4 h"** címkével ajánlotta. A Lófej-köd az Orionban van — augusztus közepén hajnalban alig emelkedik a horizont fölé. Ellenőrzés a felhasználó valós könyvtárára futtatott CLI-vel (`astrotool plan --root /Volumes/images/Astro`) ugyanarra az éjszakára:
+
+```
+IC 1396 · Elefántormány-köd   max alt 78°   "ma jó"
+NGC 7000 · Észak-Amerika-köd  max alt 88°   "ma jó"
+M 42 · Orion-köd              max alt  7°   "alacsony (max 7°)"
+NGC 2237 · Rozetta-köd        max alt  5°   "alacsony (max 5°)"
+```
+
+Az égi-mechanika motor (`DiscoveryPlanner.discover`, amit a `Planner.plan`/CLI is használ) tehát helyesen számol. A hiba az volt, hogy `PlanningQuery` (`Sources/AstroApplication/Features/Planning/PlanningQuery.swift`) **soha nem kérdezte meg, hol van bármi az égen** — kizárólag látómező-illeszkedés (`frameCoverage`/`fit`/`compositionScore`) és egy integrációs becslés alapján rangsorolt. Ez nagyobb rés volt, mint amit a parity-táblázat `discover` sora korábban dokumentált ("imaging setups are hardcoded") — a láthatóság teljes figyelmen kívül hagyása volt a valódi, súlyosabb hiányosság.
+
+**A javítás:** `PlanningQuery` most `DiscoveryPlanner.discover(...)`-t hívja (ugyanaz a motor, amit a CLI és a `Planner.plan` is használ), és a rangsorolás elsődlegesen a ma esti láthatóságon (max magasság, látható órák, Hold-távolság — `DiscoveryRow.score`) alapul, a keretezési pontszám csak másodlagos törésponti tényező. Egy cél, amely ma este nem éri el a képalkotási magasságküszöböt (`isLowAltitude`), alapértelmezés szerint **el van rejtve** a `PlanningStore.showLowAltitudeTargets` explicit opt-in kapcsoló mögött (`PlanningView`-ban "Show low-altitude targets" jelölőnégyzet); ha megjelenik, egyértelmű figyelmeztető címkével ("⚠︎ alacsony (max N°)") van jelölve, sosem "Good framing"-ként. A táblázat új "Tonight's sky" oszlopa mutatja a max magasságot, a látható ablakot, a kulminációt és a Hold-távolságot — pontosan azokat a számokat, amik alapján egy asztrofotós dönt.
+
+A site-feloldás ugyanazon az úton megy, mint máshol az appban (`Planner.resolveSite`, ugyanaz a minta, mint `HomeStore.productionNightContext`): explicit konfiguráció, különben FITS-fejléc medián. Ha nincs feloldható site, a Planning **nem talál ki rangsort** — explicit "Set your site to get tonight's ranking" / "Open a Library to get tonight's ranking" üzenetet mutat üres táblázat helyett.
+
+**Mellékes lelet, ugyanabból a screenshotból:** "IC 5070 · Pelikán-köd ≈ 2 762,0 h" — egy modellezési artefakt. `IntegrationTimeModel.hours` csak az alsó korlátot szorította (`max(0.25, …)`), felül nem; egy nagy, halvány, kiterjedt objektumnál (a katalógus integrált magnitúdója az egész szögméret fölé terítve) a levezetett felületi fényesség több száz-szoros `targetFactor`-t ad, ami négyjegyű óraszámot nyomtat egy tizedesjegy pontossággal — hamis pontosság látszatát keltve. A javítás: `IntegrationTimeModel.maxPlausibleHours` (60 óra) fölött `PlanningQuery.integrationEstimate(...)` már nem nyomtat pontos számot, hanem `.unknown` konfidenciát és "Beyond this model's range at this setup" üzenetet ad — a `PlanningEstimateConfidence` enum már létező `.unknown` esetét használva, nem egy párhuzamos mechanizmust. A fizika a modell érvényességi tartományán belül változatlan (`IntegrationTimeModelTests` zöld maradt).
+
+**Tesztek:** `Tests/AstroApplicationTests/PlanningQueryTests.swift` egy determinisztikus anchor-teszttel rögzíti a 2026-08-15/Budapest esetet (IC 434/M 42 alacsony, NGC 7000/IC 1396 jó, és az utóbbiak mindig előrébb rangsorolnak), plusz két tesztet a Pelikán-alakú (nagy, halvány) és egy normál célra a becslés-őszinteségről. `Tests/AstroUITests/PlanningStoreTests.swift` új tesztekkel fedi a site-feloldás három állapotát (nincs könyvtár / nincs site / elérhető) és az alacsony-magasságú célok alapértelmezett elrejtését.
