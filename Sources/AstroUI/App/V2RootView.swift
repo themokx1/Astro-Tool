@@ -905,6 +905,7 @@ private struct DetailHost: View {
         case .night(let rawID):
             nightLabel(for: rawID) ?? "Night"
         case .planning: "Planning"
+        case .savedTargets: "Saved Targets"
         case .library: "Library"
         case .health: "Health"
         case .calibration: "Calibration"
@@ -1102,7 +1103,13 @@ private struct DetailHost: View {
                 openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) }
             )
         case .planning:
-            PlanningView(rootURL: onboardingStore.selectedRoot, createProject: createPlannedProject)
+            PlanningView(
+                rootURL: onboardingStore.selectedRoot,
+                createProject: createPlannedProject,
+                openSavedTargets: { router.push(.savedTargets) }
+            )
+        case .savedTargets:
+            SavedTargetsView(rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary)
         case .library:
             LibraryView(
                 snapshot: onboardingStore.phase.summary,

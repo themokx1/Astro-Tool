@@ -16,7 +16,7 @@ public enum MetadataStoreError: Error, Equatable, Sendable {
 }
 
 public enum MetadataSchema {
-    public static let currentVersion = 5
+    public static let currentVersion = 6
 
     static let versionOneSQL = """
     CREATE TABLE projects(
@@ -158,6 +158,20 @@ public enum MetadataSchema {
     CREATE INDEX idx_audit_run_history_ran_at ON audit_run_history(ran_at);
     """
 
+    /// Planning's saved-targets list (wave 5 Task 4) -- one row per bookmarked
+    /// catalog designation, with an optional free-text note. `designation`
+    /// is `UNIQUE` so `MetadataStore.saveTarget` can upsert on it the same
+    /// way `acknowledgeFindingGroup` upserts on `ack_key`.
+    static let versionSixSQL = """
+    CREATE TABLE IF NOT EXISTS planning_saved_targets (
+        id TEXT PRIMARY KEY,
+        designation TEXT NOT NULL UNIQUE,
+        saved_at TEXT NOT NULL,
+        note TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_planning_saved_targets_saved_at ON planning_saved_targets(saved_at);
+    """
+
     static func migrate(_ database: SQLiteDB) throws {
         try transaction(in: database) {
             var version = try readVersion(in: database)
@@ -210,6 +224,14 @@ public enum MetadataSchema {
                 try database.exec(versionFiveSQL)
                 try database.run(
                     "UPDATE metadata_schema SET version = 5 WHERE singleton = 1;"
+                )
+                version = 5
+            }
+
+            if version < 6 {
+                try database.exec(versionSixSQL)
+                try database.run(
+                    "UPDATE metadata_schema SET version = 6 WHERE singleton = 1;"
                 )
             }
         }

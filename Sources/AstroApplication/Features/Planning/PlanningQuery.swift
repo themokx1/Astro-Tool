@@ -110,6 +110,11 @@ public struct PlanningQuery: Sendable {
     /// Mirrors `DiscoveryPlanner.discover`'s own default -- a target whose
     /// max altitude never reaches this tonight is `isLowAltitude`.
     public let minAltitudeDeg: Double
+    /// Shared with `SkyPathQuery`, which evaluates the SAME imaging-altitude
+    /// threshold for the selected target's sky-path chart -- a single named
+    /// constant so the two can never drift apart from each other or from
+    /// `DiscoveryPlanner.discover`'s own default.
+    public static let defaultMinAltitudeDeg: Double = 30
 
     public init(
         setup: ImagingSetupProfile,
@@ -120,7 +125,7 @@ public struct PlanningQuery: Sendable {
         referenceSurfaceBrightness: Double = IntegrationTimeModel.referenceSurfaceBrightness,
         site: SiteRule? = nil,
         date: Date = Date(),
-        minAltitudeDeg: Double = 30
+        minAltitudeDeg: Double = PlanningQuery.defaultMinAltitudeDeg
     ) {
         self.setup = setup
         self.focalLength = focalLength ?? setup.defaultFocalLengthMM

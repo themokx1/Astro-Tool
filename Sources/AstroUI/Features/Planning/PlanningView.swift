@@ -4,6 +4,7 @@ import SwiftUI
 
 public struct PlanningView: View {
     @State private var store = PlanningStore()
+    @State private var savedTargetsStore = SavedTargetsStore()
     @State private var selectedTargetID: String?
     /// Mirrors `PlanningStore.sortOrder`. The table needs a `Binding`, but the
     /// actual re-sorting happens in the store's cached recompute — never in
@@ -12,12 +13,22 @@ public struct PlanningView: View {
     @State private var sortOrder: [KeyPathComparator<PlanningRecommendation>] = [
         KeyPathComparator(\PlanningRecommendation.planningScore, order: .reverse)
     ]
+    /// Task 4: the note sheet's target -- set by either the selected row's
+    /// inline "Note…" action or (indirectly) reused by `SavedTargetsView`
+    /// itself, which owns its own instance of the same sheet.
+    @State private var editingNoteFor: PlanningRecommendation?
     let rootURL: URL?
     let createProject: (String) -> Void
+    let openSavedTargets: () -> Void
 
-    public init(rootURL: URL?, createProject: @escaping (String) -> Void) {
+    public init(
+        rootURL: URL?,
+        createProject: @escaping (String) -> Void,
+        openSavedTargets: @escaping () -> Void = {}
+    ) {
         self.rootURL = rootURL
         self.createProject = createProject
+        self.openSavedTargets = openSavedTargets
     }
 
     public var body: some View {
@@ -31,13 +42,38 @@ public struct PlanningView: View {
             filterBar
         } table: {
             recommendationList
+        } footer: {
+            skyPathSection
         }
         .navigationTitle("Planning")
         .accessibilityLabel("Planning")
         .accessibilityIdentifier("v2.detail.planning")
         .task { store.activate() }
         .task(id: rootURL) { store.setRootURL(rootURL) }
+        .task(id: rootURL) { await savedTargetsStore.setRootURL(rootURL) }
         .onChange(of: sortOrder) { _, newValue in store.setSortOrder(newValue) }
+        .onChange(of: selectedTargetID) { _, newValue in
+            let target = newValue.flatMap { id in store.filteredRecommendations.first(where: { $0.id == id })?.target }
+            store.selectTarget(target)
+        }
+        .sheet(item: $editingNoteFor) { row in
+            SavedTargetNoteSheet(
+                designation: row.target.designation,
+                initialNote: savedTargetsStore.note(for: row.target.designation) ?? "",
+                save: { newNote in
+                    Task {
+                        await savedTargetsStore.save(designation: row.target.designation, note: newNote)
+                        editingNoteFor = nil
+                    }
+                },
+                cancel: { editingNoteFor = nil }
+            )
+        }
+    }
+
+    private var selectedRow: PlanningRecommendation? {
+        guard let selectedTargetID else { return nil }
+        return store.filteredRecommendations.first { $0.id == selectedTargetID }
     }
 
     /// Backs the "Camera and optics" header's ⓘ button.
@@ -157,8 +193,43 @@ public struct PlanningView: View {
                     .accessibilityIdentifier("v2.planning.search")
                 Toggle("Useful framing only", isOn: $store.usefulFramingOnly)
                     .toggleStyle(.checkbox)
+                Spacer()
+                saveTargetButton
+                noteButton
+                Button("Saved Targets") { openSavedTargets() }
+                    .accessibilityIdentifier("v2.planning.open-saved")
+                    .help("Review every target you've bookmarked from Planning.")
             }
         }
+    }
+
+    /// Task 4: bookmarks the selected row -- idempotent (re-clicking an
+    /// already-saved target is a harmless no-op upsert), so this never needs
+    /// its own "already saved" disabled state; the label change below is
+    /// enough feedback.
+    private var saveTargetButton: some View {
+        Button(isSelectedRowSaved ? "Saved" : "Save Target") {
+            guard let row = selectedRow else { return }
+            Task { await savedTargetsStore.save(designation: row.target.designation) }
+        }
+        .disabled(selectedRow == nil)
+        .accessibilityIdentifier("v2.planning.save-target")
+        .help("Bookmark the selected target so you can find it again later.")
+    }
+
+    /// Only meaningful once the selected row is actually saved -- a note has
+    /// nowhere to live otherwise (`planning_saved_targets.note` hangs off a
+    /// saved row).
+    private var noteButton: some View {
+        Button("Note…") { editingNoteFor = selectedRow }
+            .disabled(!isSelectedRowSaved)
+            .accessibilityIdentifier("v2.planning.edit-note")
+            .help("Write a note on the selected saved target.")
+    }
+
+    private var isSelectedRowSaved: Bool {
+        guard let selectedRow else { return false }
+        return savedTargetsStore.isSaved(selectedRow.target.designation)
     }
 
     private func planSelectedTarget() {
@@ -205,9 +276,17 @@ public struct PlanningView: View {
                     } else {
                         Table(store.filteredRecommendations, selection: $selectedTargetID, sortOrder: $sortOrder) {
                             TableColumn("Target", value: \.target.designation) { row in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(displayName(row)).font(.headline)
-                                    Text(row.target.kind.rawValue).font(.caption).foregroundStyle(.secondary)
+                                HStack(spacing: 6) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(displayName(row)).font(.headline)
+                                        Text(row.target.kind.rawValue).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    if savedTargetsStore.isSaved(row.target.designation) {
+                                        Image(systemName: "bookmark.fill")
+                                            .foregroundStyle(AstroTokens.Color.spectralBlue)
+                                            .help("Saved")
+                                            .accessibilityLabel("Saved")
+                                    }
                                 }
                                 .padding(.vertical, 4)
                             }
@@ -301,6 +380,45 @@ public struct PlanningView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("v2.planning.recommendations")
+    }
+
+    /// Task 3: the selected row's altitude across the planned night --
+    /// `WorkspaceTablePage`'s `footer` slot, so it sits below the table
+    /// without competing for the table's own `.frame(maxHeight: .infinity)`.
+    /// Computing the actual samples happens in `PlanningStore`'s own async
+    /// path (`selectTarget`/`recomputeSkyPath`), never here in `body` --
+    /// this view only reads the store's already-computed `skyPath`.
+    private var skyPathSection: some View {
+        GroupBox("Sky path tonight") {
+            Group {
+                if selectedTargetID == nil {
+                    ContentUnavailableView(
+                        "Select a Target",
+                        systemImage: "chart.xyaxis.line",
+                        description: Text("Select a row in the table to see its altitude across tonight.")
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 160)
+                } else if store.isComputingSkyPath {
+                    ProgressView("Calculating altitude path…")
+                        .frame(maxWidth: .infinity, minHeight: 160)
+                } else if let skyPath = store.skyPath {
+                    SkyPathChart(result: skyPath)
+                } else {
+                    ContentUnavailableView(
+                        "No Sky Path Available",
+                        systemImage: "chart.xyaxis.line",
+                        description: Text(
+                            store.skyAvailability == .available
+                                ? "This target's altitude sweep could not be computed for the chosen night."
+                                : "Open a library with a resolved site to see the target's path across the sky."
+                        )
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 160)
+                }
+            }
+            .padding(8)
+        }
+        .accessibilityIdentifier("v2.planning.sky-path-section")
     }
 
     private func percent(_ factor: Double) -> String {

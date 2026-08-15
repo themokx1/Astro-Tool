@@ -106,6 +106,71 @@ struct MetadataStoreTests {
         #expect(limited[1].findingCount == 3)
     }
 
+    // MARK: - Planning saved targets (schema v6)
+
+    @Test("Saving a target is idempotent on designation and updates its note in place")
+    func saveTargetIsIdempotentOnDesignation() async throws {
+        let store = try MetadataStore.temporary()
+        let firstSavedAt = Date(timeIntervalSince1970: 1_786_400_000)
+
+        let first = try await store.saveTarget(designation: "IC 1396", note: nil, at: firstSavedAt)
+        let second = try await store.saveTarget(
+            designation: "IC 1396", note: "Shoot after midnight",
+            at: Date(timeIntervalSince1970: 1_786_500_000)
+        )
+
+        #expect(try await store.savedTargets().count == 1)
+        #expect(second.id == first.id)
+        // Re-saving updates the note but does not bump `savedAt` -- an
+        // already-saved target shouldn't jump back to the top of a
+        // newest-first list just because its note changed.
+        #expect(second.savedAt == firstSavedAt)
+        #expect(second.note == "Shoot after midnight")
+    }
+
+    @Test("updateNote changes only the note, and is a no-op for a target that was never saved")
+    func updateNoteChangesOnlyTheNote() async throws {
+        let store = try MetadataStore.temporary()
+        let savedAt = Date(timeIntervalSince1970: 1_786_400_000)
+        try await store.saveTarget(designation: "M 42", note: "Initial note", at: savedAt)
+
+        try await store.updateNote(designation: "M 42", note: "Updated note")
+
+        let record = try await #require(store.savedTarget(designation: "M 42"))
+        #expect(record.note == "Updated note")
+        #expect(record.savedAt == savedAt)
+
+        // No-op for a designation that was never saved.
+        try await store.updateNote(designation: "Never Saved", note: "orphan note")
+        #expect(try await store.savedTarget(designation: "Never Saved") == nil)
+    }
+
+    @Test("Removing a saved target is reversible and a no-op if it was never saved")
+    func removeSavedTargetIsANoOpWhenMissing() async throws {
+        let store = try MetadataStore.temporary()
+        try await store.saveTarget(designation: "M 31")
+
+        try await store.removeSavedTarget(designation: "M 31")
+
+        #expect(try await store.savedTargets().isEmpty)
+
+        // Removing again (already gone) is a no-op, not an error.
+        try await store.removeSavedTarget(designation: "M 31")
+        #expect(try await store.savedTargets().isEmpty)
+    }
+
+    @Test("savedTargets lists every saved target newest-saved first")
+    func savedTargetsOrdersNewestFirst() async throws {
+        let store = try MetadataStore.temporary()
+        try await store.saveTarget(designation: "M 31", at: Date(timeIntervalSince1970: 1_786_400_000))
+        try await store.saveTarget(designation: "IC 1396", at: Date(timeIntervalSince1970: 1_786_500_000))
+        try await store.saveTarget(designation: "M 42", at: Date(timeIntervalSince1970: 1_786_450_000))
+
+        let saved = try await store.savedTargets()
+
+        #expect(saved.map(\.designation) == ["IC 1396", "M 42", "M 31"])
+    }
+
     @Test("allResults joins every project's results with the owning project name")
     func allResultsJoinsProjectNamesAcrossProjects() async throws {
         let store = try MetadataStore.temporary()
@@ -288,6 +353,7 @@ struct MetadataStoreTests {
             "project_annotations",
             "audit_acknowledgements",
             "audit_run_history",
+            "planning_saved_targets",
         ]))
         #expect(objects.indexes.isSuperset(of: [
             "idx_series_project",
@@ -303,6 +369,7 @@ struct MetadataStoreTests {
             "idx_mutation_journal_operation",
             "idx_project_annotations_updated",
             "idx_audit_run_history_ran_at",
+            "idx_planning_saved_targets_saved_at",
         ]))
     }
 
@@ -360,7 +427,11 @@ struct MetadataStoreTests {
 
         let store = try MetadataStore(databaseURL: fixture.databaseURL)
 
-        #expect(try await store.schemaVersion() == 5)
+        // Opening a v4 database migrates all the way to the CURRENT schema
+        // version in one pass (v6 as of this branch) -- this test only
+        // pins the v4 -> v5 step's own data preservation, not a specific
+        // final version number, so it stays correct as later versions land.
+        #expect(try await store.schemaVersion() == MetadataSchema.currentVersion)
         #expect(try await store.project(id: project.id) == project)
         #expect(try await store.acknowledgements().isEmpty)
         #expect(try await store.auditRunHistory().isEmpty)
@@ -384,6 +455,46 @@ struct MetadataStoreTests {
         #expect(try schemaVersion(in: database) == 4)
         #expect(try !tableExists("audit_acknowledgements", in: database))
         #expect(try !tableExists("audit_run_history", in: database))
+    }
+
+    @Test("A version-five database migrates to version six preserving existing data")
+    func migratesVersionFiveToVersionSix() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "M 31", displayName: "Andromeda Galaxy", phase: .collecting
+        )
+        try createVersionFiveDatabase(at: fixture.databaseURL, project: project)
+
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+
+        // Same forward-safety as `migratesVersionFourToVersionFive`: pins
+        // the v5 -> v6 step's own data preservation, not a specific final
+        // version number, so a later v7+ doesn't break this assertion.
+        #expect(try await store.schemaVersion() == MetadataSchema.currentVersion)
+        #expect(try await store.project(id: project.id) == project)
+        #expect(try await store.savedTargets().isEmpty)
+        // v5's own tables/data must still be intact after the v6 migration.
+        #expect(try await store.acknowledgements().isEmpty)
+    }
+
+    @Test("A failed version-six migration rolls back DDL and leaves the old version stamp")
+    func failedVersionSixMigrationDoesNotAdvanceVersion() throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        try createVersionFiveDatabase(at: fixture.databaseURL)
+        do {
+            let database = try SQLiteDB(path: fixture.databaseURL.path)
+            try database.exec("CREATE TABLE idx_planning_saved_targets_saved_at(unexpected TEXT NOT NULL);")
+        }
+
+        #expect(throws: AstroError.self) {
+            _ = try MetadataStore(databaseURL: fixture.databaseURL)
+        }
+
+        let database = try SQLiteDB(path: fixture.databaseURL.path)
+        #expect(try schemaVersion(in: database) == 5)
+        #expect(try !tableExists("planning_saved_targets", in: database))
     }
 
     @Test("A schema newer than this build is rejected without modification")
@@ -764,6 +875,37 @@ struct MetadataStoreTests {
         try database.exec(MetadataSchema.versionFourSQL)
         try database.run(
             "INSERT INTO metadata_schema(singleton, version) VALUES (1, 4);"
+        )
+        if let project {
+            try database.run(
+                "INSERT INTO projects(id, catalog_id, display_name, phase) VALUES (?, ?, ?, ?);",
+                bind: [
+                    .text(project.id.uuidString.lowercased()),
+                    .text(project.catalogID),
+                    .text(project.displayName),
+                    .text(project.phase.rawValue),
+                ]
+            )
+        }
+    }
+
+    private func createVersionFiveDatabase(
+        at url: URL,
+        project: ProjectRecord? = nil
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let database = try SQLiteDB(path: url.path)
+        try database.exec(Self.schemaVersionSQL)
+        try database.exec(MetadataSchema.versionOneSQL)
+        try database.exec(MetadataSchema.versionTwoSQL)
+        try database.exec(MetadataSchema.versionThreeSQL)
+        try database.exec(MetadataSchema.versionFourSQL)
+        try database.exec(MetadataSchema.versionFiveSQL)
+        try database.run(
+            "INSERT INTO metadata_schema(singleton, version) VALUES (1, 5);"
         )
         if let project {
             try database.run(

@@ -14,6 +14,27 @@ public struct ResultProjectSummary: Equatable, Sendable {
     }
 }
 
+/// One Planning-saved target (wave 5 Task 4, schema v6) -- a bookmarked
+/// catalog designation with an optional free-text note. Lives here rather
+/// than alongside `AuditAcknowledgementRecord` in `Domain/LibraryObjects.swift`
+/// since that file is owned by concurrent work on this branch; this type has
+/// no dependents outside `MetadataStore`/`SavedTargetsStore` anyway, the same
+/// way `MetadataWriteBatch` just below lives in this file rather than
+/// `Domain`.
+public struct SavedTargetRecord: Codable, Equatable, Hashable, Identifiable, Sendable {
+    public let id: UUID
+    public let designation: String
+    public let savedAt: Date
+    public let note: String?
+
+    public init(id: UUID, designation: String, savedAt: Date, note: String?) {
+        self.id = id
+        self.designation = designation
+        self.savedAt = savedAt
+        self.note = note
+    }
+}
+
 public struct MetadataWriteBatch: Sendable {
     public var projects: [ProjectRecord]
     public var nights: [NightRecord]
@@ -557,6 +578,98 @@ public actor MetadataStore {
             newGroupKeys: latest.groupKeys.filter { !previousKeys.contains($0) },
             resolvedGroupKeys: previous.groupKeys.filter { !latestKeys.contains($0) }
         )
+    }
+
+    // MARK: - Planning saved targets (schema v6)
+
+    /// Bookmarks `designation`, or updates its note if it's already saved --
+    /// upserts on `designation` (`UNIQUE`) so re-saving the same target never
+    /// duplicates the row, mirroring `acknowledgeFindingGroup`'s own
+    /// upsert-on-key contract. `savedAt`/`id` are left untouched on an
+    /// existing row: only the note field can change here, since re-saving an
+    /// already-saved target shouldn't bump it back to the top of a
+    /// newest-first list.
+    @discardableResult
+    public func saveTarget(
+        designation: String,
+        note: String? = nil,
+        at savedAt: Date = .now
+    ) throws -> SavedTargetRecord {
+        try transaction {
+            try database.run(
+                """
+                INSERT INTO planning_saved_targets(id, designation, saved_at, note)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(designation) DO UPDATE SET note = excluded.note;
+                """,
+                bind: [
+                    .text(UUID().databaseText),
+                    .text(designation),
+                    .text(savedAt.ISO8601Format()),
+                    note.map(SQLiteValue.text) ?? .null,
+                ]
+            )
+        }
+        guard let record = try savedTarget(designation: designation) else {
+            throw MetadataStoreError.invalidRecord(table: "planning_saved_targets", id: designation)
+        }
+        return record
+    }
+
+    /// Updates just the note on an already-saved target -- a no-op if
+    /// `designation` was never saved (mirrors `revokeAcknowledgement`'s own
+    /// no-op contract for a missing key), since there is no saved row here
+    /// for a bare note to attach to.
+    public func updateNote(designation: String, note: String?) throws {
+        try transaction {
+            try database.run(
+                "UPDATE planning_saved_targets SET note = ? WHERE designation = ?;",
+                bind: [note.map(SQLiteValue.text) ?? .null, .text(designation)]
+            )
+        }
+    }
+
+    /// Reverses `saveTarget` -- a no-op if the designation was never saved.
+    public func removeSavedTarget(designation: String) throws {
+        try transaction {
+            try database.run(
+                "DELETE FROM planning_saved_targets WHERE designation = ?;",
+                bind: [.text(designation)]
+            )
+        }
+    }
+
+    /// One saved target's record, or `nil` if it isn't saved.
+    public func savedTarget(designation: String) throws -> SavedTargetRecord? {
+        var record: SavedTargetRecord?
+        try database.query(
+            "SELECT id, designation, saved_at, note FROM planning_saved_targets WHERE designation = ? LIMIT 1;",
+            bind: [.text(designation)]
+        ) { row in
+            record = Self.savedTargetRecord(from: row)
+        }
+        return record
+    }
+
+    /// Every saved target, newest-saved first.
+    public func savedTargets() throws -> [SavedTargetRecord] {
+        var records: [SavedTargetRecord] = []
+        try database.query(
+            "SELECT id, designation, saved_at, note FROM planning_saved_targets ORDER BY saved_at DESC;"
+        ) { row in
+            if let record = Self.savedTargetRecord(from: row) {
+                records.append(record)
+            }
+        }
+        return records
+    }
+
+    private static func savedTargetRecord(from row: SQLiteRow) -> SavedTargetRecord? {
+        guard let idText = row.string(0), let id = UUID(uuidString: idText),
+              let designation = row.string(1),
+              let savedAtText = row.string(2), let savedAt = try? Date(savedAtText, strategy: .iso8601)
+        else { return nil }
+        return SavedTargetRecord(id: id, designation: designation, savedAt: savedAt, note: row.string(3))
     }
 
     private func transaction(_ body: () throws -> Void) throws {

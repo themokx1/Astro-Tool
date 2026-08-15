@@ -585,6 +585,87 @@ struct PlanningStoreTests {
 
         #expect(store.filteredRecommendations.contains { $0.isLowAltitude })
     }
+
+    // MARK: - Task 3: sky-path chart selection
+
+    @Test("Selecting a target computes its sky path off the main actor")
+    func selectingATargetComputesSkyPath() async throws {
+        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        store.activate()
+        await store.pendingRefresh?.value
+        let row = try #require(store.recommendations.first)
+
+        store.selectTarget(row.target)
+        await store.pendingSkyPathRefresh?.value
+
+        let skyPath = try #require(store.skyPath)
+        #expect(skyPath.target.designation == row.target.designation)
+        #expect(!skyPath.samples.isEmpty)
+    }
+
+    @Test("Deselecting clears the sky path rather than leaving a stale one")
+    func deselectingClearsSkyPath() async throws {
+        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        store.activate()
+        await store.pendingRefresh?.value
+        let row = try #require(store.recommendations.first)
+        store.selectTarget(row.target)
+        await store.pendingSkyPathRefresh?.value
+        #expect(store.skyPath != nil)
+
+        store.selectTarget(nil)
+
+        #expect(store.skyPath == nil)
+    }
+
+    @Test("Selecting the same target twice is a same-value no-op")
+    func sameValueSelectTargetIsANoOp() async throws {
+        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        store.activate()
+        await store.pendingRefresh?.value
+        let row = try #require(store.recommendations.first)
+        store.selectTarget(row.target)
+        await store.pendingSkyPathRefresh?.value
+
+        let mutations = CallCounter()
+        withObservationTracking {
+            _ = store.skyPath
+        } onChange: {
+            mutations.increment()
+        }
+
+        store.selectTarget(row.target)
+
+        #expect(mutations.current == 0)
+    }
+
+    @Test("No resolved site means no sky path, even with a target selected")
+    func noSiteMeansNoSkyPath() async throws {
+        let store = PlanningStore(setups: [.apsCReference])
+        store.activate()
+        await store.pendingRefresh?.value
+        let target = try #require(TargetCatalog.all.first { $0.designation == "M 31" })
+
+        store.selectTarget(target)
+        await store.pendingSkyPathRefresh?.value
+
+        #expect(store.skyAvailability == .noLibrary)
+        #expect(store.skyPath == nil)
+    }
+
+    @Test("The sky path's max altitude agrees with DiscoveryPlanner's own value for the same target/night")
+    func skyPathMaxAltitudeAgreesWithDiscoveryPlanner() async throws {
+        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        store.activate()
+        await store.pendingRefresh?.value
+        let row = try #require(store.recommendations.first { !$0.isLowAltitude })
+
+        store.selectTarget(row.target)
+        await store.pendingSkyPathRefresh?.value
+
+        let skyPath = try #require(store.skyPath)
+        #expect(skyPath.maxAltitudeDeg == row.maxAltitudeDeg)
+    }
 }
 
 private extension ImagingSetupProfile {

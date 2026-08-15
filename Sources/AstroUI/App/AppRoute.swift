@@ -53,6 +53,11 @@ public enum ContentRoute: Hashable, Codable, Sendable {
     case nights
     case night(String)
     case planning
+    /// Wave 5 Task 4: the saved-targets list, pushed from Planning's own
+    /// "Saved Targets" action (mirrors `.health`/`.calibration`'s own shape
+    /// as a distinct route nested under a different section's
+    /// `primarySection`).
+    case savedTargets
     case library
     case health
     case calibration
@@ -83,7 +88,7 @@ public enum ContentRoute: Hashable, Codable, Sendable {
         case .home: .home
         case .projects, .project, .projectSeries, .result, .review, .resultsWorkspace: .projects
         case .nights, .night, .reviewFrame: .nights
-        case .planning: .planning
+        case .planning, .savedTargets: .planning
         case .library, .health, .calibration, .conversion, .cleanup, .sensorProfiles: .library
         case .insights: .insights
         }
@@ -177,6 +182,7 @@ public enum AppRoute: Hashable, Sendable {
         case ("results", let parts) where parts.count == 1 && !parts[0].isEmpty:
             self = .selection(.result(parts[0]))
         case ("planning", []): self = .content(.planning)
+        case ("planning", ["saved"]): self = .content(.savedTargets)
         case ("library", []): self = .content(.library)
         case ("library", ["health"]): self = .content(.health)
         case ("library", ["calibration"]): self = .content(.calibration)

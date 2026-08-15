@@ -157,6 +157,33 @@ public final class PlanningStore {
     /// lands -- lets `PlanningView` tell "still computing, first load" apart
     /// from a genuine "no matches" empty state.
     public private(set) var isComputing = false
+    /// Tonight's resolved site, as last landed by `refresh()` -- kept around
+    /// (not just used transiently inside that `Task`) so `recomputeSkyPath()`
+    /// can build a `SkyPathQuery` for whichever target is currently selected
+    /// without re-resolving the site itself. `nil` exactly when
+    /// `skyAvailability` isn't `.available`.
+    private var resolvedSite: SiteRule?
+    /// The Planning table's currently-selected target, set by `PlanningView`
+    /// via `selectTarget(_:)` -- Task 3's sky-path chart is keyed on this,
+    /// recomputed off the main actor the same way `recommendations` is,
+    /// never in `body`.
+    public private(set) var selectedSkyPathTarget: CatalogTarget?
+    /// The selected target's altitude sweep for the planned night -- STORED,
+    /// recomputed only when the selection or tonight's resolved site/date
+    /// actually changes. `nil` means "nothing selected", "no site resolved",
+    /// or "this target's sweep couldn't be computed" -- `PlanningView` shows
+    /// an honest empty state rather than inventing a flat line.
+    public private(set) var skyPath: SkyPathResult?
+    /// `true` from the moment a sky-path recompute is kicked off until its
+    /// result lands -- mirrors `isComputing`'s own "still computing" story,
+    /// one level down (per-selection rather than per-refresh).
+    public private(set) var isComputingSkyPath = false
+    /// Bumped at the start of every sky-path recompute -- same stale-result
+    /// guard `recomputeGeneration` gives `refresh()`, one level down.
+    private var skyPathGeneration = 0
+    /// Test-only handle to the in-flight sky-path recompute `Task`, mirroring
+    /// `pendingRefresh`'s own contract -- never read by production code.
+    private(set) var pendingSkyPathRefresh: Task<Void, Never>?
     private let defaults: UserDefaults
     private let computeRecommendations: RecommendationsComputer
     /// Bumped at the start of every `refresh()` and captured into that
@@ -353,10 +380,55 @@ public final class PlanningStore {
             guard let self, generation == self.recomputeGeneration else { return }
             self.recommendations = result
             self.skyAvailability = rootURL == nil ? .noLibrary : (skyContext == nil ? .noSite : .available)
+            self.resolvedSite = skyContext?.site
             self.isComputing = false
             self.recomputeFilteredRecommendations()
+            // Tonight's site/date may have just changed (a new library, or a
+            // different planned night) -- if a target is already selected,
+            // its sky path must follow, the same way `recommendations` itself
+            // just did.
+            self.recomputeSkyPath()
         }
         pendingRefresh = task
+        return task
+    }
+
+    /// Sets the Planning table's selected target -- `nil` when the selection
+    /// is cleared. Same-value guard as every other setter here: `Table`'s
+    /// selection binding can re-assert the current value during its own
+    /// update pass.
+    public func selectTarget(_ target: CatalogTarget?) {
+        guard target != selectedSkyPathTarget else { return }
+        selectedSkyPathTarget = target
+        recomputeSkyPath()
+    }
+
+    /// Recomputes `skyPath` off the main actor, guarded against a stale
+    /// (superseded) completion by `skyPathGeneration` -- the same shape
+    /// `refresh()` uses for `recommendations`. Called whenever the selected
+    /// target changes, and again whenever `refresh()` itself lands (tonight's
+    /// site/date may have moved under an already-selected target).
+    @discardableResult
+    private func recomputeSkyPath() -> Task<Void, Never> {
+        skyPathGeneration += 1
+        let generation = skyPathGeneration
+        guard let target = selectedSkyPathTarget, let site = resolvedSite, let date = planningDate else {
+            skyPath = nil
+            isComputingSkyPath = false
+            let task = Task {}
+            pendingSkyPathRefresh = task
+            return task
+        }
+        isComputingSkyPath = true
+        let task = Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                SkyPathQuery.samples(target: target, site: site, date: date)
+            }.value
+            guard let self, generation == self.skyPathGeneration else { return }
+            self.skyPath = result
+            self.isComputingSkyPath = false
+        }
+        pendingSkyPathRefresh = task
         return task
     }
 
