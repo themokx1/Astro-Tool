@@ -279,7 +279,7 @@ public struct PlanningView: View {
                     ContentUnavailableView(
                         "Set Your Site to Get Tonight's Ranking",
                         systemImage: "location.slash",
-                        description: Text("This library has no observing site configured and none could be derived from its FITS headers. Set a site in Settings to rank targets by tonight's sky.")
+                        description: Text("This library has no observing site configured and none could be derived from its FITS headers. Set your coordinates in Settings ▸ Location to rank targets by tonight's sky.")
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 default:

@@ -136,7 +136,7 @@ public struct NightsView: View {
                 ContentUnavailableView(
                     "Planning calendar unavailable",
                     systemImage: "calendar.badge.exclamationmark",
-                    description: Text("Add an observing site or scan FITS site coordinates to calculate the next 30 nights.")
+                    description: Text("Set your coordinates in Settings ▸ Location, or scan FITS files that carry site coordinates, to calculate the next 30 nights.")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

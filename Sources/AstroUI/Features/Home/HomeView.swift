@@ -227,7 +227,7 @@ private struct NightContextRail: View {
                     .font(.headline)
                 Spacer()
                 if !context.isConfigured {
-                    Text("Site not set")
+                    Text("Site not set — add it in Settings ▸ Location")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
