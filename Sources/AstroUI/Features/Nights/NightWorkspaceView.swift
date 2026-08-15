@@ -3,9 +3,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 public struct NightWorkspaceView: View {
-    private struct SeriesRow: Identifiable {
+    private struct SeriesRow: Identifiable, Equatable {
         let series: SeriesRecord
+        let projectName: String
         var id: UUID { series.id }
+        /// `KeyPathComparator` needs a non-optional `Comparable` value --
+        /// unfiltered series sort first (as the empty string).
+        var filterSortKey: String { series.filterName ?? "" }
     }
     let row: NightRow
     let rootURL: URL?
@@ -22,6 +26,15 @@ public struct NightWorkspaceView: View {
     /// Wave 4 (post-20014) fix: see `ProjectWorkspaceView.actionOwner`'s own
     /// doc comment -- same reasoning here.
     @State private var actionOwner = UUID().uuidString
+    /// V2 UI/UX audit (2026-08-14) systemic pattern S7: `row.snapshot.series`
+    /// is a small, already-in-memory local array (one night's own series),
+    /// so the sort is cached in local `@State` rather than a store (see
+    /// `NightsStore.sortOrder`'s own doc comment for the convention this
+    /// follows). Default is filter name ascending.
+    @State private var sortOrder: [KeyPathComparator<SeriesRow>] = [
+        KeyPathComparator(\SeriesRow.filterSortKey, order: .forward)
+    ]
+    @State private var sortedSeries: [SeriesRow] = []
 
     public init(
         row: NightRow,
@@ -171,16 +184,29 @@ public struct NightWorkspaceView: View {
     }
 
     private var seriesTable: some View {
-        Table(row.snapshot.series.map(SeriesRow.init)) {
-            TableColumn("Project") { series in
-                Text(row.snapshot.projects.first { $0.id == series.series.projectID }?.displayName ?? "Unknown")
+        Table(sortedSeries, sortOrder: $sortOrder) {
+            TableColumn("Project", value: \SeriesRow.projectName) { series in
+                Text(series.projectName)
             }
-            TableColumn("Filter") { Text($0.series.filterName ?? "Unfiltered") }
-            TableColumn("Exposure") { Text("\($0.series.exposureSeconds.formatted()) s").monospacedDigit() }
-            TableColumn("Setup") { Text($0.series.setupDescriptor).lineLimit(1) }
-            TableColumn("Mode") { Text($0.series.passband.rawValue.replacingOccurrences(of: "_", with: " ").capitalized) }
+            TableColumn("Filter", value: \SeriesRow.filterSortKey) { Text($0.series.filterName ?? "Unfiltered") }
+            TableColumn("Exposure", value: \SeriesRow.series.exposureSeconds) { Text("\($0.series.exposureSeconds.formatted()) s").monospacedDigit() }
+            TableColumn("Setup", value: \SeriesRow.series.setupDescriptor) { Text($0.series.setupDescriptor).lineLimit(1) }
+            TableColumn("Mode", value: \SeriesRow.series.passband.rawValue) { Text($0.series.passband.rawValue.replacingOccurrences(of: "_", with: " ").capitalized) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: sortOrder) { _, _ in recomputeSortedSeries() }
+        .task(id: row) { recomputeSortedSeries() }
+    }
+
+    private func recomputeSortedSeries() {
+        var rows = row.snapshot.series.map { series in
+            SeriesRow(
+                series: series,
+                projectName: row.snapshot.projects.first { $0.id == series.projectID }?.displayName ?? "Unknown"
+            )
+        }
+        if !sortOrder.isEmpty { rows.sort(using: sortOrder) }
+        sortedSeries = rows
     }
 
     /// This night's report (`AppState.exportNightReport`'s V2 equivalent) --

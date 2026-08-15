@@ -308,15 +308,29 @@ private struct ProjectNightsSummary: View {
     let openInsights: (String?) -> Void
     @State private var selection: UUID?
     @State private var noteEditorTarget: NightNoteEditingTarget?
+    /// V2 UI/UX audit (2026-08-14) systemic pattern S7: this table's rows
+    /// (`snapshot.nights`) are a small, already-in-memory local array (a
+    /// project rarely has more than a few dozen nights), not a store's own
+    /// cached collection -- so the sort is cached in local `@State` and
+    /// re-run via `.onChange`/`.task(id:)`, matching the convention this
+    /// codebase uses for exactly that case (see `NightsStore.sortOrder`'s
+    /// own doc comment). Default is newest night first, consistent with
+    /// the main Nights table.
+    @State private var sortOrder: [KeyPathComparator<ProjectNightSnapshot>] = [
+        KeyPathComparator(\ProjectNightSnapshot.night.localDate, order: .reverse)
+    ]
+    @State private var sortedNights: [ProjectNightSnapshot] = []
 
     var body: some View {
-        Table(snapshot.nights, selection: $selection) {
-            TableColumn("Night") { Text($0.night.localDate).monospacedDigit() }
-            TableColumn("Series") { Text($0.series.count.formatted()).monospacedDigit() }
-            TableColumn("Usable") { Text($0.usableFrames.formatted()).monospacedDigit() }
-            TableColumn("Integration") { Text(duration($0.integrationSeconds)).monospacedDigit() }
+        Table(sortedNights, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("Night", value: \ProjectNightSnapshot.night.localDate) { Text($0.night.localDate).monospacedDigit() }
+            TableColumn("Series", value: \ProjectNightSnapshot.series.count) { Text($0.series.count.formatted()).monospacedDigit() }
+            TableColumn("Usable", value: \ProjectNightSnapshot.usableFrames) { Text($0.usableFrames.formatted()).monospacedDigit() }
+            TableColumn("Integration", value: \ProjectNightSnapshot.integrationSeconds) { Text(duration($0.integrationSeconds)).monospacedDigit() }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: sortOrder) { _, _ in recomputeSortedNights() }
+        .task(id: snapshot) { recomputeSortedNights() }
         .contextMenu(forSelectionType: UUID.self) { nightIDs in
             if let id = nightIDs.first, let night = snapshot.nights.first(where: { $0.id == id }) {
                 NightActionMenu(
@@ -351,20 +365,36 @@ private struct ProjectNightsSummary: View {
         let minutes = Int(seconds.rounded()) / 60
         return String(format: "%d:%02d", minutes / 60, minutes % 60)
     }
+
+    private func recomputeSortedNights() {
+        var rows = snapshot.nights
+        if !sortOrder.isEmpty { rows.sort(using: sortOrder) }
+        sortedNights = rows
+    }
 }
 
 private struct ProjectSeriesSummary: View {
     let snapshot: ProjectSnapshot
     let openSeries: (UUID) -> Void
     @State private var selection: UUID?
+    /// Small local array (see `ProjectNightsSummary.sortOrder`'s own doc
+    /// comment for why this is cached in `@State` rather than a store).
+    /// Default is filter name ascending.
+    @State private var sortOrder: [KeyPathComparator<ProjectSeriesSnapshot>] = [
+        KeyPathComparator(\ProjectSeriesSnapshot.filterSortKey, order: .forward)
+    ]
+    @State private var sortedSeries: [ProjectSeriesSnapshot] = []
+
     var body: some View {
-        Table(snapshot.nights.flatMap(\.series), selection: $selection) {
-            TableColumn("Filter") { Text($0.filterName ?? "Unfiltered") }
-            TableColumn("Exposure") { Text("\($0.series.exposureSeconds.formatted()) s").monospacedDigit() }
-            TableColumn("Setup") { Text($0.series.setupDescriptor).lineLimit(1) }
-            TableColumn("Frames") { Text("\($0.usableFrames) / \($0.excludedFrames)").monospacedDigit() }
+        Table(sortedSeries, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("Filter", value: \ProjectSeriesSnapshot.filterSortKey) { Text($0.filterName ?? "Unfiltered") }
+            TableColumn("Exposure", value: \ProjectSeriesSnapshot.series.exposureSeconds) { Text("\($0.series.exposureSeconds.formatted()) s").monospacedDigit() }
+            TableColumn("Setup", value: \ProjectSeriesSnapshot.series.setupDescriptor) { Text($0.series.setupDescriptor).lineLimit(1) }
+            TableColumn("Frames", value: \ProjectSeriesSnapshot.usableFrames) { Text("\($0.usableFrames) / \($0.excludedFrames)").monospacedDigit() }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: sortOrder) { _, _ in recomputeSortedSeries() }
+        .task(id: snapshot) { recomputeSortedSeries() }
         .contextMenu(forSelectionType: UUID.self) { seriesIDs in
             if let id = seriesIDs.first {
                 Button("Open Series") { openSeries(id) }
@@ -372,5 +402,11 @@ private struct ProjectSeriesSummary: View {
         } primaryAction: { seriesIDs in
             if let id = seriesIDs.first { openSeries(id) }
         }
+    }
+
+    private func recomputeSortedSeries() {
+        var rows = snapshot.nights.flatMap(\.series)
+        if !sortOrder.isEmpty { rows.sort(using: sortOrder) }
+        sortedSeries = rows
     }
 }

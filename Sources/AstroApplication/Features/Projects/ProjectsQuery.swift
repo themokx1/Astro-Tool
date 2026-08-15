@@ -23,6 +23,10 @@ public struct ProjectSeriesSnapshot: Equatable, Sendable, Identifiable {
     public let integrationSeconds: Double
     public var id: UUID { series.id }
     public var filterName: String? { series.filterName }
+    /// `KeyPathComparator` needs a non-optional `Comparable` value --
+    /// unfiltered series (`filterName == nil`) sort first (as the empty
+    /// string) rather than crashing the column's sort.
+    public var filterSortKey: String { filterName ?? "" }
 }
 
 public struct ProjectNightSnapshot: Equatable, Sendable, Identifiable {
