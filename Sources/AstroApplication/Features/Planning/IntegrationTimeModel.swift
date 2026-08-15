@@ -44,6 +44,22 @@ public struct IntegrationTimeInput: Equatable, Sendable {
 public enum IntegrationTimeModel {
     public static let referenceHours = 10.0
     public static let referenceSurfaceBrightness = 22.0
+    /// Above this many hours, the model's own inputs have stopped producing
+    /// a trustworthy planning figure. The surface-brightness estimate this
+    /// model is fed (`TargetCatalog.estimatedSurfaceBrightness`, when no
+    /// curated value exists) spreads a target's INTEGRATED catalog magnitude
+    /// evenly across its full angular area -- honest for a compact object,
+    /// but for a large, faint extended nebula (the Pelican Nebula shape: mag
+    /// 8 spread over 60 arcmin) it manufactures a surface brightness far
+    /// fainter than the object's actual photographable structure, which this
+    /// model's inverse-square relation then turns into a four-digit hour
+    /// count. `PlanningQuery` treats anything past this bound as "beyond this
+    /// model's range" rather than printing a precise but meaningless number
+    /// -- see its own `integrationEstimate(...)`. Chosen well above any
+    /// exposure time an astrophotographer would actually plan for (even a
+    /// tough narrowband target rarely exceeds this), so it never demotes a
+    /// genuinely faint-but-plannable target.
+    public static let maxPlausibleHours = 60.0
 
     /// `referenceHours`/`referenceFocalRatio`/`referenceSurfaceBrightness`
     /// default to this type's own baseline constants (10 hours at f/5 and

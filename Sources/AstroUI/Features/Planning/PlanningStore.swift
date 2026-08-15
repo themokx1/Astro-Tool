@@ -3,6 +3,19 @@ import AstroCore
 import Foundation
 import Observation
 
+/// Tonight's resolved observing site plus the instant it was resolved for --
+/// exactly what `PlanningQuery.site`/`date` need, bundled so
+/// `PlanningStore.SkyContextProvider` has one return type instead of a tuple.
+public struct PlanningSkyContext: Equatable, Sendable {
+    public let site: SiteRule
+    public let date: Date
+
+    public init(site: SiteRule, date: Date) {
+        self.site = site
+        self.date = date
+    }
+}
+
 @MainActor
 @Observable
 public final class PlanningStore {
@@ -23,6 +36,13 @@ public final class PlanningStore {
     /// for the same reason `computeRecommendations` is: it lets tests count
     /// invocations without needing `TargetCatalog` itself to be mockable.
     public typealias CatalogSearch = @Sendable (String) -> [CatalogTarget]
+    /// Resolves tonight's real site the same way `HomeStore`'s
+    /// `NightContextProvider` does (`Planner.resolveSite`: explicit config,
+    /// else the FITS-median fallback) -- `nil` when no library is open
+    /// (`rootURL == nil`) or no site resolves for the one that is.
+    /// Injectable so tests can supply a fixed site/date without a real
+    /// FITS-backed library on disk.
+    public typealias SkyContextProvider = @Sendable (URL?) async throws -> PlanningSkyContext?
 
     public let setups: [ImagingSetupProfile]
     /// AppKit's Picker re-asserts the bound selection during its own update
@@ -59,6 +79,34 @@ public final class PlanningStore {
             recomputeFilteredRecommendations()
         }
     }
+    /// Off by default: a target that can't clear the imaging altitude
+    /// threshold tonight (`PlanningRecommendation.isLowAltitude`) must not
+    /// read as a good suggestion (the bug this store was rebuilt to fix --
+    /// see `PlanningQuery`'s own doc). Same-value guard as the toggles above.
+    public var showLowAltitudeTargets = false {
+        didSet {
+            guard oldValue != showLowAltitudeTargets else { return }
+            recomputeFilteredRecommendations()
+        }
+    }
+
+    /// The library whose site `refresh()` resolves tonight's sky against --
+    /// `nil` means no library is open. Set via `setRootURL(_:)`, mirroring
+    /// `selectedSetupID`'s same-value-guarded, refresh-triggering contract.
+    public private(set) var rootURL: URL?
+    /// Whether tonight's sky ranking is actually available, distinguishing
+    /// "no library open yet" and "library open but no site resolves" from
+    /// the genuine "computed, ranking available" state -- `PlanningView`
+    /// shows an explicit, honest prompt for the first two rather than an
+    /// empty results table (see `PlanningQuery.site`'s own doc: no site
+    /// means no invented ranking).
+    public enum SkyAvailability: Equatable, Sendable {
+        case pending
+        case noLibrary
+        case noSite
+        case available
+    }
+    public private(set) var skyAvailability: SkyAvailability = .pending
 
     /// The full recommendation pipeline's most recent result -- STORED, not
     /// computed. Build 20013 shipped a crash (and, with the underlying
@@ -100,6 +148,7 @@ public final class PlanningStore {
     private var lastObservedReferenceFocalRatio: Double
     private var lastObservedReferenceSurfaceBrightness: Double
     private let catalogSearch: CatalogSearch
+    private let skyContextProvider: SkyContextProvider
     /// `nonisolated(unsafe)`: only ever mutated on the main actor (`init`),
     /// but `deinit` is always `nonisolated` (it may run on any thread), so
     /// it needs to read this without a MainActor-isolation check. Safe --
@@ -111,19 +160,32 @@ public final class PlanningStore {
         setups: [ImagingSetupProfile] = PlanningStore.defaultSetups,
         defaults: UserDefaults = .standard,
         computeRecommendations: @escaping RecommendationsComputer = { $0.recommendations() },
-        catalogSearch: @escaping CatalogSearch = { TargetCatalog.search($0, limit: TargetCatalog.all.count) }
+        catalogSearch: @escaping CatalogSearch = { TargetCatalog.search($0, limit: TargetCatalog.all.count) },
+        skyContextProvider: @escaping SkyContextProvider = PlanningStore.productionSkyContext
     ) {
         let safeSetups = setups.isEmpty ? PlanningStore.defaultSetups : setups
         self.setups = safeSetups
         self.defaults = defaults
         self.computeRecommendations = computeRecommendations
         self.catalogSearch = catalogSearch
+        self.skyContextProvider = skyContextProvider
         let initial = safeSetups.first(where: \.isDefault) ?? safeSetups[0]
         selectedSetupID = initial.id
         focalLength = initial.defaultFocalLengthMM
         lastObservedReferenceHours = defaults.double(forKey: Self.referenceHoursKey)
         lastObservedReferenceFocalRatio = defaults.double(forKey: Self.referenceFocalRatioKey)
         lastObservedReferenceSurfaceBrightness = defaults.double(forKey: Self.referenceSurfaceBrightnessKey)
+    }
+
+    /// Sets the library `refresh()` resolves tonight's site against.
+    /// Same-value guard: `PlanningView`'s `.task(id: rootURL)` re-runs on
+    /// every observation of a SwiftUI view identity, not just genuine
+    /// changes -- same reason `selectedSetupID`/`setFocalLength` guard
+    /// themselves.
+    public func setRootURL(_ url: URL?) {
+        guard url != rootURL else { return }
+        rootURL = url
+        refresh()
     }
 
     /// Registers the Planning baseline fallbacks.
@@ -213,9 +275,12 @@ public final class PlanningStore {
     /// Recomputes `recommendations` off the main actor and publishes the
     /// result back once it lands, guarding against a stale (superseded)
     /// completion with `recomputeGeneration`. Called automatically whenever
-    /// `selectedSetupID`, `focalLength`, or a tracked `UserDefaults`
-    /// preference changes; exposed publicly for callers that want to force
-    /// an explicit recompute.
+    /// `selectedSetupID`, `focalLength`, `rootURL`, or a tracked
+    /// `UserDefaults` preference changes; exposed publicly for callers that
+    /// want to force an explicit recompute. Resolves tonight's site (via
+    /// `skyContextProvider`) BEFORE building the `PlanningQuery` -- this is
+    /// computed work, so like the pipeline itself it stays entirely inside
+    /// this `Task`, never in `body`.
     @discardableResult
     public func refresh() -> Task<Void, Never> {
         lastObservedReferenceHours = referenceHours
@@ -224,20 +289,31 @@ public final class PlanningStore {
         recomputeGeneration += 1
         let generation = recomputeGeneration
         isComputing = true
-        let query = PlanningQuery(
-            setup: selectedSetup,
-            focalLength: focalLength,
-            referenceHours: lastObservedReferenceHours,
-            referenceFocalRatio: lastObservedReferenceFocalRatio,
-            referenceSurfaceBrightness: lastObservedReferenceSurfaceBrightness
-        )
+        let setup = selectedSetup
+        let focalLength = focalLength
+        let referenceHours = lastObservedReferenceHours
+        let referenceFocalRatio = lastObservedReferenceFocalRatio
+        let referenceSurfaceBrightness = lastObservedReferenceSurfaceBrightness
+        let rootURL = rootURL
+        let resolveSkyContext = skyContextProvider
         let compute = computeRecommendations
         let task = Task { [weak self] in
+            let skyContext = try? await resolveSkyContext(rootURL)
+            let query = PlanningQuery(
+                setup: setup,
+                focalLength: focalLength,
+                referenceHours: referenceHours,
+                referenceFocalRatio: referenceFocalRatio,
+                referenceSurfaceBrightness: referenceSurfaceBrightness,
+                site: skyContext?.site,
+                date: skyContext?.date ?? Date()
+            )
             let result = await Task.detached(priority: .userInitiated) {
                 compute(query)
             }.value
             guard let self, generation == self.recomputeGeneration else { return }
             self.recommendations = result
+            self.skyAvailability = rootURL == nil ? .noLibrary : (skyContext == nil ? .noSite : .available)
             self.isComputing = false
             self.recomputeFilteredRecommendations()
         }
@@ -246,11 +322,12 @@ public final class PlanningStore {
     }
 
     /// Recomputes `filteredRecommendations` from the current
-    /// `recommendations`/`searchText`/`usefulFramingOnly` -- called whenever
-    /// any of those three actually changes, never on a mere property read.
-    /// `TargetCatalog.search` (via the injected `catalogSearch`) only runs
-    /// when `searchText` is non-empty, matching its prior behavior; the
-    /// `usefulFramingOnly` filter is a cheap array pass either way.
+    /// `recommendations`/`searchText`/`usefulFramingOnly`/
+    /// `showLowAltitudeTargets` -- called whenever any of those four
+    /// actually changes, never on a mere property read. `TargetCatalog.search`
+    /// (via the injected `catalogSearch`) only runs when `searchText` is
+    /// non-empty, matching its prior behavior; the other two filters are a
+    /// cheap array pass either way.
     private func recomputeFilteredRecommendations() {
         var rows = recommendations
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -260,6 +337,9 @@ public final class PlanningStore {
         }
         if usefulFramingOnly {
             rows = rows.filter { $0.fit != .tooSmall && $0.fit != .mosaic }
+        }
+        if !showLowAltitudeTargets {
+            rows = rows.filter { !$0.isLowAltitude }
         }
         filteredRecommendations = rows
     }
@@ -299,6 +379,30 @@ public final class PlanningStore {
             || referenceSurfaceBrightness != lastObservedReferenceSurfaceBrightness
         else { return }
         refresh()
+    }
+
+    /// Resolves tonight's site the exact same way `HomeStore.productionNightContext`
+    /// does -- `Planner.resolveSite` (explicit `AstroConfig.site`/`sites`,
+    /// else the FITS-median fallback across the library's own scanned
+    /// lights) -- so Planning's ranking never disagrees with the rest of the
+    /// app about where "tonight" is being evaluated from. `nil` whenever no
+    /// library is open (`rootURL == nil`) or no site resolves for the one
+    /// that is (a fresh library with no site set and no FITS coordinates
+    /// yet); `PlanningQuery.recommendations()` treats a `nil` site as "don't
+    /// invent a ranking" rather than falling back to a framing-only one.
+    public static func productionSkyContext(rootURL: URL?) async throws -> PlanningSkyContext? {
+        guard let rootURL else { return nil }
+        return try await Task.detached(priority: .utility) {
+            let identity = LibraryIdentity(rootURL: rootURL)
+            let paths = try AppStoragePaths.production(libraryID: identity, libraryRoot: rootURL)
+            let database = try Database(path: paths.indexDatabase.path)
+            let configURL = rootURL.appendingPathComponent(".astro_tool/config.json")
+            var config = (try? AstroConfig.load(from: configURL)) ?? AstroConfig()
+            config.rootPath = rootURL.path
+            let site = try Planner.resolveSite(db: database, config: config)
+            guard site.latitudeDeg != nil, site.longitudeDeg != nil else { return nil }
+            return PlanningSkyContext(site: site, date: Date())
+        }.value
     }
 
     public static let defaultSetups: [ImagingSetupProfile] = [

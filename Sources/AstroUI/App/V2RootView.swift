@@ -1102,7 +1102,7 @@ private struct DetailHost: View {
                 openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) }
             )
         case .planning:
-            PlanningView(createProject: createPlannedProject)
+            PlanningView(rootURL: onboardingStore.selectedRoot, createProject: createPlannedProject)
         case .library:
             LibraryView(
                 snapshot: onboardingStore.phase.summary,

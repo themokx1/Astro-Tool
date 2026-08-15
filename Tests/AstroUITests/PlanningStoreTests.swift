@@ -4,6 +4,22 @@ import AstroCore
 import Foundation
 import Testing
 
+/// A fixed Budapest site/date, matching `Tests/AstroCoreTests/DiscoveryPlannerTests.swift`'s
+/// own fixture -- most of this file's tests exercise infrastructure
+/// (recompute counts, same-value guards, generation racing) that doesn't
+/// care WHAT tonight's ranking is, only that a resolvable one exists so
+/// `PlanningQuery.recommendations()` doesn't short-circuit to `[]` (see that
+/// type's own doc: no site means no invented ranking).
+private let planningTestSite = SiteRule(latitudeDeg: 47.5, longitudeDeg: 19.0)
+private let planningTestDate: Date = {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "UTC")!
+    return calendar.date(from: DateComponents(year: 2026, month: 8, day: 4, hour: 12))!
+}()
+private func fixedSkyContext(_: URL?) async throws -> PlanningSkyContext? {
+    PlanningSkyContext(site: planningTestSite, date: planningTestDate)
+}
+
 /// Thread-safe call counter for injected `PlanningStore.RecommendationsComputer`
 /// closures -- `@Sendable` closures can't capture a plain `var`, and the
 /// closure body itself is synchronous (it runs inside `Task.detached`, off
@@ -135,7 +151,7 @@ struct PlanningStoreTests {
 
     @Test("Changing focal length recalculates framing and preserves useful-first ordering")
     func focalLengthRecalculatesRecommendations() async {
-        let store = PlanningStore(setups: [.apsCReference])
+        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
         store.activate()
         await store.pendingRefresh?.value
         let initial = store.recommendations
@@ -150,7 +166,7 @@ struct PlanningStoreTests {
 
     @Test("Search accepts catalog and Hungarian target names")
     func targetSearchIsLocalized() async {
-        let store = PlanningStore(setups: [.apsCReference])
+        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
         store.activate()
         await store.pendingRefresh?.value
 
@@ -164,22 +180,29 @@ struct PlanningStoreTests {
         let suite = "AstroTool-PlanningStoreTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let baseline = PlanningStore(setups: [.apsCReference], defaults: defaults)
+        let baseline = PlanningStore(setups: [.apsCReference], defaults: defaults, skyContextProvider: fixedSkyContext)
         baseline.activate()
         await baseline.pendingRefresh?.value
-        let baselineHours = try #require(baseline.recommendations.first?.integrationHours)
+        // Pick a target whose estimate stays within
+        // `IntegrationTimeModel.maxPlausibleHours` at the baseline reference
+        // (so `integrationHours` is non-nil) rather than trusting `.first`,
+        // whose sky-driven ranking is now independent of the reference
+        // hours being tested here.
+        let baselineRow = try #require(baseline.recommendations.first { $0.integrationHours != nil })
+        let baselineHours = try #require(baselineRow.integrationHours)
         // `PlanningStore` reads `UserDefaults` live rather than caching, so
         // this initial value is captured before the mutation below -- both
         // stores otherwise share the same `defaults` instance.
         let initialReferenceHours = baseline.referenceHours
 
         defaults.set(initialReferenceHours * 2, forKey: PlanningStore.referenceHoursKey)
-        let doubled = PlanningStore(setups: [.apsCReference], defaults: defaults)
+        let doubled = PlanningStore(setups: [.apsCReference], defaults: defaults, skyContextProvider: fixedSkyContext)
         doubled.activate()
         await doubled.pendingRefresh?.value
 
         #expect(doubled.referenceHours == initialReferenceHours * 2)
-        let doubledHours = try #require(doubled.recommendations.first?.integrationHours)
+        let doubledRow = try #require(doubled.recommendations.first { $0.target.designation == baselineRow.target.designation })
+        let doubledHours = try #require(doubledRow.integrationHours)
         #expect(abs(doubledHours / baselineHours - 2) < 0.001)
     }
 
@@ -323,10 +346,14 @@ struct PlanningStoreTests {
 
     @Test("isComputing is true while a recompute is in flight and false once it lands")
     func isComputingTransitions() async {
-        let store = PlanningStore(setups: [.apsCReference]) { query in
-            Thread.sleep(forTimeInterval: 0.05)
-            return query.recommendations()
-        }
+        let store = PlanningStore(
+            setups: [.apsCReference],
+            computeRecommendations: { query in
+                Thread.sleep(forTimeInterval: 0.05)
+                return query.recommendations()
+            },
+            skyContextProvider: fixedSkyContext
+        )
         store.activate()
 
         // No suspension point has occurred yet, so the detached compute
@@ -443,12 +470,12 @@ struct PlanningStoreTests {
 
     @Test("A genuine change to usefulFramingOnly still recomputes filteredRecommendations")
     func usefulFramingOnlyChangeStillRecomputes() async {
-        let store = PlanningStore(setups: [.apsCReference])
+        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
         store.activate()
         await store.pendingRefresh?.value
-        // No search filter active -- the full, unfiltered recommendation set
-        // spans all 217 catalog targets, so toggling the useful-framing
-        // filter is guaranteed to change which rows survive.
+        // No search filter active -- toggling the useful-framing filter is
+        // guaranteed to change which rows survive (tiny/mosaic targets
+        // dropping out of the visible-tonight subset).
         let withUsefulFilter = store.filteredRecommendations
 
         store.usefulFramingOnly = false
@@ -460,7 +487,7 @@ struct PlanningStoreTests {
 
     @Test("filteredRecommendations reflects a fresh recommendations pipeline result after refresh")
     func filteredRecommendationsTracksRecommendationsAcrossRefresh() async {
-        let store = PlanningStore(setups: [.apsCReference])
+        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
         store.activate()
         await store.pendingRefresh?.value
         let initialFiltered = store.filteredRecommendations
@@ -482,6 +509,75 @@ struct PlanningStoreTests {
         )
         #expect(source.contains("public private(set) var filteredRecommendations: [PlanningRecommendation] = []"))
         #expect(!source.contains("public var filteredRecommendations: [PlanningRecommendation] {"))
+    }
+
+    // MARK: - Task 1: tonight's-sky ranking, honest no-site state
+
+    @Test("No library open means no invented ranking -- an explicit noLibrary state, not an empty search result")
+    func noRootURLMeansNoLibrarySkyAvailability() async {
+        let store = PlanningStore(setups: [.apsCReference])
+        store.activate()
+        await store.pendingRefresh?.value
+
+        #expect(store.skyAvailability == .noLibrary)
+        #expect(store.recommendations.isEmpty)
+    }
+
+    @Test("A library whose site never resolves reports an explicit noSite state, not an invented ranking")
+    func unresolvableSiteMeansNoSiteSkyAvailability() async {
+        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: { _ in nil })
+        store.activate()
+        store.setRootURL(URL(fileURLWithPath: "/tmp/does-not-matter"))
+        await store.pendingRefresh?.value
+
+        #expect(store.skyAvailability == .noSite)
+        #expect(store.recommendations.isEmpty)
+    }
+
+    @Test("A resolved site produces a real ranking and reports the available state")
+    func resolvedSiteMeansAvailableSkyAvailability() async {
+        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        store.activate()
+        store.setRootURL(URL(fileURLWithPath: "/tmp/does-not-matter"))
+        await store.pendingRefresh?.value
+
+        #expect(store.skyAvailability == .available)
+        #expect(!store.recommendations.isEmpty)
+    }
+
+    @Test("Setting the same rootURL twice does not trigger a second recompute")
+    func sameValueSetRootURLIsAnObservableNoOp() async {
+        let counter = CallCounter()
+        let store = PlanningStore(setups: [.apsCReference]) { query in
+            counter.increment()
+            return query.recommendations()
+        } skyContextProvider: { _ in nil }
+        store.activate()
+        await store.pendingRefresh?.value
+        #expect(counter.current == 1)
+
+        let root = URL(fileURLWithPath: "/tmp/library-a")
+        store.setRootURL(root)
+        await store.pendingRefresh?.value
+        #expect(counter.current == 2)
+
+        store.setRootURL(root)
+        #expect(counter.current == 2)
+    }
+
+    @Test("Low-altitude targets are hidden by default and revealed by the opt-in toggle")
+    func lowAltitudeTargetsAreHiddenByDefault() async {
+        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        store.activate()
+        await store.pendingRefresh?.value
+
+        #expect(store.showLowAltitudeTargets == false)
+        #expect(store.filteredRecommendations.allSatisfy { !$0.isLowAltitude })
+        #expect(store.recommendations.contains { $0.isLowAltitude }, "the fixture site/date must actually include some low-altitude targets for this test to mean anything")
+
+        store.showLowAltitudeTargets = true
+
+        #expect(store.filteredRecommendations.contains { $0.isLowAltitude })
     }
 }
 

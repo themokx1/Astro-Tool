@@ -5,7 +5,13 @@ import SwiftUI
 public struct PlanningView: View {
     @State private var store = PlanningStore()
     @State private var selectedTargetID: String?
+    let rootURL: URL?
     let createProject: (String) -> Void
+
+    public init(rootURL: URL?, createProject: @escaping (String) -> Void) {
+        self.rootURL = rootURL
+        self.createProject = createProject
+    }
 
     public var body: some View {
         WorkspaceTablePage(
@@ -23,6 +29,7 @@ public struct PlanningView: View {
         .accessibilityLabel("Planning")
         .accessibilityIdentifier("v2.detail.planning")
         .task { store.activate() }
+        .task(id: rootURL) { store.setRootURL(rootURL) }
     }
 
     /// Backs the "Camera and optics" header's ⓘ button.
@@ -98,13 +105,17 @@ public struct PlanningView: View {
                 .textFieldStyle(.roundedBorder)
             Toggle("Useful framing only", isOn: $store.usefulFramingOnly)
                 .toggleStyle(.checkbox)
+            Toggle("Show low-altitude targets", isOn: $store.showLowAltitudeTargets)
+                .toggleStyle(.checkbox)
+                .accessibilityIdentifier("v2.planning.show-low-altitude")
         }
     }
 
     private var recommendationList: some View {
         GroupBox("Target recommendations") {
             Group {
-                if store.recommendations.isEmpty && store.isComputing {
+                switch store.skyAvailability {
+                case .pending where store.recommendations.isEmpty:
                     // The first `refresh()` (kicked off by `PlanningStore.init`)
                     // hasn't landed yet -- an honest "still computing" state,
                     // not a false "no matches" claim (part of the build 20013
@@ -112,43 +123,83 @@ public struct PlanningView: View {
                     // main actor, so it is briefly empty on first load).
                     ProgressView("Finding matches…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if store.filteredRecommendations.isEmpty {
-                    ContentUnavailableView.search(text: store.searchText)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    Table(store.filteredRecommendations, selection: $selectedTargetID) {
-                        TableColumn("Target") { row in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(displayName(row)).font(.headline)
-                                Text(row.target.kind.rawValue).font(.caption).foregroundStyle(.secondary)
-                            }
-                            .padding(.vertical, 4)
-                        }
-                        TableColumn("Framing") { row in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(row.fit.label).fontWeight(.medium)
-                                Text("\((row.frameCoverage * 100), format: .number.precision(.fractionLength(0)))% of short edge")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        .width(min: 145, ideal: 180)
-                        TableColumn("Integration") { row in
-                            VStack(alignment: .trailing, spacing: 2) {
-                                Text("≈ \(row.integrationHours, format: .number.precision(.fractionLength(1))) h")
-                                    .font(.headline.monospacedDigit())
-                                Text(row.integrationConfidence.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        .width(min: 105, ideal: 125)
-                    }
+                case .noLibrary:
+                    // Ranking by tonight's sky needs a resolved site
+                    // (`Planner.resolveSite`); no library is open at all, so
+                    // there is nothing to rank against and no ranking is
+                    // invented -- see `PlanningQuery.site`'s own doc.
+                    ContentUnavailableView(
+                        "Open a Library to Get Tonight's Ranking",
+                        systemImage: "location.slash",
+                        description: Text("Planning ranks targets by where they actually are in the sky tonight. Open a library first.")
+                    )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contextMenu(forSelectionType: String.self) { targetIDs in
-                        if let row = store.filteredRecommendations.first(where: { targetIDs.contains($0.id) }) {
-                            Button("Plan Selected") { createProject(row.target.designation) }
+                case .noSite:
+                    ContentUnavailableView(
+                        "Set Your Site to Get Tonight's Ranking",
+                        systemImage: "location.slash",
+                        description: Text("This library has no observing site configured and none could be derived from its FITS headers. Set a site in Settings to rank targets by tonight's sky.")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                default:
+                    if store.filteredRecommendations.isEmpty {
+                        ContentUnavailableView.search(text: store.searchText)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        Table(store.filteredRecommendations, selection: $selectedTargetID) {
+                            TableColumn("Target") { row in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(displayName(row)).font(.headline)
+                                    Text(row.target.kind.rawValue).font(.caption).foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            TableColumn("Tonight's sky") { row in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    if row.isLowAltitude {
+                                        Label(row.skyVerdict, systemImage: "exclamationmark.triangle.fill")
+                                            .font(.callout.weight(.semibold))
+                                            .foregroundStyle(.orange)
+                                    } else {
+                                        Text("\(row.maxAltitudeDeg ?? 0, format: .number.precision(.fractionLength(0)))° max alt")
+                                            .fontWeight(.medium)
+                                    }
+                                    Text(skyDetail(row)).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .width(min: 165, ideal: 200)
+                            TableColumn("Framing") { row in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(row.fit.label).fontWeight(.medium)
+                                    Text("\((row.frameCoverage * 100), format: .number.precision(.fractionLength(0)))% of short edge")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .width(min: 145, ideal: 180)
+                            TableColumn("Integration") { row in
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    if let hours = row.integrationHours {
+                                        Text("≈ \(hours, format: .number.precision(.fractionLength(1))) h")
+                                            .font(.headline.monospacedDigit())
+                                    } else {
+                                        Text("Beyond model range")
+                                            .font(.callout.weight(.medium))
+                                            .foregroundStyle(.orange)
+                                    }
+                                    Text(row.integrationConfidence.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .width(min: 105, ideal: 135)
                         }
-                    } primaryAction: { targetIDs in
-                        if let row = store.filteredRecommendations.first(where: { targetIDs.contains($0.id) }) {
-                            createProject(row.target.designation)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contextMenu(forSelectionType: String.self) { targetIDs in
+                            if let row = store.filteredRecommendations.first(where: { targetIDs.contains($0.id) }) {
+                                Button("Plan Selected") { createProject(row.target.designation) }
+                            }
+                        } primaryAction: { targetIDs in
+                            if let row = store.filteredRecommendations.first(where: { targetIDs.contains($0.id) }) {
+                                createProject(row.target.designation)
+                            }
                         }
                     }
                 }
@@ -157,6 +208,20 @@ public struct PlanningView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("v2.planning.recommendations")
+    }
+
+    private func skyDetail(_ row: PlanningRecommendation) -> String {
+        var parts: [String] = []
+        if let visibleHours = row.visibleHours {
+            parts.append("\(visibleHours.formatted(.number.precision(.fractionLength(1))))h visible")
+        }
+        if let culmination = row.culminationLocal {
+            parts.append("culm. \(culmination)")
+        }
+        if let moonSeparation = row.moonSeparationDeg {
+            parts.append("Moon \(moonSeparation.formatted(.number.precision(.fractionLength(0))))°")
+        }
+        return parts.isEmpty ? row.skyVerdict : parts.joined(separator: " · ")
     }
 
     private func displayName(_ row: PlanningRecommendation) -> String {
