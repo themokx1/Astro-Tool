@@ -54,6 +54,24 @@ cp "$BIN_PATH/astrotool" "$APP/Contents/Resources/astrotool"
 cp "icon/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 chmod +x "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/Resources/astrotool"
 
+# `AstroToolApp`'s `resources: [.process("Resources")]` (Package.swift) makes
+# SwiftPM emit a separate `<Package>_AstroToolApp.bundle` next to the
+# executable -- it is NOT folded into the executable or auto-discovered by
+# `Bundle.main` inside a hand-assembled `.app`. `Bundle.main`'s lookup for
+# `<locale>.lproj/Localizable.strings` only checks directly under
+# `Contents/Resources/`, so every top-level `*.lproj` from that bundle must
+# be copied there explicitly -- without this, the hu localization silently
+# never loads no matter how many keys `hu.lproj/Localizable.strings` has.
+RESOURCE_BUNDLE="$(find "$BIN_PATH" -maxdepth 1 -iname "*_${APP_EXECUTABLE_TARGET}.bundle" -print -quit)"
+if [ -n "$RESOURCE_BUNDLE" ] && [ -d "$RESOURCE_BUNDLE" ]; then
+    for lproj in "$RESOURCE_BUNDLE"/*.lproj; do
+        [ -d "$lproj" ] && cp -R "$lproj" "$APP/Contents/Resources/"
+    done
+else
+    echo "ERROR: could not find the ${APP_EXECUTABLE_TARGET} resource bundle under $BIN_PATH -- localization would silently be missing from the app." >&2
+    exit 1
+fi
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">

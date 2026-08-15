@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Astro-Tool",
+    defaultLocalization: "en",
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "AstroCore", targets: ["AstroCore"]),
@@ -18,7 +19,8 @@ let package = Package(
         .executableTarget(name: "astrotool", dependencies: ["AstroCore"]),
         .executableTarget(
             name: "AstroToolApp",
-            dependencies: ["AstroCore", "AstroApplication", "AstroUI"]
+            dependencies: ["AstroCore", "AstroApplication", "AstroUI"],
+            resources: [.process("Resources")]
         ),
         .testTarget(name: "AstroCoreTests", dependencies: ["AstroCore"]),
         .testTarget(

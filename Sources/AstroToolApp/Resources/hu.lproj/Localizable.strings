@@ -1,0 +1,26 @@
+/*
+  Localizable.strings (hu)
+  AstroTool
+
+  The V2 UI's Hungarian translation table. SwiftUI's `Text("literal")`,
+  `Button`, `Label`, `Toggle`, `Picker`, `TableColumn`, `.help()`,
+  `.accessibilityLabel()` and `.navigationTitle()` all resolve their
+  `LocalizedStringKey` against `Bundle.main` -- the app target's bundle, not
+  AstroUI's library bundle -- at render time. Putting this table here
+  therefore localizes every one of those call sites in AstroUI with zero
+  call-site changes. The key is always the exact English literal; a key
+  with no entry here falls back to that literal, so English needs no file
+  of its own.
+
+  Keep this reproducible: `scripts/extract-localizable-strings.swift`
+  extracts every literal that needs an entry, and
+  `Tests/AstroUITests/LocalizationCoverageTests.swift` fails the build if a
+  key is missing one -- except for the allowlist of brand/domain terms that
+  intentionally stay in English (see that test file for the list).
+*/
+
+"System" = "Rendszer szerint";
+"Hungarian" = "Magyar";
+"English" = "Angol";
+"Language" = "Nyelv";
+"Changing the language takes effect the next time you restart AstroTool -- it does not apply immediately." = "A nyelv módosítása csak az AstroTool következő újraindításakor lép életbe -- nem azonnal.";

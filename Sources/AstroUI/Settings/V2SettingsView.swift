@@ -30,6 +30,8 @@ public struct V2SettingsView: View {
 
 private struct GeneralSettingsView: View {
     @AppStorage("v2.general.showGuidance") private var showGuidance = true
+    @State private var selectedLanguage = AppLanguage.current()
+
     var body: some View {
         Form {
             Section("Experience") {
@@ -40,6 +42,18 @@ private struct GeneralSettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                         .accessibilityIdentifier("v2.settings.general.guidance-caption")
                 }
+            }
+            Section("Language") {
+                Picker("Language", selection: $selectedLanguage) {
+                    ForEach(AppLanguage.allCases, id: \.self) { language in
+                        Text(language.displayName).tag(language)
+                    }
+                }
+                .accessibilityIdentifier("v2.settings.language")
+                .onChange(of: selectedLanguage) { _, newValue in newValue.apply() }
+                Text("Changing the language takes effect the next time you restart AstroTool -- it does not apply immediately.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("v2.settings.language.restart-notice")
             }
         }.formStyle(.grouped)
     }

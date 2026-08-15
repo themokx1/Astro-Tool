@@ -274,6 +274,26 @@ struct V2SettingsTests {
         #expect(source.contains("v2.settings.update-catalog-cancel"))
     }
 
+    // MARK: - Language preference (localization plan Task 1)
+
+    @Test("The General tab offers a language picker with the three AppLanguage cases and an honest restart notice")
+    func languagePickerSurface() throws {
+        let source = try contents("Sources/AstroUI/Settings/V2SettingsView.swift")
+        #expect(source.contains("v2.settings.language"))
+        #expect(source.contains("AppLanguage.allCases"))
+        // It must not claim the change is instantaneous -- `Bundle.main`'s
+        // preferred localization is fixed for the process's lifetime, so
+        // only a restart actually picks up a new language.
+        #expect(!source.contains("takes effect immediately"))
+        #expect(source.contains("restart"))
+    }
+
+    @Test("Picking a language actually applies the AppLanguage override, not just updates local state")
+    func languagePickerAppliesTheOverride() throws {
+        let source = try contents("Sources/AstroUI/Settings/V2SettingsView.swift")
+        #expect(source.contains(".apply("))
+    }
+
     @Test("ExtendedCatalogUpdateStore reflects a saved cache and updates it after a fixture-driven fetch, never the network")
     func extendedCatalogUpdateStoreReflectsCacheAndFetches() async throws {
         let cacheURL = FileManager.default.temporaryDirectory

@@ -31,7 +31,7 @@ struct V2PackageSurfaceTests {
         let requiredDeclarations = [
             ".target(name:\"AstroApplication\",dependencies:[\"AstroCore\"])",
             ".target(name:\"AstroUI\",dependencies:[\"AstroApplication\"])",
-            ".executableTarget(name:\"AstroToolApp\",dependencies:[\"AstroCore\",\"AstroApplication\",\"AstroUI\"])",
+            ".executableTarget(name:\"AstroToolApp\",dependencies:[\"AstroCore\",\"AstroApplication\",\"AstroUI\"],resources:[.process(\"Resources\")])",
             ".testTarget(name:\"AstroApplicationTests\",dependencies:[\"AstroApplication\",\"AstroCore\"])",
             ".testTarget(name:\"AstroUITests\",dependencies:[\"AstroUI\",\"AstroApplication\"])",
         ]
