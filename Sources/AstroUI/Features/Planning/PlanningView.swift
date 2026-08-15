@@ -5,6 +5,13 @@ import SwiftUI
 public struct PlanningView: View {
     @State private var store = PlanningStore()
     @State private var selectedTargetID: String?
+    /// Mirrors `PlanningStore.sortOrder`. The table needs a `Binding`, but the
+    /// actual re-sorting happens in the store's cached recompute — never in
+    /// `body`, where sorting the whole catalog every layout pass is exactly
+    /// what froze this page before.
+    @State private var sortOrder: [KeyPathComparator<PlanningRecommendation>] = [
+        KeyPathComparator(\PlanningRecommendation.planningScore, order: .reverse)
+    ]
     let rootURL: URL?
     let createProject: (String) -> Void
 
@@ -21,7 +28,7 @@ public struct PlanningView: View {
         ) {
             setupBar
             baselineCard
-            searchBar
+            filterBar
         } table: {
             recommendationList
         }
@@ -30,6 +37,7 @@ public struct PlanningView: View {
         .accessibilityIdentifier("v2.detail.planning")
         .task { store.activate() }
         .task(id: rootURL) { store.setRootURL(rootURL) }
+        .onChange(of: sortOrder) { _, newValue in store.setSortOrder(newValue) }
     }
 
     /// Backs the "Camera and optics" header's ⓘ button.
@@ -99,16 +107,65 @@ public struct PlanningView: View {
         .accessibilityIdentifier("v2.planning.integration")
     }
 
-    private var searchBar: some View {
-        HStack {
-            TextField("Catalog number, English or Hungarian name", text: $store.searchText)
-                .textFieldStyle(.roundedBorder)
-            Toggle("Useful framing only", isOn: $store.usefulFramingOnly)
+    /// The planner's fixed filter and action bar. It lives in
+    /// `WorkspaceTablePage`'s non-scrolling toolbar slot, so it stays put
+    /// while the target table scrolls underneath it.
+    private var filterBar: some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+            HStack(spacing: AstroTokens.Spacing.standard) {
+                DatePicker(
+                    "Night",
+                    selection: Binding(
+                        get: { store.planningDate ?? Date() },
+                        set: { store.setPlanningDate($0) }
+                    ),
+                    displayedComponents: .date
+                )
+                .datePickerStyle(.field)
+                .fixedSize()
+                .accessibilityIdentifier("v2.planning.date")
+                .help("Plan for a different night. Ranking is computed for that night's sky.")
+
+                Button("Today") { store.setPlanningDate(Date()) }
+                    .disabled(store.isPlanningToday())
+                    .accessibilityIdentifier("v2.planning.today")
+                    .help("Go back to planning for tonight.")
+
+                Divider().frame(height: 16)
+
+                Toggle(
+                    "Hide targets that aren't photographable",
+                    isOn: Binding(
+                        get: { !store.showLowAltitudeTargets },
+                        set: { store.showLowAltitudeTargets = !$0 }
+                    )
+                )
                 .toggleStyle(.checkbox)
-            Toggle("Show low-altitude targets", isOn: $store.showLowAltitudeTargets)
-                .toggleStyle(.checkbox)
-                .accessibilityIdentifier("v2.planning.show-low-altitude")
+                .accessibilityIdentifier("v2.planning.hide-unobservable")
+                .help("Targets that never clear the imaging altitude on the chosen night.")
+
+                Spacer()
+
+                Button("Plan Project") { planSelectedTarget() }
+                    .disabled(selectedTargetID == nil)
+                    .accessibilityIdentifier("v2.planning.plan-project")
+                    .help("Create a project for the selected target.")
+            }
+            HStack(spacing: AstroTokens.Spacing.standard) {
+                TextField("Catalog number, English or Hungarian name", text: $store.searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("v2.planning.search")
+                Toggle("Useful framing only", isOn: $store.usefulFramingOnly)
+                    .toggleStyle(.checkbox)
+            }
         }
+    }
+
+    private func planSelectedTarget() {
+        guard let selectedTargetID,
+              let row = store.filteredRecommendations.first(where: { $0.id == selectedTargetID })
+        else { return }
+        createProject(row.target.designation)
     }
 
     private var recommendationList: some View {
@@ -146,14 +203,50 @@ public struct PlanningView: View {
                         ContentUnavailableView.search(text: store.searchText)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        Table(store.filteredRecommendations, selection: $selectedTargetID) {
-                            TableColumn("Target") { row in
+                        Table(store.filteredRecommendations, selection: $selectedTargetID, sortOrder: $sortOrder) {
+                            TableColumn("Target", value: \.target.designation) { row in
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(displayName(row)).font(.headline)
                                     Text(row.target.kind.rawValue).font(.caption).foregroundStyle(.secondary)
                                 }
                                 .padding(.vertical, 4)
                             }
+                            TableColumn("Score", value: \.planningScore) { row in
+                                Text(row.planningScore, format: .number.precision(.fractionLength(2)))
+                                    .font(.headline.monospacedDigit())
+                            }
+                            .width(min: 62, ideal: 72)
+                            TableColumn("Photographable", value: \.photographableFactor) { row in
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text(percent(row.photographableFactor))
+                                        .font(.callout.monospacedDigit()).fontWeight(.medium)
+                                    if let visibleHours = row.visibleHours {
+                                        Text("\(visibleHours, format: .number.precision(.fractionLength(1))) h")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                            .width(min: 96, ideal: 112)
+                            TableColumn("Frame fill", value: \.frameFillFactor) { row in
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text(percent(row.frameFillFactor))
+                                        .font(.callout.monospacedDigit()).fontWeight(.medium)
+                                    Text("\((row.frameCoverage * 100), format: .number.precision(.fractionLength(0)))% of edge")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .width(min: 90, ideal: 108)
+                            TableColumn("Moon", value: \.moonFactor) { row in
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text(percent(row.moonFactor))
+                                        .font(.callout.monospacedDigit()).fontWeight(.medium)
+                                    if let separation = row.moonSeparationDeg {
+                                        Text("\(separation, format: .number.precision(.fractionLength(0)))° away")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                            .width(min: 74, ideal: 88)
                             TableColumn("Tonight's sky") { row in
                                 VStack(alignment: .leading, spacing: 2) {
                                     if row.isLowAltitude {
@@ -208,6 +301,10 @@ public struct PlanningView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("v2.planning.recommendations")
+    }
+
+    private func percent(_ factor: Double) -> String {
+        (factor * 100).formatted(.number.precision(.fractionLength(0))) + "%"
     }
 
     private func skyDetail(_ row: PlanningRecommendation) -> String {

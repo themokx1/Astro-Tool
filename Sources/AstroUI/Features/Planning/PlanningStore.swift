@@ -79,6 +79,39 @@ public final class PlanningStore {
             recomputeFilteredRecommendations()
         }
     }
+    /// The table's column sort. Defaults to the composite score, descending —
+    /// the whole point of the score is that the first row is the best target
+    /// for the chosen night.
+    public private(set) var sortOrder: [KeyPathComparator<PlanningRecommendation>] = [
+        KeyPathComparator(\PlanningRecommendation.planningScore, order: .reverse)
+    ]
+
+    /// The night being planned for. `nil` until `activate()` sets it to
+    /// today, so a test that injects a fixed sky context keeps using that
+    /// context's own date. Same-value guarded like every other setter here:
+    /// a `DatePicker` binding re-asserts its value during AppKit's update
+    /// pass, and an unguarded write would re-run the whole pipeline (and, as
+    /// five separate freeze regressions in this file showed, can close an
+    /// invalidation loop).
+    public private(set) var planningDate: Date?
+
+    /// Plans for a different night. Normalised to the start of that day, so
+    /// picking the same date twice — which a `DatePicker` does routinely — is
+    /// a genuine no-op rather than a fresh recompute for a new timestamp.
+    public func setPlanningDate(_ date: Date, calendar: Calendar = .current) {
+        let normalized = calendar.startOfDay(for: date)
+        guard normalized != planningDate else { return }
+        planningDate = normalized
+        refresh()
+    }
+
+    /// Whether the planner is looking at tonight — what the "Today" button
+    /// disables itself on.
+    public func isPlanningToday(now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        guard let planningDate else { return true }
+        return calendar.isDate(planningDate, inSameDayAs: now)
+    }
+
     /// Off by default: a target that can't clear the imaging altitude
     /// threshold tonight (`PlanningRecommendation.isLowAltitude`) must not
     /// read as a good suggestion (the bug this store was rebuilt to fix --
@@ -220,11 +253,13 @@ public final class PlanningStore {
     /// this from `.task`, which runs once per view identity.
     private var isActivated = false
 
-    public func activate() {
+    public func activate(now: Date = Date(), calendar: Calendar = .current) {
         guard !isActivated else { return }
         isActivated = true
         registerReferenceDefaults()
         observeDefaultsChanges()
+        // The planner opens on tonight; the date picker can move it from here.
+        planningDate = calendar.startOfDay(for: now)
         refresh()
     }
 
@@ -297,6 +332,7 @@ public final class PlanningStore {
         let rootURL = rootURL
         let resolveSkyContext = skyContextProvider
         let compute = computeRecommendations
+        let plannedDate = planningDate
         let task = Task { [weak self] in
             let skyContext = try? await resolveSkyContext(rootURL)
             let query = PlanningQuery(
@@ -306,7 +342,10 @@ public final class PlanningStore {
                 referenceFocalRatio: referenceFocalRatio,
                 referenceSurfaceBrightness: referenceSurfaceBrightness,
                 site: skyContext?.site,
-                date: skyContext?.date ?? Date()
+                // The night the user is planning for. `skyContext.date` is
+                // only the fallback for a store that never had a date set
+                // (tests injecting a fixed context); the picker owns this.
+                date: plannedDate ?? skyContext?.date ?? Date()
             )
             let result = await Task.detached(priority: .userInitiated) {
                 compute(query)
@@ -341,7 +380,21 @@ public final class PlanningStore {
         if !showLowAltitudeTargets {
             rows = rows.filter { !$0.isLowAltitude }
         }
+        // Sorting happens HERE, not in `PlanningView.body`: the table can hold
+        // the whole catalog, and re-sorting it on every layout pass is exactly
+        // the class of render-path work that froze this page five times.
+        if !sortOrder.isEmpty {
+            rows.sort(using: sortOrder)
+        }
         filteredRecommendations = rows
+    }
+
+    /// Applies the column sort the user clicked in the table header. Same-value
+    /// guarded like every other setter here.
+    public func setSortOrder(_ newValue: [KeyPathComparator<PlanningRecommendation>]) {
+        guard newValue != sortOrder else { return }
+        sortOrder = newValue
+        recomputeFilteredRecommendations()
     }
 
     private func adoptSelectedSetupDefaults() {

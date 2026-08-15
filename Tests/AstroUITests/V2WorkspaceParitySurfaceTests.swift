@@ -166,8 +166,14 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(health.contains("TableColumn(\"Finding\""))
         #expect(health.contains("contextMenu(forSelectionType: String.self"))
         #expect(health.contains("v2.health.findings-table"))
-        #expect(planning.contains("Table(store.filteredRecommendations, selection: $selectedTargetID)"))
+        // Sortable since the planning-workbench work: the composite score and
+        // each of its three components are their own clickable column.
+        #expect(planning.contains("Table(store.filteredRecommendations, selection: $selectedTargetID, sortOrder: $sortOrder)"))
         #expect(planning.contains("TableColumn(\"Target\""))
+        #expect(planning.contains("TableColumn(\"Score\", value: \\.planningScore)"))
+        #expect(planning.contains("TableColumn(\"Photographable\", value: \\.photographableFactor)"))
+        #expect(planning.contains("TableColumn(\"Frame fill\", value: \\.frameFillFactor)"))
+        #expect(planning.contains("TableColumn(\"Moon\", value: \\.moonFactor)"))
         #expect(planning.contains("Plan Selected"))
         #expect(planning.contains("contextMenu(forSelectionType: String.self"))
         #expect(settings.contains("Table(store.filters, selection: $selectedFilterID)"))

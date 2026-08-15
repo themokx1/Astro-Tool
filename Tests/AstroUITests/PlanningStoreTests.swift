@@ -188,7 +188,13 @@ struct PlanningStoreTests {
         // (so `integrationHours` is non-nil) rather than trusting `.first`,
         // whose sky-driven ranking is now independent of the reference
         // hours being tested here.
-        let baselineRow = try #require(baseline.recommendations.first { $0.integrationHours != nil })
+        // ...and one whose DOUBLED estimate also stays inside that cap,
+        // otherwise the doubled store reports `nil` ("beyond model range")
+        // and there is no second figure to compare against.
+        let baselineRow = try #require(baseline.recommendations.first {
+            guard let hours = $0.integrationHours else { return false }
+            return hours * 2 < IntegrationTimeModel.maxPlausibleHours
+        })
         let baselineHours = try #require(baselineRow.integrationHours)
         // `PlanningStore` reads `UserDefaults` live rather than caching, so
         // this initial value is captured before the mutation below -- both

@@ -61,6 +61,19 @@ public struct PlanningRecommendation: Equatable, Sendable, Identifiable {
     /// double-counted). This is the PRIMARY sort key; `compositionScore` only
     /// breaks ties within it.
     public let skyScore: Double
+    /// `PlanningScore.composite` — the single number the Planning table sorts
+    /// by, and the one the user reads first. Its three components are carried
+    /// alongside so each is its own sortable column: an opaque ranking is
+    /// exactly what made the old framing-only order feel arbitrary.
+    public let planningScore: Double
+    /// Tonight's usable hours relative to the available astronomical
+    /// darkness, 0...1.
+    public let photographableFactor: Double
+    /// How well the target fills the frame, peaking at 90% of the short edge,
+    /// 0...1.
+    public let frameFillFactor: Double
+    /// Moon interference, 1 meaning "no problem", scaled by the Moon's phase.
+    public let moonFactor: Double
     /// `true` when `maxAltitudeDeg` never reaches the imaging threshold
     /// (`PlanningQuery.minAltitudeDeg`) tonight -- a target this app must
     /// never present as a good suggestion no matter how well it would frame.
@@ -155,6 +168,9 @@ public struct PlanningQuery: Sendable {
         // framing opinion, kept separate so the two aren't double-counted.
         let skyRows = DiscoveryPlanner.discover(date: date, site: site, minAltitudeDeg: minAltitudeDeg)
         let skyByDesignation = Dictionary(uniqueKeysWithValues: skyRows.map { ($0.target.designation, $0) })
+        // Tonight's darkness and Moon phase are the same for every target, so
+        // they are computed once here and handed to `PlanningScore` per row.
+        let night = Self.nightConditions(site: site, date: date)
 
         return targets.map { target in
             let coverage = max(0, (target.sizeArcmin ?? 0) / shortEdgeArcmin)
@@ -169,6 +185,21 @@ public struct PlanningQuery: Sendable {
             )
             let sky = skyByDesignation[target.designation]
             let isLowAltitude = (sky?.maxAltitudeDeg).map { $0 < minAltitudeDeg } ?? true
+            let photographable = PlanningScore.photographableFactor(
+                visibleHours: sky?.visibleHours, darknessHours: night.darknessHours
+            )
+            let frameFill = PlanningScore.frameFillFactor(frameCoverage: coverage)
+            let moon = PlanningScore.moonFactor(
+                separationDeg: sky?.moonSeparationDeg,
+                illuminationPercent: night.moonIlluminationPercent
+            )
+            let planningScore = PlanningScore.composite(
+                frameCoverage: coverage,
+                visibleHours: sky?.visibleHours,
+                darknessHours: night.darknessHours,
+                moonSeparationDeg: sky?.moonSeparationDeg,
+                moonIlluminationPercent: night.moonIlluminationPercent
+            )
 
             return PlanningRecommendation(
                 target: target,
@@ -184,6 +215,10 @@ public struct PlanningQuery: Sendable {
                 moonSeparationDeg: sky?.moonSeparationDeg,
                 skyVerdict: sky?.verdict ?? SkyVerdictText.noCoordinate,
                 skyScore: sky?.score ?? 0,
+                planningScore: planningScore,
+                photographableFactor: photographable,
+                frameFillFactor: frameFill,
+                moonFactor: moon,
                 isLowAltitude: isLowAltitude
             )
         }
@@ -195,10 +230,39 @@ public struct PlanningQuery: Sendable {
         // exactly the priority order the user's own bug report asked for.
         .sorted { lhs, rhs in
             if lhs.isLowAltitude != rhs.isLowAltitude { return !lhs.isLowAltitude }
+            if lhs.planningScore != rhs.planningScore { return lhs.planningScore > rhs.planningScore }
             if lhs.skyScore != rhs.skyScore { return lhs.skyScore > rhs.skyScore }
-            if lhs.compositionScore != rhs.compositionScore { return lhs.compositionScore > rhs.compositionScore }
             return lhs.frameCoverage > rhs.frameCoverage
         }
+    }
+
+    /// Tonight's astronomical darkness and Moon phase — one calculation for
+    /// the whole night, not per target. Returns zeroed conditions when the
+    /// night never gets dark (polar summer, or an unresolvable site), which
+    /// `PlanningScore` treats as "no usable window" rather than dividing by
+    /// zero.
+    struct NightConditions: Equatable, Sendable {
+        let darknessHours: Double
+        let moonIlluminationPercent: Double
+    }
+
+    static func nightConditions(site: SiteRule, date: Date) -> NightConditions {
+        guard let lat = site.latitudeDeg, let lon = site.longitudeDeg else {
+            return NightConditions(darknessHours: 0, moonIlluminationPercent: 0)
+        }
+        let twilight = SunMoon.astronomicalTwilight(
+            nightOf: date, latDeg: lat, lonDeg: lon, timeZone: .current
+        )
+        guard let dusk = twilight.duskUTC, let dawn = twilight.dawnUTC, dawn > dusk else {
+            return NightConditions(darknessHours: 0, moonIlluminationPercent: 0)
+        }
+        let midnight = dusk.addingTimeInterval(dawn.timeIntervalSince(dusk) / 2)
+        return NightConditions(
+            darknessHours: dawn.timeIntervalSince(dusk) / 3600,
+            moonIlluminationPercent: SunMoon.moonIlluminationPercent(
+                julianDay: JulianDate.julianDay(midnight)
+            )
+        )
     }
 
     struct IntegrationEstimate: Equatable, Sendable {
