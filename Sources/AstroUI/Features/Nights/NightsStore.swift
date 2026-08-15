@@ -29,9 +29,20 @@ public struct NightRow: Equatable, Sendable, Identifiable {
         return String(format: "%d:%02d", minutes / 60, minutes % 60)
     }
     public var excludedFrames: Int { max(0, snapshot.totalFrames - snapshot.usableFrames) }
+    /// V2 product/UX audit (2026-08-15) section 2.3, CRITICAL: this used to
+    /// be `excludedFrames > 0`, which meant *rejecting* a bad frame during
+    /// morning triage flipped the night to "Needs review" forever -- there
+    /// was no way back to `.ready` short of un-rejecting it. "Needs review"
+    /// now means what it says: frames whose verdict is still `.undecided`.
+    /// A night where every frame has been decided -- accepted, rejected, or
+    /// a mix -- does not need review, even though some frames may have been
+    /// rejected along the way. A night with zero usable frames (nothing
+    /// left to review, whether because it has no frames at all or because
+    /// everything in it was rejected) is `.empty` rather than `.needsReview`
+    /// -- there is nothing left to triage in either case.
     public var triageState: TriageState {
         if snapshot.usableFrames == 0 { return .empty }
-        return excludedFrames > 0 ? .needsReview : .ready
+        return snapshot.undecidedFrames > 0 ? .needsReview : .ready
     }
 }
 

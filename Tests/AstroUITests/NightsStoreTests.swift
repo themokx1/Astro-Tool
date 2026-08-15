@@ -102,6 +102,69 @@ struct NightsStoreTests {
         #expect(store.planningRows.map(\.summary.date) == ["2026-08-15", "2026-08-14"])
     }
 
+    // V2 product/UX audit (2026-08-15) section 2.3, CRITICAL: `triageState`
+    // used to flip to `.needsReview` from `excludedFrames > 0`, so rejecting
+    // a bad frame during morning triage -- the correct thing to do --
+    // permanently marked the night as needing review, with no way back. The
+    // rule now keys off `undecidedFrames`: still-undecided frames mean the
+    // night needs review; a night where every frame has a verdict does not,
+    // even when some of those verdicts are rejections.
+
+    @Test("A night with undecided frames needs review")
+    func nightWithUndecidedFramesNeedsReview() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "M 31", displayName: "M 31", phase: .collecting)
+        let night = NightRecord(id: UUID(), localDate: "2026-08-08", timeZoneID: "Europe/Budapest")
+        let series = makeSeries(project: project.id, night: night.id, exposure: 60)
+        try await metadata.save(MetadataWriteBatch(projects: [project], nights: [night], series: [series]))
+        try await metadata.save(MetadataWriteBatch(frameDecisions: [
+            FrameDecisionRecord(id: UUID(), seriesID: series.id, relativePath: "a.fit", verdict: .accepted, logicallyExcluded: false),
+            FrameDecisionRecord(id: UUID(), seriesID: series.id, relativePath: "b.fit", verdict: .undecided, logicallyExcluded: false),
+        ]))
+        let store = NightsStore(metadataFactory: { _ in metadata })
+
+        try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        #expect(store.nights[0].triageState == .needsReview)
+    }
+
+    @Test("A night where every frame is accepted-or-rejected does not need review, even with rejections")
+    func fullyDecidedNightDoesNotNeedReview() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "M 31", displayName: "M 31", phase: .collecting)
+        let night = NightRecord(id: UUID(), localDate: "2026-08-08", timeZoneID: "Europe/Budapest")
+        let series = makeSeries(project: project.id, night: night.id, exposure: 60)
+        try await metadata.save(MetadataWriteBatch(projects: [project], nights: [night], series: [series]))
+        try await metadata.save(MetadataWriteBatch(frameDecisions: [
+            FrameDecisionRecord(id: UUID(), seriesID: series.id, relativePath: "a.fit", verdict: .accepted, logicallyExcluded: false),
+            FrameDecisionRecord(id: UUID(), seriesID: series.id, relativePath: "b.fit", verdict: .rejected, logicallyExcluded: true),
+            FrameDecisionRecord(id: UUID(), seriesID: series.id, relativePath: "c.fit", verdict: .rejected, logicallyExcluded: true),
+        ]))
+        let store = NightsStore(metadataFactory: { _ in metadata })
+
+        try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        #expect(store.nights[0].triageState == .ready)
+        #expect(store.needsReviewCount == 0)
+    }
+
+    @Test("A night with zero usable frames is empty, not needing review, even fully decided")
+    func fullyRejectedNightIsEmpty() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "M 31", displayName: "M 31", phase: .collecting)
+        let night = NightRecord(id: UUID(), localDate: "2026-08-08", timeZoneID: "Europe/Budapest")
+        let series = makeSeries(project: project.id, night: night.id, exposure: 60)
+        try await metadata.save(MetadataWriteBatch(projects: [project], nights: [night], series: [series]))
+        try await metadata.save(MetadataWriteBatch(frameDecisions: [
+            FrameDecisionRecord(id: UUID(), seriesID: series.id, relativePath: "a.fit", verdict: .rejected, logicallyExcluded: true),
+        ]))
+        let store = NightsStore(metadataFactory: { _ in metadata })
+
+        try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        #expect(store.nights[0].triageState == .empty)
+    }
+
     private func makeSeries(project: UUID, night: UUID, exposure: Double) -> SeriesRecord {
         SeriesRecord(id: UUID(), projectID: project, nightID: night, setupID: nil,
             setupDescriptor: "ASI2600MC", sensorMode: .osc, passband: .dualBand,
