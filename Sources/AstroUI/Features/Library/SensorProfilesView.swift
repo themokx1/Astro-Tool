@@ -62,7 +62,7 @@ public struct SensorProfilesView: View {
                             .buttonStyle(.borderedProminent)
                         if !snapshot.missingCombos.isEmpty {
                             Text("\(snapshot.missingCombos.count) camera/gain/offset combo(s) in this library have no usable measurement.")
-                                .font(.caption).foregroundStyle(.orange)
+                                .font(.caption).foregroundStyle(AstroTokens.Color.warning)
                         }
                     }
                 } else {
@@ -95,7 +95,7 @@ public struct SensorProfilesView: View {
 
     private func missingComboRow(_ combo: MissingSensorProfileCombo) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(AstroTokens.Color.warning)
             VStack(alignment: .leading, spacing: 2) {
                 Text(comboText(camera: combo.camera, gain: combo.gain, offset: combo.offset)).font(.body.bold())
                 Text("Light frames use this combo, but no usable sensor profile is on record.")
@@ -110,9 +110,9 @@ public struct SensorProfilesView: View {
             HStack {
                 Text(comboText(camera: profile.camera, gain: profile.gain, offset: profile.offset)).font(.headline)
                 if profile.isEstimatorStale {
-                    Text("Stale").font(.caption2.bold()).foregroundStyle(.orange)
+                    Text("Stale").font(.caption2.bold()).foregroundStyle(AstroTokens.Color.warning)
                         .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Capsule().fill(Color.orange.opacity(0.15)))
+                        .background(Capsule().fill(AstroTokens.Color.warning.opacity(0.15)))
                 }
                 Spacer()
                 Text(profile.measuredAt.formatted(date: .abbreviated, time: .omitted)).foregroundStyle(.secondary)
@@ -204,13 +204,13 @@ private struct SensorMeasureConfirmSheet: View {
                             .accessibilityIdentifier("v2.sensor-profiles.measure-cancel")
                     } else {
                         Text("Measurement finished. \(store.snapshot?.profiles.count ?? 0) profile(s) on record.")
-                            .foregroundStyle(.green)
+                            .foregroundStyle(AstroTokens.Color.success)
                     }
                 }
             }
 
             if let errorMessage = store.errorMessage {
-                Text(errorMessage).foregroundStyle(.red)
+                Text(errorMessage).foregroundStyle(AstroTokens.Color.danger)
             }
 
             HStack {

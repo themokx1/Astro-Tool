@@ -204,13 +204,13 @@ public struct CalibrationView: View {
     private func masterStatus(_ master: CalibrationMasterInfo) -> some View {
         HStack(spacing: AstroTokens.Spacing.compact) {
             if master.isStale {
-                Label("Stale", systemImage: "clock.badge.exclamationmark").foregroundStyle(.orange)
+                Label("Stale", systemImage: "clock.badge.exclamationmark").foregroundStyle(AstroTokens.Color.warning)
             }
             if master.isUnused {
                 Label("Unused", systemImage: "questionmark.circle").foregroundStyle(.secondary)
             }
             if !master.isStale, !master.isUnused {
-                Label("OK", systemImage: "checkmark.circle").foregroundStyle(.green)
+                Label("OK", systemImage: "checkmark.circle").foregroundStyle(AstroTokens.Color.success)
             }
         }
         .font(.caption)
@@ -255,10 +255,10 @@ public struct CalibrationView: View {
                 }
                 if let receipt = store.lastReceipt {
                     Label("Linked \(receipt.linked.count) file(s), skipped \(receipt.skipped.count)", systemImage: "checkmark.seal")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(AstroTokens.Color.success)
                 }
                 if let planErrorMessage = store.planErrorMessage {
-                    Text(planErrorMessage).foregroundStyle(.orange)
+                    Text(planErrorMessage).foregroundStyle(AstroTokens.Color.warning)
                 }
                 if store.accessMode != .mutationEnabled {
                     Label("Requires write access. Enable write operations in Settings to apply this link.", systemImage: "lock.shield")
@@ -272,7 +272,7 @@ public struct CalibrationView: View {
                         .help("Link the matched master calibration files into this session")
                 }
             } else if let planErrorMessage = store.planErrorMessage {
-                Text(planErrorMessage).foregroundStyle(.orange)
+                Text(planErrorMessage).foregroundStyle(AstroTokens.Color.warning)
             }
         }
         .padding(AstroTokens.Spacing.section)

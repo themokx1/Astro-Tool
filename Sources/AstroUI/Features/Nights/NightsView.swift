@@ -153,7 +153,7 @@ public struct NightsView: View {
                     .width(min: 75, ideal: 90)
                 TableColumn("Triage") { night in
                     Label(night.triageState.rawValue, systemImage: night.triageState == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                        .foregroundStyle(night.triageState == .ready ? .green : .orange)
+                        .foregroundStyle(night.triageState == .ready ? AstroTokens.Color.success : AstroTokens.Color.warning)
                 }
                 .width(min: 110, ideal: 125)
             }

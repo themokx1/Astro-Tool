@@ -277,7 +277,7 @@ private struct ProjectNightSection: View {
                     if item.excludedFrames > 0 {
                         Text("\(item.excludedFrames) excluded")
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(AstroTokens.Color.warning)
                     }
                 }
                 .padding(.vertical, 5)
@@ -397,7 +397,7 @@ public struct NewProjectView: View {
             }
             if let saveError {
                 Label(saveError, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout).foregroundStyle(.red)
+                    .font(.callout).foregroundStyle(AstroTokens.Color.danger)
             }
             HStack {
                 Spacer()

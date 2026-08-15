@@ -132,7 +132,7 @@ public struct InsightsView: View {
                         title: "Efficiency",
                         unit: "%",
                         points: trendData(insight) { $0.efficiencyPercent },
-                        color: .green
+                        color: AstroTokens.Color.success
                     )
                 }
                 recentTrendSessions(insight)
@@ -224,9 +224,9 @@ public struct InsightsView: View {
         GroupBox("Capture efficiency") {
             HStack(spacing: AstroTokens.Spacing.spacious) {
                 Label("\(insight.usableFrameCount) usable", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(AstroTokens.Color.success)
                 Label("\(insight.rejectedFrameCount) rejected", systemImage: "xmark.circle.fill")
-                    .foregroundStyle(insight.rejectedFrameCount == 0 ? Color.secondary : Color.orange)
+                    .foregroundStyle(insight.rejectedFrameCount == 0 ? Color.secondary : AstroTokens.Color.warning)
                 Spacer()
                 Text(insight.captureEfficiency, format: .percent.precision(.fractionLength(0)))
                     .font(.title2.weight(.semibold).monospacedDigit())

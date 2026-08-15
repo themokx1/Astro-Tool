@@ -147,7 +147,7 @@ public struct ResultsView: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            Image(systemName: "square.stack.3d.up.fill").font(.title2).foregroundStyle(.purple)
+            Image(systemName: "square.stack.3d.up.fill").font(.title2).foregroundStyle(AstroTokens.Color.spectralViolet)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Results").font(.title2.bold())
                 Text("\(project.displayName) · stacks, variants, and provenance").foregroundStyle(.secondary)
@@ -202,7 +202,7 @@ public struct ResultsView: View {
                             .font(.headline)
                         if snapshot.publishableResultID == result.id {
                             Text("Publishable").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(.green.opacity(0.18), in: Capsule())
+                                .background(AstroTokens.Color.success.opacity(0.18), in: Capsule())
                                 .accessibilityIdentifier("v2.results.publishable")
                         }
                     }

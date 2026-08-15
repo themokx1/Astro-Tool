@@ -161,7 +161,7 @@ private struct ExtendedCatalogSettingsSection: View {
                 }
             }
             if let errorMessage = store.lastErrorMessage {
-                Text(errorMessage).font(.caption).foregroundStyle(.red)
+                Text(errorMessage).font(.caption).foregroundStyle(AstroTokens.Color.danger)
             }
             Text("This research has made use of the SIMBAD database and the VizieR catalogue access tool, CDS, Strasbourg, France.")
                 .font(.caption2).foregroundStyle(.secondary)
@@ -331,7 +331,7 @@ private struct EquipmentEvaluationSettingsView: View {
                 Picker("Passband", selection: $passband) {
                     ForEach(EquipmentFilterPassband.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
+                if let errorMessage { Text(errorMessage).foregroundStyle(AstroTokens.Color.danger) }
                 Button("Add Filter") {
                     do {
                         _ = try store.createFilter(manufacturer: manufacturer, model: model, passband: passband)
@@ -420,10 +420,10 @@ private struct IntegrationsSupportSettingsView: View {
                     Button("Save…") { saveDiagnostics() }
                         .disabled(diagnostics == nil)
                         .accessibilityIdentifier("v2.settings.support.save")
-                    if copied { Label("Copied", systemImage: "checkmark").foregroundStyle(.green) }
+                    if copied { Label("Copied", systemImage: "checkmark").foregroundStyle(AstroTokens.Color.success) }
                 }
                 if let saveErrorMessage {
-                    Text(saveErrorMessage).font(.caption).foregroundStyle(.red)
+                    Text(saveErrorMessage).font(.caption).foregroundStyle(AstroTokens.Color.danger)
                 }
                 if let diagnostics {
                     ScrollView {

@@ -214,8 +214,8 @@ public struct HealthView: View {
                                     Text(run.ranAt, style: .date).font(.callout.monospaced())
                                     Text("\(run.findingCount) finding(s)").foregroundStyle(.secondary)
                                     Spacer()
-                                    Text("+\(run.newCount) new").foregroundStyle(.orange)
-                                    Text("−\(run.resolvedCount) resolved").foregroundStyle(.green)
+                                    Text("+\(run.newCount) new").foregroundStyle(AstroTokens.Color.warning)
+                                    Text("−\(run.resolvedCount) resolved").foregroundStyle(AstroTokens.Color.success)
                                 }
                             }
                         }
@@ -283,7 +283,7 @@ public struct HealthView: View {
     }
 
     private func icon(_ severity: LibraryHealthSeverity) -> String { severity == .healthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill" }
-    private func color(_ severity: LibraryHealthSeverity) -> Color { severity == .healthy ? .green : .orange }
+    private func color(_ severity: LibraryHealthSeverity) -> Color { severity == .healthy ? AstroTokens.Color.success : AstroTokens.Color.warning }
     /// V2 UI/UX audit (2026-08-14) section 4: integrity findings used to get
     /// "No action needed" for the whole `.integrity` category regardless of
     /// severity -- but a checksum mismatch (severity != `.healthy`) is

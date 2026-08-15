@@ -270,7 +270,7 @@ public struct ProjectWorkspaceView: View {
                         .frame(minHeight: 180)
                         .padding(6)
                 }
-                if let saveError { Text(saveError).foregroundStyle(.red) }
+                if let saveError { Text(saveError).foregroundStyle(AstroTokens.Color.danger) }
                 HStack {
                     Text(annotation.map { "Last saved \($0.updatedAt.formatted(date: .abbreviated, time: .shortened))" } ?? "Not saved yet")
                         .font(.caption).foregroundStyle(.secondary)

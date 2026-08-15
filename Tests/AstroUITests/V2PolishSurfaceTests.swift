@@ -105,6 +105,40 @@ struct V2PolishSurfaceTests {
         #expect(offenders.isEmpty, "Hardcoded color literals in: \(offenders.joined(separator: ", "))")
     }
 
+    // MARK: (c2) No bare status colors under Features/ or Settings/ (S9).
+
+    @Test("No file under Features/ or Settings/ hardcodes a bare status color -- use AstroTokens.Color instead")
+    func noBareStatusColorLiterals() throws {
+        // V2 UI/UX audit (2026-08-14) systemic pattern S9: `AstroTokens`
+        // now has `success`/`warning`/`danger` tokens specifically so status
+        // meaning (healthy/needs-attention/failed) reads consistently across
+        // every screen -- this gate keeps a bare `.green`/`.orange`/`.red`/
+        // `.purple` (or the explicit `Color.` spelling of the same) from
+        // creeping back in. Planning is intentionally excluded: it is under
+        // a separate, currently-frozen read-only audit and was not part of
+        // this sweep.
+        let root = repositoryRoot.appendingPathComponent("Sources/AstroUI")
+        let directories = ["Features", "Settings"]
+        let excludedPathSuffixes = ["Features/Planning/PlanningView.swift", "Features/Planning/SkyPathChart.swift"]
+        let bareColorPattern = try NSRegularExpression(
+            pattern: #"(?<![A-Za-z0-9_])\.(green|orange|red|purple)(?![A-Za-z0-9_])|\bColor\.(green|orange|red|purple)\b"#
+        )
+        var offenders: [String] = []
+        for directory in directories {
+            let base = root.appendingPathComponent(directory)
+            guard let enumerator = FileManager.default.enumerator(at: base, includingPropertiesForKeys: nil) else { continue }
+            for case let url as URL in enumerator where url.pathExtension == "swift" {
+                if excludedPathSuffixes.contains(where: { url.path.hasSuffix($0) }) { continue }
+                guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+                let range = NSRange(text.startIndex..., in: text)
+                if bareColorPattern.firstMatch(in: text, range: range) != nil {
+                    offenders.append(url.lastPathComponent)
+                }
+            }
+        }
+        #expect(offenders.isEmpty, "Bare status color literals in: \(offenders.joined(separator: ", "))")
+    }
+
     // MARK: (d) Primary toolbar buttons carry `.help(` tooltips.
 
     @Test("Primary toolbar controls in the main workspaces carry .help( tooltips")
