@@ -12,7 +12,7 @@ struct LibraryHealthStoreTests {
         let fixture = try Self.makeFixture()
         let store = LibraryHealthStore(
             metadataFactory: { _ in fixture.metadata },
-            queryFactory: { _, metadata in
+            queryFactory: { _, metadata, _ in
                 LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: metadata)
             }
         )
@@ -29,7 +29,7 @@ struct LibraryHealthStoreTests {
         let fixture = try Self.makeFixture()
         let store = LibraryHealthStore(
             metadataFactory: { _ in fixture.metadata },
-            queryFactory: { _, metadata in
+            queryFactory: { _, metadata, _ in
                 LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: metadata)
             }
         )
@@ -55,7 +55,7 @@ struct LibraryHealthStoreTests {
         let fixture = try Self.makeFixture()
         let store = LibraryHealthStore(
             metadataFactory: { _ in fixture.metadata },
-            queryFactory: { _, metadata in
+            queryFactory: { _, metadata, _ in
                 LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: metadata)
             }
         )
@@ -76,7 +76,7 @@ struct LibraryHealthStoreTests {
         let fixture = try Self.makeFixture()
         let store = LibraryHealthStore(
             metadataFactory: { _ in fixture.metadata },
-            queryFactory: { _, metadata in
+            queryFactory: { _, metadata, _ in
                 LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: metadata)
             },
             auditCommandFactory: { _, metadata in
@@ -99,7 +99,7 @@ struct LibraryHealthStoreTests {
     func runAuditWithNoLibraryOpenNoOps() async throws {
         let store = LibraryHealthStore(
             metadataFactory: { _ in throw LibraryHealthStoreTestFailure.shouldNotBeCalled },
-            queryFactory: { _, _ in throw LibraryHealthStoreTestFailure.shouldNotBeCalled },
+            queryFactory: { _, _, _ in throw LibraryHealthStoreTestFailure.shouldNotBeCalled },
             auditCommandFactory: { _, _ in throw LibraryHealthStoreTestFailure.shouldNotBeCalled }
         )
         let host = OperationHost(center: OperationCenter())
@@ -115,7 +115,7 @@ struct LibraryHealthStoreTests {
         let fixture = try Self.makeFixture()
         let store = LibraryHealthStore(
             metadataFactory: { _ in fixture.metadata },
-            queryFactory: { _, metadata in
+            queryFactory: { _, metadata, _ in
                 LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: metadata)
             },
             auditCommandFactory: { _, metadata in
@@ -137,11 +137,77 @@ struct LibraryHealthStoreTests {
         #expect(store.lastVerifySummary?.ok == 1)
     }
 
+    // V2 product/UX audit (2026-08-15) section 3(a), CRITICAL: `load` used to
+    // ignore access mode entirely -- Health always reported "Read only".
+
+    @Test("Loading with mutation-enabled access mode makes the snapshot report writable")
+    func loadingWithMutationEnabledReportsWritable() async throws {
+        let fixture = try Self.makeFixture()
+        let store = LibraryHealthStore(
+            metadataFactory: { _ in fixture.metadata },
+            queryFactory: { _, metadata, accessMode in
+                LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: metadata, accessMode: accessMode)
+            }
+        )
+
+        await store.load(rootURL: fixture.root, accessMode: .mutationEnabled)
+
+        #expect(store.accessMode == .mutationEnabled)
+        #expect(store.snapshot?.isReadOnly == false)
+    }
+
+    // V2 product/UX audit (2026-08-15) section 3(b), CRITICAL: a verify run
+    // that actually found a mismatch used to leave the findings table
+    // showing only the generic "healthy" placeholder -- this proves the
+    // mismatch this test manufactures becomes a real, visible finding after
+    // the store refreshes.
+
+    @Test("A detected mismatch on re-verify becomes a visible integrity finding in the snapshot")
+    func detectedMismatchBecomesVisibleFinding() async throws {
+        let fixture = try Self.makeFixture()
+        let store = LibraryHealthStore(
+            metadataFactory: { _ in fixture.metadata },
+            queryFactory: { _, metadata, accessMode in
+                LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: metadata, accessMode: accessMode)
+            },
+            auditCommandFactory: { _, metadata in
+                AuditRunCommand(db: fixture.db, config: fixture.config, metadata: metadata)
+            }
+        )
+        await store.load(rootURL: fixture.root)
+        let host = OperationHost(center: OperationCenter())
+
+        // Establish a baseline hash for the one tracked file first.
+        await store.verifyIntegrity(
+            options: VerifyRunOptions(sampleFraction: nil, fillMissingChecksums: true),
+            rootURL: fixture.root,
+            operationHost: host
+        )
+        try await waitUntil { host.activeOperations.isEmpty }
+        #expect(!(store.snapshot?.items.contains { $0.category == .integrity && $0.severity != .healthy } ?? true))
+
+        // Now change the file's content and size -- both its recorded size
+        // and mtime will disagree with what's on disk, which
+        // `FixityVerifier` classifies as `.modified`.
+        let lightURL = fixture.root.appendingPathComponent("sessions/IC_1396/2026-08-08/lights/light.fit")
+        try Data("a very different, much longer light frame payload".utf8).write(to: lightURL)
+
+        await store.verifyIntegrity(
+            options: VerifyRunOptions(sampleFraction: nil, fillMissingChecksums: false),
+            rootURL: fixture.root,
+            operationHost: host
+        )
+        try await waitUntil { host.activeOperations.isEmpty }
+
+        let finding = try #require(store.snapshot?.items.first { $0.category == .integrity && $0.severity != .healthy })
+        #expect(finding.detail.contains("light.fit"))
+    }
+
     @Test("Verifying integrity with no library open notifies instead of crashing")
     func verifyIntegrityWithNoLibraryOpenNoOps() async throws {
         let store = LibraryHealthStore(
             metadataFactory: { _ in throw LibraryHealthStoreTestFailure.shouldNotBeCalled },
-            queryFactory: { _, _ in throw LibraryHealthStoreTestFailure.shouldNotBeCalled },
+            queryFactory: { _, _, _ in throw LibraryHealthStoreTestFailure.shouldNotBeCalled },
             auditCommandFactory: { _, _ in throw LibraryHealthStoreTestFailure.shouldNotBeCalled }
         )
         let host = OperationHost(center: OperationCenter())

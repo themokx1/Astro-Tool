@@ -54,8 +54,23 @@ public struct HealthView: View {
     ]
     @State private var displayedItems: [LibraryHealthItem] = []
 
+    /// V2 product/UX audit (2026-08-15) section 3(a), CRITICAL: this page's
+    /// own audit/verify checks never touch source files regardless of
+    /// `accessMode` (they only ever write to AstroTool's own index -- see
+    /// `AuditRunCommand`'s own doc comment), so "Read-only diagnostics" always
+    /// holds for what THIS page does. But stated with no qualification, it
+    /// reads as "nothing here can write", when write operations may well be
+    /// enabled for the Calibration/Cleanup actions this page links to --
+    /// exactly the gap the audit flagged between Health's old unconditional
+    /// "Read only" claim and Calibration's honest "Writable" one click away.
+    private var subtitleText: String {
+        accessMode == .mutationEnabled
+            ? "Calibration and integrity checks that never modify source files; write operations are enabled for actions elsewhere in this library."
+            : "Actionable calibration and integrity checks without changing source files."
+    }
+
     public var body: some View {
-        WorkspaceTablePage(eyebrow: "Read-only diagnostics", title: "Library Health", subtitle: "Actionable calibration and integrity checks without changing source files.") {
+        WorkspaceTablePage(eyebrow: "Read-only diagnostics", title: "Library Health", subtitle: subtitleText) {
             toolbarContent
         } table: {
             tableContent
@@ -65,7 +80,7 @@ public struct HealthView: View {
         .onChange(of: sortOrder) { _, _ in recomputeDisplayedItems() }
         .onChange(of: category) { _, _ in recomputeDisplayedItems() }
         .task(id: store.snapshot) { recomputeDisplayedItems() }
-        .task(id: rootURL) { if let rootURL { await store.load(rootURL: rootURL) } }
+        .task(id: rootURL) { if let rootURL { await store.load(rootURL: rootURL, accessMode: accessMode) } }
         .navigationTitle("Library Health")
         .accessibilityLabel("Library Health")
         .accessibilityIdentifier("v2.detail.library.health")
@@ -108,11 +123,21 @@ public struct HealthView: View {
         if let snapshot = store.snapshot {
             HStack(spacing: AstroTokens.Spacing.standard) {
                 MetricCard(title: "Sessions", value: "\(snapshot.sessionCount)", detail: "Indexed nights", systemImage: "moon.stars")
-                MetricCard(title: "Calibration", value: "\(snapshot.calibrationIssues)", detail: "Needs attention", systemImage: "exclamationmark.triangle")
+                // V2 product/UX audit (2026-08-15) section 3(c): this only
+                // ever counts sessions with zero session flat/dark files --
+                // it never calls `CalibAnalyzer`/`CalibHealth`, so it never
+                // checks temperature, focal-length, filter, or rotator
+                // mismatch, or master-dark staleness (all real V1 checks).
+                // Narrowed to say so rather than imply a full calibration
+                // audit ran.
+                MetricCard(title: "Calibration", value: "\(snapshot.calibrationIssues)", detail: "Missing session flat/dark only", systemImage: "exclamationmark.triangle")
                 MetricCard(title: "Duplicates", value: "\(snapshot.duplicateFiles)", detail: "Additional copies", systemImage: "square.on.square")
                 MetricCard(title: "Organization", value: "\(snapshot.organizationIssues)", detail: "Reviewable residue", systemImage: "tray.full")
-                MetricCard(title: "Access", value: snapshot.isReadOnly ? "Read only" : "Writable", detail: "Images protected", systemImage: "lock.shield")
+                MetricCard(title: "Access", value: store.accessMode == .mutationEnabled ? "Writable" : "Read only", detail: "Images protected", systemImage: "lock.shield")
             }
+            Text("Calibration here only flags sessions with no session flat/dark file. Temperature, focal length, filter, rotator angle, and master-dark staleness are not checked -- see Calibration for those.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if let running = runningAuditOperation {
                 HStack {
                     ProgressView().controlSize(.small)
@@ -200,7 +225,7 @@ public struct HealthView: View {
         } else {
             ContentUnavailableView {
                 Label("No library open", systemImage: "externaldrive.badge.questionmark")
-            } description: { Text(store.errorMessage ?? "Choose an image library to run read-only health checks.") }
+            } description: { Text(store.errorMessage ?? "Choose an image library to run these read-only health checks.") }
             actions: { Button("Choose Image Library…", action: chooseLibrary).buttonStyle(.borderedProminent) }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -216,6 +241,41 @@ public struct HealthView: View {
                 Button("Calibration…", action: openCalibration).buttonStyle(.bordered)
                     .accessibilityIdentifier("v2.health.open-calibration")
                 Spacer()
+            }
+            // V2 product/UX audit (2026-08-15) section 3(b), CRITICAL:
+            // `store.lastVerifySummary` used to be recorded and never read
+            // by any view -- a verify run that found real corruption
+            // produced a generic success toast and nothing else. This
+            // renders the same facts V1's `AuditPage` showed (files
+            // checked, mismatches, when it ran), for this session's most
+            // recent run.
+            if let summary = store.lastVerifySummary {
+                GroupBox("Last verification (this session)") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: AstroTokens.Spacing.standard) {
+                            Text("\(summary.checked) checked").font(.callout.monospacedDigit())
+                            Text("\(summary.ok) ok").foregroundStyle(AstroTokens.Color.success)
+                            if summary.contentChanged > 0 {
+                                Text("\(summary.contentChanged) likely corrupted").foregroundStyle(AstroTokens.Color.danger)
+                            }
+                            if summary.modifiedInPlace > 0 {
+                                Text("\(summary.modifiedInPlace) suspicious").foregroundStyle(AstroTokens.Color.warning)
+                            }
+                            if summary.modified > 0 {
+                                Text("\(summary.modified) modified").foregroundStyle(.secondary)
+                            }
+                            if summary.readErrors > 0 {
+                                Text("\(summary.readErrors) unreadable").foregroundStyle(AstroTokens.Color.warning)
+                            }
+                            Spacer()
+                        }
+                        if summary.contentChanged > 0 || summary.modifiedInPlace > 0 {
+                            Text("See the Integrity findings below for exactly which files, and restore them from backup.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("v2.health.last-verify-summary")
             }
             GroupBox("Audit run history") {
                 if snapshot.auditRuns.isEmpty {

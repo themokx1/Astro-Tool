@@ -82,26 +82,40 @@ public struct LibraryHealthSnapshot: Equatable, Sendable {
 public struct LibraryHealthQuery: Sendable {
     private let indexDatabase: URL?
     private let metadata: MetadataStore?
-    private init(indexDatabase: URL? = nil, metadata: MetadataStore? = nil) {
+    /// V2 product/UX audit (2026-08-15) section 3(a), CRITICAL: `snapshot()`
+    /// used to hardcode `isReadOnly: true` no matter what -- Health claimed
+    /// "Read only" even with write operations enabled, while Calibration
+    /// (`CalibrationStore.accessMode`) one click away correctly said
+    /// "Writable". This is the real access mode, threaded the same way
+    /// `CleanupPreviewQuery`/`CalibrationLinkCommand` already do; the final
+    /// snapshot's `isReadOnly` is derived from it, not from whatever the
+    /// read path below happens to hand back.
+    private let accessMode: LibraryAccessMode
+    private init(indexDatabase: URL? = nil, metadata: MetadataStore? = nil, accessMode: LibraryAccessMode = .readOnly) {
         self.indexDatabase = indexDatabase
         self.metadata = metadata
+        self.accessMode = accessMode
     }
-    init(indexDatabaseForTesting: URL, metadata: MetadataStore? = nil) {
+    init(indexDatabaseForTesting: URL, metadata: MetadataStore? = nil, accessMode: LibraryAccessMode = .readOnly) {
         self.indexDatabase = indexDatabaseForTesting
         self.metadata = metadata
+        self.accessMode = accessMode
     }
     public static func fixture() -> Self { Self() }
-    public static func production(rootURL: URL, metadata: MetadataStore? = nil) throws -> Self {
+    public static func production(
+        rootURL: URL, metadata: MetadataStore? = nil, accessMode: LibraryAccessMode = .readOnly
+    ) throws -> Self {
         let identity = LibraryIdentity(rootURL: rootURL)
         let storage = try AppStoragePaths.production(libraryID: identity, libraryRoot: rootURL)
         let resolvedMetadata = try metadata ?? MetadataStore(storagePaths: storage)
-        return Self(indexDatabase: storage.indexDatabase, metadata: resolvedMetadata)
+        return Self(indexDatabase: storage.indexDatabase, metadata: resolvedMetadata, accessMode: accessMode)
     }
 
     /// `includeAcknowledged` controls whether an acked finding group is
     /// dropped from `items` (the default, matching V1's "hide by default")
     /// or kept in place (dimmed by the caller) with `isAcknowledged == true`.
     public func snapshot(includeAcknowledged: Bool = false) async throws -> LibraryHealthSnapshot {
+        let isReadOnly = accessMode != .mutationEnabled
         let base: LibraryHealthSnapshot
         if let indexDatabase {
             base = try Self.readSnapshot(indexDatabase: indexDatabase)
@@ -112,7 +126,13 @@ public struct LibraryHealthQuery: Sendable {
                 .init(id: "integrity", category: .integrity, severity: .healthy, title: "Source library protected", detail: "Health checks are read-only."),
             ], isReadOnly: true)
         }
-        guard let metadata else { return base }
+        guard let metadata else {
+            return LibraryHealthSnapshot(
+                sessionCount: base.sessionCount, calibrationIssues: base.calibrationIssues,
+                duplicateFiles: base.duplicateFiles, organizationIssues: base.organizationIssues,
+                items: base.items, isReadOnly: isReadOnly, auditRuns: base.auditRuns
+            )
+        }
 
         let ackedKeys = Set(try await metadata.acknowledgements().map(\.ackKey))
         let annotatedItems = base.items.map { item -> LibraryHealthItem in
@@ -124,7 +144,7 @@ public struct LibraryHealthQuery: Sendable {
         return LibraryHealthSnapshot(
             sessionCount: base.sessionCount, calibrationIssues: base.calibrationIssues,
             duplicateFiles: base.duplicateFiles, organizationIssues: base.organizationIssues,
-            items: visibleItems, isReadOnly: base.isReadOnly, auditRuns: auditRuns
+            items: visibleItems, isReadOnly: isReadOnly, auditRuns: auditRuns
         )
     }
 
@@ -190,19 +210,27 @@ public struct LibraryHealthQuery: Sendable {
         })
         var duplicateFiles = 0
         if try tableHasColumn(db, table: "files", column: "content_hash") {
+            // V2 product/UX audit (2026-08-15) section 3(c) cheap fix:
+            // this used to say "4 identical files" with no path at all, so
+            // there was no way to learn which files -- `GROUP_CONCAT` pulls
+            // back the actual paths sharing the hash so the detail names
+            // enough of them to act on.
             try db.query(
                 """
-                SELECT content_hash, COUNT(*), COALESCE(MAX(size), 0)
+                SELECT content_hash, COUNT(*), COALESCE(MAX(size), 0), GROUP_CONCAT(path, '\u{1}')
                 FROM files WHERE missing = 0 AND content_hash IS NOT NULL AND content_hash <> ''
                 GROUP BY content_hash HAVING COUNT(*) > 1;
                 """
             ) { row in
                 let count = Int(row.int64(1) ?? 0)
                 duplicateFiles += max(0, count - 1)
+                let paths = (row.string(3) ?? "").split(separator: "\u{1}").map(String.init)
+                let shown = paths.prefix(2).joined(separator: ", ")
+                let remaining = paths.count > 2 ? " and \(paths.count - 2) more" : ""
                 items.append(.init(
                     id: "duplicate|\(row.string(0) ?? "unknown")", category: .duplicates,
                     severity: .warning, title: "Duplicate content",
-                    detail: "\(count) identical files; \(max(0, count - 1)) additional copy can be reviewed safely."
+                    detail: "\(count) identical files: \(shown)\(remaining)."
                 ))
             }
         }
@@ -221,15 +249,99 @@ public struct LibraryHealthQuery: Sendable {
                 detail: "\(organizationIssues) residue file can be reviewed; nothing will be deleted automatically."
             ))
         }
-        items.append(.init(
-            id: "integrity", category: .integrity, severity: .healthy,
-            title: "Source library protected", detail: "This health scan opened only AstroTool's external index."
-        ))
+        // V2 product/UX audit (2026-08-15) section 3(b), CRITICAL: this used
+        // to be a single hardcoded "healthy" item, no matter what a prior
+        // `Verify Integrity…` run actually found -- a run that found real
+        // corruption produced a generic success toast and nothing else,
+        // while `HealthView` promised "Restore from backup" for a mismatch
+        // that could never appear here. `findings` from the most recent
+        // `kind = 'verify'` run (persisted by `FixityVerifier.run`, see its
+        // own doc comment) are real, durable evidence of what that run
+        // found; only when there are none does the reassuring placeholder
+        // stand. Titles/detail are written fresh in English here rather
+        // than passed through `findings.message` (Hungarian free text meant
+        // for the CLI), keyed off the same `category` strings
+        // `FixityVerifier.findings(from:)` already assigns.
+        let integrityItems = try Self.latestVerifyFindings(db: db)
+        if integrityItems.isEmpty {
+            items.append(.init(
+                id: "integrity", category: .integrity, severity: .healthy,
+                title: "Source library protected", detail: "This health scan opened only AstroTool's external index."
+            ))
+        } else {
+            items.append(contentsOf: integrityItems)
+        }
         return LibraryHealthSnapshot(
             sessionCount: sessions.count, calibrationIssues: missingFlats.count + missingDarks.count,
             duplicateFiles: duplicateFiles, organizationIssues: organizationIssues,
             items: items, isReadOnly: true
         )
+    }
+
+    /// Real per-file mismatch/read-error findings from the most recently
+    /// completed `kind = 'verify'` run, if any -- `[]` on a database that
+    /// predates the `runs`/`findings` tables, or if the most recent verify
+    /// run found nothing wrong.
+    private static func latestVerifyFindings(db: SQLiteDB) throws -> [LibraryHealthItem] {
+        guard try tableExists(db, name: "runs"), try tableExists(db, name: "findings") else { return [] }
+        var latestRunID: Int64?
+        try db.query("SELECT id FROM runs WHERE kind = 'verify' ORDER BY started_at DESC LIMIT 1;") { row in
+            latestRunID = row.int64(0)
+        }
+        guard let runID = latestRunID else { return [] }
+        var findings: [LibraryHealthItem] = []
+        try db.query(
+            "SELECT category, path FROM findings WHERE run_id = ? ORDER BY id;",
+            bind: [.int(runID)]
+        ) { row in
+            let category = row.string(0) ?? ""
+            let path = row.string(1) ?? "unknown file"
+            let (title, detail, severity) = Self.integrityFindingText(category: category, path: path)
+            findings.append(.init(
+                id: "integrity|\(runID)|\(path)", category: .integrity, severity: severity,
+                title: title, detail: detail
+            ))
+        }
+        return findings
+    }
+
+    private static func integrityFindingText(category: String, path: String) -> (title: String, detail: String, severity: LibraryHealthSeverity) {
+        switch category {
+        case "content-changed":
+            return (
+                "Possible silent corruption",
+                "\(path): content changed since the last integrity check, but its size and modification time did not -- this looks like bitrot, not an edit. Restore this file from a backup.",
+                .critical
+            )
+        case "modified-in-place":
+            return (
+                "Suspicious in-place modification",
+                "\(path): modification time changed but size did not, and the content hash differs -- could be an in-place header rewrite, but treat it as suspicious.",
+                .warning
+            )
+        case "modified":
+            return (
+                "File modified since last check",
+                "\(path): size and modification time both changed since the last integrity check -- likely an intentional edit or overwrite, not corruption.",
+                .info
+            )
+        case "verify-read-error":
+            return (
+                "File unreadable during verification",
+                "\(path): could not be read during the last integrity verification.",
+                .warning
+            )
+        default:
+            return ("Integrity finding", "\(path): \(category)", .warning)
+        }
+    }
+
+    private static func tableExists(_ db: SQLiteDB, name: String) throws -> Bool {
+        var found = false
+        try db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?;", bind: [.text(name)]) { _ in
+            found = true
+        }
+        return found
     }
 
     private static func tableHasColumn(_ db: SQLiteDB, table: String, column: String) throws -> Bool {

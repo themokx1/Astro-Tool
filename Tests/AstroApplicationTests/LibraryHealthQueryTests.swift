@@ -38,6 +38,12 @@ struct LibraryHealthQueryTests {
         #expect(snapshot.organizationIssues == 1)
         #expect(snapshot.items.contains { $0.category == .duplicates })
         #expect(snapshot.items.contains { $0.category == .organization })
+        // V2 product/UX audit (2026-08-15) section 3(c) cheap fix: a
+        // duplicate finding used to say "N identical files" with no path at
+        // all -- there was no way to learn which files.
+        let duplicate = try #require(snapshot.items.first { $0.category == .duplicates })
+        #expect(duplicate.detail.contains("light.fit"))
+        #expect(duplicate.detail.contains("copy.fit"))
         let flat = try #require(snapshot.items.first { $0.category == .flat })
         #expect(flat.target == "IC_1396")
         #expect(flat.sessionDate == "2026-08-08")
@@ -90,6 +96,57 @@ struct LibraryHealthQueryTests {
         #expect(snapshot.auditRuns[0].resolvedCount == 1)
         #expect(snapshot.auditRuns[1].newCount == 2)
         #expect(snapshot.auditRuns[1].resolvedCount == 0)
+    }
+
+    // V2 product/UX audit (2026-08-15) section 3(a), CRITICAL: `isReadOnly`
+    // used to be hardcoded `true` no matter what -- Health always claimed
+    // "Read only" even with write operations enabled elsewhere.
+
+    @Test("isReadOnly reflects the access mode the caller passed, not a hardcoded value")
+    func isReadOnlyReflectsAccessMode() async throws {
+        let indexDatabase = try Self.makeIndexDatabase()
+
+        let readOnly = try await LibraryHealthQuery(indexDatabaseForTesting: indexDatabase).snapshot()
+        #expect(readOnly.isReadOnly)
+
+        let writable = try await LibraryHealthQuery(indexDatabaseForTesting: indexDatabase, accessMode: .mutationEnabled).snapshot()
+        #expect(!writable.isReadOnly)
+    }
+
+    // V2 product/UX audit (2026-08-15) section 3(b), CRITICAL: `readSnapshot`
+    // never emitted a real integrity-mismatch finding at all -- a verify run
+    // that found corruption produced a generic success toast and nothing
+    // else, while Health kept showing its one hardcoded "healthy" item.
+
+    @Test("A prior verify run's mismatch becomes a real, non-healthy integrity finding")
+    func verifyMismatchBecomesIntegrityFinding() async throws {
+        let indexDatabase = try Self.makeIndexDatabase()
+        let db = try SQLiteDB(path: indexDatabase.path)
+        try db.exec(
+            """
+            CREATE TABLE runs(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, started_at REAL NOT NULL, finished_at REAL, root TEXT NOT NULL, config_json TEXT);
+            CREATE TABLE findings(id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL, severity TEXT NOT NULL, category TEXT NOT NULL, path TEXT NOT NULL, message TEXT NOT NULL, suggestion_json TEXT);
+            """
+        )
+        try db.exec("INSERT INTO runs(id, kind, started_at, finished_at, root) VALUES (1, 'verify', 100, 200, '/tmp');")
+        try db.exec(
+            "INSERT INTO findings(run_id, severity, category, path, message) VALUES (1, 'sure_error', 'content-changed', 'sessions/IC_1396/2026-08-08/lights/light.fit', 'a fájl tartalma megváltozott');"
+        )
+
+        let snapshot = try await LibraryHealthQuery(indexDatabaseForTesting: indexDatabase).snapshot()
+
+        let mismatch = try #require(snapshot.items.first { $0.category == .integrity && $0.severity == .critical })
+        #expect(mismatch.detail.contains("light.fit"))
+        #expect(!snapshot.items.contains { $0.category == .integrity && $0.severity == .healthy })
+    }
+
+    @Test("No verify run yet keeps the reassuring healthy integrity item")
+    func noVerifyRunKeepsHealthyIntegrityItem() async throws {
+        let indexDatabase = try Self.makeIndexDatabase()
+
+        let snapshot = try await LibraryHealthQuery(indexDatabaseForTesting: indexDatabase).snapshot()
+
+        #expect(snapshot.items.contains { $0.category == .integrity && $0.severity == .healthy })
     }
 
     private static func makeIndexDatabase() throws -> URL {

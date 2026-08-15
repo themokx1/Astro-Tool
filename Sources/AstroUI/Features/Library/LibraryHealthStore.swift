@@ -25,13 +25,18 @@ private final class HealthOperationProgressBox: @unchecked Sendable {
 @Observable
 public final class LibraryHealthStore {
     public typealias MetadataFactory = @MainActor @Sendable (URL) throws -> MetadataStore
-    public typealias QueryFactory = @Sendable (URL, MetadataStore) throws -> LibraryHealthQuery
+    public typealias QueryFactory = @Sendable (URL, MetadataStore, LibraryAccessMode) throws -> LibraryHealthQuery
     public typealias AuditCommandFactory = @Sendable (URL, MetadataStore) throws -> AuditRunCommand
 
     public private(set) var snapshot: LibraryHealthSnapshot?
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
     public private(set) var showAcknowledged = false
+    /// V2 product/UX audit (2026-08-15) section 3(a), CRITICAL: threaded the
+    /// same way `CalibrationStore.accessMode` already is -- `load`'s caller
+    /// supplies the library's real access mode, and `snapshot`'s own
+    /// `isReadOnly` is derived from it instead of a hardcoded `true`.
+    public private(set) var accessMode: LibraryAccessMode = .readOnly
     /// The most recently completed `runVerify`'s own summary -- kept around
     /// so the confirmation sheet's caller can show a one-line result after
     /// `OperationHost`'s own generic success toast, without re-querying
@@ -55,8 +60,8 @@ public final class LibraryHealthStore {
 
     public init(
         metadataFactory: @escaping MetadataFactory = LibraryHealthStore.productionMetadata,
-        queryFactory: @escaping QueryFactory = { rootURL, metadata in
-            try LibraryHealthQuery.production(rootURL: rootURL, metadata: metadata)
+        queryFactory: @escaping QueryFactory = { rootURL, metadata, accessMode in
+            try LibraryHealthQuery.production(rootURL: rootURL, metadata: metadata, accessMode: accessMode)
         },
         auditCommandFactory: @escaping AuditCommandFactory = { rootURL, metadata in
             try AuditRunCommand.production(rootURL: rootURL, metadata: metadata)
@@ -67,15 +72,16 @@ public final class LibraryHealthStore {
         self.auditCommandFactory = auditCommandFactory
     }
 
-    public func load(rootURL: URL) async {
+    public func load(rootURL: URL, accessMode: LibraryAccessMode = .readOnly) async {
         isLoading = true
         errorMessage = nil
+        self.accessMode = accessMode
         defer { isLoading = false }
         do {
             let metadata = try metadataFactory(rootURL.standardizedFileURL)
             self.metadata = metadata
             self.rootURL = rootURL.standardizedFileURL
-            snapshot = try await queryFactory(rootURL, metadata).snapshot(includeAcknowledged: showAcknowledged)
+            snapshot = try await queryFactory(rootURL, metadata, accessMode).snapshot(includeAcknowledged: showAcknowledged)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -222,7 +228,7 @@ public final class LibraryHealthStore {
     private func refresh() async {
         guard let rootURL, let metadata else { return }
         do {
-            snapshot = try await queryFactory(rootURL, metadata).snapshot(includeAcknowledged: showAcknowledged)
+            snapshot = try await queryFactory(rootURL, metadata, accessMode).snapshot(includeAcknowledged: showAcknowledged)
         } catch {
             errorMessage = error.localizedDescription
         }
