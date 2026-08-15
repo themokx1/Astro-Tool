@@ -130,7 +130,7 @@ struct MidnightMoon: Sendable, Equatable {
 /// coordinate and is never a comet), which is why those two stay put in
 /// `Planner`'s own verdict priority list rather than becoming dead code
 /// here.
-enum SkyVerdict {
+public enum SkyVerdict {
     static let noCoordinate = "nincs koordináta"
     static func tooLow(_ maxAlt: Double) -> String { String(format: "alacsony (max %.0f°)", maxAlt) }
     static let notVisibleTonight = "nem látszik ma éjjel"
@@ -146,6 +146,89 @@ enum SkyVerdict {
     /// carries no comets (their positions aren't static), so this exists
     /// purely for `Planner`'s own use.
     static let cometStaleCoordinate = "üstökös — a tárolt koordináta a felvétel idejéből való, ma már nem érvényes"
+
+    /// Parses one of this enum's own generated strings into a structured,
+    /// locale-independent classification -- `Planner.plan`/
+    /// `DiscoveryPlanner.discover` still generate the Hungarian sentence
+    /// directly into `TargetPlan`/`DiscoveryRow` (V1's and the `astrotool`
+    /// CLI's own consumers, unchanged), so this is the seam V2 -- and any
+    /// future locale -- renders from instead of the engine emitting a
+    /// second, pre-formatted sentence per locale. `SkyVerdictKind.english`
+    /// is today's only renderer; a later localization pass adds siblings
+    /// (e.g. a `.hungarian` that would just replay the constants above) over
+    /// these SAME cases rather than re-deriving them from text again.
+    /// Anything this doesn't recognize (there is no such case in today's
+    /// closed vocabulary) is carried through as `.unrecognized` rather than
+    /// silently dropped.
+    public static func parse(_ verdict: String) -> SkyVerdictKind {
+        switch verdict {
+        case noCoordinate: return .noCoordinates
+        case notVisibleTonight: return .notVisibleTonight
+        case good: return .goodTonight
+        case cometStaleCoordinate: return .cometStaleCoordinate
+        default: break
+        }
+        if verdict.hasPrefix("alacsony (max "), verdict.hasSuffix("°)") {
+            let inner = verdict.dropFirst("alacsony (max ".count).dropLast("°)".count)
+            if let maxDeg = Double(inner) {
+                return .lowAltitude(maxDeg: maxDeg)
+            }
+        }
+        if verdict.hasPrefix("Hold zavar ("), verdict.hasSuffix("%)") {
+            let inner = verdict.dropFirst("Hold zavar (".count).dropLast("%)".count)
+            let parts = inner.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            if parts.count == 2, parts[0].hasSuffix("°"),
+               let separationDeg = Double(parts[0].dropLast()),
+               let illuminationPercent = Double(parts[1])
+            {
+                return .moonInterferes(separationDeg: separationDeg, illuminationPercent: illuminationPercent)
+            }
+        }
+        return .unrecognized(verdict)
+    }
+
+    /// Convenience for callers that only ever want the English sentence --
+    /// `parse(verdict).english`. Kept alongside `parse` because both V2 call
+    /// sites (`PlanningQuery.recommendations()`, `HomeView`) want exactly
+    /// this and nothing else from the structured value today.
+    public static func english(_ verdict: String) -> String {
+        parse(verdict).english
+    }
+}
+
+/// `SkyVerdict.parse`'s own structured result -- see that function's doc for
+/// why this exists instead of the engine emitting a second pre-formatted
+/// sentence per locale. Carries the same numbers the Hungarian sentence
+/// would have carried, so a renderer never has to re-parse text.
+public enum SkyVerdictKind: Equatable, Sendable {
+    case noCoordinates
+    case notVisibleTonight
+    case goodTonight
+    case cometStaleCoordinate
+    case lowAltitude(maxDeg: Double)
+    case moonInterferes(separationDeg: Double, illuminationPercent: Double)
+    /// `SkyVerdict.parse` didn't recognize the input (there is no such case
+    /// in today's closed vocabulary) -- carries the original text through so
+    /// no information is silently hidden.
+    case unrecognized(String)
+
+    /// Today's only renderer. A future localization pass adds a sibling
+    /// (e.g. `hungarian`) over these same cases.
+    public var english: String {
+        switch self {
+        case .noCoordinates: return "no coordinates"
+        case .notVisibleTonight: return "not visible tonight"
+        case .goodTonight: return "good tonight"
+        case .cometStaleCoordinate:
+            return "comet -- stored coordinate is from capture time, not valid for tonight"
+        case let .lowAltitude(maxDeg):
+            return String(format: "low (max %.0f°)", maxDeg)
+        case let .moonInterferes(separationDeg, illuminationPercent):
+            return String(format: "Moon interferes (%.0f°, %.0f%%)", separationDeg, illuminationPercent)
+        case let .unrecognized(raw):
+            return raw
+        }
+    }
 }
 
 /// `visibilityFactor` / `moonPenalty` -- the two score components

@@ -52,9 +52,13 @@ public struct PlanningRecommendation: Equatable, Sendable, Identifiable {
     public let visibleHours: Double?
     public let culminationLocal: String?
     public let moonSeparationDeg: Double?
-    /// Same Hungarian verdict vocabulary `Planner.plan`/`DiscoveryPlanner`
-    /// use elsewhere in the app (`"ma jó"`, `"alacsony (max N°)"`, ...).
-    public let skyVerdict: String
+    /// Structured parse (`SkyVerdict.parse`) of the same Hungarian verdict
+    /// vocabulary `Planner.plan`/`DiscoveryPlanner` generate elsewhere in the
+    /// app (`"ma jó"`, `"alacsony (max N°)"`, ...) -- V2's `PlanningView`
+    /// renders `.english`; a future localization pass renders a Hungarian
+    /// sibling from these same cases instead of the raw sentence (V2 UI/UX
+    /// audit, 2026-08-15, section 4).
+    public let skyVerdict: SkyVerdictKind
     /// `DiscoveryPlanner`'s own `visibilityFactor x moonPenalty` (composition
     /// is intentionally excluded here -- `compositionScore` above already
     /// carries this query's own framing opinion, so the two aren't
@@ -225,7 +229,7 @@ public struct PlanningQuery: Sendable {
                 visibleHours: sky?.visibleHours,
                 culminationLocal: sky?.culminationLocal,
                 moonSeparationDeg: sky?.moonSeparationDeg,
-                skyVerdict: sky?.verdict ?? SkyVerdictText.noCoordinate,
+                skyVerdict: SkyVerdict.parse(sky?.verdict ?? SkyVerdictText.noCoordinate),
                 skyScore: sky?.score ?? 0,
                 planningScore: planningScore,
                 photographableFactor: photographable,

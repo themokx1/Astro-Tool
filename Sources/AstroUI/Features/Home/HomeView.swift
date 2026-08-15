@@ -1,5 +1,6 @@
 import SwiftUI
 import AstroApplication
+import AstroCore
 import UniformTypeIdentifiers
 
 public struct HomeView: View {
@@ -139,7 +140,13 @@ public struct HomeView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text(recommendation.verdict)
+                        // `HomeTonightRecommendation.verdict` is still
+                        // `Planner.plan`'s own raw Hungarian sentence (V1/CLI's
+                        // own consumer, unchanged) -- `SkyVerdict.parse(...)
+                        // .english` is the same structured-parse translation
+                        // `PlanningView` uses, so this English UI never shows
+                        // it directly (V2 UI/UX audit, 2026-08-15, section 4).
+                        Text(SkyVerdict.parse(recommendation.verdict).english)
                             .font(.caption.weight(.medium))
                             .foregroundStyle(AstroTokens.Color.spectralBlue)
                         if let projectID = recommendation.projectID {

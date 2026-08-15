@@ -179,4 +179,86 @@ struct V2PolishSurfaceTests {
         let health = try contents("Sources/AstroUI/Features/Library/HealthView.swift")
         #expect(health.contains("help: \"Scan the library"), "HealthView no longer carries its Run Audit tooltip text")
     }
+
+    // MARK: (e) No engine-layer Hungarian on a V2 render path (2026-08-15 audit, section 4).
+
+    @Test("No file under Sources/AstroUI renders a property whose name ends in HU")
+    func noSourceUnderAstroUIRendersAHUSuffixedProperty() throws {
+        // `displayNameHU`/`humanSummaryHU` (and any future `...HU` property)
+        // are V1/CLI's own vocabulary -- V2 must always go through the
+        // English sibling (`displayName`, `humanSummary`, `.english`, ...)
+        // instead. `commonNameHU` is deliberately exempted: a separate,
+        // pre-existing, out-of-scope field (a real Hungarian common name,
+        // not an untranslated engine sentence) that `PlanningView.swift`'s
+        // own `displayName(_:)` reads as a documented fallback -- this gate
+        // is about the 2026-08-15 audit's own P1 pattern, not that field.
+        let root = repositoryRoot.appendingPathComponent("Sources/AstroUI")
+        let pattern = try NSRegularExpression(pattern: #"\.[A-Za-z0-9_]*HU\b"#)
+        let exemptSuffixes = ["commonNameHU"]
+        var offenders: [String] = []
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else {
+            Issue.record("Could not enumerate \(root.path)")
+            return
+        }
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            let range = NSRange(text.startIndex..., in: text)
+            let matches = pattern.matches(in: text, range: range).compactMap { Range($0.range, in: text) }.map { text[$0] }
+            let realOffenders = matches.filter { match in !exemptSuffixes.contains { match.hasSuffix($0) } }
+            if !realOffenders.isEmpty {
+                offenders.append("\(url.lastPathComponent): \(realOffenders.joined(separator: ", "))")
+            }
+        }
+        #expect(offenders.isEmpty, "HU-suffixed property access in: \(offenders.joined(separator: "; "))")
+    }
+
+    @Test("No file under Sources/AstroUI contains the engine's raw Hungarian verdict/capture/conversion vocabulary")
+    func noSourceUnderAstroUIContainsTheKnownHungarianVocabulary() throws {
+        // The exact Hungarian words/phrases the 2026-08-15 audit's section 4
+        // found rendered directly on V2 screens -- `SkyVerdict`'s own
+        // vocabulary, `SensorMode`/`SignalMode`'s labels, and the
+        // conversion ambiguity/conflict/summary sentences. None of these
+        // should ever appear as source text under `Sources/AstroUI`: the
+        // real fix is a translated field/computed property, never a
+        // hardcoded literal pasted into a view.
+        let hungarianVocabulary = [
+            "nincs koordináta", "nem látszik ma éjjel", "alacsony (max", "Hold zavar (",
+            "üstökös — a tárolt koordináta",
+            "Monokróm", "Ismeretlen szenzor", "Szélessáv", "Keskenysáv", "Szűrő nélkül", "Ismeretlen fénysáv",
+            "frame-ek gyűjtése nem egyértelmű", "kézi döntést kérnek",
+            "célútvonal már foglalt", "célútvonala már foglalt",
+            "nyers expozíció", "kalibrációs frame közül", "kiválasztott sessionben nincs konvertálható",
+        ]
+        let root = repositoryRoot.appendingPathComponent("Sources/AstroUI")
+        var offenders: [String] = []
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else {
+            Issue.record("Could not enumerate \(root.path)")
+            return
+        }
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            for phrase in hungarianVocabulary where text.contains(phrase) {
+                offenders.append("\(url.lastPathComponent): \(phrase)")
+            }
+        }
+        #expect(offenders.isEmpty, "Hardcoded Hungarian vocabulary in: \(offenders.joined(separator: "; "))")
+    }
+
+    @Test("HomeView translates the engine's raw verdict before rendering it")
+    func homeViewTranslatesTheVerdictBeforeRendering() throws {
+        let source = try contents("Sources/AstroUI/Features/Home/HomeView.swift")
+        #expect(source.contains("SkyVerdict.parse(recommendation.verdict).english"))
+        #expect(!source.contains("Text(recommendation.verdict)"), "HomeView must not render the raw engine verdict directly")
+    }
+
+    @Test("ConversionWorkspace reads the English sibling of every V1/CLI Hungarian conversion field")
+    func conversionWorkspaceReadsEnglishConversionFields() throws {
+        let source = try contents("Sources/AstroUI/Features/Library/ConversionWorkspace.swift")
+        #expect(source.contains("plan.humanSummary "))
+        #expect(source.contains(".titleEnglish"))
+        #expect(source.contains(".explanationEnglish"))
+        #expect(source.contains(".messageEnglish"))
+        #expect(!source.contains("Text(ambiguity.explanation)"), "must render explanationEnglish, not the raw Hungarian explanation")
+        #expect(!source.contains("Label(ambiguity.title,"), "must render titleEnglish, not the raw Hungarian title")
+    }
 }

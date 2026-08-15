@@ -347,7 +347,15 @@ public struct ConversionWorkspace: View {
                 ProgressView("Building plan…")
             } else if let plan = store.plan {
                 Text("\(plan.scope.target) · \(plan.scope.date)").foregroundStyle(.secondary)
-                Text(plan.humanSummaryHU).font(.callout).foregroundStyle(.secondary)
+                // `humanSummary` is the English sibling of `humanSummaryHU`
+                // (V1/CLI's own consumer, unchanged) -- see that property's
+                // own doc comment. Every plan `ConversionStore` actually
+                // builds here comes fresh from `SessionConversionPlanner.plan`
+                // (never decoded from an old `plan.json`), so `humanSummary`
+                // is always populated in practice; falling back to the
+                // Hungarian sibling would defeat the point of this property,
+                // so an empty string is the honest fallback instead.
+                Text(plan.humanSummary ?? "").font(.callout).foregroundStyle(.secondary)
                 if plan.proposedGroups.isEmpty {
                     Label("Every capture group already exists as-is; nothing new to name.", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(AstroTokens.Color.success)
@@ -377,11 +385,11 @@ public struct ConversionWorkspace: View {
                 }
                 HStack {
                     Picker("Sensor", selection: sensorBinding(for: proposed)) {
-                        ForEach(SensorMode.allCases, id: \.self) { Text($0.displayNameHU).tag($0) }
+                        ForEach(SensorMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }
                     .accessibilityIdentifier("v2.conversion.group-sensor")
                     Picker("Signal", selection: signalBinding(for: proposed)) {
-                        ForEach(SignalMode.allCases, id: \.self) { Text($0.displayNameHU).tag($0) }
+                        ForEach(SignalMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }
                     .accessibilityIdentifier("v2.conversion.group-signal")
                 }
@@ -467,9 +475,9 @@ public struct ConversionWorkspace: View {
     private func ambiguityCard(_ ambiguity: ConversionAmbiguity) -> some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
-                Label(ambiguity.title, systemImage: "questionmark.diamond.fill")
+                Label(ambiguity.titleEnglish, systemImage: "questionmark.diamond.fill")
                     .font(.subheadline.weight(.semibold)).foregroundStyle(AstroTokens.Color.warning)
-                Text(ambiguity.explanation).font(.caption).foregroundStyle(.secondary)
+                Text(ambiguity.explanationEnglish).font(.caption).foregroundStyle(.secondary)
                 Text("\(ambiguity.affectedPaths.count) file(s): \(ambiguity.affectedPaths.prefix(3).map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))")
                     .font(.caption.monospaced()).lineLimit(2)
                 HStack {
@@ -519,7 +527,7 @@ public struct ConversionWorkspace: View {
                     .font(.callout)
                 if !plan.conflicts.isEmpty {
                     ForEach(plan.conflicts) { conflict in
-                        Label("\(conflict.path): \(conflict.message)", systemImage: "xmark.octagon.fill")
+                        Label("\(conflict.path): \(conflict.messageEnglish)", systemImage: "xmark.octagon.fill")
                             .font(.caption).foregroundStyle(AstroTokens.Color.danger)
                     }
                 }

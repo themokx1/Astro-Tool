@@ -342,7 +342,7 @@ public struct PlanningView: View {
                             TableColumn("Tonight's sky") { row in
                                 VStack(alignment: .leading, spacing: 2) {
                                     if row.isLowAltitude {
-                                        Label(row.skyVerdict, systemImage: "exclamationmark.triangle.fill")
+                                        Label(row.skyVerdict.english, systemImage: "exclamationmark.triangle.fill")
                                             .font(.callout.weight(.semibold))
                                             .foregroundStyle(.orange)
                                     } else {
@@ -454,7 +454,7 @@ public struct PlanningView: View {
         if let moonSeparation = row.moonSeparationDeg {
             parts.append("Moon \(moonSeparation.formatted(.number.precision(.fractionLength(0))))°")
         }
-        return parts.isEmpty ? row.skyVerdict : parts.joined(separator: " · ")
+        return parts.isEmpty ? row.skyVerdict.english : parts.joined(separator: " · ")
     }
 
     private func displayName(_ row: PlanningRecommendation) -> String {

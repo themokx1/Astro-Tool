@@ -95,6 +95,32 @@ struct PlanningQueryTests {
         #expect(ngc7000Index < m42Index)
         #expect(ic1396Index < ic434Index)
         #expect(ic1396Index < m42Index)
+
+        // V2 UI/UX audit (2026-08-15) section 4, and the follow-up
+        // localization plan's Task 2: `skyVerdict` is a structured
+        // `SkyVerdictKind` (not a pre-built Hungarian sentence), so `.english`
+        // is what PlanningView renders and a future locale renderer builds
+        // its own sentence from these same numbers instead of re-parsing text.
+        // The altitude is rounded to a whole degree by the time it reaches
+        // the Hungarian sentence this parses (`SkyVerdict.tooLow`'s own
+        // `%.0f`), so the structured value carries that same rounded number,
+        // not `maxAltitudeDeg`'s full precision.
+        #expect(ngc7000.skyVerdict == .goodTonight)
+        #expect(ic1396.skyVerdict == .goodTonight)
+        #expect(m42.skyVerdict == .lowAltitude(maxDeg: m42Alt.rounded()))
+        #expect(ic434.skyVerdict == .lowAltitude(maxDeg: ic434Alt.rounded()))
+    }
+
+    @Test("Every recommendation's structured verdict is a known kind, never the unrecognized fallback")
+    func everySkyVerdictParsesIntoAKnownKind() {
+        let result = PlanningQuery.fixture(focalLength: 200, site: budapest, date: utc(2026, 8, 15))
+            .recommendations()
+        #expect(!result.isEmpty)
+        for recommendation in result {
+            if case .unrecognized(let raw) = recommendation.skyVerdict {
+                Issue.record("\(recommendation.target.designation) produced an unrecognized verdict: \(raw)")
+            }
+        }
     }
 
     // MARK: - Task 2: honest integration estimates
