@@ -285,7 +285,7 @@ private struct ProjectNightSection: View {
         }
         .padding(12)
         .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
-        .accessibilityIdentifier("v2.projects.night")
+        .accessibilityIdentifier("v2.projects.night.\(snapshot.id.uuidString)")
     }
 
     private func seriesTitle(_ item: ProjectSeriesSnapshot) -> String {

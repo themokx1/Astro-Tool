@@ -606,12 +606,16 @@ public struct ConversionWorkspace: View {
     /// leaving is now the native Back chevron.
     private var footer: some View {
         HStack {
-            if stepIndex > 0 { Button("Back") { stepIndex -= 1 } }
+            if stepIndex > 0 {
+                Button("Back") { stepIndex -= 1 }
+                    .accessibilityIdentifier("v2.conversion.back")
+            }
             Spacer()
             if stepIndex < steps.count - 1 {
                 Button("Continue") { stepIndex += 1 }
                     .buttonStyle(.borderedProminent)
                     .disabled(!canContinue)
+                    .accessibilityIdentifier("v2.conversion.continue")
             }
         }.padding(16)
     }

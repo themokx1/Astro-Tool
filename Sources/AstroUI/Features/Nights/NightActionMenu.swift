@@ -81,7 +81,7 @@ public struct NightActionMenu: View {
                 .disabled(rootURL == nil)
             Button("Open in Insights", systemImage: "chart.xyaxis.line") { openInsights(setupDescriptor) }
         }
-        .accessibilityIdentifier("v2.nights.action-menu")
+        .accessibilityIdentifier("v2.nights.action-menu.\(nightID.uuidString)")
     }
 
     /// `sessions/<target>/<date>` -- the fixed on-disk layout every session

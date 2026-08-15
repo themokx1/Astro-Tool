@@ -201,6 +201,7 @@ public struct HealthView: View {
         if let snapshot = store.snapshot {
             HStack {
                 Button("Calibration…", action: openCalibration).buttonStyle(.bordered)
+                    .accessibilityIdentifier("v2.health.open-calibration")
                 Spacer()
             }
             GroupBox("Audit run history") {

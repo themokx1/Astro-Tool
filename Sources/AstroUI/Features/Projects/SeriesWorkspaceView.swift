@@ -43,6 +43,7 @@ public struct SeriesWorkspaceView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal, AstroTokens.Spacing.spacious)
             .padding(.vertical, AstroTokens.Spacing.standard)
+            .accessibilityIdentifier("v2.series.workspace.tab")
             ScrollView {
                 content.padding(AstroTokens.Spacing.spacious)
             }

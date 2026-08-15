@@ -75,6 +75,7 @@ public struct ProjectWorkspaceView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal, AstroTokens.Spacing.spacious)
             .padding(.vertical, AstroTokens.Spacing.standard)
+            .accessibilityIdentifier("v2.project.workspace.tab")
             if router.projectTab == .results {
                 resultsContent
             } else if router.projectTab == .nights || router.projectTab == .series {
@@ -286,6 +287,7 @@ public struct ProjectWorkspaceView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(isSaving || (goalHours != nil && goalHours! <= 0))
+                    .accessibilityIdentifier("v2.project.save-details")
                 }
             }
         }

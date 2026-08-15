@@ -330,7 +330,7 @@ public struct ReviewWorkspace: View {
                                 }
                                 Text(Self.formatted(row.score, fractionDigits: 2))
                             }
-                            .accessibilityIdentifier("v2.review.quality-columns")
+                            .accessibilityIdentifier("v2.review.quality-columns.\(row.id.uuidString)")
                         }
                         .width(min: 70, ideal: 85)
                         TableColumn("FWHM", value: \.fwhmSortKey) { row in
@@ -422,13 +422,16 @@ public struct ReviewWorkspace: View {
             Button("Accept") { apply(.accepted, decisionIDs: selectedDecisionIDs, in: selected) }
                 .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
                 .keyboardShortcut("a", modifiers: [.command, .shift])
+                .accessibilityIdentifier("v2.review.accept")
             Button("Reset") { apply(.undecided, decisionIDs: selectedDecisionIDs, in: selected) }
                 .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
+                .accessibilityIdentifier("v2.review.reset")
             Button("Reject") { apply(.rejected, decisionIDs: selectedDecisionIDs, in: selected) }
                 .buttonStyle(.borderedProminent)
                 .tint(AstroTokens.Color.danger)
                 .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
                 .keyboardShortcut("r", modifiers: [.command, .shift])
+                .accessibilityIdentifier("v2.review.reject")
         }
     }
 

@@ -31,6 +31,7 @@ public struct LibraryView: View {
                 } actions: {
                     Button("Choose Image Library…", action: chooseLibrary)
                         .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("v2.library.choose")
                 }
             } else {
                 WorkspacePage(eyebrow: "Local and private", title: "Library", subtitle: "A read-only index of the image folders already on your Mac.") {
@@ -54,11 +55,13 @@ public struct LibraryView: View {
                             HStack {
                                 Button("Organize One Session…", action: convertSession)
                                     .buttonStyle(.borderedProminent)
+                                    .accessibilityIdentifier("v2.library.convert-session")
                                 Button("Rescan", systemImage: "arrow.clockwise", action: rescan)
                                     .buttonStyle(.bordered)
                                     .help("Re-read the library folder for new or changed files (⌘R)")
                                     .accessibilityIdentifier("v2.library.rescan")
                                 Button("Change Library…", action: chooseLibrary).buttonStyle(.bordered)
+                                    .accessibilityIdentifier("v2.library.change")
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading).padding(AstroTokens.Spacing.compact)

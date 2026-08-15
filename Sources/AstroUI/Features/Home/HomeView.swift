@@ -145,6 +145,7 @@ public struct HomeView: View {
                         if let projectID = recommendation.projectID {
                             Button("Open") { openProjectID(projectID) }
                                 .buttonStyle(.borderless)
+                                .accessibilityIdentifier("v2.home.open-recommendation.\(recommendation.id)")
                         }
                     }
                     .padding(.vertical, 9)

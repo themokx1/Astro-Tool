@@ -65,7 +65,7 @@ public struct FrameThumbnailCell: View {
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .task(id: "\(rootURL.path)|\(relativePath)") { await load() }
-        .accessibilityIdentifier("v2.frame.thumbnail")
+        .accessibilityIdentifier("v2.frame.thumbnail.\(relativePath)")
     }
 
     @MainActor

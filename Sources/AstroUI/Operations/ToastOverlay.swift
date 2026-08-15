@@ -81,7 +81,7 @@ private struct ToastCapsule: View {
         }
         .buttonStyle(.plain)
         .help("Click to dismiss")
-        .accessibilityIdentifier("v2.toast-layer.toast")
+        .accessibilityIdentifier("v2.toast-layer.toast.\(toast.id)")
     }
 
     private var iconName: String {

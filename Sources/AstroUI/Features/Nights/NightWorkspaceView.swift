@@ -58,6 +58,7 @@ public struct NightWorkspaceView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal, AstroTokens.Spacing.spacious)
             .padding(.vertical, AstroTokens.Spacing.standard)
+            .accessibilityIdentifier("v2.night.workspace.tab")
             if router.nightTab == .series {
                 // Deliberately NOT inside the `ScrollView` below: a `Table`
                 // proposed an unbounded height (as it would be inside a

@@ -319,6 +319,7 @@ private struct V2Shell: View {
                 }
                 .help("Create a project from the astronomical catalog")
                 .accessibilityLabel("New project")
+                .accessibilityIdentifier("v2.toolbar.new-project")
 
                 Button(action: router.toggleInspector) {
                     Label("Inspector", systemImage: "sidebar.right")
