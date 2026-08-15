@@ -209,8 +209,11 @@ struct V2WorkspaceParitySurfaceTests {
         let health = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/HealthView.swift"))
         let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
         let route = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/AppRoute.swift"))
-        #expect(workspace.contains("Table(coverageRows, selection: $selectedCoverageID)"))
-        #expect(workspace.contains("Table(store.masters, selection: $selectedMasterID)"))
+        // V2 UI/UX audit (2026-08-14) systemic pattern S7: both tables are
+        // now sortable (v2/v2.1 follow-up).
+        #expect(workspace.contains("Table(sortedCoverageRows, selection: $selectedCoverageID, sortOrder: $coverageSortOrder)"))
+        #expect(workspace.contains("store.masters, selection: $selectedMasterID,"))
+        #expect(workspace.contains("sortOrder: Binding(get: { store.mastersSortOrder }, set: { store.setMastersSortOrder($0) })"))
         #expect(workspace.contains("v2.calibration.coverage-table"))
         #expect(workspace.contains("v2.calibration.masters-table"))
         #expect(workspace.contains("v2.calibration.link-preview"))

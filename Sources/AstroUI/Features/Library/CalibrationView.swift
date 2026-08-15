@@ -6,7 +6,7 @@ import SwiftUI
 /// One dark-coverage combo (`CalibNeed`), wrapped only to give the `Table`
 /// an `Identifiable` row -- no field is recomputed, `need` is the engine's
 /// own value untouched.
-private struct CalibrationCoverageRow: Identifiable {
+private struct CalibrationCoverageRow: Identifiable, Equatable {
     let id: String
     let need: CalibNeed
 
@@ -15,6 +15,10 @@ private struct CalibrationCoverageRow: Identifiable {
         let tempLabel: String = need.tempC.map { String($0) } ?? "nil"
         self.id = "\(need.kind.rawValue)|\(need.exposureSeconds)|\(tempLabel)"
     }
+
+    /// `KeyPathComparator` needs a non-optional `Comparable` value.
+    var tempSortKey: Double { need.tempC ?? -.infinity }
+    var masterSortKey: String { need.matchedMasterPath ?? "" }
 }
 
 public struct CalibrationView: View {
@@ -40,6 +44,17 @@ public struct CalibrationView: View {
     @State private var selectedCoverageID: String?
     @State private var selectedMasterID: String?
     @State private var showsLinkPreview = false
+    /// V2 UI/UX audit (2026-08-14) systemic pattern S7: `store.coverage` is
+    /// a small, already-in-memory local list (one library's own dark-need
+    /// combos), not a store-cached collection in its own right, so the sort
+    /// is cached in local `@State` rather than `CalibrationStore` (see
+    /// `NightsStore.sortOrder`'s own doc comment for the convention this
+    /// follows). Default is highest light-count first -- the combos
+    /// needing the most attention.
+    @State private var coverageSortOrder: [KeyPathComparator<CalibrationCoverageRow>] = [
+        KeyPathComparator(\CalibrationCoverageRow.need.lightCount, order: .reverse)
+    ]
+    @State private var sortedCoverageRows: [CalibrationCoverageRow] = []
 
     public init(
         rootURL: URL?,
@@ -51,10 +66,6 @@ public struct CalibrationView: View {
         self.accessMode = accessMode
         self.chooseLibrary = chooseLibrary
         self.onLibraryFindingsChanged = onLibraryFindingsChanged
-    }
-
-    private var coverageRows: [CalibrationCoverageRow] {
-        store.coverage.map(CalibrationCoverageRow.init)
     }
 
     public var body: some View {
@@ -70,6 +81,8 @@ public struct CalibrationView: View {
         .task(id: rootURL) {
             if let rootURL { await store.load(rootURL: rootURL, accessMode: accessMode) }
         }
+        .onChange(of: coverageSortOrder) { _, _ in recomputeSortedCoverageRows() }
+        .task(id: store.coverage) { recomputeSortedCoverageRows() }
         .onAppear {
             store.onLibraryFindingsChanged = onLibraryFindingsChanged
         }
@@ -133,14 +146,14 @@ public struct CalibrationView: View {
 
     private var coverageTable: some View {
         GroupBox("Session coverage") {
-            Table(coverageRows, selection: $selectedCoverageID) {
-                TableColumn("Combo") { row in
+            Table(sortedCoverageRows, selection: $selectedCoverageID, sortOrder: $coverageSortOrder) {
+                TableColumn("Combo", value: \CalibrationCoverageRow.tempSortKey) { row in
                     Text("\(formattedNumber(row.need.exposureSeconds)) s / \(row.need.tempC.map { formattedNumber($0) + " °C" } ?? "—")")
                         .font(.callout.monospaced())
                 }
-                TableColumn("Lights") { row in Text("\(row.need.lightCount)") }
+                TableColumn("Lights", value: \CalibrationCoverageRow.need.lightCount) { row in Text("\(row.need.lightCount)") }
                     .width(min: 60, ideal: 70)
-                TableColumn("Master") { row in
+                TableColumn("Master", value: \CalibrationCoverageRow.masterSortKey) { row in
                     Text(row.need.matchedMasterPath ?? "Missing")
                         .foregroundStyle(row.need.matchedMasterPath == nil ? AstroTokens.Color.spectralBlue : .primary)
                 }
@@ -151,7 +164,7 @@ public struct CalibrationView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contextMenu(forSelectionType: String.self) { ids in
-                if let row = coverageRows.first(where: { ids.contains($0.id) }) {
+                if let row = sortedCoverageRows.first(where: { ids.contains($0.id) }) {
                     coverageActionMenu(row)
                 }
             }
@@ -160,21 +173,30 @@ public struct CalibrationView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private func recomputeSortedCoverageRows() {
+        var rows = store.coverage.map(CalibrationCoverageRow.init)
+        if !coverageSortOrder.isEmpty { rows.sort(using: coverageSortOrder) }
+        sortedCoverageRows = rows
+    }
+
     private func mastersTable(rootURL: URL) -> some View {
         GroupBox("Master darks") {
-            Table(store.masters, selection: $selectedMasterID) {
-                TableColumn("Path") { master in
+            Table(
+                store.masters, selection: $selectedMasterID,
+                sortOrder: Binding(get: { store.mastersSortOrder }, set: { store.setMastersSortOrder($0) })
+            ) {
+                TableColumn("Path", value: \CalibrationMasterInfo.path) { master in
                     Text(master.path).font(.callout.monospaced()).lineLimit(1)
                 }
-                TableColumn("Temp °C") { master in
+                TableColumn("Temp °C", value: \CalibrationMasterInfo.temperatureSortKey) { master in
                     Text(master.temperatureCelsius.map { formattedNumber($0) } ?? "—")
                 }
                 .width(min: 70, ideal: 90)
-                TableColumn("Age (days)") { master in
+                TableColumn("Age (days)", value: \CalibrationMasterInfo.ageDaysSortKey) { master in
                     Text(master.ageDays.map(String.init) ?? "—")
                 }
                 .width(min: 90, ideal: 110)
-                TableColumn("Status") { master in masterStatus(master) }
+                TableColumn("Status", value: \CalibrationMasterInfo.statusSortKey) { master in masterStatus(master) }
                     .width(min: 140, ideal: 180)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

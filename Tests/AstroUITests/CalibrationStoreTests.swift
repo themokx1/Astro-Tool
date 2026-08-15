@@ -93,6 +93,35 @@ struct CalibrationStoreTests {
         #expect(store.masters.contains { $0.path == "calibration_library/darks/300sec_-10deg" })
     }
 
+    @Test("Masters default to path-ascending and re-sort on demand")
+    func sortsMastersByColumn() async throws {
+        let fixture = try CalibStoreFixture.make()
+        defer { fixture.cleanup() }
+        try fixture.writeFITSMaster("calibration_library/darks/300sec_-10deg/master1.fit")
+        try fixture.writeFITSMaster("calibration_library/darks/100sec_-5deg/master2.fit")
+        try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, setTemp: -10.0)
+        try fixture.scan()
+
+        let store = CalibrationStore(
+            queryFactory: { _ in CalibrationQuery(db: fixture.db, config: fixture.config) },
+            commandFactory: { _, accessMode in
+                CalibrationLinkCommand(db: fixture.db, config: fixture.config, root: fixture.libraryDir, accessMode: accessMode)
+            }
+        )
+
+        await store.load(rootURL: fixture.libraryDir)
+
+        #expect(store.masters.map(\.path) == [
+            "calibration_library/darks/100sec_-5deg", "calibration_library/darks/300sec_-10deg",
+        ])
+
+        store.setMastersSortOrder([KeyPathComparator(\CalibrationMasterInfo.path, order: .reverse)])
+
+        #expect(store.masters.map(\.path) == [
+            "calibration_library/darks/300sec_-10deg", "calibration_library/darks/100sec_-5deg",
+        ])
+    }
+
     @Test("Preparing a link plan populates linkPlan without requiring write access")
     func preparingPlanWorksReadOnly() async throws {
         let fixture = try CalibStoreFixture.make()

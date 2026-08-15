@@ -17,6 +17,14 @@ public final class CalibrationStore {
 
     public private(set) var coverage: [CalibNeed] = []
     public private(set) var masters: [CalibrationMasterInfo] = []
+    /// V2 UI/UX audit (2026-08-14) systemic pattern S7: `masters` is this
+    /// store's own cached collection (unlike `coverage`, which
+    /// `CalibrationView` wraps and sorts locally -- see that view's own doc
+    /// comment for why), so the sort lives here, applied whenever `masters`
+    /// is (re)loaded. Default is path ascending -- simple and deterministic.
+    public private(set) var mastersSortOrder: [KeyPathComparator<CalibrationMasterInfo>] = [
+        KeyPathComparator(\CalibrationMasterInfo.path, order: .forward)
+    ]
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
     public private(set) var accessMode: LibraryAccessMode = .readOnly
@@ -55,9 +63,21 @@ public final class CalibrationStore {
             let query = try queryFactory(rootURL)
             coverage = try query.coverage()
             masters = try query.masterInventory()
+            sortMasters()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    public func setMastersSortOrder(_ newValue: [KeyPathComparator<CalibrationMasterInfo>]) {
+        guard newValue != mastersSortOrder else { return }
+        mastersSortOrder = newValue
+        sortMasters()
+    }
+
+    private func sortMasters() {
+        guard !mastersSortOrder.isEmpty else { return }
+        masters.sort(using: mastersSortOrder)
     }
 
     /// Builds a link preview for `target`/`date` -- always available
@@ -100,6 +120,7 @@ public final class CalibrationStore {
             if let query = try? queryFactory(rootURL) {
                 coverage = (try? query.coverage()) ?? coverage
                 masters = (try? query.masterInventory()) ?? masters
+                sortMasters()
             }
             onLibraryFindingsChanged?()
         } catch LibraryMutationError.readOnly {

@@ -40,6 +40,23 @@ public struct CalibrationMasterInfo: Equatable, Sendable, Identifiable {
         self.isUnused = isUnused
         self.warnings = warnings
     }
+
+    // MARK: Sort keys
+    //
+    // `KeyPathComparator` needs a non-optional `Comparable` value; these
+    // give the V2 Calibration workspace's masters table one for each of its
+    // otherwise-optional or composite columns.
+
+    public var temperatureSortKey: Double { temperatureCelsius ?? -.infinity }
+    public var ageDaysSortKey: Int { ageDays ?? -1 }
+    /// Matches `CalibrationView.masterStatus`'s own precedence (stale, then
+    /// unused, then OK) so sorting this column groups rows the same way
+    /// that view's own status label already reads.
+    public var statusSortKey: Int {
+        if isStale { return 2 }
+        if isUnused { return 1 }
+        return 0
+    }
 }
 
 /// Read-only projections over the calibration engines (`CalibAnalyzer`,
