@@ -17,6 +17,7 @@ public struct V2SettingsView: View {
         TabView {
             GeneralSettingsView().tabItem { Label("General", systemImage: "gearshape") }
             LibrariesSettingsView(appModel: appModel).tabItem { Label("Libraries & Safety", systemImage: "externaldrive.badge.checkmark") }
+            LocationSettingsView(appModel: appModel).tabItem { Label("Location", systemImage: "location") }
             PlanningSettingsView().tabItem { Label("Planning", systemImage: "sparkles") }
             EquipmentEvaluationSettingsView(store: store).tabItem { Label("Equipment", systemImage: "camera.aperture") }
             IntegrationsSupportSettingsView(appModel: appModel, store: store).tabItem { Label("Support", systemImage: "lifepreserver") }
@@ -97,6 +98,94 @@ private struct LibrariesSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
+    }
+}
+
+/// Task 1 (V2 UI/UX audit section 2.1): `PlanningView`'s `.noSite` empty
+/// state, `HomeView`'s "Site not set" night-context rail, and `NightsView`'s
+/// 30-night calendar empty state all send the user here to set a site --
+/// this is that control, the only one anywhere in the app that writes
+/// `AstroConfig.site`/`sites` (previously only editable by hand-editing
+/// `<library-root>/.astro_tool/config.json` outside the app entirely).
+private struct LocationSettingsView: View {
+    let appModel: AppModel
+    @State private var store: SiteSettingsStore
+
+    init(appModel: AppModel) {
+        self.appModel = appModel
+        _store = State(initialValue: SiteSettingsStore(rootURL: appModel.currentLibraryRootURL))
+    }
+
+    var body: some View {
+        Form {
+            if !store.hasLibraryOpen {
+                Section {
+                    Label("Open a library to set an observing site.", systemImage: "externaldrive.badge.xmark")
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("v2.settings.site.no-library")
+            } else {
+                Section("Observing site") {
+                    TextField("Name (optional)", text: Binding(get: { store.nameText }, set: { store.setNameText($0) }))
+                        .accessibilityIdentifier("v2.settings.site.name")
+                    TextField("Latitude (°)", text: Binding(get: { store.latitudeText }, set: { store.setLatitudeText($0) }))
+                        .accessibilityIdentifier("v2.settings.site.latitude")
+                    TextField("Longitude (°)", text: Binding(get: { store.longitudeText }, set: { store.setLongitudeText($0) }))
+                        .accessibilityIdentifier("v2.settings.site.longitude")
+                    Text("Used to rank tonight's targets in Planning, Home's night-context rail, and the 30-night calendar in Nights.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Currently in effect") {
+                    if let effective = store.effectiveSite, let lat = effective.latitudeDeg, let lon = effective.longitudeDeg {
+                        LabeledContent("Latitude", value: String(format: "%.4f°", lat))
+                        LabeledContent("Longitude", value: String(format: "%.4f°", lon))
+                        Text(effectiveSourceCaption(effective.source))
+                            .font(.caption).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("v2.settings.site.effective-source")
+                    } else {
+                        Text("No site configured, and none could be derived from this library's FITS headers yet.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("v2.settings.site.effective-source")
+                    }
+                }
+                Section {
+                    HStack {
+                        Button("Save") {
+                            guard store.save() else { return }
+                            Task { await store.refreshEffectiveSite() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("v2.settings.site.save")
+                        if let saveMessage = store.saveMessage {
+                            Text(saveMessage).foregroundStyle(AstroTokens.Color.success)
+                        }
+                        if let errorMessage = store.errorMessage {
+                            Text(errorMessage).foregroundStyle(AstroTokens.Color.danger)
+                        }
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .task(id: appModel.currentLibraryRootURL) { await store.refreshEffectiveSite() }
+        .onChange(of: appModel.currentLibraryRootURL) { _, newRootURL in
+            // Settings is a separate scene: it can be opened before any
+            // library is open at all, in which case `store` was built with
+            // `rootURL: nil` -- since that's a `let`, rebuilding the whole
+            // store is the only way this tab notices a library opening (or
+            // switching) afterward, rather than permanently showing the
+            // "no library open" state from whenever Settings first launched.
+            store = SiteSettingsStore(rootURL: newRootURL)
+        }
+        .accessibilityIdentifier("v2.settings.site")
+    }
+
+    private func effectiveSourceCaption(_ source: SiteSettingsStore.EffectiveSiteSource) -> String {
+        switch source {
+        case .configured: "From this library's configured observing site."
+        case .derivedFromFITS: "Derived automatically from this library's own scanned FITS headers -- no site is explicitly configured."
+        case .notSet: ""
+        }
     }
 }
 
