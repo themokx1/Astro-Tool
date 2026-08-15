@@ -9,6 +9,12 @@ public enum OperationKind: Hashable, Sendable {
     case export(project: String)
     case convert(session: String)
     case sensorMeasurement(library: String)
+    /// The opt-in "Update Catalog" action (Settings ▸ Planning): downloads
+    /// the extended SIMBAD/VizieR target catalog into `CatalogCache`. Not
+    /// per-library (the extended catalog is the same regardless of which
+    /// library is open), so unlike every other case here it carries no
+    /// associated value.
+    case catalogFetch
 }
 
 public enum CancellationPolicy: Hashable, Sendable {

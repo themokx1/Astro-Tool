@@ -89,6 +89,22 @@ public struct CatalogTarget: Sendable, Codable, Equatable {
 public enum TargetCatalog {
     public static let all: [CatalogTarget] = messier + nonMessier
 
+    /// Merges `cached` (typically `CatalogCache.load()?.targets ?? []`) on
+    /// top of `builtIn`. `builtIn`'s hand-verified entries are the offline
+    /// baseline and ALWAYS win a duplicate designation -- a fetched row can
+    /// add coverage `builtIn` doesn't have (`"LBN 437"`, `"IC 4604"`, an
+    /// extra `vdB`/`Barnard`/Abell-PN entry, ...) but never override a
+    /// curated entry's coordinates or name. Pure and order-preserving:
+    /// `builtIn` first (unchanged order), then whichever `cached` entries
+    /// aren't already present, in `cached`'s own order.
+    public static func merged(builtIn: [CatalogTarget] = TargetCatalog.all, cached: [CatalogTarget]) -> [CatalogTarget] {
+        guard !cached.isEmpty else { return builtIn }
+        let builtInDesignations = Set(builtIn.map(\.designation))
+        let additions = cached.filter { !builtInDesignations.contains($0.designation) }
+        guard !additions.isEmpty else { return builtIn }
+        return builtIn + additions
+    }
+
     /// English names are deliberately data, not UI translations: they are
     /// stable search aliases and therefore also provide deterministic ASCII
     /// folder names. Bare catalog objects remain searchable by designation.
@@ -165,11 +181,18 @@ public enum TargetCatalog {
     /// Offline, forgiving target search used by new-session creation. Search
     /// normalization removes accents, punctuation and whitespace, so
     /// `IC1396`, `Elephant's Trunk` and `elefantormany` all hit one record.
-    public static func search(_ query: String, limit: Int = 20) -> [CatalogTarget] {
+    ///
+    /// `source` defaults to `all` (the built-in 217, unchanged behavior for
+    /// every existing caller) but accepts `TargetCatalog.merged(cached:)`'s
+    /// result too, so the extended catalog searches the exact same way once
+    /// a caller opts into it -- `"Rho Ophiuchi"`, `"LBN437"`/`"LBN 437"` all
+    /// match through `commonNameHU`/`designation` alone, same as any
+    /// built-in entry, once those rows are present in `source`.
+    public static func search(_ query: String, limit: Int = 20, in source: [CatalogTarget] = TargetCatalog.all) -> [CatalogTarget] {
         let needle = normalizedSearch(query)
         guard !needle.isEmpty, limit > 0 else { return [] }
 
-        return all.compactMap { target -> (CatalogTarget, Int)? in
+        return source.compactMap { target -> (CatalogTarget, Int)? in
             let values = [target.designation, target.commonNameHU, englishNames[target.designation]]
                 .compactMap { $0 } + (extraAliases[target.designation] ?? [])
             let normalized = values.map(normalizedSearch)
