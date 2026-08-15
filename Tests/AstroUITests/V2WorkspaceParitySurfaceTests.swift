@@ -361,3 +361,44 @@ struct V2WorkspaceParitySurfaceTests {
         }
     }
 }
+
+@Suite("Projects table carries its own facts")
+struct ProjectsTableSelfSufficiencyTests {
+    private func source(_ path: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        return try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
+    }
+
+    // The owner's report: "when I click a target its detail appears in a
+    // little strip at the bottom, that's very bad UX — if it isn't in the
+    // list, put it in the list." Selecting a row must not be the only way to
+    // learn a project's numbers, and comparing projects must not require
+    // clicking them one at a time.
+    @Test("Selecting a project does not open a cramped bottom detail strip")
+    func noBottomDetailStrip() throws {
+        let view = try source("Sources/AstroUI/Features/Projects/ProjectsView.swift")
+        #expect(!view.contains("detailFooter"))
+        #expect(!view.contains("ProjectAcquisitionDetail("))
+    }
+
+    @Test("Everything worth comparing is a column, including goal progress")
+    func comparableFactsAreColumns() throws {
+        let view = try source("Sources/AstroUI/Features/Projects/ProjectsView.swift")
+        for column in ["Project", "Phase", "Nights", "Series", "Integration", "Frames", "Latest", "Goal", "Next"] {
+            #expect(view.contains("TableColumn(\"\(column)\""), "missing the \(column) column")
+        }
+        // The advice is explainable in place rather than in a second panel.
+        #expect(view.contains("help(row.nextActionExplanation)"))
+    }
+
+    @Test("The project advice is written in the app's own language")
+    func nextActionIsEnglish() throws {
+        let query = try source("Sources/AstroApplication/Features/Projects/ProjectsQuery.swift")
+        #expect(query.contains("Keep collecting"))
+        #expect(query.contains("Plan the first night"))
+        // The Hungarian strings this column used to render on an English UI.
+        #expect(!query.contains("Folytasd"))
+        #expect(!query.contains("Készíts"))
+    }
+}

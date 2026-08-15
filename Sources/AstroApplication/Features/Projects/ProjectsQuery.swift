@@ -146,28 +146,28 @@ public struct ProjectsQuery: Sendable {
         switch phase {
         case .planned:
             return ProjectNextAction(
-                title: seriesCount == 0 ? "Tervezd meg az első éjszakát" : "Kezdd el a gyűjtést",
-                explanation: "Válassz setupot, szűrőt és expozíciós sorozatot."
+                title: seriesCount == 0 ? "Plan the first night" : "Start collecting",
+                explanation: "Choose a setup, a filter and an exposure series."
             )
         case .collecting:
             return ProjectNextAction(
-                title: "Folytasd a gyűjtést",
-                explanation: "A következő jó éjszakán bővítsd a hiányzó sorozatokat."
+                title: "Keep collecting",
+                explanation: "Add the missing series on the next good night."
             )
         case .processing:
             return ProjectNextAction(
-                title: "Folytasd a feldolgozást",
-                explanation: "Ellenőrizd a stackeket és az eredmények lineage-ét."
+                title: "Keep processing",
+                explanation: "Check the stacks and the results' lineage."
             )
         case .complete:
             return ProjectNextAction(
-                title: "Készíts végső riportot",
-                explanation: "A projekt kész; exportáld a megosztható összegzést."
+                title: "Write the final report",
+                explanation: "The project is done; export the shareable summary."
             )
         case .archived:
             return ProjectNextAction(
-                title: "Projekt archiválva",
-                explanation: "Nincs szükséges teendő."
+                title: "Project archived",
+                explanation: "Nothing to do."
             )
         }
     }

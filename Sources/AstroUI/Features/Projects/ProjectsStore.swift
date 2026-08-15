@@ -18,7 +18,26 @@ public struct ProjectWorkspaceRow: Identifiable, Equatable, Sendable {
     public let excludedFrames: Int
     public let latestNight: String?
     public let nextAction: String
+    /// The one-line "why" behind `nextAction`. Shown as the column's tooltip
+    /// so the advice is explainable without a second panel.
+    public let nextActionExplanation: String
+    public let seriesCount: Int
+    /// The project's integration goal in hours, if the user set one. Carried
+    /// on the row so "how far is each project from done" is answerable while
+    /// comparing projects — it used to live only in the inspector, one
+    /// project at a time.
+    public let goalHours: Double?
     public var id: UUID { project.id }
+
+    /// 0...1 against the goal, or `nil` when no goal is set. Its own property
+    /// so the column can sort on it.
+    public var goalProgress: Double? {
+        guard let goalHours, goalHours > 0 else { return nil }
+        return min(1, (integrationSeconds / 3600) / goalHours)
+    }
+
+    /// Sorts goal-less projects last rather than mixing them into the middle.
+    public var goalProgressSortKey: Double { goalProgress ?? -1 }
     /// `KeyPathComparator` needs a non-optional `Comparable` value --
     /// `latestNight` is `nil` for a project with no nights yet, which
     /// sorts first (as the "oldest") rather than crashing the column's sort.
@@ -257,7 +276,10 @@ public final class ProjectsStore {
                 usableFrames: snapshot.usableFrames,
                 excludedFrames: snapshot.totalFrames - snapshot.usableFrames,
                 latestNight: snapshot.nights.map(\.night.localDate).max(),
-                nextAction: snapshot.nextAction.title
+                nextAction: snapshot.nextAction.title,
+                nextActionExplanation: snapshot.nextAction.explanation,
+                seriesCount: snapshot.nights.reduce(0) { $0 + $1.series.count },
+                goalHours: try? await metadata.projectAnnotation(projectID: project.id)?.integrationGoalHours
             ))
         }
         return rows

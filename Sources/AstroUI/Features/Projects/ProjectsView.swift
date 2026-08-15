@@ -68,8 +68,6 @@ public struct ProjectsView: View {
             }
         } table: {
             tableContent
-        } footer: {
-            detailFooter
         }
         .navigationTitle("Projects")
         .accessibilityLabel("Projects")
@@ -97,6 +95,8 @@ public struct ProjectsView: View {
                         .width(min: 85, ideal: 100)
                     TableColumn("Nights", value: \ProjectWorkspaceRow.nightCount) { row in Text(row.nightCount.formatted()).monospacedDigit() }
                         .width(60)
+                    TableColumn("Series", value: \ProjectWorkspaceRow.seriesCount) { row in Text(row.seriesCount.formatted()).monospacedDigit() }
+                        .width(58)
                     TableColumn("Integration", value: \ProjectWorkspaceRow.integrationSeconds) { row in Text(duration(row.integrationSeconds)).monospacedDigit() }
                         .width(85)
                     TableColumn("Frames", value: \ProjectWorkspaceRow.usableFrames) { row in
@@ -105,7 +105,22 @@ public struct ProjectsView: View {
                     }.width(80)
                     TableColumn("Latest", value: \ProjectWorkspaceRow.latestNightSortKey) { row in Text(row.latestNight ?? "—").monospacedDigit() }
                         .width(100)
-                    TableColumn("Next") { row in Text(row.nextAction).lineLimit(1) }
+                    TableColumn("Goal", value: \ProjectWorkspaceRow.goalProgressSortKey) { row in
+                        if let progress = row.goalProgress {
+                            HStack(spacing: 6) {
+                                ProgressView(value: progress).frame(width: 44)
+                                Text(progress, format: .percent.precision(.fractionLength(0)))
+                                    .monospacedDigit().font(.caption)
+                            }
+                            .help("\(duration(row.integrationSeconds)) of \((row.goalHours ?? 0).formatted(.number.precision(.fractionLength(0...1)))) h goal")
+                        } else {
+                            Text("—").foregroundStyle(.secondary)
+                                .help("No integration goal set — add one on the project's Notes tab.")
+                        }
+                    }.width(96)
+                    TableColumn("Next") { row in
+                        Text(row.nextAction).lineLimit(1).help(row.nextActionExplanation)
+                    }
                     TableColumn("") { row in
                         HStack(spacing: 4) {
                             Button { reviewProject(row.project) } label: { Image(systemName: "checklist") }
@@ -130,27 +145,6 @@ public struct ProjectsView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-
-    /// Bounded to its own scroll region rather than left to grow freely --
-    /// unlike the table above it, this is not a virtualizing control, so an
-    /// explicit cap keeps a project with many nights/series from pushing the
-    /// table region down to nothing.
-    @ViewBuilder
-    private var detailFooter: some View {
-        if store.isLoading, store.selectedProjectID != nil, store.selectedProject == nil {
-            ProgressView("Loading project…")
-                .frame(maxWidth: .infinity, minHeight: 80)
-        } else if let detail = store.selectedProject {
-            ScrollView {
-                ProjectAcquisitionDetail(
-                    snapshot: detail,
-                    review: { reviewProject(detail.project) },
-                    results: { showResults(detail.project) }
-                )
-            }
-            .frame(maxHeight: 340)
         }
     }
 

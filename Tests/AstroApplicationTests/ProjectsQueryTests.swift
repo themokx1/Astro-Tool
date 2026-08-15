@@ -50,7 +50,8 @@ struct ProjectsQueryTests {
 
         let snapshot = try #require(try await ProjectsQuery(metadata: store).project(id: project.id))
         #expect(snapshot.series.map(\.id) == [ownSeries.id])
-        #expect(snapshot.nextAction.title == "Folytasd a gyűjtést")
+        // The UI is English; this advice used to render Hungarian on it.
+        #expect(snapshot.nextAction.title == "Keep collecting")
         #expect(snapshot.canonicalFolderName == "IC_1396_Elephants_Trunk_Nebula")
     }
 
