@@ -102,7 +102,6 @@ public struct CleanupPreviewView: View {
                 .accessibilityIdentifier("v2.cleanup.apply-quarantine")
             }.padding(16)
         }
-        .frame(minWidth: 760, minHeight: 540)
         .background(.background)
         .task { await store.load(rootURL: rootURL, accessMode: accessMode) }
         .accessibilityIdentifier("v2.cleanup.preview")

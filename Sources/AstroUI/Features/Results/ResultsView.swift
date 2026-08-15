@@ -123,9 +123,15 @@ public struct ResultsView: View {
             } else if let error = store.errorMessage {
                 ContentUnavailableView("Results unavailable", systemImage: "exclamationmark.triangle", description: Text(error))
             } else if let snapshot = store.snapshot, !snapshot.results.isEmpty {
+                // V2 UI/UX audit (2026-08-14) systemic pattern S10: this
+                // split's own minimums (440 + 430 = 870) used to be an even
+                // bigger floor than the outer view's old 780pt sheet-era one
+                // (removed below) -- reduced so both panes still fit inside
+                // the narrower detail column the shell's split view
+                // actually gives this route.
                 HSplitView {
-                    resultTable(snapshot).frame(minWidth: 440, idealWidth: 560)
-                    resultDetail(snapshot).frame(minWidth: 430)
+                    resultTable(snapshot).frame(minWidth: 260, idealWidth: 400)
+                    resultDetail(snapshot).frame(minWidth: 220)
                 }
             } else {
                 ContentUnavailableView {
@@ -135,7 +141,6 @@ public struct ResultsView: View {
                 }
             }
         }
-        .frame(minWidth: 780, minHeight: 560)
         .background(.background)
         .task { await store.load(rootURL: rootURL, projectID: project.id) }
         // Wave 4 Task 3: a distinct identifier while embedded (no header) as

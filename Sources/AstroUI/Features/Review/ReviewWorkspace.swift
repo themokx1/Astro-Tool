@@ -47,7 +47,6 @@ public struct ReviewWorkspace: View {
                 }
             }
         }
-        .frame(minWidth: 800, minHeight: 580)
         .background(AstroTokens.Color.graphite.opacity(0.22))
         .task(id: projectID) {
             try? await store.open(rootURL: rootURL, projectID: projectID)
@@ -183,14 +182,21 @@ public struct ReviewWorkspace: View {
     }
 
     private func reviewContent(_ snapshot: ReviewProjectSnapshot) -> some View {
+        // V2 UI/UX audit (2026-08-14) systemic pattern S10: this three-pane
+        // split's own minimums used to sum to 765 -- almost exactly the
+        // outer view's old 800pt sheet-era floor (removed above), so
+        // relaxing that outer floor alone would not have fixed anything;
+        // the narrower detail column the shell's split view actually gives
+        // this route (sidebar + inspector both showing) needs these three
+        // panes to still fit without forcing the window wider.
         HSplitView {
             seriesList(snapshot.series)
-                .frame(minWidth: 205, idealWidth: 240, maxWidth: 290)
+                .frame(minWidth: 140, idealWidth: 200, maxWidth: 290)
             frameReview
-                .frame(minWidth: 340, maxWidth: .infinity)
+                .frame(minWidth: 240, maxWidth: .infinity)
             if let selectedSeries = store.selectedSeries {
                 inspector(for: selectedSeries)
-                    .frame(minWidth: 220, idealWidth: 250, maxWidth: 300)
+                    .frame(minWidth: 160, idealWidth: 220, maxWidth: 300)
             }
         }
         .sheet(item: $archivePreview) { plan in

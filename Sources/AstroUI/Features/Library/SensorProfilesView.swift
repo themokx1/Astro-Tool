@@ -73,7 +73,7 @@ public struct SensorProfilesView: View {
             Label("Measurement writes only to this library's own index database, never to the image library itself.", systemImage: "lock.shield")
                 .font(.caption).foregroundStyle(.secondary).padding(14)
         }
-        .frame(minWidth: 820, minHeight: 520).background(.background)
+        .background(.background)
         .task { await store.load(rootURL: rootURL) }
         .sheet(isPresented: $showsMeasureSheet) {
             SensorMeasureConfirmSheet(store: store, operationHost: operationHost, dismiss: { showsMeasureSheet = false })

@@ -240,7 +240,6 @@ public struct ConversionWorkspace: View {
             Divider()
             footer
         }
-        .frame(minWidth: 820, minHeight: 600)
         .background(.background)
         .task { await store.load(rootURL: rootURL, accessMode: accessMode) }
         .accessibilityIdentifier("v2.conversion.workspace")
