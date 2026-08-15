@@ -117,6 +117,31 @@ struct PlanningQueryTests {
         #expect(!estimate.source.isEmpty)
     }
 
+    // Most LBN/vdB/Sh2 entries carry no magnitude at all, so there is nothing
+    // to estimate from. Substituting the reference surface brightness makes
+    // the model hand back its own input: every one of those targets printed
+    // "≈ 10,0 h — Fallback", which reads as an estimate but is just the
+    // configured baseline echoed back. Same dishonesty as the four-digit
+    // figures above, from the other direction.
+    @Test("A target with no brightness data reports no estimate instead of echoing the reference hours")
+    func targetWithoutBrightnessDataHasNoEstimate() {
+        let noPhotometry = CatalogTarget(
+            designation: "LBN 437", commonNameHU: nil,
+            raDeg: 338.051, decDeg: 40.591, kind: .emissionNebula,
+            sizeArcmin: nil, magnitude: nil
+        )
+
+        let estimate = PlanningQuery.integrationEstimate(
+            target: noPhotometry, focalRatio: 5, systemEfficiency: 1,
+            referenceHours: IntegrationTimeModel.referenceHours,
+            referenceFocalRatio: 5, referenceSurfaceBrightness: IntegrationTimeModel.referenceSurfaceBrightness
+        )
+
+        #expect(estimate.hours == nil, "the reference baseline is an input, not an estimate")
+        #expect(estimate.confidence == .fallback)
+        #expect(!estimate.source.isEmpty)
+    }
+
     @Test("A normal-sized target still produces a sane, precise estimate")
     func normalTargetStaysWithinModelRange() throws {
         let normal = CatalogTarget(

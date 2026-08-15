@@ -354,9 +354,14 @@ public struct PlanningView: View {
                                         Text("≈ \(hours, format: .number.precision(.fractionLength(1))) h")
                                             .font(.headline.monospacedDigit())
                                     } else {
-                                        Text("Beyond model range")
+                                        // Two different "no number" cases, and
+                                        // conflating them would be its own
+                                        // small lie: the model refusing an
+                                        // out-of-range figure is not the same
+                                        // as the catalog having no photometry.
+                                        Text(row.integrationConfidence == .fallback ? "No data" : "Beyond model range")
                                             .font(.callout.weight(.medium))
-                                            .foregroundStyle(.orange)
+                                            .foregroundStyle(.secondary)
                                     }
                                     Text(row.integrationConfidence.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
                                 }

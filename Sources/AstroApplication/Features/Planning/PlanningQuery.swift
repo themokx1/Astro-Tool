@@ -297,7 +297,18 @@ public struct PlanningQuery: Sendable {
     ) -> IntegrationEstimate {
         let directBrightness = target.surfaceBrightnessMagPerArcsec2
         let estimatedBrightness = TargetCatalog.estimatedSurfaceBrightness(for: target)
-        let brightness = directBrightness ?? estimatedBrightness ?? 22
+        // No photometry at all -- true for most LBN/vdB/Sh2 entries. Feeding
+        // the reference surface brightness in here would make the model return
+        // its own input (exactly `referenceHours`), which then printed as
+        // "≈ 10,0 h — Fallback" on every such row: the configured baseline
+        // echoed back, dressed as an estimate. Say we don't know instead.
+        guard let brightness = directBrightness ?? estimatedBrightness else {
+            return IntegrationEstimate(
+                hours: nil,
+                source: "No estimate -- this catalog entry has no magnitude or size to derive surface brightness from",
+                confidence: .fallback
+            )
+        }
         let rawHours = IntegrationTimeModel.hours(
             IntegrationTimeInput(
                 targetSurfaceBrightness: brightness,
