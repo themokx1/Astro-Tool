@@ -130,13 +130,14 @@ private struct PlanningSettingsView: View {
 /// `WindowGroup` that owns `V2RootView`'s `OperationHost`, so there is no
 /// shared instance to borrow here.
 private struct ExtendedCatalogSettingsSection: View {
-    @AppStorage("v2.settings.extended-catalog") private var extendedCatalogEnabled = false
+    @AppStorage("v2.settings.extended-catalog") private var extendedCatalogEnabled = true
     @State private var store = ExtendedCatalogUpdateStore()
 
     var body: some View {
         Section("Extended target catalog") {
             Toggle("Look up additional targets online (SIMBAD/VizieR)", isOn: $extendedCatalogEnabled)
                 .accessibilityIdentifier("v2.settings.extended-catalog")
+                .task { store.activate() }
             Text(
                 "When on, \"Update Catalog\" sends only catalogue names and coordinates (e.g. \"IC 4604\") to SIMBAD/VizieR -- never your library's files, paths, targets, or notes. Downloaded objects are cached on this Mac; Planning keeps working offline afterward."
             )
@@ -199,7 +200,27 @@ final class ExtendedCatalogUpdateStore {
     ) {
         self.cache = cache
         self.fetcherFactory = fetcherFactory
+    }
+
+    /// `init` stays silent: SwiftUI re-evaluates a `@State` default expression
+    /// on every view construction, so reading the cache file there would mean
+    /// disk I/O once per render -- the same shape as the freezes this module
+    /// spent five builds chasing. Views call this from `.task` instead.
+    private var isActivated = false
+
+    func activate() {
+        guard !isActivated else { return }
+        isActivated = true
         reloadCachedSummary()
+    }
+
+    /// First-launch behaviour: with the catalog enabled (the default) and
+    /// nothing cached yet, fetch it once so the planner opens on the wide
+    /// catalog instead of the built-in 217.
+    func startUpdateIfNeeded(isEnabled: Bool) async {
+        activate()
+        guard isEnabled, cachedTargetCount == nil, lastErrorMessage == nil else { return }
+        await startUpdate()
     }
 
     private static func productionCache() -> CatalogCache {
@@ -383,7 +404,7 @@ private struct IntegrationsSupportSettingsView: View {
                 Label("All library analysis runs locally on this Mac.", systemImage: "hand.raised")
                 Label("No account or cloud upload is required.", systemImage: "icloud.slash")
                 Link("Privacy notice", destination: URL(string: ProductInfo.privacyURL)!)
-                Text("If the opt-in extended target catalog (Planning tab) is enabled, catalogue names/coordinates only are sent to SIMBAD/VizieR: \"This research has made use of the SIMBAD database and the VizieR catalogue access tool, CDS, Strasbourg, France.\"")
+                Text("The extended target catalog (Planning tab, on by default) downloads once from SIMBAD/VizieR and then works offline. Only catalogue queries leave this Mac -- never library contents, paths or file names. Turn it off in Planning settings to stay fully offline: \"This research has made use of the SIMBAD database and the VizieR catalogue access tool, CDS, Strasbourg, France.\"")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Support") {

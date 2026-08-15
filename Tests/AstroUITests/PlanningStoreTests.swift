@@ -151,7 +151,7 @@ struct PlanningStoreTests {
 
     @Test("Changing focal length recalculates framing and preserves useful-first ordering")
     func focalLengthRecalculatesRecommendations() async {
-        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        let store = PlanningStore(setups: [.apsCReference], catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext)
         store.activate()
         await store.pendingRefresh?.value
         let initial = store.recommendations
@@ -195,7 +195,7 @@ struct PlanningStoreTests {
 
     @Test("Search accepts catalog and Hungarian target names")
     func targetSearchIsLocalized() async {
-        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        let store = PlanningStore(setups: [.apsCReference], catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext)
         store.activate()
         await store.pendingRefresh?.value
 
@@ -505,7 +505,7 @@ struct PlanningStoreTests {
 
     @Test("A genuine change to usefulFramingOnly still recomputes filteredRecommendations")
     func usefulFramingOnlyChangeStillRecomputes() async {
-        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        let store = PlanningStore(setups: [.apsCReference], catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext)
         store.activate()
         await store.pendingRefresh?.value
         // No search filter active -- toggling the useful-framing filter is
@@ -522,7 +522,7 @@ struct PlanningStoreTests {
 
     @Test("filteredRecommendations reflects a fresh recommendations pipeline result after refresh")
     func filteredRecommendationsTracksRecommendationsAcrossRefresh() async {
-        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        let store = PlanningStore(setups: [.apsCReference], catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext)
         store.activate()
         await store.pendingRefresh?.value
         let initialFiltered = store.filteredRecommendations
@@ -571,7 +571,7 @@ struct PlanningStoreTests {
 
     @Test("A resolved site produces a real ranking and reports the available state")
     func resolvedSiteMeansAvailableSkyAvailability() async {
-        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        let store = PlanningStore(setups: [.apsCReference], catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext)
         store.activate()
         store.setRootURL(URL(fileURLWithPath: "/tmp/does-not-matter"))
         await store.pendingRefresh?.value
@@ -602,7 +602,7 @@ struct PlanningStoreTests {
 
     @Test("Low-altitude targets are hidden by default and revealed by the opt-in toggle")
     func lowAltitudeTargetsAreHiddenByDefault() async {
-        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        let store = PlanningStore(setups: [.apsCReference], catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext)
         store.activate()
         await store.pendingRefresh?.value
 
@@ -619,7 +619,7 @@ struct PlanningStoreTests {
 
     @Test("Selecting a target computes its sky path off the main actor")
     func selectingATargetComputesSkyPath() async throws {
-        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        let store = PlanningStore(setups: [.apsCReference], catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext)
         store.activate()
         await store.pendingRefresh?.value
         let row = try #require(store.recommendations.first)
@@ -634,7 +634,7 @@ struct PlanningStoreTests {
 
     @Test("Deselecting clears the sky path rather than leaving a stale one")
     func deselectingClearsSkyPath() async throws {
-        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        let store = PlanningStore(setups: [.apsCReference], catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext)
         store.activate()
         await store.pendingRefresh?.value
         let row = try #require(store.recommendations.first)
@@ -649,7 +649,7 @@ struct PlanningStoreTests {
 
     @Test("Selecting the same target twice is a same-value no-op")
     func sameValueSelectTargetIsANoOp() async throws {
-        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        let store = PlanningStore(setups: [.apsCReference], catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext)
         store.activate()
         await store.pendingRefresh?.value
         let row = try #require(store.recommendations.first)
@@ -684,7 +684,7 @@ struct PlanningStoreTests {
 
     @Test("The sky path's max altitude agrees with DiscoveryPlanner's own value for the same target/night")
     func skyPathMaxAltitudeAgreesWithDiscoveryPlanner() async throws {
-        let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
+        let store = PlanningStore(setups: [.apsCReference], catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext)
         store.activate()
         await store.pendingRefresh?.value
         let row = try #require(store.recommendations.first { !$0.isLowAltitude })

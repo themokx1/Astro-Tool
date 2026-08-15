@@ -5,6 +5,11 @@ import SwiftUI
 public struct PlanningView: View {
     @State private var store = PlanningStore()
     @State private var savedTargetsStore = SavedTargetsStore()
+    /// Downloads the extended catalog once on first launch (the toggle is on
+    /// by default). Its `init` is deliberately side-effect free; the cache
+    /// read and any fetch happen from `.task` below.
+    @State private var catalogUpdate = ExtendedCatalogUpdateStore()
+    @AppStorage("v2.settings.extended-catalog") private var extendedCatalogEnabled = true
     @State private var selectedTargetID: String?
     /// Mirrors `PlanningStore.sortOrder`. The table needs a `Binding`, but the
     /// actual re-sorting happens in the store's cached recompute — never in
@@ -49,6 +54,14 @@ public struct PlanningView: View {
         .accessibilityLabel("Planning")
         .accessibilityIdentifier("v2.detail.planning")
         .task { store.activate() }
+        .task {
+            // First launch: fetch the catalog, then re-rank so the wider list
+            // is what the user actually sees. A failure leaves the built-in
+            // catalog in place and surfaces in Settings.
+            let before = catalogUpdate.cachedTargetCount
+            await catalogUpdate.startUpdateIfNeeded(isEnabled: extendedCatalogEnabled)
+            if catalogUpdate.cachedTargetCount != before { store.refresh() }
+        }
         .task(id: rootURL) { store.setRootURL(rootURL) }
         .task(id: rootURL) { await savedTargetsStore.setRootURL(rootURL) }
         .onChange(of: sortOrder) { _, newValue in store.setSortOrder(newValue) }

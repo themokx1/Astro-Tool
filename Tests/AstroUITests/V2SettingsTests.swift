@@ -215,12 +215,35 @@ struct V2SettingsTests {
         #expect(store.filters.count == 1)
     }
 
-    // MARK: - Extended target catalog (wave-5 Task 5): opt-in, default off
+    // MARK: - Extended target catalog (wave-5 Task 5)
+    //
+    // Shipped opt-in/default-off; the owner then asked for it on by default
+    // with a first-launch download, since the built-in 217 objects are far too
+    // narrow to plan from. The default is therefore ON — but because that
+    // means the app reaches the network on first run, the privacy copy has to
+    // say so plainly and the switch-off has to stay one click away.
 
-    @Test("The extended-catalog toggle defaults to OFF, same posture as the Open-Meteo weather integration")
-    func extendedCatalogTogglesDefaultsToOff() throws {
+    @Test("The extended-catalog toggle defaults to ON and the privacy copy admits the network use")
+    func extendedCatalogDefaultsToOnAndSaysSo() throws {
         let source = try contents("Sources/AstroUI/Settings/V2SettingsView.swift")
-        #expect(source.contains("@AppStorage(\"v2.settings.extended-catalog\") private var extendedCatalogEnabled = false"))
+        #expect(source.contains("@AppStorage(\"v2.settings.extended-catalog\") private var extendedCatalogEnabled = true"))
+        // The user must be told it is on by default and how to turn it off.
+        #expect(source.contains("on by default"))
+        #expect(source.contains("Turn it off"))
+    }
+
+    @Test("The catalog is fetched once on first launch, not on every render")
+    func extendedCatalogFetchesOnceOnFirstLaunch() throws {
+        let settings = try contents("Sources/AstroUI/Settings/V2SettingsView.swift")
+        // A guarded, explicit entry point rather than work in `init` — the
+        // store is held in a `@State` default expression, which SwiftUI
+        // re-evaluates on every view construction.
+        #expect(settings.contains("func startUpdateIfNeeded(isEnabled: Bool) async"))
+        #expect(settings.contains("guard isEnabled, cachedTargetCount == nil"))
+        #expect(!settings.contains("        reloadCachedSummary()\n    }\n\n    private static func productionCache"))
+
+        let planning = try contents("Sources/AstroUI/Features/Planning/PlanningView.swift")
+        #expect(planning.contains("startUpdateIfNeeded(isEnabled: extendedCatalogEnabled)"))
     }
 
     @Test("Settings states plainly that only catalogue names/coordinates leave the machine, and carries the required SIMBAD/VizieR attribution")

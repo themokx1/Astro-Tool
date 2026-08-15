@@ -232,7 +232,10 @@ public final class PlanningStore {
     /// `nonisolated` and parameterless so the default search closure — which
     /// must be `@Sendable` — can call it without capturing anything.
     nonisolated public static func productionCatalog() -> [CatalogTarget] {
-        guard UserDefaults.standard.bool(forKey: extendedCatalogEnabledKey),
+        // Absent key means "never touched the toggle", and the toggle now
+        // defaults to on -- `bool(forKey:)` alone would read that as off.
+        let enabled = UserDefaults.standard.object(forKey: extendedCatalogEnabledKey) as? Bool ?? true
+        guard enabled,
               let fileURL = try? CatalogCache.productionFileURL(),
               let payload = CatalogCache(fileURL: fileURL).load()
         else { return TargetCatalog.all }
