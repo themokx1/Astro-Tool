@@ -112,22 +112,27 @@ public enum DiscoveryPlanner {
         date: Date,
         site: SiteRule,
         minAltitudeDeg: Double = 30,
+        /// The catalog to sweep. Defaults to the built-in table; the Planning
+        /// workbench passes the merged built-in + downloaded extended catalog,
+        /// because a target with no sky row here is treated as unobservable
+        /// and silently vanishes from the planner.
+        targets: [CatalogTarget] = TargetCatalog.all,
         existingDesignations: Set<String> = [],
         setupFOVDeg: (width: Double, height: Double)? = nil
     ) -> [DiscoveryRow] {
         let timeZone = TimeZone.current
 
         guard let lat = site.latitudeDeg, let lon = site.longitudeDeg else {
-            return unresolvedRows(existingDesignations: existingDesignations, setupFOVDeg: setupFOVDeg)
+            return unresolvedRows(targets: targets, existingDesignations: existingDesignations, setupFOVDeg: setupFOVDeg)
         }
         let night = SunMoon.astronomicalTwilight(nightOf: date, latDeg: lat, lonDeg: lon, timeZone: timeZone)
         guard let duskUTC = night.duskUTC, let dawnUTC = night.dawnUTC else {
-            return unresolvedRows(existingDesignations: existingDesignations, setupFOVDeg: setupFOVDeg)
+            return unresolvedRows(targets: targets, existingDesignations: existingDesignations, setupFOVDeg: setupFOVDeg)
         }
 
         let moon = NightSweep.midnightMoon(duskUTC: duskUTC, dawnUTC: dawnUTC)
 
-        let rows = TargetCatalog.all.map { catalogTarget -> DiscoveryRow in
+        let rows = targets.map { catalogTarget -> DiscoveryRow in
             let sweep = NightSweep.sweep(
                 raDeg: catalogTarget.raDeg, decDeg: catalogTarget.decDeg, latDeg: lat, lonDeg: lon,
                 duskUTC: duskUTC, dawnUTC: dawnUTC, minAltitudeDeg: minAltitudeDeg
@@ -182,10 +187,11 @@ public enum DiscoveryPlanner {
     /// `discover`'s own doc, case 1). `fovFitLabel`/`alreadyInLibrary` are
     /// still filled in -- both are independent of tonight's sky.
     private static func unresolvedRows(
+        targets: [CatalogTarget] = TargetCatalog.all,
         existingDesignations: Set<String>,
         setupFOVDeg: (width: Double, height: Double)?
     ) -> [DiscoveryRow] {
-        TargetCatalog.all.map { catalogTarget in
+        targets.map { catalogTarget in
             let composition = fovComposition(
                 sizeArcmin: catalogTarget.sizeArcmin,
                 setupFOVDeg: setupFOVDeg

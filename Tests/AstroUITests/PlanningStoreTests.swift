@@ -164,6 +164,35 @@ struct PlanningStoreTests {
         #expect(store.recommendations.first?.fit != .tooSmall)
     }
 
+    // The opt-in SIMBAD/VizieR fetch is only worth anything if the targets it
+    // caches actually reach the planner. Without this wiring the download
+    // succeeds, Settings reports a cache, and Planning still shows the
+    // built-in 217 — a silently useless feature.
+    @Test("Targets from the extended catalog are ranked and searchable in Planning")
+    func extendedCatalogTargetsReachThePlanner() async {
+        let extra = CatalogTarget(
+            designation: "LBN 437", commonNameHU: nil, raDeg: 338.051, decDeg: 40.591,
+            kind: .emissionNebula, sizeArcmin: 20, magnitude: nil
+        )
+        let store = PlanningStore(
+            setups: [.apsCReference],
+            catalogProvider: { TargetCatalog.merged(cached: [extra]) },
+            skyContextProvider: fixedSkyContext
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+
+        #expect(store.recommendations.contains { $0.target.designation == "LBN 437" })
+
+        // ...and findable by name, from the same source the ranking used.
+        // The framing filter is off here on purpose: this asserts the catalog
+        // reaches the planner, not that a 20-arcmin nebula frames well at
+        // 200 mm (it doesn't, and `usefulFramingOnly` would hide it).
+        store.usefulFramingOnly = false
+        store.searchText = "LBN 437"
+        #expect(store.filteredRecommendations.contains { $0.target.designation == "LBN 437" })
+    }
+
     @Test("Search accepts catalog and Hungarian target names")
     func targetSearchIsLocalized() async {
         let store = PlanningStore(setups: [.apsCReference], skyContextProvider: fixedSkyContext)
@@ -402,7 +431,7 @@ struct PlanningStoreTests {
         let searchCounter = CallCounter()
         let store = PlanningStore(setups: [.apsCReference]) { query in
             query.recommendations()
-        } catalogSearch: { query in
+        } catalogSearch: { query, _ in
             searchCounter.increment()
             return TargetCatalog.search(query, limit: TargetCatalog.all.count)
         }
@@ -428,7 +457,7 @@ struct PlanningStoreTests {
         let searchCounter = CallCounter()
         let store = PlanningStore(setups: [.apsCReference]) { query in
             query.recommendations()
-        } catalogSearch: { query in
+        } catalogSearch: { query, _ in
             searchCounter.increment()
             return TargetCatalog.search(query, limit: TargetCatalog.all.count)
         }
@@ -447,7 +476,7 @@ struct PlanningStoreTests {
         let searchCounter = CallCounter()
         let store = PlanningStore(setups: [.apsCReference]) { query in
             query.recommendations()
-        } catalogSearch: { query in
+        } catalogSearch: { query, _ in
             searchCounter.increment()
             return TargetCatalog.search(query, limit: TargetCatalog.all.count)
         }

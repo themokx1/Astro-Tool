@@ -171,7 +171,14 @@ public struct PlanningQuery: Sendable {
         // keeps `DiscoveryRow.score` to just `visibilityFactor x
         // moonPenalty`) -- this query's OWN `composition(...)` below is the
         // framing opinion, kept separate so the two aren't double-counted.
-        let skyRows = DiscoveryPlanner.discover(date: date, site: site, minAltitudeDeg: minAltitudeDeg)
+        // Sweep the SAME catalog this query ranks. Passing the built-in table
+        // here (the engine's default) would leave every extended-catalog
+        // target without a sky row, and a target with no sky row counts as
+        // unobservable — so the whole downloaded catalog would silently vanish
+        // from the planner.
+        let skyRows = DiscoveryPlanner.discover(
+            date: date, site: site, minAltitudeDeg: minAltitudeDeg, targets: targets
+        )
         let skyByDesignation = Dictionary(uniqueKeysWithValues: skyRows.map { ($0.target.designation, $0) })
         // Tonight's darkness and Moon phase are the same for every target, so
         // they are computed once here and handed to `PlanningScore` per row.

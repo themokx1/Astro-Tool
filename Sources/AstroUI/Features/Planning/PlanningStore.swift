@@ -35,7 +35,7 @@ public final class PlanningStore {
     /// Runs `TargetCatalog.search` for `filteredRecommendations`. Injectable
     /// for the same reason `computeRecommendations` is: it lets tests count
     /// invocations without needing `TargetCatalog` itself to be mockable.
-    public typealias CatalogSearch = @Sendable (String) -> [CatalogTarget]
+    public typealias CatalogSearch = @Sendable (String, [CatalogTarget]) -> [CatalogTarget]
     /// Resolves tonight's real site the same way `HomeStore`'s
     /// `NightContextProvider` does (`Planner.resolveSite`: explicit config,
     /// else the FITS-median fallback) -- `nil` when no library is open
@@ -208,6 +208,7 @@ public final class PlanningStore {
     private var lastObservedReferenceFocalRatio: Double
     private var lastObservedReferenceSurfaceBrightness: Double
     private let catalogSearch: CatalogSearch
+    private let catalogProvider: CatalogProvider
     private let skyContextProvider: SkyContextProvider
     /// `nonisolated(unsafe)`: only ever mutated on the main actor (`init`),
     /// but `deinit` is always `nonisolated` (it may run on any thread), so
@@ -216,18 +217,52 @@ public final class PlanningStore {
     /// which this could race.
     private nonisolated(unsafe) var defaultsObserver: NSObjectProtocol?
 
+    /// The catalog the planner ranks and searches. Defaults to the built-in
+    /// 217 objects merged with whatever the opt-in SIMBAD/VizieR fetch has
+    /// cached, so enabling the extended catalog in Settings actually widens
+    /// what Planning shows — without it, the download would be invisible here.
+    /// Not `@Sendable`: it is only ever called on the main actor, in
+    /// `refresh()`, before the detached compute starts — the resulting array
+    /// is what crosses the isolation boundary, not this closure.
+    public typealias CatalogProvider = @MainActor () -> [CatalogTarget]
+
+    /// Reads the cache only when the user opted in. A missing, corrupt or
+    /// version-mismatched cache falls back to the built-in catalog rather
+    /// than failing (`CatalogCache.load()` returns `nil` for all three).
+    /// `nonisolated` and parameterless so the default search closure — which
+    /// must be `@Sendable` — can call it without capturing anything.
+    nonisolated public static func productionCatalog() -> [CatalogTarget] {
+        guard UserDefaults.standard.bool(forKey: extendedCatalogEnabledKey),
+              let fileURL = try? CatalogCache.productionFileURL(),
+              let payload = CatalogCache(fileURL: fileURL).load()
+        else { return TargetCatalog.all }
+        return TargetCatalog.merged(cached: payload.targets)
+    }
+
+    /// Mirrors `V2SettingsView`'s `@AppStorage` key for the opt-in toggle.
+    nonisolated public static let extendedCatalogEnabledKey = "v2.settings.extended-catalog"
+
     public init(
         setups: [ImagingSetupProfile] = PlanningStore.defaultSetups,
         defaults: UserDefaults = .standard,
         computeRecommendations: @escaping RecommendationsComputer = { $0.recommendations() },
-        catalogSearch: @escaping CatalogSearch = { TargetCatalog.search($0, limit: TargetCatalog.all.count) },
+        catalogSearch: CatalogSearch? = nil,
+        catalogProvider: CatalogProvider? = nil,
         skyContextProvider: @escaping SkyContextProvider = PlanningStore.productionSkyContext
     ) {
         let safeSetups = setups.isEmpty ? PlanningStore.defaultSetups : setups
         self.setups = safeSetups
         self.defaults = defaults
         self.computeRecommendations = computeRecommendations
-        self.catalogSearch = catalogSearch
+        self.catalogProvider = catalogProvider ?? { PlanningStore.productionCatalog() }
+        // Search the SAME catalog the ranking uses, so a target that appears
+        // in the table can always be found by name and vice versa.
+        // Searches whatever catalog the ranking actually used (passed in by
+        // `recomputeFilteredRecommendations`), so extended-catalog targets
+        // stay findable and search can never offer a target the table lacks.
+        self.catalogSearch = catalogSearch ?? { query, source in
+            TargetCatalog.search(query, limit: source.count, in: source)
+        }
         self.skyContextProvider = skyContextProvider
         let initial = safeSetups.first(where: \.isDefault) ?? safeSetups[0]
         selectedSetupID = initial.id
@@ -360,11 +395,13 @@ public final class PlanningStore {
         let resolveSkyContext = skyContextProvider
         let compute = computeRecommendations
         let plannedDate = planningDate
+        let targets = catalogProvider()
         let task = Task { [weak self] in
             let skyContext = try? await resolveSkyContext(rootURL)
             let query = PlanningQuery(
                 setup: setup,
                 focalLength: focalLength,
+                targets: targets,
                 referenceHours: referenceHours,
                 referenceFocalRatio: referenceFocalRatio,
                 referenceSurfaceBrightness: referenceSurfaceBrightness,
@@ -443,7 +480,7 @@ public final class PlanningStore {
         var rows = recommendations
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !query.isEmpty {
-            let matchingIDs = Set(catalogSearch(query).map(\.designation))
+            let matchingIDs = Set(catalogSearch(query, rows.map(\.target)).map(\.designation))
             rows = rows.filter { matchingIDs.contains($0.target.designation) }
         }
         if usefulFramingOnly {
