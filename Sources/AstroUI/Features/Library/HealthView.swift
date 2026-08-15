@@ -43,6 +43,16 @@ public struct HealthView: View {
     @State private var category: LibraryHealthCategory?
     @State private var selectedFindingID: String?
     @State private var acknowledgeRequest: AcknowledgeRequest?
+    /// V2 UI/UX audit (2026-08-14) systemic pattern S7: findings are a
+    /// small, already-in-memory local list (`store.snapshot.items`), not a
+    /// paginated/expensive query result, so the sort is cached in local
+    /// `@State` rather than the store (see `NightsStore.sortOrder`'s own
+    /// doc comment for the convention this follows). Default is most
+    /// severe first.
+    @State private var sortOrder: [KeyPathComparator<LibraryHealthItem>] = [
+        KeyPathComparator(\LibraryHealthItem.severityRank, order: .reverse)
+    ]
+    @State private var displayedItems: [LibraryHealthItem] = []
 
     public var body: some View {
         WorkspaceTablePage(eyebrow: "Read-only diagnostics", title: "Library Health", subtitle: "Actionable calibration and integrity checks without changing source files.") {
@@ -52,6 +62,9 @@ public struct HealthView: View {
         } footer: {
             footerContent
         }
+        .onChange(of: sortOrder) { _, _ in recomputeDisplayedItems() }
+        .onChange(of: category) { _, _ in recomputeDisplayedItems() }
+        .task(id: store.snapshot) { recomputeDisplayedItems() }
         .task(id: rootURL) { if let rootURL { await store.load(rootURL: rootURL) } }
         .navigationTitle("Library Health")
         .accessibilityLabel("Library Health")
@@ -139,10 +152,10 @@ public struct HealthView: View {
 
     @ViewBuilder
     private var tableContent: some View {
-        if let snapshot = store.snapshot {
+        if store.snapshot != nil {
             GroupBox("Health findings") {
-                Table(filteredItems(snapshot), selection: $selectedFindingID) {
-                    TableColumn("Finding") { item in
+                Table(displayedItems, selection: $selectedFindingID, sortOrder: $sortOrder) {
+                    TableColumn("Finding", value: \LibraryHealthItem.title) { item in
                         HStack(alignment: .top, spacing: 10) {
                             Image(systemName: icon(item.severity)).foregroundStyle(color(item.severity))
                             VStack(alignment: .leading, spacing: 3) {
@@ -164,7 +177,7 @@ public struct HealthView: View {
                             .font(.callout.monospaced())
                     }
                     .width(min: 145, ideal: 190)
-                    TableColumn("Category") { item in
+                    TableColumn("Category", value: \LibraryHealthItem.category.rawValue) { item in
                         Text(item.category.rawValue.capitalized)
                     }
                     .width(min: 90, ideal: 110)
@@ -175,7 +188,7 @@ public struct HealthView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contextMenu(forSelectionType: String.self) { findingIDs in
-                    if let item = filteredItems(snapshot).first(where: { findingIDs.contains($0.id) }) {
+                    if let item = displayedItems.first(where: { findingIDs.contains($0.id) }) {
                         healthActionMenu(item)
                     }
                 }
@@ -310,8 +323,10 @@ public struct HealthView: View {
         NSWorkspace.shared.activateFileViewerSelecting([rootURL])
     }
 
-    private func filteredItems(_ snapshot: LibraryHealthSnapshot) -> [LibraryHealthItem] {
-        snapshot.items.filter { category == nil || $0.category == category }
+    private func recomputeDisplayedItems() {
+        var rows = (store.snapshot?.items ?? []).filter { category == nil || $0.category == category }
+        if !sortOrder.isEmpty { rows.sort(using: sortOrder) }
+        displayedItems = rows
     }
 
     @ViewBuilder

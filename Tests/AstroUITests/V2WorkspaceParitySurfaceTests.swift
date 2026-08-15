@@ -162,7 +162,10 @@ struct V2WorkspaceParitySurfaceTests {
         let health = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/HealthView.swift"))
         let planning = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Planning/PlanningView.swift"))
         let settings = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"))
-        #expect(health.contains("Table(filteredItems(snapshot), selection: $selectedFindingID)"))
+        // V2 UI/UX audit (2026-08-14) systemic pattern S7: findings are now
+        // sortable (v2/v2.1 follow-up) -- the table reads from a locally
+        // cached, re-sorted `displayedItems` rather than filtering inline.
+        #expect(health.contains("Table(displayedItems, selection: $selectedFindingID, sortOrder: $sortOrder)"))
         #expect(health.contains("TableColumn(\"Finding\""))
         #expect(health.contains("contextMenu(forSelectionType: String.self"))
         #expect(health.contains("v2.health.findings-table"))

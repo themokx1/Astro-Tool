@@ -25,6 +25,18 @@ public struct LibraryHealthItem: Equatable, Sendable, Identifiable {
     /// from an ephemeral row identity.
     public var ackCategory: String { category.rawValue }
     public var ackGroupKey: String { id }
+    /// `KeyPathComparator` needs a `Comparable` value, and `severity`'s
+    /// `rawValue` sorts alphabetically (critical, healthy, info, warning),
+    /// not by actual severity -- this is the real "most severe first" key
+    /// the findings table's default sort (and any user re-sort) uses.
+    public var severityRank: Int {
+        switch severity {
+        case .critical: 3
+        case .warning: 2
+        case .info: 1
+        case .healthy: 0
+        }
+    }
 
     func acknowledged(_ flag: Bool) -> LibraryHealthItem {
         LibraryHealthItem(
