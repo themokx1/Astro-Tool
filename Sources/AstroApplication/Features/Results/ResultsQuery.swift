@@ -13,6 +13,13 @@ public struct ResultLineageSnapshot: Equatable, Sendable, Identifiable {
     public let sourceFrameIDs: [UUID]
     public let sourceResultIDs: [UUID]
     public let calibrationAssets: [String]
+
+    /// `KeyPathComparator` needs a non-optional `Comparable` value -- joins
+    /// name/version the same way `ResultsView.softwareLabel` displays them,
+    /// falling back to empty (sorts first) when neither is recorded.
+    public var softwareSortKey: String {
+        [softwareName, softwareVersion].compactMap { $0 }.joined(separator: " ")
+    }
 }
 
 public struct ResultsSnapshot: Equatable, Sendable {

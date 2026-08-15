@@ -23,6 +23,16 @@ public final class ResultsStore {
     /// export menu having to know how to resolve either on its own.
     public private(set) var canonicalFolderName: String?
     public private(set) var latestNightDate: String?
+    /// V2 UI/UX audit (2026-08-14) systemic pattern S7: the results table's
+    /// header used to look clickable and do nothing. Default is most
+    /// recent first.
+    public private(set) var sortOrder: [KeyPathComparator<ResultLineageSnapshot>] = [
+        KeyPathComparator(\ResultLineageSnapshot.createdAt, order: .reverse)
+    ]
+    /// Cached, re-sorted whenever `snapshot`/`sortOrder` changes -- never
+    /// re-derived from `body` (see `PlanningStore.filteredRecommendations`'s
+    /// own doc comment for the same fix applied first).
+    public private(set) var results: [ResultLineageSnapshot] = []
 
     private let metadataFactory: MetadataFactory
 
@@ -36,11 +46,24 @@ public final class ResultsStore {
         do {
             let metadata = try metadataFactory(rootURL)
             snapshot = try await ResultsQuery(metadata: metadata).snapshot(projectID: projectID)
+            recomputeResults()
             if let projectSnapshot = try await ProjectsQuery(metadata: metadata).project(id: projectID) {
                 canonicalFolderName = projectSnapshot.canonicalFolderName
                 latestNightDate = projectSnapshot.nights.first?.night.localDate
             }
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    public func setSortOrder(_ newValue: [KeyPathComparator<ResultLineageSnapshot>]) {
+        guard newValue != sortOrder else { return }
+        sortOrder = newValue
+        recomputeResults()
+    }
+
+    private func recomputeResults() {
+        var rows = snapshot?.results ?? []
+        if !sortOrder.isEmpty { rows.sort(using: sortOrder) }
+        results = rows
     }
 }
 
@@ -75,6 +98,13 @@ public struct ResultsView: View {
     let showsHeader: Bool
     @State private var store: ResultsStore
     @State private var selectedResultID: UUID?
+    /// Mirrors `ResultsStore.sortOrder`. The table needs a `Binding`, but
+    /// the actual re-sort happens in the store's cached `results` (see
+    /// `PlanningView.sortOrder`'s own doc comment for why that split
+    /// exists).
+    @State private var sortOrder: [KeyPathComparator<ResultLineageSnapshot>] = [
+        KeyPathComparator(\ResultLineageSnapshot.createdAt, order: .reverse)
+    ]
     @Environment(WorkspaceActionCenter.self) private var workspaceActionCenter
     /// Wave 4 (post-20014) fix: see `ProjectWorkspaceView.actionOwner`'s own
     /// doc comment -- same reasoning here.
@@ -137,7 +167,7 @@ public struct ResultsView: View {
                 ProgressView("Reading result lineage…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = store.errorMessage {
                 ContentUnavailableView("Results unavailable", systemImage: "exclamationmark.triangle", description: Text(error))
-            } else if let snapshot = store.snapshot, !snapshot.results.isEmpty {
+            } else if let snapshot = store.snapshot, !store.results.isEmpty {
                 // V2 UI/UX audit (2026-08-14) systemic pattern S10: this
                 // split's own minimums (440 + 430 = 870) used to be an even
                 // bigger floor than the outer view's old 780pt sheet-era one
@@ -158,6 +188,7 @@ public struct ResultsView: View {
         }
         .background(.background)
         .task { await store.load(rootURL: rootURL, projectID: project.id) }
+        .onChange(of: sortOrder) { _, newValue in store.setSortOrder(newValue) }
         // Wave 4 Task 3: a distinct identifier while embedded (no header) as
         // `ProjectWorkspaceView`'s Results tab, so UI automation can tell the
         // pushed `.resultsWorkspace(projectID:)` route apart from this same
@@ -202,7 +233,7 @@ public struct ResultsView: View {
     }
 
     private func resultTable(_ snapshot: ResultsSnapshot) -> some View {
-        Table(snapshot.results, selection: $selectedResultID) {
+        Table(store.results, selection: $selectedResultID, sortOrder: $sortOrder) {
             TableColumn("Preview") { result in
                 if let relativePath = result.relativePath {
                     FrameThumbnailCell(rootURL: rootURL, relativePath: relativePath)
@@ -215,7 +246,7 @@ public struct ResultsView: View {
                 }
             }
             .width(min: 36, ideal: 36, max: 36)
-            TableColumn("Result") { result in
+            TableColumn("Result", value: \ResultLineageSnapshot.role.rawValue) { result in
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Label(result.role.rawValue.capitalized, systemImage: result.role == .final ? "checkmark.seal.fill" : "square.stack")
@@ -231,21 +262,21 @@ public struct ResultsView: View {
                 }
                 .padding(.vertical, 4)
             }
-            TableColumn("Created") { result in
+            TableColumn("Created", value: \ResultLineageSnapshot.createdAt) { result in
                 Text(result.createdAt.formatted(date: .abbreviated, time: .shortened))
             }
             .width(min: 125, ideal: 145)
-            TableColumn("Software") { result in
+            TableColumn("Software", value: \ResultLineageSnapshot.softwareSortKey) { result in
                 Text(softwareLabel(result)).lineLimit(1)
             }
             .width(min: 110, ideal: 140)
         }
         .contextMenu(forSelectionType: UUID.self) { resultIDs in
-            if let result = snapshot.results.first(where: { resultIDs.contains($0.id) }) {
+            if let result = store.results.first(where: { resultIDs.contains($0.id) }) {
                 resultActionMenu(result)
             }
         } primaryAction: { resultIDs in
-            if let result = snapshot.results.first(where: { resultIDs.contains($0.id) }) {
+            if let result = store.results.first(where: { resultIDs.contains($0.id) }) {
                 openResult(result)
             }
         }
@@ -259,7 +290,10 @@ public struct ResultsView: View {
         ))
         .accessibilityIdentifier("v2.results.table")
         .onAppear {
-            selectedResultID = selectedResultID ?? snapshot.publishableResultID ?? snapshot.results.last?.id
+            // Default sort is most-recent-first (`ResultsStore.sortOrder`),
+            // so the first row is "most recent" -- `.last` here (this
+            // table's own pre-sort convention) would now mean "oldest".
+            selectedResultID = selectedResultID ?? snapshot.publishableResultID ?? store.results.first?.id
         }
     }
 

@@ -32,6 +32,34 @@ struct ResultsStoreTests {
         #expect(store.errorMessage == nil)
     }
 
+    @Test("Results default to most-recent-first and re-sort on demand")
+    func sortsResultsByColumn() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .processing)
+        try await metadata.save(MetadataWriteBatch(projects: [project]))
+        let older = ResultRecord(
+            id: UUID(), projectID: project.id, parentResultID: nil, kind: .stack, role: .intermediate,
+            relativePath: "stacks/IC1396/older.fit", createdAt: Date(timeIntervalSince1970: 1_786_000_000),
+            softwareName: "Siril", softwareVersion: "1.2"
+        )
+        let newer = ResultRecord(
+            id: UUID(), projectID: project.id, parentResultID: nil, kind: .stack, role: .final,
+            relativePath: "stacks/IC1396/newer.fit", createdAt: Date(timeIntervalSince1970: 1_786_100_000),
+            softwareName: "Siril", softwareVersion: "1.2"
+        )
+        try await metadata.save(older)
+        try await metadata.save(newer)
+        let store = ResultsStore(metadataFactory: { _ in metadata })
+
+        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()), projectID: project.id)
+
+        #expect(store.results.map(\.id) == [newer.id, older.id])
+
+        store.setSortOrder([KeyPathComparator(\ResultLineageSnapshot.createdAt, order: .forward)])
+
+        #expect(store.results.map(\.id) == [older.id, newer.id])
+    }
+
     @Test("A load failure surfaces its error message rather than throwing past the view")
     func loadFailureSurfacesError() async throws {
         struct BoomError: Error {}

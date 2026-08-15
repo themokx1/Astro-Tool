@@ -144,7 +144,10 @@ struct V2WorkspaceParitySurfaceTests {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Results/ResultsView.swift"))
-        #expect(workspace.contains("Table(snapshot.results, selection: $selectedResultID)"))
+        // V2 UI/UX audit (2026-08-14) systemic pattern S7: sortable since
+        // the v2/v2.1 follow-up -- reads from the store's own cached,
+        // re-sorted `results` rather than the raw snapshot.
+        #expect(workspace.contains("Table(store.results, selection: $selectedResultID, sortOrder: $sortOrder)"))
         #expect(workspace.contains("TableColumn(\"Result\""))
         #expect(workspace.contains("TableColumn(\"Created\""))
         #expect(workspace.contains("TableColumn(\"Software\""))
