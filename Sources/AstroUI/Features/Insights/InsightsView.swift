@@ -3,20 +3,34 @@ import AstroCore
 import Charts
 import SwiftUI
 
+/// V2 UI/UX audit (2026-08-14) systemic pattern S8: this used to be a
+/// `private final class` with `InsightsQuery.production` called directly
+/// inside `load`, so this whole screen had zero unit-test surface. Follows
+/// `LibraryHealthStore`'s query-factory injection pattern so tests can
+/// supply a fixture-backed `InsightsQuery` without touching the
+/// filesystem-resolving `production` constructor.
 @MainActor
 @Observable
-private final class InsightsStore {
-    var snapshot: InsightsSnapshot?
-    var availableYears: [Int] = []
-    var errorMessage: String?
-    var isLoading = false
+public final class InsightsStore {
+    public typealias QueryFactory = @Sendable (URL) throws -> InsightsQuery
 
-    func load(rootURL: URL?, year: Int? = nil) async {
+    public private(set) var snapshot: InsightsSnapshot?
+    public private(set) var availableYears: [Int] = []
+    public private(set) var errorMessage: String?
+    public private(set) var isLoading = false
+
+    private let queryFactory: QueryFactory
+
+    public init(queryFactory: @escaping QueryFactory = { rootURL in try InsightsQuery.production(rootURL: rootURL) }) {
+        self.queryFactory = queryFactory
+    }
+
+    public func load(rootURL: URL?, year: Int? = nil) async {
         guard let rootURL else { snapshot = nil; return }
         isLoading = true
         defer { isLoading = false }
         do {
-            snapshot = try await InsightsQuery.production(rootURL: rootURL).snapshot(year: year)
+            snapshot = try await queryFactory(rootURL).snapshot(year: year)
             if year == nil, let snapshot {
                 availableYears = Array(Set(snapshot.months.compactMap { Int($0.month.prefix(4)) })).sorted(by: >)
             }
@@ -35,7 +49,7 @@ public struct InsightsView: View {
     /// / `pendingInsightsSetupFilter`. `nil` leaves `selectedSetup` at its
     /// usual "All setups" default.
     let initialSetupFilter: String?
-    @State private var store = InsightsStore()
+    @State private var store: InsightsStore
     @State private var selectedYear: Int?
     @State private var selectedSetup: String?
 
@@ -43,12 +57,14 @@ public struct InsightsView: View {
         snapshot: LibrarySnapshot?,
         rootURL: URL?,
         initialSetupFilter: String? = nil,
-        chooseLibrary: @escaping () -> Void
+        chooseLibrary: @escaping () -> Void,
+        store: InsightsStore = InsightsStore()
     ) {
         self.librarySnapshot = snapshot
         self.rootURL = rootURL
         self.initialSetupFilter = initialSetupFilter
         self.chooseLibrary = chooseLibrary
+        _store = State(initialValue: store)
         _selectedSetup = State(initialValue: initialSetupFilter)
     }
 

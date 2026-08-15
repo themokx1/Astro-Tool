@@ -1,31 +1,49 @@
 import AstroApplication
 import SwiftUI
 
+/// V2 UI/UX audit (2026-08-14) systemic pattern S8: this used to be a
+/// `private final class` with `CleanupPreviewQuery.production` called
+/// directly inside its own methods, so this whole screen had zero
+/// unit-test surface. Follows `LibraryHealthStore`'s query-factory
+/// injection pattern so tests can supply a fixture-backed
+/// `CleanupPreviewQuery` without touching the filesystem-resolving
+/// `production` constructor.
 @MainActor
 @Observable
-private final class CleanupPreviewStore {
-    var snapshot: CleanupPreviewSnapshot?
-    var isLoading = false
-    var errorMessage: String?
-    var selectedCategories: Set<String> = []
-    var planErrorMessage: String?
+public final class CleanupPreviewStore {
+    public typealias QueryFactory = @Sendable (URL, LibraryAccessMode) throws -> CleanupPreviewQuery
 
+    public private(set) var snapshot: CleanupPreviewSnapshot?
+    public private(set) var isLoading = false
+    public private(set) var errorMessage: String?
+    public private(set) var selectedCategories: Set<String> = []
+    public private(set) var planErrorMessage: String?
+
+    private let queryFactory: QueryFactory
     private var rootURL: URL?
     private var accessMode: LibraryAccessMode = .readOnly
 
-    func load(rootURL: URL, accessMode: LibraryAccessMode) async {
+    public init(
+        queryFactory: @escaping QueryFactory = { rootURL, accessMode in
+            try CleanupPreviewQuery.production(rootURL: rootURL, accessMode: accessMode)
+        }
+    ) {
+        self.queryFactory = queryFactory
+    }
+
+    public func load(rootURL: URL, accessMode: LibraryAccessMode) async {
         isLoading = true
         self.rootURL = rootURL
         self.accessMode = accessMode
         defer { isLoading = false }
         do {
-            snapshot = try await CleanupPreviewQuery.production(rootURL: rootURL, accessMode: accessMode).snapshot()
+            snapshot = try await queryFactory(rootURL, accessMode).snapshot()
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    func toggleSelection(_ category: String) {
+    public func toggleSelection(_ category: String) {
         if selectedCategories.contains(category) {
             selectedCategories.remove(category)
         } else {
@@ -38,11 +56,11 @@ private final class CleanupPreviewStore {
     /// never writes anything); `QuarantineApplyCommand.apply` is what
     /// actually gates on write access, once the confirmation sheet is
     /// shown.
-    func buildPlan() -> LibraryMutationPlan? {
+    public func buildPlan() -> LibraryMutationPlan? {
         guard let rootURL, !selectedCategories.isEmpty else { return nil }
         planErrorMessage = nil
         do {
-            return try CleanupPreviewQuery.production(rootURL: rootURL, accessMode: accessMode)
+            return try queryFactory(rootURL, accessMode)
                 .plan(selecting: selectedCategories, confirmationToken: UUID().uuidString)
         } catch {
             planErrorMessage = error.localizedDescription
@@ -55,16 +73,18 @@ public struct CleanupPreviewView: View {
     let rootURL: URL
     let accessMode: LibraryAccessMode
     let presentQuarantineApply: (LibraryMutationPlan) -> Void
-    @State private var store = CleanupPreviewStore()
+    @State private var store: CleanupPreviewStore
 
     public init(
         rootURL: URL,
         accessMode: LibraryAccessMode = .readOnly,
-        presentQuarantineApply: @escaping (LibraryMutationPlan) -> Void = { _ in }
+        presentQuarantineApply: @escaping (LibraryMutationPlan) -> Void = { _ in },
+        store: CleanupPreviewStore = CleanupPreviewStore()
     ) {
         self.rootURL = rootURL
         self.accessMode = accessMode
         self.presentQuarantineApply = presentQuarantineApply
+        _store = State(initialValue: store)
     }
 
     public var body: some View {

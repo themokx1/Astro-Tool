@@ -3,24 +3,38 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// V2 UI/UX audit (2026-08-14) systemic pattern S8: this used to be a
+/// `private final class` that resolved `ProjectsStore.productionMetadata`
+/// directly inside `load`, so this whole screen had zero unit-test surface.
+/// Follows `ProjectsStore`'s own `metadataFactory` injection pattern so
+/// tests can supply a fixture-backed `MetadataStore` without touching the
+/// filesystem-resolving production path.
 @MainActor
 @Observable
-private final class ResultsStore {
-    var snapshot: ResultsSnapshot?
-    var isLoading = false
-    var errorMessage: String?
+public final class ResultsStore {
+    public typealias MetadataFactory = @MainActor @Sendable (URL) throws -> MetadataStore
+
+    public private(set) var snapshot: ResultsSnapshot?
+    public private(set) var isLoading = false
+    public private(set) var errorMessage: String?
     /// This project's own library/folder key and most recent night, loaded
     /// alongside `snapshot` -- everything the "Export Stack List" menu item
     /// needs to call `ExportService.stackList(target:date:)`, without the
     /// export menu having to know how to resolve either on its own.
-    var canonicalFolderName: String?
-    var latestNightDate: String?
+    public private(set) var canonicalFolderName: String?
+    public private(set) var latestNightDate: String?
 
-    func load(rootURL: URL, projectID: UUID) async {
+    private let metadataFactory: MetadataFactory
+
+    public init(metadataFactory: @escaping MetadataFactory = ProjectsStore.productionMetadata) {
+        self.metadataFactory = metadataFactory
+    }
+
+    public func load(rootURL: URL, projectID: UUID) async {
         isLoading = true
         defer { isLoading = false }
         do {
-            let metadata = try ProjectsStore.productionMetadata(rootURL: rootURL)
+            let metadata = try metadataFactory(rootURL)
             snapshot = try await ResultsQuery(metadata: metadata).snapshot(projectID: projectID)
             if let projectSnapshot = try await ProjectsQuery(metadata: metadata).project(id: projectID) {
                 canonicalFolderName = projectSnapshot.canonicalFolderName
@@ -59,17 +73,18 @@ public struct ResultsView: View {
     let rootURL: URL
     let project: ProjectRecord
     let showsHeader: Bool
-    @State private var store = ResultsStore()
+    @State private var store: ResultsStore
     @State private var selectedResultID: UUID?
     @Environment(WorkspaceActionCenter.self) private var workspaceActionCenter
     /// Wave 4 (post-20014) fix: see `ProjectWorkspaceView.actionOwner`'s own
     /// doc comment -- same reasoning here.
     @State private var actionOwner = UUID().uuidString
 
-    public init(rootURL: URL, project: ProjectRecord, showsHeader: Bool = true) {
+    public init(rootURL: URL, project: ProjectRecord, showsHeader: Bool = true, store: ResultsStore = ResultsStore()) {
         self.rootURL = rootURL
         self.project = project
         self.showsHeader = showsHeader
+        _store = State(initialValue: store)
     }
 
     // Wave 4 navigation-rework code-review fix: publishing workspace actions
