@@ -103,6 +103,23 @@ struct ProjectsStoreTests {
         #expect(store.selectedProjectID == project.id)
     }
 
+    @Test("Projects defaults to name-ascending and re-sorts workspaceRows on demand")
+    func sortsWorkspaceRowsByColumn() async throws {
+        let metadata = try MetadataStore.temporary()
+        let alpha = ProjectRecord(id: UUID(), catalogID: "NGC 7000", displayName: "Alpha Target", phase: .collecting)
+        let zulu = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Zulu Target", phase: .collecting)
+        try await metadata.save(MetadataWriteBatch(projects: [alpha, zulu]))
+        let store = ProjectsStore(metadataFactory: { _ in metadata })
+
+        try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        #expect(store.workspaceRows.map(\.project.displayName) == ["Alpha Target", "Zulu Target"])
+
+        store.setSortOrder([KeyPathComparator(\ProjectWorkspaceRow.project.displayName, order: .reverse)])
+
+        #expect(store.workspaceRows.map(\.project.displayName) == ["Zulu Target", "Alpha Target"])
+    }
+
     @Test("Switching selection between projects never leaves the annotation mismatched with the selected snapshot")
     func selectingProjectsNeverObservesMismatchedAnnotation() async throws {
         // Wave 4 Task 1 data-bug fix: `selectProject` used to assign

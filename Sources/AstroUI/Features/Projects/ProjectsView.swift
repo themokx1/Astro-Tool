@@ -11,6 +11,13 @@ public struct ProjectsView: View {
     let openProject: (ProjectRecord) -> Void
     @State private var searchText = ""
     @State private var visibleProjects: [ProjectRecord] = []
+    /// Mirrors `ProjectsStore.sortOrder`. The table needs a `Binding`, but
+    /// the actual re-sort happens in the store's `workspaceRows` (see
+    /// `PlanningView.sortOrder`'s own doc comment for why that split
+    /// exists).
+    @State private var sortOrder: [KeyPathComparator<ProjectWorkspaceRow>] = [
+        KeyPathComparator(\ProjectWorkspaceRow.project.displayName, order: .forward)
+    ]
 
     public var body: some View {
         if snapshot == nil {
@@ -70,14 +77,15 @@ public struct ProjectsView: View {
         .task(id: store.projects) {
             visibleProjects = (try? await store.search(searchText)) ?? store.projects
         }
+        .onChange(of: sortOrder) { _, newValue in store.setSortOrder(newValue) }
     }
 
     @ViewBuilder
     private var tableContent: some View {
         if !store.projects.isEmpty {
             GroupBox("Saved projects") {
-                Table(filteredRows, selection: projectSelection) {
-                    TableColumn("Project") { row in
+                Table(filteredRows, selection: projectSelection, sortOrder: $sortOrder) {
+                    TableColumn("Project", value: \ProjectWorkspaceRow.project.displayName) { row in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(row.project.displayName).font(.headline)
                             Text(row.project.catalogID).font(.caption).foregroundStyle(.secondary)
@@ -85,17 +93,17 @@ public struct ProjectsView: View {
                         .contentShape(Rectangle())
                         .onTapGesture(count: 2) { openProject(row.project) }
                     }
-                    TableColumn("Phase") { row in Text(row.project.phase.rawValue.capitalized) }
+                    TableColumn("Phase", value: \ProjectWorkspaceRow.project.phase.rawValue) { row in Text(row.project.phase.rawValue.capitalized) }
                         .width(min: 85, ideal: 100)
-                    TableColumn("Nights") { row in Text(row.nightCount.formatted()).monospacedDigit() }
+                    TableColumn("Nights", value: \ProjectWorkspaceRow.nightCount) { row in Text(row.nightCount.formatted()).monospacedDigit() }
                         .width(60)
-                    TableColumn("Integration") { row in Text(duration(row.integrationSeconds)).monospacedDigit() }
+                    TableColumn("Integration", value: \ProjectWorkspaceRow.integrationSeconds) { row in Text(duration(row.integrationSeconds)).monospacedDigit() }
                         .width(85)
-                    TableColumn("Frames") { row in
+                    TableColumn("Frames", value: \ProjectWorkspaceRow.usableFrames) { row in
                         Text("\(row.usableFrames) / \(row.excludedFrames)").monospacedDigit()
                             .help("Usable / excluded")
                     }.width(80)
-                    TableColumn("Latest") { row in Text(row.latestNight ?? "—").monospacedDigit() }
+                    TableColumn("Latest", value: \ProjectWorkspaceRow.latestNightSortKey) { row in Text(row.latestNight ?? "—").monospacedDigit() }
                         .width(100)
                     TableColumn("Next") { row in Text(row.nextAction).lineLimit(1) }
                     TableColumn("") { row in

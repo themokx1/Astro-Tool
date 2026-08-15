@@ -19,6 +19,10 @@ public struct ProjectWorkspaceRow: Identifiable, Equatable, Sendable {
     public let latestNight: String?
     public let nextAction: String
     public var id: UUID { project.id }
+    /// `KeyPathComparator` needs a non-optional `Comparable` value --
+    /// `latestNight` is `nil` for a project with no nights yet, which
+    /// sorts first (as the "oldest") rather than crashing the column's sort.
+    public var latestNightSortKey: String { latestNight ?? "" }
 }
 
 @MainActor
@@ -27,6 +31,12 @@ public final class ProjectsStore {
     public typealias MetadataFactory = @MainActor @Sendable (URL) throws -> MetadataStore
 
     public private(set) var projects: [ProjectRecord] = []
+    /// V2 UI/UX audit (2026-08-14) systemic pattern S7: the Projects
+    /// table's header used to look clickable and do nothing. Default is
+    /// project name ascending.
+    public private(set) var sortOrder: [KeyPathComparator<ProjectWorkspaceRow>] = [
+        KeyPathComparator(\ProjectWorkspaceRow.project.displayName, order: .forward)
+    ]
     public private(set) var workspaceRows: [ProjectWorkspaceRow] = []
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
@@ -78,6 +88,7 @@ public final class ProjectsStore {
             self.rootURL = rootURL.standardizedFileURL
             projects = try await metadata.projects()
             workspaceRows = try await Self.makeWorkspaceRows(projects: projects, metadata: metadata)
+            sortWorkspaceRows()
             searchIndex = try await Self.makeSearchIndex(projects: projects, metadata: metadata)
             if let selectedProjectID, projects.contains(where: { $0.id == selectedProjectID }) {
                 selectedProject = try await ProjectsQuery(metadata: metadata).project(id: selectedProjectID)
@@ -91,6 +102,17 @@ public final class ProjectsStore {
             errorMessage = error.localizedDescription
             throw error
         }
+    }
+
+    public func setSortOrder(_ newValue: [KeyPathComparator<ProjectWorkspaceRow>]) {
+        guard newValue != sortOrder else { return }
+        sortOrder = newValue
+        sortWorkspaceRows()
+    }
+
+    private func sortWorkspaceRows() {
+        guard !sortOrder.isEmpty else { return }
+        workspaceRows.sort(using: sortOrder)
     }
 
     public func search(_ term: String) async throws -> [ProjectRecord] {
@@ -186,6 +208,7 @@ public final class ProjectsStore {
             try await metadata.save(project)
             projects = try await metadata.projects()
             workspaceRows = try await Self.makeWorkspaceRows(projects: projects, metadata: metadata)
+            sortWorkspaceRows()
             errorMessage = nil
             return project
         } catch {
