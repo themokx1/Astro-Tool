@@ -86,4 +86,16 @@ struct V2HonestSurfacesTests {
         let source = try contents("Sources/AstroUI/Features/Home/HomeStore.swift")
         #expect(source.contains("isConfigured"))
     }
+
+    // MARK: 5. FrameInspector must not offer an archive move nothing performs.
+
+    @Test("No surface offers an archive move the app cannot perform")
+    func noFalseArchivePromise() throws {
+        for file in ["Sources/AstroUI/Inspector/FrameInspector.swift",
+                     "Sources/AstroUI/Features/Review/ReviewWorkspace.swift"] {
+            let source = try contents(file)
+            #expect(!source.contains("Move to Archive"), "\(file) still offers a move nothing implements")
+            #expect(!source.contains("ArchivePreviewSheet"), "\(file) still presents the dead-end sheet")
+        }
+    }
 }

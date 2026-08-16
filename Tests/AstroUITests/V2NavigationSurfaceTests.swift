@@ -98,11 +98,14 @@ struct V2NavigationSurfaceTests {
         let cleanup = try contents("Sources/AstroUI/Features/Library/CleanupPreviewView.swift")
         let sensorProfiles = try contents("Sources/AstroUI/Features/Library/SensorProfilesView.swift")
 
-        // `ReviewWorkspace`/`SensorProfilesView` each still legitimately
-        // declare a `dismiss: () -> Void` on an UNRELATED nested sheet type
-        // (`ArchivePreviewSheet`, `SensorMeasureConfirmSheet`) -- only the
-        // "Done"/"Close" exit BUTTON that used to close the whole
-        // workspace-as-overlay is gone.
+        // `SensorProfilesView` still legitimately declares a
+        // `dismiss: () -> Void` on an UNRELATED nested sheet type
+        // (`SensorMeasureConfirmSheet`) -- only the "Done"/"Close" exit
+        // BUTTON that used to close the whole workspace-as-overlay is gone.
+        // (`ReviewWorkspace`'s own `ArchivePreviewSheet` -- and its
+        // `dismiss: () -> Void` -- was deleted outright in Task 11 of the
+        // 2026-08-16 Archive Map wave: the sheet was a dead end no code
+        // path ever applied.)
         #expect(!review.contains("\"Done\""))
         #expect(!results.contains("\"Close\""))
         #expect(!results.contains("dismiss: () -> Void"))

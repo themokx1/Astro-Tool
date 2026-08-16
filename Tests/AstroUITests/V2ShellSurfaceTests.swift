@@ -230,7 +230,6 @@ struct V2ShellSurfaceTests {
             #expect(review.contains(identifier))
         }
         #expect(inspector.contains("v2.review.inspector"))
-        #expect(review.contains("v2.review.archive-preview"))
         #expect(review.contains("Review distribution"))
         #expect(review.contains("keyboardShortcut(\"a\""))
         #expect(review.contains("keyboardShortcut(\"r\""))

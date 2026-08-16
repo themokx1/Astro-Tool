@@ -84,7 +84,6 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(workspace.contains("apply(.accepted, decisionIDs:"))
         #expect(workspace.contains("apply(.undecided, decisionIDs:"))
         #expect(workspace.contains("apply(.rejected, decisionIDs:"))
-        #expect(workspace.contains("Archive preview"))
     }
 
     @Test("Frame review shows measured quality columns and can run frame rating")

@@ -7,7 +7,6 @@ public struct ReviewWorkspace: View {
     let rootURL: URL
     let projectID: UUID
     @State private var selectedDecisionIDs: Set<UUID> = []
-    @State private var archivePreview: ReviewArchivePlan?
     @State private var sortOrder: [KeyPathComparator<ReviewFrameRow>] = [KeyPathComparator(\.scoreSortKey, order: .reverse)]
     @State private var selectedCaptureSlug: String?
     @State private var selectedNightFilter: String?
@@ -198,9 +197,6 @@ public struct ReviewWorkspace: View {
                 inspector(for: selectedSeries)
                     .frame(minWidth: 160, idealWidth: 220, maxWidth: 300)
             }
-        }
-        .sheet(item: $archivePreview) { plan in
-            ArchivePreviewSheet(plan: plan) { archivePreview = nil }
         }
     }
 
@@ -440,9 +436,7 @@ public struct ReviewWorkspace: View {
         if selectedDecisionIDs.count == 1,
            let id = selectedDecisionIDs.first,
            let decision = selected.decisions.first(where: { $0.id == id }) {
-            FrameInspector(decision: decision) {
-                archivePreview = try? store.archivePlan(for: decision)
-            }
+            FrameInspector(decision: decision)
         } else {
             SeriesInspector(snapshot: selected) { filter in
                 Task { try? await store.assignFilter(filter) }
@@ -502,40 +496,6 @@ private struct QualityDistribution: View {
         color.frame(width: snapshot.decisions.isEmpty
             ? (color == .gray ? totalWidth : 0)
             : totalWidth * Double(count) / Double(snapshot.decisions.count))
-    }
-}
-
-private struct ArchivePreviewSheet: View {
-    let plan: ReviewArchivePlan
-    let dismiss: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
-            Label("Archive preview", systemImage: "archivebox")
-                .font(.title2.weight(.semibold))
-            Text("No file has moved. Review the exact source and destination first.")
-                .foregroundStyle(.secondary)
-            GroupBox("Planned move") {
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
-                    GridRow { Text("From").foregroundStyle(.secondary); Text(plan.sourceRelative).monospaced() }
-                    GridRow { Text("To").foregroundStyle(.secondary); Text(plan.destinationRelative).monospaced() }
-                }
-                .textSelection(.enabled)
-                .padding(8)
-            }
-            Label(
-                "Applying archive moves will be enabled only after write access is explicitly granted.",
-                systemImage: "lock.shield"
-            )
-            .font(.callout).foregroundStyle(AstroTokens.Color.warning)
-            HStack {
-                Spacer()
-                Button("Close", action: dismiss).keyboardShortcut(.cancelAction)
-            }
-        }
-        .padding(AstroTokens.Spacing.spacious)
-        .frame(minWidth: 620, minHeight: 360)
-        .accessibilityIdentifier("v2.review.archive-preview")
     }
 }
 

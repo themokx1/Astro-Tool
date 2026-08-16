@@ -209,6 +209,18 @@ public final class ReviewStore {
         }
     }
 
+    /// Deliberately has no UI consumer today. Task 11 (2026-08-16 Archive
+    /// Map wave) deleted `FrameInspector`'s "Move to Archive…" button and
+    /// `ReviewWorkspace`'s `ArchivePreviewSheet`: the sheet's only button was
+    /// `Close`, and no code path anywhere ever applied the plan it
+    /// previewed -- a door painted on a wall, per the 2026-08-15 product
+    /// audit. This method and `ReviewCommands.archivePlan(relativePath:)`
+    /// are kept and stay tested because they are the real, correct core of
+    /// a future archive-move feature -- just not one wired to any surface
+    /// yet. Do not "helpfully" wire a button back to this without also
+    /// building the actual move-and-confirm flow (source/destination
+    /// resolution, write-access gating, and applying the plan), or you will
+    /// recreate the exact false promise this task removed.
     public func archivePlan(for decision: FrameDecisionRecord) throws -> ReviewArchivePlan {
         guard let metadata else { throw ReviewStoreError.reviewNotOpen }
         return try ReviewCommands(metadata: metadata).archivePlan(relativePath: decision.relativePath)
