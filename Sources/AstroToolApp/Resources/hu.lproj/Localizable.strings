@@ -772,4 +772,34 @@
 "Not tied to a target" = "Nem tartozik célponthoz";
 "%lld nights · %lld files" = "%lld éjszaka · %lld fájl";
 "−%@" = "−%@";
+
+// ArchiveView.swift / ArchiveVerdict.swift (Task 9) -- the page shell and its
+// verdict sentence. Two groups, split for the same reason ArchiveClass's own
+// entry above explains: `ArchiveVerdictHeader.headline`/`.integrityText` are
+// `switch` statements returning `LocalizedStringKey`, invisible to the
+// extraction script (no key is ever produced for them), so they are pinned
+// down here by hand; the rest were found by the script and are listed in its
+// own `--missing` output.
+//
+// Hand-added, invisible to the extraction script:
+"One thing needs you." = "Egy dolog vár rád.";
+"%lld things need you." = "%lld dolog vár rád.";
+"Nothing needs you right now." = "Jelenleg semmi sem vár rád.";
+"I have not looked through this library yet." = "Ezt a könyvtárat még nem néztem át.";
+"The last check is older than your most recent scan." = "Az utolsó ellenőrzés régebbi, mint a legutóbbi beolvasásod.";
+"%lld file(s) changed content since the last check." = "%lld fájl tartalma megváltozott az utolsó ellenőrzés óta.";
+"Nothing has been corrupted since the last check." = "Az utolsó ellenőrzés óta semmi nem sérült.";
+"I have not checked this library's integrity yet." = "Az adatépséget még nem ellenőriztem.";
+//
+// Found by the extraction script:
+"Archive" = "Archívum";
+"Needs you" = "Rád vár";
+"Could not read the archive" = "Nem sikerült beolvasni az archívumot";
+"Try Again" = "Próbáld újra";
+"Nothing indexed yet" = "Még nincs semmi indexelve";
+"This library has not been scanned yet, or every file in it is currently missing." = "Ezt a könyvtárat még nem olvastuk be, vagy jelenleg minden fájlja hiányzik.";
+"This card will not show again for this kind of finding unless it recurs after a new check." = "Ez a kártya nem jelenik meg újra ehhez a találattípushoz, hacsak nem kerül elő újra egy következő ellenőrzés után.";
+"%@ can be reclaimed — %@ of it in %@." = "%@ nyerhető vissza — ebből %@ itt van: %@.";
+"%@ can be reclaimed." = "%@ nyerhető vissza.";
+"%@ more findings in categories this page has no action for · %@" = "%@ további találat olyan kategóriákban, amikre ez az oldal nem kínál műveletet · %@";
 "Preview Quarantine for This Target…" = "Karantén előnézete ehhez a célponthoz…";
