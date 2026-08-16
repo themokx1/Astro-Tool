@@ -2080,3 +2080,140 @@ Az 1. hullám akkor kész, ha mind igaz:
 - ⓖ Sehol nem szerepel a „Move to Archive…" felirat.
 - ⓗ `swift test --no-parallel` teljesen zöld, és a tesztszám nem csökkent.
 - ⓘ Az app CPU-ja az Archívum szekcióban 25 s és 115 s után is <15%.
+
+---
+
+## Task 2b: A célponthoz nem köthető fájlok sem tűnhetnek el a térképről
+
+**Miért van ez a task:** a 2. task leszállított kódját a **valódi** könyvtáron visszajátszva kiderült, hogy a `buildRows` `guard !target.isEmpty else { return }` sora **129 fájlt, 6,28 GB-ot némán kihagy** a térképből. Nem szemét: ennek a 6,28 GB-nak a túlnyomó része a `calibration_library/darks/…` — a **megosztott kalibrációs törzs**, ami tervezetten nem tartozik egyetlen célponthoz sem. És **3,13 GB duplikátum van benne**, vagyis valódi visszanyerhető hely.
+
+Két konkrét következmény, amit ez okoz:
+
+1. A sáv fejléce „605,7 GB"-ot ír, miközben a könyvtár 611,9 GB. Egy térkép, ami a bájtok holléte a tárgya, nem hagyhat el 6 GB-ot szó nélkül.
+2. A `reclaimableBytes` a `reclaimByTarget` **teljes** összegéből jön (a `guard` csak a célpontonkénti bontásra hat), a `totalBytes` viszont a sorokból. Így a visszanyerhető-sín aránya olyan nevezőre számol, amiben a számlálója egy része nincs is benne, és a sorok visszanyerhető értékei nem adják ki a fejlécben írt összeget.
+
+Ez a terv hibája volt, nem a megvalósításé. A javítás: a célponthoz nem köthető fájlok kapjanak **saját sort**, ne tűnjenek el.
+
+**Files:**
+- Modify: `Sources/AstroApplication/Features/Archive/ArchiveMapQuery.swift`
+- Modify: `Tests/AstroApplicationTests/ArchiveMapQueryTests.swift`
+
+- [ ] **Step 1: Write the failing tests**
+
+Vedd fel a meglévő `makeIndexDatabase` fixture-be két célpont nélküli fájlt — egy nagyot és egy duplikátum-találattal jelöltet:
+
+```swift
+try db.exec("""
+    INSERT INTO files VALUES
+      ('calibration_library/darks/d1.fit', 250, NULL, NULL, 'dark', 'calibration', 0),
+      ('calibration_library/darks/d2.fit', 250, NULL, NULL, 'dark', 'calibration', 0);
+    """)
+try db.exec("INSERT INTO findings VALUES(3, 2, 'suspicious', 'duplicate-content', 'calibration_library/darks/d2.fit', 'copy');")
+```
+
+Ezzel a fixture összesen 1400 bájt, és a célpont nélküli vödör 500 bájt, ebből 250 visszanyerhető.
+
+```swift
+@Test("Files that belong to no target get their own row instead of vanishing")
+func untargetedFilesGetTheirOwnRow() async throws {
+    let index = try Self.makeIndexDatabase()
+    let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
+
+    let untargeted = try #require(snapshot.rows.first { $0.isUntargeted })
+    #expect(untargeted.target == nil)
+    #expect(untargeted.totalBytes == 500)
+    #expect(untargeted.fileCount == 2)
+    #expect(untargeted.nightCount == 0)
+    #expect(untargeted.reclaimableBytes == 250)
+    #expect(untargeted.slices.map(\.archiveClass) == [.calibration])
+}
+
+@Test("The header total is the whole library, and the rows add up to it")
+func rowsAddUpToTheHeaderTotal() async throws {
+    let index = try Self.makeIndexDatabase()
+    let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
+
+    #expect(snapshot.totalBytes == 1400)
+    #expect(snapshot.rows.reduce(0) { $0 + $1.totalBytes } == snapshot.totalBytes,
+            "a byte in the library must appear in exactly one row")
+    #expect(snapshot.fileCount == 7)
+    #expect(snapshot.slices.reduce(0) { $0 + $1.bytes } == snapshot.totalBytes,
+            "the strip must cover the same bytes the header claims")
+}
+
+@Test("Reclaimable totals reconcile between the header and the rows")
+func reclaimReconcilesBetweenHeaderAndRows() async throws {
+    let index = try Self.makeIndexDatabase()
+    let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
+
+    #expect(snapshot.rows.reduce(0) { $0 + $1.reclaimableBytes } == snapshot.reclaimableBytes,
+            "the rail's numerator must be the sum of what the rows show")
+}
+
+@Test("targetCount counts real targets, not the untargeted bucket")
+func targetCountExcludesTheUntargetedRow() async throws {
+    let index = try Self.makeIndexDatabase()
+    let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
+    #expect(snapshot.targetCount == 2)
+    #expect(snapshot.rows.count == 3)
+}
+```
+
+A meglévő négy teszt várt értékeit is igazítsd az új fixture-höz (`totalsExcludeMissingFiles`, `targetRowsAreSortedBySize`, `reclaimableComesFromLatestAudit`, `missingAuditTablesStillProducesAMap`). **Ne** lazíts rajtuk — az `emptyLibrary` teszt változatlan marad.
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `swift test --no-parallel --filter ArchiveMapQueryTests`
+Expected: FAIL — `value of type 'ArchiveTargetRow' has no member 'isUntargeted'`
+
+- [ ] **Step 3: Implement**
+
+`ArchiveTargetRow` kapjon egy `target: String?`-ot az `id` mellé, és az `id` abból származzon — így nincs üres-string mágia, és a nézet egyértelműen tudja, melyik sorra nem alkalmazhatók a célpont-specifikus műveletek:
+
+```swift
+public struct ArchiveTargetRow: Equatable, Sendable, Identifiable {
+    /// The target's own folder name, or `nil` for files the scanner could
+    /// not attribute to any target -- on a real library that bucket is
+    /// dominated by `calibration_library/`, a shared store that belongs to
+    /// no single target by design. It gets a row rather than being dropped:
+    /// this map's entire claim is "here is where your bytes are", and a
+    /// silently missing 6 GB (3 GB of it reclaimable duplicates) breaks that
+    /// claim.
+    public let target: String?
+    /// Stable identity for `ForEach`/selection. Derived from `target`, with
+    /// a sentinel for the untargeted bucket so no real folder name can
+    /// collide with it (`/` cannot appear in a scanned target name).
+    public var id: String { target ?? "/untargeted" }
+    public var isUntargeted: Bool { target == nil }
+    public let displayName: String
+    …
+}
+```
+
+A `buildRows`-ból **töröld** a `guard !target.isEmpty else { return }` sort, és helyette az üres célpontot `nil`-re képezd le. Az untargeted sor `displayName`-je `"Not tied to a target"`, `nightCount`-ja `0`.
+
+A `snapshot()`-ban:
+- `targetCount` = `rows.count(where: { !$0.isUntargeted })` — a felhasználó célpontjai, nem a vödör
+- `nightCount` változatlan (az untargeted vödörnek nincs éjszakája)
+- `reclaimByTarget` kulcsa legyen `String?`, hogy az üres célpontú találatok az untargeted sorra kerüljenek, ne csak az összegbe
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `swift test --no-parallel --filter ArchiveMapQueryTests`
+Expected: PASS — 10 tests
+
+- [ ] **Step 5: Verify against the real library**
+
+```bash
+sqlite3 "/Volumes/images/Astro/.astro_tool/astrotool.sqlite" \
+  "SELECT COUNT(*), SUM(size) FROM files WHERE missing=0;"
+```
+
+A `snapshot.totalBytes` és `fileCount` ennek **pontosan** meg kell egyeznie. Ha a kötet nincs csatolva, hagyd ki ezt a lépést, és jelezd a riportban.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add Sources/AstroApplication/Features/Archive/ArchiveMapQuery.swift Tests/AstroApplicationTests/ArchiveMapQueryTests.swift
+git commit -m "fix: keep untargeted files on the archive map"
+```
