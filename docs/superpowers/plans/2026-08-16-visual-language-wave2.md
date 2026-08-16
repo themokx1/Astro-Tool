@@ -411,3 +411,53 @@ Az az audit **2026-08-15-én lezárult** (wave 5, Planning workbench). Az indok 
 ```bash
 git commit -m "fix: enforce the palette's own rules"
 ```
+
+---
+
+## Task 2c: Egy kapu, ami tényleg minden színt lát
+
+**Kiváltó ok:** a 2b. task jelentése talált egy nyers `.yellow`-t a `SkyPathChart`-ban, ami „kívül esik a kapu regexén". Utánanézve **kilenc** ilyen van, hét fájlban — és ez nem a fejlesztők hanyagsága, hanem a kapuké:
+
+| Kapu | Mit fed le |
+|---|---|
+| `noHardcodedColorLiterals` | `Color(red:` és `Color(#colorLiteral` — csak **numerikus** literálok |
+| `noBareStatusColorLiterals` | `green`, `orange`, `red`, `purple` — **négy** név |
+
+A SwiftUI-nak ennél sokkal több beépített színe van. Ami átcsúszott:
+
+```
+.yellow   NightNoteSheet.swift:130        figyelmeztető háromszög
+.yellow   SkyPathChart.swift:30           kulmináció-jelölő a diagramon
+.blue     InsightsView.swift:307          oszlop-gradiens
+.blue     SensorProfilesView.swift:26,142,144   ikonok
+.gray     FrameBlinkReview.swift:219      placeholder kitöltés
+.gray     ReviewWorkspace.swift:542       kis mintaszám jelzése
+.white    ConversionWorkspace.swift:295   kiválasztott elem előtere
+```
+
+**A legbeszédesebb a `NightNoteSheet:130`:** egy figyelmeztető háromszög sárgában, miközben mindenhol máshol a figyelmeztetés `attention` (narancs). Ugyanaz a jelentés, két szín, két képernyőn — pontosan az az S9-minta, ami miatt a kapu készült. Azért élte túl, mert a kapu neveket sorolt fel, nem szabályt fogalmazott meg.
+
+**Files:** a hét forrásfájl + `Tests/AstroUITests/V2PolishSurfaceTests.swift`
+
+- [ ] **Step 1: A két kapu egyesítése, teljes névlistával**
+
+Vond össze a kettőt egyetlen `noInlineColorsInFeatureViews` tesztté, ami elfog **minden** beépített SwiftUI-színnevet (`black white gray grey red orange yellow green mint teal cyan blue indigo purple pink brown clear primary secondary`) **és** a numerikus literálokat. A `.primary`/`.secondary`/`.clear` **engedélyezett** — ezek szemantikus rendszerszerepek, nem konkrét színek; a doc-komment mondja ki, miért.
+
+A regex ne találjon bele azonosítókba (`.redacted`, `.grayscale`), és kommenteket előbb szűrj ki. **Igazold, hogy bukik**: futtasd a javítás előtt, és sorolja fel mind a kilencet.
+
+- [ ] **Step 2: A kilenc javítása**
+
+Mindegyiknél a **jelentés** dönt, nem a mai szín:
+
+- `NightNoteSheet:130` → `attention` (figyelmeztetés, ahogy mindenhol máshol)
+- `SkyPathChart:30` → `accent` (a kulmináció adat-jelölő, nem státusz)
+- `InsightsView:307`, `SensorProfilesView` ×3 → `accent`
+- `FrameBlinkReview:219` → `inkFaint` vagy `edge` (üres hely jelzése)
+- `ReviewWorkspace:542` → `dataUnclassified` (kevés minta = „nem tudok róla eleget", nem státusz)
+- `ConversionWorkspace:295` → a kiválasztott elem előtere; ha a háttér `accent`, akkor a rendszer saját kontraszt-párja kell, nem nyers fehér — döntsd el a kontextusból és indokold
+
+- [ ] **Step 3: Suite + commit**
+
+```bash
+git commit -m "fix: let the colour gate see every colour"
+```
