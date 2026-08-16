@@ -55,4 +55,29 @@ struct CleanupPreviewStoreTests {
         let store = CleanupPreviewStore()
         #expect(store.buildPlan() == nil)
     }
+
+    // MARK: Task 10 prerequisite -- preselect
+
+    @Test("preselect pre-checks the given categories")
+    func preselectPreChecksTheGivenCategories() {
+        let store = CleanupPreviewStore()
+        store.preselect(["duplicate-content", "residue"])
+        #expect(store.selectedCategories == ["duplicate-content", "residue"])
+    }
+
+    @Test("Re-preselecting the same set the store already holds is a no-op, matching this codebase's equal-value-guard convention")
+    func preselectWithTheSameValueIsANoOp() {
+        let store = CleanupPreviewStore()
+        store.preselect(["duplicate-content"])
+        store.preselect(["duplicate-content"])
+        #expect(store.selectedCategories == ["duplicate-content"])
+    }
+
+    @Test("Preselecting a genuinely different set still overwrites -- this is a preset, not a merge")
+    func preselectWithADifferentValueOverwrites() {
+        let store = CleanupPreviewStore()
+        store.preselect(["duplicate-content"])
+        store.preselect(["residue"])
+        #expect(store.selectedCategories == ["residue"])
+    }
 }

@@ -117,11 +117,11 @@ final class AstroToolLaunchTests: XCTestCase {
         let app = launchFixtureApp()
         completeOnboarding(app)
 
+        // Task 10: Health's own findings table is superseded by the Archive
+        // page's task cards, which now render for `.library` itself (see
+        // `enterSection` above), so Health no longer has its own sidebar
+        // child row to click through here. Calibration still does.
         enterSection("v2.sidebar.library", revealing: "v2.detail.library", in: app)
-        let health = element("v2.sidebar.library.health", in: app)
-        XCTAssertTrue(health.waitForExistence(timeout: 5), "Library must expose a Health child row")
-        health.click()
-        XCTAssertTrue(element("v2.detail.library.health", in: app).waitForExistence(timeout: 10))
 
         let calibration = element("v2.sidebar.library.calibration", in: app)
         XCTAssertTrue(calibration.waitForExistence(timeout: 5))

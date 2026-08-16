@@ -7,7 +7,9 @@ struct V2BetaWorkspaceSurfaceTests {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
-        for view in ["ProjectsView", "NightsView", "PlanningView", "LibraryView", "InsightsView"] {
+        // Task 10: the `.library` section now routes to `ArchiveView`, not
+        // the deleted `LibraryView`.
+        for view in ["ProjectsView", "NightsView", "PlanningView", "ArchiveView", "InsightsView"] {
             #expect(shell.contains("\(view)("))
         }
         #expect(!shell.contains("Available after library workflows arrive"))

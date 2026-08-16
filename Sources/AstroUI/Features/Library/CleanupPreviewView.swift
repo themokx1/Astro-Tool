@@ -51,6 +51,21 @@ public final class CleanupPreviewStore {
         }
     }
 
+    /// Task 10 prerequisite: pre-checks `categories` before the user has
+    /// touched a single `Toggle` -- the Archive page's task cards already
+    /// know exactly which categories their own "Preview Quarantine…" action
+    /// covers, so there is no reason to make the user re-select them here by
+    /// hand. Equal-value guarded like every other setter in this codebase:
+    /// `@Observable` signals a mutation regardless of equality, and an
+    /// unguarded assignment here (called from `CleanupPreviewView.init`
+    /// every time its own default argument is re-evaluated) is exactly the
+    /// shape that produced this project's one prior infinite transaction
+    /// loop.
+    public func preselect(_ categories: Set<String>) {
+        guard selectedCategories != categories else { return }
+        selectedCategories = categories
+    }
+
     /// Builds the quarantine plan for whichever groups are currently
     /// selected -- available regardless of `accessMode` (building a plan
     /// never writes anything); `QuarantineApplyCommand.apply` is what
@@ -79,11 +94,20 @@ public struct CleanupPreviewView: View {
         rootURL: URL,
         accessMode: LibraryAccessMode = .readOnly,
         presentQuarantineApply: @escaping (LibraryMutationPlan) -> Void = { _ in },
+        /// Task 10 prerequisite: the Archive page's task cards preset this
+        /// through `AppRouter.pendingCleanupCategories` (see its own doc
+        /// comment) right before pushing `.cleanup` -- `nil` (every OTHER
+        /// call site, e.g. Health's plain "Cleanup Preview" action) leaves
+        /// `store`'s selection at its own default, empty set.
+        initialCategories: Set<String>? = nil,
         store: CleanupPreviewStore = CleanupPreviewStore()
     ) {
         self.rootURL = rootURL
         self.accessMode = accessMode
         self.presentQuarantineApply = presentQuarantineApply
+        if let initialCategories {
+            store.preselect(initialCategories)
+        }
         _store = State(initialValue: store)
     }
 

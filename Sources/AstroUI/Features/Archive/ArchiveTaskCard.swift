@@ -117,8 +117,12 @@ struct ArchiveTaskCard: View {
 
     private var actionTitle: LocalizedStringKey {
         switch task.kind {
-        case .intermediateFiles: "Preview Quarantine…"
-        case .duplicateContent: "Compare Copies…"
+        // Task 10 prerequisite: both cards resolve to the same
+        // `.previewQuarantine` action now (see `ArchiveTaskAction`'s own
+        // doc comment), so both get the button label that matches what
+        // actually happens -- "Compare Copies…" promised a surface this
+        // wave never built.
+        case .intermediateFiles, .duplicateContent: "Preview Quarantine…"
         case .misplacedCalibration, .brokenNames, .corruption, .unverified: "Reveal in Finder"
         case .auditNeverRun: "Run Check"
         }

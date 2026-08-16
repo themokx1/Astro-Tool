@@ -282,6 +282,14 @@ private struct V2Shell: View {
     @State private var pendingMutationRootURL: URL?
     @State private var pendingMutationAccessMode: LibraryAccessMode = .readOnly
     @State private var sidebarBadges = SidebarBadgeStore()
+    /// Task 10: the Archive page's own map/task data, owned here (once per
+    /// window, same lifetime as `libraryHealthStore`) rather than freshly
+    /// constructed per visit -- a re-scan/re-audit can complete while the
+    /// user is on some OTHER section, and this shared instance is what lets
+    /// `reloadArchiveStore()` below refresh it in place so the page shows
+    /// current numbers the next time it is visited, not whatever it last
+    /// loaded before the operation ran.
+    @State private var archiveStore = ArchiveStore()
     @AppStorage("v2.library.enableWriteOperations") private var enableWriteOperations = false
     @Environment(\.openSettings) private var openSettings
     @Environment(OperationHost.self) private var operationHost
@@ -311,7 +319,7 @@ private struct V2Shell: View {
                 projectsStore: projectsStore,
                 nightsStore: nightsStore,
                 reviewStore: reviewStore,
-                libraryHealthStore: libraryHealthStore,
+                archiveStore: archiveStore,
                 libraryRootFallback: libraryRootFallback,
                 chooseLibrary: presentOnboarding,
                 createPlannedProject: { designation in
@@ -319,6 +327,7 @@ private struct V2Shell: View {
                     router.present(.newProject)
                 },
                 rescan: performRescan,
+                runAudit: performAudit,
                 accessMode: libraryAccessMode,
                 presentQuarantineApply: { plan, rootURL, accessMode in
                     pendingMutationPlan = plan
@@ -429,7 +438,15 @@ private struct V2Shell: View {
         .onChange(of: operationHost.recentOutcomes) { _, outcomes in
             guard let latest = outcomes.first, latest.phase == .succeeded else { return }
             switch latest.kind {
-            case .scan, .audit, .verify: refreshSidebarBadges()
+            case .scan, .audit, .verify:
+                refreshSidebarBadges()
+                // Task 10: without this, the Archive page keeps showing
+                // whatever it loaded before this operation ran -- the exact
+                // "the run did nothing" impression the task calls out.
+                // Reuses this same outcome-observing mechanism rather than
+                // adding a second one, matching `refreshSidebarBadges`'s own
+                // reasoning right above.
+                reloadArchiveStore()
             default: break
             }
         }
@@ -656,6 +673,19 @@ private struct V2Shell: View {
         Task { await sidebarBadges.refresh(rootURL: rootURL, nights: nights) }
     }
 
+    /// Task 10: reloads the Archive page's own map/task data after a
+    /// rescan/audit/verify operation succeeds -- see the `.onChange(of:
+    /// operationHost.recentOutcomes)` call site above. `archiveStore` is
+    /// shared across the whole window's lifetime (owned by this `V2Shell`,
+    /// not recreated per visit -- see its own doc comment), so this refresh
+    /// lands even if the user is currently on some OTHER section, and the
+    /// Archive page shows current numbers the next time it is visited
+    /// rather than whatever it last loaded before the operation ran.
+    private func reloadArchiveStore() {
+        guard let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback else { return }
+        Task { await archiveStore.load(rootURL: rootURL) }
+    }
+
     /// Backs both the ⌘R menu command (`V2AstroToolCommands`, via
     /// `FocusedValues.libraryRescan`) and the Library workspace's own
     /// "Rescan" button -- one action, reused rather than duplicated.
@@ -820,13 +850,15 @@ private struct V2Sidebar: View {
         List(selection: sectionSelection) {
             ForEach(PrimarySection.allCases, id: \.self) { section in
                 if section == .library {
+                    // Task 10: Health's own findings table is superseded by
+                    // the Archive page's task cards (which now render for
+                    // `.library` itself), so Health no longer has its own
+                    // sidebar child row -- Calibration still does, since
+                    // nothing on the Archive page replaces it. The `.health`
+                    // route/deep link both still resolve (to the Archive
+                    // page too), just not from a sidebar click any more --
+                    // see `AppRoute.init(deepLink:)`'s own comment.
                     DisclosureGroup(isExpanded: $isLibraryExpanded) {
-                        libraryChildRow(
-                            title: "Health",
-                            systemImage: "checkmark.shield",
-                            route: .health,
-                            accessibilityID: "v2.sidebar.library.health"
-                        )
                         libraryChildRow(
                             title: "Calibration",
                             systemImage: "thermometer.snowflake",
@@ -931,11 +963,26 @@ private struct DetailHost: View {
     let projectsStore: ProjectsStore
     let nightsStore: NightsStore
     let reviewStore: ReviewStore
-    let libraryHealthStore: LibraryHealthStore
+    /// Task 10: owned by `V2Shell` (see its own doc comment on the
+    /// property), handed down here so both `.library` and `.health` can
+    /// render `ArchiveView` against the SAME instance -- an old, restored
+    /// `.health` route must show the very same data `.library` does, not a
+    /// second independent load. `DetailHost` no longer needs its OWN
+    /// `libraryHealthStore` reference: `.health`'s destination is
+    /// `archiveDestination()` now, not `HealthView(store: libraryHealthStore)`,
+    /// and `runAudit` (below) is how the Archive page reaches
+    /// `LibraryHealthStore.runAudit` instead.
+    let archiveStore: ArchiveStore
     let libraryRootFallback: URL?
     let chooseLibrary: () -> Void
     let createPlannedProject: (String) -> Void
     let rescan: () -> Void
+    /// Task 10: backs `ArchiveView`'s "Check Library" toolbar action and its
+    /// task cards' own "Run Check"/"Run Audit" actions -- wired straight to
+    /// `V2Shell.performAudit`, the same function `HealthView`'s own
+    /// audit split button already used, rather than duplicating
+    /// `LibraryHealthStore.runAudit`'s call into `ArchiveStore`.
+    let runAudit: (AuditRunMode) -> Void
     let accessMode: LibraryAccessMode
     let presentQuarantineApply: (LibraryMutationPlan, URL, LibraryAccessMode) -> Void
     let libraryFindingsChanged: () -> Void
@@ -1211,13 +1258,7 @@ private struct DetailHost: View {
         case .savedTargets:
             SavedTargetsView(rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary)
         case .library:
-            LibraryView(
-                snapshot: onboardingStore.phase.summary,
-                rootURL: onboardingStore.selectedRoot,
-                chooseLibrary: chooseLibrary,
-                convertSession: { router.push(.conversion) },
-                rescan: rescan
-            )
+            archiveDestination()
         case .insights:
             InsightsView(
                 snapshot: onboardingStore.phase.summary,
@@ -1227,14 +1268,14 @@ private struct DetailHost: View {
             )
             .onAppear { router.pendingInsightsSetupFilter = nil }
         case .health:
-            HealthView(
-                rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary,
-                openCalibration: { router.push(.calibration) },
-                accessMode: accessMode,
-                openCleanup: { router.push(.cleanup) },
-                openSensorProfiles: { router.push(.sensorProfiles) },
-                store: libraryHealthStore
-            )
+            // Task 10: Health's findings table is superseded by the Archive
+            // page's task cards, and it no longer has its own sidebar row --
+            // but this route is still reachable from a restored window
+            // state saved by an older build (and, redirected, from the
+            // `astrotool://library/health` deep link -- see
+            // `AppRoute.init(deepLink:)`), so it must render something real
+            // rather than an empty view.
+            archiveDestination()
         case .calibration:
             CalibrationView(
                 rootURL: onboardingStore.selectedRoot, accessMode: accessMode,
@@ -1290,8 +1331,14 @@ private struct DetailHost: View {
                 CleanupPreviewView(
                     rootURL: rootURL,
                     accessMode: accessMode,
-                    presentQuarantineApply: { plan in presentQuarantineApply(plan, rootURL, accessMode) }
+                    presentQuarantineApply: { plan in presentQuarantineApply(plan, rootURL, accessMode) },
+                    initialCategories: router.pendingCleanupCategories
                 )
+                // Task 10 prerequisite: one-shot, same as
+                // `pendingInsightsSetupFilter`'s own consumer -- read once
+                // here, then cleared so it never lingers and re-applies to
+                // some LATER, unrelated visit to Cleanup Preview.
+                .onAppear { router.pendingCleanupCategories = nil }
             } else {
                 noLibraryPlaceholder(title: "Cleanup Preview", systemImage: "archivebox")
             }
@@ -1313,6 +1360,34 @@ private struct DetailHost: View {
             Button("Choose Image Library…", action: chooseLibrary)
                 .buttonStyle(.borderedProminent)
         }
+    }
+
+    /// Task 10: shared by both `.library` (its real, current home) and
+    /// `.health` (kept only so an old restored window state / redirected
+    /// deep link never lands on an empty view -- see each case's own
+    /// comment) so the two can never drift into two different-looking
+    /// pages for what is, today, the exact same destination.
+    private func archiveDestination() -> some View {
+        ArchiveView(
+            rootURL: onboardingStore.selectedRoot,
+            accessMode: accessMode,
+            chooseLibrary: chooseLibrary,
+            rescan: rescan,
+            convertSession: { router.push(.conversion) },
+            openQuarantinePreview: { categories in
+                // Task 10 prerequisite: stash the categories the triggering
+                // task card already knows about, then push -- `.cleanup`'s
+                // own `.onAppear` above reads and clears this one-shot value,
+                // following `pendingInsightsSetupFilter`'s precedent. An
+                // empty set (the Targets section's own bare "Preview
+                // Quarantine…" row) clears any stale value instead of
+                // pre-checking an empty selection.
+                router.pendingCleanupCategories = categories.isEmpty ? nil : categories
+                router.push(.cleanup)
+            },
+            runAudit: runAudit,
+            store: archiveStore
+        )
     }
 }
 

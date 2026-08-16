@@ -51,9 +51,13 @@ public enum ArchiveTaskSeverity: String, Sendable {
 
 public enum ArchiveTaskAction: Equatable, Sendable {
     /// Pushes the existing quarantine preview, pre-selected to these
-    /// `CleanupPreviewGroup.category` values.
+    /// `CleanupPreviewGroup.category` values -- both the "Stacking
+    /// leftovers" and "Byte-identical copies" cards resolve to this same
+    /// action, each with its own correct categories, instead of the
+    /// duplicate card promising a distinct comparison surface (`case
+    /// compareDuplicates`, removed) this wave never built. See Task 10's
+    /// own prerequisite note in the plan for why.
     case previewQuarantine(categories: [String])
-    case compareDuplicates
     case revealInFinder(path: String)
     case runAudit
     /// Only ever produced internally, and filtered out before `tasks()`
@@ -257,10 +261,8 @@ public struct ArchiveTaskQuery: Sendable {
         for kind: ArchiveTaskKind, entry: (files: Int, bytes: Int64, paths: [String])
     ) -> ArchiveTaskAction {
         switch kind {
-        case .intermediateFiles:
+        case .intermediateFiles, .duplicateContent:
             .previewQuarantine(categories: kind.findingCategories)
-        case .duplicateContent:
-            .compareDuplicates
         case .misplacedCalibration, .brokenNames, .corruption, .unverified:
             // Honest gate: with no concrete path there is nothing to open,
             // so no card is produced at all (see this type's doc comment).

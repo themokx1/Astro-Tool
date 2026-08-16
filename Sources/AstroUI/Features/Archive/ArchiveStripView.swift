@@ -110,10 +110,28 @@ struct ArchiveStripView: View {
         }
     }
 
-    private var reclaimHelpText: String {
-        let percent = (reclaimFraction * 100).formatted(.number.precision(.fractionLength(0...1)))
-        let bytes = ByteCountFormatter.string(fromByteCount: reclaimableBytes, countStyle: .file)
-        return "\(bytes) reclaimable, \(percent)% of the archive"
+    /// Task 10 prerequisite (the fourth instance of this wave's own
+    /// localization trap): a `String`-typed accessor over user-facing
+    /// prose is invisible to `scripts/extract-localizable-strings.swift`
+    /// and resolves `.help`/`.accessibilityValue` through `Text`'s verbatim
+    /// `StringProtocol` overload instead of the `LocalizedStringKey` one --
+    /// the Hungarian build would silently keep showing this sentence in
+    /// English forever. `Text` (not `String`) is required, exactly like
+    /// `detailText(for:)` just below already does for the per-segment
+    /// tooltip.
+    private var reclaimHelpText: Text {
+        // Named `percentText`/`bytesText`, not the bare `percent`/`bytes` --
+        // the extraction script's placeholder-type inference indexes EVERY
+        // `let name: Type` declaration across all of `Sources/` by name, and
+        // both bare names are declared as numeric types elsewhere in this
+        // codebase (`ArchiveTask.bytes: Int64`, `TonightPage.percent:
+        // Double`); a same-named local here (itself a `String`, with no
+        // type annotation to register a conflicting entry) would have been
+        // misclassified as `%lld`/`%lf` instead of the `%@` these two
+        // already-formatted strings actually need.
+        let percentText = (reclaimFraction * 100).formatted(.number.precision(.fractionLength(0...1)))
+        let bytesText = ByteCountFormatter.string(fromByteCount: reclaimableBytes, countStyle: .file)
+        return Text("\(bytesText) reclaimable, \(percentText)% of the archive")
     }
 
     @ViewBuilder

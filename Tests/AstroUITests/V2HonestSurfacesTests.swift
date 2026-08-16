@@ -34,16 +34,26 @@ struct V2HonestSurfacesTests {
 
     // MARK: 2. Library must not claim read-only access unconditionally.
 
-    @Test("LibraryView reflects the real access mode instead of an unconditional Read-only access label")
+    @Test("The archive page never hardcodes an unconditional Read-only claim; the write-capable pages it links to reflect the real access mode instead")
     func libraryAccessLabelReflectsWriteMode() throws {
-        let source = try contents("Sources/AstroUI/Features/Library/LibraryView.swift")
+        // Task 10: `LibraryView` (and its own unconditional-label fix from
+        // the 2026-08-14 audit) is deleted -- `ArchiveView` is its
+        // replacement, but by its own explicit design (see its `accessMode`
+        // doc comment) it renders no access-mode badge of its own at all:
+        // every action it performs directly is read-only regardless of
+        // `accessMode`, and the write-capable actions it links to (Cleanup
+        // Preview, Organize One Session) already show their own honest
+        // access-mode state on their own pages. This keeps the ORIGINAL
+        // honesty contract -- no unconditional "Read-only access" lie --
+        // while checking it where the claim can actually be made now.
+        let archive = try contents("Sources/AstroUI/Features/Archive/ArchiveView.swift")
         #expect(
-            !source.contains(#"Label("Read-only access", systemImage: "lock.shield").foregroundStyle(.green)"#),
-            "the old unconditional label must be gone -- it lied whenever mutation was enabled"
+            !archive.contains(#"Label("Read-only access", systemImage: "lock.shield").foregroundStyle(.green)"#),
+            "ArchiveView must not hardcode an unconditional Read-only claim"
         )
-        #expect(source.contains("enableWriteOperations"), "LibraryView must read the same write-mode flag HealthView/CalibrationView use")
-        #expect(source.contains(".mutationEnabled"))
-        #expect(source.contains("\"Writable\""))
+        let cleanup = try contents("Sources/AstroUI/Features/Library/CleanupPreviewView.swift")
+        #expect(cleanup.contains(".mutationEnabled"))
+        #expect(cleanup.contains("Requires write access"), "the write-capable page this page links to must state the real access mode honestly")
     }
 
     // MARK: 3. Integrity findings must not blanket-claim "no action needed".

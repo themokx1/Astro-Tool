@@ -30,7 +30,9 @@ struct V2PolishSurfaceTests {
             ("ProjectsView", "Sources/AstroUI/Features/Projects/ProjectsView.swift"),
             ("NightsView", "Sources/AstroUI/Features/Nights/NightsView.swift"),
             ("PlanningView", "Sources/AstroUI/Features/Planning/PlanningView.swift"),
-            ("LibraryView", "Sources/AstroUI/Features/Library/LibraryView.swift"),
+            // Task 10: `.library` now renders `ArchiveView`, the deleted
+            // `LibraryView`'s replacement.
+            ("ArchiveView", "Sources/AstroUI/Features/Archive/ArchiveView.swift"),
             ("InsightsView", "Sources/AstroUI/Features/Insights/InsightsView.swift"),
             ("ResultsView", "Sources/AstroUI/Features/Results/ResultsView.swift"),
             ("HealthView", "Sources/AstroUI/Features/Library/HealthView.swift"),

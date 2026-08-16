@@ -9,16 +9,18 @@ import SwiftUI
 // the sibling file `ArchiveVerdict.swift` -- this file alone would otherwise
 // pass ~550 lines.
 
-/// The Archive page: the redesigned home for what used to be `LibraryView`
-/// (three counter cards) plus `HealthView`'s findings table, folded into one
-/// screen that leads with a verdict sentence instead of filler copy. Toolbar
-/// actions and the actual audit run are taken as injected closures -- this
-/// view never wires them to a concrete store; a later task wires
-/// `LibraryHealthStore.runAudit` and the router in `V2RootView`.
+/// The Archive page: the redesigned home for what used to be the old
+/// `LibraryView` (three counter cards, now deleted) plus `HealthView`'s
+/// findings table, folded into one screen that leads with a verdict
+/// sentence instead of filler copy. Toolbar actions and the actual audit run
+/// are taken as injected closures -- this view never wires them to a
+/// concrete store itself; `V2RootView` (Task 10) wires `runAudit` to
+/// `LibraryHealthStore.runAudit` and builds this view for both its `.library`
+/// and (for backward-compatible restoration only) `.health` routes.
 public struct ArchiveView: View {
     let rootURL: URL?
-    /// Accepted for parity with `HealthView`/`LibraryView`'s own
-    /// initializers and for a future write-enabled action on this page, but
+    /// Accepted for parity with `HealthView`'s own initializer, and for a
+    /// future write-enabled action on this page, but
     /// not rendered as its own badge today: every action this page performs
     /// directly (Check Library, Rescan) is read-only regardless of this
     /// value -- same reasoning as `HealthView.subtitleText`'s own doc
@@ -29,13 +31,21 @@ public struct ArchiveView: View {
     let chooseLibrary: () -> Void
     let rescan: () -> Void
     let convertSession: () -> Void
-    /// Pushes the existing, already-tested Cleanup Preview page. Always a
-    /// bare, unfiltered open -- there is no existing mechanism to preselect
-    /// its category checkboxes from here (`CleanupPreviewStore.selectedCategories`
-    /// starts empty and is only ever mutated by a user tap), so both
-    /// `ArchiveTaskAction.previewQuarantine` and `.compareDuplicates` route
-    /// here rather than promising a filtered view this wave does not build.
-    let openQuarantinePreview: () -> Void
+    /// Pushes the existing, already-tested Cleanup Preview page, carrying
+    /// along whichever `CleanupPreviewGroup.category` values the triggering
+    /// action already knows about. Task 10 prerequisite: `CleanupPreviewStore`
+    /// now supports pre-checking categories (`preselect(_:)`), so a task
+    /// card's own `.previewQuarantine(categories:)` action passes them
+    /// straight through here rather than promising the filtering it cannot
+    /// deliver, as an earlier version of this doc comment claimed. The
+    /// Targets section's own bare "Preview Quarantine…" row (no specific
+    /// category in play there) calls this with an empty set, which leaves
+    /// `CleanupPreviewStore.selectedCategories` at its own default. The
+    /// caller (`V2RootView`'s `.library`/`.health` destinations) is expected
+    /// to stash the categories on `AppRouter.pendingCleanupCategories`
+    /// before pushing `.cleanup` -- this view has no `router` of its own to
+    /// do that itself.
+    let openQuarantinePreview: (Set<String>) -> Void
     /// Runs the read-only audit. Never called directly by this view for
     /// "Run Check" task-card presses without going through this same
     /// closure -- there is exactly one audit entry point, matching the
@@ -58,7 +68,7 @@ public struct ArchiveView: View {
         chooseLibrary: @escaping () -> Void,
         rescan: @escaping () -> Void,
         convertSession: @escaping () -> Void,
-        openQuarantinePreview: @escaping () -> Void,
+        openQuarantinePreview: @escaping (Set<String>) -> Void,
         runAudit: @escaping (AuditRunMode) -> Void,
         store: ArchiveStore = ArchiveStore()
     ) {
@@ -219,7 +229,7 @@ public struct ArchiveView: View {
                             row: row,
                             maxTargetBytes: maxTargetBytes,
                             onRevealInFinder: { revealInFinder(row: row) },
-                            onPreviewQuarantine: { openQuarantinePreview() }
+                            onPreviewQuarantine: { openQuarantinePreview([]) }
                         )
                     }
                 }
@@ -274,8 +284,8 @@ public struct ArchiveView: View {
 
     private func perform(_ action: ArchiveTaskAction) {
         switch action {
-        case .previewQuarantine, .compareDuplicates:
-            openQuarantinePreview()
+        case .previewQuarantine(let categories):
+            openQuarantinePreview(Set(categories))
         case .revealInFinder(let path):
             revealInFinder(relativePath: path)
         case .runAudit:

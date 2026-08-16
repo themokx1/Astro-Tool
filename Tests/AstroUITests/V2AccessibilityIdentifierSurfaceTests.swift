@@ -56,12 +56,20 @@ struct V2AccessibilityIdentifierSurfaceTests {
         #expect(source.contains(#"accessibilityIdentifier("v2.health.open-calibration")"#))
     }
 
-    @Test("LibraryView's Choose/Organize/Change buttons each carry an identifier")
+    @Test("ArchiveView's Choose/Organize/Change buttons each carry an identifier")
     func libraryViewButtonsHaveIdentifiers() throws {
-        let source = try contents("Sources/AstroUI/Features/Library/LibraryView.swift")
-        #expect(source.contains(#"accessibilityIdentifier("v2.library.choose")"#))
-        #expect(source.contains(#"accessibilityIdentifier("v2.library.convert-session")"#))
-        #expect(source.contains(#"accessibilityIdentifier("v2.library.change")"#))
+        // Task 10: `LibraryView` (and its `v2.library.*` identifiers) is
+        // gone -- its three buttons survive as `ArchiveView`'s own toolbar
+        // actions instead. "Choose" is a plain in-body button (a literal
+        // `.accessibilityIdentifier(...)` call); "Organize"/"Change" are
+        // `WorkspaceAction`s whose own `id` is what `V2RootView`'s shared
+        // toolbar rendering later applies as the identifier -- both shapes
+        // are covered by checking each id string is declared at all, the
+        // same convention `ArchiveViewSurfaceTests` already uses.
+        let source = try contents("Sources/AstroUI/Features/Archive/ArchiveView.swift")
+        #expect(source.contains(#"accessibilityIdentifier("v2.archive.choose")"#))
+        #expect(source.contains(#""v2.archive.organize""#))
+        #expect(source.contains(#""v2.archive.change""#))
     }
 
     @Test("HomeView's per-recommendation Open button is uniquely identified per row")

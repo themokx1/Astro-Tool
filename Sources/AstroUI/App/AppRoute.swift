@@ -184,7 +184,12 @@ public enum AppRoute: Hashable, Sendable {
         case ("planning", []): self = .content(.planning)
         case ("planning", ["saved"]): self = .content(.savedTargets)
         case ("library", []): self = .content(.library)
-        case ("library", ["health"]): self = .content(.health)
+        // Task 10: Health's findings now live on the Archive page itself
+        // (it no longer has its own sidebar row), but `astrotool://library/
+        // health` ships in already-published documentation -- redirecting it
+        // to `.library` rather than dropping it keeps that link working
+        // instead of resolving to nothing.
+        case ("library", ["health"]): self = .content(.library)
         case ("library", ["calibration"]): self = .content(.calibration)
         case ("insights", []): self = .content(.insights)
         case ("settings", let parts) where parts.count == 1 && !parts[0].isEmpty:

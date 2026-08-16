@@ -217,6 +217,24 @@ struct ArchiveViewSurfaceTests {
                     "found a `var x: String` in ArchiveView.swift: \(trimmed)")
         }
     }
+
+    // MARK: Task 10 prerequisite -- the duplicate card resolves through the
+    // same previewQuarantine action, and its categories reach the route push
+
+    @Test("compareDuplicates no longer exists as an action; the duplicate card's action carries its categories through to the route push")
+    func previewQuarantineCarriesItsCategoriesThroughToTheRoutePush() throws {
+        let source = try archiveSource()
+        #expect(!source.contains("compareDuplicates"), "ArchiveTaskAction.compareDuplicates was deleted -- ArchiveView must not reference it")
+        // `perform(_:)` must forward the categories the underlying
+        // `ArchiveTaskAction.previewQuarantine(categories:)` already carries
+        // to `openQuarantinePreview`, not discard them by calling it bare.
+        #expect(source.contains("case .previewQuarantine(let categories):"))
+        #expect(source.contains("openQuarantinePreview(Set(categories))"))
+        // The closure itself now accepts the categories it is asked to
+        // preselect, rather than the bare `() -> Void` an earlier version
+        // of this page had.
+        #expect(source.contains("let openQuarantinePreview: (Set<String>) -> Void"))
+    }
 }
 
 private extension ArchiveMapSnapshot {

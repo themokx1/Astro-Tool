@@ -55,6 +55,20 @@ public final class AppRouter {
     /// "All setups").
     public var pendingInsightsSetupFilter: String?
 
+    /// Task 10 prerequisite: the Archive page's task cards know exactly
+    /// which `CleanupPreviewGroup.category` values their own action covers
+    /// (e.g. `["duplicate-content"]`) -- this is the hand-off that lets
+    /// pushing `.cleanup` land on Cleanup Preview with those categories
+    /// already checked, instead of the bare unfiltered open the page used to
+    /// be limited to. Follows `pendingInsightsSetupFilter` exactly: a
+    /// one-shot stash set right before navigating, read once and cleared by
+    /// the consumer (`V2RootView`'s `.cleanup` destination) in its own
+    /// `.onAppear`, so it never lingers and re-applies to some LATER,
+    /// unrelated visit to Cleanup Preview. `nil` leaves
+    /// `CleanupPreviewStore.selectedCategories` untouched (its own default,
+    /// empty selection).
+    public var pendingCleanupCategories: Set<String>?
+
     /// Wave 4 Task 3: the project/night workspace's own last-selected
     /// segmented tab, owned here (a plain router property) rather than as
     /// `@State` inside `ProjectWorkspaceView`/`NightWorkspaceView` -- those
@@ -92,6 +106,7 @@ public final class AppRouter {
         isInspectorPresented = true
         presentation = nil
         pendingInsightsSetupFilter = nil
+        pendingCleanupCategories = nil
         projectTab = .overview
         nightTab = .overview
     }
@@ -102,6 +117,7 @@ public final class AppRouter {
     ) {
         presentation = nil
         pendingInsightsSetupFilter = nil
+        pendingCleanupCategories = nil
         paths = [:]
 
         let routeIsConsistent = state.contentRoute.primarySection == state.primarySection

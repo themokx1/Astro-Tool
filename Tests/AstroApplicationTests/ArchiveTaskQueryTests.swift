@@ -60,6 +60,11 @@ struct ArchiveTaskQueryTests {
 
         let duplicates = try #require(tasks.first { $0.kind == .duplicateContent })
         #expect(duplicates.bytes == 500)
+        // Task 10 prerequisite: the duplicate card no longer promises a
+        // distinct comparison surface (`.compareDuplicates`, deleted) --
+        // it resolves to the same `.previewQuarantine` action every other
+        // reclaimable card uses, with its own correct category.
+        #expect(duplicates.action == .previewQuarantine(categories: ["duplicate-content"]))
 
         let misplaced = try #require(tasks.first { $0.kind == .misplacedCalibration })
         #expect(misplaced.severity == .error)

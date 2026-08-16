@@ -750,7 +750,6 @@
 "Preview Quarantine…" = "Karantén előnézete…";
 "Byte-identical copies" = "Bájtazonos másolatok";
 "Files whose exact contents already exist elsewhere. You choose which copy stays." = "Olyan fájlok, amelyeknek a pontos tartalma már létezik máshol is. Te döntöd el, melyik másolat marad meg.";
-"Compare Copies…" = "Másolatok összehasonlítása…";
 "Calibration in the wrong folder" = "Kalibráció rossz mappában";
 "These files sit in a calibration folder but are not calibration frames, so this night's matching is silently wrong." = "Ezek a fájlok egy kalibrációs mappában vannak, de nem kalibrációs képkockák, ezért ennek az éjszakának a párosítása észrevétlenül hibás.";
 "Folder names that break scanning" = "Mappanevek, amelyek megakasztják a beolvasást";
@@ -803,3 +802,9 @@
 "%@ can be reclaimed." = "%@ nyerhető vissza.";
 "%@ more findings in categories this page has no action for · %@" = "%@ további találat olyan kategóriákban, amikre ez az oldal nem kínál műveletet · %@";
 "Preview Quarantine for This Target…" = "Karantén előnézete ehhez a célponthoz…";
+
+// ArchiveStripView.swift (Task 10 prerequisite) -- `reclaimHelpText` used to
+// be `String`-typed (invisible to the extraction script, never localizes);
+// hand-added here now that it is `Text`, same reasoning as every other
+// hand-added group above.
+"%@ reclaimable, %@% of the archive" = "%@ felszabadítható, az archívum %@%-a";

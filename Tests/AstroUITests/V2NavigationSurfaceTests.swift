@@ -1,3 +1,4 @@
+import AstroUI
 import Foundation
 import Testing
 
@@ -170,9 +171,70 @@ struct V2NavigationSurfaceTests {
     @Test("Library's own sub-pages are sidebar child rows, not a separate middle column")
     func librarySubPagesAreSidebarChildRows() throws {
         let root = try contents("Sources/AstroUI/App/V2RootView.swift")
-        #expect(root.contains("v2.sidebar.library.health"))
+        // Task 10: Health's findings now live on the Archive page itself
+        // (`.library`'s own destination), so it no longer has a sidebar
+        // child row of its own -- see `V2NavigationSurfaceTests`'
+        // `librarySectionRendersTheArchive` for the gate pinning that down.
+        // Calibration still does, since nothing on the Archive page
+        // replaces it.
+        #expect(!root.contains("v2.sidebar.library.health"))
         #expect(root.contains("v2.sidebar.library.calibration"))
         #expect(root.contains("DisclosureGroup"))
+    }
+
+    // MARK: Task 10 -- the Library section renders the Archive page
+
+    @Test("The Library section renders the archive page, and Health is no longer its own sidebar row")
+    func librarySectionRendersTheArchive() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(source.contains("ArchiveView("))
+        #expect(!source.contains("LibraryView("), "LibraryView is replaced, not merely bypassed")
+        #expect(!source.contains("v2.sidebar.library.health"),
+                "Health's findings now live on the archive page, so it has no sidebar row")
+        #expect(source.contains("v2.sidebar.library.calibration"), "Calibration keeps its row")
+    }
+
+    @Test("The library/health deep link still resolves, redirected to the archive page")
+    func healthDeepLinkRedirects() throws {
+        let route = try #require(AppRoute(deepLink: URL(string: "astrotool://library/health")!))
+        #expect(route == .content(.library))
+    }
+
+    @Test("The .health ContentRoute still renders the archive page, so an old restored window state never lands on an empty view")
+    func healthRouteStillRendersTheArchivePage() throws {
+        let root = try contents("Sources/AstroUI/App/V2RootView.swift")
+        let destinationStart = try #require(root.range(of: "private func destination(for route: ContentRoute)"))
+        let destinationEnd = try #require(root.range(of: "\n    private func noLibraryPlaceholder"))
+        let destinationSwitch = String(root[destinationStart.lowerBound..<destinationEnd.lowerBound])
+        let healthCaseRange = try #require(destinationSwitch.range(of: "case .health:"))
+        let calibrationCaseRange = try #require(
+            destinationSwitch.range(of: "case .calibration:", range: healthCaseRange.upperBound..<destinationSwitch.endIndex)
+        )
+        let healthCaseBody = String(destinationSwitch[healthCaseRange.upperBound..<calibrationCaseRange.lowerBound])
+        #expect(healthCaseBody.contains("archiveDestination()"), "the .health case must still render something real, not an empty view")
+    }
+
+    @Test("Task 10 prerequisite: AppRouter.pendingCleanupCategories follows pendingInsightsSetupFilter's own one-shot precedent")
+    func pendingCleanupCategoriesFollowsTheOneShotPrecedent() throws {
+        let model = try contents("Sources/AstroUI/App/AppModel.swift")
+        #expect(model.contains("public var pendingCleanupCategories: Set<String>?"))
+
+        let root = try contents("Sources/AstroUI/App/V2RootView.swift")
+        // The push site stashes the categories before pushing...
+        #expect(root.contains("router.pendingCleanupCategories = categories.isEmpty ? nil : categories"))
+        // ...and the consumer (the `.cleanup` destination) reads it once and
+        // clears it in `.onAppear`, exactly like `.insights` already does
+        // for `pendingInsightsSetupFilter`.
+        #expect(root.contains("initialCategories: router.pendingCleanupCategories"))
+        #expect(root.contains(".onAppear { router.pendingCleanupCategories = nil }"))
+    }
+
+    @Test("Task 10 prerequisite: CleanupPreviewStore.preselect exists and pre-checks the given categories")
+    func cleanupPreviewStorePreselectIsWired() throws {
+        let store = try contents("Sources/AstroUI/Features/Library/CleanupPreviewView.swift")
+        #expect(store.contains("public func preselect(_ categories: Set<String>)"))
+        #expect(store.contains("initialCategories: Set<String>? = nil"))
+        #expect(store.contains("store.preselect(initialCategories)"))
     }
 
     @Test("The shell's stable toolbar renders the current route's own workspace actions from the shared WorkspaceActionCenter")

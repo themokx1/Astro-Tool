@@ -166,7 +166,9 @@ struct V2ShellSurfaceTests {
             ("projects", "Sources/AstroUI/Features/Projects/ProjectsView.swift"),
             ("nights", "Sources/AstroUI/Features/Nights/NightsView.swift"),
             ("planning", "Sources/AstroUI/Features/Planning/PlanningView.swift"),
-            ("library", "Sources/AstroUI/Features/Library/LibraryView.swift"),
+            // Task 10: `.library` now renders `ArchiveView`, the deleted
+            // `LibraryView`'s replacement.
+            ("library", "Sources/AstroUI/Features/Archive/ArchiveView.swift"),
             ("insights", "Sources/AstroUI/Features/Insights/InsightsView.swift"),
         ]
         let uiTest = try String(
@@ -294,8 +296,8 @@ struct V2ShellSurfaceTests {
         #expect(!overlay.contains("while true"))
     }
 
-    @Test("A global rescan (⌘R) is wired into the menu bar and the Library workspace")
-    func rescanIsWiredIntoCommandsAndLibraryView() throws {
+    @Test("A global rescan (⌘R) is wired into the menu bar and the Archive workspace")
+    func rescanIsWiredIntoCommandsAndArchiveView() throws {
         let commands = try String(
             contentsOf: repositoryRoot.appendingPathComponent(
                 "Sources/AstroToolApp/Views/Commands.swift"
@@ -306,13 +308,16 @@ struct V2ShellSurfaceTests {
         #expect(v2Commands.contains("Rescan"))
         #expect(v2Commands.contains(".keyboardShortcut(\"r\""))
 
-        let library = try String(
+        // Task 10: the Rescan button survives as one of `ArchiveView`'s own
+        // toolbar actions (`LibraryView`, and its `v2.library.rescan`
+        // identifier, are gone).
+        let archive = try String(
             contentsOf: repositoryRoot.appendingPathComponent(
-                "Sources/AstroUI/Features/Library/LibraryView.swift"
+                "Sources/AstroUI/Features/Archive/ArchiveView.swift"
             ),
             encoding: .utf8
         )
-        #expect(library.contains("v2.library.rescan"))
+        #expect(archive.contains("\"v2.archive.rescan\""))
     }
 
     @Test("Run Audit (⌥⌘A) is wired into the menu bar and Library Health's split button/verify sheet")
