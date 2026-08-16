@@ -58,11 +58,15 @@ struct ArchiveTaskCard: View {
 
     // `.reclaim` severity is a byte count the user can win back;
     // everything else is a count of files that need a look.
-    // wave 2: move to AstroFormat
     private var headlineValue: String {
         task.severity == .reclaim
-            ? ByteCountFormatter.string(fromByteCount: task.bytes, countStyle: .file)
+            ? Self.formatBytes(task.bytes)
             : task.affectedFileCount.formatted()
+    }
+
+    // wave 2: move to AstroFormat
+    private static func formatBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     // Localization trap (see this file's header + the plan's own warning):
