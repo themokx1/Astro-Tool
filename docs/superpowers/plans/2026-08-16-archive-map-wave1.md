@@ -1725,7 +1725,39 @@ git commit -m "feat: add the archive task card and target row"
 
 **Files:**
 - Create: `Sources/AstroUI/Features/Archive/ArchiveView.swift`
+- Modify: `Sources/AstroApplication/Features/Archive/ArchiveMapQuery.swift` (lásd a „soha nem ellenőrzött épség" alfejezetet lentebb)
 - Test: `Tests/AstroUITests/ArchiveSurfaceTests.swift` (bővítés)
+- Test: `Tests/AstroApplicationTests/ArchiveMapQueryTests.swift` (bővítés)
+
+### Előfeltétel: a „semmi nem sérült" nem mondható el ellenőrzés nélkül
+
+A valódi könyvtárban **egyetlen `verify` típusú futás sincs** — a felhasználó soha nem futtatott integritás-ellenőrzést. Ez a normális eset, nem kivétel.
+
+Az `ArchiveVerdictDetail` `hasIntegrityFinding`-je viszont `tasks.contains { $0.kind == .corruption }`, ami ilyenkor `false`, és a nézet ebből azt a mondatot építené, hogy **„Semmi nem sérült."** Ez pontosan az a fajta megalapozatlan állítás, amit ez az egész átépítés meg akar szüntetni: az app olyat állítana, amit meg sem nézett. Ugyanaz a hiba, mint a régi Health oldal „0 calibration issues"-a.
+
+Ezért:
+
+1. Az `ArchiveMapSnapshot` kapjon egy `lastVerifyAt: Date?` mezőt. A `lastRuns(db:)` már a `runs` táblát olvassa — bővítsd a `WHERE kind IN ('scan','audit')`-ot `'verify'`-jal, és add vissza harmadik értékként. Teszt pinnelje, hogy verify-futás nélkül `nil`.
+2. Az `ArchiveVerdictDetail` `hasIntegrityFinding: Bool`-ja helyett **három** állapotú legyen:
+
+```swift
+enum IntegrityState: Equatable {
+    /// A verify pass has run and found corruption.
+    case corruptionFound
+    /// A verify pass has run and found none.
+    case verifiedClean
+    /// No verify pass has ever run -- the app knows nothing about this
+    /// library's integrity and must not imply otherwise.
+    case neverVerified
+}
+```
+
+3. A második sor szövege ágakként:
+   - `.corruptionFound` → „N fájl tartalma megváltozott." (elöl, minden más előtt)
+   - `.verifiedClean` → „Az utolsó ellenőrzés óta semmi nem sérült."
+   - `.neverVerified` → „Az adatépséget még nem ellenőriztem." — és **semmilyen** formában nem állítja, hogy rendben van
+
+Teszt mindhárom ágra. Ez a legfontosabb egyetlen mondat az oldalon; nem elég, ha „általában" igaz.
 
 - [ ] **Step 1: Write the failing test for the verdict sentence**
 
