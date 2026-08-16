@@ -354,7 +354,7 @@ public struct PlanningView: View {
                                     if row.isLowAltitude {
                                         Label(row.skyVerdict.english, systemImage: "exclamationmark.triangle.fill")
                                             .font(.callout.weight(.semibold))
-                                            .foregroundStyle(.orange)
+                                            .foregroundStyle(AstroTokens.Color.attention)
                                     } else {
                                         Text("\(row.maxAltitudeDeg ?? 0, format: .number.precision(.fractionLength(0)))° max alt")
                                             .fontWeight(.medium)

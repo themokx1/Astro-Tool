@@ -129,12 +129,17 @@ struct V2PolishSurfaceTests {
         // meaning (healthy/needs-attention/failed) reads consistently across
         // every screen -- this gate keeps a bare `.green`/`.orange`/`.red`/
         // `.purple` (or the explicit `Color.` spelling of the same) from
-        // creeping back in. Planning is intentionally excluded: it is under
-        // a separate, currently-frozen read-only audit and was not part of
-        // this sweep.
+        // creeping back in.
+        //
+        // Wave 2 Task 2b: this used to permanently exempt
+        // `Features/Planning/PlanningView.swift` and
+        // `Features/Planning/SkyPathChart.swift`, reasoning that Planning
+        // was "under a separate, currently-frozen read-only audit and was
+        // not part of this sweep." That audit closed 2026-08-15 (the
+        // Planning workbench wave shipped) -- the reason expired, so the
+        // exemption is gone too. Both sites it was hiding are fixed.
         let root = repositoryRoot.appendingPathComponent("Sources/AstroUI")
         let directories = ["Features", "Settings"]
-        let excludedPathSuffixes = ["Features/Planning/PlanningView.swift", "Features/Planning/SkyPathChart.swift"]
         let bareColorPattern = try NSRegularExpression(
             pattern: #"(?<![A-Za-z0-9_])\.(green|orange|red|purple)(?![A-Za-z0-9_])|\bColor\.(green|orange|red|purple)\b"#
         )
@@ -143,7 +148,6 @@ struct V2PolishSurfaceTests {
             let base = root.appendingPathComponent(directory)
             guard let enumerator = FileManager.default.enumerator(at: base, includingPropertiesForKeys: nil) else { continue }
             for case let url as URL in enumerator where url.pathExtension == "swift" {
-                if excludedPathSuffixes.contains(where: { url.path.hasSuffix($0) }) { continue }
                 guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
                 let range = NSRange(text.startIndex..., in: text)
                 if bareColorPattern.firstMatch(in: text, range: range) != nil {

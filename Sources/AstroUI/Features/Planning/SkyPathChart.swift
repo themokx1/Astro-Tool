@@ -19,7 +19,7 @@ struct SkyPathChart: View {
                         .interpolationMethod(.catmullRom)
                 }
                 RuleMark(y: .value("Imaging threshold", result.minAltitudeDeg))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(AstroTokens.Color.attention)
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                     .annotation(position: .top, alignment: .leading) {
                         Text("\(result.minAltitudeDeg, format: .number.precision(.fractionLength(0)))° min")

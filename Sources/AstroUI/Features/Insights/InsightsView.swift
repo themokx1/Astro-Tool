@@ -148,7 +148,7 @@ public struct InsightsView: View {
                         title: "Efficiency",
                         unit: "%",
                         points: trendData(insight) { $0.efficiencyPercent },
-                        color: AstroTokens.Color.ok
+                        color: AstroTokens.Color.accent
                     )
                 }
                 recentTrendSessions(insight)
