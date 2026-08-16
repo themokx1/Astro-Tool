@@ -2274,3 +2274,85 @@ A `snapshot.totalBytes` és `fileCount` ennek **pontosan** meg kell egyeznie. Ha
 git add Sources/AstroApplication/Features/Archive/ArchiveMapQuery.swift Tests/AstroApplicationTests/ArchiveMapQueryTests.swift
 git commit -m "fix: keep untargeted files on the archive map"
 ```
+
+---
+
+## Task 7b: A sáv feliratai forduljanak le
+
+**Miért van ez a task:** a 7. task leszállított `ArchiveStripView.swift`-je bevezetett egy `ArchiveClass.displayName` bővítményt `String` visszatérési típussal, öt beégetett angol névvel („Light frames", „Stacks", „Processed", „Calibration", „Unclassified"), plusz egy `"Other"`-t a maradék-szegmensre és egy `"\(count) files"`-t a részletsorban.
+
+Két baj van vele:
+
+1. **A `String`-ként tipizált felületi szöveg soha nem fordul le.** A `LocalizedStringKey` felbontása csak literálon működik; egy `String`-et visszaadó `switch`-et a kinyerő script sem lát, tehát kulcs sem keletkezik belőle. Ez a projekt **már elkövetett** hibája — pontosan ezért lett a `MetricCard.title` `String`-ből `LocalizedStringKey`, és pontosan ezért van rá kapu-teszt. A `LocalizationCoverageTests` most sem szólt, mert nincs mit észrevennie.
+2. **Az indoklás téves.** A doc-komment az `ArchiveTargetRow.displayName`-re hivatkozik precedensként. Az viszont **katalógus-jelölés** („NGC 7000") — az tényleg nem fordítandó. A „Processed", „Unclassified" és „Calibration" ellenben hétköznapi szavak, amiknek van természetes magyar alakjuk.
+
+A tulajdonos saját nyelvhasználata a mérce (README, kiadási jegyzetek): a `light frame`, `stack`, `dark`, `flat`, `bias` **angolul marad** magyar szövegben is, mert a magyar asztrofotósok így mondják; a `Feldolgozott`, `Kalibráció`, `Besorolatlan` viszont magyarul van. A fordításnak ezt kell követnie, nem egy mechanikus szótárazásnak.
+
+**Files:**
+- Modify: `Sources/AstroUI/Features/Archive/ArchiveStripView.swift`
+- Modify: `Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings`
+- Modify: `Tests/AstroUITests/V2PolishSurfaceTests.swift`
+
+- [ ] **Step 1: Write the failing gate**
+
+A meglévő kapuk nem tudják elkapni ezt a hibaosztályt, ezért előbb a kaput írjuk meg:
+
+```swift
+@Test("No Archive view returns user-facing text as a plain String")
+func archiveViewsDoNotReturnUserFacingStringsFromSwitches() throws {
+    // A `var x: String { switch … }` over UI words never localizes: the
+    // extraction script only sees LocalizedStringKey literals, so no key is
+    // ever produced and the Hungarian build silently shows English. This is
+    // the exact defect that forced MetricCard.title from String to
+    // LocalizedStringKey -- gate it at the layer where it recurs.
+    for file in try filenames(under: "Sources/AstroUI/Features/Archive") {
+        let source = try contents("Sources/AstroUI/Features/Archive/\(file)")
+        #expect(!source.contains("var displayName: String"),
+                "\(file) returns display text as String -- use LocalizedStringKey")
+    }
+}
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `swift test --no-parallel --filter archiveViewsDoNotReturnUserFacingStringsFromSwitches`
+Expected: FAIL — `ArchiveStripView.swift returns display text as String`
+
+- [ ] **Step 3: Implement**
+
+`ArchiveClass.displayName` legyen `LocalizedStringKey`, öt literál kulccsal, és a `"Other"` is literál kulcs. A `.help(...)` és az `.accessibilityLabel(...)` `Text`-et is elfogad, ezért a szegmens szövege két lefordítható darabból álljon össze, nem egy összefűzött `String`-ből:
+
+```swift
+private func segmentText(_ segment: ArchiveStripLayout.Segment) -> Text {
+    Text(segment.archiveClass?.displayName ?? "Other")
+        + Text(verbatim: " · ")
+        + Text("\(byteString(segment.bytes)) · \(segment.fileCount.formatted()) files")
+}
+```
+
+Ez pontosan két kulcsot termel: az osztálynevet és a `"%@ · %@ files"` formátumot — mindkettő ugyanúgy kinyerhető és fordítható, mint a meglévő `"%@ checked"`.
+
+- [ ] **Step 4: Add the Hungarian translations**
+
+```
+"Light frames" = "Light frame-ek";
+"Stacks" = "Stackek";
+"Processed" = "Feldolgozott";
+"Calibration" = "Kalibráció";
+"Unclassified" = "Besorolatlan";
+"Other" = "Egyéb";
+"%@ · %@ files" = "%@ · %@ fájl";
+```
+
+- [ ] **Step 5: Run the gates and the suite**
+
+Run: `swift test --no-parallel --filter LocalizationCoverageTests`
+Run: `swift test --no-parallel 2>&1 | tail -20`
+Expected: minden zöld
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add Sources/AstroUI/Features/Archive/ArchiveStripView.swift Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings Tests/AstroUITests/V2PolishSurfaceTests.swift
+git commit -m "fix: localize the archive strip's own labels"
+```
