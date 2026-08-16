@@ -50,6 +50,7 @@
 "%@ s / %@" = "%@ mp / %@";
 "%@ usable · %lld nights · %lld series" = "%@ használható · %lld éjszaka · %lld sorozat";
 "%@ · %@" = "%@ · %@";
+"%@ · %@ files" = "%@ · %@ fájl";
 "%@ · %lld nights" = "%@ · %lld éjszaka";
 "%@ · stacks, variants, and provenance" = "%@ · stackek, változatok és eredet";
 "%@% of edge" = "%@% a szélből";
@@ -582,7 +583,7 @@
 "Latitude" = "Szélesség";
 "Latitude (°)" = "Szélesség (°)";
 "Library behavior" = "Könyvtár viselkedése";
-"Light frames" = "Light képkockák";
+"Light frames" = "Light frame-ek";
 "Lineage" = "Eredet";
 "Longitude" = "Hosszúság";
 "Longitude (°)" = "Hosszúság (°)";
@@ -721,3 +722,15 @@
 "Check the stacks and the results' lineage." = "Ellenőrizd a stackeket és az eredmények eredetét.";
 "The project is done; export the shareable summary." = "A projekt kész; exportáld a megosztható összegzést.";
 "Nothing to do." = "Nincs teendő.";
+
+// ArchiveClass.displayName (ArchiveStripView.swift, Task 7b) -- maps the
+// engine's ArchiveClass case, not a rendered String, to a
+// LocalizedStringKey; "light frame" and "stack" stay in their established
+// English form per this project's own Hungarian astrophotography usage
+// (see the glossary at the top of this file). "Light frames" and
+// "Calibration" already have entries earlier in this file (shared with
+// InsightsView/CalibrationView), so they are not repeated here.
+"Stacks" = "Stackek";
+"Processed" = "Feldolgozott";
+"Unclassified" = "Besorolatlan";
+"Other" = "Egyéb";

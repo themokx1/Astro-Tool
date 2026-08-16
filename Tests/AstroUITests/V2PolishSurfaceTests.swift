@@ -284,4 +284,47 @@ struct V2PolishSurfaceTests {
             #expect(!source.contains("Color(red:"), "\(file) defines its own color")
         }
     }
+
+    // MARK: (g) No Archive view returns user-facing text as a plain String (Task 7b).
+
+    @Test("No Archive view returns user-facing text as a plain String")
+    func archiveViewsDoNotReturnUserFacingStringsFromSwitches() throws {
+        // A `var x: String { switch … }` over UI words never localizes: the
+        // extraction script only sees LocalizedStringKey literals, so no key is
+        // ever produced and the Hungarian build silently shows English. This is
+        // the exact defect that forced MetricCard.title from String to
+        // LocalizedStringKey -- gate it at the layer where it recurs.
+        for file in try filenames(under: "Sources/AstroUI/Features/Archive") {
+            let source = try contents("Sources/AstroUI/Features/Archive/\(file)")
+            #expect(!source.contains("var displayName: String"),
+                    "\(file) returns display text as String -- use LocalizedStringKey")
+        }
+    }
+
+    @Test("ArchiveClass's display names and the archive strip's detail format have Hungarian translations")
+    func archiveClassDisplayNamesAreTranslated() throws {
+        // `scripts/extract-localizable-strings.swift` only finds
+        // literal-first-argument call sites (`Text("...")`, `.help("...")`,
+        // etc.) -- a `switch` that maps cases to `LocalizedStringKey`
+        // (`ArchiveClass.displayName`, same shape as the precedented
+        // `ProjectWorkflowPhase.displayLabel`/`PlanningFit.displayLabel`) is
+        // invisible to it, so `LocalizationCoverageTests`' automated
+        // coverage check cannot catch a missing entry here. This pins the
+        // translations down by hand instead, the same way hu.lproj's own
+        // tail groups already do for those other two switch-mapped
+        // properties.
+        let strings = try contents("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
+        let expectedEntries = [
+            #""Light frames" = "Light frame-ek";"#,
+            #""Stacks" = "Stackek";"#,
+            #""Processed" = "Feldolgozott";"#,
+            #""Calibration" = "Kalibráció";"#,
+            #""Unclassified" = "Besorolatlan";"#,
+            #""Other" = "Egyéb";"#,
+            #""%@ · %@ files" = "%@ · %@ fájl";"#,
+        ]
+        for entry in expectedEntries {
+            #expect(strings.contains(entry), "hu.lproj is missing: \(entry)")
+        }
+    }
 }

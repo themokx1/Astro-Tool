@@ -120,26 +120,39 @@ struct ArchiveStripView: View {
     private func segmentView(_ segment: ArchiveStripLayout.Segment, width: CGFloat) -> some View {
         let isDimmed = selectedClass != nil && selectedClass != segment.archiveClass
         let identifier = segment.archiveClass?.rawValue ?? "residual"
-        let name = segment.archiveClass?.displayName ?? "Other"
-        let detail = "\(ByteCountFormatter.string(fromByteCount: segment.bytes, countStyle: .file)) · \(segment.fileCount.formatted()) files"
+        let nameText = Text(segment.archiveClass?.displayName ?? "Other")
+        let detailText = detailText(for: segment)
         Rectangle()
             .fill(segment.archiveClass.map(ArchivePalette.color(for:)) ?? AstroTokens.Color.hairline)
             .opacity(isDimmed ? 0.35 : 1)
             .frame(width: max(0, width * segment.fraction))
             .onTapGesture { onSelect(segment.archiveClass) }
-            .help("\(name) · \(detail)")
-            .accessibilityLabel(name)
-            .accessibilityValue(detail)
+            .help(nameText + Text(verbatim: " · ") + detailText)
+            .accessibilityLabel(nameText)
+            .accessibilityValue(detailText)
             .accessibilityIdentifier("v2.archive.strip.\(identifier)")
+    }
+
+    /// Two localizable pieces composed with `Text`'s `+` operator, not one
+    /// concatenated `String` -- `.help(...)` and `.accessibilityLabel(...)`
+    /// both accept `Text`, so this stays translatable end to end instead of
+    /// baking the byte count and file count into a verbatim string.
+    private func detailText(for segment: ArchiveStripLayout.Segment) -> Text {
+        Text("\(ByteCountFormatter.string(fromByteCount: segment.bytes, countStyle: .file)) · \(segment.fileCount.formatted()) files")
     }
 }
 
 private extension ArchiveClass {
-    /// English display names for the strip and its tooltips/accessibility
-    /// text -- `ArchiveTargetRow.displayName`'s doc comment already
-    /// established this UI stays English (V2 UI/UX audit pattern P1), so
-    /// this deliberately does not localize.
-    var displayName: String {
+    /// The strip's segment names and tooltip text. This is user-facing
+    /// vocabulary ("Processed", "Unclassified", "Calibration" are ordinary
+    /// words), not a catalog designation -- unlike
+    /// `ArchiveTargetRow.displayName`, which renders a literal catalog
+    /// string (e.g. "NGC 7000") that has no Hungarian form to translate to.
+    /// `LocalizedStringKey` (not `String`) is required here: a `String`-typed
+    /// switch is invisible to `scripts/extract-localizable-strings.swift` and
+    /// to SwiftUI's own localization resolution, so it silently renders
+    /// English forever -- the same defect `MetricCard.title` was fixed for.
+    var displayName: LocalizedStringKey {
         switch self {
         case .light: "Light frames"
         case .stack: "Stacks"
