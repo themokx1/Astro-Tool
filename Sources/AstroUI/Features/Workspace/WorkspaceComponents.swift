@@ -122,9 +122,16 @@ extension WorkspaceTablePage where Footer == EmptyView {
 }
 
 struct MetricCard: View {
-    let title: String
+    // V2 UI/UX audit (2026-08-16): these two used to be plain `String`,
+    // which routes `Label`/`Text` through their verbatim `StringProtocol`
+    // overload instead of the `LocalizedStringKey` one -- so every metric
+    // card's title and detail ("Reference", "Focal length", "Useful
+    // matches", …) stayed English even after the Hungarian table shipped.
+    // `value` and `systemImage` stay `String`: `value` is almost always a
+    // formatted number/duration, never a phrase to translate.
+    let title: LocalizedStringKey
     let value: String
-    let detail: String
+    let detail: LocalizedStringKey
     let systemImage: String
 
     var body: some View {

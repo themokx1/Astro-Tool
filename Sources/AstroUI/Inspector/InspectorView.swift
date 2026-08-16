@@ -182,7 +182,7 @@ private struct ProjectInspectorPanel: View {
                 LabeledContent("Catalog ID", value: snapshot.project.catalogID)
                 LabeledContent("Name", value: snapshot.project.displayName)
                 LabeledContent("Folder", value: snapshot.canonicalFolderName)
-                LabeledContent("Phase", value: snapshot.project.phase.rawValue.capitalized)
+                LabeledContent("Phase") { Text(snapshot.project.phase.displayLabel) }
             }
             Section("Progress") {
                 LabeledContent("Integration", value: duration(snapshot.integrationSeconds))

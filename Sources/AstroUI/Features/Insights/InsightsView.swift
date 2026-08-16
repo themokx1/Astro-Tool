@@ -232,7 +232,7 @@ public struct InsightsView: View {
             MetricCard(title: "Nights", value: "\(insight.nightCount)", detail: "Capture sessions", systemImage: "moon.stars")
             MetricCard(title: "Targets", value: "\(insight.targetCount)", detail: "Unique objects", systemImage: "scope")
             MetricCard(title: "Light frames", value: "\(insight.frameCount)", detail: "Indexed and present", systemImage: "photo.stack")
-            MetricCard(title: "Average night", value: duration(insight.averageIntegrationPerNight), detail: insight.bestMonth.map { "Best month: \($0.month)" } ?? "No monthly data", systemImage: "chart.bar.fill")
+            MetricCard(title: "Average night", value: duration(insight.averageIntegrationPerNight), detail: LocalizedStringKey(insight.bestMonth.map { "Best month: \($0.month)" } ?? "No monthly data"), systemImage: "chart.bar.fill")
         }
     }
 

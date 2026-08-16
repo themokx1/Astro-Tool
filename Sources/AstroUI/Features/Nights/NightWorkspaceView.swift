@@ -131,7 +131,7 @@ public struct NightWorkspaceView: View {
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
                 HStack(spacing: AstroTokens.Spacing.standard) {
                     MetricCard(title: "Integration", value: row.integrationSummary, detail: "Usable light frames", systemImage: "timer")
-                    MetricCard(title: "Series", value: row.seriesCount.formatted(), detail: row.filterSummary, systemImage: "square.stack.3d.up")
+                    MetricCard(title: "Series", value: row.seriesCount.formatted(), detail: LocalizedStringKey(row.filterSummary), systemImage: "square.stack.3d.up")
                     MetricCard(title: "Triage", value: row.triageState.rawValue, detail: "\(row.excludedFrames) excluded", systemImage: "checklist")
                 }
                 GroupBox("Projects captured this night") {

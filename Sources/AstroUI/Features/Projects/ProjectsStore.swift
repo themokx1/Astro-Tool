@@ -1,6 +1,7 @@
 import AstroApplication
 import Foundation
 import Observation
+import SwiftUI
 
 public enum ProjectsStoreError: LocalizedError, Equatable {
     case libraryNotOpen
@@ -17,6 +18,18 @@ public struct ProjectWorkspaceRow: Identifiable, Equatable, Sendable {
     public let usableFrames: Int
     public let excludedFrames: Int
     public let latestNight: String?
+    // V2 UI/UX audit (2026-08-16): these two used to be a verbatim copy of
+    // `ProjectNextAction.title`/`.explanation` -- the engine's English
+    // sentence -- which never localized (`Text`/`.help` render a `String`
+    // through their non-localizing overload). `ProjectWorkspaceRow` has to
+    // stay `Sendable`, and `LocalizedStringKey` itself is not `Sendable`, so
+    // this can't just change type to `LocalizedStringKey` the way
+    // `MetricCard`'s properties did. Instead these are resolved eagerly
+    // against `Bundle.main`'s `hu.lproj` table at row-construction time, via
+    // `ProjectNextActionKind.localizedTitle`/`.localizedExplanation` --
+    // keyed off the same finite case as `ProjectNextActionKind.titleKey`
+    // (used everywhere else this value renders), never off the engine's
+    // rendered sentence.
     public let nextAction: String
     /// The one-line "why" behind `nextAction`. Shown as the column's tooltip
     /// so the advice is explainable without a second panel.
@@ -276,8 +289,8 @@ public final class ProjectsStore {
                 usableFrames: snapshot.usableFrames,
                 excludedFrames: snapshot.totalFrames - snapshot.usableFrames,
                 latestNight: snapshot.nights.map(\.night.localDate).max(),
-                nextAction: snapshot.nextAction.title,
-                nextActionExplanation: snapshot.nextAction.explanation,
+                nextAction: snapshot.nextAction.kind.localizedTitle,
+                nextActionExplanation: snapshot.nextAction.kind.localizedExplanation,
                 seriesCount: snapshot.nights.reduce(0) { $0 + $1.series.count },
                 goalHours: try? await metadata.projectAnnotation(projectID: project.id)?.integrationGoalHours
             ))
@@ -289,5 +302,64 @@ public final class ProjectsStore {
         value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .unicodeScalars.filter(CharacterSet.alphanumerics.contains)
             .map(String.init).joined().lowercased()
+    }
+}
+
+/// V2 UI/UX audit (2026-08-16): `ProjectNextAction.title`/`.explanation` are
+/// English sentences meant for non-UI consumers. The UI localizes by
+/// switching on `ProjectNextActionKind` -- the finite case the engine
+/// already derives the sentence from -- and mapping each case to a
+/// `LocalizedStringKey` here, at the view layer. No Hungarian text lives in
+/// `AstroApplication`.
+extension ProjectNextActionKind {
+    fileprivate var titleText: String {
+        switch self {
+        case .planFirstNight: "Plan the first night"
+        case .startCollecting: "Start collecting"
+        case .keepCollecting: "Keep collecting"
+        case .keepProcessing: "Keep processing"
+        case .writeFinalReport: "Write the final report"
+        case .archived: "Project archived"
+        }
+    }
+
+    fileprivate var explanationText: String {
+        switch self {
+        case .planFirstNight, .startCollecting: "Choose a setup, a filter and an exposure series."
+        case .keepCollecting: "Add the missing series on the next good night."
+        case .keepProcessing: "Check the stacks and the results' lineage."
+        case .writeFinalReport: "The project is done; export the shareable summary."
+        case .archived: "Nothing to do."
+        }
+    }
+
+    /// For direct use in view bodies (`Text`/`Label`) -- resolved lazily by
+    /// SwiftUI against `Bundle.main` at render time, like any other
+    /// `LocalizedStringKey` literal in this codebase.
+    var titleKey: LocalizedStringKey { LocalizedStringKey(titleText) }
+    var explanationKey: LocalizedStringKey { LocalizedStringKey(explanationText) }
+
+    /// For `Sendable`-constrained storage (`ProjectWorkspaceRow`) that can't
+    /// hold a `LocalizedStringKey` -- resolves eagerly against the same
+    /// `Bundle.main`/`hu.lproj` table `titleKey`/`explanationKey` resolve
+    /// lazily, so both paths render identically.
+    var localizedTitle: String { NSLocalizedString(titleText, bundle: .main, comment: "") }
+    var localizedExplanation: String { NSLocalizedString(explanationText, bundle: .main, comment: "") }
+}
+
+/// V2 UI/UX audit (2026-08-16): `project.phase.rawValue.capitalized`
+/// (`InspectorView.swift`, `ProjectsView.swift`'s "Phase" column) rendered a
+/// plain `String`, so it stayed English -- same fix as `PlanningFit` above:
+/// map the case, not a rendered/capitalized rawValue, to a
+/// `LocalizedStringKey`.
+extension ProjectWorkflowPhase {
+    var displayLabel: LocalizedStringKey {
+        switch self {
+        case .planned: "Planned"
+        case .collecting: "Collecting"
+        case .processing: "Processing"
+        case .complete: "Complete"
+        case .archived: "Archived"
+        }
     }
 }

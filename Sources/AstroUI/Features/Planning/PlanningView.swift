@@ -146,7 +146,7 @@ public struct PlanningView: View {
             )
             MetricCard(
                 title: "Focal length", value: "\(store.focalLength.formatted(.number.precision(.fractionLength(0)))) mm",
-                detail: store.selectedSetup.cameraName, systemImage: "camera.aperture"
+                detail: LocalizedStringKey(store.selectedSetup.cameraName), systemImage: "camera.aperture"
             )
             MetricCard(
                 title: "Useful matches", value: "\(store.filteredRecommendations.count)",
@@ -221,7 +221,17 @@ public struct PlanningView: View {
     /// its own "already saved" disabled state; the label change below is
     /// enough feedback.
     private var saveTargetButton: some View {
-        Button(isSelectedRowSaved ? "Saved" : "Save Target") {
+        // V2 UI/UX audit (2026-08-16): `Button(cond ? "Saved" : "Save
+        // Target"))` looks like it should resolve to `Button`'s
+        // `LocalizedStringKey` initializer the same way a plain literal
+        // would, but it doesn't -- a ternary of two string literals infers
+        // as plain `String` here, which routes through `Button`'s verbatim
+        // `StringProtocol` overload instead. That's why "Save Target" stayed
+        // English even once it had a `hu.lproj` entry. Wrapping the ternary
+        // in `LocalizedStringKey(_:)` forces the intended overload; the
+        // resulting key is still exactly "Saved" or "Save Target" at
+        // runtime, so the existing translations apply unchanged.
+        Button(LocalizedStringKey(isSelectedRowSaved ? "Saved" : "Save Target")) {
             guard let row = selectedRow else { return }
             Task { await savedTargetsStore.save(designation: row.target.designation) }
         }
@@ -355,7 +365,7 @@ public struct PlanningView: View {
                             .width(min: 165, ideal: 200)
                             TableColumn("Framing") { row in
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(row.fit.label).fontWeight(.medium)
+                                    Text(row.fit.displayLabel).fontWeight(.medium)
                                     Text("\((row.frameCoverage * 100), format: .number.precision(.fractionLength(0)))% of short edge")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }

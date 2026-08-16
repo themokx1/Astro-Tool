@@ -91,7 +91,7 @@ public struct ProjectsView: View {
                         .contentShape(Rectangle())
                         .onTapGesture(count: 2) { openProject(row.project) }
                     }
-                    TableColumn("Phase", value: \ProjectWorkspaceRow.project.phase.rawValue) { row in Text(row.project.phase.rawValue.capitalized) }
+                    TableColumn("Phase", value: \ProjectWorkspaceRow.project.phase.rawValue) { row in Text(row.project.phase.displayLabel) }
                         .width(min: 85, ideal: 100)
                     TableColumn("Nights", value: \ProjectWorkspaceRow.nightCount) { row in Text(row.nightCount.formatted()).monospacedDigit() }
                         .width(60)
@@ -221,8 +221,8 @@ private struct ProjectAcquisitionDetail: View {
 
                 Label {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(snapshot.nextAction.title).font(.headline)
-                        Text(snapshot.nextAction.explanation)
+                        Text(snapshot.nextAction.kind.titleKey).font(.headline)
+                        Text(snapshot.nextAction.kind.explanationKey)
                             .font(.callout).foregroundStyle(.secondary)
                     }
                 } icon: {

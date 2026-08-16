@@ -11,8 +11,25 @@ public struct ProjectCatalogMatch: Equatable, Sendable, Identifiable {
 }
 
 public struct ProjectNextAction: Equatable, Sendable {
+    public let kind: ProjectNextActionKind
     public let title: String
     public let explanation: String
+}
+
+/// `ProjectNextAction.title`/`.explanation` are English sentences meant for
+/// non-UI consumers (exports, tests) that want the plain text as-is. The UI
+/// localizes this instead by switching on `kind` -- the same finite,
+/// enumerable case this file's own `nextAction(for:seriesCount:)` already
+/// switches on -- and mapping each case to a `LocalizedStringKey` at the
+/// view layer (`AstroUI`'s `ProjectsStore.swift`). No Hungarian text lives
+/// here; this enum only names the cases.
+public enum ProjectNextActionKind: Equatable, Sendable {
+    case planFirstNight
+    case startCollecting
+    case keepCollecting
+    case keepProcessing
+    case writeFinalReport
+    case archived
 }
 
 public struct ProjectSeriesSnapshot: Equatable, Sendable, Identifiable {
@@ -146,26 +163,31 @@ public struct ProjectsQuery: Sendable {
         switch phase {
         case .planned:
             return ProjectNextAction(
+                kind: seriesCount == 0 ? .planFirstNight : .startCollecting,
                 title: seriesCount == 0 ? "Plan the first night" : "Start collecting",
                 explanation: "Choose a setup, a filter and an exposure series."
             )
         case .collecting:
             return ProjectNextAction(
+                kind: .keepCollecting,
                 title: "Keep collecting",
                 explanation: "Add the missing series on the next good night."
             )
         case .processing:
             return ProjectNextAction(
+                kind: .keepProcessing,
                 title: "Keep processing",
                 explanation: "Check the stacks and the results' lineage."
             )
         case .complete:
             return ProjectNextAction(
+                kind: .writeFinalReport,
                 title: "Write the final report",
                 explanation: "The project is done; export the shareable summary."
             )
         case .archived:
             return ProjectNextAction(
+                kind: .archived,
                 title: "Project archived",
                 explanation: "Nothing to do."
             )

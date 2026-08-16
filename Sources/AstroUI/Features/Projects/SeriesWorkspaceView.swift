@@ -70,7 +70,7 @@ public struct SeriesWorkspaceView: View {
                 HStack(spacing: AstroTokens.Spacing.standard) {
                     MetricCard(title: "Usable", value: item.usableFrames.formatted(), detail: "\(item.excludedFrames) excluded", systemImage: "photo.stack")
                     MetricCard(title: "Integration", value: duration(item.integrationSeconds), detail: "\(item.totalFrames) total frames", systemImage: "timer")
-                    MetricCard(title: "Exposure", value: exposure, detail: item.series.binning, systemImage: "camera.shutter.button")
+                    MetricCard(title: "Exposure", value: exposure, detail: LocalizedStringKey(item.series.binning), systemImage: "camera.shutter.button")
                 }
                 GroupBox("Capture settings") {
                     Grid(alignment: .leading, horizontalSpacing: 32, verticalSpacing: 12) {

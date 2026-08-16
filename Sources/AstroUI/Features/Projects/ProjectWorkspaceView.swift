@@ -232,11 +232,11 @@ public struct ProjectWorkspaceView: View {
                 HStack(spacing: AstroTokens.Spacing.standard) {
                     MetricCard(title: "Integration", value: duration(snapshot.integrationSeconds), detail: "Usable exposure", systemImage: "timer")
                     MetricCard(title: "Frames", value: "\(snapshot.usableFrames)", detail: "\(snapshot.totalFrames - snapshot.usableFrames) excluded", systemImage: "photo.stack")
-                    MetricCard(title: "Latest night", value: snapshot.nights.first?.night.localDate ?? "—", detail: snapshot.canonicalFolderName, systemImage: "moon.stars")
+                    MetricCard(title: "Latest night", value: snapshot.nights.first?.night.localDate ?? "—", detail: LocalizedStringKey(snapshot.canonicalFolderName), systemImage: "moon.stars")
                 }
                 GroupBox("Next action") {
-                    Label(snapshot.nextAction.title, systemImage: "arrow.forward.circle.fill")
-                    Text(snapshot.nextAction.explanation).foregroundStyle(.secondary)
+                    Label(snapshot.nextAction.kind.titleKey, systemImage: "arrow.forward.circle.fill")
+                    Text(snapshot.nextAction.kind.explanationKey).foregroundStyle(.secondary)
                 }
             }
         case .nights, .series:

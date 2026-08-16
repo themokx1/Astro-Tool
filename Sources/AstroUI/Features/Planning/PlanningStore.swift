@@ -2,6 +2,7 @@ import AstroApplication
 import AstroCore
 import Foundation
 import Observation
+import SwiftUI
 
 /// Tonight's resolved observing site plus the instant it was resolved for --
 /// exactly what `PlanningQuery.site`/`date` need, bundled so
@@ -590,4 +591,24 @@ public final class PlanningStore {
             fNumber: 4, relativeEfficiency: 1, isDefault: false
         ),
     ]
+}
+
+/// V2 UI/UX audit (2026-08-16): `PlanningFit.label` is a plain `String`
+/// computed in `AstroApplication` (`PlanningQuery.swift`) -- rendering it
+/// directly (`Text(row.fit.label)`) routes through `Text`'s verbatim
+/// `StringProtocol` overload, so it never localized. Per the localization
+/// plan, the fix lives here at the view layer: map the engine's *case*
+/// (never its rendered English sentence) to a `LocalizedStringKey`, so
+/// `hu.lproj` can translate it like any other UI literal. The engine keeps
+/// emitting English-only `label` for any other (non-UI) consumer.
+extension PlanningFit {
+    var displayLabel: LocalizedStringKey {
+        switch self {
+        case .mosaic: "Mosaic"
+        case .tooSmall: "Too small"
+        case .wide: "Wide composition"
+        case .good: "Good framing"
+        case .tight: "Tight framing"
+        }
+    }
 }
