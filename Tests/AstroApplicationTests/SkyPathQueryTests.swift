@@ -65,3 +65,34 @@ struct SkyPathQueryTests {
         #expect(SkyPathQuery.samples(target: target, site: noSite, date: fixedNight) == nil)
     }
 }
+
+/// The owner reported: a downloaded LBN/Sh2 target shows "88° max. magasság"
+/// in the Planning table, yet the sky-path chart underneath says the altitude
+/// sweep could not be computed. Cause: this query let `DiscoveryPlanner`
+/// default to the built-in 217-object catalog, so any target that came from
+/// the SIMBAD/VizieR download was simply not found — the same defect already
+/// fixed once in `PlanningQuery`, present a second time here.
+@Suite("Sky path works for targets outside the built-in catalog")
+struct SkyPathExtendedCatalogTests {
+    @Test("A target that is not in the built-in catalog still gets a sky path")
+    func extendedCatalogTargetHasSkyPath() throws {
+        // Sh2-117 / LBN 437 territory: Lacerta-Cygnus, high from Budapest in
+        // mid-August, and deliberately NOT a member of TargetCatalog.all.
+        let downloaded = CatalogTarget(
+            designation: "LBN 437", commonNameHU: nil,
+            raDeg: 338.051, decDeg: 40.591, kind: .emissionNebula,
+            sizeArcmin: 20, magnitude: nil
+        )
+        #expect(
+            !TargetCatalog.all.contains { $0.designation == downloaded.designation },
+            "fixture must genuinely be outside the built-in catalog for this test to mean anything"
+        )
+
+        let result = try #require(
+            SkyPathQuery.samples(target: downloaded, site: budapest, date: fixedNight),
+            "a downloaded target must get a sky path, not a 'could not be computed' state"
+        )
+        #expect(!result.samples.isEmpty)
+        #expect(result.maxAltitudeDeg > 0)
+    }
+}

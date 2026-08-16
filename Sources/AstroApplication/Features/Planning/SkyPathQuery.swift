@@ -106,7 +106,16 @@ public enum SkyPathQuery {
         // "max alt" column and `PlanningRecommendation.maxAltitudeDeg` use --
         // reused directly rather than re-derived from this chart's own
         // coarser 5-minute grid, so the two numbers can never drift apart.
-        let discoveryRows = DiscoveryPlanner.discover(date: date, site: site, minAltitudeDeg: minAltitudeDeg)
+        // Sweep THIS target explicitly. Letting the engine default to the
+        // built-in catalog meant every downloaded (LBN/Sh2/vdB/Barnard)
+        // target fell out of the lookup and the chart reported "altitude
+        // sweep could not be computed" — while the table, which passes its
+        // own catalog, happily showed that target's max altitude two rows
+        // above. Passing the single target is also far cheaper than sweeping
+        // thousands of rows to read one of them.
+        let discoveryRows = DiscoveryPlanner.discover(
+            date: date, site: site, minAltitudeDeg: minAltitudeDeg, targets: [target]
+        )
         guard let row = discoveryRows.first(where: { $0.target.designation == target.designation }),
               let maxAltitudeDeg = row.maxAltitudeDeg
         else { return nil }
