@@ -88,4 +88,191 @@ struct LocalizationCoverageTests {
         let stillMissing = missing.filter { !Self.allowlist.contains($0) }
         #expect(stillMissing.isEmpty, "swift scripts/extract-localizable-strings.swift --missing should report nothing outstanding: \(stillMissing.prefix(20))")
     }
+
+    // MARK: - Gap 1 regression (V2 UI/UX audit, 2026-08-16)
+    //
+    // An owner screenshot showed `GroupBox("Target recommendations")`,
+    // `GroupBox("Sky path tonight")`, `GroupBox("Saved projects")` and others
+    // rendering in English on an otherwise-Hungarian screen: the extraction
+    // script's construct list didn't cover `GroupBox`, `Section`,
+    // `LabeledContent`, `TextField`, `DatePicker`, `Stepper`, `Menu` or
+    // `Link` yet, even though every one of those has the exact same
+    // literal-first-argument `LocalizedStringKey` shape `Text`/`Button`/etc.
+    // already had support for. These tests pin that fix down two ways: (1)
+    // literal spot checks for the exact strings the screenshot showed, and
+    // (2) an independent, regex-based re-scan of `Sources/AstroUI` for
+    // *every* non-interpolated literal call site of the newly covered
+    // constructs, cross-checked against the script's own output -- so this
+    // doesn't just prove "the strings I happened to notice work", it proves
+    // "grep can't find a call site the script doesn't already report".
+
+    @Test("Literals the owner's Hungarian screenshot showed in English are now extracted and translated")
+    func previouslyMissedGroupBoxAndLabeledContentLiteralsAreCovered() throws {
+        let keys = Set(try runExtractionScript())
+        let translated = try parseStringsFile(
+            repositoryRoot.appendingPathComponent("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
+        )
+        // One representative literal per newly covered construct:
+        // GroupBox, Section, LabeledContent, TextField (placeholder),
+        // DatePicker, Menu, Link, plus MetricCard's `title:`.
+        let mustBeCovered = [
+            "Target recommendations", "Sky path tonight", "Saved projects", // GroupBox
+            "Experience", // Section
+            "Latitude", // LabeledContent
+            "Name (optional)", // TextField placeholder
+            "Night", // DatePicker
+            "Choose Filter…", // Menu
+            "Privacy notice", // Link
+            "Reference", "Focal length", "Useful matches", // MetricCard(title:)
+        ]
+        for literal in mustBeCovered {
+            #expect(keys.contains(literal), "\"\(literal)\" is no longer found by the extraction script")
+            #expect(translated.contains(literal), "\"\(literal)\" has no Hungarian translation")
+        }
+    }
+
+    /// Independently re-derives every non-interpolated literal-first-argument
+    /// call site for the newly covered constructs by walking
+    /// `Sources/AstroUI` with its own regex (deliberately not reusing any of
+    /// `extract-localizable-strings.swift`'s own code), then asserts each one
+    /// is present in the script's own extracted key set. A call site with
+    /// string interpolation (`\(...)`) is skipped here, not because it's out
+    /// of scope, but because re-deriving its exact placeholder-substituted
+    /// key would mean re-implementing `inferPlaceholder` a second time --
+    /// the non-interpolated literals alone are more than enough real call
+    /// sites to catch a regression where a construct silently drops out of
+    /// `constructPatterns` again.
+    @Test("A grep-style re-scan finds no literal call site the extraction script misses")
+    func grepCrossCheckFindsNothingTheScriptMisses() throws {
+        let keys = Set(try runExtractionScript())
+        let constructs = [
+            "GroupBox", "Section", "LabeledContent", "TextField", "DatePicker", "Stepper", "Menu", "Link",
+        ]
+        let pattern = try NSRegularExpression(
+            pattern: #"\b(?:"# + constructs.joined(separator: "|") + #")\(\s*"([^"\\]*)""#
+        )
+        let astroUIRoot = repositoryRoot.appendingPathComponent("Sources/AstroUI")
+        var sampledCallSiteCount = 0
+        for file in try swiftFiles(under: astroUIRoot) {
+            guard let source = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let nsRange = NSRange(source.startIndex..<source.endIndex, in: source)
+            for match in pattern.matches(in: source, range: nsRange) {
+                guard let literalRange = Range(match.range(at: 1), in: source) else { continue }
+                let literal = String(source[literalRange])
+                guard !literal.isEmpty else { continue }
+                sampledCallSiteCount += 1
+                #expect(
+                    keys.contains(literal),
+                    "grep-style re-scan found a literal call site the extraction script missed: \"\(literal)\" in \(file.lastPathComponent)"
+                )
+            }
+        }
+        // A loose floor: proves the regex itself is actually matching real
+        // call sites rather than silently matching nothing.
+        #expect(sampledCallSiteCount > 20, "the cross-check's own regex found suspiciously few call sites (\(sampledCallSiteCount)) -- did it break?")
+    }
+
+    private func swiftFiles(under root: URL) throws -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+            return []
+        }
+        var result: [URL] = []
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            result.append(url)
+        }
+        return result
+    }
+
+    // MARK: - Gap 2 regression (V2 UI/UX audit, 2026-08-16)
+    //
+    // `MetricCard.title`/`.detail` used to be plain `String`, which routes
+    // `Label`/`Text` through their verbatim, never-localized overload
+    // instead of the `LocalizedStringKey` one -- that's why "Reference",
+    // "Focal length" and "Useful matches" stayed English on every metric
+    // card in the app even with a complete Hungarian table. This pins the
+    // fix down by name (not just via the general coverage test above, which
+    // would silently stop catching a regression here since a `String`
+    // literal is *also* valid input to a `LocalizedStringKey` parameter --
+    // the type is what changes behavior, not the literal's spelling).
+
+    @Test("MetricCard's title/detail stay LocalizedStringKey, not String, so this regression cannot return")
+    func metricCardStaysLocalizedStringKeyTyped() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Features/Workspace/WorkspaceComponents.swift"),
+            encoding: .utf8
+        )
+        guard let structRange = source.range(of: "struct MetricCard: View {"),
+              let bodyRange = source.range(of: "var body: some View {", range: structRange.upperBound..<source.endIndex)
+        else {
+            Issue.record("MetricCard's declaration shape changed enough that this test's landmarks no longer find it -- update them")
+            return
+        }
+        let declaration = source[structRange.upperBound..<bodyRange.lowerBound]
+        #expect(
+            declaration.contains("let title: LocalizedStringKey"),
+            "MetricCard.title regressed back to String -- Label(title, ...) would stop localizing"
+        )
+        #expect(
+            declaration.contains("let detail: LocalizedStringKey"),
+            "MetricCard.detail regressed back to String -- Text(detail) would stop localizing"
+        )
+    }
+
+    /// `Button(cond ? "Saved" : "Save Target")` looks like a plain literal
+    /// call site but isn't one: a ternary of two string literals infers as
+    /// `String`, not `LocalizedStringKey`, so it silently renders verbatim
+    /// English forever, no matter what's in `hu.lproj`. `PlanningView.swift`
+    /// works around this by wrapping the ternary in `LocalizedStringKey(_:)`
+    /// explicitly -- this pins that specific workaround down, since a
+    /// "helpful" cleanup that unwraps it back to a bare ternary would
+    /// compile fine and silently reintroduce the bug.
+    @Test("\"Save Target\" is wrapped in LocalizedStringKey so it actually localizes despite the ternary")
+    func saveTargetLocalizesDespiteTernary() throws {
+        let view = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Features/Planning/PlanningView.swift"),
+            encoding: .utf8
+        )
+        #expect(
+            view.contains(#"Button(LocalizedStringKey(isSelectedRowSaved ? "Saved" : "Save Target"))"#),
+            "the Save/Saved ternary must stay wrapped in LocalizedStringKey(...) -- a bare ternary of two literals resolves to Button's verbatim String overload instead"
+        )
+        let translated = try parseStringsFile(
+            repositoryRoot.appendingPathComponent("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
+        )
+        #expect(translated.contains("Save Target"))
+        #expect(translated.contains("Saved"))
+    }
+
+    /// `PlanningFit.label`, `ProjectWorkflowPhase.rawValue.capitalized` and
+    /// `ProjectNextAction.title`/`.explanation` are `String`s computed in
+    /// `AstroApplication`/`AstroCore` -- rendering them directly is the same
+    /// verbatim-overload bug as `MetricCard`. The fix maps each engine
+    /// *case* (never the rendered sentence) to a `LocalizedStringKey` at the
+    /// view layer instead (`PlanningStore.swift`'s `PlanningFit.displayLabel`,
+    /// `ProjectsStore.swift`'s `ProjectWorkflowPhase.displayLabel` and
+    /// `ProjectNextActionKind.titleKey`/`.explanationKey`). This just checks
+    /// every case's Hungarian text made it into `hu.lproj`.
+    @Test("Framing, phase, and next-action labels mapped from engine enum cases are translated")
+    func engineCrossingDisplayLabelsAreTranslated() throws {
+        let translated = try parseStringsFile(
+            repositoryRoot.appendingPathComponent("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
+        )
+        let expected = [
+            // PlanningFit.displayLabel
+            "Mosaic", "Too small", "Wide composition", "Good framing", "Tight framing",
+            // ProjectWorkflowPhase.displayLabel
+            "Planned", "Collecting", "Processing", "Complete", "Archived",
+            // ProjectNextActionKind.titleKey / .explanationKey
+            "Plan the first night", "Start collecting", "Keep collecting", "Keep processing",
+            "Write the final report", "Project archived",
+            "Choose a setup, a filter and an exposure series.",
+            "Add the missing series on the next good night.",
+            "Check the stacks and the results' lineage.",
+            "The project is done; export the shareable summary.",
+            "Nothing to do.",
+        ]
+        for key in expected {
+            #expect(translated.contains(key), "missing Hungarian translation for \"\(key)\"")
+        }
+    }
 }

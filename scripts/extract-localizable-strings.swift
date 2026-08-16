@@ -1,9 +1,40 @@
 #!/usr/bin/env swift
 // Extracts every user-facing literal that SwiftUI resolves as a
 // `LocalizedStringKey` from `Sources/AstroUI` -- the literal arguments to
-// `Text`, `Button`, `Label`, `Toggle`, `Picker`, `TableColumn`, `.help`,
-// `.accessibilityLabel`, `.navigationTitle`, `ContentUnavailableView`,
-// `.confirmationDialog` and `.alert`.
+// `Text`, `Button`, `Label`, `Toggle`, `Picker`, `TableColumn`, `GroupBox`,
+// `Section`, `LabeledContent`, `TextField`, `DatePicker`, `Stepper`, `Menu`,
+// `Link`, `.help`, `.accessibilityLabel`, `.navigationTitle`,
+// `.navigationSubtitle`, `ContentUnavailableView`, `.confirmationDialog` and
+// `.alert`.
+//
+// Every one of those is a construct whose FIRST positional argument is typed
+// `LocalizedStringKey` (a title, a label, or a text-field placeholder) --
+// that positional-first-argument shape is exactly what this script's single
+// scanning strategy (match the construct, then require a literal
+// immediately after the opening parenthesis) can extract. `GroupBox`,
+// `Section`, `LabeledContent`, `TextField`, `DatePicker`, `Stepper`, `Menu`
+// and `Link` were added after an owner screenshot showed English text
+// (`GroupBox("Target recommendations")`, `GroupBox("Sky path tonight")`,
+// `GroupBox("Saved projects")`, and others) surviving the Hungarian
+// translation pass simply because the original construct list didn't cover
+// their call sites -- verified with
+// `grep -rnE '\b(GroupBox|Section|LabeledContent|TextField|DatePicker|Stepper|Menu|Link)\(\s*"' Sources/AstroUI`
+// before and after this change: every literal-first-argument call site that
+// grep finds is now also something this script extracts (the two
+// intentional exceptions -- `TextField(Self.examplePlaceholder(for: key), …)`
+// and `Menu(selectedNightFilter ?? "…")` -- aren't literals at all, see the
+// design notes below). `Toggle`'s `isOn:`-first form
+// (`Toggle(isOn: $x) { Text("…") }`) needed no new pattern: its label lives
+// in a trailing `Text(…)`, which the existing `Text(` pattern already
+// covers.
+//
+// A LocalizedStringKey construct whose literal is NOT its first positional
+// argument -- `.searchable(text:prompt:)`'s `prompt:`, or any bespoke SwiftUI
+// view's own `title:`/`label:`-named parameter -- is out of scope for this
+// general pass; see `MetricCard`'s `title`/`detail` fix (V2 UI/UX audit,
+// 2026-08-16) for how a specific named-parameter view gets its own
+// extraction support once it actually carries `LocalizedStringKey`
+// properties.
 //
 // This is the reproducible source of truth
 // `Tests/AstroUITests/LocalizationCoverageTests.swift` checks against: it
@@ -365,9 +396,29 @@ let constructPatterns: [String] = [
     #"\bToggle\(\s*"#,
     #"\bPicker\(\s*"#,
     #"\bTableColumn\(\s*"#,
+    #"\bGroupBox\(\s*"#,
+    #"\bSection\(\s*"#,
+    #"\bLabeledContent\(\s*"#,
+    #"\bTextField\(\s*"#,
+    #"\bDatePicker\(\s*"#,
+    #"\bStepper\(\s*"#,
+    #"\bMenu\(\s*"#,
+    #"\bLink\(\s*"#,
+    // `MetricCard`'s `title:` (V2 UI/UX audit, 2026-08-16 -- was a plain
+    // `String`, so it never localized at all; see `WorkspaceComponents.swift`).
+    // `detail:` is deliberately NOT covered here: it's the same named
+    // parameter `ConversionWorkspace.swift`'s still-`String`-typed
+    // `stepLabel`/`LibraryWelcomeView.swift`'s `safetyRow` helpers also use,
+    // and this script has no balanced-parenthesis call-site tracking to tell
+    // "inside a MetricCard(...) call" from "inside a stepLabel(...) call" --
+    // extracting it there would silently claim strings are localized that
+    // aren't yet. `MetricCard`'s `detail:` literals are translated by hand
+    // in `hu.lproj` instead (see the commit that made this change).
+    #"\bMetricCard\(\s*title:\s*"#,
     #"\.help\(\s*"#,
     #"\.accessibilityLabel\(\s*"#,
     #"\.navigationTitle\(\s*"#,
+    #"\.navigationSubtitle\(\s*"#,
     #"\bContentUnavailableView\(\s*"#,
     #"\.confirmationDialog\(\s*"#,
     #"\.alert\(\s*"#,
