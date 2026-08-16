@@ -329,4 +329,163 @@ struct V2PolishSurfaceTests {
             #expect(strings.contains(entry), "hu.lproj is missing: \(entry)")
         }
     }
+
+    // MARK: (h) Task 12 -- the actionability gate and the engine-vocabulary gate.
+
+    @Test("The archive never renders a task card without an executable action")
+    func archiveTaskCardsAreAlwaysActionable() throws {
+        // `ArchiveTaskQuery` must keep filtering out any task whose action
+        // resolved to `.unavailable` BEFORE a card is ever built -- the old
+        // library-health table's "Next step" column was a static label with
+        // no button behind it for exactly this case, and this gate exists so
+        // that regression can't come back silently.
+        let source = try contents("Sources/AstroApplication/Features/Archive/ArchiveTaskQuery.swift")
+        #expect(source.contains("guard action != .unavailable else { return nil }"),
+                "the actionability gate was removed from ArchiveTaskQuery")
+        let card = try contents("Sources/AstroUI/Features/Archive/ArchiveTaskCard.swift")
+        #expect(!card.contains("Text(nextStep"), "a card must render a Button, never a next-step label")
+    }
+
+    /// Banned engine-internal vocabulary, scanned for USER-FACING TEXT ONLY.
+    ///
+    /// The plan this test comes from listed `"Residue"` and `"Finding("`
+    /// among the banned words, but `ArchiveTaskQuery.findingCategories`
+    /// (`Sources/AstroApplication/Features/Archive/ArchiveTaskQuery.swift`)
+    /// legitimately contains the lowercase string `"residue"` as a raw
+    /// `findings.category` SQL value -- not user-facing text, and never
+    /// rendered anywhere. A naive "does this file contain this word
+    /// anywhere" scan over that file would either have to special-case that
+    /// value or fail the build on a legitimate identifier, so this gate:
+    ///
+    /// 1. Scans only `Sources/AstroUI/Features/Archive` -- the render
+    ///    layer -- and never `Sources/AstroApplication`, where the query
+    ///    layer's category identifiers and SQL live. This alone already
+    ///    keeps `ArchiveTaskQuery.swift`'s `"residue"` out of scope, since
+    ///    it lives in a different module entirely.
+    /// 2. Strips comments before scanning, so a doc comment that explains
+    ///    (or warns about) one of these words by name -- this codebase's own
+    ///    established style, see `ArchiveTaskCard.swift`'s and
+    ///    `ArchiveStripView.swift`'s header comments -- cannot trip its own
+    ///    gate.
+    /// 3. Only flags a banned word when it appears INSIDE a double-quoted
+    ///    string literal (an actual candidate for rendered text), not
+    ///    merely following a quote character anywhere in the file.
+    ///
+    /// This does NOT prove no engine vocabulary ever reaches the user by any
+    /// path (a value read from the database at runtime and interpolated
+    /// into a `Text` would not appear as a literal here at all -- that is a
+    /// data-flow property no source-text scan can verify), only that none of
+    /// these five words appears as literal text in this directory today.
+    @Test("No archive UI surface uses the engine's internal vocabulary as literal text")
+    func archiveSurfacesUseHumanWords() throws {
+        let banned = ["Triage", "Frame fill", "Photographable", "Residue", "Finding("]
+        let literalPattern = try NSRegularExpression(pattern: #""((?:[^"\\]|\\.)*)""#)
+        for file in try filenames(under: "Sources/AstroUI/Features/Archive") {
+            let raw = try contents("Sources/AstroUI/Features/Archive/\(file)")
+            let source = Self.removingLineComments(raw)
+            let nsRange = NSRange(source.startIndex..<source.endIndex, in: source)
+            var literals: [String] = []
+            literalPattern.enumerateMatches(in: source, range: nsRange) { match, _, _ in
+                guard let match, let range = Range(match.range(at: 1), in: source) else { return }
+                literals.append(String(source[range]))
+            }
+            for word in banned {
+                #expect(!literals.contains(where: { $0.contains(word) }),
+                        "\(file) shows the user the word \(word)")
+            }
+        }
+    }
+
+    /// Strips `//` and `///` line comments (block comments are not this
+    /// codebase's convention in `Sources/AstroUI/Features/Archive` and are
+    /// not handled here) -- tracks whether it is inside a string literal so
+    /// a literal that happens to contain `//` is never mistaken for a
+    /// comment.
+    private static func removingLineComments(_ source: String) -> String {
+        var result = ""
+        result.reserveCapacity(source.count)
+        var i = source.startIndex
+        var inLineComment = false
+        var inString = false
+        while i < source.endIndex {
+            let c = source[i]
+            let next = source.index(after: i)
+            if inLineComment {
+                if c == "\n" { inLineComment = false; result.append(c) }
+                i = next
+                continue
+            }
+            if inString {
+                result.append(c)
+                if c == "\\", next < source.endIndex {
+                    result.append(source[next])
+                    i = source.index(after: next)
+                    continue
+                }
+                if c == "\"" { inString = false }
+                i = next
+                continue
+            }
+            if c == "\"" {
+                inString = true
+                result.append(c)
+                i = next
+                continue
+            }
+            if c == "/", next < source.endIndex, source[next] == "/" {
+                inLineComment = true
+                i = source.index(after: next)
+                continue
+            }
+            result.append(c)
+            i = next
+        }
+        return result
+    }
+
+    // MARK: (i) Task 12 -- hand-verified translations for the wave's OTHER
+    // switch-returning-LocalizedStringKey blind spots (Archive Map wave,
+    // 2026-08-16). `archiveClassDisplayNamesAreTranslated` above already
+    // covers `ArchiveClass.displayName` (Task 7b/10); these two cover the
+    // other two Archive `switch`es of the same invisible-to-the-extractor
+    // shape, so a regression removing any of THEIR hu.lproj entries is also
+    // caught, not just eyeballed once during this audit.
+
+    @Test("ArchiveVerdictHeader's headline and integrity-state switches have Hungarian translations")
+    func archiveVerdictSwitchTextsAreTranslated() throws {
+        let strings = try contents("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
+        let expectedEntries = [
+            #""I have not looked through this library yet." = "Ezt a könyvtárat még nem néztem át.";"#,
+            #""The last check is older than your most recent scan." = "Az utolsó ellenőrzés régebbi, mint a legutóbbi beolvasásod.";"#,
+            #""Nothing needs you right now." = "Jelenleg semmi sem vár rád.";"#,
+            #""One thing needs you." = "Egy dolog vár rád.";"#,
+            #""%lld things need you." = "%lld dolog vár rád.";"#,
+            #""%lld file(s) changed content since the last check." = "%lld fájl tartalma megváltozott az utolsó ellenőrzés óta.";"#,
+            #""Nothing has been corrupted since the last check." = "Az utolsó ellenőrzés óta semmi nem sérült.";"#,
+            #""I have not checked this library's integrity yet." = "Az adatépséget még nem ellenőriztem.";"#,
+        ]
+        for entry in expectedEntries {
+            #expect(strings.contains(entry), "hu.lproj is missing: \(entry)")
+        }
+    }
+
+    @Test("ArchiveTaskCard's title/explanation/actionTitle switches have Hungarian translations")
+    func archiveTaskCardSwitchTextsAreTranslated() throws {
+        let strings = try contents("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
+        let expectedEntries = [
+            #""Stacking leftovers" = "Stack-maradványok";"#,
+            #""Byte-identical copies" = "Bájtazonos másolatok";"#,
+            #""Calibration in the wrong folder" = "Kalibráció rossz mappában";"#,
+            #""Folder names that break scanning" = "Mappanevek, amelyek megakasztják a beolvasást";"#,
+            #""Checksum mismatch" = "Ellenőrzőösszeg-eltérés";"#,
+            #""Could not be confirmed" = "Nem sikerült megerősíteni";"#,
+            #""Not checked yet" = "Még nincs ellenőrizve";"#,
+            #""Preview Quarantine…" = "Karantén előnézete…";"#,
+            #""Reveal in Finder" = "Megjelenítés a Finderben";"#,
+            #""Run Check" = "Ellenőrzés futtatása";"#,
+        ]
+        for entry in expectedEntries {
+            #expect(strings.contains(entry), "hu.lproj is missing: \(entry)")
+        }
+    }
 }

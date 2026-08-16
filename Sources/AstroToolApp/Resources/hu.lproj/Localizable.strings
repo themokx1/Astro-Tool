@@ -808,3 +808,29 @@
 // hand-added here now that it is `Text`, same reasoning as every other
 // hand-added group above.
 "%@ reclaimable, %@% of the archive" = "%@ felszabadítható, az archívum %@%-a";
+
+// ArchiveView.swift (Task 12) -- `ProgressView("Reading the archive…")`'s
+// literal IS correctly `LocalizedStringKey`-typed (it resolves at runtime
+// like any other), but `ProgressView` is not one of
+// `scripts/extract-localizable-strings.swift`'s covered constructs, so no
+// key was ever produced for it and this entry was missing until now --
+// found only by hand-auditing the file, exactly the blind spot Task 9/10's
+// comments above warn about for `switch`. Hand-added:
+"Reading the archive…" = "Az archívum beolvasása…";
+
+// ArchiveView.swift's toolbar actions (Task 10 prerequisite) -- "Check
+// Library", its tooltip, and its "Fast" menu item. These entries are added
+// for forward-compatibility, but do NOT yet take effect: `WorkspaceAction`/
+// `WorkspaceActionMenu`/`WorkspaceMenuItem` (Sources/AstroUI/App/
+// WorkspaceActions.swift) type `title`/`help` as plain `String`, so
+// `V2RootView`'s toolbar renders them through `Label`/`Text`/`.help`'s
+// verbatim `StringProtocol` overload, never the `LocalizedStringKey` one --
+// the same class of defect `MetricCard.title` was fixed for, but here it is
+// in shared, wave-spanning toolbar infrastructure (used by every workspace,
+// not just Archive) rather than a single Archive-local view, so fixing the
+// TYPE is out of this task's scope. Until `WorkspaceAction.title`/`.help`
+// and `WorkspaceMenuItem.title` become `LocalizedStringKey`, these three
+// strings render in English regardless of this entry existing.
+"Check Library" = "Könyvtár ellenőrzése";
+"Read through the library for leftovers, duplicates, and structural problems" = "Nézd át a könyvtárat maradványokért, duplikátumokért és szerkezeti hibákért";
+"Fast (Skip Duplicate Scan)" = "Gyors (duplikátum-keresés kihagyása)";
