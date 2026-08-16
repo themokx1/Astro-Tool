@@ -516,3 +516,207 @@
 "→ %@ · %@" = "→ %@ · %@";
 "−%lld resolved" = "−%lld megoldva";
 "≈ %@ h" = "≈ %@ ó";
+
+// MARK: - Extended construct coverage (Task 4, V2 UI/UX audit 2026-08-16)
+//
+// The extraction script's construct list was missing `GroupBox`, `Section`,
+// `LabeledContent`, `TextField`, `DatePicker`, `Stepper`, `Menu` and `Link`
+// -- see `scripts/extract-localizable-strings.swift`'s header comment and
+// `Tests/AstroUITests/LocalizationCoverageTests.swift`'s Gap 1 tests. This
+// section is everything that extension found still untranslated.
+
+"Access" = "Hozzáférés";
+"Acquisition goal" = "Felvételi cél";
+"Add filter" = "Szűrő hozzáadása";
+"Application" = "Alkalmazás";
+"Architecture" = "Architektúra";
+"Assignments and moves" = "Hozzárendelések és áthelyezések";
+"Astronomical planning calendar" = "Csillagászati tervezési naptár";
+"Audit run history" = "Audit-futtatások előzményei";
+"Average night" = "Átlagos éjszaka";
+"Binning" = "Binning";
+"Calibration assets" = "Kalibrációs elemek";
+"Candidates" = "Jelöltek";
+"Capture" = "Felvétel";
+"Capture activity" = "Felvételi aktivitás";
+"Capture efficiency" = "Felvételi hatékonyság";
+"Capture settings" = "Felvételi beállítások";
+"Catalog ID" = "Katalógusazonosító";
+"Catalog number or target name" = "Katalógusszám vagy célpont neve";
+"Catalog number, English or Hungarian name" = "Katalógusszám, angol vagy magyar név";
+"Choose Filter…" = "Szűrő kiválasztása…";
+"Confirmation token" = "Megerősítő token";
+"Continue where it matters" = "Folytasd, ahol számít";
+"Coverage gaps" = "Lefedettségi hiányok";
+"Currently in effect" = "Jelenleg érvényben";
+"Date" = "Dátum";
+"Destination" = "Célhely";
+"Diagnostics" = "Diagnosztika";
+"Documentation" = "Dokumentáció";
+"Duplicates" = "Duplikátumok";
+"Equipment usage" = "Eszközhasználat";
+"Excluded" = "Kizárt";
+"Experience" = "Élmény";
+"Extended target catalog" = "Bővített célpontkatalógus";
+"File" = "Fájl";
+"File action" = "Fájlművelet";
+"Files affected" = "Érintett fájlok";
+"Filters" = "Szűrők";
+"Filters and passbands" = "Szűrők és áteresztési sávok";
+"Focal length" = "Fókusztávolság";
+"Folder" = "Mappa";
+"Gain" = "Erősítés";
+"Group name" = "Csoport neve";
+"Health findings" = "Észlelt problémák";
+"Hours" = "Óra";
+"Image library" = "Képkönyvtár";
+"Input frames" = "Bemeneti képkockák";
+"Input series" = "Bemeneti sorozatok";
+"Integration baseline" = "Integrációs alapérték";
+"Integration goal" = "Integrációs cél";
+"Key" = "Kulcs";
+"Kind" = "Típus";
+"Last verification (this session)" = "Legutóbbi ellenőrzés (ebben a sessionben)";
+"Latest night" = "Legutóbbi éjszaka";
+"Latitude" = "Szélesség";
+"Latitude (°)" = "Szélesség (°)";
+"Library behavior" = "Könyvtár viselkedése";
+"Light frames" = "Light képkockák";
+"Lineage" = "Eredet";
+"Longitude" = "Hosszúság";
+"Longitude (°)" = "Hosszúság (°)";
+"Manufacturer" = "Gyártó";
+"Manufacturer, e.g. SVBONY" = "Gyártó, pl. SVBONY";
+"Master darks" = "Master dark képkockák";
+"Measured profiles" = "Mért profilok";
+"Missing measurements" = "Hiányzó mérések";
+"Model" = "Modell";
+"Model, e.g. SV220" = "Modell, pl. SV220";
+"Morning triage" = "Reggeli triázs";
+"Most photographed" = "Legtöbbet fotózott";
+"Name" = "Név";
+"Name (optional)" = "Név (opcionális)";
+"Next action" = "Következő lépés";
+"Observed nights" = "Megfigyelt éjszakák";
+"Observing site" = "Megfigyelési helyszín";
+"Offset" = "Offset";
+"Operating system" = "Operációs rendszer";
+"Optional note" = "Opcionális jegyzet";
+"Organization" = "Rendszerezettség";
+"Planned move" = "Tervezett áthelyezés";
+"Privacy" = "Adatvédelem";
+"Privacy notice" = "Adatvédelmi tájékoztató";
+"Progress" = "Előrehaladás";
+"Project notes" = "Projektjegyzetek";
+"Projects captured this night" = "Az éjszaka során felvett projektek";
+"Quick actions" = "Gyorsműveletek";
+"Recent Libraries" = "Legutóbbi könyvtárak";
+"Recoverable" = "Visszanyerhető";
+"Reference" = "Referencia";
+"Reference focal ratio" = "Referencia f/szám";
+"Reference integration" = "Referencia integráció";
+"Release channel" = "Kiadási csatorna";
+"Review" = "Áttekintés";
+"Role" = "Szerep";
+"Safety" = "Biztonság";
+"Saved projects" = "Mentett projektek";
+"Search projects, catalog, filter, setup, or status" = "Keresés projektek, katalógus, szűrő, összeállítás vagy állapot szerint";
+"Session coverage" = "Session lefedettség";
+"Session model" = "Session modell";
+"Session notes" = "Session jegyzetek";
+"Session quality trends" = "Session minőségi trendek";
+"Sky path tonight" = "Ma esti égi pálya";
+"Source" = "Forrás";
+"Source path" = "Forrás elérési út";
+"Source results" = "Forrás eredmények";
+"Stack inclusion" = "Stack-tartalmazás";
+"Start cleanly" = "Tiszta kezdés";
+"Surface brightness" = "Felületi fényesség";
+"Target recommendations" = "Célpont-javaslatok";
+"Targets" = "Célpontok";
+"Total size" = "Teljes méret";
+"Usable frames" = "Használható képkockák";
+"Usable integration" = "Használható integráció";
+"Useful matches" = "Hasznos találatok";
+"Value" = "Érték";
+"Verdict" = "Verdikt";
+"Version" = "Verzió";
+"f/" = "f/";
+"mag/arcsec²" = "mag/arcsec²";
+
+// MetricCard's `detail:` literals -- not extracted by the script (see its
+// `MetricCard(` pattern's comment for why), translated by hand instead so
+// every metric card is fully Hungarian, not just its title.
+"Detected date-based sessions" = "Dátum alapján észlelt sessionök";
+"Indexed read-only" = "Indexelve, csak olvasható";
+"Needs review" = "Áttekintésre vár";
+"Verified light exposure" = "Ellenőrzött light expozíció";
+"Capture sessions" = "Felvételi sessionök";
+"Unique objects" = "Egyedi objektumok";
+"Indexed and present" = "Indexelve és jelen van";
+"No monthly data" = "Nincs havi adat";
+"In %@" = "Ebben: %@";
+"Indexed observing sessions" = "Indexelt megfigyelési sessionök";
+"Usable light frames" = "Használható light képkockák";
+"Usable exposure" = "Használható expozíció";
+"Tiny targets ranked lower" = "Az apró célpontok hátrébb sorolva";
+"Recognized target folders" = "Felismert célpontmappák";
+"Across the open library" = "A megnyitott könyvtárban";
+"%lld of %lld frames" = "%lld / %lld képkocka";
+"%lld capture series" = "%lld felvételi sorozat";
+"%lld total frames" = "%lld összes képkocka";
+"f/%@ · μ %@" = "f/%@ · μ %@";
+"Rejected or archived frames" = "Elvetett vagy archivált képkockák";
+"Nothing selected automatically" = "Semmi sincs automatikusan kiválasztva";
+"If every candidate is approved" = "Ha minden jelölt jóváhagyásra kerül";
+"Combos without a master" = "Master nélküli kombinációk";
+"Inventoried directories" = "Leltárba vett mappák";
+"Images protected" = "A képek védettek";
+"Canonical targets" = "Kanonikus célpontok";
+"Observed sessions" = "Megfigyelt sessionök";
+"No source writes" = "Nincs forrásírás";
+"Indexed nights" = "Indexelt éjszakák";
+"Missing session flat/dark only" = "Csak hiányzó session flat/dark";
+"Additional copies" = "További másolatok";
+"Reviewable residue" = "Áttekintésre váró maradvány";
+
+// "Save Target" -- see PlanningView.swift's `saveTargetButton` and
+// LocalizationCoverageTests.swift's `saveTargetLocalizesDespiteTernary`:
+// a ternary of two literals doesn't resolve to LocalizedStringKey on its
+// own, so the extraction script can't see this one either. Wrapped
+// explicitly at the call site instead; translated by hand here.
+"Save Target" = "Célpont mentése";
+
+// PlanningFit.displayLabel (PlanningStore.swift) -- maps the engine's
+// PlanningFit case, not its rendered `.label` sentence, to a
+// LocalizedStringKey.
+"Mosaic" = "Mozaik";
+"Too small" = "Túl kicsi";
+"Wide composition" = "Széles kompozíció";
+"Good framing" = "Jó képkivágás";
+"Tight framing" = "Szoros képkivágás";
+
+// ProjectWorkflowPhase.displayLabel (ProjectsStore.swift) -- maps the
+// engine's ProjectWorkflowPhase case, not its rendered
+// `.rawValue.capitalized`, to a LocalizedStringKey.
+"Planned" = "Tervezett";
+"Collecting" = "Gyűjtés";
+"Processing" = "Feldolgozás";
+"Complete" = "Kész";
+"Archived" = "Archiválva";
+
+// ProjectNextActionKind.titleKey / .explanationKey (ProjectsStore.swift) --
+// maps the engine's ProjectNextActionKind case, not
+// ProjectNextAction.title/.explanation's rendered English sentence, to a
+// LocalizedStringKey.
+"Plan the first night" = "Tervezd meg az első éjszakát";
+"Start collecting" = "Kezdd el a gyűjtést";
+"Keep collecting" = "Folytasd a gyűjtést";
+"Keep processing" = "Folytasd a feldolgozást";
+"Write the final report" = "Írd meg a záró jelentést";
+"Project archived" = "Projekt archiválva";
+"Choose a setup, a filter and an exposure series." = "Válassz összeállítást, szűrőt és expozíciós sorozatot.";
+"Add the missing series on the next good night." = "A következő jó éjszakán vedd fel a hiányzó sorozatokat.";
+"Check the stacks and the results' lineage." = "Ellenőrizd a stackeket és az eredmények eredetét.";
+"The project is done; export the shareable summary." = "A projekt kész; exportáld a megosztható összegzést.";
+"Nothing to do." = "Nincs teendő.";
