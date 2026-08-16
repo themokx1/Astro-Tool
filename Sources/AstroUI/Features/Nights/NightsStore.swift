@@ -83,12 +83,30 @@ public final class NightsStore {
     private let metadataFactory: MetadataFactory
     private let calendarProvider: CalendarProvider
 
+    /// `calendarProvider` is `Optional`/`nil` rather than defaulted directly
+    /// to `NightsStore.productionCalendar`, and MUST stay that way: an
+    /// `async` default argument is emitted as a `weak`/`linkonce_odr`
+    /// closure plus an async function pointer record into every module that
+    /// uses the default, and Swift 6.3.3 gives those copies different async
+    /// context sizes (80 bytes here, 64 in a client module). The linker
+    /// coalesces body and size record independently, so it can pair the big
+    /// body with the small record -- the callee then writes past the context
+    /// `swift_task_alloc` handed it and corrupts the task allocator, which
+    /// aborts the process with `freed pointer was not the last allocation`.
+    /// That is not hypothetical: it crashed
+    /// `GlobalSearchStoreTests.searchesAcrossWorkflowObjects` 100% of the
+    /// time on a clean build, and which way it fell depended only on this
+    /// file's object layout. Resolving the default in the initializer body
+    /// keeps the closure private to this module, so no client emits a
+    /// competing copy. `AsyncContextSizeGateTests` gates this and carries
+    /// the full account; `metadataFactory` is not `async`, emits no such
+    /// record, and is deliberately left as an ordinary default.
     public init(
         metadataFactory: @escaping MetadataFactory = ProjectsStore.productionMetadata,
-        calendarProvider: @escaping CalendarProvider = NightsStore.productionCalendar
+        calendarProvider: CalendarProvider? = nil
     ) {
         self.metadataFactory = metadataFactory
-        self.calendarProvider = calendarProvider
+        self.calendarProvider = calendarProvider ?? NightsStore.productionCalendar
     }
 
     public var availableMonths: [String] {

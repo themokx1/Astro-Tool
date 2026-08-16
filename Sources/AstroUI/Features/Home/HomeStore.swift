@@ -119,16 +119,29 @@ public final class HomeStore {
     private let calibCoverageProvider: CalibCoverageProvider
     private let nightContextProvider: NightContextProvider
 
+    /// All three providers are `Optional`/`nil` rather than defaulted
+    /// directly to the `production…` methods, and must stay that way: an
+    /// `async` default argument is re-emitted as a `weak`/`linkonce_odr`
+    /// async function pointer record in every module that uses it, with a
+    /// different context size in the declaring module than in a client (80
+    /// vs 64 for `tonightProvider`/`calibCoverageProvider`) -- a link that
+    /// pairs the big body with the small record corrupts the task allocator.
+    /// `nightContextProvider`'s two copies happen to agree today (144 both
+    /// ways, a coincidence of its return type, not a guarantee); it gets the
+    /// same shape because the hazard is the pattern, not the one symbol that
+    /// currently diverges. `snapshot` is not `async`, emits no such record,
+    /// and is deliberately left as an ordinary default.
+    /// `AsyncContextSizeGateTests` gates this and carries the full account.
     public init(
         snapshot: HomeSnapshot = .unconfigured,
-        tonightProvider: @escaping TonightProvider = HomeStore.productionTonight,
-        calibCoverageProvider: @escaping CalibCoverageProvider = HomeStore.productionCalibCoverage,
-        nightContextProvider: @escaping NightContextProvider = HomeStore.productionNightContext
+        tonightProvider: TonightProvider? = nil,
+        calibCoverageProvider: CalibCoverageProvider? = nil,
+        nightContextProvider: NightContextProvider? = nil
     ) {
         self.snapshot = snapshot
-        self.tonightProvider = tonightProvider
-        self.calibCoverageProvider = calibCoverageProvider
-        self.nightContextProvider = nightContextProvider
+        self.tonightProvider = tonightProvider ?? HomeStore.productionTonight
+        self.calibCoverageProvider = calibCoverageProvider ?? HomeStore.productionCalibCoverage
+        self.nightContextProvider = nightContextProvider ?? HomeStore.productionNightContext
     }
 
     public func replaceSnapshot(_ snapshot: HomeSnapshot) {

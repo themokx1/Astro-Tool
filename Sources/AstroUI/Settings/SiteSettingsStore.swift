@@ -75,21 +75,38 @@ public final class SiteSettingsStore {
     public private(set) var saveMessage: String?
     public private(set) var isRefreshing = false
 
+    /// Named so the initializer can take it as `SiteResolver?` -- spelling
+    /// the optional inline would read
+    /// `(@Sendable (URL, AstroConfig) async -> SiteRule?)?`, two different
+    /// optionals one character apart. Matches how `NightsStore`/`HomeStore`/
+    /// `GlobalSearchStore` name their injected providers.
+    public typealias SiteResolver = @Sendable (URL, AstroConfig) async -> SiteRule?
+
     public let rootURL: URL?
     private let configLoader: @Sendable (URL) -> AstroConfig
     private let configSaver: @Sendable (AstroConfig, URL) throws -> Void
-    private let siteResolver: @Sendable (URL, AstroConfig) async -> SiteRule?
+    private let siteResolver: SiteResolver
 
+    /// `siteResolver` is `Optional`/`nil` rather than defaulted directly to
+    /// `SiteSettingsStore.productionSiteResolver`, and must stay that way:
+    /// an `async` default argument is re-emitted as a `weak`/`linkonce_odr`
+    /// async function pointer record in every module that uses it, with a
+    /// different context size in the declaring module than in a client (48
+    /// vs 32 here) -- a link that pairs the big body with the small record
+    /// corrupts the task allocator. `configLoader`/`configSaver` are not
+    /// `async`, emit no such record, and are deliberately left as ordinary
+    /// defaults. `AsyncContextSizeGateTests` gates this and carries the full
+    /// account.
     public init(
         rootURL: URL?,
         configLoader: @escaping @Sendable (URL) -> AstroConfig = SiteSettingsStore.productionConfigLoader,
         configSaver: @escaping @Sendable (AstroConfig, URL) throws -> Void = SiteSettingsStore.productionConfigSaver,
-        siteResolver: @escaping @Sendable (URL, AstroConfig) async -> SiteRule? = SiteSettingsStore.productionSiteResolver
+        siteResolver: SiteResolver? = nil
     ) {
         self.rootURL = rootURL
         self.configLoader = configLoader
         self.configSaver = configSaver
-        self.siteResolver = siteResolver
+        self.siteResolver = siteResolver ?? SiteSettingsStore.productionSiteResolver
         if let rootURL {
             loadDraft(from: configLoader(rootURL))
         }

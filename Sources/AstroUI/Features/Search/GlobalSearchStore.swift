@@ -45,12 +45,21 @@ public final class GlobalSearchStore {
     private let librarySearch: LibrarySearch
     private let resultsSearch: ResultsSearch
 
+    /// Both providers are `Optional`/`nil` rather than defaulted directly to
+    /// the `production…` methods, and must stay that way: an `async` default
+    /// argument is re-emitted as a `weak`/`linkonce_odr` async function
+    /// pointer record in every module that uses it, with a different context
+    /// size in the declaring module than in a client (128 vs 112, and 80 vs
+    /// 64, for these two) -- a link that pairs the big body with the small
+    /// record corrupts the task allocator. Resolving in the body keeps the
+    /// closure private to this module. `AsyncContextSizeGateTests` gates
+    /// this and carries the full account.
     public init(
-        librarySearch: @escaping LibrarySearch = GlobalSearchStore.productionSearch,
-        resultsSearch: @escaping ResultsSearch = GlobalSearchStore.productionResultsSearch
+        librarySearch: LibrarySearch? = nil,
+        resultsSearch: ResultsSearch? = nil
     ) {
-        self.librarySearch = librarySearch
-        self.resultsSearch = resultsSearch
+        self.librarySearch = librarySearch ?? GlobalSearchStore.productionSearch
+        self.resultsSearch = resultsSearch ?? GlobalSearchStore.productionResultsSearch
     }
 
     public func search(
