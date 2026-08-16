@@ -35,7 +35,8 @@ struct V2BetaWorkspaceSurfaceTests {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let shell = try String(
-            contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift")
+            contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"),
+            encoding: .utf8
         )
         #expect(shell.contains(".task(id: onboardingStore.phase.summary?.libraryID.id)"))
         #expect(!shell.contains(".task(id: onboardingStore.selectedRoot)"))
@@ -48,7 +49,8 @@ struct V2BetaWorkspaceSurfaceTests {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(
-            contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectsView.swift")
+            contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectsView.swift"),
+            encoding: .utf8
         )
         #expect(source.contains("v2.projects.detail"))
         #expect(source.contains("v2.projects.night"))
