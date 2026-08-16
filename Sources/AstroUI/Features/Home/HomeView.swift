@@ -180,8 +180,7 @@ public struct HomeView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
             Text("OBSERVATORY WORKSPACE")
-                .font(.caption.weight(.semibold))
-                .tracking(1.4)
+                .astroMicro()
                 .foregroundStyle(AstroTokens.Color.accent)
             Text("Prepare the next clear night")
                 .font(.largeTitle.weight(.semibold))

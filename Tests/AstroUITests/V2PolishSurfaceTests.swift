@@ -24,6 +24,21 @@ struct V2PolishSurfaceTests {
         return try FileManager.default.contentsOfDirectory(atPath: directory.path)
     }
 
+    /// Repository-relative paths of every `.swift` file under `relativePath`,
+    /// recursing into subdirectories. Same enumeration approach as
+    /// `AstroTokensTests.filenames(under:recursive:)`.
+    private func swiftFiles(under relativePath: String) throws -> [String] {
+        let directory = repositoryRoot.appendingPathComponent(relativePath)
+        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil) else {
+            return []
+        }
+        var results: [String] = []
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            results.append(url.path.replacingOccurrences(of: repositoryRoot.path + "/", with: ""))
+        }
+        return results
+    }
+
     private var featureViewPaths: [(name: String, path: String)] {
         [
             ("HomeView", "Sources/AstroUI/Features/Home/HomeView.swift"),
@@ -549,5 +564,82 @@ struct V2PolishSurfaceTests {
         for entry in expectedEntries {
             #expect(strings.contains(entry), "hu.lproj is missing: \(entry)")
         }
+    }
+
+    // MARK: (j) Wave 2 Task 3 -- fixed-size numeric text is always tabular.
+
+    /// Finds every `Text(...)` statement's own modifier chain (the
+    /// constructor plus its immediately-chained `.modifier(...)` calls,
+    /// stopping at the next statement) in a comment-stripped source file.
+    ///
+    /// Chains are found by paren-balance, not indentation: starting at a
+    /// line containing `Text(`, subsequent lines are folded into the same
+    /// chain while EITHER the running paren balance is still open (so a
+    /// multi-line argument, like a ternary passed to `.foregroundStyle`,
+    /// does not split the chain) OR the next line's trimmed text starts
+    /// with `.` (a same-line-balanced chained modifier). The chain ends at
+    /// the first line that is neither.
+    private static func textModifierChains(in source: String) -> [String] {
+        let lines = source.components(separatedBy: "\n")
+        var chains: [String] = []
+        var index = 0
+        func parenBalance(_ line: String) -> Int {
+            line.reduce(0) { $0 + ($1 == "(" ? 1 : ($1 == ")" ? -1 : 0)) }
+        }
+        while index < lines.count {
+            guard lines[index].contains("Text(") else { index += 1; continue }
+            var chain = lines[index]
+            var balance = parenBalance(lines[index])
+            var next = index + 1
+            while next < lines.count {
+                let trimmed = lines[next].trimmingCharacters(in: .whitespaces)
+                guard balance > 0 || trimmed.hasPrefix(".") else { break }
+                chain += "\n" + lines[next]
+                balance += parenBalance(lines[next])
+                next += 1
+            }
+            chains.append(chain)
+            index = next
+        }
+        return chains
+    }
+
+    /// Rule 1 (spec 5.2): every numeric display is `monospacedDigit()` --
+    /// a proportional digit column jitters as values change, unreadable in
+    /// a table and actively dishonest in a bar chart, where width reads as
+    /// magnitude. Scoped to `Text(...)` chains specifically (not
+    /// `Image(systemName:)`, which also uses `.font(.system(size:` for
+    /// plain icon glyphs and would otherwise be a false positive -- see
+    /// `ResultsView.swift:242` and `FrameThumbnailCell.swift:57`, both
+    /// fixed-size icon glyphs with no digit content at all).
+    ///
+    /// What this does NOT catch:
+    /// - a `Text` built from `AstroType`'s own `.astroData()`/
+    ///   `.astroDataHero()` text-style-based fonts never has a literal
+    ///   `.font(.system(size:` at all, so it is invisible to this scan by
+    ///   construction -- that is fine, since those two already bake
+    ///   `monospacedDigit()` into the modifier itself and cannot regress
+    ///   independently of `AstroType.swift`.
+    /// - a fixed-size, non-numeric `Text` (decorative prose at a literal
+    ///   pixel size) would also be flagged, since this scan has no way to
+    ///   know the rendered value is a number -- there is no such case in
+    ///   the tree today, and the fix (adding `.monospacedDigit()`) is
+    ///   harmless even when the text is not numeric.
+    /// - a numeric value threaded through a `Label(`, a computed `Text`
+    ///   wrapper one level of indirection away, or a fixed size expressed
+    ///   as `.font(Font.system(size:` (fully qualified) rather than the
+    ///   literal `.font(.system(size:` this scan matches.
+    @Test("Numeric display text at a fixed point size is always tabular")
+    func numericDisplayIsAlwaysTabular() throws {
+        var offenders: [String] = []
+        for file in try swiftFiles(under: "Sources/AstroUI/Features") {
+            let source = Self.removingLineComments(try contents(file))
+            for chain in Self.textModifierChains(in: source) where chain.contains(".font(.system(size:") {
+                if !chain.contains("monospacedDigit") {
+                    offenders.append(file)
+                }
+            }
+        }
+        #expect(offenders.isEmpty, "Fixed-size Text without monospacedDigit() in: \(offenders.joined(separator: ", "))")
     }
 }

@@ -23,7 +23,7 @@ struct ArchiveTaskCard: View {
                         .monospacedDigit()
                         .foregroundStyle(task.severity == .error
                             ? AstroTokens.Color.critical : AstroTokens.Color.accent)
-                    Text(title).font(.system(.title3, weight: .semibold))
+                    Text(title).astroSectionTitle()
                 }
                 Text(explanation)
                     .font(.callout)

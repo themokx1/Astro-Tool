@@ -140,7 +140,7 @@ struct MetricCard: View {
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.title.weight(.semibold).monospacedDigit())
+                .astroDataHero()
             Text(detail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
