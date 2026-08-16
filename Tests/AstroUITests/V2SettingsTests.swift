@@ -13,7 +13,7 @@ struct V2SettingsTests {
 
     @Test("V2 support can preview, copy and save privacy-safe diagnostics")
     func supportDiagnosticsSurface() throws {
-        let source = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"))
+        let source = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"), encoding: .utf8)
         #expect(source.contains("SupportDiagnostics"))
         #expect(source.contains("Generate Diagnostics"))
         #expect(source.contains("Copy Diagnostics"))
@@ -25,7 +25,7 @@ struct V2SettingsTests {
 
     @Test("Support exposes documentation, support, source and privacy links plus a version/OS/architecture row")
     func supportLinksAndVersionSurface() throws {
-        let source = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"))
+        let source = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"), encoding: .utf8)
         #expect(source.contains("v2.settings.support.links"))
         #expect(source.contains("ProductInfo.documentationURL"))
         #expect(source.contains("ProductInfo.supportURL"))
@@ -121,11 +121,11 @@ struct V2SettingsTests {
 
     @Test("The Planning tab's baseline preferences are wired to PlanningStore, not disclosed as a no-op")
     func planningPreferencesAreWiredNotDisclosedAsANoOp() throws {
-        let settingsSource = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"))
+        let settingsSource = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"), encoding: .utf8)
         #expect(!settingsSource.contains("Not yet applied to planning calculations"))
         #expect(settingsSource.contains("PlanningStore.referenceHoursKey"))
 
-        let planningStoreSource = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Features/Planning/PlanningStore.swift"))
+        let planningStoreSource = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Features/Planning/PlanningStore.swift"), encoding: .utf8)
         #expect(planningStoreSource.contains("v2.planning.referenceHours"))
         #expect(planningStoreSource.contains("referenceFocalRatio"))
         #expect(planningStoreSource.contains("referenceSurfaceBrightness"))
@@ -133,7 +133,7 @@ struct V2SettingsTests {
 
     @Test("Recent Libraries are listed with a switch action routed through AppModel")
     func recentLibrariesSurface() throws {
-        let source = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"))
+        let source = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"), encoding: .utf8)
         #expect(source.contains("v2.settings.recent-libraries"))
         #expect(source.contains("appModel.recentLibraries"))
         #expect(source.contains("appModel.requestLibrarySwitch"))
@@ -141,7 +141,7 @@ struct V2SettingsTests {
 
     @Test("scanOnOpen actually gates whether the last library is restored and re-indexed at launch")
     func scanOnOpenGatesAutomaticRestoreAtLaunch() throws {
-        let source = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        let source = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
         #expect(source.contains("@AppStorage(\"v2.library.scanOnOpen\")"))
         #expect(source.contains("else if scanOnOpen"))
         // V2 UI/UX audit section 2.2: the raw, unrouted `restoreSavedLibrary()`
@@ -154,10 +154,10 @@ struct V2SettingsTests {
 
     @Test("showGuidance actually gates guidance captions in Home and Settings")
     func showGuidanceGatesCaptionsInHomeAndSettings() throws {
-        let settingsSource = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"))
+        let settingsSource = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"), encoding: .utf8)
         #expect(settingsSource.contains("if showGuidance"))
 
-        let homeSource = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Features/Home/HomeView.swift"))
+        let homeSource = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Features/Home/HomeView.swift"), encoding: .utf8)
         #expect(homeSource.contains("@AppStorage(\"v2.general.showGuidance\")"))
         #expect(homeSource.contains("if showGuidance"))
         #expect(homeSource.contains("v2.home.guidance-caption"))

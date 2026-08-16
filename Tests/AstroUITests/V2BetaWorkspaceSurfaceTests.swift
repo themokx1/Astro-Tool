@@ -6,7 +6,7 @@ struct V2BetaWorkspaceSurfaceTests {
     func betaRoutesHaveConcreteViews() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
         // Task 10: the `.library` section now routes to `ArchiveView`, not
         // the deleted `LibraryView`.
         for view in ["ProjectsView", "NightsView", "PlanningView", "ArchiveView", "InsightsView"] {
@@ -23,7 +23,7 @@ struct V2BetaWorkspaceSurfaceTests {
             atPath: root.appendingPathComponent("Sources/AstroUI/Features").path
         ).filter { $0.hasSuffix("View.swift") }
         let source = try files.map {
-            try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/\($0)"))
+            try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/\($0)"), encoding: .utf8)
         }.joined(separator: "\n")
         for id in ["v2.detail.projects", "v2.detail.nights", "v2.detail.planning", "v2.detail.library", "v2.detail.insights"] {
             #expect(source.contains(id))
@@ -61,8 +61,8 @@ struct V2BetaWorkspaceSurfaceTests {
     func homeRecommendationHasDirectProjectAction() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let home = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Home/HomeView.swift"))
-        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        let home = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Home/HomeView.swift"), encoding: .utf8)
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
         #expect(home.contains("Open Project"))
         #expect(home.contains("openProject(project)"))
         #expect(shell.contains("projectsStore.selectProject(project.id)"))
@@ -72,9 +72,9 @@ struct V2BetaWorkspaceSurfaceTests {
     func planningPrefillsNewProjectFromRecommendation() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let planning = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Planning/PlanningView.swift"))
-        let projects = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectsView.swift"))
-        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        let planning = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Planning/PlanningView.swift"), encoding: .utf8)
+        let projects = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectsView.swift"), encoding: .utf8)
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
         #expect(planning.contains("createProject(row.target.designation)"))
         #expect(projects.contains("initialQuery"))
         #expect(shell.contains("newProjectInitialQuery = designation"))
@@ -84,8 +84,8 @@ struct V2BetaWorkspaceSurfaceTests {
     func newProjectOpensCreatedProject() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let projects = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectsView.swift"))
-        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        let projects = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectsView.swift"), encoding: .utf8)
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
         #expect(projects.contains("didCreate(project)"))
         #expect(shell.contains("openCreatedProject"))
         #expect(shell.contains("projectsStore.selectProject(project.id)"))
@@ -95,8 +95,8 @@ struct V2BetaWorkspaceSurfaceTests {
     func nightsExposeMorningTriage() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let nights = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsView.swift"))
-        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsStore.swift"))
+        let nights = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsView.swift"), encoding: .utf8)
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsStore.swift"), encoding: .utf8)
         #expect(nights.contains("Morning triage"))
         #expect(nights.contains("Needs review"))
         #expect(nights.contains("v2.nights.triage"))
@@ -108,8 +108,8 @@ struct V2BetaWorkspaceSurfaceTests {
     func globalSearchIncludesSeries() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let search = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Search/GlobalSearchStore.swift"))
-        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        let search = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Search/GlobalSearchStore.swift"), encoding: .utf8)
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
         #expect(search.contains("case series"))
         #expect(search.contains("Series ·"))
         #expect(search.contains("series.filterName"))
@@ -122,7 +122,7 @@ struct V2BetaWorkspaceSurfaceTests {
     func insightsShowsCaptureEfficiency() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Insights/InsightsView.swift"))
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Insights/InsightsView.swift"), encoding: .utf8)
         #expect(view.contains("Capture efficiency"))
         #expect(view.contains("rejectedFrameCount"))
         #expect(view.contains("v2.insights.quality"))
@@ -132,8 +132,8 @@ struct V2BetaWorkspaceSurfaceTests {
     func homeShowsTonightRecommendations() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Home/HomeStore.swift"))
-        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Home/HomeView.swift"))
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Home/HomeStore.swift"), encoding: .utf8)
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Home/HomeView.swift"), encoding: .utf8)
         #expect(store.contains("Planner.plan"))
         #expect(store.contains("visibleWindowLocal"))
         #expect(store.contains("moonSeparationDeg"))
@@ -145,8 +145,8 @@ struct V2BetaWorkspaceSurfaceTests {
     func nightsShowsPlanningCalendar() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsStore.swift"))
-        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsView.swift"))
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsStore.swift"), encoding: .utf8)
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsView.swift"), encoding: .utf8)
         #expect(store.contains("Planner.month(nights: 30"))
         #expect(view.contains("Next 30 nights"))
         #expect(view.contains("Astronomical planning calendar"))
@@ -157,7 +157,7 @@ struct V2BetaWorkspaceSurfaceTests {
     func insightsShowsQualityTrendSeries() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Insights/InsightsView.swift"))
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Insights/InsightsView.swift"), encoding: .utf8)
         #expect(view.contains("Session quality trends"))
         #expect(view.contains("fwhmValue"))
         #expect(view.contains("backgroundEPerSecPerArcsec2"))

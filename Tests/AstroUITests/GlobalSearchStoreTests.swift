@@ -115,7 +115,7 @@ struct GlobalSearchStoreTests {
     func resultHitsRouteToResultContent() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
         #expect(shell.contains("case .result:"))
         #expect(shell.contains(".result(objectID.uuidString)"))
     }

@@ -13,7 +13,7 @@ struct NightActionMenuTests {
     private func read(_ relativePath: String) throws -> String {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        return try String(contentsOf: root.appendingPathComponent(relativePath))
+        return try String(contentsOf: root.appendingPathComponent(relativePath), encoding: .utf8)
     }
 
     @Test("Every listed action is bound to a real handler, not a disabled stub")

@@ -7,7 +7,7 @@ struct V2WorkspaceParitySurfaceTests {
     func projectsTableContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectsView.swift"))
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectsView.swift"), encoding: .utf8)
         #expect(source.contains("Table("))
         #expect(source.contains("selection:"))
         #expect(source.contains("TableColumn(\"Integration\""))
@@ -19,9 +19,9 @@ struct V2WorkspaceParitySurfaceTests {
     func projectWorkspaceContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift"))
-        let route = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/AppRoute.swift"))
-        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift"), encoding: .utf8)
+        let route = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/AppRoute.swift"), encoding: .utf8)
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
         // Wave 4 Task 3: the "Project › …" eyebrow is gone (redundant with
         // the global BreadcrumbBar), and the tab enum itself moved to
         // `AppRoute.swift` as router-owned `ProjectWorkspaceTab` -- its
@@ -42,9 +42,9 @@ struct V2WorkspaceParitySurfaceTests {
     func nightWorkspaceContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift"))
-        let project = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift"))
-        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift"), encoding: .utf8)
+        let project = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift"), encoding: .utf8)
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
         // Wave 4 Task 3: the "Night › …" eyebrow is gone (redundant with the
         // global BreadcrumbBar).
         #expect(!workspace.contains("Night ›"))
@@ -59,8 +59,8 @@ struct V2WorkspaceParitySurfaceTests {
     func seriesWorkspaceContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/SeriesWorkspaceView.swift"))
-        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/SeriesWorkspaceView.swift"), encoding: .utf8)
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
         // Wave 4 Task 3: the "Project › … › Series › …" eyebrow is gone
         // (redundant with the global BreadcrumbBar).
         #expect(!workspace.contains("Series ›"))
@@ -75,7 +75,7 @@ struct V2WorkspaceParitySurfaceTests {
     func frameReviewTableContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/ReviewWorkspace.swift"))
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/ReviewWorkspace.swift"), encoding: .utf8)
         #expect(workspace.contains("Table(rows, selection: $selectedDecisionIDs, sortOrder: $sortOrder)"))
         #expect(workspace.contains("TableColumn(\"Frame\""))
         #expect(workspace.contains("TableColumn(\"Decision\""))
@@ -90,7 +90,7 @@ struct V2WorkspaceParitySurfaceTests {
     func frameReviewQualityContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/ReviewWorkspace.swift"))
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/ReviewWorkspace.swift"), encoding: .utf8)
         #expect(workspace.contains("TableColumn(\"Score\", value: \\.scoreSortKey)"))
         #expect(workspace.contains("TableColumn(\"FWHM\", value: \\.fwhmSortKey)"))
         #expect(workspace.contains("TableColumn(\"Roundness\", value: \\.roundnessSortKey)"))
@@ -111,11 +111,11 @@ struct V2WorkspaceParitySurfaceTests {
     func frameReviewVisualReviewContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/ReviewWorkspace.swift"))
-        let results = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Results/ResultsView.swift"))
-        let blink = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/FrameBlinkReview.swift"))
-        let thumbnail = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/FrameThumbnailCell.swift"))
-        let quickLook = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/QuickLookSupport.swift"))
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/ReviewWorkspace.swift"), encoding: .utf8)
+        let results = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Results/ResultsView.swift"), encoding: .utf8)
+        let blink = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/FrameBlinkReview.swift"), encoding: .utf8)
+        let thumbnail = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/FrameThumbnailCell.swift"), encoding: .utf8)
+        let quickLook = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Review/QuickLookSupport.swift"), encoding: .utf8)
         #expect(workspace.contains("v2.review.blink"))
         #expect(workspace.contains("Review Frames…"))
         #expect(workspace.contains("openBlinkReview"))
@@ -142,7 +142,7 @@ struct V2WorkspaceParitySurfaceTests {
     func resultsWorkspaceActionsContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Results/ResultsView.swift"))
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Results/ResultsView.swift"), encoding: .utf8)
         // V2 UI/UX audit (2026-08-14) systemic pattern S7: sortable since
         // the v2/v2.1 follow-up -- reads from the store's own cached,
         // re-sorted `results` rather than the raw snapshot.
@@ -161,9 +161,9 @@ struct V2WorkspaceParitySurfaceTests {
     func remainingWorkspaceTablesContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let health = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/HealthView.swift"))
-        let planning = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Planning/PlanningView.swift"))
-        let settings = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"))
+        let health = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/HealthView.swift"), encoding: .utf8)
+        let planning = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Planning/PlanningView.swift"), encoding: .utf8)
+        let settings = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"), encoding: .utf8)
         // V2 UI/UX audit (2026-08-14) systemic pattern S7: findings are now
         // sortable (v2/v2.1 follow-up) -- the table reads from a locally
         // cached, re-sorted `displayedItems` rather than filtering inline.
@@ -192,8 +192,8 @@ struct V2WorkspaceParitySurfaceTests {
     func healthAcknowledgementContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let health = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/HealthView.swift"))
-        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/LibraryHealthStore.swift"))
+        let health = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/HealthView.swift"), encoding: .utf8)
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/LibraryHealthStore.swift"), encoding: .utf8)
         #expect(health.contains("Mark as Acknowledged…"))
         #expect(health.contains("Revoke Acknowledgement"))
         #expect(health.contains("Show Acknowledged"))
@@ -208,11 +208,11 @@ struct V2WorkspaceParitySurfaceTests {
     func calibrationWorkspaceContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/CalibrationView.swift"))
-        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/CalibrationStore.swift"))
-        let health = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/HealthView.swift"))
-        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
-        let route = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/AppRoute.swift"))
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/CalibrationView.swift"), encoding: .utf8)
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/CalibrationStore.swift"), encoding: .utf8)
+        let health = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/HealthView.swift"), encoding: .utf8)
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
+        let route = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/AppRoute.swift"), encoding: .utf8)
         // V2 UI/UX audit (2026-08-14) systemic pattern S7: both tables are
         // now sortable (v2/v2.1 follow-up).
         #expect(workspace.contains("Table(sortedCoverageRows, selection: $selectedCoverageID, sortOrder: $coverageSortOrder)"))
@@ -236,9 +236,9 @@ struct V2WorkspaceParitySurfaceTests {
     func conversionWorkspaceAppliesAndUndoesThroughEngine() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/ConversionWorkspace.swift"))
-        let command = try String(contentsOf: root.appendingPathComponent("Sources/AstroApplication/Features/Library/SessionConversionCommand.swift"))
-        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Library/ConversionWorkspace.swift"), encoding: .utf8)
+        let command = try String(contentsOf: root.appendingPathComponent("Sources/AstroApplication/Features/Library/SessionConversionCommand.swift"), encoding: .utf8)
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
 
         // Editable proposal fields.
         #expect(workspace.contains("TextField(\"Group name\""))
@@ -285,7 +285,7 @@ struct V2WorkspaceParitySurfaceTests {
     func projectGoalAndNotesContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift"))
+        let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift"), encoding: .utf8)
         #expect(workspace.contains("Integration goal"))
         #expect(workspace.contains("Project notes"))
         #expect(workspace.contains("Save Project Details"))
@@ -297,8 +297,8 @@ struct V2WorkspaceParitySurfaceTests {
     func nightsWorkTableContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let nights = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsView.swift"))
-        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"))
+        let nights = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsView.swift"), encoding: .utf8)
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
         #expect(nights.contains("Table(store.visibleNights, selection:"))
         #expect(nights.contains("TableColumn(\"Night\""))
         #expect(nights.contains("TableColumn(\"Projects\""))
@@ -311,12 +311,12 @@ struct V2WorkspaceParitySurfaceTests {
     func exportMenusReachEveryWorkspace() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let service = try String(contentsOf: root.appendingPathComponent("Sources/AstroApplication/Features/Exports/ExportService.swift"))
-        let menu = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Exports/ExportMenu.swift"))
-        let project = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift"))
-        let night = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift"))
-        let home = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Home/HomeView.swift"))
-        let results = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Results/ResultsView.swift"))
+        let service = try String(contentsOf: root.appendingPathComponent("Sources/AstroApplication/Features/Exports/ExportService.swift"), encoding: .utf8)
+        let menu = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Exports/ExportMenu.swift"), encoding: .utf8)
+        let project = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift"), encoding: .utf8)
+        let night = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift"), encoding: .utf8)
+        let home = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Home/HomeView.swift"), encoding: .utf8)
+        let results = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Results/ResultsView.swift"), encoding: .utf8)
 
         #expect(service.contains("AcquisitionExport.render"))
         #expect(service.contains("TargetReport.render"))
@@ -353,7 +353,7 @@ struct V2WorkspaceParitySurfaceTests {
             "Sources/AstroUI/Features/Nights/NightWorkspaceView.swift",
         ]
         for relative in sources {
-            let source = try String(contentsOf: root.appendingPathComponent(relative))
+            let source = try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
             #expect(!source.contains(".disabled(true)"), Comment(rawValue: relative))
             #expect(!source.contains("Button(\"Move to Archive\") {}"), Comment(rawValue: relative))
             #expect(!source.contains("Button(\"No Action Required\") {}"), Comment(rawValue: relative))

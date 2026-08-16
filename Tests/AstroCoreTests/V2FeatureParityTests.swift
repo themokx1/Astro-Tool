@@ -31,7 +31,7 @@ struct V2FeatureParityTests {
 
     @Test("No workflow may claim completion without named unit and UI evidence")
     func completedRowsNameEvidence() throws {
-        let text = try String(contentsOf: root.appendingPathComponent("docs/superpowers/reviews/v2-feature-parity.csv"))
+        let text = try String(contentsOf: root.appendingPathComponent("docs/superpowers/reviews/v2-feature-parity.csv"), encoding: .utf8)
         for row in try parse(text) where row["status"] == "complete" {
             #expect(row["unit_test"]!.contains("Tests"))
             #expect(row["ui_test"]!.contains("Tests"))
@@ -41,7 +41,7 @@ struct V2FeatureParityTests {
 
     @Test("Overstated rows are downgraded to beta-partial with an honest known gap")
     func overstatedRowsAreDowngraded() throws {
-        let text = try String(contentsOf: root.appendingPathComponent("docs/superpowers/reviews/v2-feature-parity.csv"))
+        let text = try String(contentsOf: root.appendingPathComponent("docs/superpowers/reviews/v2-feature-parity.csv"), encoding: .utf8)
         let rows = try parse(text)
         let byWorkflow = Dictionary(uniqueKeysWithValues: rows.map { ($0["v1_workflow"]!, $0) })
         for workflow in ["target-detail", "all-targets", "settings-planning", "trends", "discover"] {
