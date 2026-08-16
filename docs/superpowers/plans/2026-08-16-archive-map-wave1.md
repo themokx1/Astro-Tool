@@ -1975,6 +1975,24 @@ func healthDeepLinkRedirects() throws {
 Run: `swift test --no-parallel --filter V2NavigationSurfaceTests`
 Expected: FAIL
 
+### Előfeltétel: a gomb annyit ígérjen, amennyit tud
+
+A 9b. task jelentése két, egymással összefüggő pontatlanságot hagyott hátra:
+
+- A „Stacking leftovers" kártya `Preview Quarantine…` gombja és a „Byte-identical copies" kártya `Compare Copies…` gombja **ugyanarra a szűretlen** karantén-előnézetre nyílik. Az első így egy hatókört sugall, ami nincs meg; a második egy összehasonlító felületet ígér, ami nem létezik.
+- A `reclaimHelpText` az `ArchiveStripView`-ban `String`-ként tipizált, beégetett angol szavakkal — **ugyanaz a lokalizációs csapda, negyedszer** ebben a hullámban.
+
+A jó hír: a szűrés **majdnem ingyen van**. A `CleanupPreviewStore` már ma is per-kategória `Toggle`-ökkel dolgozik, és van `selectedCategories: Set<String>`-je; csak előre be kell állítani. A `V2RootView`-ban erre **létező minta** van: a `router.pendingInsightsSetupFilter`.
+
+Ezért ebben a taskban, még a route-bekötés előtt:
+
+1. `AppRouter` kapjon egy `pendingCleanupCategories: Set<String>?`-t, pontosan a `pendingInsightsSetupFilter` mintájára (beleértve azt, hogy a fogyasztó `.onAppear`-ben nullázza).
+2. `CleanupPreviewStore` kapjon egy `preselect(_ categories: Set<String>)`-t, ami a `selectedCategories`-t állítja. Azonosérték-őrrel, mint minden más setter.
+3. Az `ArchiveTaskAction.compareDuplicates` eset **törlendő**. A duplikátum-kártya ugyanazt a `.previewQuarantine(categories: ["duplicate-content"])` akciót kapja, mint a többi — egy művelet-típus, helyes kategóriákkal. A gombfelirat mindkét kártyán `Preview Quarantine…`; ez pontosan az, ami történik.
+4. `ArchiveStripView.reclaimHelpText` legyen `Text`-et adó, lefordítható, a 7b. task mintája szerint; a `"Reclaimable space"` és a százalékos formátum kapjon `hu.lproj` bejegyzést.
+
+Teszt pinnelje, hogy a duplikátum-kártya akciója `previewQuarantine`, és hogy a route-push a kategóriákat átadja.
+
 - [ ] **Step 3: Implement**
 
 1. A `.library` ág az `ArchiveView`-t építi, átadva: `store: archiveStore`, `rootURL: onboardingStore.selectedRoot`, `chooseLibrary`, `rescan`, `convertSession: { router.push(.conversion) }`, `openQuarantinePreview: { router.push(.cleanup) }`, `accessMode`. **`openTarget` nincs** — lásd a 8. task jegyzetét arról, hogy a mappanév nem oldható fel projekt-`UUID`-vé ebben a hullámban.
