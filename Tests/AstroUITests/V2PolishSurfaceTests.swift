@@ -19,6 +19,11 @@ struct V2PolishSurfaceTests {
         try String(contentsOf: repositoryRoot.appendingPathComponent(relativePath), encoding: .utf8)
     }
 
+    private func filenames(under relativePath: String) throws -> [String] {
+        let directory = repositoryRoot.appendingPathComponent(relativePath)
+        return try FileManager.default.contentsOfDirectory(atPath: directory.path)
+    }
+
     private var featureViewPaths: [(name: String, path: String)] {
         [
             ("HomeView", "Sources/AstroUI/Features/Home/HomeView.swift"),
@@ -87,6 +92,11 @@ struct V2PolishSurfaceTests {
 
     // MARK: (c) No hardcoded colors under Features/ or Settings/.
 
+    // A single allowed exception: ArchivePalette.swift IS the palette
+    // definition, so it is the one file under Features/ that may contain hex
+    // literals. Everything else must read from it or from AstroTokens.
+    private static let colorLiteralExemptFiles: Set<String> = ["ArchivePalette.swift"]
+
     @Test("No file under Features/ or Settings/ hardcodes a color literal")
     func noHardcodedColorLiterals() throws {
         let root = repositoryRoot.appendingPathComponent("Sources/AstroUI")
@@ -96,6 +106,7 @@ struct V2PolishSurfaceTests {
             let base = root.appendingPathComponent(directory)
             guard let enumerator = FileManager.default.enumerator(at: base, includingPropertiesForKeys: nil) else { continue }
             for case let url as URL in enumerator where url.pathExtension == "swift" {
+                if Self.colorLiteralExemptFiles.contains(url.lastPathComponent) { continue }
                 guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
                 if text.contains("Color(red:") || text.contains("Color(#colorLiteral") {
                     offenders.append(url.lastPathComponent)
@@ -260,5 +271,17 @@ struct V2PolishSurfaceTests {
         #expect(source.contains(".messageEnglish"))
         #expect(!source.contains("Text(ambiguity.explanation)"), "must render explanationEnglish, not the raw Hungarian explanation")
         #expect(!source.contains("Label(ambiguity.title,"), "must render titleEnglish, not the raw Hungarian title")
+    }
+
+    // MARK: (f) Archive views read their category colors from ArchivePalette, never inline.
+
+    @Test("Archive views read their category colors from ArchivePalette, never inline")
+    func archiveViewsUseThePalette() throws {
+        let archiveDirectory = "Sources/AstroUI/Features/Archive"
+        for file in try filenames(under: archiveDirectory) where file != "ArchivePalette.swift" {
+            let source = try contents("\(archiveDirectory)/\(file)")
+            #expect(!source.contains("NSColor(hex:"), "\(file) defines its own color")
+            #expect(!source.contains("Color(red:"), "\(file) defines its own color")
+        }
     }
 }
