@@ -25,8 +25,7 @@ public struct NightRow: Equatable, Sendable, Identifiable {
         return filters.isEmpty ? "No filter metadata" : filters.joined(separator: ", ")
     }
     public var integrationSummary: String {
-        let minutes = Int(snapshot.integrationSeconds.rounded()) / 60
-        return String(format: "%d:%02d", minutes / 60, minutes % 60)
+        AstroFormat.duration(seconds: snapshot.integrationSeconds)
     }
     public var excludedFrames: Int { max(0, snapshot.totalFrames - snapshot.usableFrames) }
     /// V2 product/UX audit (2026-08-15) section 2.3, CRITICAL: this used to

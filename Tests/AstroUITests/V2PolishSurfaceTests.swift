@@ -655,34 +655,27 @@ struct V2PolishSurfaceTests {
     /// system -- a real regression, not a style nit. This is a read/parse
     /// constraint on a specific field, not a blanket exemption for the
     /// file's directory or module.
-    /// `NightsStore.swift`'s `NightRow.integrationSummary` is a SECOND,
-    /// narrower exemption, for a reason that has nothing to do with style:
-    /// routing it through `AstroFormat.duration(seconds:)` -- functionally
-    /// identical to its own inline `%d:%02d` -- makes
-    /// `GlobalSearchStoreTests.searchesAcrossWorkflowObjects` crash the
-    /// whole test process (`freed pointer was not the last allocation`,
-    /// SIGABRT), reproducibly, on a clean build. Isolated with a
-    /// synchronous unit test that constructs a `NightRow` directly and
-    /// reads `integrationSummary` with no async/`MetadataStore` involved at
-    /// all: that path returns the correct `"12:40 h"` and never crashes,
-    /// which is why this is not a bug in `AstroFormat.duration` or in
-    /// `integrationSummary`'s own logic -- both are correct in isolation.
-    /// The crash is specific to this one file's compiled shape interacting
-    /// with that one async test's `MetadataStore`/SQLite-backed setup;
-    /// several functionally-equivalent rewrites of `integrationSummary`
-    /// (string interpolation instead of `String(format:)`, a same-file
-    /// helper instead of a cross-file one, wrapping the call in another
-    /// layer of interpolation) all still crashed, and only reverting to the
-    /// exact original inline `String(format:)` made it go away -- which is
-    /// why this reads as a pre-existing, layout-sensitive memory-safety
-    /// issue elsewhere (most likely in the persistence layer or the async
-    /// test harness) that this specific edit happens to tickle, not
-    /// something a different formatting call fixes. Flagged for dedicated
-    /// investigation separately; until that lands, this ONE property keeps
-    /// its own inline copy rather than sharing `AstroFormat.duration`.
+    /// `NightsStore.swift` used to be a second exemption here, because
+    /// routing `NightRow.integrationSummary` through
+    /// `AstroFormat.duration(seconds:)` reproducibly crashed
+    /// `GlobalSearchStoreTests.searchesAcrossWorkflowObjects` with `freed
+    /// pointer was not the last allocation` (SIGABRT) on a clean build. The
+    /// exemption is gone because the underlying defect was found and fixed,
+    /// not worked around: that message comes from Swift's per-task
+    /// `StackAllocator`, not from malloc, and the corruption was an
+    /// `async` default argument emitted as a `linkonce_odr` async function
+    /// pointer record with two different context sizes (80 bytes in the
+    /// declaring module, 64 in a client), letting the linker pair a large
+    /// function body with a small size record. Formatting had nothing to do
+    /// with it -- `NightsStore.open`'s machine code was byte-for-byte
+    /// identical across the crashing and passing builds, and this edit only
+    /// moved the object file enough to flip the linker's pick, which is why
+    /// five equivalent rewrites all crashed too. See
+    /// `AsyncContextSizeGateTests`, which gates the real defect at the
+    /// binary level, and `NightsStore.init(metadataFactory:calendarProvider:)`
+    /// for the shape that fixes it.
     private static let handRolledFormattingExemptFiles: Set<String> = [
         "SiteSettingsStore.swift",
-        "NightsStore.swift",
     ]
 
     /// Rule (spec 5.2, `P2` pattern): a second format for a unit that

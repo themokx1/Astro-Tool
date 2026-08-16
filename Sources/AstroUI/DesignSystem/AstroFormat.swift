@@ -17,9 +17,8 @@ import Foundation
 /// instead of building their own format string;
 /// `V2PolishSurfaceTests.noHandRolledFormatting` gates this (see that
 /// test's own doc comment for exactly what it does and does not cover,
-/// including its two named exemptions -- `SiteSettingsStore.swift` for a
-/// locale reason, `NightsStore.swift` for a reproducible test-process
-/// crash this function's own doc comment below also explains).
+/// including its one named exemption, `SiteSettingsStore.swift`, for a
+/// locale reason).
 public enum AstroFormat {
     /// Renders a duration as `h:mm h`, e.g. `12:40 h` -- always carries its
     /// unit so a bare number is never mistaken for something else. Matches
@@ -28,20 +27,15 @@ public enum AstroFormat {
     /// to whole minutes -- a duration under a full minute reads as `0:00 h`,
     /// never blank or negative.
     ///
-    /// `NightsStore.swift`'s `NightRow.integrationSummary` is the one
-    /// former duplicate that deliberately still does NOT call this: doing
-    /// so reproducibly crashes `GlobalSearchStoreTests
-    /// .searchesAcrossWorkflowObjects` with `freed pointer was not the last
-    /// allocation` (SIGABRT) on a clean build. A synchronous unit test that
-    /// builds a `NightRow` directly and reads `integrationSummary` with no
-    /// `MetadataStore`/async involved returns the correct `"12:40 h"` and
-    /// never crashes, so this function's own logic is not at fault -- the
-    /// crash is specific to that one file's compiled shape interacting with
-    /// that one async test's SQLite-backed setup, not to what value this
-    /// function returns or how it computes it. See
-    /// `V2PolishSurfaceTests.handRolledFormattingExemptFiles` for the full
-    /// account; that exemption should be removed once the underlying
-    /// memory-safety issue is found and fixed, not treated as permanent.
+    /// Every former duplicate now calls this, including
+    /// `NightsStore.swift`'s `NightRow.integrationSummary`, which was
+    /// briefly exempted because routing it here reproducibly crashed
+    /// `GlobalSearchStoreTests.searchesAcrossWorkflowObjects` with `freed
+    /// pointer was not the last allocation`. That was never a fault in this
+    /// function: the crash came from an `async` default argument emitted
+    /// with two different async context sizes across translation units, and
+    /// this edit only shifted the object file enough to flip which copy the
+    /// linker kept. See `AsyncContextSizeGateTests` for the full account.
     public static func duration(seconds: Double) -> String {
         let totalMinutes = Int(seconds.rounded()) / 60
         let hours = totalMinutes / 60
