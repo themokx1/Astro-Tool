@@ -2504,3 +2504,57 @@ func errorSurfacesNeverShowRawSwiftErrors() throws {
 ```bash
 git commit -m "fix: make error dialogs name the real problem and offer a real action"
 ```
+
+---
+
+## Task 15: A frissesség-jelzésnek legyen mire épülnie
+
+**Kiváltó ok:** a 13. task futásidejű ellenőrzése után a valódi index `runs` táblájában **egyetlen sor** van, és az egy `audit`. Nincs benne `scan`.
+
+Ennek az az oka, hogy a `runs` táblát csak az `AuditEngine`, a `FixityVerifier` és a **V1** `AppState` írja. A V2 beolvasási útja (`LibrarySession.scan()` → `ScanWorkflowMaterializer`) **egyetlen `runs` sort sem rögzít**.
+
+Következmény, amit a 2. taskban én terveztem el rosszul:
+
+- `ArchiveMapQuery.lastRuns` a `runs WHERE kind = 'scan'`-t olvassa → `lastScanAt` a V2-ben **mindig `nil`**.
+- Ezért az `isAuditStale` **mindig `false`**, és az ítélet-mondat `.stale` ága **soha nem jelenhet meg**.
+- A `ArchiveMapQueryTests.auditOlderThanScanIsStale` teszt zöld, mert a fixture kézzel beszúr egy `scan` sort, ami a valóságban sosem keletkezik. **Zöld teszt, halott funkció** — pontosan az a minta, ami miatt ez a hullám végén futásidejű mérés is van.
+
+### A választás, és miért ez
+
+Három lehetőség volt:
+
+1. `MAX(files.scanned_at)`-ra váltani. **Elvetve.** A mért adat szerint ez „mikor változott utoljára a könyvtár" (a legrégebbi `scanned_at` egy nappal korábbi, tehát a változatlan fájlok nem frissülnek), nem „mikor néztem rá utoljára". Egy olyan beolvasás után, ami nem talált változást, elavultnak hazudná magát.
+2. A `.stale` ág törlése. **Elvetve.** A frissesség a fejléc egyik fő állítása („Ellenőrizve · N perce"); nem elhagyni kell, hanem megalapozni.
+3. **Választva:** a V2 rögzítse a beolvasás befejezését a saját metaadat-tárában.
+
+**Files:**
+- Modify: `Sources/AstroApplication/Persistence/MetadataSchema.swift` (séma-emelés), `MetadataStore.swift`
+- Modify: `Sources/AstroApplication/Library/ScanWorkflowMaterializer.swift` (a befejezés rögzítése)
+- Modify: `Sources/AstroApplication/Features/Archive/ArchiveMapQuery.swift`
+- Test: `Tests/AstroApplicationTests/MetadataStoreTests.swift`, `ArchiveMapQueryTests.swift`
+
+- [ ] **Step 1: `MetadataStore` tudja, mikor fejeződött be egy beolvasás**
+
+Additív séma-emelés, `IF NOT EXISTS`-szel, a meglévő migrációs minta szerint (a `finding_acks`/`savedTargets` emelések a példa). Egyetlen sor kell, nem történet: `recordScanCompleted(at:)` és `lastScanCompletedAt() -> Date?`.
+
+Teszt: friss tár → `nil`; rögzítés után a pontos érték; kétszeri rögzítés az újabbat tartja.
+
+- [ ] **Step 2: A beolvasás rögzítse magát**
+
+A `ScanWorkflowMaterializer` (vagy a `LibrarySession.scan()` hívási helye — amelyik a **sikeres** befejezést látja) hívja meg a `recordScanCompleted(at:)`-et. **Csak siker esetén**; egy megszakított vagy elbukott beolvasás nem frissítheti a frissességet, különben az app azt állítja, ránézett, holott nem.
+
+- [ ] **Step 3: `ArchiveMapQuery` innen olvassa a `lastScanAt`-et**
+
+A `lastRuns(db:)` **maradjon** az `audit`/`verify` ágakra (azok valóban `runs` sorok). A `lastScanAt` a `MetadataStore`-ból jöjjön. A `snapshot()` már ma is kap `metadata`-t.
+
+- [ ] **Step 4: A teszt hazudott — javítsd**
+
+Az `auditOlderThanScanIsStale` fixture-je ne kézzel beszúrt `runs`-sorral dolgozzon, hanem a `MetadataStore` valódi `recordScanCompleted`-jével. Így a teszt azt bizonyítja, ami a termékben történik.
+
+Plusz egy teszt, ami a mostani hibát pinneli: **`runs`-ban lévő `scan` sor nélkül is** legyen `lastScanAt`, ha a metaadat-tár rögzítette.
+
+- [ ] **Step 5: Suite + commit**
+
+```bash
+git commit -m "fix: record when a scan finished so freshness means something"
+```
