@@ -2558,3 +2558,53 @@ Plusz egy teszt, ami a mostani hibát pinneli: **`runs`-ban lévő `scan` sor n�
 ```bash
 git commit -m "fix: record when a scan finished so freshness means something"
 ```
+
+---
+
+## Task 16: A toolbar gombfeliratai az egész appban lefordulnak
+
+**Kiváltó ok:** a 12. task auditja közben derült ki, hogy a `WorkspaceAction`, a `WorkspaceActionMenu` és a `WorkspaceMenuItem` a `title`-t és a `help`-et **`String`-ként** deklarálja (`Sources/AstroUI/App/WorkspaceActions.swift:22, 24, 66, 107, 109`), a `V2RootView` pedig `Label(action.title, systemImage:)`, `Text(item.title)` és `Label(menu.title, systemImage:)` hívásokkal rajzolja őket.
+
+A `String` a SwiftUI verbatim túlterhelését választja, nem a `LocalizedStringKey`-ét. Ezért **az egész V2 app minden toolbar-gombfelirata angol marad magyar felületen** — nem csak az Archívumé: a Review, a Health, a Nights, a Planning és a Calibration is. 36 ilyen literál van a `Features/` alatt.
+
+Ez ugyanaz a hiba, mint a `MetricCard.title`-é volt, csak **egy szinttel feljebb, közös infrastruktúrában**. Nem ez a hullám okozta; a hullám csak megtalálta. És mivel minden munkatér toolbarja ezen megy keresztül, ez a legnagyobb egyetlen lokalizációs rés az appban.
+
+**Files:**
+- Modify: `Sources/AstroUI/App/WorkspaceActions.swift`
+- Modify: `Sources/AstroUI/App/V2RootView.swift` (ahol szükséges)
+- Modify: minden hívási hely a `Sources/AstroUI/Features/` alatt, ami `title:`/`help:` literált ad át
+- Modify: `Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings`
+- Test: `Tests/AstroUITests/WorkspaceActionsTests.swift`, `V2PolishSurfaceTests.swift`
+
+- [ ] **Step 1: Kapu előbb**
+
+```swift
+@Test("Workspace toolbar actions carry translatable titles, not verbatim Strings")
+func workspaceActionTitlesAreLocalizable() throws {
+    let source = try contents("Sources/AstroUI/App/WorkspaceActions.swift")
+    #expect(!source.contains("public let title: String"),
+            "a String title routes SwiftUI to its verbatim overload and never localizes")
+    #expect(!source.contains("public let help: String?"),
+            "same for the tooltip")
+}
+```
+
+- [ ] **Step 2: A típus váltson**
+
+`title` legyen `LocalizedStringKey`, `help` legyen `LocalizedStringKey?`.
+
+**Egy csapda, amit előre kell kezelni:** a `WorkspaceAction` ma `Equatable`, és a `LocalizedStringKey` `Equatable` ugyan, de az egyenlősége a **kulcson** alapul, nem a feloldott szövegen — ez itt helyes viselkedés, de a `WorkspaceActionsTests` meglévő egyenlőség-tesztjeit át kell nézni, nem vakon igazítani. Ha egy teszt a `title` szövegére hasonlít, az `accessibilityIdentifier`-re vagy az `id`-ra kell váltania, mert **az** a stabil azonosság.
+
+- [ ] **Step 3: A hívási helyek**
+
+A 36 literál átvitele mechanikus, de **nem** vak keresés-csere: minden hívási helyen ellenőrizd, hogy a `title:` tényleg literál-e. Ahol interpolált vagy `String`-változóból jön (ha van ilyen), ott az a hívási hely külön eset — jelentsd, ne alakítsd át `LocalizedStringKey(someString)`-gé, mert az futásidőben a *tartalmat* keresné kulcsként.
+
+- [ ] **Step 4: Fordítások**
+
+A toolbar-feliratok többsége a kinyerő script számára **látható** lesz (a `WorkspaceAction(` konstrukció első argumentuma nem a `title`, ezért ellenőrizd!). Amit nem lát, kézzel a `hu.lproj` végi csoportba.
+
+- [ ] **Step 5: Suite + commit**
+
+```bash
+git commit -m "fix: localize every workspace toolbar action title"
+```
