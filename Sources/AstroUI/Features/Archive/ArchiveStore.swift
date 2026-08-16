@@ -15,10 +15,16 @@ import Observation
 @Observable
 public final class ArchiveStore {
     public typealias MapFactory = @Sendable (URL) async throws -> ArchiveMapSnapshot
-    public typealias TaskFactory = @Sendable (URL) async throws -> [ArchiveTask]
+    public typealias TaskFactory = @Sendable (URL) async throws -> ArchiveTaskSummary
 
     public private(set) var snapshot: ArchiveMapSnapshot?
+    /// Convenience for the view: the cards half of the last-loaded
+    /// `ArchiveTaskSummary`. Kept alongside `uncovered` rather than making
+    /// callers dig into a summary struct for the common case.
     public private(set) var tasks: [ArchiveTask] = []
+    /// What `ArchiveTaskQuery` could not cover -- the footer reads this so
+    /// the page never silently implies it saw more findings than it did.
+    public private(set) var uncovered: UncoveredFindings = .none
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
 
@@ -49,7 +55,7 @@ public final class ArchiveStore {
             try await ArchiveMapQuery.production(rootURL: rootURL).snapshot()
         },
         taskFactory: @escaping TaskFactory = { rootURL in
-            try await ArchiveTaskQuery.production(rootURL: rootURL).tasks()
+            try await ArchiveTaskQuery.production(rootURL: rootURL).summary()
         }
     ) {
         self.mapFactory = mapFactory
@@ -66,12 +72,14 @@ public final class ArchiveStore {
             let loaded = try await taskFactory(rootURL)
             guard token == generation else { return }
             snapshot = map
-            tasks = loaded
+            tasks = loaded.tasks
+            uncovered = loaded.uncovered
             recomputeVisibleRows()
         } catch {
             guard token == generation else { return }
             snapshot = nil
             tasks = []
+            uncovered = .none
             visibleRows = []
             errorMessage = error.localizedDescription
         }

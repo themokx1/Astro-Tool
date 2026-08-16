@@ -94,6 +94,49 @@ public struct ArchiveTask: Equatable, Sendable, Identifiable {
     }
 }
 
+/// What `ArchiveTaskQuery` intentionally does not turn into a card: findings
+/// whose `category` maps to no `ArchiveTaskKind` at all. Replayed against the
+/// real library this is 138 findings, 8.69 GB, across twelve categories
+/// (`capture-unassigned-artifact`, `capture-legacy-folder`, `tool-output`,
+/// `missing-counterpart`, and eight more). Dropping them is the right call --
+/// they have no executable action -- but dropping them SILENTLY is not: four
+/// cards and nothing else reads as complete coverage. The footer renders this
+/// as a single quiet line so the page never implies it saw more than it did.
+///
+/// Deliberately distinct from a card that exists but is suppressed
+/// (acknowledged, or dropped by the actionability gate in `action(for:entry:)`):
+/// those findings' categories DID map to a kind, so they are not "uncovered" --
+/// conflating the two would make an acknowledged finding look like a coverage
+/// gap.
+public struct UncoveredFindings: Equatable, Sendable {
+    public let count: Int
+    public let bytes: Int64
+    /// Category name -> how many findings, for the footer's tooltip.
+    public let categories: [String: Int]
+
+    public static let none = UncoveredFindings(count: 0, bytes: 0, categories: [:])
+    public var isEmpty: Bool { count == 0 }
+
+    public init(count: Int, bytes: Int64, categories: [String: Int]) {
+        self.count = count
+        self.bytes = bytes
+        self.categories = categories
+    }
+}
+
+/// `ArchiveTaskQuery.summary()`'s full result: the cards the page can act on,
+/// plus what it could not cover. Kept as one struct rather than two return
+/// values so a caller can never read one half without the other.
+public struct ArchiveTaskSummary: Equatable, Sendable {
+    public let tasks: [ArchiveTask]
+    public let uncovered: UncoveredFindings
+
+    public init(tasks: [ArchiveTask], uncovered: UncoveredFindings) {
+        self.tasks = tasks
+        self.uncovered = uncovered
+    }
+}
+
 /// Turns the latest audit run's and the latest verify run's findings into at
 /// most six cards -- one per `ArchiveTaskKind` -- instead of one row per
 /// finding. The 3 228 residue findings on the reference library are one
@@ -121,17 +164,25 @@ public struct ArchiveTaskQuery: Sendable {
         return Self(indexDatabaseForTesting: storage.indexDatabase, metadata: resolvedMetadata)
     }
 
-    public func tasks() async throws -> [ArchiveTask] {
+    public func summary() async throws -> ArchiveTaskSummary {
         let db = try SQLiteDB(readOnlyPath: indexDatabase.standardizedFileURL.path)
 
         guard try Self.hasAuditRun(db: db) else {
-            return [ArchiveTask(
-                kind: .auditNeverRun, severity: .info,
-                affectedFileCount: 0, bytes: 0, evidencePaths: [], action: .runAudit
-            )]
+            return ArchiveTaskSummary(
+                tasks: [ArchiveTask(
+                    kind: .auditNeverRun, severity: .info,
+                    affectedFileCount: 0, bytes: 0, evidencePaths: [], action: .runAudit
+                )],
+                uncovered: .none
+            )
         }
 
         var grouped: [ArchiveTaskKind: (files: Int, bytes: Int64, paths: [String])] = [:]
+        // Categories with no ArchiveTaskKind at all -- see UncoveredFindings'
+        // doc comment. Kept separate from `grouped` because a finding here
+        // never had a chance to become a card, unlike one that is grouped
+        // and later suppressed by an acknowledgement or the actionability gate.
+        var uncoveredByCategory: [String: (files: Int, bytes: Int64)] = [:]
         try db.query(
             """
             SELECT d.category, d.path, COALESCE(f.size, 0)
@@ -148,7 +199,13 @@ public struct ArchiveTaskQuery: Sendable {
             let size = row.int64(2) ?? 0
             guard let kind = ArchiveTaskKind.allCases.first(where: {
                 $0.findingCategories.contains(category)
-            }) else { return }
+            }) else {
+                var entry = uncoveredByCategory[category] ?? (files: 0, bytes: 0)
+                entry.files += 1
+                entry.bytes += size
+                uncoveredByCategory[category] = entry
+                return
+            }
             var entry = grouped[kind] ?? (files: 0, bytes: 0, paths: [])
             entry.files += 1
             entry.bytes += size
@@ -163,7 +220,7 @@ public struct ArchiveTaskQuery: Sendable {
             ackedKeys = []
         }
 
-        return grouped.compactMap { kind, entry -> ArchiveTask? in
+        let tasks = grouped.compactMap { kind, entry -> ArchiveTask? in
             let ackKey = MetadataStore.ackKey(category: ArchiveTask.ackCategory, groupKey: kind.rawValue)
             guard !ackedKeys.contains(ackKey) else { return nil }
             let action = Self.action(for: kind, entry: entry)
@@ -178,6 +235,13 @@ public struct ArchiveTaskQuery: Sendable {
             ($0.severity.rank, -$0.bytes, $0.kind.rawValue)
                 < ($1.severity.rank, -$1.bytes, $1.kind.rawValue)
         }
+
+        let uncovered = UncoveredFindings(
+            count: uncoveredByCategory.values.reduce(0) { $0 + $1.files },
+            bytes: uncoveredByCategory.values.reduce(0) { $0 + $1.bytes },
+            categories: uncoveredByCategory.mapValues(\.files)
+        )
+        return ArchiveTaskSummary(tasks: tasks, uncovered: uncovered)
     }
 
     private static func severity(for kind: ArchiveTaskKind) -> ArchiveTaskSeverity {

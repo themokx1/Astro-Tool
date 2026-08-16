@@ -13,20 +13,29 @@ struct ArchiveStoreTests {
         )
         #expect(store.snapshot == nil)
         #expect(store.tasks.isEmpty)
+        #expect(store.uncovered.isEmpty)
         #expect(!store.isLoading)
         #expect(store.errorMessage == nil)
     }
 
-    @Test("Loading publishes the snapshot and the tasks together")
+    @Test("Loading publishes the snapshot, the tasks, and the uncovered findings together")
     func loadPublishesBoth() async throws {
         let store = ArchiveStore(
             mapFactory: { _ in .stub(totalBytes: 1000) },
-            taskFactory: { _ in [.stub(kind: .intermediateFiles, bytes: 400)] }
+            taskFactory: { _ in
+                ArchiveTaskSummary(
+                    tasks: [.stub(kind: .intermediateFiles, bytes: 400)],
+                    uncovered: UncoveredFindings(count: 3, bytes: 900, categories: ["tool-output": 3])
+                )
+            }
         )
         await store.load(rootURL: URL(fileURLWithPath: "/tmp/lib"))
 
         #expect(store.snapshot?.totalBytes == 1000)
         #expect(store.tasks.count == 1)
+        #expect(store.uncovered.count == 3)
+        #expect(store.uncovered.bytes == 900)
+        #expect(store.uncovered.categories == ["tool-output": 3])
         #expect(!store.isLoading)
         #expect(store.errorMessage == nil)
     }
@@ -36,13 +45,14 @@ struct ArchiveStoreTests {
         struct Boom: Error, LocalizedError { var errorDescription: String? { "index unreadable" } }
         let store = ArchiveStore(
             mapFactory: { _ in throw Boom() },
-            taskFactory: { _ in [] }
+            taskFactory: { _ in ArchiveTaskSummary(tasks: [], uncovered: .none) }
         )
         await store.load(rootURL: URL(fileURLWithPath: "/tmp/lib"))
 
         #expect(store.snapshot == nil)
         #expect(store.errorMessage == "index unreadable")
         #expect(!store.isLoading)
+        #expect(store.uncovered == .none)
     }
 
     @Test("A superseded load never overwrites a newer result")
@@ -53,7 +63,7 @@ struct ArchiveStoreTests {
                 if url.lastPathComponent == "slow" { await gate.wait() }
                 return .stub(totalBytes: url.lastPathComponent == "slow" ? 1 : 2)
             },
-            taskFactory: { _ in [] }
+            taskFactory: { _ in ArchiveTaskSummary(tasks: [], uncovered: .none) }
         )
 
         let slow = Task { await store.load(rootURL: URL(fileURLWithPath: "/tmp/slow")) }
@@ -70,7 +80,10 @@ struct ArchiveStoreTests {
 
     @Test("Setting the same class filter twice does not republish")
     func filterSetterGuardsEqualValues() {
-        let store = ArchiveStore(mapFactory: { _ in .stub(totalBytes: 0) }, taskFactory: { _ in [] })
+        let store = ArchiveStore(
+            mapFactory: { _ in .stub(totalBytes: 0) },
+            taskFactory: { _ in ArchiveTaskSummary(tasks: [], uncovered: .none) }
+        )
         store.selectedClass = .light
         let first = store.filterChangeCount
         store.selectedClass = .light
