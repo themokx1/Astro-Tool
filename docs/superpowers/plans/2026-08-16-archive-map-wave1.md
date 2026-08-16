@@ -2400,3 +2400,107 @@ Expected: minden zöld
 git add Sources/AstroUI/Features/Archive/ArchiveStripView.swift Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings Tests/AstroUITests/V2PolishSurfaceTests.swift
 git commit -m "fix: localize the archive strip's own labels"
 ```
+
+---
+
+## Task 14: A hibaüzenetek mondják meg, mi a baj és mit lehet tenni
+
+**Kiváltó ok (tulajdonosi képernyőkép, 2026-08-16):** a 13. task verifikációs futása közben az app ezt a párbeszédet mutatta:
+
+> **A könyvtár-hozzáférés figyelmet igényel**
+> AstroTool could not read this folder. Choose it again to restore access, or select a different image library. (A művelet végrehajtása sikertelen volt. (AstroCore.AstroError hiba 4.))
+> [Másik könyvtár kiválasztása] [Vissza] [Bezárás]
+
+Az `AstroError` 4-es esete a **`databaseError(String)`**, nem hozzáférési hiba. A kötet fel volt csatolva, az index ép volt. Négy külön defekt egyetlen ablakban:
+
+1. **A tanács nem a hibához szól.** `LibraryWelcomeView.actionableMessage(for:)` egyetlen `if`-et néz (`.notDirectory`), és minden más hibára hozzáférési szöveget ad. Egy adatbázis-hibát a mappa újraválasztása nem javít — a felület olyat kér, ami nem segít.
+2. **Belső típusnév és eset-sorszám a felhasználó szeme előtt.** Az `AstroError` nem `LocalizedError`, ezért a `localizedDescription` a Swift alapértelmezését adja: `AstroCore.AstroError error 4`. Közben a `databaseError(String)` **hordozza** a valódi magyarázatot a saját mezőjében — a kód eldobja.
+3. **`String`-ként tipizált felületi szöveg** (`actionableMessage -> String`) → soha nem fordul. Ezért magyar a cím és angol a törzs. **Ötödik előfordulás ebben a hullámban.**
+4. **Három gomb, egyik sem az, ami kell.** „Choose Another Library" / „Back" / „Close" — az utóbbi kettő megkülönböztethetetlen kimenetű, és **nincs Retry**, pedig maga az üzenet újrapróbálást javasol.
+
+**Files:**
+- Modify: `Sources/AstroCore/Model/Types.swift` (`AstroError: LocalizedError`)
+- Modify: `Sources/AstroUI/Onboarding/LibraryWelcomeView.swift`
+- Modify: `Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings`
+- Test: `Tests/AstroCoreTests/AstroErrorTests.swift` (új), `Tests/AstroUITests/V2HonestSurfacesTests.swift`
+
+- [ ] **Step 1: `AstroError` mondja meg magáról, mi ő**
+
+```swift
+extension AstroError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .accessDenied(let path):
+            "AstroTool is not allowed to read \(path)."
+        case .volumeNotMounted(let path):
+            "The volume holding \(path) is not mounted."
+        case .pathNotFound(let path):
+            "\(path) no longer exists."
+        case .corruptFITS(let path, let reason):
+            "\(path) could not be read as a FITS file: \(reason)"
+        case .databaseError(let detail):
+            "AstroTool's own index could not be read: \(detail)"
+        case .writeForbidden(let path):
+            "Writing to \(path) is not permitted."
+        case .sirilNotFound(let path):
+            "Siril was not found at \(path)."
+        case .invalidInput(let detail):
+            detail
+        }
+    }
+
+    /// What the user can actually do about it -- rendered as the dialog's
+    /// action, so a wrong recovery suggestion becomes a wrong button rather
+    /// than only a wrong sentence.
+    public var recovery: AstroErrorRecovery {
+        switch self {
+        case .accessDenied, .pathNotFound: .rechooseLibrary
+        case .volumeNotMounted: .retry
+        case .databaseError: .retry
+        case .corruptFITS, .writeForbidden, .sirilNotFound, .invalidInput: .none
+        }
+    }
+}
+
+public enum AstroErrorRecovery: Equatable, Sendable {
+    /// Re-picking the folder restores a stale security-scoped bookmark.
+    case rechooseLibrary
+    /// Transient: the volume may appear, the lock may clear.
+    case retry
+    /// Nothing the dialog can offer; the message has to carry it.
+    case none
+}
+```
+
+Teszt: minden eset ad nem-üres `errorDescription`-t, egyik sem tartalmazza az `"AstroError"` szöveget, és a `databaseError` megjelenít**i** a saját mezőjét.
+
+- [ ] **Step 2: A párbeszéd a hibából vezesse le a szövegét ÉS a gombjait**
+
+`actionableMessage(for:)` **törlendő**. Helyette a nézet az `AstroError` `errorDescription`-jét mutassa (a nem-`AstroError` hibákra marad az általános ág), és a gombokat a `recovery`-ből építse:
+
+- `.rechooseLibrary` → elsődleges: `Choose Library Again…`, másodlagos: `Choose a Different Library…`
+- `.retry` → elsődleges: `Try Again`, másodlagos: `Choose a Different Library…`
+- `.none` → csak `Choose a Different Library…`
+
+A `Back` és a `Close` közül **az egyik törlendő** — két gomb, ami ugyanoda vezet, két esélyt ad rosszul dönteni. Maradjon a `Close`.
+
+Minden felirat `LocalizedStringKey`, kézzel felvéve a `hu.lproj` végi csoportba.
+
+- [ ] **Step 3: Kapu**
+
+```swift
+@Test("No error surface shows the user a raw Swift error type or case index")
+func errorSurfacesNeverShowRawSwiftErrors() throws {
+    for file in try filenames(under: "Sources/AstroUI/Onboarding") {
+        let source = try contents("Sources/AstroUI/Onboarding/\(file)")
+        #expect(!source.contains("error.localizedDescription)"),
+                "\(file) interpolates a raw error description into user-facing copy")
+    }
+}
+```
+
+- [ ] **Step 4: Suite + commit**
+
+```bash
+git commit -m "fix: make error dialogs name the real problem and offer a real action"
+```
