@@ -176,6 +176,23 @@ struct ArchiveMapQueryTests {
         #expect(snapshot.isAuditStale)
     }
 
+    @Test("lastVerifyAt is nil when the library has never had a verify run -- the ordinary case")
+    func lastVerifyAtIsNilWithoutAVerifyRun() async throws {
+        let index = try Self.makeIndexDatabase()
+        let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
+        #expect(snapshot.lastVerifyAt == nil)
+    }
+
+    @Test("lastVerifyAt reports the latest verify run's date once one exists")
+    func lastVerifyAtReportsTheLatestVerifyRun() async throws {
+        let index = try Self.makeIndexDatabase()
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("INSERT INTO runs VALUES(4,'verify',4000.0);")
+
+        let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
+        #expect(snapshot.lastVerifyAt == Date(timeIntervalSince1970: 4000))
+    }
+
     @Test("An empty library produces an empty, non-throwing snapshot")
     func emptyLibrary() async throws {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())

@@ -78,6 +78,13 @@ public struct ArchiveMapSnapshot: Equatable, Sendable {
     public let reclaimableFiles: Int
     public let lastScanAt: Date?
     public let lastAuditAt: Date?
+    /// The latest `verify` run's start time, or `nil` when the library has
+    /// never had one -- the ordinary case on a real library. The view needs
+    /// this as a distinct fact, not merely "no corruption card": with no
+    /// verify run there is nothing to derive "nothing is corrupted" from,
+    /// and asserting it anyway would be exactly the unearned "0 issues"
+    /// claim this redesign exists to remove.
+    public let lastVerifyAt: Date?
 
     /// `true` only when BOTH runs exist and the scan is the newer one --
     /// then the reclaim figures describe a library state that has already
@@ -92,7 +99,7 @@ public struct ArchiveMapSnapshot: Equatable, Sendable {
         totalBytes: Int64, fileCount: Int, targetCount: Int, nightCount: Int,
         slices: [ArchiveSlice], rows: [ArchiveTargetRow],
         reclaimableBytes: Int64, reclaimableFiles: Int,
-        lastScanAt: Date?, lastAuditAt: Date?
+        lastScanAt: Date?, lastAuditAt: Date?, lastVerifyAt: Date? = nil
     ) {
         self.totalBytes = totalBytes
         self.fileCount = fileCount
@@ -104,6 +111,7 @@ public struct ArchiveMapSnapshot: Equatable, Sendable {
         self.reclaimableFiles = reclaimableFiles
         self.lastScanAt = lastScanAt
         self.lastAuditAt = lastAuditAt
+        self.lastVerifyAt = lastVerifyAt
     }
 }
 
@@ -167,7 +175,7 @@ public struct ArchiveMapQuery: Sendable {
             reclaimByTarget: reclaim.byTarget
         )
         let slices = Self.aggregateSlices(rows.flatMap(\.slices))
-        let (lastScanAt, lastAuditAt) = try Self.lastRuns(db: db)
+        let (lastScanAt, lastAuditAt, lastVerifyAt) = try Self.lastRuns(db: db)
 
         return ArchiveMapSnapshot(
             totalBytes: rows.reduce(0) { $0 + $1.totalBytes },
@@ -179,7 +187,8 @@ public struct ArchiveMapQuery: Sendable {
             reclaimableBytes: reclaim.totalBytes,
             reclaimableFiles: reclaim.totalFiles,
             lastScanAt: lastScanAt,
-            lastAuditAt: lastAuditAt
+            lastAuditAt: lastAuditAt,
+            lastVerifyAt: lastVerifyAt
         )
     }
 
@@ -268,18 +277,24 @@ public struct ArchiveMapQuery: Sendable {
         return (byTarget, totalFiles, totalBytes)
     }
 
-    private static func lastRuns(db: SQLiteDB) throws -> (scan: Date?, audit: Date?) {
-        guard try tableExists(db, name: "runs") else { return (nil, nil) }
+    private static func lastRuns(db: SQLiteDB) throws -> (scan: Date?, audit: Date?, verify: Date?) {
+        guard try tableExists(db, name: "runs") else { return (nil, nil, nil) }
         var scan: Date?
         var audit: Date?
+        var verify: Date?
         try db.query(
-            "SELECT kind, MAX(started_at) FROM runs WHERE kind IN ('scan','audit') GROUP BY kind;"
+            "SELECT kind, MAX(started_at) FROM runs WHERE kind IN ('scan','audit','verify') GROUP BY kind;"
         ) { row in
             guard let seconds = row.double(1) else { return }
             let date = Date(timeIntervalSince1970: seconds)
-            if row.string(0) == "scan" { scan = date } else { audit = date }
+            switch row.string(0) {
+            case "scan": scan = date
+            case "audit": audit = date
+            case "verify": verify = date
+            default: break
+            }
         }
-        return (scan, audit)
+        return (scan, audit, verify)
     }
 
     private static func tableExists(_ db: SQLiteDB, name: String) throws -> Bool {
