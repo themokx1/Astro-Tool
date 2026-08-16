@@ -127,7 +127,7 @@ public struct NightNoteSheet: View {
 
     private func conflictRow(key: String, conflict: NoteConflicts.Conflict) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(AstroTokens.Color.attention)
             Text("Differs from README: \(conflict.readmeValue)").foregroundStyle(.secondary)
             Button("Use README Value") { store.setValue(conflict.readmeValue, for: key) }
                 .buttonStyle(.link)

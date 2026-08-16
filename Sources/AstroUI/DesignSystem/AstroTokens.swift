@@ -96,9 +96,13 @@ public enum AstroTokens {
         // / "needs attention" / "this failed", so the same status could read
         // as a different color from one screen to the next. These three are
         // the single definition every status use should read from now on --
-        // `V2PolishSurfaceTests.noBareStatusColorLiterals` gates against a
-        // bare `.green`/`.orange`/`.red`/`.purple` creeping back into
-        // `Features/` or `Settings/`.
+        // `V2PolishSurfaceTests.noInlineColorsInFeatureViews` gates against
+        // ANY bare SwiftUI color name (not just the four S9 happened to
+        // find) creeping back into `Features/` or `Settings/`. Wave 2 Task
+        // 2c: the original gate only named `green`/`orange`/`red`/`purple`,
+        // so `.yellow`/`.blue`/`.gray`/`.white` sat invisible in the tree --
+        // the merged gate states the SwiftUI color vocabulary itself now,
+        // not a sample of it.
         /// Rendben / a healthy/successful/positive state -- "no action
         /// needed", "writable", "OK", "linked". Desaturated, OIII-derived --
         /// deliberately not a plain system green.

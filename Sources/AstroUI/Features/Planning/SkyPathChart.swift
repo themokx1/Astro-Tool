@@ -27,7 +27,7 @@ struct SkyPathChart: View {
                     }
                 if let culminationTime = result.culminationTime {
                     PointMark(x: .value("Time", culminationTime), y: .value("Altitude", result.maxAltitudeDeg))
-                        .foregroundStyle(.yellow)
+                        .foregroundStyle(AstroTokens.Color.accent)
                         .symbolSize(90)
                         .annotation(position: .top) {
                             Text("Culm. \(result.maxAltitudeDeg, format: .number.precision(.fractionLength(0)))°")

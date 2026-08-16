@@ -480,7 +480,7 @@ private struct QualityDistribution: View {
             GeometryReader { geometry in
                 HStack(spacing: 2) {
                     segment(count: snapshot.acceptedCount, totalWidth: geometry.size.width, color: AstroTokens.Color.ok)
-                    segment(count: snapshot.undecidedCount, totalWidth: geometry.size.width, color: .gray)
+                    segment(count: snapshot.undecidedCount, totalWidth: geometry.size.width, color: AstroTokens.Color.dataUnclassified)
                     segment(count: snapshot.rejectedCount, totalWidth: geometry.size.width, color: AstroTokens.Color.critical)
                 }
             }
@@ -493,8 +493,15 @@ private struct QualityDistribution: View {
     }
 
     private func segment(count: Int, totalWidth: Double, color: Color) -> some View {
+        // When there are zero decisions yet, render one full-width bar in
+        // the "undecided" (`dataUnclassified`) color as the empty-state
+        // placeholder rather than three zero-width bars -- the comparison
+        // below identifies that segment by its token, the same
+        // `AstroTokens.Color.dataUnclassified` static value passed at the
+        // call site above, so it still recognizes it after the literal
+        // `.gray` this used to compare against became a token.
         color.frame(width: snapshot.decisions.isEmpty
-            ? (color == .gray ? totalWidth : 0)
+            ? (color == AstroTokens.Color.dataUnclassified ? totalWidth : 0)
             : totalWidth * Double(count) / Double(snapshot.decisions.count))
     }
 }
@@ -529,17 +536,19 @@ private struct ReviewFrameRow: Identifiable {
 }
 
 /// A small color dot showing where a frame's score falls within this
-/// library's own score distribution -- green/yellow/orange for
-/// best/middle/worst third (`PercentileBand`), gray with no color judgment
-/// at all for a low sample. Renders nothing when `result` is `nil` (the
-/// frame has no score to rank, e.g. never rated).
+/// library's own score distribution -- `ok`/muted/`attention` for
+/// best/middle/worst third (`PercentileBand`), `dataUnclassified` (the
+/// palette's own "the app knows nothing about it" gray) for a low sample,
+/// since a low sample means there isn't enough data to rank the frame at
+/// all, not that the frame itself scored badly. Renders nothing when
+/// `result` is `nil` (the frame has no score to rank, e.g. never rated).
 private struct PercentileDot: View {
     let result: LibraryPercentileResult?
 
     var body: some View {
         if let result {
             Circle()
-                .fill(result.isLowSample ? Color.gray : Self.color(for: result.band))
+                .fill(result.isLowSample ? AstroTokens.Color.dataUnclassified : Self.color(for: result.band))
                 .frame(width: 7, height: 7)
                 .help(Self.tooltipText(result))
         }
@@ -548,7 +557,14 @@ private struct PercentileDot: View {
     private static func color(for band: PercentileBand) -> Color {
         switch band {
         case .best: AstroTokens.Color.ok
-        case .middle: .yellow
+        // The middle third isn't a status worth signaling -- it's an
+        // unremarkable, average frame. `ok`/`attention` are reserved for
+        // the two thirds that ARE worth a color opinion (best, worst);
+        // `.secondary` (a semantic system role that adapts with
+        // appearance, not a specific hue -- see this gate's own doc
+        // comment) says "no particular status" instead of inventing a
+        // third arbitrary hue the way the old raw `.yellow` did.
+        case .middle: .secondary
         case .worst: AstroTokens.Color.attention
         }
     }

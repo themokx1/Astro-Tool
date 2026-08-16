@@ -92,7 +92,7 @@ struct V2PolishSurfaceTests {
         }
     }
 
-    // MARK: (c) No hardcoded colors under Features/ or Settings/.
+    // MARK: (c) No inline colors under Features/ or Settings/ (Wave 2 Task 2c).
 
     // Wave 2 Task 2: the former single allowed exception, `ArchivePalette.swift`
     // (the palette definition itself, which could contain hex literals), was
@@ -101,61 +101,111 @@ struct V2PolishSurfaceTests {
     // scanned directory needs an exemption anymore.
     private static let colorLiteralExemptFiles: Set<String> = []
 
-    @Test("No file under Features/ or Settings/ hardcodes a color literal")
-    func noHardcodedColorLiterals() throws {
+    /// One narrowly-scoped, justified exception: `ConversionWorkspace.swift`'s
+    /// step-rail badge fills its `Circle` with `Color.accentColor` when a
+    /// step is current -- the OS-level system accent (Blue/Purple/Pink/Red/
+    /// Orange/Yellow/Green/Graphite/Multicolor, whatever the user picked in
+    /// System Settings), NOT this app's own `AstroTokens.Color.accent` teal;
+    /// there is no `Assets.xcassets` in this project overriding it. `.white`
+    /// on top is the platform's own convention for a badge on a filled
+    /// accent shape (macOS's own segmented controls and notification badges
+    /// do the same regardless of the user's accent choice) -- `.primary`
+    /// would flip to near-black in light mode, which is a worse, not
+    /// better, contrast pair against several accent colors (yellow, orange)
+    /// and would make this the only badge in the OS that doesn't follow the
+    /// platform convention. Kept as literal `.white` on purpose; matched by
+    /// exact source substring so nothing else on this line class can hide
+    /// behind it.
+    private static let inlineColorExemptions: [(file: String, substring: String)] = [
+        ("ConversionWorkspace.swift", "isCurrent ? .white : .primary"),
+    ]
+
+    /// Every built-in SwiftUI `Color` static member that names a specific
+    /// color (Apple's complete list: black/white/gray/grey/red/orange/
+    /// yellow/green/mint/teal/cyan/blue/indigo/purple/pink/brown), plus the
+    /// three semantic system ROLES (`clear`/`primary`/`secondary`).
+    ///
+    /// This gate replaces two earlier ones that each named a subset instead
+    /// of stating the rule: `noHardcodedColorLiterals` matched only
+    /// numeric literals (`Color(red:`, `Color(#colorLiteral`), and
+    /// `noBareStatusColorLiterals` matched exactly four names (`green`,
+    /// `orange`, `red`, `purple`) chosen because they were the ones a 2026
+    /// -08-14 audit happened to find. SwiftUI ships far more named colors
+    /// than that, so `.yellow`, `.blue`, `.gray`, and `.white` sat in the
+    /// tree completely invisible to both gates -- nine sites across seven
+    /// files (Wave 2 Task 2c). Listing the SwiftUI vocabulary itself, not a
+    /// sample of it, is what makes a color invisible to this gate
+    /// structurally impossible rather than merely unlikely.
+    ///
+    /// `.primary`/`.secondary`/`.clear` are deliberately EXCLUDED from the
+    /// banned set even though they appear in the full vocabulary above: they
+    /// are semantic system roles that adapt with the platform's own
+    /// appearance and accessibility settings (Increase Contrast, Dark Mode,
+    /// tinted backgrounds), not a specific hue standing in for one of this
+    /// app's own meanings the way `.yellow` or `.blue` would be. Banning
+    /// them would just push call sites toward inventing their own literal
+    /// gray/black substitutes -- the opposite of this gate's purpose. A
+    /// future reader should not "complete" this list by adding them back.
+    private static let allSwiftUIColorNames =
+        "black|white|gray|grey|red|orange|yellow|green|mint|teal|cyan|blue|indigo|purple|pink|brown|clear|primary|secondary"
+    private static let allowedColorRoles: Set<String> = ["clear", "primary", "secondary"]
+
+    @Test("No file under Features/ or Settings/ uses an inline SwiftUI color literal -- use AstroTokens.Color instead")
+    func noInlineColorsInFeatureViews() throws {
         let root = repositoryRoot.appendingPathComponent("Sources/AstroUI")
         let directories = ["Features", "Settings"]
-        var offenders: [String] = []
-        for directory in directories {
-            let base = root.appendingPathComponent(directory)
-            guard let enumerator = FileManager.default.enumerator(at: base, includingPropertiesForKeys: nil) else { continue }
-            for case let url as URL in enumerator where url.pathExtension == "swift" {
-                if Self.colorLiteralExemptFiles.contains(url.lastPathComponent) { continue }
-                guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-                if text.contains("Color(red:") || text.contains("Color(#colorLiteral") {
-                    offenders.append(url.lastPathComponent)
-                }
-            }
-        }
-        #expect(offenders.isEmpty, "Hardcoded color literals in: \(offenders.joined(separator: ", "))")
-    }
-
-    // MARK: (c2) No bare status colors under Features/ or Settings/ (S9).
-
-    @Test("No file under Features/ or Settings/ hardcodes a bare status color -- use AstroTokens.Color instead")
-    func noBareStatusColorLiterals() throws {
-        // V2 UI/UX audit (2026-08-14) systemic pattern S9: `AstroTokens`
-        // now has `success`/`warning`/`danger` tokens specifically so status
-        // meaning (healthy/needs-attention/failed) reads consistently across
-        // every screen -- this gate keeps a bare `.green`/`.orange`/`.red`/
-        // `.purple` (or the explicit `Color.` spelling of the same) from
-        // creeping back in.
-        //
-        // Wave 2 Task 2b: this used to permanently exempt
-        // `Features/Planning/PlanningView.swift` and
-        // `Features/Planning/SkyPathChart.swift`, reasoning that Planning
-        // was "under a separate, currently-frozen read-only audit and was
-        // not part of this sweep." That audit closed 2026-08-15 (the
-        // Planning workbench wave shipped) -- the reason expired, so the
-        // exemption is gone too. Both sites it was hiding are fixed.
-        let root = repositoryRoot.appendingPathComponent("Sources/AstroUI")
-        let directories = ["Features", "Settings"]
-        let bareColorPattern = try NSRegularExpression(
-            pattern: #"(?<![A-Za-z0-9_])\.(green|orange|red|purple)(?![A-Za-z0-9_])|\bColor\.(green|orange|red|purple)\b"#
+        // Two traps: (1) a bare identifier check must not match a color name
+        // that is only a PREFIX of a longer identifier (`.redacted`,
+        // `.grayscale`, `.blueprint`, `.greenwich`) -- the trailing
+        // negative lookahead below requires a non-identifier character (or
+        // end of line) right after the color name. (2) a doc comment that
+        // names a color (e.g. explaining what it used to be) must not fail
+        // its own gate -- comments are stripped before scanning, the same
+        // way `archiveSurfacesUseHumanWords` above strips them.
+        let namedColorPattern = try NSRegularExpression(
+            pattern: #"(?<![A-Za-z0-9_])\.(\#(Self.allSwiftUIColorNames))(?![A-Za-z0-9_])|\bColor\.(\#(Self.allSwiftUIColorNames))\b"#
         )
         var offenders: [String] = []
         for directory in directories {
             let base = root.appendingPathComponent(directory)
             guard let enumerator = FileManager.default.enumerator(at: base, includingPropertiesForKeys: nil) else { continue }
             for case let url as URL in enumerator where url.pathExtension == "swift" {
-                guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-                let range = NSRange(text.startIndex..., in: text)
-                if bareColorPattern.firstMatch(in: text, range: range) != nil {
-                    offenders.append(url.lastPathComponent)
+                if Self.colorLiteralExemptFiles.contains(url.lastPathComponent) { continue }
+                guard let rawText = try? String(contentsOf: url, encoding: .utf8) else { continue }
+                let text = Self.removingLineComments(rawText)
+                let exemptSubstrings = Self.inlineColorExemptions
+                    .filter { $0.file == url.lastPathComponent }
+                    .map(\.substring)
+
+                var fileOffenders: Set<String> = []
+                for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+                    if exemptSubstrings.contains(where: { line.contains($0) }) { continue }
+
+                    if line.contains("Color(red:") || line.contains("Color(#colorLiteral") {
+                        fileOffenders.insert("Color(red:/#colorLiteral")
+                        continue
+                    }
+
+                    let lineString = String(line)
+                    let range = NSRange(lineString.startIndex..., in: lineString)
+                    namedColorPattern.enumerateMatches(in: lineString, range: range) { match, _, _ in
+                        guard let match else { return }
+                        // Group 1 is the bare `.name` form, group 2 the
+                        // qualified `Color.name` form -- exactly one fires.
+                        let name = (1...2).lazy.compactMap { index -> String? in
+                            guard let r = Range(match.range(at: index), in: lineString) else { return nil }
+                            return String(lineString[r])
+                        }.first
+                        guard let name, !Self.allowedColorRoles.contains(name) else { return }
+                        fileOffenders.insert(name)
+                    }
+                }
+                if !fileOffenders.isEmpty {
+                    offenders.append("\(url.lastPathComponent): .\(fileOffenders.sorted().joined(separator: ", ."))")
                 }
             }
         }
-        #expect(offenders.isEmpty, "Bare status color literals in: \(offenders.joined(separator: ", "))")
+        #expect(offenders.isEmpty, "Inline SwiftUI color literals in: \(offenders.joined(separator: "; "))")
     }
 
     // MARK: (d) Primary toolbar buttons carry `.help(` tooltips.

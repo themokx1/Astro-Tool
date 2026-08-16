@@ -23,7 +23,7 @@ public struct SensorProfilesView: View {
     public var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
-                Image(systemName: "sensor").font(.title2).foregroundStyle(.blue)
+                Image(systemName: "sensor").font(.title2).foregroundStyle(AstroTokens.Color.accent)
                 VStack(alignment: .leading) {
                     Text("Sensor Profiles").font(.title2.bold())
                     Text("Measured camera behavior from the local index.").foregroundStyle(.secondary)
@@ -139,9 +139,9 @@ public struct SensorProfilesView: View {
             Text("Read noise history").font(.caption2).foregroundStyle(.secondary)
             Chart(history) { point in
                 LineMark(x: .value("Measured", point.measuredAt), y: .value("Read noise e⁻", point.readNoiseElectrons ?? 0))
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(AstroTokens.Color.accent)
                 PointMark(x: .value("Measured", point.measuredAt), y: .value("Read noise e⁻", point.readNoiseElectrons ?? 0))
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(AstroTokens.Color.accent)
             }
             .chartXAxis(.hidden)
             .chartYAxis(.hidden)

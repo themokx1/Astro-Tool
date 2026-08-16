@@ -572,7 +572,7 @@ public struct ConversionWorkspace: View {
             systemImage: receipt.status == .applied ? "checkmark.circle.fill" : "arrow.uturn.backward.circle.fill"
         )
         .font(.headline)
-        .foregroundStyle(receipt.status == .applied ? AstroTokens.Color.ok : Color.blue)
+        .foregroundStyle(receipt.status == .applied ? AstroTokens.Color.ok : AstroTokens.Color.accent)
         Text("Receipt: \(receipt.id) · \(receipt.moves.count) file move(s)")
             .font(.caption.monospaced()).foregroundStyle(.secondary)
         HStack {

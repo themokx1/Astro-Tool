@@ -216,7 +216,7 @@ public struct FrameBlinkReview: View {
 
     private var preview: some View {
         ZStack {
-            Rectangle().fill(Color.gray.opacity(0.08))
+            Rectangle().fill(AstroTokens.Color.edge.opacity(0.08))
             if let image {
                 Image(nsImage: image)
                     .resizable()

@@ -304,7 +304,7 @@ public struct InsightsView: View {
         GroupBox("Capture activity") {
             Chart(insight.months) { month in
                 BarMark(x: .value("Month", month.month), y: .value("Hours", month.integrationSeconds / 3600))
-                    .foregroundStyle(.blue.gradient)
+                    .foregroundStyle(AstroTokens.Color.accent.gradient)
                     .cornerRadius(4)
             }
             .chartYAxisLabel("Integration hours")
