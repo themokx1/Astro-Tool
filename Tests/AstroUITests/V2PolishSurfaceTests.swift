@@ -642,4 +642,80 @@ struct V2PolishSurfaceTests {
         }
         #expect(offenders.isEmpty, "Fixed-size Text without monospacedDigit() in: \(offenders.joined(separator: ", "))")
     }
+
+    // MARK: (k) Wave 2 Task 4 -- one format per unit.
+
+    /// One file, one narrowly-scoped exemption: `SiteSettingsStore.swift`'s
+    /// `latitudeText`/`longitudeText` are an EDITABLE draft that round-trips
+    /// through `Double(_:)` on save (`SiteSettingsStore.swift`'s own
+    /// `save()`), which requires a `.` decimal separator regardless of the
+    /// user's locale. `AstroFormat.degrees` is deliberately locale-aware (a
+    /// Hungarian system renders a comma), so routing this site through it
+    /// would make `Double("47,4979")` fail to parse on any non-English
+    /// system -- a real regression, not a style nit. This is a read/parse
+    /// constraint on a specific field, not a blanket exemption for the
+    /// file's directory or module.
+    /// `NightsStore.swift`'s `NightRow.integrationSummary` is a SECOND,
+    /// narrower exemption, for a reason that has nothing to do with style:
+    /// routing it through `AstroFormat.duration(seconds:)` -- functionally
+    /// identical to its own inline `%d:%02d` -- makes
+    /// `GlobalSearchStoreTests.searchesAcrossWorkflowObjects` crash the
+    /// whole test process (`freed pointer was not the last allocation`,
+    /// SIGABRT), reproducibly, on a clean build. Isolated with a
+    /// synchronous unit test that constructs a `NightRow` directly and
+    /// reads `integrationSummary` with no async/`MetadataStore` involved at
+    /// all: that path returns the correct `"12:40 h"` and never crashes,
+    /// which is why this is not a bug in `AstroFormat.duration` or in
+    /// `integrationSummary`'s own logic -- both are correct in isolation.
+    /// The crash is specific to this one file's compiled shape interacting
+    /// with that one async test's `MetadataStore`/SQLite-backed setup;
+    /// several functionally-equivalent rewrites of `integrationSummary`
+    /// (string interpolation instead of `String(format:)`, a same-file
+    /// helper instead of a cross-file one, wrapping the call in another
+    /// layer of interpolation) all still crashed, and only reverting to the
+    /// exact original inline `String(format:)` made it go away -- which is
+    /// why this reads as a pre-existing, layout-sensitive memory-safety
+    /// issue elsewhere (most likely in the persistence layer or the async
+    /// test harness) that this specific edit happens to tickle, not
+    /// something a different formatting call fixes. Flagged for dedicated
+    /// investigation separately; until that lands, this ONE property keeps
+    /// its own inline copy rather than sharing `AstroFormat.duration`.
+    private static let handRolledFormattingExemptFiles: Set<String> = [
+        "SiteSettingsStore.swift",
+        "NightsStore.swift",
+    ]
+
+    /// Rule (spec 5.2, `P2` pattern): a second format for a unit that
+    /// already has one is a second truth -- two screens can disagree about
+    /// the same number and neither is "wrong". Scoped to `Sources/AstroUI`
+    /// as a whole, excluding `DesignSystem/` (where `AstroFormat.swift`
+    /// itself legitimately builds format strings) and `PreviewSupport/`
+    /// (`V2PreviewFixtures.swift` uses `String(format: "%012d", ...)` to
+    /// synthesize a UUID string for canned preview data -- a key, not a
+    /// displayed value).
+    ///
+    /// What this does NOT catch:
+    /// - `Sources/AstroApplication` or any other target/module -- a
+    ///   hand-rolled format in the data layer, if one existed, would not be
+    ///   caught here.
+    /// - a unit that is ALREADY formatted through some means other than
+    ///   `String(format:)` and duplicated that way (e.g. the eleven direct
+    ///   `ByteCountFormatter.string(fromByteCount:countStyle:)` call sites
+    ///   across `Archive/`, `Library/`, and `Search/` predate `AstroFormat`
+    ///   and were out of this task's stated scope -- the system's own
+    ///   formatter can't drift the way a hand-rolled `%d:%02d` can, but
+    ///   routing them through `AstroFormat.bytes` for a single call site
+    ///   is a reasonable follow-up, not covered by this gate).
+    @Test("No file under Sources/AstroUI (outside DesignSystem/ and PreviewSupport/) formats a value by hand")
+    func noHandRolledFormatting() throws {
+        var offenders: [String] = []
+        for file in try swiftFiles(under: "Sources/AstroUI") {
+            if file.contains("/DesignSystem/") || file.contains("/PreviewSupport/") { continue }
+            let filename = (file as NSString).lastPathComponent
+            if Self.handRolledFormattingExemptFiles.contains(filename) { continue }
+            let source = Self.removingLineComments(try contents(file))
+            if source.contains("String(format:") { offenders.append(file) }
+        }
+        #expect(offenders.isEmpty, "use AstroFormat instead -- a second format for the same unit is a second truth: \(offenders.joined(separator: ", "))")
+    }
 }

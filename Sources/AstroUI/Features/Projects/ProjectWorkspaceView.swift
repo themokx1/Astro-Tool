@@ -118,7 +118,7 @@ public struct ProjectWorkspaceView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(snapshot.project.displayName).font(.title2.weight(.semibold))
-            Text("\(duration(snapshot.integrationSeconds)) usable · \(snapshot.nights.count) nights · \(snapshot.series.count) series")
+            Text("\(AstroFormat.duration(seconds: snapshot.integrationSeconds)) usable · \(snapshot.nights.count) nights · \(snapshot.series.count) series")
                 .font(.callout).foregroundStyle(.secondary)
         }
         .padding(AstroTokens.Spacing.spacious)
@@ -230,7 +230,7 @@ public struct ProjectWorkspaceView: View {
         case .overview:
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
                 HStack(spacing: AstroTokens.Spacing.standard) {
-                    MetricCard(title: "Integration", value: duration(snapshot.integrationSeconds), detail: "Usable exposure", systemImage: "timer")
+                    MetricCard(title: "Integration", value: AstroFormat.duration(seconds: snapshot.integrationSeconds), detail: "Usable exposure", systemImage: "timer")
                     MetricCard(title: "Frames", value: "\(snapshot.usableFrames)", detail: "\(snapshot.totalFrames - snapshot.usableFrames) excluded", systemImage: "photo.stack")
                     MetricCard(title: "Latest night", value: snapshot.nights.first?.night.localDate ?? "—", detail: LocalizedStringKey(snapshot.canonicalFolderName), systemImage: "moon.stars")
                 }
@@ -292,11 +292,6 @@ public struct ProjectWorkspaceView: View {
             }
         }
     }
-
-    private func duration(_ seconds: Double) -> String {
-        let minutes = Int(seconds.rounded()) / 60
-        return String(format: "%d:%02d", minutes / 60, minutes % 60)
-    }
 }
 
 private struct ProjectNightsSummary: View {
@@ -326,7 +321,7 @@ private struct ProjectNightsSummary: View {
             TableColumn("Night", value: \ProjectNightSnapshot.night.localDate) { Text($0.night.localDate).monospacedDigit() }
             TableColumn("Series", value: \ProjectNightSnapshot.series.count) { Text($0.series.count.formatted()).monospacedDigit() }
             TableColumn("Usable", value: \ProjectNightSnapshot.usableFrames) { Text($0.usableFrames.formatted()).monospacedDigit() }
-            TableColumn("Integration", value: \ProjectNightSnapshot.integrationSeconds) { Text(duration($0.integrationSeconds)).monospacedDigit() }
+            TableColumn("Integration", value: \ProjectNightSnapshot.integrationSeconds) { Text(AstroFormat.duration(seconds: $0.integrationSeconds)).monospacedDigit() }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: sortOrder) { _, _ in recomputeSortedNights() }
@@ -360,10 +355,6 @@ private struct ProjectNightsSummary: View {
                 )
             }
         }
-    }
-    private func duration(_ seconds: Double) -> String {
-        let minutes = Int(seconds.rounded()) / 60
-        return String(format: "%d:%02d", minutes / 60, minutes % 60)
     }
 
     private func recomputeSortedNights() {

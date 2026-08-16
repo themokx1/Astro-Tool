@@ -69,7 +69,7 @@ public struct SeriesWorkspaceView: View {
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
                 HStack(spacing: AstroTokens.Spacing.standard) {
                     MetricCard(title: "Usable", value: item.usableFrames.formatted(), detail: "\(item.excludedFrames) excluded", systemImage: "photo.stack")
-                    MetricCard(title: "Integration", value: duration(item.integrationSeconds), detail: "\(item.totalFrames) total frames", systemImage: "timer")
+                    MetricCard(title: "Integration", value: AstroFormat.duration(seconds: item.integrationSeconds), detail: "\(item.totalFrames) total frames", systemImage: "timer")
                     MetricCard(title: "Exposure", value: exposure, detail: LocalizedStringKey(item.series.binning), systemImage: "camera.shutter.button")
                 }
                 GroupBox("Capture settings") {
@@ -112,9 +112,5 @@ public struct SeriesWorkspaceView: View {
     private var gainOffset: String {
         let values = [item.series.gain.map { String($0) }, item.series.offset.map { String($0) }].compactMap { $0 }
         return values.isEmpty ? "—" : values.joined(separator: " / ")
-    }
-    private func duration(_ seconds: Double) -> String {
-        let minutes = Int(seconds.rounded()) / 60
-        return String(format: "%d:%02d", minutes / 60, minutes % 60)
     }
 }

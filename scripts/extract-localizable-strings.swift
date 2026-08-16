@@ -251,8 +251,15 @@ let knownIntegerIdentifiers: Set<String> = ["index", "count", "number"]
 
 // MARK: - Interpolation placeholder inference
 
+// Wave 2 Task 4: widened to also match a NAMESPACED callee
+// (`AstroFormat.duration(seconds: x)`), not just a bare one
+// (`duration(x)`) -- `AstroFormat`'s formatters are always called
+// qualified and always use argument labels, both of which the original
+// bare-identifier-only pattern rejected outright, silently falling through
+// to the trailing-identifier heuristic below and misreading a labeled
+// `Double` argument (`seconds:`) as if it were the whole expression's type.
 let wholeExpressionIsACallPattern = try! NSRegularExpression(
-    pattern: #"^[A-Za-z_][A-Za-z0-9_]*\(.*\)$"#
+    pattern: #"^[A-Za-z_][A-Za-z0-9_.]*\(.*\)$"#
 )
 
 func inferPlaceholder(
@@ -268,14 +275,22 @@ func inferPlaceholder(
     if expr.range(of: #"^-?\d+$"#, options: .regularExpression) != nil { return "%lld" }
     if expr.range(of: #"^-?\d+\.\d+$"#, options: .regularExpression) != nil { return "%lf" }
 
-    // A bare top-level call like "duration(snapshot.integrationSeconds)" must
-    // be classified by what `duration` RETURNS, not by digging into its
+    // A bare top-level call like "duration(snapshot.integrationSeconds)" OR
+    // a namespaced one like "AstroFormat.duration(seconds: x)" must be
+    // classified by what the callee RETURNS, not by digging into its
     // argument -- otherwise an argument like `integrationSeconds: Double`
-    // leaks through as if the whole expression were a Double.
+    // (or the `seconds:` label itself) leaks through as if the whole
+    // expression were a Double. The lookup key is the callee's OWN name
+    // (the last dot-separated component), matching how
+    // `buildFunctionReturnTypeIndex` indexes a `func` declaration by its
+    // bare name regardless of which type it's nested in -- `AstroFormat`
+    // has exactly one `duration`/`bytes`/`count`/`degrees`/`coefficient` in
+    // all of `Sources/`, so this stays unambiguous.
     let fullRange = NSRange(expr.startIndex..<expr.endIndex, in: expr)
     if wholeExpressionIsACallPattern.firstMatch(in: expr, range: fullRange) != nil,
        let openParen = expr.firstIndex(of: "(") {
-        let calleeName = String(expr[expr.startIndex..<openParen])
+        let qualifiedCallee = String(expr[expr.startIndex..<openParen])
+        let calleeName = qualifiedCallee.split(separator: ".").last.map(String.init) ?? qualifiedCallee
         if let category = functionReturnTypeIndex[calleeName] { return category.rawValue }
         // An unrecognized callee (defined outside Sources/, or a SwiftUI/
         // Foundation API we didn't index) still isn't a bare property --

@@ -59,7 +59,7 @@ public struct HomeView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(project.displayName).font(.headline)
                             Text(project.phase == .collecting
-                                ? "Least collected active project · \(duration(store.snapshot.nextProjectIntegrationSeconds)) so far."
+                                ? "Least collected active project · \(AstroFormat.duration(seconds: store.snapshot.nextProjectIntegrationSeconds)) so far."
                                 : "Open the project and plan its first capture series.")
                                 .font(.callout).foregroundStyle(.secondary)
                         }
@@ -171,11 +171,6 @@ public struct HomeView: View {
         .init(title: "Max altitude", explanation: "The target's highest point above the horizon tonight. A higher altitude means a shorter, clearer path through the atmosphere.", glossaryTerm: "Airmass"),
         .init(title: "Verdict", explanation: "A short, honest summary of tonight's visibility for this target, combining its visible window and altitude."),
     ]
-
-    private func duration(_ seconds: Double) -> String {
-        let minutes = Int(seconds.rounded()) / 60
-        return String(format: "%d:%02d", minutes / 60, minutes % 60)
-    }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {

@@ -185,7 +185,7 @@ private struct ProjectInspectorPanel: View {
                 LabeledContent("Phase") { Text(snapshot.project.phase.displayLabel) }
             }
             Section("Progress") {
-                LabeledContent("Integration", value: duration(snapshot.integrationSeconds))
+                LabeledContent("Integration", value: AstroFormat.duration(seconds: snapshot.integrationSeconds))
                 if let goalHours = annotation?.integrationGoalHours, goalHours > 0 {
                     LabeledContent("Goal", value: "\(goalHours.formatted(.number.precision(.fractionLength(0...1)))) h")
                     ProgressView(value: min(1, (snapshot.integrationSeconds / 3600) / goalHours))
@@ -222,11 +222,6 @@ private struct ProjectInspectorPanel: View {
     private func revealLatestNightFolder() {
         guard let url = latestNightURL else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
-    private func duration(_ seconds: Double) -> String {
-        let minutes = Int(seconds.rounded()) / 60
-        return String(format: "%d:%02d", minutes / 60, minutes % 60)
     }
 }
 
@@ -302,7 +297,7 @@ private struct SeriesSummaryPanel: View {
             Section("Frames") {
                 LabeledContent("Usable", value: "\(item.usableFrames)")
                 LabeledContent("Excluded", value: "\(item.excludedFrames)")
-                LabeledContent("Integration", value: duration(item.integrationSeconds))
+                LabeledContent("Integration", value: AstroFormat.duration(seconds: item.integrationSeconds))
             }
         }
         .formStyle(.grouped)
@@ -315,11 +310,6 @@ private struct SeriesSummaryPanel: View {
 
     private var passband: String {
         item.series.passband.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
-    }
-
-    private func duration(_ seconds: Double) -> String {
-        let minutes = Int(seconds.rounded()) / 60
-        return String(format: "%d:%02d", minutes / 60, minutes % 60)
     }
 }
 

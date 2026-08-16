@@ -152,8 +152,8 @@ public struct SensorProfilesView: View {
     }
 
     private func comboText(camera: String, gain: Double?, offset: Double?) -> String {
-        let gainText = gain.map { String(format: "%g", $0) } ?? "—"
-        let offsetText = offset.map { String(format: "%g", $0) } ?? "—"
+        let gainText = gain.map { AstroFormat.coefficient($0) } ?? "—"
+        let offsetText = offset.map { AstroFormat.coefficient($0) } ?? "—"
         return "\(camera) · gain \(gainText) · offset \(offsetText)"
     }
 

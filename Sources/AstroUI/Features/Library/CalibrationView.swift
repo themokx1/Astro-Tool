@@ -148,7 +148,7 @@ public struct CalibrationView: View {
         GroupBox("Session coverage") {
             Table(sortedCoverageRows, selection: $selectedCoverageID, sortOrder: $coverageSortOrder) {
                 TableColumn("Combo", value: \CalibrationCoverageRow.tempSortKey) { row in
-                    Text("\(formattedNumber(row.need.exposureSeconds)) s / \(row.need.tempC.map { formattedNumber($0) + " °C" } ?? "—")")
+                    Text("\(AstroFormat.coefficient(row.need.exposureSeconds)) s / \(row.need.tempC.map { AstroFormat.coefficient($0) + " °C" } ?? "—")")
                         .font(.callout.monospaced())
                 }
                 TableColumn("Lights", value: \CalibrationCoverageRow.need.lightCount) { row in Text("\(row.need.lightCount)") }
@@ -189,7 +189,7 @@ public struct CalibrationView: View {
                     Text(master.path).font(.callout.monospaced()).lineLimit(1)
                 }
                 TableColumn("Temp °C", value: \CalibrationMasterInfo.temperatureSortKey) { master in
-                    Text(master.temperatureCelsius.map { formattedNumber($0) } ?? "—")
+                    Text(master.temperatureCelsius.map { AstroFormat.coefficient($0) } ?? "—")
                 }
                 .width(min: 70, ideal: 90)
                 TableColumn("Age (days)", value: \CalibrationMasterInfo.ageDaysSortKey) { master in
@@ -314,9 +314,5 @@ public struct CalibrationView: View {
     private func revealMaster(_ master: CalibrationMasterInfo, rootURL: URL) {
         guard let url = masterURL(for: master, rootURL: rootURL) else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
-    private func formattedNumber(_ value: Double) -> String {
-        String(format: "%g", value)
     }
 }

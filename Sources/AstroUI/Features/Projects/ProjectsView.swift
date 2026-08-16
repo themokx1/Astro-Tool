@@ -97,7 +97,7 @@ public struct ProjectsView: View {
                         .width(60)
                     TableColumn("Series", value: \ProjectWorkspaceRow.seriesCount) { row in Text(row.seriesCount.formatted()).monospacedDigit() }
                         .width(58)
-                    TableColumn("Integration", value: \ProjectWorkspaceRow.integrationSeconds) { row in Text(duration(row.integrationSeconds)).monospacedDigit() }
+                    TableColumn("Integration", value: \ProjectWorkspaceRow.integrationSeconds) { row in Text(AstroFormat.duration(seconds: row.integrationSeconds)).monospacedDigit() }
                         .width(85)
                     TableColumn("Frames", value: \ProjectWorkspaceRow.usableFrames) { row in
                         Text("\(row.usableFrames) / \(row.excludedFrames)").monospacedDigit()
@@ -112,7 +112,7 @@ public struct ProjectsView: View {
                                 Text(progress, format: .percent.precision(.fractionLength(0)))
                                     .monospacedDigit().font(.caption)
                             }
-                            .help("\(duration(row.integrationSeconds)) of \((row.goalHours ?? 0).formatted(.number.precision(.fractionLength(0...1)))) h goal")
+                            .help("\(AstroFormat.duration(seconds: row.integrationSeconds)) of \((row.goalHours ?? 0).formatted(.number.precision(.fractionLength(0...1)))) h goal")
                         } else {
                             Text("—").foregroundStyle(.secondary)
                                 .help("No integration goal set — add one on the project's Notes tab.")
@@ -168,11 +168,6 @@ public struct ProjectsView: View {
             }
         )
     }
-
-    private func duration(_ seconds: Double) -> String {
-        let minutes = Int(seconds.rounded()) / 60
-        return String(format: "%d:%02d", minutes / 60, minutes % 60)
-    }
 }
 
 private struct ProjectAcquisitionDetail: View {
@@ -201,7 +196,7 @@ private struct ProjectAcquisitionDetail: View {
                 HStack(spacing: AstroTokens.Spacing.standard) {
                     MetricCard(
                         title: "Usable integration",
-                        value: duration(snapshot.integrationSeconds),
+                        value: AstroFormat.duration(seconds: snapshot.integrationSeconds),
                         detail: "\(snapshot.usableFrames) of \(snapshot.totalFrames) frames",
                         systemImage: "timer"
                     )
@@ -242,11 +237,6 @@ private struct ProjectAcquisitionDetail: View {
         }
         .accessibilityIdentifier("v2.projects.detail")
     }
-
-    private func duration(_ seconds: Double) -> String {
-        let totalMinutes = Int(seconds.rounded()) / 60
-        return String(format: "%d:%02d", totalMinutes / 60, totalMinutes % 60)
-    }
 }
 
 private struct ProjectNightSection: View {
@@ -258,7 +248,7 @@ private struct ProjectNightSection: View {
                 Label(snapshot.night.localDate, systemImage: "moon.stars.fill")
                     .font(.headline)
                 Spacer()
-                Text("\(snapshot.usableFrames) usable · \(duration(snapshot.integrationSeconds))")
+                Text("\(snapshot.usableFrames) usable · \(AstroFormat.duration(seconds: snapshot.integrationSeconds))")
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -302,11 +292,6 @@ private struct ProjectNightSection: View {
 
     private func exposure(_ seconds: Double) -> String {
         "\(seconds.formatted(.number.precision(.fractionLength(0...1)))) s"
-    }
-
-    private func duration(_ seconds: Double) -> String {
-        let totalMinutes = Int(seconds.rounded()) / 60
-        return String(format: "%d:%02d", totalMinutes / 60, totalMinutes % 60)
     }
 
     private func passbandIcon(_ passband: SeriesPassband) -> String {

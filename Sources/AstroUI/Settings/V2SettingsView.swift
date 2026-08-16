@@ -151,8 +151,8 @@ private struct LocationSettingsView: View {
                 }
                 Section("Currently in effect") {
                     if let effective = store.effectiveSite, let lat = effective.latitudeDeg, let lon = effective.longitudeDeg {
-                        LabeledContent("Latitude", value: String(format: "%.4f°", lat))
-                        LabeledContent("Longitude", value: String(format: "%.4f°", lon))
+                        LabeledContent("Latitude", value: AstroFormat.degrees(lat))
+                        LabeledContent("Longitude", value: AstroFormat.degrees(lon))
                         Text(effectiveSourceCaption(effective.source))
                             .font(.caption).foregroundStyle(.secondary)
                             .accessibilityIdentifier("v2.settings.site.effective-source")
