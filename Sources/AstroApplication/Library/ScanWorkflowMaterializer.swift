@@ -108,6 +108,12 @@ public enum ScanWorkflowMaterializer {
             series: seriesRecords,
             frameDecisions: decisionRecords
         ))
+        // Only reached once every read/write above has succeeded -- this is
+        // the actual "V2 looked at the library" moment `ArchiveMapQuery`'s
+        // freshness headline needs. A thrown error anywhere above (bad
+        // index, a rejected write) skips this line entirely, so a failed or
+        // cancelled scan never claims to be fresh (wave 6 Task 15).
+        try await metadata.recordScanCompleted()
         return ScanWorkflowMaterializationSummary(
             projects: Set(grouped.keys.map(\.projectID)).count,
             nights: Set(grouped.keys.map(\.nightID)).count,

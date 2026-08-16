@@ -175,7 +175,16 @@ public struct ArchiveMapQuery: Sendable {
             reclaimByTarget: reclaim.byTarget
         )
         let slices = Self.aggregateSlices(rows.flatMap(\.slices))
-        let (lastScanAt, lastAuditAt, lastVerifyAt) = try Self.lastRuns(db: db)
+        // `lastRuns` still supplies `audit`/`verify` -- those are genuine
+        // `runs` rows written by `AuditEngine`/`FixityVerifier`. `scan` is
+        // deliberately dropped here: V2's own scan path never writes a
+        // `runs` row (only V1's `AppState` did), so that column is always
+        // empty on a real library. `lastScanAt` instead comes from
+        // `MetadataStore.lastScanCompletedAt()`, the timestamp
+        // `ScanWorkflowMaterializer.materialize` records on its own success
+        // (wave 6 Task 15).
+        let (_, lastAuditAt, lastVerifyAt) = try Self.lastRuns(db: db)
+        let lastScanAt = try await metadata?.lastScanCompletedAt()
 
         return ArchiveMapSnapshot(
             totalBytes: rows.reduce(0) { $0 + $1.totalBytes },

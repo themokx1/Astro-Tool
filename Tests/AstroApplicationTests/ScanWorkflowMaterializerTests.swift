@@ -91,6 +91,43 @@ struct ScanWorkflowMaterializerTests {
         #expect(try await metadata.projects().isEmpty)
         #expect(try await metadata.nights().isEmpty)
     }
+
+    // MARK: - Scan completion freshness (wave 6 Task 15)
+
+    @Test("A successful materialize records that V2 just looked at the library")
+    func successfulMaterializeRecordsScanCompletion() async throws {
+        let fixture = try MaterializerFixture.make()
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        let metadata = try MetadataStore.temporary()
+        #expect(try await metadata.lastScanCompletedAt() == nil)
+
+        let before = Date()
+        _ = try await ScanWorkflowMaterializer.materialize(
+            indexDatabase: fixture.indexURL,
+            metadata: metadata
+        )
+        let after = Date()
+
+        let recorded = try await #require(metadata.lastScanCompletedAt())
+        #expect(recorded >= before.addingTimeInterval(-1))
+        #expect(recorded <= after.addingTimeInterval(1))
+    }
+
+    @Test("A materialize that never reaches the library index does not record a scan completion")
+    func failedMaterializeDoesNotRecordScanCompletion() async throws {
+        let metadata = try MetadataStore.temporary()
+        let missingIndex = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AstroTool-Materializer-Missing-\(UUID().uuidString).sqlite")
+
+        await #expect(throws: (any Error).self) {
+            _ = try await ScanWorkflowMaterializer.materialize(
+                indexDatabase: missingIndex,
+                metadata: metadata
+            )
+        }
+
+        #expect(try await metadata.lastScanCompletedAt() == nil)
+    }
 }
 
 private struct MaterializerFixture {

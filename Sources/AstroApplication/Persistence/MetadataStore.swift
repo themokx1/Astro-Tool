@@ -672,6 +672,40 @@ public actor MetadataStore {
         return SavedTargetRecord(id: id, designation: designation, savedAt: savedAt, note: row.string(3))
     }
 
+    // MARK: - Scan completion (schema v7)
+
+    /// Records that V2's own scan pipeline just finished successfully --
+    /// call this only from a caller that has actually observed success
+    /// (`ScanWorkflowMaterializer.materialize` returning without throwing),
+    /// never speculatively. Upserts the single `singleton = 1` row, so
+    /// calling this twice keeps only the newer `completedAt`; there is no
+    /// history here, only "when did we last look".
+    public func recordScanCompleted(at completedAt: Date = .now) throws {
+        try transaction {
+            try database.run(
+                """
+                INSERT INTO scan_completions(singleton, completed_at) VALUES (1, ?)
+                ON CONFLICT(singleton) DO UPDATE SET completed_at = excluded.completed_at;
+                """,
+                bind: [.text(completedAt.ISO8601Format())]
+            )
+        }
+    }
+
+    /// When V2 last recorded a successful scan completion, or `nil` if it
+    /// never has -- a fresh store, or one that has only ever seen failed or
+    /// cancelled scans.
+    public func lastScanCompletedAt() throws -> Date? {
+        var result: Date?
+        try database.query(
+            "SELECT completed_at FROM scan_completions WHERE singleton = 1;"
+        ) { row in
+            guard let text = row.string(0) else { return }
+            result = try? Date(text, strategy: .iso8601)
+        }
+        return result
+    }
+
     private func transaction(_ body: () throws -> Void) throws {
         try database.exec("BEGIN IMMEDIATE;")
         do {

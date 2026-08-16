@@ -354,6 +354,7 @@ struct MetadataStoreTests {
             "audit_acknowledgements",
             "audit_run_history",
             "planning_saved_targets",
+            "scan_completions",
         ]))
         #expect(objects.indexes.isSuperset(of: [
             "idx_series_project",
@@ -495,6 +496,60 @@ struct MetadataStoreTests {
         let database = try SQLiteDB(path: fixture.databaseURL.path)
         #expect(try schemaVersion(in: database) == 5)
         #expect(try !tableExists("planning_saved_targets", in: database))
+    }
+
+    @Test("A version-six database migrates to version seven preserving existing data")
+    func migratesVersionSixToVersionSeven() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "M 31", displayName: "Andromeda Galaxy", phase: .collecting
+        )
+        try createVersionSixDatabase(at: fixture.databaseURL, project: project)
+
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+
+        // Same forward-safety as `migratesVersionFiveToVersionSix`: pins the
+        // v6 -> v7 step's own data preservation, not a specific final
+        // version number, so a later v8+ doesn't break this assertion.
+        #expect(try await store.schemaVersion() == MetadataSchema.currentVersion)
+        #expect(try await store.project(id: project.id) == project)
+        #expect(try await store.lastScanCompletedAt() == nil)
+        // v6's own tables/data must still be intact after the v7 migration.
+        #expect(try await store.savedTargets().isEmpty)
+        #expect(try await store.acknowledgements().isEmpty)
+    }
+
+    @Test("A failed version-seven migration rolls back DDL and leaves the old version stamp")
+    func failedVersionSevenMigrationDoesNotAdvanceVersion() throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        try createVersionSixDatabase(at: fixture.databaseURL)
+        do {
+            // `scan_completions`'s own `CREATE TABLE IF NOT EXISTS` only
+            // suppresses a collision with an existing TABLE/VIEW of that
+            // name, not an INDEX -- mirrors
+            // `failedVersionSixMigrationDoesNotAdvanceVersion`'s use of a
+            // cross-type name collision to force a real failure despite
+            // `IF NOT EXISTS`.
+            let database = try SQLiteDB(path: fixture.databaseURL.path)
+            try database.exec("""
+            CREATE TABLE placeholder_for_v7_collision(x TEXT);
+            CREATE INDEX scan_completions ON placeholder_for_v7_collision(x);
+            """)
+        }
+
+        #expect(throws: AstroError.self) {
+            _ = try MetadataStore(databaseURL: fixture.databaseURL)
+        }
+
+        let database = try SQLiteDB(path: fixture.databaseURL.path)
+        #expect(try schemaVersion(in: database) == 6)
+        var scanCompletionsIsATable = false
+        try database.query(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'scan_completions';"
+        ) { _ in scanCompletionsIsATable = true }
+        #expect(!scanCompletionsIsATable, "the v7 table must never have been created")
     }
 
     @Test("A schema newer than this build is rejected without modification")
@@ -742,6 +797,40 @@ struct MetadataStoreTests {
         }
     }
 
+    // MARK: - Scan completion (schema v7)
+
+    @Test("A fresh store has never recorded a scan completion")
+    func lastScanCompletedAtIsNilOnAFreshStore() async throws {
+        let store = try MetadataStore.temporary()
+
+        #expect(try await store.lastScanCompletedAt() == nil)
+    }
+
+    @Test("Recording a scan completion is readable back exactly")
+    func recordScanCompletedIsReadableBack() async throws {
+        let store = try MetadataStore.temporary()
+        let completedAt = Date(timeIntervalSince1970: 1_786_404_000)
+
+        try await store.recordScanCompleted(at: completedAt)
+
+        let recorded = try await store.lastScanCompletedAt()
+        #expect(recorded != nil)
+        #expect(abs((recorded ?? .distantPast).timeIntervalSince1970 - completedAt.timeIntervalSince1970) < 1)
+    }
+
+    @Test("Recording a scan completion twice keeps only the newer one")
+    func recordScanCompletedTwiceKeepsTheNewerOne() async throws {
+        let store = try MetadataStore.temporary()
+        let first = Date(timeIntervalSince1970: 1_786_400_000)
+        let second = Date(timeIntervalSince1970: 1_786_500_000)
+
+        try await store.recordScanCompleted(at: first)
+        try await store.recordScanCompleted(at: second)
+
+        let recorded = try await store.lastScanCompletedAt()
+        #expect(abs((recorded ?? .distantPast).timeIntervalSince1970 - second.timeIntervalSince1970) < 1)
+    }
+
     @Test("Persisted enum values are stable language-neutral tokens")
     func enumRawValuesAreLanguageNeutral() {
         #expect(ProjectWorkflowPhase.allCases.map(\.rawValue) == [
@@ -906,6 +995,38 @@ struct MetadataStoreTests {
         try database.exec(MetadataSchema.versionFiveSQL)
         try database.run(
             "INSERT INTO metadata_schema(singleton, version) VALUES (1, 5);"
+        )
+        if let project {
+            try database.run(
+                "INSERT INTO projects(id, catalog_id, display_name, phase) VALUES (?, ?, ?, ?);",
+                bind: [
+                    .text(project.id.uuidString.lowercased()),
+                    .text(project.catalogID),
+                    .text(project.displayName),
+                    .text(project.phase.rawValue),
+                ]
+            )
+        }
+    }
+
+    private func createVersionSixDatabase(
+        at url: URL,
+        project: ProjectRecord? = nil
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let database = try SQLiteDB(path: url.path)
+        try database.exec(Self.schemaVersionSQL)
+        try database.exec(MetadataSchema.versionOneSQL)
+        try database.exec(MetadataSchema.versionTwoSQL)
+        try database.exec(MetadataSchema.versionThreeSQL)
+        try database.exec(MetadataSchema.versionFourSQL)
+        try database.exec(MetadataSchema.versionFiveSQL)
+        try database.exec(MetadataSchema.versionSixSQL)
+        try database.run(
+            "INSERT INTO metadata_schema(singleton, version) VALUES (1, 6);"
         )
         if let project {
             try database.run(

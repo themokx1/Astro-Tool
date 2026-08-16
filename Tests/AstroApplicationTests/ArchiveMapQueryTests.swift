@@ -168,12 +168,45 @@ struct ArchiveMapQueryTests {
 
     @Test("An audit older than the last scan is reported as stale")
     func auditOlderThanScanIsStale() async throws {
+        // The audit row in `makeIndexDatabase` is stamped 2000.0 (epoch
+        // seconds). V2 never writes a `scan` row to `runs` -- only
+        // `MetadataStore.recordScanCompleted` marks a scan as done, so that
+        // is what this test must go through to prove what the product
+        // actually does (wave 6 Task 15).
+        let index = try Self.makeIndexDatabase()
+        let metadata = try MetadataStore.temporary()
+        try await metadata.recordScanCompleted(at: Date(timeIntervalSince1970: 3000.0))
+
+        let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index, metadata: metadata).snapshot()
+        #expect(snapshot.isAuditStale)
+    }
+
+    @Test("lastScanAt comes from the metadata store, even with no scan row in runs at all")
+    func lastScanAtComesFromMetadataWithoutARunsScanRow() async throws {
+        // Pins the bug this task fixes: a real library's `runs` table never
+        // has a `scan` row (only `AuditEngine`/`FixityVerifier`/V1's
+        // `AppState` write it), so `lastScanAt` must come from
+        // `MetadataStore`, not `runs`.
         let index = try Self.makeIndexDatabase()
         let db = try SQLiteDB(path: index.path)
-        try db.exec("INSERT INTO runs VALUES(3,'scan',3000.0);")
+        try db.exec("DELETE FROM runs WHERE kind = 'scan';")
+        let metadata = try MetadataStore.temporary()
+        let completedAt = Date(timeIntervalSince1970: 5000.0)
+        try await metadata.recordScanCompleted(at: completedAt)
+
+        let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index, metadata: metadata).snapshot()
+
+        #expect(snapshot.lastScanAt != nil)
+        #expect(abs((snapshot.lastScanAt ?? .distantPast).timeIntervalSince1970 - completedAt.timeIntervalSince1970) < 1)
+    }
+
+    @Test("lastScanAt is nil when there is no metadata store at all")
+    func lastScanAtIsNilWithoutAMetadataStore() async throws {
+        let index = try Self.makeIndexDatabase()
 
         let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
-        #expect(snapshot.isAuditStale)
+
+        #expect(snapshot.lastScanAt == nil)
     }
 
     @Test("lastVerifyAt is nil when the library has never had a verify run -- the ordinary case")

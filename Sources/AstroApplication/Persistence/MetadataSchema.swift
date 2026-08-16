@@ -16,7 +16,7 @@ public enum MetadataStoreError: Error, Equatable, Sendable {
 }
 
 public enum MetadataSchema {
-    public static let currentVersion = 6
+    public static let currentVersion = 7
 
     static let versionOneSQL = """
     CREATE TABLE projects(
@@ -172,6 +172,22 @@ public enum MetadataSchema {
     CREATE INDEX IF NOT EXISTS idx_planning_saved_targets_saved_at ON planning_saved_targets(saved_at);
     """
 
+    /// Archive Map's freshness signal (wave 6 Task 15) -- ONE row recording
+    /// when V2's own scan pipeline (`ScanWorkflowMaterializer.materialize`)
+    /// last completed successfully. Not a history: `MetadataStore.
+    /// recordScanCompleted` upserts the single `singleton = 1` row, the same
+    /// shape as `metadata_schema` itself. This deliberately does NOT read
+    /// from the read-only index's `runs` table -- only `AuditEngine`,
+    /// `FixityVerifier` and V1's `AppState` ever write a `runs` row, and V2's
+    /// scan path never does, so `runs WHERE kind = 'scan'` never has a row
+    /// to find on a real library.
+    static let versionSevenSQL = """
+    CREATE TABLE IF NOT EXISTS scan_completions (
+        singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+        completed_at TEXT NOT NULL
+    );
+    """
+
     static func migrate(_ database: SQLiteDB) throws {
         try transaction(in: database) {
             var version = try readVersion(in: database)
@@ -232,6 +248,14 @@ public enum MetadataSchema {
                 try database.exec(versionSixSQL)
                 try database.run(
                     "UPDATE metadata_schema SET version = 6 WHERE singleton = 1;"
+                )
+                version = 6
+            }
+
+            if version < 7 {
+                try database.exec(versionSevenSQL)
+                try database.run(
+                    "UPDATE metadata_schema SET version = 7 WHERE singleton = 1;"
                 )
             }
         }
