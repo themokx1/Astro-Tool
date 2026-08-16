@@ -373,6 +373,7 @@
 "Receipt: %@ · %lld file move(s)" = "Nyugta: %@ · %lld fájláthelyezés";
 "Recent" = "Legutóbbi";
 "Recent session" = "Legutóbbi session";
+"Reclaimable space" = "Felszabadítható hely";
 "Record Decision" = "Döntés rögzítése";
 "Refresh the external index when opening a library" = "A külső index frissítése könyvtár megnyitásakor";
 "Reject" = "Elvetés";
