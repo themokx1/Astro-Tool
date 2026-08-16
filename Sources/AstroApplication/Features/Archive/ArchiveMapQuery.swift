@@ -34,7 +34,16 @@ public struct ArchiveTargetRow: Equatable, Sendable, Identifiable {
     /// that one appends `CatalogNames.hungarian`'s common name, which would
     /// put Hungarian text on an English UI (V2 UI/UX audit pattern P1). The
     /// localized common name is a wave-2 addition.
-    public let displayName: String
+    ///
+    /// `nil` for the untargeted row -- that is NOT missing data. A catalog
+    /// designation or folder name is verbatim, non-translatable text, so it
+    /// belongs here. But the untargeted bucket has no folder name of its
+    /// own; the view renders it as "Not tied to a target", which IS
+    /// translatable UI prose. This type stays free of presentation text (the
+    /// same boundary `ArchiveTaskQuery`'s doc comment states), so it hands
+    /// the view `nil` and lets the view supply that sentence as a
+    /// `LocalizedStringKey`.
+    public let displayName: String?
     public let nightCount: Int
     public let fileCount: Int
     public let totalBytes: Int64
@@ -43,7 +52,7 @@ public struct ArchiveTargetRow: Equatable, Sendable, Identifiable {
     public let reclaimableFiles: Int
 
     public init(
-        target: String?, displayName: String, nightCount: Int, fileCount: Int,
+        target: String?, displayName: String?, nightCount: Int, fileCount: Int,
         totalBytes: Int64, slices: [ArchiveSlice],
         reclaimableBytes: Int64, reclaimableFiles: Int
     ) {
@@ -185,12 +194,15 @@ public struct ArchiveMapQuery: Sendable {
                 return ArchiveSlice(archiveClass: archiveClass, fileCount: value.files, bytes: value.bytes)
             }
             let reclaim = reclaimByTarget[target] ?? (files: 0, bytes: 0)
-            let displayName: String
+            // `nil` for the untargeted bucket -- see `ArchiveTargetRow.displayName`'s
+            // doc comment: that sentence is translatable UI prose, and this
+            // layer never produces presentation text.
+            let displayName: String?
             if let target {
                 let resolved = TargetNameResolver.resolve(folderName: target)
                 displayName = resolved.designation ?? target.replacingOccurrences(of: "_", with: " ")
             } else {
-                displayName = "Not tied to a target"
+                displayName = nil
             }
             return ArchiveTargetRow(
                 target: target,

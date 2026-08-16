@@ -127,6 +127,8 @@ struct ArchiveMapQueryTests {
 
         let untargeted = try #require(snapshot.rows.first { $0.isUntargeted })
         #expect(untargeted.target == nil)
+        #expect(untargeted.displayName == nil,
+                "the untargeted row's name is translatable UI prose -- the view supplies it, not this query")
         #expect(untargeted.totalBytes == 500)
         #expect(untargeted.fileCount == 2)
         #expect(untargeted.nightCount == 0)

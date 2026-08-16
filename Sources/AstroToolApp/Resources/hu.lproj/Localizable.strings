@@ -734,3 +734,42 @@
 "Processed" = "Feldolgozott";
 "Unclassified" = "Besorolatlan";
 "Other" = "Egyéb";
+
+// ArchiveTaskCard's title/explanation/actionTitle (ArchiveTaskCard.swift,
+// Task 8) -- switch-mapped over ArchiveTaskKind to LocalizedStringKey, the
+// same shape as ArchiveClass.displayName above, and invisible to the
+// extraction script for the same reason: a `switch` returning
+// LocalizedStringKey resolves correctly at runtime but produces no
+// extracted key, so it is pinned down here by hand instead. The plan's own
+// task table lists a stale `.integrity` case -- `.corruption` and
+// `.unverified` (Task 4's split) get their own copy here instead, and only
+// `.corruption` says to restore from a backup: an unverified file is not
+// proof of loss, so it must not borrow corruption's language.
+"Stacking leftovers" = "Stack-maradványok";
+"Intermediate output from stacking — regenerable from your raw frames. Your light frames are not touched." = "A stackelés közbenső kimenete — a nyers képkockáidból újra előállítható. A light frame-jeidhez nem nyúlunk.";
+"Preview Quarantine…" = "Karantén előnézete…";
+"Byte-identical copies" = "Bájtazonos másolatok";
+"Files whose exact contents already exist elsewhere. You choose which copy stays." = "Olyan fájlok, amelyeknek a pontos tartalma már létezik máshol is. Te döntöd el, melyik másolat marad meg.";
+"Compare Copies…" = "Másolatok összehasonlítása…";
+"Calibration in the wrong folder" = "Kalibráció rossz mappában";
+"These files sit in a calibration folder but are not calibration frames, so this night's matching is silently wrong." = "Ezek a fájlok egy kalibrációs mappában vannak, de nem kalibrációs képkockák, ezért ennek az éjszakának a párosítása észrevétlenül hibás.";
+"Folder names that break scanning" = "Mappanevek, amelyek megakasztják a beolvasást";
+"A nested session tree, an unfilled template name, or a duplicated catalog prefix." = "Egymásba ágyazott session-mappák, egy kitöltetlen sablonnév vagy egy duplikált katalógus-előtag.";
+"Checksum mismatch" = "Ellenőrzőösszeg-eltérés";
+"A file's contents changed while its size and timestamp did not. Restore it from a backup copy." = "Egy fájl tartalma megváltozott, miközben a mérete és időbélyege nem. Állítsd vissza egy biztonsági másolatból.";
+"Could not be confirmed" = "Nem sikerült megerősíteni";
+"The last integrity check could not read these files, or found them rewritten in place. This is not proof of loss." = "Az utolsó integritás-ellenőrzés nem tudta beolvasni ezeket a fájlokat, vagy azt találta, hogy helyben felülírták őket. Ez nem bizonyítéka az adatvesztésnek.";
+"Not checked yet" = "Még nincs ellenőrizve";
+"I have not looked through this library yet. The check reads only — it never moves or deletes anything." = "Ezt a könyvtárat még nem néztem át. Az ellenőrzés csak olvas — soha nem mozgat és nem töröl semmit.";
+"Run Check" = "Ellenőrzés futtatása";
+
+// ArchiveTargetRowView (Task 8) -- the untargeted row's name is translatable
+// UI prose the view supplies (see ArchiveTargetRow.displayName's doc
+// comment, ArchiveMapQuery.swift -- the query itself hands back `nil`, never
+// a String, for that row); the rest are its "<n> nights · <m> files"
+// caption, its "-<reclaim>" byte line, and its per-target quarantine preview
+// menu item.
+"Not tied to a target" = "Nem tartozik célponthoz";
+"%lld nights · %lld files" = "%lld éjszaka · %lld fájl";
+"−%@" = "−%@";
+"Preview Quarantine for This Target…" = "Karantén előnézete ehhez a célponthoz…";
