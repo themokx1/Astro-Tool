@@ -1824,6 +1824,14 @@ VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
 - `store.errorMessage != nil` → `ContentUnavailableView` a hibaszöveggel + `Try Again` gomb, ami újra `load`-ol
 - `snapshot.totalBytes == 0` → „Nothing indexed yet" + `Rescan`
 
+**Kötelező lábjegyzet: ami nem kapott kártyát.** Az `ArchiveTaskQuery` szándékosan csak azokat a találat-kategóriákat képezi kártyára, amelyekhez tartozik végrehajtható művelet. A valódi könyvtáron visszajátszva ez **138 találatot, 8,69 GB-ot hagy kártya nélkül** — `capture-unassigned-artifact` (34), `capture-legacy-folder` (32), `tool-output` (23), `missing-counterpart` (18) és további nyolc kategória. Ezeket **nem szabad némán elhagyni**: a lista alján, halkan (`.caption`, `inkFaint`), egyetlen sor:
+
+> „További 138 találat olyan kategóriákban, amikre ez az oldal nem kínál műveletet · 8,69 GB"
+
+A sor `.help()`-je sorolja fel a kategóriákat darabszámmal. Ehhez az `ArchiveTaskQuery` adjon vissza egy `uncoveredFindings: (count: Int, bytes: Int64, categories: [String: Int])` mezőt a `tasks()` mellett — új típus **nem** kell, elég egy `ArchiveTaskSummary` struct, ami a `tasks`-t és ezt együtt hordozza. Teszt pinnelje, hogy egy nem képezett kategóriájú találat pontosan itt jelenik meg, és **nem** kártyaként.
+
+Ez a „no silent caps" szabály: ha a felület szűkíti a lefedettséget, mondja ki, mennyit hagyott el — különben úgy olvasódik, hogy mindent lefedett.
+
 **Toolbar-akciók** (`WorkspaceActionCenter`-en át, `.onAppear` / `.onChange` / `.onDisappear`, **soha nem `body`-ból** — lásd az antipattern-jegyzet 2. pontját, és másold a `HealthView.publishWorkspaceActions()` mintáját pontosan):
 
 ```swift
