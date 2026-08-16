@@ -141,7 +141,6 @@
 "Cancel Scan" = "Beolvasás megszakítása";
 "Category" = "Kategória";
 "Change Library…" = "Könyvtár váltása…";
-"Choose Another Library" = "Másik könyvtár kiválasztása";
 "Choose Another Library…" = "Másik könyvtár kiválasztása…";
 "Choose Image Library" = "Képkönyvtár kiválasztása";
 "Choose Image Library…" = "Képkönyvtár kiválasztása…";
@@ -834,3 +833,26 @@
 "Check Library" = "Könyvtár ellenőrzése";
 "Read through the library for leftovers, duplicates, and structural problems" = "Nézd át a könyvtárat maradványokért, duplikátumokért és szerkezeti hibákért";
 "Fast (Skip Duplicate Scan)" = "Gyors (duplikátum-keresés kihagyása)";
+
+// LibraryWelcomeView.swift (Task 14, 2026-08-16 owner screenshot) -- the
+// access-problem sheet used to show `error.localizedDescription` (Swift's
+// default "AstroCore.AstroError error 4" for a non-LocalizedError type)
+// wrapped in a fixed English sentence, with fixed Back/Close/Choose Another
+// Library buttons regardless of what actually failed. It now switches on
+// `AstroError`/`LibraryAccessProblem` directly and derives both the
+// sentence and the buttons from the error's own `recovery`
+// (`Sources/AstroCore/Model/Types.swift`). Found by the extraction script
+// (its `Text(...)`/`Button(...)` calls are literal-first-argument, even
+// inside a `switch`, unlike the `ArchiveVerdictHeader`-style computed
+// `LocalizedStringKey` properties elsewhere in this file):
+"AstroTool is not allowed to read %@." = "Az AstroTool nem férhet hozzá ehhez: %@.";
+"The volume holding %@ is not mounted." = "A(z) %@ útvonalat tartalmazó kötet nincs csatlakoztatva.";
+"%@ no longer exists." = "A(z) %@ már nem létezik.";
+"%@ could not be read as a FITS file: %@" = "A(z) %@ nem olvasható be FITS fájlként: %@";
+"AstroTool's own index could not be read: %@" = "Az AstroTool saját indexe nem olvasható: %@";
+"Writing to %@ is not permitted." = "A(z) %@ írása nem engedélyezett.";
+"Siril was not found at %@." = "A Siril nem található itt: %@.";
+"Choose a folder that contains your image library. Individual files cannot be scanned as a library." = "Válassz egy mappát, amely a képkönyvtáradat tartalmazza. Egyes fájlok nem olvashatók be könyvtárként.";
+"AstroTool could not complete this action. Try again, or choose a different library." = "Az AstroTool nem tudta végrehajtani ezt a műveletet. Próbáld újra, vagy válassz másik könyvtárat.";
+"Choose Library Again…" = "Könyvtár újbóli kiválasztása…";
+"Choose a Different Library…" = "Másik könyvtár kiválasztása…";

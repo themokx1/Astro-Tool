@@ -1,4 +1,5 @@
 import AstroApplication
+import AstroCore
 import Foundation
 import Observation
 import SwiftUI
@@ -8,7 +9,7 @@ public enum OnboardingPhase: Equatable, Sendable {
     case chooseLibrary
     case scanning(progress: LibraryScanProgress?)
     case summary(LibrarySnapshot)
-    case accessProblem(String)
+    case accessProblem(LibraryAccessProblem)
 
     public var isScanning: Bool {
         if case .scanning = self { return true }
@@ -20,8 +21,15 @@ public enum OnboardingPhase: Equatable, Sendable {
         return nil
     }
 
+    /// Plain-string fallback, kept for callers that only want a message --
+    /// today that is `V2RootView`'s `LibraryAccessProblemBanner` (main-shell
+    /// restore failures), which is out of Task 14's file list and still
+    /// renders this as an untranslated `Text(String)`. `LibraryWelcomeView`
+    /// itself no longer reads this: it switches on the `.accessProblem`
+    /// payload directly so it can render a translatable `Text` and derive
+    /// its buttons from `recovery` (see `LibraryAccessProblem`).
     public var accessProblemMessage: String? {
-        if case .accessProblem(let message) = self { return message }
+        if case .accessProblem(let problem) = self { return problem.fallbackMessage }
         return nil
     }
 
@@ -222,6 +230,60 @@ public enum OnboardingStoreError: Error, Equatable, Sendable {
     case notDirectory
 }
 
+/// What went wrong opening or scanning a library -- carries enough
+/// structure that the sentence AND the buttons come from the same source
+/// of truth (Task 14, 2026-08-16 owner screenshot). Before this, the dialog
+/// derived its message from a raw `error.localizedDescription` (Swift's
+/// default `"AstroCore.AstroError error 4"` for a non-`LocalizedError`
+/// type) while its buttons were fixed regardless of what actually failed --
+/// so a database error got told to re-pick a folder, a fix that could not
+/// work. Now a wrong diagnosis becomes a wrong BUTTON, which people notice,
+/// instead of only a wrong sentence, which people skim past.
+public enum LibraryAccessProblem: Equatable, Sendable {
+    /// The chosen path is not a directory (a single file was picked or
+    /// dropped) -- not an `AstroError`, so it is modeled here directly
+    /// instead of forcing an artificial `AstroError` case for it.
+    case notDirectory
+    case astro(AstroError)
+    /// A failure that is neither of the above (should be rare to never in
+    /// production -- every real open/scan failure throws `AstroError` or
+    /// `OnboardingStoreError.notDirectory`). Carries no payload on purpose:
+    /// there is nothing honest to say about an error this code does not
+    /// model, so it gets a generic sentence rather than a raw Swift dump.
+    case other
+
+    init(catching error: any Error) {
+        if error as? OnboardingStoreError == .notDirectory {
+            self = .notDirectory
+        } else if let astroError = error as? AstroError {
+            self = .astro(astroError)
+        } else {
+            self = .other
+        }
+    }
+
+    public var recovery: AstroErrorRecovery {
+        switch self {
+        case .notDirectory: .rechooseLibrary
+        case .astro(let error): error.recovery
+        case .other: .rechooseLibrary
+        }
+    }
+
+    /// Plain, untranslated fallback -- see `OnboardingPhase.accessProblemMessage`'s
+    /// doc comment for who still reads this.
+    public var fallbackMessage: String {
+        switch self {
+        case .notDirectory:
+            "Choose a folder that contains your image library. Individual files cannot be scanned as a library."
+        case .astro(let error):
+            error.errorDescription ?? "AstroTool could not complete this action."
+        case .other:
+            "AstroTool could not complete this action. Try again, or choose a different library."
+        }
+    }
+}
+
 @MainActor
 @Observable
 public final class OnboardingStore {
@@ -320,7 +382,7 @@ public final class OnboardingStore {
             throw CancellationError()
         } catch {
             if isActive(operationID) {
-                phase = .accessProblem(Self.actionableMessage(for: error))
+                phase = .accessProblem(LibraryAccessProblem(catching: error))
             }
             throw error
         }
@@ -527,12 +589,6 @@ public final class OnboardingStore {
         return attributes[.type] as? FileAttributeType == .typeDirectory
     }
 
-    private static func actionableMessage(for error: any Error) -> String {
-        if error as? OnboardingStoreError == .notDirectory {
-            return "Choose a folder that contains your image library. Individual files cannot be scanned as a library."
-        }
-        return "AstroTool could not read this folder. Choose it again to restore access, or select a different image library. (\(error.localizedDescription))"
-    }
 }
 
 @MainActor
@@ -580,8 +636,8 @@ public struct LibraryWelcomeView: View {
                         onPersonalize()
                     }
                 )
-            case .accessProblem(let message):
-                accessProblem(message)
+            case .accessProblem(let problem):
+                accessProblem(problem)
             }
         }
         .frame(minWidth: 560, idealWidth: 620, minHeight: 440)
@@ -673,22 +729,99 @@ public struct LibraryWelcomeView: View {
         }
     }
 
-    private func accessProblem(_ message: String) -> some View {
+    private func accessProblem(_ problem: LibraryAccessProblem) -> some View {
         ContentUnavailableView {
             Label("Library access needs attention", systemImage: "folder.badge.questionmark")
         } description: {
-            Text(message)
+            Self.accessProblemText(for: problem)
         } actions: {
-            Button("Choose Another Library") {
-                store.returnToLibraryChoice()
-                isChoosingLibrary = true
-            }
-            .buttonStyle(.borderedProminent)
-            Button("Back") {
-                store.returnToLibraryChoice()
-            }
+            recoveryButtons(for: problem.recovery)
+            // Task 14: the old "Back" button led to the same place as
+            // "Close" for this sheet -- two buttons that dismiss to the
+            // same outcome give the user two ways to guess wrong. "Back" is
+            // deleted; "Close" stays as the one way out that offers no
+            // recovery.
             Button("Close") { dismiss() }
                 .keyboardShortcut(.cancelAction)
+        }
+    }
+
+    /// The dialog's action(s), derived from the error's own `recovery`
+    /// instead of being fixed regardless of what failed (Task 14). Each
+    /// case's primary action is `.buttonStyle(.borderedProminent)`.
+    @ViewBuilder
+    private func recoveryButtons(for recovery: AstroErrorRecovery) -> some View {
+        switch recovery {
+        case .rechooseLibrary:
+            Button("Choose Library Again…") { chooseAnotherLibrary() }
+                .buttonStyle(.borderedProminent)
+            Button("Choose a Different Library…") { chooseAnotherLibrary() }
+        case .retry:
+            Button("Try Again") { retryAccessProblem() }
+                .buttonStyle(.borderedProminent)
+            Button("Choose a Different Library…") { chooseAnotherLibrary() }
+        case .none:
+            Button("Choose a Different Library…") { chooseAnotherLibrary() }
+                .buttonStyle(.borderedProminent)
+        }
+    }
+
+    private func chooseAnotherLibrary() {
+        store.returnToLibraryChoice()
+        isChoosingLibrary = true
+    }
+
+    /// Re-runs the scan against the SAME root that just failed -- the point
+    /// of `.retry` (a stale volume mount, a locked database) is that
+    /// nothing about the folder choice was wrong, so re-picking it would
+    /// not help. Falls back to the folder picker if, somehow, there is no
+    /// remembered root to retry.
+    private func retryAccessProblem() {
+        guard let root = store.selectedRoot else {
+            chooseAnotherLibrary()
+            return
+        }
+        beginScan(root)
+    }
+
+    /// Maps a failure to translatable, honest copy -- `AstroCore`'s own
+    /// `errorDescription` (see `Types.swift`) is a plain, non-translating
+    /// `String`, so this switches on the case itself and builds a `Text`
+    /// with a `LocalizedStringKey` instead. Unlike some other switch-derived
+    /// `Text` in this codebase, these literal `Text("...")` call sites ARE
+    /// picked up by `scripts/extract-localizable-strings.swift` (it matches
+    /// any literal-first-argument call, even inside a `switch`) -- their
+    /// `hu.lproj` entries were added because the extraction script's
+    /// `--missing` reported them, not because they were invisible to it.
+    private static func accessProblemText(for problem: LibraryAccessProblem) -> Text {
+        switch problem {
+        case .notDirectory:
+            Text("Choose a folder that contains your image library. Individual files cannot be scanned as a library.")
+        case .astro(let error):
+            accessProblemText(for: error)
+        case .other:
+            Text("AstroTool could not complete this action. Try again, or choose a different library.")
+        }
+    }
+
+    private static func accessProblemText(for error: AstroError) -> Text {
+        switch error {
+        case .accessDenied(let path):
+            Text("AstroTool is not allowed to read \(path).")
+        case .volumeNotMounted(let path):
+            Text("The volume holding \(path) is not mounted.")
+        case .pathNotFound(let path):
+            Text("\(path) no longer exists.")
+        case .corruptFITS(let path, let reason):
+            Text("\(path) could not be read as a FITS file: \(reason)")
+        case .databaseError(let detail):
+            Text("AstroTool's own index could not be read: \(detail)")
+        case .writeForbidden(let path):
+            Text("Writing to \(path) is not permitted.")
+        case .sirilNotFound(let path):
+            Text("Siril was not found at \(path).")
+        case .invalidInput(let detail):
+            Text(detail)
         }
     }
 

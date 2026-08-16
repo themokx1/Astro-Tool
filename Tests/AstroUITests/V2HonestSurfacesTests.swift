@@ -98,4 +98,35 @@ struct V2HonestSurfacesTests {
             #expect(!source.contains("ArchivePreviewSheet"), "\(file) still presents the dead-end sheet")
         }
     }
+
+    // MARK: 6. Task 14 (owner screenshot) -- error surfaces must name the
+    // real problem and never a raw Swift error type/case index.
+
+    @Test("No error surface shows the user a raw Swift error type or case index")
+    func errorSurfacesNeverShowRawSwiftErrors() throws {
+        for file in ["FirstScanSummaryView.swift", "FirstScanView.swift", "LibraryWelcomeView.swift"] {
+            let source = try contents("Sources/AstroUI/Onboarding/\(file)")
+            #expect(
+                !source.contains("error.localizedDescription)"),
+                "\(file) interpolates a raw error description into user-facing copy"
+            )
+        }
+    }
+
+    @Test("The onboarding access-problem dialog derives its buttons from the error's recovery, not a fixed Back/Close/Choose-Another set")
+    func accessProblemButtonsComeFromRecovery() throws {
+        let source = try contents("Sources/AstroUI/Onboarding/LibraryWelcomeView.swift")
+        // The old fixed button set: "Back" led to the exact same outcome as
+        // "Close" (both just left the sheet's access-problem state with no
+        // recovery attempted) -- two buttons, one outcome, two ways to
+        // guess wrong. It must be gone.
+        #expect(!source.contains(#"Button("Back")"#), "the redundant Back button (same outcome as Close) must be removed")
+        #expect(source.contains(#"Button("Close")"#), "Close must remain as the one no-recovery way out")
+        // The new buttons are keyed off `AstroErrorRecovery`, not a single
+        // "Choose Another Library" applied unconditionally to every error.
+        #expect(source.contains("for recovery: AstroErrorRecovery"))
+        #expect(source.contains(#"Button("Choose Library Again…")"#))
+        #expect(source.contains(#"Button("Try Again")"#))
+        #expect(source.contains(#"Button("Choose a Different Library…")"#))
+    }
 }
