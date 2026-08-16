@@ -1697,9 +1697,34 @@ struct ArchiveTaskCard: View {
 
 **Lokalizációs csapda:** a `title`, `explanation` és `actionTitle` `LocalizedStringKey`-t adjon vissza, **ne** `String`-et. Egy `switch`, ami minden ágon sztringliterált ad vissza, `String`-re következtet, és **soha nem fordul le magyarra** — pontosan ez a hiba történt a `MetricCard.title`-lel. Írd ki a típust explicit módon: `private var title: LocalizedStringKey { switch task.kind { … } }`.
 
-- [ ] **Step 2: Write `ArchiveTargetRowView`**
+- [ ] **Step 2a: Előbb vidd ki a felületi mondatot a motorrétegből**
 
-Három zóna: `210pt` név-blokk (`displayName` + `„<n> nights · <m> files"` caption), rugalmas sáv-blokk, `92pt` érték-blokk (összméret + `−<reclaim>` piros második sor, ha van).
+A 2b. task `ArchiveTargetRow.displayName`-je a célpont nélküli vödörre a `"Not tied to a target"` **angol `String` literált** kapta, az `AstroApplication` rétegben. Ez ugyanaz a hibaosztály, amit a 7b. task most zárt be, csak eggyel rosszabb helyen: felületi mondat a motorrétegben, ami így soha nem fordul le, és megsérti a projekt saját határát („a store nem tartalmaz felületi szöveget; a lokalizáció a nézetrétegben történik").
+
+A valódi célpontoknál a `displayName` **katalógus-jelölés** (`NGC 7000`) vagy mappanév — az helyesen nem fordítandó, és marad. Csak az untargeted ág a hibás.
+
+Ezért:
+
+- `ArchiveTargetRow.displayName` legyen `String?`, és az untargeted sorra `nil`. A doc-komment mondja ki, hogy a `nil` **nem** hiányzó adat, hanem „ennek a sornak a nevét a nézet adja, mert az fordítandó szöveg".
+- `ArchiveMapQuery.buildRows` ennek megfelelően ne gyártson felületi mondatot.
+- A meglévő `untargetedFilesGetTheirOwnRow` teszt asszertálja, hogy `displayName == nil`.
+- A nézet dönt:
+
+```swift
+if let name = row.displayName {
+    Text(name)                      // verbatim: catalog designation, not translatable
+} else {
+    Text("Not tied to a target")    // LocalizedStringKey, translatable
+}
+```
+
+- `hu.lproj`: `"Not tied to a target" = "Nem tartozik célponthoz";`
+
+Ez a lépés az `AstroApplication`-t is módosítja (`ArchiveMapQuery.swift` és a hozzá tartozó teszt), ezért **előbb** fut, mint a nézet megírása.
+
+- [ ] **Step 2b: Write `ArchiveTargetRowView`**
+
+Három zóna: `210pt` név-blokk (a fenti név + `„<n> nights · <m> files"` caption), rugalmas sáv-blokk, `92pt` érték-blokk (összméret + `−<reclaim>` piros második sor, ha van).
 
 A sávok a **legnagyobb célpont** méretéhez normalizálódnak, ezért a nézet paraméterként kap egy `maxTargetBytes: Int64`-et — nem számolja ki magának, mert a sorok egymáshoz mérten értelmesek. Ha `maxTargetBytes <= 0`, a sáv üresen marad (nulla osztás nélkül).
 
