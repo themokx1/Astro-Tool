@@ -1630,14 +1630,15 @@ A kártya bemenete egyetlen `ArchiveTask` és egy `onAction: (ArchiveTaskAction)
 | `.duplicateContent` | „Byte-identical copies" | „Files whose exact contents already exist elsewhere. You choose which copy stays." | „Compare Copies…" |
 | `.misplacedCalibration` | „Calibration in the wrong folder" | „These files sit in a calibration folder but are not calibration frames, so this night's matching is silently wrong." | „Reveal in Finder" |
 | `.brokenNames` | „Folder names that break scanning" | „A nested session tree, an unfilled template name, or a duplicated catalog prefix." | „Reveal in Finder" |
-| `.integrity` | „Checksum mismatch" | „A file's contents changed since it was indexed. Restore it from a backup copy." | „Reveal in Finder" |
+| `.corruption` | „Checksum mismatch" | „A file's contents changed while its size and timestamp did not. Restore it from a backup copy." | „Reveal in Finder" |
+| `.unverified` | „Could not be confirmed" | „The last integrity check could not read these files, or found them rewritten in place. This is not proof of loss." | „Reveal in Finder" |
 | `.auditNeverRun` | „Not checked yet" | „I have not looked through this library yet. The check reads only — it never moves or deletes anything." | „Run Check" |
 
 A fő érték (`headlineValue`) a kártyában számolódik: `.reclaim` súlyosságnál `AstroFormat.bytes(task.bytes)`, egyébként `task.affectedFileCount.formatted()`. Ha még nincs `AstroFormat` (2. hullám vezeti be), írj egy `private func` formázót ebbe a fájlba, és hagyj `// wave 2: move to AstroFormat` kommentet.
 
 Az `evidencePaths` legfeljebb három sorban, `.font(.caption.monospaced())`, `.textSelection(.enabled)`, `.lineLimit(1)`, `.truncationMode(.head)` — az útvonal vége a beszédes rész.
 
-Egyetlen gomb, `.buttonStyle(.borderedProminent)` csak `.reclaim` és `.info` esetén, `.bordered` az `.error` esetén (a hiba-kártyáé nem „csináld meg", hanem „nézd meg"). Kontextusmenü: `Mark as Acknowledged…`, ami a `MetadataStore.acknowledgeFindingGroup(category: ArchiveTask.ackCategory, groupKey: task.ackGroupKey, note:)`-t hívja.
+Egyetlen gomb, mindig `.buttonStyle(.borderedProminent)`, és a súlyosságot a `.tint` hordozza — a stílus nem kapcsolható ternáriussal, mert a `.bordered` és a `.borderedProminent` különböző típus, és nincs `AnyButtonStyle`. (Lásd a kódvázat lentebb; az a mérvadó.) Kontextusmenü: `Mark as Acknowledged…`, ami a `MetadataStore.acknowledgeFindingGroup(category: ArchiveTask.ackCategory, groupKey: task.ackGroupKey, note:)`-t hívja.
 
 Accessibility ID: `v2.archive.task.<kind.rawValue>`, a gombé `v2.archive.task.<kind.rawValue>.action`.
 
