@@ -247,7 +247,7 @@ public struct ConversionWorkspace: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            Image(systemName: "square.split.2x1").font(.title2).foregroundStyle(AstroTokens.Color.spectralViolet)
+            Image(systemName: "square.split.2x1").font(.title2).foregroundStyle(AstroTokens.Color.accent)
             VStack(alignment: .leading, spacing: 3) {
                 Text("Organize one session").font(.title2.bold())
                 Text("Preview first. Nothing is written until you apply.").foregroundStyle(.secondary)
@@ -335,7 +335,7 @@ public struct ConversionWorkspace: View {
             .frame(maxWidth: 460)
             .onChange(of: store.mode) { _, _ in Task { try? await store.refreshPlan() } }
             .onChange(of: store.selection) { _, _ in Task { try? await store.refreshPlan() } }
-            Label("Exactly 1 session", systemImage: "scope").foregroundStyle(AstroTokens.Color.success)
+            Label("Exactly 1 session", systemImage: "scope").foregroundStyle(AstroTokens.Color.ok)
             Spacer()
         }
     }
@@ -358,7 +358,7 @@ public struct ConversionWorkspace: View {
                 Text(plan.humanSummary ?? "").font(.callout).foregroundStyle(.secondary)
                 if plan.proposedGroups.isEmpty {
                     Label("Every capture group already exists as-is; nothing new to name.", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(AstroTokens.Color.success)
+                        .foregroundStyle(AstroTokens.Color.ok)
                 } else {
                     Text("Names, sensor, signal, and filter can be corrected before applying. The slug is fixed since every move/assignment refers to it.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -367,7 +367,7 @@ public struct ConversionWorkspace: View {
                     }
                 }
             } else if let planErrorMessage = store.planErrorMessage {
-                Text(planErrorMessage).foregroundStyle(AstroTokens.Color.warning)
+                Text(planErrorMessage).foregroundStyle(AstroTokens.Color.attention)
             }
             Spacer()
         }
@@ -464,7 +464,7 @@ public struct ConversionWorkspace: View {
                 }
                 if plan.ambiguities.isEmpty {
                     Label("Every file is assigned to a capture group.", systemImage: "checkmark.seal.fill")
-                        .foregroundStyle(AstroTokens.Color.success)
+                        .foregroundStyle(AstroTokens.Color.ok)
                 }
             }
             Spacer()
@@ -476,7 +476,7 @@ public struct ConversionWorkspace: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 Label(ambiguity.titleEnglish, systemImage: "questionmark.diamond.fill")
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(AstroTokens.Color.warning)
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(AstroTokens.Color.attention)
                 Text(ambiguity.explanationEnglish).font(.caption).foregroundStyle(.secondary)
                 Text("\(ambiguity.affectedPaths.count) file(s): \(ambiguity.affectedPaths.prefix(3).map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))")
                     .font(.caption.monospaced()).lineLimit(2)
@@ -506,7 +506,7 @@ public struct ConversionWorkspace: View {
             } else if let plan = store.plan {
                 operationsSummary(plan)
             } else if let planErrorMessage = store.planErrorMessage {
-                Text(planErrorMessage).foregroundStyle(AstroTokens.Color.warning)
+                Text(planErrorMessage).foregroundStyle(AstroTokens.Color.attention)
             }
             Spacer()
         }
@@ -516,7 +516,7 @@ public struct ConversionWorkspace: View {
     @ViewBuilder
     private func operationsSummary(_ plan: SessionConversionPlan) -> some View {
         if plan.mode == .logicalOnly {
-            Label("0 files moved", systemImage: "checkmark.shield.fill").foregroundStyle(AstroTokens.Color.success).font(.headline)
+            Label("0 files moved", systemImage: "checkmark.shield.fill").foregroundStyle(AstroTokens.Color.ok).font(.headline)
             Text("AstroTool keeps the session together and represents each exposure/filter combination as its own capture group.")
         } else {
             Label("\(plan.moves.count) file(s) will move", systemImage: "arrow.triangle.branch").font(.headline)
@@ -528,7 +528,7 @@ public struct ConversionWorkspace: View {
                 if !plan.conflicts.isEmpty {
                     ForEach(plan.conflicts) { conflict in
                         Label("\(conflict.path): \(conflict.messageEnglish)", systemImage: "xmark.octagon.fill")
-                            .font(.caption).foregroundStyle(AstroTokens.Color.danger)
+                            .font(.caption).foregroundStyle(AstroTokens.Color.critical)
                     }
                 }
             }
@@ -539,10 +539,10 @@ public struct ConversionWorkspace: View {
                 .font(.caption).foregroundStyle(.secondary)
         } else if !plan.canApply {
             Label("Resolve every ambiguity before applying.", systemImage: "exclamationmark.triangle.fill")
-                .font(.caption).foregroundStyle(AstroTokens.Color.warning)
+                .font(.caption).foregroundStyle(AstroTokens.Color.attention)
         }
         if let planErrorMessage = store.planErrorMessage {
-            Text(planErrorMessage).foregroundStyle(AstroTokens.Color.warning)
+            Text(planErrorMessage).foregroundStyle(AstroTokens.Color.attention)
         }
         HStack {
             Spacer()
@@ -572,7 +572,7 @@ public struct ConversionWorkspace: View {
             systemImage: receipt.status == .applied ? "checkmark.circle.fill" : "arrow.uturn.backward.circle.fill"
         )
         .font(.headline)
-        .foregroundStyle(receipt.status == .applied ? AstroTokens.Color.success : Color.blue)
+        .foregroundStyle(receipt.status == .applied ? AstroTokens.Color.ok : Color.blue)
         Text("Receipt: \(receipt.id) · \(receipt.moves.count) file move(s)")
             .font(.caption.monospaced()).foregroundStyle(.secondary)
         HStack {

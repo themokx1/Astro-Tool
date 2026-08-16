@@ -96,7 +96,7 @@ public struct BreadcrumbBar: View {
                     Button(crumb.title) { select(crumb.id) }
                         .buttonStyle(.plain)
                         .font(.callout)
-                        .foregroundStyle(AstroTokens.Color.spectralBlue)
+                        .foregroundStyle(AstroTokens.Color.accent)
                 }
             }
             Spacer(minLength: 0)

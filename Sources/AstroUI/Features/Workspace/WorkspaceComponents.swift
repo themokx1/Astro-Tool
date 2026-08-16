@@ -38,7 +38,7 @@ struct WorkspacePage<Content: View>: View {
             .frame(maxWidth: 920, alignment: .leading)
             .padding(AstroTokens.Spacing.spacious)
         }
-        .background(AstroTokens.Color.graphite.opacity(0.36))
+        .background(AstroTokens.Color.ground.opacity(0.36))
     }
 }
 
@@ -105,7 +105,7 @@ struct WorkspaceTablePage<Toolbar: View, TableContent: View, Footer: View>: View
         }
         .padding(AstroTokens.Spacing.spacious)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(AstroTokens.Color.graphite.opacity(0.36))
+        .background(AstroTokens.Color.ground.opacity(0.36))
     }
 }
 
@@ -151,7 +151,7 @@ struct MetricCard: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
         .overlay {
             RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel)
-                .stroke(AstroTokens.Color.hairline, lineWidth: 1)
+                .stroke(AstroTokens.Color.edge, lineWidth: 1)
         }
     }
 }

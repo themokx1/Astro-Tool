@@ -46,7 +46,7 @@ public struct ReviewWorkspace: View {
                 }
             }
         }
-        .background(AstroTokens.Color.graphite.opacity(0.22))
+        .background(AstroTokens.Color.ground.opacity(0.22))
         .task(id: projectID) {
             try? await store.open(rootURL: rootURL, projectID: projectID)
         }
@@ -168,7 +168,7 @@ public struct ReviewWorkspace: View {
         HStack(spacing: 14) {
             Image(systemName: "checkmark.rectangle.stack")
                 .font(.title2)
-                .foregroundStyle(AstroTokens.Color.spectralViolet)
+                .foregroundStyle(AstroTokens.Color.accent)
             VStack(alignment: .leading, spacing: 2) {
                 Text(store.snapshot?.project.displayName ?? "Frame Review")
                     .font(.title2.weight(.semibold))
@@ -314,14 +314,14 @@ public struct ReviewWorkspace: View {
                         .width(min: 105, ideal: 120)
                         TableColumn("Library status") { row in
                             Text(row.decision.logicallyExcluded ? "Excluded" : "Included")
-                                .foregroundStyle(row.decision.logicallyExcluded ? AstroTokens.Color.danger : .secondary)
+                                .foregroundStyle(row.decision.logicallyExcluded ? AstroTokens.Color.critical : .secondary)
                         }
                         .width(min: 100, ideal: 115)
                         TableColumn("Score", value: \.scoreSortKey) { row in
                             HStack(spacing: 4) {
                                 if row.isOutlier {
                                     Image(systemName: "exclamationmark.triangle.fill")
-                                        .foregroundStyle(AstroTokens.Color.warning)
+                                        .foregroundStyle(AstroTokens.Color.attention)
                                         .help("Outlier: scores well below this session's other frames")
                                 }
                                 Text(Self.formatted(row.score, fractionDigits: 2))
@@ -424,7 +424,7 @@ public struct ReviewWorkspace: View {
                 .accessibilityIdentifier("v2.review.reset")
             Button("Reject") { apply(.rejected, decisionIDs: selectedDecisionIDs, in: selected) }
                 .buttonStyle(.borderedProminent)
-                .tint(AstroTokens.Color.danger)
+                .tint(AstroTokens.Color.critical)
                 .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .accessibilityIdentifier("v2.review.reject")
@@ -479,9 +479,9 @@ private struct QualityDistribution: View {
             }
             GeometryReader { geometry in
                 HStack(spacing: 2) {
-                    segment(count: snapshot.acceptedCount, totalWidth: geometry.size.width, color: AstroTokens.Color.success)
+                    segment(count: snapshot.acceptedCount, totalWidth: geometry.size.width, color: AstroTokens.Color.ok)
                     segment(count: snapshot.undecidedCount, totalWidth: geometry.size.width, color: .gray)
-                    segment(count: snapshot.rejectedCount, totalWidth: geometry.size.width, color: AstroTokens.Color.danger)
+                    segment(count: snapshot.rejectedCount, totalWidth: geometry.size.width, color: AstroTokens.Color.critical)
                 }
             }
             .frame(height: 8)
@@ -547,9 +547,9 @@ private struct PercentileDot: View {
 
     private static func color(for band: PercentileBand) -> Color {
         switch band {
-        case .best: AstroTokens.Color.success
+        case .best: AstroTokens.Color.ok
         case .middle: .yellow
-        case .worst: AstroTokens.Color.warning
+        case .worst: AstroTokens.Color.attention
         }
     }
 
@@ -571,13 +571,13 @@ private struct SeriesRow: View {
                     .font(.headline)
                 Spacer()
                 if let filter = snapshot.series.filterName {
-                    Text(filter).font(.caption.weight(.medium)).foregroundStyle(AstroTokens.Color.spectralViolet)
+                    Text(filter).font(.caption.weight(.medium)).foregroundStyle(AstroTokens.Color.accent)
                 }
             }
             Text(snapshot.series.setupDescriptor).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             HStack(spacing: 10) {
-                Label("\(snapshot.acceptedCount)", systemImage: "checkmark.circle.fill").foregroundStyle(AstroTokens.Color.success)
-                Label("\(snapshot.rejectedCount)", systemImage: "xmark.circle.fill").foregroundStyle(AstroTokens.Color.danger)
+                Label("\(snapshot.acceptedCount)", systemImage: "checkmark.circle.fill").foregroundStyle(AstroTokens.Color.ok)
+                Label("\(snapshot.rejectedCount)", systemImage: "xmark.circle.fill").foregroundStyle(AstroTokens.Color.critical)
                 Label("\(snapshot.undecidedCount)", systemImage: "circle.dashed").foregroundStyle(.secondary)
             }
             .font(.caption2)
@@ -616,8 +616,8 @@ private struct FrameVerdictLabel: View {
 
     private var color: Color {
         switch decision.verdict {
-        case .accepted: AstroTokens.Color.success
-        case .rejected: AstroTokens.Color.danger
+        case .accepted: AstroTokens.Color.ok
+        case .rejected: AstroTokens.Color.critical
         case .undecided: .secondary
         }
     }

@@ -96,7 +96,7 @@ private struct ToastCapsule: View {
         switch toast.level {
         case .success: .green
         case .failure: .red
-        case .info: AstroTokens.Color.spectralBlue
+        case .info: AstroTokens.Color.accent
         }
     }
 }

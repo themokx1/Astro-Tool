@@ -54,7 +54,7 @@ public struct NightNoteSheet: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     if let errorMessage = store.errorMessage {
-                        Text(errorMessage).font(.caption).foregroundStyle(AstroTokens.Color.warning)
+                        Text(errorMessage).font(.caption).foregroundStyle(AstroTokens.Color.attention)
                     }
                 }
                 .padding(AstroTokens.Spacing.section)
@@ -173,7 +173,7 @@ public struct NightNoteSheet: View {
                     .disabled(newCustomKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             if let message = store.customKeyErrorMessage {
-                Text(message).font(.caption).foregroundStyle(AstroTokens.Color.warning)
+                Text(message).font(.caption).foregroundStyle(AstroTokens.Color.attention)
             }
         }
         .accessibilityIdentifier("v2.nights.note-add-custom-key")

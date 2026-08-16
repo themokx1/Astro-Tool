@@ -22,7 +22,7 @@ struct ArchiveTaskCard: View {
                         .font(.system(size: 23, weight: .medium, design: .monospaced))
                         .monospacedDigit()
                         .foregroundStyle(task.severity == .error
-                            ? AstroTokens.Color.danger : AstroTokens.Color.spectralBlue)
+                            ? AstroTokens.Color.critical : AstroTokens.Color.accent)
                     Text(title).font(.system(.title3, weight: .semibold))
                 }
                 Text(explanation)
@@ -42,15 +42,15 @@ struct ArchiveTaskCard: View {
             Button(actionTitle) { onAction(task.action) }
                 .buttonStyle(.borderedProminent)
                 .tint(task.severity == .error
-                    ? AstroTokens.Color.danger : AstroTokens.Color.spectralBlue)
+                    ? AstroTokens.Color.critical : AstroTokens.Color.accent)
                 .accessibilityIdentifier("v2.archive.task.\(task.kind.rawValue).action")
         }
         .padding(AstroTokens.Spacing.standard)
-        .background(AstroTokens.Color.elevatedGraphite, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
+        .background(AstroTokens.Color.surface, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
         .overlay {
             RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel)
                 .stroke(task.severity == .error
-                    ? AstroTokens.Color.danger.opacity(0.34) : AstroTokens.Color.hairline, lineWidth: 1)
+                    ? AstroTokens.Color.critical.opacity(0.34) : AstroTokens.Color.edge, lineWidth: 1)
         }
         .contextMenu { Button("Mark as Acknowledged…", action: onAcknowledge) }
         .accessibilityIdentifier("v2.archive.task.\(task.kind.rawValue)")

@@ -94,10 +94,12 @@ struct V2PolishSurfaceTests {
 
     // MARK: (c) No hardcoded colors under Features/ or Settings/.
 
-    // A single allowed exception: ArchivePalette.swift IS the palette
-    // definition, so it is the one file under Features/ that may contain hex
-    // literals. Everything else must read from it or from AstroTokens.
-    private static let colorLiteralExemptFiles: Set<String> = ["ArchivePalette.swift"]
+    // Wave 2 Task 2: the former single allowed exception, `ArchivePalette.swift`
+    // (the palette definition itself, which could contain hex literals), was
+    // absorbed into `AstroTokens.swift` under `DesignSystem/` -- outside
+    // `Features/`/`Settings/` entirely -- and deleted, so no file under either
+    // scanned directory needs an exemption anymore.
+    private static let colorLiteralExemptFiles: Set<String> = []
 
     @Test("No file under Features/ or Settings/ hardcodes a color literal")
     func noHardcodedColorLiterals() throws {
@@ -275,12 +277,18 @@ struct V2PolishSurfaceTests {
         #expect(!source.contains("Label(ambiguity.title,"), "must render titleEnglish, not the raw Hungarian title")
     }
 
-    // MARK: (f) Archive views read their category colors from ArchivePalette, never inline.
+    // MARK: (f) Archive views read their category colors from AstroTokens, never inline.
 
-    @Test("Archive views read their category colors from ArchivePalette, never inline")
+    @Test("Archive views read their category colors from AstroTokens, never inline")
     func archiveViewsUseThePalette() throws {
+        // Wave 2 Task 2: `ArchivePalette` (five data-category colors plus its
+        // own `dynamic(dark:light:)` helper) was absorbed into `AstroTokens`
+        // and the file deleted -- `AstroTokens.Color.forArchiveClass` and
+        // `AstroTokens.Color.data*` are now the only source of these colors,
+        // so this gate no longer carves out an exempt palette file; every
+        // file under Archive/ is checked.
         let archiveDirectory = "Sources/AstroUI/Features/Archive"
-        for file in try filenames(under: archiveDirectory) where file != "ArchivePalette.swift" {
+        for file in try filenames(under: archiveDirectory) {
             let source = try contents("\(archiveDirectory)/\(file)")
             #expect(!source.contains("NSColor(hex:"), "\(file) defines its own color")
             #expect(!source.contains("Color(red:"), "\(file) defines its own color")

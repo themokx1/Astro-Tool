@@ -86,7 +86,7 @@ public struct NightWorkspaceView: View {
                 }
             }
         }
-        .background(AstroTokens.Color.graphite.opacity(0.36))
+        .background(AstroTokens.Color.ground.opacity(0.36))
         .navigationTitle(row.date)
         .accessibilityIdentifier("v2.night.workspace")
         .sheet(isPresented: $isEditingNotes) {

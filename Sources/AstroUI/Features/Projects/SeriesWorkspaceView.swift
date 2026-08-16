@@ -48,7 +48,7 @@ public struct SeriesWorkspaceView: View {
                 content.padding(AstroTokens.Spacing.spacious)
             }
         }
-        .background(AstroTokens.Color.graphite.opacity(0.36))
+        .background(AstroTokens.Color.ground.opacity(0.36))
         .navigationTitle(seriesTitle)
         .accessibilityIdentifier("v2.series.workspace")
         // Wave 4 Task 2: "Review Frames" used to be an in-body button in

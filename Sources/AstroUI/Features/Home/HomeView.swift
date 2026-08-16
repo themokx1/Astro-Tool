@@ -39,7 +39,7 @@ public struct HomeView: View {
             .frame(maxWidth: 760, alignment: .leading)
             .padding(AstroTokens.Spacing.spacious)
         }
-        .background(AstroTokens.Color.graphite.opacity(0.36))
+        .background(AstroTokens.Color.ground.opacity(0.36))
         .navigationTitle("Home")
         .accessibilityLabel("Home")
         .accessibilityIdentifier("v2.detail.home")
@@ -55,7 +55,7 @@ public struct HomeView: View {
                 if let project = store.snapshot.nextProject {
                     HStack(spacing: 14) {
                         Image(systemName: "arrow.forward.circle.fill")
-                            .font(.title2).foregroundStyle(AstroTokens.Color.spectralBlue)
+                            .font(.title2).foregroundStyle(AstroTokens.Color.accent)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(project.displayName).font(.headline)
                             Text(project.phase == .collecting
@@ -148,7 +148,7 @@ public struct HomeView: View {
                         // it directly (V2 UI/UX audit, 2026-08-15, section 4).
                         Text(SkyVerdict.parse(recommendation.verdict).english)
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(AstroTokens.Color.spectralBlue)
+                            .foregroundStyle(AstroTokens.Color.accent)
                         if let projectID = recommendation.projectID {
                             Button("Open") { openProjectID(projectID) }
                                 .buttonStyle(.borderless)
@@ -182,7 +182,7 @@ public struct HomeView: View {
             Text("OBSERVATORY WORKSPACE")
                 .font(.caption.weight(.semibold))
                 .tracking(1.4)
-                .foregroundStyle(AstroTokens.Color.spectralBlue)
+                .foregroundStyle(AstroTokens.Color.accent)
             Text("Prepare the next clear night")
                 .font(.largeTitle.weight(.semibold))
             if showGuidance {
@@ -240,9 +240,9 @@ private struct NightContextRail: View {
                             .fill(
                                 LinearGradient(
                                     colors: [
-                                        AstroTokens.Color.spectralBlue.opacity(0.45),
-                                        AstroTokens.Color.spectralViolet.opacity(0.88),
-                                        AstroTokens.Color.spectralBlue.opacity(0.45),
+                                        AstroTokens.Color.accent.opacity(0.45),
+                                        AstroTokens.Color.accent.opacity(0.88),
+                                        AstroTokens.Color.accent.opacity(0.45),
                                     ],
                                     startPoint: .leading,
                                     endPoint: .trailing
@@ -251,7 +251,7 @@ private struct NightContextRail: View {
                             .frame(height: 2)
                         if let nowFraction = context.nowFraction {
                             Circle()
-                                .fill(AstroTokens.Color.spectralViolet)
+                                .fill(AstroTokens.Color.accent)
                                 .frame(width: 7, height: 7)
                                 .offset(x: proxy.size.width * nowFraction - 3.5)
                         }
@@ -280,7 +280,7 @@ private struct NightContextRail: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
         .overlay {
             RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel)
-                .stroke(AstroTokens.Color.hairline, lineWidth: 1)
+                .stroke(AstroTokens.Color.edge, lineWidth: 1)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(

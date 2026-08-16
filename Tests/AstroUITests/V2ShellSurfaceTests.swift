@@ -124,8 +124,13 @@ struct V2ShellSurfaceTests {
             encoding: .utf8
         )
 
-        #expect(tokens.contains("NSColor.windowBackgroundColor"))
-        #expect(tokens.contains("NSColor.separatorColor"))
+        // Wave 2 Task 2: `ground`/`edge` no longer alias
+        // `NSColor.windowBackgroundColor`/`.separatorColor` -- the rebuilt
+        // `AstroTokens` palette (spec section 5.1) gives every color its own
+        // literal dark/light hex pair through `NSColor(name:dynamicProvider:)`
+        // instead, which is what actually makes each token adaptive now.
+        #expect(tokens.contains("dynamicProvider"))
+        #expect(tokens.contains("bestMatch(from: [.aqua, .darkAqua])"))
         #expect(home.contains("Choose Image Library…"))
         #expect(home.contains("read-only index"))
         #expect(!home.contains("Open Library"))

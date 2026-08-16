@@ -132,7 +132,7 @@ private struct OutcomeRow: View {
         case .succeeded: .green
         case .failed: .red
         case .cancelled: .secondary
-        case .running: AstroTokens.Color.spectralBlue
+        case .running: AstroTokens.Color.accent
         }
     }
 }

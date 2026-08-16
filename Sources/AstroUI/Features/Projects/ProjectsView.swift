@@ -227,7 +227,7 @@ private struct ProjectAcquisitionDetail: View {
                     }
                 } icon: {
                     Image(systemName: "arrow.forward.circle.fill")
-                        .foregroundStyle(AstroTokens.Color.spectralBlue)
+                        .foregroundStyle(AstroTokens.Color.accent)
                 }
 
                 Divider()
@@ -265,7 +265,7 @@ private struct ProjectNightSection: View {
             ForEach(snapshot.series) { item in
                 HStack(spacing: 10) {
                     Image(systemName: passbandIcon(item.series.passband))
-                        .foregroundStyle(AstroTokens.Color.spectralViolet)
+                        .foregroundStyle(AstroTokens.Color.accent)
                         .frame(width: 20)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(seriesTitle(item))
@@ -279,7 +279,7 @@ private struct ProjectNightSection: View {
                     if item.excludedFrames > 0 {
                         Text("\(item.excludedFrames) excluded")
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(AstroTokens.Color.warning)
+                            .foregroundStyle(AstroTokens.Color.attention)
                     }
                 }
                 .padding(.vertical, 5)
@@ -352,7 +352,7 @@ public struct NewProjectView: View {
             HStack {
                 Image(systemName: "sparkles.rectangle.stack")
                     .font(.title)
-                    .foregroundStyle(AstroTokens.Color.spectralViolet)
+                    .foregroundStyle(AstroTokens.Color.accent)
                 VStack(alignment: .leading) {
                     Text("New Project").font(.title2.weight(.semibold))
                     Text("Choose the target first; AstroTool will keep its identity canonical.")
@@ -389,7 +389,7 @@ public struct NewProjectView: View {
             }
             if let selected {
                 HStack {
-                    Image(systemName: "folder.badge.plus").foregroundStyle(AstroTokens.Color.spectralBlue)
+                    Image(systemName: "folder.badge.plus").foregroundStyle(AstroTokens.Color.accent)
                     Text("Folder preview")
                     Spacer()
                     Text(selected.canonicalFolderName).font(.caption.monospaced()).textSelection(.enabled)
@@ -399,7 +399,7 @@ public struct NewProjectView: View {
             }
             if let saveError {
                 Label(saveError, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout).foregroundStyle(AstroTokens.Color.danger)
+                    .font(.callout).foregroundStyle(AstroTokens.Color.critical)
             }
             HStack {
                 Spacer()

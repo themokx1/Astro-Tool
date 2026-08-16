@@ -88,7 +88,7 @@ public struct FirstStepsView: View {
     private func row(_ step: Step) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: step.systemImage)
-                .foregroundStyle(AstroTokens.Color.spectralBlue)
+                .foregroundStyle(AstroTokens.Color.accent)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(step.title).font(.callout).bold()

@@ -92,7 +92,7 @@ public struct ProjectWorkspaceView: View {
                 }
             }
         }
-        .background(AstroTokens.Color.graphite.opacity(0.36))
+        .background(AstroTokens.Color.ground.opacity(0.36))
         .navigationTitle(snapshot.project.displayName)
         .accessibilityIdentifier("v2.project.workspace")
         // Wave 4 Task 2: this workspace's own primary actions (Export,
@@ -271,7 +271,7 @@ public struct ProjectWorkspaceView: View {
                         .frame(minHeight: 180)
                         .padding(6)
                 }
-                if let saveError { Text(saveError).foregroundStyle(AstroTokens.Color.danger) }
+                if let saveError { Text(saveError).foregroundStyle(AstroTokens.Color.critical) }
                 HStack {
                     Text(annotation.map { "Last saved \($0.updatedAt.formatted(date: .abbreviated, time: .shortened))" } ?? "Not saved yet")
                         .font(.caption).foregroundStyle(.secondary)

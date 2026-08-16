@@ -144,10 +144,10 @@ public struct MutationConfirmationSheet: View {
 
             if let receipt = store.receipt {
                 Label("Applied \(receipt.entries.count) file(s) into quarantine.", systemImage: "checkmark.seal")
-                    .foregroundStyle(AstroTokens.Color.success)
+                    .foregroundStyle(AstroTokens.Color.ok)
                 if store.isRolledBack {
                     Label("Rolled back — files restored to their original location.", systemImage: "arrow.uturn.backward.circle")
-                        .foregroundStyle(AstroTokens.Color.warning)
+                        .foregroundStyle(AstroTokens.Color.attention)
                 } else {
                     Button("Undo") { Task { await store.rollback() } }
                         .disabled(store.isRollingBack)
@@ -168,7 +168,7 @@ public struct MutationConfirmationSheet: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     if let errorMessage = store.errorMessage {
-                        Text(errorMessage).font(.caption).foregroundStyle(AstroTokens.Color.warning)
+                        Text(errorMessage).font(.caption).foregroundStyle(AstroTokens.Color.attention)
                     }
                     HStack {
                         Spacer()

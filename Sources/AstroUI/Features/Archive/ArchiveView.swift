@@ -107,7 +107,7 @@ public struct ArchiveView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AstroTokens.Color.graphite.opacity(0.36))
+        .background(AstroTokens.Color.ground.opacity(0.36))
         .navigationTitle("Archive")
         .accessibilityLabel("Archive")
         .accessibilityIdentifier("v2.detail.library")

@@ -154,7 +154,7 @@ public struct NightsView: View {
                 TableColumn("Night", value: \NightRow.date) { night in
                     Label(night.date, systemImage: "moon.stars.fill")
                         .font(.headline.monospacedDigit())
-                        .foregroundStyle(AstroTokens.Color.spectralViolet)
+                        .foregroundStyle(AstroTokens.Color.accent)
                 }
                 TableColumn("Projects") { Text($0.projectSummary).lineLimit(1) }
                 TableColumn("Series", value: \NightRow.seriesCount) { Text($0.seriesCount.formatted()).monospacedDigit() }
@@ -165,7 +165,7 @@ public struct NightsView: View {
                     .width(min: 75, ideal: 90)
                 TableColumn("Triage", value: \NightRow.triageState.rawValue) { night in
                     Label(night.triageState.rawValue, systemImage: night.triageState == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                        .foregroundStyle(night.triageState == .ready ? AstroTokens.Color.success : AstroTokens.Color.warning)
+                        .foregroundStyle(night.triageState == .ready ? AstroTokens.Color.ok : AstroTokens.Color.attention)
                 }
                 .width(min: 110, ideal: 125)
             }

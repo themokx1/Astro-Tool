@@ -641,7 +641,7 @@ public struct LibraryWelcomeView: View {
             }
         }
         .frame(minWidth: 560, idealWidth: 620, minHeight: 440)
-        .background(AstroTokens.Color.graphite.opacity(0.32))
+        .background(AstroTokens.Color.ground.opacity(0.32))
         .fileImporter(
             isPresented: $isChoosingLibrary,
             allowedContentTypes: [.folder],
@@ -660,7 +660,7 @@ public struct LibraryWelcomeView: View {
             Label("READ-ONLY FIRST SCAN", systemImage: "lock.shield")
                 .font(.caption.weight(.semibold))
                 .tracking(1.3)
-                .foregroundStyle(AstroTokens.Color.spectralBlue)
+                .foregroundStyle(AstroTokens.Color.accent)
 
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
                 Text("Bring your night sky library into focus")
@@ -692,7 +692,7 @@ public struct LibraryWelcomeView: View {
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
             .overlay {
                 RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel)
-                    .stroke(isDropTargeted ? AstroTokens.Color.spectralBlue : AstroTokens.Color.hairline, lineWidth: isDropTargeted ? 2 : 1)
+                    .stroke(isDropTargeted ? AstroTokens.Color.accent : AstroTokens.Color.edge, lineWidth: isDropTargeted ? 2 : 1)
             }
             .dropDestination(for: URL.self) { urls, _ in
                 guard let root = urls.first else { return false }
@@ -720,7 +720,7 @@ public struct LibraryWelcomeView: View {
     private func safetyRow(_ title: String, detail: String, systemImage: String) -> some View {
         HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
             Image(systemName: systemImage)
-                .foregroundStyle(AstroTokens.Color.spectralBlue)
+                .foregroundStyle(AstroTokens.Color.accent)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.headline)

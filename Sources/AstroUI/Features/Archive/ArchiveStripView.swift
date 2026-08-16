@@ -93,12 +93,12 @@ struct ArchiveStripView: View {
             .clipShape(RoundedRectangle(cornerRadius: 5))
 
             Capsule()
-                .fill(AstroTokens.Color.hairline)
+                .fill(AstroTokens.Color.edge)
                 .frame(height: 5)
                 .overlay(alignment: .leading) {
                     GeometryReader { proxy in
                         Capsule()
-                            .fill(AstroTokens.Color.danger)
+                            .fill(AstroTokens.Color.critical)
                             .frame(width: proxy.size.width * reclaimFraction)
                     }
                 }
@@ -141,7 +141,7 @@ struct ArchiveStripView: View {
         let nameText = Text(segment.archiveClass?.displayName ?? "Other")
         let detailText = detailText(for: segment)
         Rectangle()
-            .fill(segment.archiveClass.map(ArchivePalette.color(for:)) ?? AstroTokens.Color.hairline)
+            .fill(segment.archiveClass.map(AstroTokens.Color.forArchiveClass) ?? AstroTokens.Color.edge)
             .opacity(isDimmed ? 0.35 : 1)
             .frame(width: max(0, width * segment.fraction))
             .onTapGesture { onSelect(segment.archiveClass) }

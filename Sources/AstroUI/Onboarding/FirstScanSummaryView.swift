@@ -22,7 +22,7 @@ public struct FirstScanSummaryView: View {
             Label("FIRST SCAN COMPLETE", systemImage: "checkmark.circle.fill")
                 .font(.caption.weight(.semibold))
                 .tracking(1.3)
-                .foregroundStyle(AstroTokens.Color.spectralBlue)
+                .foregroundStyle(AstroTokens.Color.accent)
                 .accessibilityIdentifier("v2.onboarding.summary")
 
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
@@ -70,7 +70,7 @@ public struct FirstScanSummaryView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
         .overlay {
             RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel)
-                .stroke(AstroTokens.Color.hairline, lineWidth: 1)
+                .stroke(AstroTokens.Color.edge, lineWidth: 1)
         }
     }
 }

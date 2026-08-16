@@ -50,7 +50,7 @@ public struct FirstScanView: View {
 
             Label("Scanning locally", systemImage: "externaldrive.badge.magnifyingglass")
                 .font(.callout.weight(.medium))
-                .foregroundStyle(AstroTokens.Color.spectralBlue)
+                .foregroundStyle(AstroTokens.Color.accent)
 
             Button("Cancel Scan", action: cancel)
                 .keyboardShortcut(.cancelAction)

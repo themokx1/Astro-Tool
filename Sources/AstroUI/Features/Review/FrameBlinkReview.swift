@@ -175,7 +175,7 @@ public struct FrameBlinkReview: View {
                 if quality?.isOutlier == true {
                     Label("Outlier", systemImage: "exclamationmark.triangle.fill")
                         .font(.callout)
-                        .foregroundStyle(AstroTokens.Color.warning)
+                        .foregroundStyle(AstroTokens.Color.attention)
                 }
 
                 verdictChip(frame.verdict)
@@ -199,9 +199,9 @@ public struct FrameBlinkReview: View {
     private func verdictChip(_ verdict: FrameVerdict) -> some View {
         switch verdict {
         case .accepted:
-            Label("Accepted", systemImage: "checkmark.circle.fill").foregroundStyle(AstroTokens.Color.success)
+            Label("Accepted", systemImage: "checkmark.circle.fill").foregroundStyle(AstroTokens.Color.ok)
         case .rejected:
-            Label("Rejected", systemImage: "xmark.circle.fill").foregroundStyle(AstroTokens.Color.danger)
+            Label("Rejected", systemImage: "xmark.circle.fill").foregroundStyle(AstroTokens.Color.critical)
         case .undecided:
             Label("Undecided", systemImage: "circle.dashed").foregroundStyle(.secondary)
         }
@@ -270,7 +270,7 @@ public struct FrameBlinkReview: View {
                 .disabled(store.currentFrame == nil)
 
             if let errorMessage = store.errorMessage {
-                Text(errorMessage).font(.caption).foregroundStyle(AstroTokens.Color.danger)
+                Text(errorMessage).font(.caption).foregroundStyle(AstroTokens.Color.critical)
             }
 
             Spacer()

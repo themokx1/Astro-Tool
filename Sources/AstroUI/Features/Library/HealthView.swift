@@ -207,7 +207,7 @@ public struct HealthView: View {
                     }
                     .width(min: 90, ideal: 110)
                     TableColumn("Next step") { item in
-                        Text(nextStep(item)).foregroundStyle(AstroTokens.Color.spectralBlue)
+                        Text(nextStep(item)).foregroundStyle(AstroTokens.Color.accent)
                     }
                     .width(min: 115, ideal: 145)
                 }
@@ -254,18 +254,18 @@ public struct HealthView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: AstroTokens.Spacing.standard) {
                             Text("\(summary.checked) checked").font(.callout.monospacedDigit())
-                            Text("\(summary.ok) ok").foregroundStyle(AstroTokens.Color.success)
+                            Text("\(summary.ok) ok").foregroundStyle(AstroTokens.Color.ok)
                             if summary.contentChanged > 0 {
-                                Text("\(summary.contentChanged) likely corrupted").foregroundStyle(AstroTokens.Color.danger)
+                                Text("\(summary.contentChanged) likely corrupted").foregroundStyle(AstroTokens.Color.critical)
                             }
                             if summary.modifiedInPlace > 0 {
-                                Text("\(summary.modifiedInPlace) suspicious").foregroundStyle(AstroTokens.Color.warning)
+                                Text("\(summary.modifiedInPlace) suspicious").foregroundStyle(AstroTokens.Color.attention)
                             }
                             if summary.modified > 0 {
                                 Text("\(summary.modified) modified").foregroundStyle(.secondary)
                             }
                             if summary.readErrors > 0 {
-                                Text("\(summary.readErrors) unreadable").foregroundStyle(AstroTokens.Color.warning)
+                                Text("\(summary.readErrors) unreadable").foregroundStyle(AstroTokens.Color.attention)
                             }
                             Spacer()
                         }
@@ -288,8 +288,8 @@ public struct HealthView: View {
                                     Text(run.ranAt, style: .date).font(.callout.monospaced())
                                     Text("\(run.findingCount) finding(s)").foregroundStyle(.secondary)
                                     Spacer()
-                                    Text("+\(run.newCount) new").foregroundStyle(AstroTokens.Color.warning)
-                                    Text("−\(run.resolvedCount) resolved").foregroundStyle(AstroTokens.Color.success)
+                                    Text("+\(run.newCount) new").foregroundStyle(AstroTokens.Color.attention)
+                                    Text("−\(run.resolvedCount) resolved").foregroundStyle(AstroTokens.Color.ok)
                                 }
                             }
                         }
@@ -357,7 +357,7 @@ public struct HealthView: View {
     }
 
     private func icon(_ severity: LibraryHealthSeverity) -> String { severity == .healthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill" }
-    private func color(_ severity: LibraryHealthSeverity) -> Color { severity == .healthy ? AstroTokens.Color.success : AstroTokens.Color.warning }
+    private func color(_ severity: LibraryHealthSeverity) -> Color { severity == .healthy ? AstroTokens.Color.ok : AstroTokens.Color.attention }
     /// V2 UI/UX audit (2026-08-14) section 4: integrity findings used to get
     /// "No action needed" for the whole `.integrity` category regardless of
     /// severity -- but a checksum mismatch (severity != `.healthy`) is

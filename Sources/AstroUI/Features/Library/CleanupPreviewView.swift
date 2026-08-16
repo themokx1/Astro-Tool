@@ -114,7 +114,7 @@ public struct CleanupPreviewView: View {
     public var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
-                Image(systemName: "archivebox").font(.title2).foregroundStyle(AstroTokens.Color.warning)
+                Image(systemName: "archivebox").font(.title2).foregroundStyle(AstroTokens.Color.attention)
                 VStack(alignment: .leading) {
                     Text("Cleanup Preview").font(.title2.bold())
                     Text("Review candidates before any quarantine operation.").foregroundStyle(.secondary)
@@ -129,14 +129,14 @@ public struct CleanupPreviewView: View {
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()
             HStack {
-                Label("Preview only · no files moved", systemImage: "lock.shield").foregroundStyle(AstroTokens.Color.success)
+                Label("Preview only · no files moved", systemImage: "lock.shield").foregroundStyle(AstroTokens.Color.ok)
                 Spacer()
                 if accessMode != .mutationEnabled {
                     Label("Requires write access. Enable write operations in Settings to apply quarantine.", systemImage: "lock.shield")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if let planErrorMessage = store.planErrorMessage {
-                    Text(planErrorMessage).font(.caption).foregroundStyle(AstroTokens.Color.warning)
+                    Text(planErrorMessage).font(.caption).foregroundStyle(AstroTokens.Color.attention)
                 }
                 Button("Apply Quarantine…") {
                     if let plan = store.buildPlan() { presentQuarantineApply(plan) }
@@ -180,7 +180,7 @@ public struct CleanupPreviewView: View {
                             }
                             if group.truncatedCount > 0 { Text("+ \(group.truncatedCount) more").foregroundStyle(.secondary) }
                             Label("Proposed action: move to quarantine · never delete", systemImage: "archivebox")
-                                .font(.caption).foregroundStyle(AstroTokens.Color.warning)
+                                .font(.caption).foregroundStyle(AstroTokens.Color.attention)
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                     }
                 }

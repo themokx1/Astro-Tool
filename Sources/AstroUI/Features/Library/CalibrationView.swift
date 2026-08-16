@@ -155,7 +155,7 @@ public struct CalibrationView: View {
                     .width(min: 60, ideal: 70)
                 TableColumn("Master", value: \CalibrationCoverageRow.masterSortKey) { row in
                     Text(row.need.matchedMasterPath ?? "Missing")
-                        .foregroundStyle(row.need.matchedMasterPath == nil ? AstroTokens.Color.spectralBlue : .primary)
+                        .foregroundStyle(row.need.matchedMasterPath == nil ? AstroTokens.Color.accent : .primary)
                 }
                 TableColumn("Sessions") { row in
                     Text(row.need.sessions.map { "\($0.target) · \($0.date)" }.joined(separator: ", "))
@@ -226,13 +226,13 @@ public struct CalibrationView: View {
     private func masterStatus(_ master: CalibrationMasterInfo) -> some View {
         HStack(spacing: AstroTokens.Spacing.compact) {
             if master.isStale {
-                Label("Stale", systemImage: "clock.badge.exclamationmark").foregroundStyle(AstroTokens.Color.warning)
+                Label("Stale", systemImage: "clock.badge.exclamationmark").foregroundStyle(AstroTokens.Color.attention)
             }
             if master.isUnused {
                 Label("Unused", systemImage: "questionmark.circle").foregroundStyle(.secondary)
             }
             if !master.isStale, !master.isUnused {
-                Label("OK", systemImage: "checkmark.circle").foregroundStyle(AstroTokens.Color.success)
+                Label("OK", systemImage: "checkmark.circle").foregroundStyle(AstroTokens.Color.ok)
             }
         }
         .font(.caption)
@@ -277,10 +277,10 @@ public struct CalibrationView: View {
                 }
                 if let receipt = store.lastReceipt {
                     Label("Linked \(receipt.linked.count) file(s), skipped \(receipt.skipped.count)", systemImage: "checkmark.seal")
-                        .foregroundStyle(AstroTokens.Color.success)
+                        .foregroundStyle(AstroTokens.Color.ok)
                 }
                 if let planErrorMessage = store.planErrorMessage {
-                    Text(planErrorMessage).foregroundStyle(AstroTokens.Color.warning)
+                    Text(planErrorMessage).foregroundStyle(AstroTokens.Color.attention)
                 }
                 if store.accessMode != .mutationEnabled {
                     Label("Requires write access. Enable write operations in Settings to apply this link.", systemImage: "lock.shield")
@@ -294,7 +294,7 @@ public struct CalibrationView: View {
                         .help("Link the matched master calibration files into this session")
                 }
             } else if let planErrorMessage = store.planErrorMessage {
-                Text(planErrorMessage).foregroundStyle(AstroTokens.Color.warning)
+                Text(planErrorMessage).foregroundStyle(AstroTokens.Color.attention)
             }
         }
         .padding(AstroTokens.Spacing.section)

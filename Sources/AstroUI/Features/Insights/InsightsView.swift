@@ -136,19 +136,19 @@ public struct InsightsView: View {
                         title: "FWHM",
                         unit: "arcsec / px",
                         points: trendData(insight) { point in point.fwhmValue?.value },
-                        color: AstroTokens.Color.spectralBlue
+                        color: AstroTokens.Color.accent
                     )
                     trendChart(
                         title: "Background",
                         unit: "e⁻/s/arcsec²",
                         points: trendData(insight) { $0.backgroundEPerSecPerArcsec2 },
-                        color: AstroTokens.Color.spectralViolet
+                        color: AstroTokens.Color.accent
                     )
                     trendChart(
                         title: "Efficiency",
                         unit: "%",
                         points: trendData(insight) { $0.efficiencyPercent },
-                        color: AstroTokens.Color.success
+                        color: AstroTokens.Color.ok
                     )
                 }
                 recentTrendSessions(insight)
@@ -240,9 +240,9 @@ public struct InsightsView: View {
         GroupBox("Capture efficiency") {
             HStack(spacing: AstroTokens.Spacing.spacious) {
                 Label("\(insight.usableFrameCount) usable", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(AstroTokens.Color.success)
+                    .foregroundStyle(AstroTokens.Color.ok)
                 Label("\(insight.rejectedFrameCount) rejected", systemImage: "xmark.circle.fill")
-                    .foregroundStyle(insight.rejectedFrameCount == 0 ? Color.secondary : AstroTokens.Color.warning)
+                    .foregroundStyle(insight.rejectedFrameCount == 0 ? Color.secondary : AstroTokens.Color.attention)
                 Spacer()
                 Text(insight.captureEfficiency, format: .percent.precision(.fractionLength(0)))
                     .font(.title2.weight(.semibold).monospacedDigit())
@@ -258,7 +258,7 @@ public struct InsightsView: View {
                 ForEach(insight.filterUsage.prefix(8)) { item in
                     HStack {
                         Image(systemName: "line.3.horizontal.decrease.circle")
-                            .foregroundStyle(AstroTokens.Color.spectralViolet)
+                            .foregroundStyle(AstroTokens.Color.accent)
                         Text(item.name).lineLimit(1)
                         Spacer()
                         Text("\(item.frameCount) · \(duration(item.integrationSeconds))")
@@ -279,7 +279,7 @@ public struct InsightsView: View {
                 ForEach(insight.setupUsage.prefix(8)) { item in
                     HStack {
                         Image(systemName: "camera.aperture")
-                            .foregroundStyle(AstroTokens.Color.spectralBlue)
+                            .foregroundStyle(AstroTokens.Color.accent)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.camera).lineLimit(1)
                             if let focalLength = item.focalLength {

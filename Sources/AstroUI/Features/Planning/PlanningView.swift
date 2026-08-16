@@ -306,7 +306,7 @@ public struct PlanningView: View {
                                     }
                                     if savedTargetsStore.isSaved(row.target.designation) {
                                         Image(systemName: "bookmark.fill")
-                                            .foregroundStyle(AstroTokens.Color.spectralBlue)
+                                            .foregroundStyle(AstroTokens.Color.accent)
                                             .help("Saved")
                                             .accessibilityLabel("Saved")
                                     }

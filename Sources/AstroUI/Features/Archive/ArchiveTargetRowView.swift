@@ -3,9 +3,10 @@ import Foundation
 import SwiftUI
 
 /// One row per target, its byte composition drawn as a miniature of
-/// `ArchiveStripView` above it -- same segment colors, same `ArchivePalette`,
-/// same residual-merging layout maths (`ArchiveStripLayout`), so the two read
-/// as one visual language rather than two unrelated bar charts.
+/// `ArchiveStripView` above it -- same segment colors
+/// (`AstroTokens.Color.forArchiveClass`), same residual-merging layout maths
+/// (`ArchiveStripLayout`), so the two read as one visual language rather than
+/// two unrelated bar charts.
 ///
 /// Unlike the strip, a row's bar is not normalized to its OWN total: it is
 /// normalized to the LARGEST target in the map (`maxTargetBytes`), so a
@@ -90,7 +91,7 @@ struct ArchiveTargetRowView: View {
             HStack(spacing: 1.5) {
                 ForEach(Array(layout.segments.enumerated()), id: \.offset) { _, segment in
                     Rectangle()
-                        .fill(segment.archiveClass.map(ArchivePalette.color(for:)) ?? AstroTokens.Color.hairline)
+                        .fill(segment.archiveClass.map(AstroTokens.Color.forArchiveClass) ?? AstroTokens.Color.edge)
                         .frame(width: max(0, scaledWidth * segment.fraction))
                 }
             }
@@ -108,7 +109,7 @@ struct ArchiveTargetRowView: View {
             if row.reclaimableBytes > 0 {
                 Text("−\(ByteCountFormatter.string(fromByteCount: row.reclaimableBytes, countStyle: .file))")
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(AstroTokens.Color.danger)
+                    .foregroundStyle(AstroTokens.Color.critical)
             }
         }
     }

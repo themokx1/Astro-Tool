@@ -171,10 +171,10 @@ private struct LocationSettingsView: View {
                         .buttonStyle(.borderedProminent)
                         .accessibilityIdentifier("v2.settings.site.save")
                         if let saveMessage = store.saveMessage {
-                            Text(saveMessage).foregroundStyle(AstroTokens.Color.success)
+                            Text(saveMessage).foregroundStyle(AstroTokens.Color.ok)
                         }
                         if let errorMessage = store.errorMessage {
-                            Text(errorMessage).foregroundStyle(AstroTokens.Color.danger)
+                            Text(errorMessage).foregroundStyle(AstroTokens.Color.critical)
                         }
                     }
                 }
@@ -264,7 +264,7 @@ private struct ExtendedCatalogSettingsSection: View {
                 }
             }
             if let errorMessage = store.lastErrorMessage {
-                Text(errorMessage).font(.caption).foregroundStyle(AstroTokens.Color.danger)
+                Text(errorMessage).font(.caption).foregroundStyle(AstroTokens.Color.critical)
             }
             Text("This research has made use of the SIMBAD database and the VizieR catalogue access tool, CDS, Strasbourg, France.")
                 .font(.caption2).foregroundStyle(.secondary)
@@ -443,7 +443,7 @@ private struct EquipmentEvaluationSettingsView: View {
                 Picker("Passband", selection: $passband) {
                     ForEach(EquipmentFilterPassband.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                if let errorMessage { Text(errorMessage).foregroundStyle(AstroTokens.Color.danger) }
+                if let errorMessage { Text(errorMessage).foregroundStyle(AstroTokens.Color.critical) }
                 Button("Add Filter") {
                     do {
                         _ = try store.createFilter(manufacturer: manufacturer, model: model, passband: passband)
@@ -532,10 +532,10 @@ private struct IntegrationsSupportSettingsView: View {
                     Button("Save…") { saveDiagnostics() }
                         .disabled(diagnostics == nil)
                         .accessibilityIdentifier("v2.settings.support.save")
-                    if copied { Label("Copied", systemImage: "checkmark").foregroundStyle(AstroTokens.Color.success) }
+                    if copied { Label("Copied", systemImage: "checkmark").foregroundStyle(AstroTokens.Color.ok) }
                 }
                 if let saveErrorMessage {
-                    Text(saveErrorMessage).font(.caption).foregroundStyle(AstroTokens.Color.danger)
+                    Text(saveErrorMessage).font(.caption).foregroundStyle(AstroTokens.Color.critical)
                 }
                 if let diagnostics {
                     ScrollView {

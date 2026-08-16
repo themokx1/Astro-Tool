@@ -15,7 +15,7 @@ struct SkyPathChart: View {
             Chart {
                 ForEach(result.samples, id: \.time) { sample in
                     LineMark(x: .value("Time", sample.time), y: .value("Altitude", sample.altitudeDeg))
-                        .foregroundStyle(AstroTokens.Color.spectralBlue)
+                        .foregroundStyle(AstroTokens.Color.accent)
                         .interpolationMethod(.catmullRom)
                 }
                 RuleMark(y: .value("Imaging threshold", result.minAltitudeDeg))

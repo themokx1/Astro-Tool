@@ -784,7 +784,7 @@ private struct GlobalSearchPanel: View {
                             Button { open(result) } label: {
                                 HStack(spacing: 10) {
                                     Image(systemName: searchIcon(result.kind))
-                                        .foregroundStyle(AstroTokens.Color.spectralBlue)
+                                        .foregroundStyle(AstroTokens.Color.accent)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(result.title).font(.headline)
                                         Text(result.subtitle).font(.caption).foregroundStyle(.secondary)
@@ -919,7 +919,7 @@ private struct V2Sidebar: View {
             Label(title, systemImage: systemImage)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isCurrentLibraryChild(route) ? AstroTokens.Color.spectralBlue : .primary)
+        .foregroundStyle(isCurrentLibraryChild(route) ? AstroTokens.Color.accent : .primary)
         .accessibilityLabel(title)
         .accessibilityIdentifier(accessibilityID)
     }
@@ -1499,7 +1499,7 @@ private struct V2EmptyDetail: View {
         }
         .navigationTitle(title)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AstroTokens.Color.graphite.opacity(0.36))
+        .background(AstroTokens.Color.ground.opacity(0.36))
         .accessibilityLabel(title)
         .accessibilityIdentifier(accessibilityIdentifier)
     }
