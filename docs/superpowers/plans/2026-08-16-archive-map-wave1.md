@@ -955,139 +955,156 @@ git commit -m "feat: collapse audit findings into actionable archive tasks"
 
 ---
 
-## Task 4: Az integritás-eltérés kapjon fájlútvonalat
+## Task 4: Az integritás-találatok jussanak el a térképig
 
-A `2026-08-15`-i termékaudit 3(b) pontja: a verify-futás egy sérülést találó eredménye ma egyetlen általános toast, és semmi más. Az `ArchiveTaskQuery.integrity` ága ezért ma soha nem tud kártyát gyártani (nincs útvonal → `.none` → nincs kártya). Ez a lépés adja meg neki az útvonalat.
+**Ennek a tasknak a premisszája megváltozott.** Az eredeti szöveg abból indult ki, hogy a verify-futás nem ír fájlszintű találatot, és az `AstroCore`-t kell bővíteni. A kód elolvasása után ez **nem igaz**:
+
+- `FixityVerifier.run` (`Sources/AstroCore/Audit/FixityVerifier.swift:425`) **már ma is** beszúrja a találatokat `db.insertFinding`-gel, teljes fájlútvonallal.
+- A `FixityVerifier.findings(from:)` (`:366`) négy kategóriát gyárt: `content-changed` (sureError, néma korrupció), `modified-in-place` (suspicious), `modified` (probablyIntentional, szándékos szerkesztés) és `verify-read-error` (suspicious).
+- Ezek viszont **saját, `"verify"` típusú futásba** kerülnek, nem az `"audit"`-ba.
+
+**A valódi hézag tehát nem az `AstroCore`-ban van, hanem az `ArchiveTaskQuery`-ben:** az csak a `(SELECT MAX(id) FROM runs WHERE kind = 'audit')` futást olvassa, így a verify találatai **láthatatlanok** a térkép számára. `AstroCore`-t ez a task **nem** módosít.
+
+Egy második, kisebb döntés is benne van: a `modified` kategória kimarad. Az azt jelenti, hogy a fájl mérete és ideje is változott — szándékos szerkesztés, nem adatvesztés. Riasztani érte azt tanítaná a felhasználónak, hogy hagyja figyelmen kívül a kártyákat.
+
+És egy harmadik: a „állítsd vissza biztonsági mentésből" tanács **csak** a `content-changed`-re igaz. Egy olvasási hiba nem korrupció, hanem meg nem erősített állapot. Ezért egyetlen `integrity` kártya helyett **kettő** lesz, hogy mindkettő a saját, igaz tanácsát adhassa.
 
 **Files:**
-- Modify: `Sources/AstroApplication/Features/Library/AuditRunCommand.swift`
-- Test: `Tests/AstroApplicationTests/AuditRunCommandTests.swift`
+- Modify: `Sources/AstroApplication/Features/Archive/ArchiveTaskQuery.swift`
+- Modify: `Tests/AstroApplicationTests/ArchiveTaskQueryTests.swift`
 
-- [ ] **Step 1: Read the existing verify path**
+- [ ] **Step 1: Write the failing tests**
 
-Run: `grep -n "runVerify\|FixityVerifier\|Summary\|recordAuditRun\|func verify" Sources/AstroApplication/Features/Library/AuditRunCommand.swift`
-
-Írd le magadnak, melyik metódus adja vissza a `FixityVerifier.Summary`-t, és hol van a legközelebbi hely, ahol `Finding` sorokat lehetne írni az index-adatbázisba. Ha a `FixityVerifier` nem ad vissza fájlszintű eltéréslistát, akkor **előbb** azt bővítsd (`AstroCore/Audit/FixityVerifier.swift`), additívan: a `Summary` mellé egy `mismatches: [FixityMismatch]` mező, ahol `FixityMismatch` a `path` + `kind` (`.contentChanged` / `.modifiedInPlace` / `.unreadable`) párt hordozza.
-
-- [ ] **Step 2: Write the failing test**
+Bővítsd a fixture-t egy verify-futással és annak találataival:
 
 ```swift
-@Test("A verify run records an integrity finding carrying the offending path")
-func verifyRecordsIntegrityFindingsWithPaths() async throws {
-    // Építs fel egy fixture-könyvtárat egy indexelt, hash-elt fájllal,
-    // írd felül a fájl tartalmát, majd futtass verify-t.
-    let fixture = try V2FixtureLibrary.makeWithHashedFile(contents: "original")
-    defer { fixture.cleanUp() }
-    try fixture.overwriteIndexedFile(contents: "tampered")
+try db.exec("INSERT INTO runs VALUES(3,'verify',3000.0);")
+try db.exec("""
+    INSERT INTO files VALUES
+      ('rot.fit', 700, 'M42', '2026-01-05', 'light', 'sessions', 0),
+      ('unread.fit', 50, 'M42', '2026-01-05', 'light', 'sessions', 0),
+      ('edited.fit', 60, 'M42', '2026-01-05', 'light', 'sessions', 0);
+    """)
+try db.exec("""
+    INSERT INTO findings VALUES
+      (10, 3, 'sure_error', 'content-changed',   'rot.fit',    'bitrot'),
+      (11, 3, 'suspicious', 'verify-read-error', 'unread.fit', 'unreadable'),
+      (12, 3, 'probably_intentional', 'modified', 'edited.fit', 'edited on purpose');
+    """)
+```
 
-    let command = try AuditRunCommand.production(rootURL: fixture.root, metadata: fixture.metadata)
-    let summary = try await command.runVerify(options: VerifyRunOptions(sampleFraction: nil, fillMissingChecksums: false))
+```swift
+@Test("Corruption from the latest verify run becomes its own card")
+func corruptionFromVerifyRunBecomesACard() async throws {
+    let index = try Self.makeIndexDatabase()
+    let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).tasks()
 
-    #expect(summary.contentChanged == 1)
+    let corruption = try #require(tasks.first { $0.kind == .corruption })
+    #expect(corruption.severity == .error)
+    #expect(corruption.affectedFileCount == 1)
+    #expect(corruption.bytes == 700)
+    #expect(corruption.evidencePaths == ["rot.fit"])
+    #expect(corruption.action == .revealInFinder(path: "rot.fit"))
+}
 
-    let db = try SQLiteDB(readOnlyPath: fixture.indexDatabase.path)
-    var recorded: [(category: String, path: String)] = []
-    try db.query("SELECT category, path FROM findings WHERE category = 'integrity';") { row in
-        recorded.append((row.string(0) ?? "", row.string(1) ?? ""))
-    }
-    #expect(recorded.count == 1)
-    #expect(recorded[0].path == fixture.indexedRelativePath)
+@Test("A file that could not be read is reported as unconfirmed, not as corruption")
+func unreadableFileIsNotReportedAsCorruption() async throws {
+    let index = try Self.makeIndexDatabase()
+    let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).tasks()
+
+    let unconfirmed = try #require(tasks.first { $0.kind == .unverified })
+    #expect(unconfirmed.severity == .attention)
+    #expect(unconfirmed.evidencePaths == ["unread.fit"])
+    #expect(!(try #require(tasks.first { $0.kind == .corruption }).evidencePaths.contains("unread.fit")))
+}
+
+@Test("A deliberately edited file raises nothing at all")
+func deliberatelyModifiedFileRaisesNothing() async throws {
+    let index = try Self.makeIndexDatabase()
+    let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).tasks()
+
+    #expect(!tasks.contains { $0.evidencePaths.contains("edited.fit") },
+            "'modified' means the user changed the file on purpose -- alarming about it teaches the user to ignore cards")
+}
+
+@Test("Audit and verify findings are read from their own latest runs, independently")
+func auditAndVerifyRunsAreReadIndependently() async throws {
+    let index = try Self.makeIndexDatabase()
+    let db = try SQLiteDB(path: index.path)
+    // A newer audit run must not hide the older verify run's findings.
+    try db.exec("INSERT INTO runs VALUES(4,'audit',4000.0);")
+    try db.exec("INSERT INTO findings VALUES(13, 4, 'suspicious', 'residue', 'r_pp_a.fit', 'leftover');")
+
+    let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).tasks()
+    #expect(tasks.contains { $0.kind == .corruption }, "the verify run's findings survive a newer audit run")
+    let intermediates = try #require(tasks.first { $0.kind == .intermediateFiles })
+    #expect(intermediates.affectedFileCount == 1, "only the LATEST audit run's residue counts")
 }
 ```
 
-Ha a `V2FixtureLibrary` nem tud hash-elt fájlt gyártani, bővítsd ki — a bővítés a `Tests/AstroApplicationTests/Fixtures/V2FixtureLibrary.swift`-be tartozik, nem a tesztfájlba.
+A meglévő hét teszt várt értékeit igazítsd az új fixture-höz. **Ne** lazíts egyetlen meglévő asszerción sem: ha egy nem elégíthető ki helyes kóddal, állj meg és jelentsd.
 
-- [ ] **Step 3: Run test to verify it fails**
+- [ ] **Step 2: Run tests to verify they fail**
 
-Run: `swift test --no-parallel --filter AuditRunCommandTests/verifyRecordsIntegrityFindingsWithPaths`
-Expected: FAIL — `recorded.count == 0`
+Run: `swift test --no-parallel --filter ArchiveTaskQueryTests`
+Expected: FAIL — `type 'ArchiveTaskKind' has no member 'corruption'`
 
-- [ ] **Step 4: Implement**
+- [ ] **Step 3: Implement**
 
-Két rész. Először az `AstroCore` oldal, ha a `FixityVerifier` ma csak összesített számokat ad vissza — additív bővítés, a meglévő `Summary` mezői változatlanok, hogy egyetlen mai hívó se törjön:
-
-```swift
-// Sources/AstroCore/Audit/FixityVerifier.swift
-public struct FixityMismatch: Equatable, Sendable {
-    public enum Kind: String, Sendable {
-        /// Same size and mtime, different bytes -- the dangerous one.
-        case contentChanged
-        /// Bytes differ and mtime moved: probably an intentional edit.
-        case modifiedInPlace
-        case unreadable
-    }
-    public let path: String
-    public let kind: Kind
-
-    public init(path: String, kind: Kind) {
-        self.path = path
-        self.kind = kind
-    }
-}
-
-// …és a meglévő `FixityVerifier.Summary`-be egyetlen új STORED property,
-// a mai mezők után:
-//
-//     /// Every file this run could not confirm, with its path. Empty on a
-//     /// clean run. Added additively: every count above it keeps its exact
-//     /// meaning, so V1, the CLI and the existing tests read what they
-//     /// always read.
-//     public let mismatches: [FixityMismatch]
-//
-// Az inicializálója kapjon `mismatches: [FixityMismatch] = []`
-// alapértelmezést, hogy egyetlen mai `Summary(...)` hívási hely se törjön.
-```
-
-A `verify` ciklusa már ma is fájlonként dönt (ott nőnek a `contentChanged` / `modifiedInPlace` / `readErrors` számlálók) — ugyanott fűzz hozzá egy `FixityMismatch`-et a lokális tömbhöz, és add át az inicializálónak a ciklus végén.
-
-Aztán az `AstroApplication` oldal, közvetlenül a meglévő `recordAuditRun` hívás mellett:
+Az `ArchiveTaskKind`-ból **töröld** az `integrity` esetet, és tedd a helyére ezt a kettőt:
 
 ```swift
-// Sources/AstroApplication/Features/Library/AuditRunCommand.swift
-private func recordIntegrityFindings(_ summary: FixityVerifier.Summary, runID: Int64, db: SQLiteDB) throws {
-    for mismatch in summary.mismatches {
-        try db.run(
-            """
-            INSERT INTO findings(run_id, severity, category, path, message)
-            VALUES(?, ?, 'integrity', ?, ?);
-            """,
-            bind: [
-                .int(runID),
-                .text(mismatch.kind == .contentChanged ? "sure_error" : "suspicious"),
-                .text(mismatch.path),
-                .text(Self.integrityMessage(for: mismatch.kind)),
-            ]
-        )
-    }
-}
-
-private static func integrityMessage(for kind: FixityMismatch.Kind) -> String {
-    switch kind {
-    case .contentChanged:
-        "The file's contents changed but its size and timestamp did not -- restore it from a backup copy."
-    case .modifiedInPlace:
-        "The file was modified after it was indexed."
-    case .unreadable:
-        "The file could not be read during verification."
-    }
-}
+    /// Silent corruption: the bytes changed while size and timestamp did
+    /// not. The only finding here that means data may already be lost, and
+    /// the only one for which "restore from a backup copy" is true advice.
+    case corruption
+    /// The verify pass could not confirm these files -- it read an error, or
+    /// found an in-place rewrite. Not proof of loss, so it must not borrow
+    /// corruption's language.
+    case unverified
 ```
 
-**Ne** vezess be új táblát és ne emelj sémaverziót; a meglévő `findings` séma elég. A `run_id` ugyanaz a futás-azonosító, amit a `recordAuditRun` már létrehozott — ne nyiss másodikat.
+és a `findingCategories`-ben:
 
-- [ ] **Step 5: Run the full application test target**
+```swift
+        case .corruption: ["content-changed"]
+        case .unverified: ["modified-in-place", "verify-read-error"]
+```
 
-Run: `swift test --no-parallel --filter AstroApplicationTests`
-Expected: PASS — minden korábbi teszt is zöld
+A `"modified"` kategória **egyik** listában sem szerepel — ez szándékos, és a `deliberatelyModifiedFileRaisesNothing` teszt pinneli.
+
+A `severity(for:)`-ben: `.corruption` → `.error`, `.unverified` → `.attention`.
+
+Az `action(for:entry:)`-ben mindkettő a `revealInFinder` ágra megy, ugyanazzal az „útvonal nélkül nincs kártya" szabállyal.
+
+A `tasks()` lekérdezésében a `WHERE` feltétel **két** futást fogadjon el, nem egyet:
+
+```sql
+WHERE d.run_id IN (
+        (SELECT MAX(id) FROM runs WHERE kind = 'audit'),
+        (SELECT MAX(id) FROM runs WHERE kind = 'verify')
+      )
+```
+
+A `hasAuditRun` **változatlan marad**: az „még nem néztem át a könyvtáradat" állapot továbbra is az audit hiányát jelenti, nem a verify-ét. Egy sosem futtatott verify nem ugyanaz, mint egy sosem futtatott audit, és nem szabad ugyanazt a mondatot kapnia.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `swift test --no-parallel --filter ArchiveTaskQueryTests`
+Expected: PASS — 11 tests
+
+- [ ] **Step 5: Run the whole suite**
+
+Run: `swift test --no-parallel 2>&1 | tail -20`
+Expected: minden zöld (2320+ teszt). Az `AuditRunCommandTests` és a `FixityVerifier` tesztjei **nem** változhatnak — ez a task nem nyúlt hozzájuk.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Sources/AstroApplication Sources/AstroCore Tests/AstroApplicationTests
-git commit -m "fix: record integrity mismatches as findings with their paths"
+git add Sources/AstroApplication/Features/Archive/ArchiveTaskQuery.swift Tests/AstroApplicationTests/ArchiveTaskQueryTests.swift
+git commit -m "fix: surface verify findings on the archive page"
 ```
 
----
 
 ## Task 5: `ArchivePalette` — az öt adatkategória-szín
 
