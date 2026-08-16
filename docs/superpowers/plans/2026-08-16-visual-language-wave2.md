@@ -369,3 +369,45 @@ git commit --allow-empty -m "chore: verify the visual language on the real libra
 - ⓖ CPU <15% a valódi könyvtáron, 25 s és 115 s után.
 - ⓗ A CHANGELOG kimondja a breaking change-et, és a letöltőoldal a macOS 14–15 felhasználókat a v1-re irányítja.
 - ⓘ A vizuális ellenőrzés emberi része **kimondva nyitott** — nem elhallgatva.
+
+---
+
+## Task 2b: A paletta szabályai legyenek tényleg kikényszerítve
+
+**Kiváltó ok:** a 2. task söprése után három, egymással összefüggő hiba maradt a fában — mindhárom arról szól, hogy a szabály ki van mondva, de nincs betartatva.
+
+### 1. Státuszszín egy mérési görbén
+
+Az `InsightsView` három egymás melletti trend-diagramja: FWHM → `accent`, Background → `accent`, Efficiency → **`ok`**.
+
+Az `ok` azt jelenti: „rendben van". Egy mérési görbén ez **értékítéletet mond az adatról**, függetlenül attól, mit mutat — a diagram olyat állít, amit a szám nem. Ez ugyanaz a hiba, mint a régi Health oldal „0 calibration issues"-a, csak grafikonon.
+
+Emellett a `trendChart` **három külön diagramot** épít, mindegyiknek saját címe és tengelye van (small multiples), egyetlen sorozattal. Köztük a szín **semmilyen információt nem hordoz** — a különböző szín különbséget sugall, ami nincs.
+
+**Döntés:** mind a három `accent`-et kap, az `ok` eltűnik innen. Nem kell új token: egy hue a small multiples-hez őszinte, és megszűnik a hamis ítélet.
+
+### 2. A kapu csak egy irányba néz
+
+Az `AstroTokensTests.dataColorsAreNotStatus` azt őrzi, hogy adatkategória-szín ne jelentsen státuszt. **Visszafelé nem néz** — ezért nem szólt az `ok`-ra egy grafikonon.
+
+**Bővítés:** ugyanaz a teszt fogja el a másik irányt is — `ok`/`attention`/`critical` nem jelenhet meg olyan sorban, ami adat-sorozatot rajzol (`LineMark`, `PointMark`, `BarMark`, `AreaMark`, `foregroundStyle` egy `Chart` blokkon belül). Ha ez forrás-vizsgálattal nem fejezhető ki tisztán, gateld a leszűkített, védhető részhalmazt, és **mondd ki a teszt doc-kommentjében, mit nem fog el** — ne írj olyan tesztet, ami véletlenül megy át.
+
+### 3. Lejárt felmentés a nyers színliterál-kapuban
+
+A `V2PolishSurfaceTests.noBareStatusColorLiterals` **két fájlt véglegesen felment** (`Features/Planning/PlanningView.swift`, `Features/Planning/SkyPathChart.swift`), ezzel az indoklással: „Planning is intentionally excluded: it is under a separate, currently-frozen read-only audit and was not part of this sweep."
+
+Az az audit **2026-08-15-én lezárult** (wave 5, Planning workbench). Az indok lejárt, a felmentés maradt — két fájl azóta korlátlanul megszegheti a szabályt. Egy indok nélkül maradt felmentés csendben állandó lyukká válik; a projekt saját auditja pont ezt kifogásolta a lejárat nélküli nyugtázásoknál.
+
+**Teendő:** a felmentés **törlendő**, és a két találat javítandó:
+- `SkyPathChart.swift:22` — a `RuleMark` a fotózhatósági küszöböt jelöli („ez alatt nem éri meg"). Ez **valódi figyelmeztetés**, tehát `attention`.
+- `PlanningView.swift:357` — döntsd el a kontextusból; ha státusz, `attention`/`critical`, ha adat, akkor a megfelelő adat-token.
+
+**Files:** `Sources/AstroUI/Features/Insights/InsightsView.swift`, `Sources/AstroUI/Features/Planning/SkyPathChart.swift`, `Sources/AstroUI/Features/Planning/PlanningView.swift`, `Tests/AstroUITests/AstroTokensTests.swift`, `Tests/AstroUITests/V2PolishSurfaceTests.swift`
+
+- [ ] **Step 1:** a bővített kaput és a felmentés törlését **előbb** — mindkettőnek buknia kell a jelenlegi fán. Igazold.
+- [ ] **Step 2:** a három javítás.
+- [ ] **Step 3:** teljes suite csendes gépen, majd commit:
+
+```bash
+git commit -m "fix: enforce the palette's own rules"
+```
