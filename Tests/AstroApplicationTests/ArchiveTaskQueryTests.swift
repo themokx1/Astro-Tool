@@ -22,9 +22,12 @@ struct ArchiveTaskQueryTests {
               ('r_pp_a.fit', 1000, 'M42', '2026-01-05', 'other', 'sessions', 0),
               ('r_pp_b.fit', 2000, 'M42', '2026-01-05', 'other', 'sessions', 0),
               ('dupe.fit',    500, 'M42', '2026-01-05', 'dark',  'calibration', 0),
-              ('flats/x.tif', 300, 'C2025', '2026-04-18', 'other', 'sessions', 0);
+              ('flats/x.tif', 300, 'C2025', '2026-04-18', 'other', 'sessions', 0),
+              ('rot.fit',     700, 'M42', '2026-01-05', 'light', 'sessions', 0),
+              ('unread.fit',   50, 'M42', '2026-01-05', 'light', 'sessions', 0),
+              ('edited.fit',   60, 'M42', '2026-01-05', 'light', 'sessions', 0);
             """)
-        try db.exec("INSERT INTO runs VALUES(1,'scan',1000.0),(2,'audit',2000.0);")
+        try db.exec("INSERT INTO runs VALUES(1,'scan',1000.0),(2,'audit',2000.0),(3,'verify',3000.0);")
         if withFindings {
             try db.exec("""
                 INSERT INTO findings VALUES
@@ -32,6 +35,12 @@ struct ArchiveTaskQueryTests {
                   (2, 2, 'suspicious', 'residue', 'r_pp_b.fit', 'leftover'),
                   (3, 2, 'suspicious', 'duplicate-content', 'dupe.fit', 'copy'),
                   (4, 2, 'sure_error', 'calib-in-wrong-dir', 'flats/x.tif', 'not a flat');
+                """)
+            try db.exec("""
+                INSERT INTO findings VALUES
+                  (10, 3, 'sure_error', 'content-changed',   'rot.fit',    'bitrot'),
+                  (11, 3, 'suspicious', 'verify-read-error', 'unread.fit', 'unreadable'),
+                  (12, 3, 'probably_intentional', 'modified', 'edited.fit', 'edited on purpose');
                 """)
         }
         return path
@@ -42,7 +51,7 @@ struct ArchiveTaskQueryTests {
         let index = try Self.makeIndexDatabase()
         let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).tasks()
 
-        #expect(tasks.count == 3)
+        #expect(tasks.count == 5)
         let intermediates = try #require(tasks.first { $0.kind == .intermediateFiles })
         #expect(intermediates.affectedFileCount == 2)
         #expect(intermediates.bytes == 3000)
@@ -62,7 +71,9 @@ struct ArchiveTaskQueryTests {
         let index = try Self.makeIndexDatabase()
         let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).tasks()
 
-        #expect(tasks.map(\.kind) == [.misplacedCalibration, .intermediateFiles, .duplicateContent])
+        #expect(tasks.map(\.kind) == [
+            .corruption, .misplacedCalibration, .intermediateFiles, .duplicateContent, .unverified,
+        ])
     }
 
     @Test("At most three evidence paths are carried, however many findings there are")
@@ -122,5 +133,52 @@ struct ArchiveTaskQueryTests {
         for task in tasks {
             #expect(task.action != .unavailable, "\(task.kind) produced a card with no action")
         }
+    }
+
+    @Test("Corruption from the latest verify run becomes its own card")
+    func corruptionFromVerifyRunBecomesACard() async throws {
+        let index = try Self.makeIndexDatabase()
+        let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).tasks()
+
+        let corruption = try #require(tasks.first { $0.kind == .corruption })
+        #expect(corruption.severity == .error)
+        #expect(corruption.affectedFileCount == 1)
+        #expect(corruption.bytes == 700)
+        #expect(corruption.evidencePaths == ["rot.fit"])
+        #expect(corruption.action == .revealInFinder(path: "rot.fit"))
+    }
+
+    @Test("A file that could not be read is reported as unconfirmed, not as corruption")
+    func unreadableFileIsNotReportedAsCorruption() async throws {
+        let index = try Self.makeIndexDatabase()
+        let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).tasks()
+
+        let unconfirmed = try #require(tasks.first { $0.kind == .unverified })
+        #expect(unconfirmed.severity == .attention)
+        #expect(unconfirmed.evidencePaths == ["unread.fit"])
+        #expect(!(try #require(tasks.first { $0.kind == .corruption }).evidencePaths.contains("unread.fit")))
+    }
+
+    @Test("A deliberately edited file raises nothing at all")
+    func deliberatelyModifiedFileRaisesNothing() async throws {
+        let index = try Self.makeIndexDatabase()
+        let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).tasks()
+
+        #expect(!tasks.contains { $0.evidencePaths.contains("edited.fit") },
+                "'modified' means the user changed the file on purpose -- alarming about it teaches the user to ignore cards")
+    }
+
+    @Test("Audit and verify findings are read from their own latest runs, independently")
+    func auditAndVerifyRunsAreReadIndependently() async throws {
+        let index = try Self.makeIndexDatabase()
+        let db = try SQLiteDB(path: index.path)
+        // A newer audit run must not hide the older verify run's findings.
+        try db.exec("INSERT INTO runs VALUES(4,'audit',4000.0);")
+        try db.exec("INSERT INTO findings VALUES(13, 4, 'suspicious', 'residue', 'r_pp_a.fit', 'leftover');")
+
+        let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).tasks()
+        #expect(tasks.contains { $0.kind == .corruption }, "the verify run's findings survive a newer audit run")
+        let intermediates = try #require(tasks.first { $0.kind == .intermediateFiles })
+        #expect(intermediates.affectedFileCount == 1, "only the LATEST audit run's residue counts")
     }
 }

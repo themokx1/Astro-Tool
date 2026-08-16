@@ -6,7 +6,14 @@ public enum ArchiveTaskKind: String, CaseIterable, Sendable {
     case duplicateContent
     case misplacedCalibration
     case brokenNames
-    case integrity
+    /// Silent corruption: the bytes changed while size and timestamp did
+    /// not. The only finding here that means data may already be lost, and
+    /// the only one for which "restore from a backup copy" is true advice.
+    case corruption
+    /// The verify pass could not confirm these files -- it read an error, or
+    /// found an in-place rewrite. Not proof of loss, so it must not borrow
+    /// corruption's language.
+    case unverified
     /// Not a problem -- the honest "I have not looked yet" state, which
     /// still deserves a card because it has a real button.
     case auditNeverRun
@@ -19,7 +26,8 @@ public enum ArchiveTaskKind: String, CaseIterable, Sendable {
         case .misplacedCalibration: ["calib-in-wrong-dir", "orphan-calib-dir"]
         case .brokenNames: ["placeholder-name", "duplicated-catalog-prefix",
                             "nested-session-tree", "noncanonical-subdir"]
-        case .integrity: ["integrity"]
+        case .corruption: ["content-changed"]
+        case .unverified: ["modified-in-place", "verify-read-error"]
         case .auditNeverRun: []
         }
     }
@@ -86,9 +94,10 @@ public struct ArchiveTask: Equatable, Sendable, Identifiable {
     }
 }
 
-/// Turns the latest audit run's findings into at most six cards -- one per
-/// `ArchiveTaskKind` -- instead of one row per finding. The 3 228 residue
-/// findings on the reference library are one card, not 3 228 rows.
+/// Turns the latest audit run's and the latest verify run's findings into at
+/// most six cards -- one per `ArchiveTaskKind` -- instead of one row per
+/// finding. The 3 228 residue findings on the reference library are one
+/// card, not 3 228 rows.
 ///
 /// Hard rule, gated by `ArchiveTaskQueryTests.everyCardIsActionable`: a card
 /// only exists if its `action` can actually run. Titles and explanatory
@@ -127,7 +136,10 @@ public struct ArchiveTaskQuery: Sendable {
             """
             SELECT d.category, d.path, COALESCE(f.size, 0)
             FROM findings d LEFT JOIN files f ON f.path = d.path
-            WHERE d.run_id = (SELECT MAX(id) FROM runs WHERE kind = 'audit')
+            WHERE d.run_id IN (
+                    (SELECT MAX(id) FROM runs WHERE kind = 'audit'),
+                    (SELECT MAX(id) FROM runs WHERE kind = 'verify')
+                  )
             ORDER BY d.id;
             """
         ) { row in
@@ -170,8 +182,9 @@ public struct ArchiveTaskQuery: Sendable {
 
     private static func severity(for kind: ArchiveTaskKind) -> ArchiveTaskSeverity {
         switch kind {
-        case .misplacedCalibration, .brokenNames, .integrity: .error
+        case .misplacedCalibration, .brokenNames, .corruption: .error
         case .intermediateFiles, .duplicateContent: .reclaim
+        case .unverified: .attention
         case .auditNeverRun: .info
         }
     }
@@ -184,7 +197,7 @@ public struct ArchiveTaskQuery: Sendable {
             .previewQuarantine(categories: kind.findingCategories)
         case .duplicateContent:
             .compareDuplicates
-        case .misplacedCalibration, .brokenNames, .integrity:
+        case .misplacedCalibration, .brokenNames, .corruption, .unverified:
             // Honest gate: with no concrete path there is nothing to open,
             // so no card is produced at all (see this type's doc comment).
             entry.paths.first.map { ArchiveTaskAction.revealInFinder(path: $0) } ?? .unavailable
