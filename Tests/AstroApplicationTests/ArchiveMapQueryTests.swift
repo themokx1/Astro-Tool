@@ -27,6 +27,14 @@ struct ArchiveMapQueryTests {
               ('e.fit', 400, 'M42',      '2026-01-05', 'stack',  'stacks',   0),
               ('gone.fit', 9999, 'M42',  '2026-01-05', 'light',  'sessions', 1);
             """)
+        // Two files the scanner could not attribute to any target -- the
+        // shared calibration store. 500 bytes total, of which 250 (d2) is
+        // flagged as a duplicate by the audit below.
+        try db.exec("""
+            INSERT INTO files VALUES
+              ('calibration_library/darks/d1.fit', 250, NULL, NULL, 'dark', 'calibration', 0),
+              ('calibration_library/darks/d2.fit', 250, NULL, NULL, 'dark', 'calibration', 0);
+            """)
         if includeAuditTables {
             try db.exec("""
                 CREATE TABLE runs(id INTEGER PRIMARY KEY, kind TEXT, started_at REAL);
@@ -39,6 +47,10 @@ struct ArchiveMapQueryTests {
                   (1, 2, 'suspicious', 'residue', 'c.tif', 'leftover'),
                   (2, 2, 'suspicious', 'duplicate-content', 'e.fit', 'copy');
                 """)
+            try db.exec("""
+                INSERT INTO findings VALUES
+                  (3, 2, 'suspicious', 'duplicate-content', 'calibration_library/darks/d2.fit', 'copy');
+                """)
         }
         return path
     }
@@ -48,8 +60,8 @@ struct ArchiveMapQueryTests {
         let index = try Self.makeIndexDatabase()
         let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
 
-        #expect(snapshot.totalBytes == 900)
-        #expect(snapshot.fileCount == 5)
+        #expect(snapshot.totalBytes == 1400)
+        #expect(snapshot.fileCount == 7)
         #expect(snapshot.targetCount == 2)
         #expect(snapshot.nightCount == 3)
 
@@ -58,7 +70,8 @@ struct ArchiveMapQueryTests {
         #expect(light.fileCount == 2)
         let stack = try #require(snapshot.slices.first { $0.archiveClass == .stack })
         #expect(stack.bytes == 500)
-        #expect(snapshot.slices.contains { $0.archiveClass == .calibration && $0.bytes == 100 })
+        // NGC_7000's flat (100) plus the untargeted darks (500) = 600.
+        #expect(snapshot.slices.contains { $0.archiveClass == .calibration && $0.bytes == 600 })
         #expect(!snapshot.slices.contains { $0.archiveClass == .processed },
                 "a class with no bytes produces no slice at all")
     }
@@ -68,8 +81,11 @@ struct ArchiveMapQueryTests {
         let index = try Self.makeIndexDatabase()
         let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
 
-        #expect(snapshot.rows.map(\.id) == ["NGC_7000", "M42"])
-        let ngc = try #require(snapshot.rows.first)
+        // NGC_7000 (500 bytes) and the untargeted bucket (500 bytes) tie;
+        // the tiebreaker is ascending id, and "/untargeted" sorts before
+        // "NGC_7000" because '/' precedes 'N' in ASCII.
+        #expect(snapshot.rows.map(\.id) == ["/untargeted", "NGC_7000", "M42"])
+        let ngc = try #require(snapshot.rows.first { $0.id == "NGC_7000" })
         #expect(ngc.totalBytes == 500)
         #expect(ngc.nightCount == 2)
         #expect(ngc.fileCount == 4)
@@ -83,12 +99,14 @@ struct ArchiveMapQueryTests {
         let index = try Self.makeIndexDatabase()
         let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
 
-        #expect(snapshot.reclaimableBytes == 500)
-        #expect(snapshot.reclaimableFiles == 2)
+        #expect(snapshot.reclaimableBytes == 750)
+        #expect(snapshot.reclaimableFiles == 3)
         let m42 = try #require(snapshot.rows.first { $0.id == "M42" })
         #expect(m42.reclaimableBytes == 400)
         let ngc = try #require(snapshot.rows.first { $0.id == "NGC_7000" })
         #expect(ngc.reclaimableBytes == 100)
+        let untargeted = try #require(snapshot.rows.first { $0.isUntargeted })
+        #expect(untargeted.reclaimableBytes == 250)
     }
 
     @Test("A library whose index has no audit tables still renders a map")
@@ -96,10 +114,54 @@ struct ArchiveMapQueryTests {
         let index = try Self.makeIndexDatabase(includeAuditTables: false)
         let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
 
-        #expect(snapshot.totalBytes == 900)
+        #expect(snapshot.totalBytes == 1400)
         #expect(snapshot.reclaimableBytes == 0)
         #expect(snapshot.lastAuditAt == nil)
         #expect(!snapshot.isAuditStale, "no audit at all is not staleness -- it is its own state")
+    }
+
+    @Test("Files that belong to no target get their own row instead of vanishing")
+    func untargetedFilesGetTheirOwnRow() async throws {
+        let index = try Self.makeIndexDatabase()
+        let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
+
+        let untargeted = try #require(snapshot.rows.first { $0.isUntargeted })
+        #expect(untargeted.target == nil)
+        #expect(untargeted.totalBytes == 500)
+        #expect(untargeted.fileCount == 2)
+        #expect(untargeted.nightCount == 0)
+        #expect(untargeted.reclaimableBytes == 250)
+        #expect(untargeted.slices.map(\.archiveClass) == [.calibration])
+    }
+
+    @Test("The header total is the whole library, and the rows add up to it")
+    func rowsAddUpToTheHeaderTotal() async throws {
+        let index = try Self.makeIndexDatabase()
+        let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
+
+        #expect(snapshot.totalBytes == 1400)
+        #expect(snapshot.rows.reduce(0) { $0 + $1.totalBytes } == snapshot.totalBytes,
+                "a byte in the library must appear in exactly one row")
+        #expect(snapshot.fileCount == 7)
+        #expect(snapshot.slices.reduce(0) { $0 + $1.bytes } == snapshot.totalBytes,
+                "the strip must cover the same bytes the header claims")
+    }
+
+    @Test("Reclaimable totals reconcile between the header and the rows")
+    func reclaimReconcilesBetweenHeaderAndRows() async throws {
+        let index = try Self.makeIndexDatabase()
+        let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
+
+        #expect(snapshot.rows.reduce(0) { $0 + $1.reclaimableBytes } == snapshot.reclaimableBytes,
+                "the rail's numerator must be the sum of what the rows show")
+    }
+
+    @Test("targetCount counts real targets, not the untargeted bucket")
+    func targetCountExcludesTheUntargetedRow() async throws {
+        let index = try Self.makeIndexDatabase()
+        let snapshot = try await ArchiveMapQuery(indexDatabaseForTesting: index).snapshot()
+        #expect(snapshot.targetCount == 2)
+        #expect(snapshot.rows.count == 3)
     }
 
     @Test("An audit older than the last scan is reported as stale")

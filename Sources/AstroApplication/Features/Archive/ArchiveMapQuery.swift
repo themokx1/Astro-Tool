@@ -15,9 +15,19 @@ public struct ArchiveSlice: Equatable, Sendable, Identifiable {
 }
 
 public struct ArchiveTargetRow: Equatable, Sendable, Identifiable {
-    /// The target's own folder name -- the stable identity everything else
-    /// (findings, routes, Finder reveal) keys off.
-    public let id: String
+    /// The target's own folder name, or `nil` for files the scanner could
+    /// not attribute to any target -- on a real library that bucket is
+    /// dominated by `calibration_library/`, a shared store that belongs to
+    /// no single target by design. It gets a row rather than being dropped:
+    /// this map's entire claim is "here is where your bytes are", and a
+    /// silently missing 6 GB (3 GB of it reclaimable duplicates) breaks that
+    /// claim.
+    public let target: String?
+    /// Stable identity for `ForEach`/selection. Derived from `target`, with
+    /// a sentinel for the untargeted bucket so no real folder name can
+    /// collide with it (`/` cannot appear in a scanned target name).
+    public var id: String { target ?? "/untargeted" }
+    public var isUntargeted: Bool { target == nil }
     /// The catalog designation when the folder name yields one
     /// (`TargetNameResolver`), otherwise the folder name with underscores
     /// turned into spaces. Deliberately NOT `ResolvedTargetName.displayName`:
@@ -33,11 +43,11 @@ public struct ArchiveTargetRow: Equatable, Sendable, Identifiable {
     public let reclaimableFiles: Int
 
     public init(
-        id: String, displayName: String, nightCount: Int, fileCount: Int,
+        target: String?, displayName: String, nightCount: Int, fileCount: Int,
         totalBytes: Int64, slices: [ArchiveSlice],
         reclaimableBytes: Int64, reclaimableFiles: Int
     ) {
-        self.id = id
+        self.target = target
         self.displayName = displayName
         self.nightCount = nightCount
         self.fileCount = fileCount
@@ -118,8 +128,8 @@ public struct ArchiveMapQuery: Sendable {
     public func snapshot() async throws -> ArchiveMapSnapshot {
         let db = try SQLiteDB(readOnlyPath: indexDatabase.standardizedFileURL.path)
 
-        var bytesByTargetAndClass: [String: [ArchiveClass: (files: Int, bytes: Int64)]] = [:]
-        var nightsByTarget: [String: Set<String>] = [:]
+        var bytesByTargetAndClass: [String?: [ArchiveClass: (files: Int, bytes: Int64)]] = [:]
+        var nightsByTarget: [String?: Set<String>] = [:]
         try db.query(
             """
             SELECT COALESCE(target, ''), COALESCE(role, ''), COALESCE(session_date, ''),
@@ -128,12 +138,12 @@ public struct ArchiveMapQuery: Sendable {
             GROUP BY target, role, session_date;
             """
         ) { row in
-            let target = row.string(0) ?? ""
+            let rawTarget = row.string(0) ?? ""
+            let target: String? = rawTarget.isEmpty ? nil : rawTarget
             let archiveClass = ArchiveClass(role: row.string(1) ?? "")
             let night = row.string(2) ?? ""
             let files = Int(row.int64(3) ?? 0)
             let bytes = row.int64(4) ?? 0
-            guard !target.isEmpty else { return }
             var classes = bytesByTargetAndClass[target] ?? [:]
             let existing = classes[archiveClass] ?? (files: 0, bytes: 0)
             classes[archiveClass] = (files: existing.files + files, bytes: existing.bytes + bytes)
@@ -153,7 +163,7 @@ public struct ArchiveMapQuery: Sendable {
         return ArchiveMapSnapshot(
             totalBytes: rows.reduce(0) { $0 + $1.totalBytes },
             fileCount: rows.reduce(0) { $0 + $1.fileCount },
-            targetCount: rows.count,
+            targetCount: rows.count(where: { !$0.isUntargeted }),
             nightCount: nightsByTarget.values.reduce(0) { $0 + $1.count },
             slices: slices,
             rows: rows,
@@ -165,9 +175,9 @@ public struct ArchiveMapQuery: Sendable {
     }
 
     private static func buildRows(
-        bytesByTargetAndClass: [String: [ArchiveClass: (files: Int, bytes: Int64)]],
-        nightsByTarget: [String: Set<String>],
-        reclaimByTarget: [String: (files: Int, bytes: Int64)]
+        bytesByTargetAndClass: [String?: [ArchiveClass: (files: Int, bytes: Int64)]],
+        nightsByTarget: [String?: Set<String>],
+        reclaimByTarget: [String?: (files: Int, bytes: Int64)]
     ) -> [ArchiveTargetRow] {
         bytesByTargetAndClass.map { target, classes in
             let slices = ArchiveClass.displayOrder.compactMap { archiveClass -> ArchiveSlice? in
@@ -175,11 +185,16 @@ public struct ArchiveMapQuery: Sendable {
                 return ArchiveSlice(archiveClass: archiveClass, fileCount: value.files, bytes: value.bytes)
             }
             let reclaim = reclaimByTarget[target] ?? (files: 0, bytes: 0)
-            let resolved = TargetNameResolver.resolve(folderName: target)
+            let displayName: String
+            if let target {
+                let resolved = TargetNameResolver.resolve(folderName: target)
+                displayName = resolved.designation ?? target.replacingOccurrences(of: "_", with: " ")
+            } else {
+                displayName = "Not tied to a target"
+            }
             return ArchiveTargetRow(
-                id: target,
-                displayName: resolved.designation
-                    ?? target.replacingOccurrences(of: "_", with: " "),
+                target: target,
+                displayName: displayName,
                 nightCount: nightsByTarget[target]?.count ?? 0,
                 fileCount: slices.reduce(0) { $0 + $1.fileCount },
                 totalBytes: slices.reduce(0) { $0 + $1.bytes },
@@ -189,8 +204,8 @@ public struct ArchiveMapQuery: Sendable {
             )
         }
         .sorted { lhs, rhs in
-            // Biggest first; folder name breaks a tie so the order is stable
-            // across runs rather than following dictionary iteration order.
+            // Biggest first; id breaks a tie so the order is stable across
+            // runs rather than following dictionary iteration order.
             if lhs.totalBytes != rhs.totalBytes { return lhs.totalBytes > rhs.totalBytes }
             return lhs.id < rhs.id
         }
@@ -213,12 +228,12 @@ public struct ArchiveMapQuery: Sendable {
 
     private static func reclaimByTarget(
         db: SQLiteDB, metadata: MetadataStore?
-    ) throws -> (byTarget: [String: (files: Int, bytes: Int64)], totalFiles: Int, totalBytes: Int64) {
+    ) throws -> (byTarget: [String?: (files: Int, bytes: Int64)], totalFiles: Int, totalBytes: Int64) {
         guard try tableExists(db, name: "findings"), try tableExists(db, name: "runs") else {
             return ([:], 0, 0)
         }
         let placeholders = reclaimableCategories.map { "'\($0)'" }.joined(separator: ",")
-        var byTarget: [String: (files: Int, bytes: Int64)] = [:]
+        var byTarget: [String?: (files: Int, bytes: Int64)] = [:]
         var totalFiles = 0
         var totalBytes: Int64 = 0
         try db.query(
@@ -230,12 +245,12 @@ public struct ArchiveMapQuery: Sendable {
             GROUP BY f.target;
             """
         ) { row in
-            let target = row.string(0) ?? ""
+            let rawTarget = row.string(0) ?? ""
+            let target: String? = rawTarget.isEmpty ? nil : rawTarget
             let files = Int(row.int64(1) ?? 0)
             let bytes = row.int64(2) ?? 0
             totalFiles += files
             totalBytes += bytes
-            guard !target.isEmpty else { return }
             byTarget[target] = (files: files, bytes: bytes)
         }
         return (byTarget, totalFiles, totalBytes)
