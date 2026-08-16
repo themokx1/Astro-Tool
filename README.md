@@ -53,7 +53,7 @@ session-konverter alapértelmezett logikai módja egyetlen fájlt sem mozgat.
 
 ## Telepítés
 
-Követelmény: **macOS 14 vagy újabb**. A kiadási DMG Universal, ezért Apple
+Követelmény: **macOS 26 vagy újabb**. A kiadási DMG Universal, ezért Apple
 Silicon és Intel Macen is fut.
 
 1. Töltsd le a legújabb DMG-t a [Releases](../../releases) oldalról.
@@ -183,7 +183,7 @@ csomagot a `scripts/release.sh` készíti, érvényes Apple hitelesítő adatokk
 - Swift 6 / Swift Package Manager
 - SwiftUI + Observation
 - SQLite
-- minimum macOS 14
+- minimum macOS 26
 - `AstroCore`, `AstroToolApp` és `astrotool` termékek
 
 A változtatásokhoz kérünk tesztet, különösen fájlművelet, migráció,

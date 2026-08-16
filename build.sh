@@ -110,7 +110,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleDevelopmentRegion</key><string>hu</string>
     <key>CFBundleLocalizations</key><array><string>hu</string><string>en</string></array>
     <key>LSApplicationCategoryType</key><string>public.app-category.photography</string>
-    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSHumanReadableCopyright</key><string>Copyright © 2026 AstroTool contributors.</string>

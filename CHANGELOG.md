@@ -8,6 +8,23 @@ történik.
 
 ## [Unreleased]
 
+### Breaking change (minimum macOS 26 — Task 1)
+
+**A V2-nek mostantól macOS 26 vagy újabb kell.** A csomag korábban macOS
+14-et célzott; a V2 még előzetes kiadás, ezért ez a legolcsóbb pillanat az
+emelésre, mielőtt a felület a macOS 26-os Liquid Glass-alapokra épül.
+
+- **Ha macOS 14 vagy macOS 15 rendszert használsz**, a V2 mostantól nem
+  települ és nem frissül a gépeden. Ez nem hiba — ez a fenti követelmény
+  következménye.
+- **A [korábbi, macOS 14-kompatibilis 1.0.0 kiadás](../../releases/tag/v1.0.0)
+  változatlanul elérhető marad**, és nem kap ezt a törő emelést; onnan tölthető
+  le, és a jelen frissítés nem szünteti meg.
+- Az érintett fájlok: `Package.swift` (`platforms: [.macOS(.v26)]`,
+  `swift-tools-version: 6.2`), `project.yml`, `build.sh`
+  (`LSMinimumSystemVersion`), a CI/release workflow-k (`runs-on: macos-26`),
+  a README és a weboldal.
+
 ## [2.0.0] - 2026-08-12
 
 ### Added
