@@ -27,12 +27,33 @@ public enum AstroTokens {
         /// The window's base surface. Blue-leaning graphite, never a flat
         /// black or a neutral system grey.
         public static let ground = dynamic(dark: 0x070A10, light: 0xF6F7FB)
-        /// Card, panel.
+        /// Card, panel -- the content layer that reads AGAINST `ground`.
+        /// Never painted directly by a feature view: it is the fill of the
+        /// one shared raised-surface treatment,
+        /// `View.astroRaisedSurface(_:)` (`AstroSurface.swift`), which also
+        /// owns the padding, the corner shape, the hairline and the shadow
+        /// that make it read as a card at all. `V2PolishSurfaceTests`'
+        /// `surfaceTokensAreOnlyPaintedByTheSharedTreatment` gates that.
         public static let surface = dynamic(dark: 0x10151F, light: 0xFFFFFF)
-        /// Elevated card, popover. Light appearance additionally carries a
-        /// shadow at the call site; the color itself is the same white.
+        /// A surface presented ABOVE the page rather than on it -- a popover,
+        /// a floating overlay. One step lighter than `surface` in dark
+        /// appearance; the same white in light, where separation comes from
+        /// the shadow such a surface carries instead.
+        ///
+        /// Task 7c note: this token's previous doc comment promised that
+        /// light appearance "additionally carries a shadow at the call site",
+        /// and no such call site was ever written. That shadow now exists,
+        /// but it belongs to `surface` via `astroRaisedSurface(_:)`, not
+        /// here. This token has NO caller in `AstroUI` today: the app's only
+        /// genuinely-above-the-page surface is the toast
+        /// (`Operations/ToastOverlay.swift`), which uses the system's own
+        /// `.regularMaterial` -- correctly, since a toast should refract what
+        /// it covers. Kept rather than deleted because the popover case is
+        /// real and unbuilt, not because anything reads it.
         public static let surfaceRaised = dynamic(dark: 0x161D29, light: 0xFFFFFF)
-        /// Hairline divider.
+        /// Hairline divider, and the edge of a raised surface -- see
+        /// `astroRaisedSurface(_:)` for why a card in light appearance needs
+        /// one at all (a 4% fill delta is not, on its own, an edge).
         public static let edge = dynamic(dark: 0x232C3C, light: 0xDFE4EE)
 
         // MARK: Text

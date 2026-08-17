@@ -123,15 +123,25 @@ struct WorkspaceTablePage<Toolbar: View, TableContent: View, Footer: View>: View
             // Task 6: the dense content itself -- up to 3,231 rows in the
             // real reference library's worst case (see
             // `ArchiveTaskDetailView`'s own doc comment) -- stays on an
-            // explicit SOLID `surface`, never glass. This is the one
+            // explicit SOLID surface, never glass. This is the one
             // container in the file whose direct child is a caller-supplied
             // `Table`/`List`, so it is exactly the shape
             // `V2PolishSurfaceTests`'s `noTableOrListHasAGlassParent` gate
-            // exists to keep solid: `.background` here, never
-            // `.glassEffect`.
+            // exists to keep solid.
+            //
+            // Task 7c (2026-08-17): this was the ONE correct raised surface
+            // in the whole tree -- a hand-rolled
+            // `.background(AstroTokens.Color.surface, in: ConcentricRectangle())`
+            // with no edge and no shadow, which in light appearance is a 4%
+            // tonal step off `ground` and therefore very nearly no card at
+            // all. It now goes through the shared treatment rather than
+            // sitting beside it as a second convention, so the eight table
+            // pages and the thirteen non-table routes finally read as the
+            // same design. `.flush`, because a `Table`'s own row insets and
+            // scroller must reach the card's edge.
             table
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .background(AstroTokens.Color.surface, in: ConcentricRectangle())
+                .astroRaisedSurface(.flush)
 
             footer
         }
