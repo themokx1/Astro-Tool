@@ -107,7 +107,7 @@ public struct NightWorkspaceView: View {
             .padding(AstroTokens.Spacing.spacious)
             Divider()
             Picker("Night section", selection: $router.nightTab) {
-                ForEach(NightWorkspaceTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                ForEach(NightWorkspaceTab.allCases, id: \.self) { Text($0.displayLabel).tag($0) }
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, AstroTokens.Spacing.spacious)
@@ -180,7 +180,7 @@ public struct NightWorkspaceView: View {
                 HStack(spacing: AstroTokens.Spacing.standard) {
                     MetricCard(title: "Integration", value: row.integrationSummary, detail: "Usable light frames", systemImage: "timer")
                     MetricCard(title: "Series", value: row.seriesCount.formatted(), detail: LocalizedStringKey(row.filterSummary), systemImage: "square.stack.3d.up")
-                    MetricCard(title: "Triage", value: row.triageState.rawValue, detail: "\(row.excludedFrames) excluded", systemImage: "checklist")
+                    MetricCard(title: "Triage", value: row.triageState.localizedText, detail: "\(row.excludedFrames) excluded", systemImage: "checklist")
                 }
                 // Task 7 (2026-08-17, GroupBox removal): `GroupBox`'s
                 // opaque grey panel gone for good; Task 7c gives the block
@@ -247,12 +247,23 @@ public struct NightWorkspaceView: View {
             TableColumn("Project", value: \SeriesRow.projectName) { series in
                 Text(series.projectName)
             }
-            TableColumn("Filter", value: \SeriesRow.filterSortKey) { Text($0.series.filterName ?? "Unfiltered") }
+            // `filterName` is arbitrary user/FITS data, so it can't become a
+            // `LocalizedStringKey`-typed property outright -- wrapping the
+            // `?? "Unfiltered"` fallback in `LocalizedStringKey(...)` at the
+            // call site translates the fallback and leaves any real filter
+            // name displaying as itself (an unmatched key just shows its own
+            // text), same trick `NightsView`'s `darkHours`/`bestTargets`
+            // columns use above.
+            TableColumn("Filter", value: \SeriesRow.filterSortKey) { Text(LocalizedStringKey($0.series.filterName ?? "Unfiltered")) }
             TableColumn("Exposure", value: \SeriesRow.series.exposureSeconds) { Text("\($0.series.exposureSeconds.formatted()) s").monospacedDigit() }
             TableColumn("Setup", value: \SeriesRow.series.setupDescriptor) { Text($0.series.setupDescriptor).lineLimit(1) }
-            TableColumn("Mode", value: \SeriesRow.series.passband.rawValue) { Text($0.series.passband.rawValue.replacingOccurrences(of: "_", with: " ").capitalized) }
+            TableColumn("Mode", value: \SeriesRow.series.passband.rawValue) { Text($0.series.passband.displayLabel) }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // W3-9: was `.frame(maxWidth: .infinity, maxHeight: .infinity)` --
+        // see `tableMaxHeight`'s own doc comment (`WorkspaceComponents.swift`)
+        // for why an unbounded height painted empty alternating stripes
+        // below this night's real series rows.
+        .frame(maxWidth: .infinity, maxHeight: tableMaxHeight(rowCount: sortedSeries.count))
         .onChange(of: sortOrder) { _, _ in recomputeSortedSeries() }
         .task(id: row) { recomputeSortedSeries() }
     }

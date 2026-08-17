@@ -168,6 +168,37 @@ extension WorkspaceTablePage where Footer == EmptyView {
     }
 }
 
+/// W3-9: a small `Table` (2-5 rows, e.g. `ProjectWorkspaceView`'s own Nights/
+/// Series tabs, or `NightWorkspaceView`'s Series tab) given
+/// `.frame(maxHeight: .infinity)` inside a pane far taller than its content
+/// is proposed the pane's whole remaining height -- AppKit then paints the
+/// leftover space as empty alternating-row stripes below the real rows all
+/// the way to the bottom of the page, which is a real part of why the owner
+/// called these pages "butucska" (dumb-looking). This never wraps a `Table`
+/// in a scrolling container to fix it (that would defeat row virtualization
+/// -- see `WorkspaceTablePage`'s own doc comment for the incident that rule
+/// exists to prevent); it only caps what `.frame(maxHeight:)` proposes, so a small
+/// table sizes to its own rows and a large one still gets `.infinity` --
+/// fills the pane, scrolls, and virtualizes normally, exactly like every
+/// `WorkspaceTablePage` table already does.
+///
+/// `rowHeight`/`headerHeight` approximate a standard (non-compact) macOS
+/// `Table`'s own `NSTableView` row/header metrics closely enough for this
+/// purpose -- the goal is "no visible dead stripe below the last real row",
+/// not a pixel-exact height, and a few points of slack either way is
+/// invisible next to real row content.
+func tableMaxHeight(rowCount: Int, rowHeight: CGFloat = 28, headerHeight: CGFloat = 28) -> CGFloat {
+    // Past this many rows, capping would already propose a height taller
+    // than most windows' own content area -- nothing is gained by capping
+    // further, so it falls back to the same `.infinity` a genuinely large
+    // `WorkspaceTablePage` table uses.
+    let uncappedRowThreshold = 16
+    guard rowCount < uncappedRowThreshold else { return .infinity }
+    // A floor of 1 row keeps a genuinely empty table from collapsing to
+    // just its header.
+    return CGFloat(max(rowCount, 1)) * rowHeight + headerHeight
+}
+
 struct MetricCard: View {
     // V2 UI/UX audit (2026-08-16): these two used to be plain `String`,
     // which routes `Label`/`Text` through their verbatim `StringProtocol`

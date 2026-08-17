@@ -75,7 +75,7 @@ public struct ProjectWorkspaceView: View {
             header
             Divider()
             Picker("Project section", selection: $router.projectTab) {
-                ForEach(ProjectWorkspaceTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                ForEach(ProjectWorkspaceTab.allCases, id: \.self) { Text($0.displayLabel).tag($0) }
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, AstroTokens.Spacing.spacious)
@@ -356,7 +356,14 @@ public struct ProjectWorkspaceView: View {
                 .formStyle(.grouped)
                 if let saveError { Text(saveError).foregroundStyle(AstroTokens.Color.critical) }
                 HStack {
-                    Text(annotation.map { "Last saved \($0.updatedAt.formatted(date: .abbreviated, time: .shortened))" } ?? "Not saved yet")
+                    // W3-9: `.map { "…" } ?? "Not saved yet"` infers `String`
+                    // (the `??` right-hand side forces it), so `Text(String)`
+                    // always chose the verbatim overload -- wrapping in
+                    // `LocalizedStringKey(...)` is the same fix
+                    // `NightsView`'s `darkHours`/`bestTargets` columns use.
+                    Text(LocalizedStringKey(
+                        annotation.map { "Last saved \($0.updatedAt.formatted(date: .abbreviated, time: .shortened))" } ?? "Not saved yet"
+                    ))
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button("Save Project Details") {
@@ -415,7 +422,7 @@ private struct ProjectNightsSummary: View {
             // of making the reader open every night to find out.
             TableColumn("Triage") { night in
                 let state = triageState(for: night)
-                Label(state.rawValue, systemImage: state == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                Label(state.displayLabel, systemImage: state == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                     .foregroundStyle(state == .ready ? AstroTokens.Color.ok : AstroTokens.Color.attention)
             }
             .width(min: 110, ideal: 125)
@@ -437,7 +444,11 @@ private struct ProjectNightsSummary: View {
             }
             .width(40)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // W3-9: was `.frame(maxWidth: .infinity, maxHeight: .infinity)` --
+        // see `tableMaxHeight`'s own doc comment for why an unbounded
+        // height painted 2-5 real rows followed by ~20 empty alternating
+        // stripes down to the bottom of the page.
+        .frame(maxWidth: .infinity, maxHeight: tableMaxHeight(rowCount: sortedNights.count))
         .onChange(of: sortOrder) { _, _ in recomputeSortedNights() }
         .task(id: snapshot) { recomputeSortedNights() }
         .contextMenu(forSelectionType: UUID.self) { nightIDs in
@@ -529,7 +540,11 @@ private struct ProjectSeriesSummary: View {
         Table(sortedSeries, selection: $selection, sortOrder: $sortOrder) {
             TableColumn("Night", value: \ProjectSeriesRow.nightDate) { Text($0.nightDate).monospacedDigit() }
                 .width(min: 85, ideal: 100)
-            TableColumn("Filter", value: \ProjectSeriesRow.series.filterSortKey) { Text($0.series.filterName ?? "Unfiltered") }
+            // Same `LocalizedStringKey(...)`-wrapped fallback as
+            // `NightWorkspaceView`'s own Filter column -- `filterName` is
+            // arbitrary FITS/user data, so only the "Unfiltered" fallback
+            // needs (and gets) a `hu.lproj` entry.
+            TableColumn("Filter", value: \ProjectSeriesRow.series.filterSortKey) { Text(LocalizedStringKey($0.series.filterName ?? "Unfiltered")) }
             TableColumn("Exposure", value: \ProjectSeriesRow.series.series.exposureSeconds) { Text("\($0.series.series.exposureSeconds.formatted()) s").monospacedDigit() }
             TableColumn("Setup", value: \ProjectSeriesRow.series.series.setupDescriptor) { Text($0.series.series.setupDescriptor).lineLimit(1) }
             TableColumn("Frames", value: \ProjectSeriesRow.series.usableFrames) { Text("\($0.series.usableFrames) / \($0.series.excludedFrames)").monospacedDigit() }
@@ -554,7 +569,8 @@ private struct ProjectSeriesSummary: View {
             }
             .width(40)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // W3-9: same fix as `ProjectNightsSummary`'s Table above.
+        .frame(maxWidth: .infinity, maxHeight: tableMaxHeight(rowCount: sortedSeries.count))
         .onChange(of: sortOrder) { _, _ in recomputeSortedSeries() }
         .task(id: snapshot) { recomputeSortedSeries() }
         .contextMenu(forSelectionType: UUID.self) { seriesIDs in
