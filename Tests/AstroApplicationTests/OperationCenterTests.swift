@@ -90,31 +90,47 @@ struct OperationCenterTests {
         #expect(cancelledCapture.value == nil)
     }
 
-    @Test("A blocking reentrant cancellation handler does not occupy the actor")
+    /// `.timeLimit` rather than a hand-rolled deadline: if `cancel(_:)` ever
+    /// regresses to invoking the handler inline on the actor, the two
+    /// `center.state(_:)` calls below never return, and a trait is what turns
+    /// that hang into a reported failure. It is a hang guard, not a
+    /// performance assertion -- the body takes microseconds.
+    @Test(
+        "A blocking reentrant cancellation handler does not occupy the actor",
+        .timeLimit(.minutes(1))
+    )
     func blockingCancellationHandlerLeavesOtherStateResponsive() async {
         let center = OperationCenter()
         let unrelated = await center.start(
             kind: .audit(library: "B"),
             cancellation: .unavailable
         )
-        let blocker = ReentrantCancellationBlocker(center: center, operationID: unrelated.id)
+        let handler = BlockingCancelHandler()
         let cancellable = await center.start(
             kind: .scan(library: "A"),
             cancellation: .cooperative,
-            cancelHandler: { blocker.run() }
+            cancelHandler: { handler.enterAndBlock() }
         )
 
         let cancellation = Task { await center.cancel(cancellable.id) }
-        let reenteredWhileBlocked = await blocker.waitForReentrantQuery()
+        await handler.waitUntilBlocking()
 
-        #expect(reenteredWhileBlocked)
-        #expect(blocker.observedPhase == .running)
-        if reenteredWhileBlocked {
-            #expect(await center.state(cancellable.id)?.phase == .cancelled)
-            #expect(await center.state(unrelated.id)?.phase == .running)
-        }
+        // The handler is sitting in a blocking `wait()` right now, inside the
+        // `Task.detached` that `cancel(_:)` runs it on, and `cancel(_:)` is
+        // itself suspended awaiting it. These two queries reach the actor
+        // anyway -- that is the property.
+        //
+        // They deliberately run on this test's own, already-scheduled task
+        // rather than a fresh `Task.detached`. The previous version fired the
+        // reentrant query from inside the handler and then blocked a SECOND
+        // cooperative-pool thread waiting up to a second for it, so proving
+        // the point required three pool threads at once while holding two of
+        // them hostage. See `BlockingCancelHandler` for what that cost the
+        // rest of the suite.
+        #expect(await center.state(unrelated.id)?.phase == .running)
+        #expect(await center.state(cancellable.id)?.phase == .cancelled)
 
-        blocker.release()
+        handler.release()
         #expect(await cancellation.value)
     }
 
@@ -265,41 +281,65 @@ private func startTrackedOperation(
     return (operation, reference)
 }
 
-private final class ReentrantCancellationBlocker: @unchecked Sendable {
-    private let center: OperationCenter
-    private let operationID: UUID
-    private let queryFinished = DispatchSemaphore(value: 0)
+/// The deliberately-blocking cancel handler that
+/// `blockingCancellationHandlerLeavesOtherStateResponsive` installs.
+///
+/// Nothing here may park a thread of the Swift concurrency cooperative pool
+/// except the handler body itself -- whose blocking IS the behaviour under
+/// test, and which `OperationCenter.cancel` deliberately runs on a
+/// `Task.detached` precisely so it cannot occupy the actor. That pool is
+/// process-wide and fixed-width (one thread per active core, 10 on this
+/// machine) and swift-testing runs all 112 suites on it concurrently, so a
+/// task that parks on a `DispatchSemaphore` takes a thread out of
+/// circulation for every other suite too.
+///
+/// The version this replaces did that twice over and then made it worse: the
+/// handler fired a reentrant `center.state(_:)` query on a THIRD
+/// `Task.detached` and blocked a SECOND pool thread waiting up to a second
+/// for it to answer. When the pool was busy -- which, in a 2441-test parallel
+/// run, it continuously is -- the query could not be scheduled, so the wait
+/// burned its full second with two threads pinned, and every other test that
+/// needed a `Task.detached` to start promptly in that window missed its own
+/// deadline. That was the entire load-dependent half of the suite's flake:
+/// `LibraryLaunchScanTests` (4 tests), `LibraryHealthStoreTests` (3),
+/// `ReviewStoreTests` -- none of which have anything to do with
+/// cancellation, all of which are just waiting on `OperationHost.run`'s
+/// detached task. Skipping this one test made all of them green across three
+/// consecutive full parallel runs, which is how it was identified.
+///
+/// So the reentrant query moved to the test's own, already-running task: the
+/// property ("the actor answers while a blocking handler is in flight") is
+/// asserted directly instead of through two proxies, no additional pool
+/// thread has to come free for the assertion to be reachable, and the one
+/// thread that is blocked stays blocked for an actor round-trip rather than
+/// for up to a second.
+private final class BlockingCancelHandler: @unchecked Sendable {
     private let mayReturn = DispatchSemaphore(value: 0)
     private let lock = NSLock()
-    private var storedPhase: OperationPhase?
+    private var isBlocking = false
 
-    init(center: OperationCenter, operationID: UUID) {
-        self.center = center
-        self.operationID = operationID
+    /// The cancel handler proper. Runs on the `Task.detached` inside
+    /// `OperationCenter.cancel`, and parks that task's thread until
+    /// `release()`. The timeout is a safety net against hanging a whole
+    /// parallel test run if an assertion above it throws before `release()`
+    /// is reached -- never the expected path.
+    func enterAndBlock() {
+        lock.withLock { isBlocking = true }
+        _ = mayReturn.wait(timeout: .now() + 30)
     }
 
-    var observedPhase: OperationPhase? {
-        lock.withLock { storedPhase }
-    }
-
-    func run() {
-        Task.detached { [center, operationID, queryFinished] in
-            let phase = await center.state(operationID)?.phase
-            self.lock.withLock { self.storedPhase = phase }
-            queryFinished.signal()
+    /// Suspends -- without holding a cooperative thread -- until the handler
+    /// has entered its blocking wait. Unbounded on purpose: the test carries
+    /// a `.timeLimit` trait, which reports a hang as a failure instead of
+    /// letting a hand-rolled deadline turn "the pool was busy for a moment"
+    /// into a spurious one.
+    func waitUntilBlocking() async {
+        while !lock.withLock({ isBlocking }) {
+            try? await Task.sleep(for: .milliseconds(1))
         }
-        _ = mayReturn.wait(timeout: .now() + 5)
-    }
-
-    func waitForReentrantQuery() async -> Bool {
-        await Task.detached { self.waitForReentrantQuerySynchronously() }.value
     }
 
     func release() {
         mayReturn.signal()
-    }
-
-    private func waitForReentrantQuerySynchronously() -> Bool {
-        queryFinished.wait(timeout: .now() + 1) == .success
     }
 }
