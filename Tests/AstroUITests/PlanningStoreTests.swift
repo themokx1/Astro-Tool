@@ -20,6 +20,18 @@ private func fixedSkyContext(_: URL?) async throws -> PlanningSkyContext? {
     PlanningSkyContext(site: planningTestSite, date: planningTestDate)
 }
 
+/// Matches `PlanningStore`'s own private `nightDateKey(for:)` formatter
+/// exactly (`yyyy-MM-dd`, `en_US_POSIX`, `TimeZone.current`) -- both use
+/// `TimeZone.current`, so this test's expectations stay correct regardless
+/// of the machine's own time zone.
+private func nightKey(for date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone.current
+    formatter.dateFormat = "yyyy-MM-dd"
+    return formatter.string(from: date)
+}
+
 /// Thread-safe call counter for injected `PlanningStore.RecommendationsComputer`
 /// closures -- `@Sendable` closures can't capture a plain `var`, and the
 /// closure body itself is synchronous (it runs inside `Task.detached`, off
@@ -694,6 +706,69 @@ struct PlanningStoreTests {
 
         let skyPath = try #require(store.skyPath)
         #expect(skyPath.maxAltitudeDeg == row.maxAltitudeDeg)
+    }
+
+    // MARK: - W4-2 (cloud forecast)
+
+    @Test("The planned night's cloud summary shows when the forecast covers it")
+    func cloudStateShowsSummaryForPlannedNight() async throws {
+        let key = nightKey(for: planningTestDate)
+        let summary = DailyCloudSummary(date: key, minPercent: 12, maxPercent: 48, meanPercent: 30)
+        let store = PlanningStore(
+            setups: [.apsCReference], catalogProvider: { TargetCatalog.all },
+            skyContextProvider: fixedSkyContext,
+            weatherProvider: { _ in [key: summary] }
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+        store.setPlanningDate(planningTestDate)
+        await store.pendingRefresh?.value
+
+        #expect(store.cloudState == .summary(summary))
+    }
+
+    @Test("A planned night beyond Open-Meteo's 7-day horizon reports so honestly, not a stale guess")
+    func cloudStateReportsBeyondHorizonHonestly() async throws {
+        let store = PlanningStore(
+            setups: [.apsCReference], catalogProvider: { TargetCatalog.all },
+            skyContextProvider: fixedSkyContext,
+            // A real forecast fetch, just with no bucket covering this
+            // particular night -- exactly what a night beyond Open-Meteo's
+            // 7-day window looks like.
+            weatherProvider: { _ in [:] }
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+        store.setPlanningDate(planningTestDate)
+        await store.pendingRefresh?.value
+
+        #expect(store.cloudState == .beyondHorizon)
+    }
+
+    @Test("No cloud indicator at all when weather is off or no site resolves")
+    func cloudStateHiddenWhenProviderReportsNothing() async throws {
+        let store = PlanningStore(
+            setups: [.apsCReference], catalogProvider: { TargetCatalog.all },
+            skyContextProvider: fixedSkyContext,
+            weatherProvider: { _ in nil }
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+
+        #expect(store.cloudState == .hidden)
+    }
+
+    @Test("A fetch failure with no cached forecast surfaces the mapped error instead of silently hiding")
+    func cloudStateSurfacesFetchFailure() async throws {
+        let store = PlanningStore(
+            setups: [.apsCReference], catalogProvider: { TargetCatalog.all },
+            skyContextProvider: fixedSkyContext,
+            weatherProvider: { _ in throw WeatherError.network }
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+
+        #expect(store.cloudState == .error(.network))
     }
 }
 

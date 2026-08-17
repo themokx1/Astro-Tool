@@ -1373,3 +1373,19 @@
 "Open a library with a resolved site to see the target's path across the sky." = "Nyiss meg egy könyvtárat feloldott megfigyelőhellyel, hogy lásd a célpont útját az égen.";
 "Finder metadata files" = "Finder metaadat-fájlok";
 "Hidden files Finder leaves behind in folders it has opened, like .DS_Store. They hold no image data." = "Rejtett fájlok, amelyeket a Finder hagy hátra a megnyitott mappákban, mint a .DS_Store. Nem tartalmaznak képadatot.";
+
+/* W4-2 (bring back the cloud forecast): hand-added, not extraction-script-
+   visible -- every key below is reached through a `LocalizedStringKey`-typed
+   computed property/`switch` (`WeatherError.captionKey`, `NightContextRail`'s
+   `cloudRow`/`cloudValueText`, `PlanningView.cloudIndicator`), none of which
+   the extraction script's literal-first-argument regex can see (same class
+   of hand-added entry as this file's own earlier "MetricInfoButton.swift"/
+   "W3-13" comments). */
+"Cloudiness" = "Felhőzet";
+"Cloud tonight: %@" = "Felhő ma éjjel: %@";
+"Open-Meteo · %@" = "Open-Meteo · %@";
+"Forecast horizon is 7 days" = "Az előrejelzés 7 napra lát el";
+"Cloud" = "Felhő";
+"No connection to Open-Meteo" = "Nincs kapcsolat az Open-Meteóval";
+"Open-Meteo returned an invalid response" = "Az Open-Meteo hibás választ adott";
+"Open-Meteo's response could not be processed" = "Az Open-Meteo válasza nem feldolgozható";

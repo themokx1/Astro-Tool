@@ -165,6 +165,61 @@ struct NightsStoreTests {
         #expect(store.nights[0].triageState == .empty)
     }
 
+    // MARK: - W4-2 (cloud forecast)
+
+    @Test("Opening a library with weather enabled loads per-night cloud summaries")
+    func opensNightWeather() async throws {
+        let metadata = try MetadataStore.temporary()
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        let summaries: [String: DailyCloudSummary] = [
+            "2026-08-14": DailyCloudSummary(date: "2026-08-14", minPercent: 5, maxPercent: 40, meanPercent: 20),
+        ]
+        let store = NightsStore(
+            metadataFactory: { _ in metadata },
+            calendarProvider: { _ in [] },
+            weatherProvider: { selectedRoot in
+                #expect(selectedRoot == root)
+                return summaries
+            }
+        )
+
+        try await store.open(rootURL: root)
+
+        #expect(store.nightWeather == summaries)
+    }
+
+    @Test("No site configured (or weather off) leaves nightWeather empty, not an error")
+    func opensWithoutWeatherLeavesNightWeatherEmpty() async throws {
+        let metadata = try MetadataStore.temporary()
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        let store = NightsStore(
+            metadataFactory: { _ in metadata },
+            calendarProvider: { _ in [] },
+            weatherProvider: { _ in nil }
+        )
+
+        try await store.open(rootURL: root)
+
+        #expect(store.nightWeather.isEmpty)
+    }
+
+    @Test("A cloud forecast fetch failure does not fail the calendar load itself")
+    func weatherFetchFailureDoesNotFailOpen() async throws {
+        let metadata = try MetadataStore.temporary()
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        let forecast = [NightSummary(date: "2026-08-14", astroDarkHours: 5.2, moonIlluminationPercent: 8, bestTargets: [])]
+        let store = NightsStore(
+            metadataFactory: { _ in metadata },
+            calendarProvider: { _ in forecast },
+            weatherProvider: { _ in throw WeatherError.network }
+        )
+
+        try await store.open(rootURL: root)
+
+        #expect(store.planningNights == forecast)
+        #expect(store.nightWeather.isEmpty)
+    }
+
     private func makeSeries(project: UUID, night: UUID, exposure: Double) -> SeriesRecord {
         SeriesRecord(id: UUID(), projectID: project, nightID: night, setupID: nil,
             setupDescriptor: "ASI2600MC", sensorMode: .osc, passband: .dualBand,

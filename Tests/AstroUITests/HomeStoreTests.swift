@@ -254,6 +254,87 @@ struct HomeStoreTests {
         #expect(store.snapshot.nightContext.isConfigured == false)
     }
 
+    // MARK: - W4-2 (cloud forecast)
+
+    @Test("Tonight's cloud picture lands on the snapshot after configure()")
+    func configureLoadsNightCloud() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let fetchedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let store = HomeStore(
+            tonightProvider: { _ in [] },
+            weatherProvider: { _ in HomeSnapshot.NightCloud(duskPercent: 20, dawnPercent: 55, fetchedAt: fetchedAt) }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.pendingWeatherLoad?.value
+
+        #expect(store.snapshot.nightCloud?.duskPercent == 20)
+        #expect(store.snapshot.nightCloud?.dawnPercent == 55)
+        // Honesty check: the store must carry the fetch's own `fetchedAt`
+        // through unchanged, even when it's the OLD timestamp a
+        // cache-on-failure fallback would return -- never silently
+        // re-stamped with "now".
+        #expect(store.snapshot.nightCloud?.fetchedAt == fetchedAt)
+        #expect(store.snapshot.nightCloudError == nil)
+    }
+
+    @Test("No site configured means no weather row and no error")
+    func configureShowsNoRowWhenProviderReportsNothing() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in [] },
+            weatherProvider: { _ in nil }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.pendingWeatherLoad?.value
+
+        #expect(store.snapshot.nightCloud == nil)
+        #expect(store.snapshot.nightCloudError == nil)
+    }
+
+    @Test("A fetch failure with no cached forecast surfaces the mapped error, not silence")
+    func configureSurfacesWeatherFetchFailure() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in [] },
+            weatherProvider: { _ in throw WeatherError.decode }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.pendingWeatherLoad?.value
+
+        #expect(store.snapshot.nightCloud == nil)
+        #expect(store.snapshot.nightCloudError == .decode)
+    }
+
+    @Test("A night beyond Open-Meteo's 7-day horizon reports honestly, not a stale dusk/dawn guess")
+    func configureReportsBeyondHorizonHonestly() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in [] },
+            weatherProvider: { _ in HomeSnapshot.NightCloud(duskPercent: nil, dawnPercent: nil, fetchedAt: Date()) }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.pendingWeatherLoad?.value
+
+        #expect(store.snapshot.nightCloud?.duskPercent == nil)
+        #expect(store.snapshot.nightCloud?.dawnPercent == nil)
+    }
+
     private func makeSeries(project: UUID, night: UUID, exposure: Double) -> SeriesRecord {
         SeriesRecord(id: UUID(), projectID: project, nightID: night, setupID: nil,
             setupDescriptor: "Test", sensorMode: .osc, passband: .broadband,

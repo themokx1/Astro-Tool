@@ -197,6 +197,12 @@ public final class HomeStore {
     /// second library open before the first fetch lands must not let the
     /// stale one win. Same guard shape as `PlanningStore.recomputeGeneration`.
     private var weatherGeneration = 0
+    /// Test-only handle to the in-flight weather fetch, mirroring
+    /// `PlanningStore.pendingRefresh`'s own contract -- `configure` doesn't
+    /// await this `Task` itself (weather must never delay the dashboard), so
+    /// tests need a way to deterministically wait for it. Never read by
+    /// production code.
+    private(set) var pendingWeatherLoad: Task<Void, Never>?
 
     /// All four providers are `Optional`/`nil` rather than defaulted
     /// directly to the `production…` methods, and must stay that way: an
@@ -245,7 +251,7 @@ public final class HomeStore {
             return
         }
         let provider = weatherProvider
-        Task { [weak self] in
+        pendingWeatherLoad = Task { [weak self] in
             guard let self else { return }
             do {
                 let cloud = try await provider(rootURL)
