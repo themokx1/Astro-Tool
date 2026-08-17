@@ -187,6 +187,20 @@ public struct HealthView: View {
                     .padding(.horizontal, AstroTokens.Spacing.standard)
                     .padding(.vertical, AstroTokens.Spacing.compact)
                 Divider()
+                // W3-12 finding 4: `store.errorMessage` used to render only
+                // in the no-snapshot `ContentUnavailableView` branch below --
+                // with a findings table already loaded, a failed acknowledge/
+                // revoke (`LibraryHealthStore.acknowledge`/
+                // `revokeAcknowledgement` both set this on failure) was
+                // invisible. The loaded state now gets the same surface.
+                if let errorMessage = store.errorMessage {
+                    Text(errorMessage)
+                        .font(.callout)
+                        .foregroundStyle(AstroTokens.Color.critical)
+                        .padding(.horizontal, AstroTokens.Spacing.standard)
+                        .padding(.vertical, AstroTokens.Spacing.compact)
+                        .accessibilityIdentifier("v2.health.error")
+                }
                 Table(displayedItems, selection: $selectedFindingID, sortOrder: $sortOrder) {
                     TableColumn("Finding", value: \LibraryHealthItem.title) { item in
                         HStack(alignment: .top, spacing: 10) {
