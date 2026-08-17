@@ -1443,8 +1443,13 @@ struct V2PolishSurfaceTests {
         // identifier (`.surfaceArea`) from matching, and it must try
         // `surfaceRaised` before `surface` or the alternation settles on the
         // shorter branch.
+        //
+        // Task 7d added `recess` to the same alternation rather than writing
+        // a second, near-identical scanner: the rule is "a structural surface
+        // token is painted by its own shared treatment, never by a view", and
+        // there are now three such tokens.
         let pattern = try NSRegularExpression(
-            pattern: #"\.(surfaceRaised|surface)(?![A-Za-z0-9_])"#
+            pattern: #"\.(surfaceRaised|surface|recess)(?![A-Za-z0-9_])"#
         )
         var offenders: [String] = []
         for file in try swiftFiles(under: "Sources/AstroUI") {
@@ -1456,6 +1461,7 @@ struct V2PolishSurfaceTests {
             let source = Self.removingLineComments(try contents(file))
             for (offset, line) in source.components(separatedBy: "\n").enumerated() {
                 if line.contains("public static let surface") { continue }
+                if line.contains("public static let recess") { continue }
                 let nsRange = NSRange(line.startIndex..<line.endIndex, in: line)
                 guard pattern.firstMatch(in: line, range: nsRange) != nil else { continue }
                 offenders.append("\(file):\(offset + 1)")
@@ -1472,6 +1478,166 @@ struct V2PolishSurfaceTests {
             together:
             \(offenders.joined(separator: "\n"))
             """)
+    }
+
+    // MARK: (r) Task 7d (2026-08-17) -- the recessed layer, and the one
+    // vocabulary that cannot express it.
+    //
+    // Three wells, three recipes: `.quaternary.opacity(0.45)`
+    // (`ProjectsView`), `.quaternary.opacity(0.5)` at a corner radius of 10
+    // (`ResultsView`), and a bare `.quaternary` (`MutationConfirmationSheet`).
+    // The inconsistency is the owner's own complaint; the INVERSION is the
+    // part nobody could see. See `RecessedFillGate`'s own doc comment for the
+    // measurements, and `astroRecessedSurface(_:)` for the treatment.
+
+    @Test("The recessed-fill detector flags every shape a hierarchical fill can be written in")
+    func recessedFillGateDetectsViolations() {
+        // The three real offenders' own shapes: bare, with an opacity, and
+        // as an `in:`-shaped background.
+        #expect(!RecessedFillGate.offendingLines(
+            in: ".background(.quaternary, in: RoundedRectangle(cornerRadius: 12))"
+        ).isEmpty)
+        #expect(!RecessedFillGate.offendingLines(
+            in: ".background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))"
+        ).isEmpty)
+        #expect(!RecessedFillGate.offendingLines(
+            in: ".background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))"
+        ).isEmpty)
+
+        // Qualified through the type, and fully qualified -- the exact blind
+        // spot the last agent's negative lookbehind produced on
+        // `AstroTokens.Color.surfaceRaised`, checked here deliberately.
+        #expect(!RecessedFillGate.offendingLines(in: ".background(Color.secondary.opacity(0.18))").isEmpty)
+        #expect(!RecessedFillGate.offendingLines(in: ".background(HierarchicalShapeStyle.quaternary)").isEmpty)
+        #expect(!RecessedFillGate.offendingLines(in: "Rectangle().fill(.tertiary)").isEmpty)
+        #expect(!RecessedFillGate.offendingLines(in: ".fill(SwiftUI.HierarchicalShapeStyle.primary)").isEmpty)
+
+        // Wrapped across lines -- reformatting is not a fix.
+        #expect(!RecessedFillGate.offendingLines(in: """
+            .background(
+                .quaternary,
+                in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel)
+            )
+            """).isEmpty)
+
+        // Whitespace around the member accesses.
+        #expect(!RecessedFillGate.offendingLines(in: ".fill( Color . secondary )").isEmpty)
+
+        // The reported line number is the line the call STARTS on, so a
+        // human can find it.
+        #expect(RecessedFillGate.offendingLines(in: """
+            VStack {
+                Text("hi")
+            }
+            .background(.quaternary)
+            """) == [4])
+    }
+
+    @Test("The recessed-fill detector allows the shared treatment, foreground styles, and badges")
+    func recessedFillGateAllowsTheRealShapes() {
+        // The treatment itself, and the token behind it.
+        #expect(RecessedFillGate.offendingLines(in: ".astroRecessedSurface()").isEmpty)
+        #expect(RecessedFillGate.offendingLines(in: ".background { shape.fill(AstroTokens.Color.recess) }").isEmpty)
+
+        // The FOREGROUND use of the very same names, which is correct and
+        // used on nearly every screen. A gate that flagged this would be
+        // unusable and would be turned off within a week.
+        #expect(RecessedFillGate.offendingLines(in: """
+            Text("detail").foregroundStyle(.secondary)
+            Text("path").foregroundStyle(.tertiary)
+            .foregroundStyle(isCurrent ? .white : .primary)
+            """).isEmpty)
+
+        // Badge vocabulary: a tinted pill or disc sized to a glyph is not a
+        // surface, and its colour means a status rather than a depth.
+        #expect(RecessedFillGate.offendingLines(
+            in: ".background(isCurrent ? Color.accentColor : Color.secondary.opacity(0.18), in: Circle())"
+        ).isEmpty)
+        #expect(RecessedFillGate.offendingLines(in: ".background(.quaternary, in: Capsule())").isEmpty)
+
+        // A design token used as a fill is the whole point -- only the
+        // HIERARCHICAL vocabulary is forbidden here. (`surface`/`recess`
+        // being reserved to their shared treatments is a different rule,
+        // gated by `surfaceTokensAreOnlyPaintedByTheSharedTreatment`.)
+        #expect(RecessedFillGate.offendingLines(in: """
+            .background(AstroTokens.Color.ok.opacity(0.18), in: Capsule())
+            Rectangle().fill(AstroTokens.Color.edge.opacity(0.08))
+            .background(AstroTokens.Color.ground)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            """).isEmpty)
+
+        // An identifier merely BEGINNING with one of the four names.
+        #expect(RecessedFillGate.offendingLines(in: ".background(.secondaryLabelWell)").isEmpty)
+        #expect(RecessedFillGate.offendingLines(in: ".fill(theme.primaryAccent)").isEmpty)
+    }
+
+    /// The real-tree scan the two synthetic tests above exist to justify
+    /// trusting. NO exemptions, not even a temporary one: the third
+    /// offender (`ResultsView`'s `.quaternary.opacity(0.5)` at a corner
+    /// radius of 10 -- the only panel-shaped radius in the app that was not
+    /// `AstroTokens.CornerRadius.panel`) belonged to a concurrent task's
+    /// file, and that task adopted the shared treatment itself rather than
+    /// leaving a hole in the rule.
+    @Test("No view in Sources/AstroUI paints a recessed fill by hand")
+    func noViewPaintsARecessedFillByHand() throws {
+        var offenders: [String] = []
+        for file in try swiftFiles(under: "Sources/AstroUI") {
+            let source = Self.removingLineComments(try contents(file))
+            let lines = RecessedFillGate.offendingLines(in: source)
+            if !lines.isEmpty {
+                offenders.append("\(file): line(s) \(lines.map(String.init).joined(separator: ", "))")
+            }
+        }
+        #expect(offenders.isEmpty, """
+            A hierarchical style (`.primary`/`.secondary`/`.tertiary`/\
+            `.quaternary`) is a FOREGROUND vocabulary: as a fill it is black \
+            at ~10% in light appearance and WHITE at ~10% in dark, so the \
+            same call site reads recessed for one user and raised for \
+            another. Use `.astroRecessedSurface()` (or \
+            `.astroRecessedSurface(.flush)` for content that insets itself), \
+            which owns the fill, the corner shape and the padding together \
+            and whose direction is measured in both appearances:
+            \(offenders.joined(separator: "\n"))
+            """)
+    }
+
+    @Test("No recessed surface is applied inside another recessed surface")
+    func noRecessedSurfaceIsNested() throws {
+        var offenders: [String] = []
+        for file in try swiftFiles(under: "Sources/AstroUI") {
+            let source = Self.removingLineComments(try contents(file))
+            let lines = RaisedSurfaceGate.nestedOccurrences(in: source, modifier: RaisedSurfaceGate.recessedModifier)
+            if !lines.isEmpty {
+                offenders.append("\(file): line(s) \(lines.map(String.init).joined(separator: ", "))")
+            }
+        }
+        #expect(offenders.isEmpty, """
+            A well inside a well is the same defect as a box inside a box: \
+            two identical fills meet, so the inner one is invisible and only \
+            its doubled gutter shows:
+            \(offenders.joined(separator: "\n"))
+            """)
+    }
+
+    /// The runtime half of the rule above, and the reason the lexical gate is
+    /// allowed to have blind spots -- exactly the pairing
+    /// `theRaisedSurfaceCollapsesWhenNested` documents for the raised layer.
+    @Test("The recessed-surface modifier collapses instead of painting a second well")
+    func theRecessedSurfaceCollapsesWhenNested() throws {
+        let source = Self.removingLineComments(try contents("Sources/AstroUI/DesignSystem/AstroSurface.swift"))
+        #expect(source.contains("@Environment(\\.astroIsInsideRecessedSurface) private var isNested"),
+                "the modifier no longer reads whether an ancestor already recessed")
+        #expect(source.contains(".environment(\\.astroIsInsideRecessedSurface, true)"),
+                "the modifier no longer publishes the guard to its descendants")
+        // The collapsed branch must paint NOTHING. Counted the same way the
+        // raised gate counts, so the fill cannot quietly move into it.
+        #expect(source.components(separatedBy: ".fill(AstroTokens.Color.recess)").count == 2,
+                "the recess fill must appear exactly once -- the collapsed branch paints nothing")
+        // A well never carries the raised layer's edge cues: a stroke inside
+        // the card's own stroke is a border on a border, and a drop shadow
+        // says "above", which is the opposite of what the fill says.
+        #expect(!source.contains("recess).shadow"), "a well must not carry a shadow")
+        #expect(!source.contains("strokeBorder(AstroTokens.Color.recess"), "a well must not carry a hairline")
     }
 
     /// Resolves the three structural tokens through
@@ -1502,6 +1668,45 @@ struct V2PolishSurfaceTests {
         }
     }
 
+    /// The recessed half of the same idea, and the gate the whole of Task 7d
+    /// hangs on. `astroRecessedSurface` paints a FILL and nothing else -- no
+    /// hairline, no shadow -- so unlike the raised layer it has no fallback
+    /// cue if the fill is wrong. It has to be measurably below both the
+    /// backdrop and the surface, in both appearances, or it is not recessed;
+    /// the three `.quaternary` recipes it replaced satisfied that in light
+    /// appearance and failed it in dark, which is the defect this test
+    /// exists to make impossible to reintroduce silently.
+    @Test("The recessed layer is darker than both the backdrop and the raised surface, in both appearances")
+    @MainActor
+    func theRecessedLayerIsDarkerThanBothInBothAppearances() {
+        for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
+            guard let appearance = NSAppearance(named: appearanceName) else {
+                Issue.record("Could not build \(appearanceName.rawValue)")
+                continue
+            }
+            appearance.performAsCurrentDrawingAppearance {
+                let name = appearanceName.rawValue
+                let ground = Self.luminance(of: AstroTokens.Color.ground)
+                let surface = Self.luminance(of: AstroTokens.Color.surface)
+                let recess = Self.luminance(of: AstroTokens.Color.recess)
+                let edge = Self.luminance(of: AstroTokens.Color.edge)
+                #expect(recess < surface, "\(name): a well must be darker than the surface it is sunk into")
+                #expect(recess < ground, "\(name): a well must be darker than the page backdrop too, so it reads the same way wherever it is put")
+                // Direction alone is not enough: a 0.4% step is technically
+                // darker and visually nothing. `surface` -> `ground` is 3.1%
+                // in light and that pair needs a hairline AND a shadow to
+                // read; a fill-only treatment needs more than that on its
+                // own.
+                #expect(surface - recess > 0.04, "\(name): the well is too shallow to read on fill alone (\(surface - recess))")
+                // A well often sits next to a `Divider`, which is `edge`. If
+                // the two resolve to the same tone the divider vanishes into
+                // the well -- in light appearance these are only 2.4 points
+                // apart, so this is a real constraint, not a formality.
+                #expect(abs(edge - recess) > 0.02, "\(name): the hairline must stay distinguishable from the recessed fill")
+            }
+        }
+    }
+
     /// Relative luminance of a token resolved in whatever appearance is
     /// current. `usingColorSpace(.sRGB)` because a dynamic `NSColor` has no
     /// components until it is resolved into a concrete space.
@@ -1524,25 +1729,31 @@ struct V2PolishSurfaceTests {
 /// `GroundOpacityGate`: synthetic snippets and the real-tree scan call the
 /// same function, and a snippet is not a file under `Sources/AstroUI`.
 enum RaisedSurfaceGate {
-    private static let modifier = ".astroRaisedSurface("
+    /// Task 7d generalized this from a constant to a parameter so the
+    /// RECESSED treatment gets the identical lexical check for free. The two
+    /// modifiers have the same nesting defect for the same reason (two
+    /// identical fills meeting), and a second copy of this brace walker
+    /// would be a second place for it to be wrong.
+    static let raisedModifier = ".astroRaisedSurface("
+    static let recessedModifier = ".astroRecessedSurface("
 
     /// 1-based line numbers (matching how a human reads the source) of every
     /// raised surface that has a raised ancestor in the same file.
-    static func nestedOccurrences(in source: String) -> [Int] {
+    static func nestedOccurrences(in source: String, modifier: String = raisedModifier) -> [Int] {
         let lines = source.components(separatedBy: "\n")
         var offenders: [Int] = []
         for (index, line) in lines.enumerated() where line.contains(modifier) {
-            if hasRaisedAncestor(lines: lines, from: index) {
+            if hasRaisedAncestor(lines: lines, from: index, modifier: modifier) {
                 offenders.append(index + 1)
             }
         }
         return offenders
     }
 
-    private static func hasRaisedAncestor(lines: [String], from targetIndex: Int) -> Bool {
+    private static func hasRaisedAncestor(lines: [String], from targetIndex: Int, modifier: String) -> Bool {
         var childIndex = targetIndex
         while let openerIndex = enclosingOpener(lines: lines, of: childIndex) {
-            if blockIsRaised(lines: lines, openerIndex: openerIndex) { return true }
+            if blockIsRaised(lines: lines, openerIndex: openerIndex, modifier: modifier) { return true }
             childIndex = openerIndex
         }
         return false
@@ -1569,11 +1780,24 @@ enum RaisedSurfaceGate {
     /// either on its own opening statement (including a multi-line chain
     /// immediately above it) or chained after its matching closing brace,
     /// possibly behind other modifiers.
-    private static func blockIsRaised(lines: [String], openerIndex: Int) -> Bool {
+    private static func blockIsRaised(lines: [String], openerIndex: Int, modifier: String) -> Bool {
         var openStatement = lines[openerIndex]
         var j = openerIndex - 1
         while j >= 0 {
             let trimmed = lines[j].trimmingCharacters(in: .whitespaces)
+            // Blank lines do not end a chain. This matters far more than it
+            // looks: callers are scanned AFTER `removingLineComments`, which
+            // replaces every comment line with an EMPTY line rather than
+            // deleting it -- and this codebase documents almost every
+            // surface application with a comment block sitting between the
+            // container's closing brace and the modifier chained onto it. A
+            // walker that stopped at the first blank line therefore declared
+            // every well-documented card "not raised", which is most of
+            // them, and would have let a nested one through in exactly the
+            // files most likely to have one. Found by injecting a nested
+            // `.astroRecessedSurface()` into `ProjectNightSection` and
+            // watching the gate stay green.
+            if trimmed.isEmpty { j -= 1; continue }
             guard trimmed.hasPrefix(".") || trimmed.hasSuffix(",") || trimmed.hasSuffix("(") else { break }
             openStatement = lines[j] + "\n" + openStatement
             j -= 1
@@ -1592,11 +1816,106 @@ enum RaisedSurfaceGate {
         var m = k + 1
         while m < lines.count {
             let trimmed = lines[m].trimmingCharacters(in: .whitespaces)
+            // Blank lines do not end a chain -- see the identical skip in the
+            // backward walk above for why this is the difference between a
+            // working gate and a decorative one. This is the half that
+            // actually mattered: EVERY surface application in this tree is
+            // `Container { ... }` / comment block / `.astroRaisedSurface()`,
+            // so before this line the walker never once recognized a real
+            // card as raised.
+            if trimmed.isEmpty { m += 1; continue }
             guard trimmed.hasPrefix(".") else { break }
             if trimmed.hasPrefix(modifier) { return true }
             m += 1
         }
         return false
+    }
+}
+
+/// Detects a HIERARCHICAL SHAPE STYLE (`.primary`/`.secondary`/`.tertiary`/
+/// `.quaternary`) handed to `.background(` or `.fill(` as a container fill --
+/// the shape all three of the app's hand-rolled recessed wells were written
+/// in before Task 7d.
+///
+/// # Why this is a rule and not a tidy-up
+///
+/// A hierarchical style is a FOREGROUND vocabulary. As a fill it resolves to
+/// black at ~10% alpha in light appearance and WHITE at ~10% alpha in dark,
+/// so the same call site is recessed in one appearance and raised in the
+/// other -- measured, over `surface`: .9020 light / .1711 dark at full
+/// strength, against a surface of 1.0000 / .0810. All three real offenders
+/// were therefore inverted for every user in dark mode, and no gate written
+/// against the source TEXT could have seen it, because the text is fine and
+/// the resolution is what is wrong. That is exactly why the rule has to
+/// forbid the vocabulary rather than police the values:
+/// `AstroTokens.Color.recess` is an explicit two-appearance token whose
+/// direction `V2PolishSurfaceTests
+/// .theRecessedLayerIsDarkerThanBothInBothAppearances` can actually measure.
+///
+/// # What it deliberately allows
+///
+/// A fill whose `in:` shape is a `Circle(` or a `Capsule(`. Those are the
+/// BADGE vocabulary -- a step-indicator disc, a status pill -- not a surface:
+/// they size to a glyph, they never contain layout, and their colour means
+/// something (`ok`/`attention`/`critical`) rather than marking a depth. This
+/// is stated as a shape rule rather than a file list on purpose; the failure
+/// mode this suite has documented three times over is a gate that enumerated
+/// the offenders one audit happened to find.
+///
+/// # What it cannot see, by construction
+///
+/// A style reached through a binding (`let dim = HierarchicalShapeStyle
+/// .quaternary` … `.background(dim)`), a `Material`, or a hierarchical style
+/// applied through some third modifier. A source-text scan cannot follow a
+/// binding, which is why the token's own DIRECTION is gated numerically as
+/// well.
+enum RecessedFillGate {
+    private static let pattern = try! NSRegularExpression(
+        // `\.(?:background|fill)\(` anchors to the consumer, so
+        // `.foregroundStyle(.secondary)` -- the correct, extremely common use
+        // of exactly these names -- is untouched. The qualifier group is
+        // OPTIONAL and dotted so all three real spellings match: bare
+        // (`.quaternary`), through the type (`Color.secondary`), and fully
+        // qualified (`HierarchicalShapeStyle.quaternary`). Every separator is
+        // `\s*`, so wrapping the call across lines does not hide it. The
+        // trailing lookahead keeps a longer identifier (`.secondaryLabel`,
+        // `.primaryAction`) from matching.
+        pattern: #"\.(?:background|fill)\(\s*(?:[A-Za-z_][A-Za-z0-9_]*(?:\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)*\s*)?\.\s*(?:primary|secondary|tertiary|quaternary)(?![A-Za-z0-9_])"#
+    )
+
+    /// 1-based line numbers (matching how a human reads the source) of every
+    /// hierarchical style used as a container fill.
+    static func offendingLines(in source: String) -> [Int] {
+        let characters = Array(source)
+        let nsRange = NSRange(source.startIndex..., in: source)
+        return pattern.matches(in: source, range: nsRange).compactMap { match in
+            guard let range = Range(match.range, in: source) else { return nil }
+            guard let parenIndex = source[range].firstIndex(of: "(") else { return nil }
+            let openOffset = source.distance(from: source.startIndex, to: parenIndex)
+            let argument = balancedArgument(characters, openParenAt: openOffset)
+                .filter { !$0.isWhitespace }
+            if argument.contains("in:Circle(") || argument.contains("in:Capsule(") { return nil }
+            return source[source.startIndex..<range.lowerBound].filter { $0 == "\n" }.count + 1
+        }
+    }
+
+    /// The text between `characters[openParenAt]` and its matching `)`, found
+    /// with the same depth-counting walk the brace gates in this file use.
+    /// Returns everything to the end of input if the parenthesis is never
+    /// closed -- a truncated snippet should still be scanned, not silently
+    /// treated as clean.
+    private static func balancedArgument(_ characters: [Character], openParenAt start: Int) -> String {
+        var depth = 0
+        var index = start
+        while index < characters.count {
+            if characters[index] == "(" { depth += 1 }
+            if characters[index] == ")" {
+                depth -= 1
+                if depth == 0 { return String(characters[(start + 1)..<index]) }
+            }
+            index += 1
+        }
+        return String(characters[min(start + 1, characters.count)...])
     }
 }
 
@@ -1659,7 +1978,15 @@ enum GlassTableGate {
     /// glassed.
     static func offendingLines(in source: String) -> [Int] {
         let lines = source.components(separatedBy: "\n")
-        let constructorPattern = try! NSRegularExpression(pattern: #"(?<![A-Za-z0-9_.])(Table|List)\("#)
+        // Task 7d widened this from `\(` to `[({]`. The original saw only
+        // the parenthesized form, so `List { ... }` -- SwiftUI's static-row
+        // spelling, and the one `ArchiveView` and `SensorProfilesView`
+        // actually use -- was invisible to the rule stated as
+        // non-negotiable. Found by injecting a glassed `List { }` into
+        // `ArchiveView` and watching the gate stay green. Verified not to
+        // change the verdict on the tree as it stands: clean before, clean
+        // after; the two newly-visible lists are both unglassed.
+        let constructorPattern = try! NSRegularExpression(pattern: #"(?<![A-Za-z0-9_.])(Table|List)\s*[({]"#)
         var offenders: [Int] = []
         for (index, line) in lines.enumerated() {
             let nsRange = NSRange(line.startIndex..., in: line)
@@ -1697,6 +2024,16 @@ enum GlassTableGate {
         var j = openerIndex - 1
         while j >= 0 {
             let trimmed = lines[j].trimmingCharacters(in: .whitespaces)
+            // Task 7d: blank lines do not end a chain. Same blind spot, same
+            // fix, same reason as `RaisedSurfaceGate.blockIsRaised` -- these
+            // scans run on comment-STRIPPED source, in which every documented
+            // modifier chain is separated from its container's brace by a run
+            // of empty lines. Found while proving the recessed gate red;
+            // this gate had it too, and it guards the one rule in this file
+            // that is stated as non-negotiable (dense rows over moving glass
+            // are unreadable). Verified not to change the verdict on the tree
+            // as it stands: clean before, clean after.
+            if trimmed.isEmpty { j -= 1; continue }
             guard trimmed.hasPrefix(".") || trimmed.hasSuffix(",") || trimmed.hasSuffix("(") else { break }
             openStatement = lines[j] + "\n" + openStatement
             j -= 1
@@ -1717,6 +2054,7 @@ enum GlassTableGate {
         var m = k + 1
         while m < lines.count {
             let trimmed = lines[m].trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { m += 1; continue }
             guard trimmed.hasPrefix(".") else { break }
             if trimmed.hasPrefix(".glassEffect(") { return true }
             m += 1
