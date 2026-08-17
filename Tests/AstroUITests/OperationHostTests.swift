@@ -54,6 +54,74 @@ struct OperationHostTests {
         #expect(host.toasts.contains { $0.level == .failure && $0.message.contains("boom") })
     }
 
+    // MARK: - Silent-success gate
+    //
+    // The completion path runs on the `Task.detached` inside
+    // `run(kind:title:work:)`, so every main-actor method it calls is a
+    // separate hop with a scheduling gap in between. While retiring the
+    // operation from `activeOperations`/`recentOutcomes` and posting its
+    // toast were two such hops, the main actor was free in the gap and
+    // anything running there saw an operation that had finished with no
+    // confirmation anywhere -- the exact hole this app's
+    // preview/confirm/receipt/undo promise exists to close, and (in test
+    // form) the cause of the 30-60% flake in `ReviewStoreTests`/
+    // `LibraryHealthStoreTests`. See `OperationHost.finalize`'s doc comment.
+
+    @Test("An operation is never observably finished without its confirmation")
+    func finishedOperationIsNeverObservableWithoutItsConfirmation() async throws {
+        let silentSightings = ObservedCounter()
+        let observedTurns = ObservedCounter()
+
+        // Repeated because what this pins is a scheduling gap, not a logic
+        // error: any single completion may or may not hand the main actor to
+        // the observer while the gap is open, but a run of them reliably
+        // does. Measured on the defect (toast posted in a second main-actor
+        // hop after the outcome was recorded): 25 iterations caught it on
+        // every attempt.
+        for _ in 0..<25 {
+            let host = OperationHost(center: OperationCenter())
+            let gate = AsyncGate()
+
+            let id = await host.run(kind: .export(project: "P"), title: "Exporting P") {
+                await gate.waitToProceed()
+            }
+
+            // A main-actor observer that gets a look in at every scheduling
+            // turn for the whole duration of the completion path -- standing
+            // in for the view bodies, `.onChange` handlers and other
+            // operations' completions that really do run there.
+            let observer = Task { @MainActor in
+                while !Task.isCancelled {
+                    observedTurns.increment()
+                    if host.recentOutcomes.contains(where: { $0.id == id }), host.toasts.isEmpty {
+                        silentSightings.increment()
+                    }
+                    await Task.yield()
+                }
+            }
+
+            gate.open()
+            _ = await host.outcome(of: id)
+            observer.cancel()
+            _ = await observer.value
+        }
+
+        // Guards the assertion below against passing vacuously: if the
+        // observer never actually got scheduled, it could not have seen a
+        // gap either.
+        #expect(observedTurns.value > 25, "the observer never ran often enough to see anything")
+        #expect(
+            silentSightings.value == 0,
+            """
+            Observed \(silentSightings.value) moment(s) in which an operation was \
+            recorded as finished while no toast announced it. Retiring the \
+            operation and posting its toast must happen in one main-actor step \
+            (`OperationHost.finalize(id:kind:title:phase:announcing:)`), with no \
+            `await` between them.
+            """
+        )
+    }
+
     // MARK: - `outcome(of:)`/`errorMessage(for:)` (Task 2: the launch-scan
     // preparation pipeline needs to react inline to a `run`-registered
     // operation's actual result, unlike every other fire-and-forget caller).
@@ -524,6 +592,16 @@ private final class AsyncGate: @unchecked Sendable {
 private final class NotificationCounter: @unchecked Sendable {
     private(set) var value = 0
     func increment() { value += 1 }
+}
+
+/// A lock-guarded counter for the silent-success gate: incremented from a
+/// separate `Task` that interleaves with the code under test on the main
+/// actor, and read from the test body afterwards.
+private final class ObservedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func increment() { lock.withLock { count += 1 } }
 }
 
 /// A thread-safe single-value box for `ProgressRelay` tests -- `read`/`apply`

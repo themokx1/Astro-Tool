@@ -179,17 +179,21 @@ public final class OperationHost {
             do {
                 try await work()
                 if await self.center.finish(id) {
-                    await self.finalize(id: id, kind: kind, title: title, phase: .succeeded)
-                    await self.enqueueToast(.success, "\(title) \(Self.localized("finished."))")
+                    await self.finalize(
+                        id: id, kind: kind, title: title, phase: .succeeded,
+                        announcing: (.success, "\(title) \(Self.localized("finished."))")
+                    )
                 } else {
                     await self.reconcileSuccessRace(id: id, kind: kind, title: title)
                 }
             } catch is CancellationError {
-                await self.finalize(id: id, kind: kind, title: title, phase: .cancelled)
+                await self.finalize(id: id, kind: kind, title: title, phase: .cancelled, announcing: nil)
             } catch {
                 if await self.center.fail(id, message: error.localizedDescription) {
-                    await self.finalize(id: id, kind: kind, title: title, phase: .failed)
-                    await self.enqueueToast(.failure, "\(title) \(Self.localized("failed:")) \(error.localizedDescription)")
+                    await self.finalize(
+                        id: id, kind: kind, title: title, phase: .failed,
+                        announcing: (.failure, "\(title) \(Self.localized("failed:")) \(error.localizedDescription)")
+                    )
                 } else {
                     await self.reconcileRaceOutcome(id: id, kind: kind, title: title)
                 }
@@ -302,7 +306,39 @@ public final class OperationHost {
 
     // MARK: - Private
 
-    private func finalize(id: UUID, kind: OperationKind, title: String, phase: OperationPhase) async {
+    /// Publishes an operation's ending -- retiring it from `activeOperations`,
+    /// recording it in `recentOutcomes`, and posting the toast that announces
+    /// it -- as ONE synchronous main-actor step.
+    ///
+    /// The single-step-ness is the whole point, not an incidental style
+    /// choice. Every caller reaches this from the `Task.detached` in
+    /// `run(kind:title:work:)`, i.e. from OFF the main actor, so each `await`
+    /// on a main-actor method here is a separate hop with a scheduling gap in
+    /// between. When retiring the operation and posting its toast were two
+    /// such hops, the main actor was free in the gap, and anything else
+    /// running there -- a view body, an `.onChange`, another operation's
+    /// completion, a test polling `activeOperations` -- could observe the
+    /// intermediate state: "nothing is running any more, and there is no
+    /// confirmation of anything having finished". That is an operation
+    /// silently succeeding, which is precisely what this app's per-item
+    /// preview/confirm/receipt/undo promise forbids; it is also what made
+    /// `ReviewStoreTests`/`LibraryHealthStoreTests` fail 30-60% of the time
+    /// (the polling loop won the gap and asserted on a toast that had not
+    /// been appended yet). Because this method contains no `await`, no such
+    /// gap exists: observers see the operation still running, or they see it
+    /// finished WITH its toast, and never anything in between.
+    ///
+    /// Do not add an `await` to this method, and do not split the toast back
+    /// out into a second call from `run`. `OperationHostTests`
+    /// .`finishedOperationIsNeverObservableWithoutItsConfirmation` fails if
+    /// either happens.
+    private func finalize(
+        id: UUID,
+        kind: OperationKind,
+        title: String,
+        phase: OperationPhase,
+        announcing toast: (level: ToastLevel, message: String)?
+    ) {
         runningTasks[id] = nil
         activeOperations.removeAll { $0.id == id }
         recentOutcomes.insert(
@@ -311,6 +347,9 @@ public final class OperationHost {
         )
         if recentOutcomes.count > recentOutcomesLimit {
             recentOutcomes.removeLast(recentOutcomes.count - recentOutcomesLimit)
+        }
+        if let toast {
+            enqueueToastNow(toast.level, toast.message)
         }
     }
 
@@ -322,10 +361,12 @@ public final class OperationHost {
     /// something other than the expected cancellation.
     private func reconcileRaceOutcome(id: UUID, kind: OperationKind, title: String) async {
         let recordedPhase = await center.state(id)?.phase ?? .cancelled
-        await finalize(id: id, kind: kind, title: title, phase: recordedPhase)
-        if recordedPhase != .cancelled {
-            await enqueueToast(.info, "\(title) \(Self.localized("ended unexpectedly."))")
-        }
+        finalize(
+            id: id, kind: kind, title: title, phase: recordedPhase,
+            announcing: recordedPhase == .cancelled
+                ? nil
+                : (.info, "\(title) \(Self.localized("ended unexpectedly."))")
+        )
     }
 
     /// Reached when `work` returned successfully (no throw at all) but the
@@ -348,12 +389,10 @@ public final class OperationHost {
             return
         }
         await center.forceSucceed(id)
-        await finalize(id: id, kind: kind, title: title, phase: .succeeded)
-        await enqueueToast(.success, "\(title) \(Self.localized("finished."))")
-    }
-
-    private func enqueueToast(_ level: ToastLevel, _ message: String) async {
-        enqueueToastNow(level, message)
+        finalize(
+            id: id, kind: kind, title: title, phase: .succeeded,
+            announcing: (.success, "\(title) \(Self.localized("finished."))")
+        )
     }
 
     private func enqueueToastNow(_ level: ToastLevel, _ message: String) {
