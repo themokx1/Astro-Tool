@@ -148,3 +148,49 @@ A második valószínűleg jobb, mert a sor-műveletek száma nőni fog (a jobbk
 ```bash
 git commit -m "fix: make row actions legible without hovering"
 ```
+
+---
+
+## Task 7: A Results fül kösse be a meglévő stack-felderítést
+
+**A tulajdonos szavai:** „result oldalban nincs semmi." És amikor megkérdeztem, mi legyen vele: *„úgy emlékszem, ez már működött is korábban a V1-ben, nincs ez már kész?"*
+
+**Az emlékezete pontos.** Mérve:
+
+```
+Sources/AstroCore/Stats/StackDiscovery.swift          697 sor, 2 tesztfájl
+V1 használja:   AppState, AllTargetsPage, AuditPage, StacksSegment
+V2 használja:   SEHOL — nulla találat AstroUI-ban és AstroApplication-ben
+```
+
+A `ResultsQuery` ehelyett a `metadata.results(projectID:)` táblából olvas, amibe **az egész produkciós fában semmi nem ír** (`ResultRecord(` konstruktor-hívás a perzisztencia-rétegen kívül: nulla). Vagyis a fül szerkezetileg mindig üres, mindenkinek — nem azért, mert nincs eredmény.
+
+**Ez a harmadik ugyanilyen eset ebben a hullámban**, és ez már minta: a V2 átépítése működő motorokat hagyott bekötetlenül. A tonight-szűrésnél a `SkyVerdict` már ott volt, csak senki nem cselekedett rá; a verify-találatoknál a `FixityVerifier` már írta őket, csak senki nem olvasta. **A hiányzó darab nem a logika, hanem a huzalozás.**
+
+Ezért ez a task **nem funkcióépítés**. Ne írj új felderítést.
+
+### Amit a motor ad
+
+`StackFile` (útvonal, célpont, session-dátum, capture-slug, méret, módosítás, `kind`, `matchSource`, a névből olvasott keretszám / részexpozíció / összidő, dimenziók), `TargetStacks` célpontonként, `StackVariantKind` a variáns-családokra, `StackGroup` alap + variánsok bontásban.
+
+**Files:** `Sources/AstroApplication/Features/Results/ResultsQuery.swift`, `Sources/AstroUI/Features/Results/ResultsView.swift`, tesztek
+
+- [ ] **Step 1: Nézd meg, mit mutat a V1**
+
+Olvasd el a `Sources/AstroToolApp/Views/TargetDetail/StacksSegment.swift`-et. Az a referencia arra, mit érdemes megjeleníteni — a tulajdonos ezt ismerte és ez hiányzik neki. **Ne találj ki új oszlopokat**, amíg ez nincs meg.
+
+- [ ] **Step 2: A `ResultsQuery` a `StackDiscovery`-ből dolgozzon**
+
+A `metadata.results(...)` olvasás helyére. A lineage (`LineageEdgeRecord`) **nem** része a felderítésnek — az arról szólna, mely keretek mentek egy stackbe, és azt a motor nem tudja. Ne találj ki hozzá adatot: ha egy eredményhez nincs lineage, a felület ne mutasson lineage-szekciót.
+
+- [ ] **Step 3: Mi legyen a halott táblákkal**
+
+A `ResultRecord`/`LineageEdgeRecord` táblákba ezek után sem ír semmi. **Ne töröld** őket ebben a taskban (séma-változás külön döntés) — de **jelentsd**, hogy holtan maradnak, hogy ne higgye a következő olvasó, hogy ezek táplálják a felületet.
+
+- [ ] **Step 4: Ellenőrizd a valós könyvtáron**
+
+`/Volumes/images/Astro`, csak olvasás. A tulajdonosnak vannak `stacks/` és `processed/` mappái — jelentsd, **hány eredményt talál célpontonként**, és hogy a variáns-családok (pl. `starless_`, `_HOO`) helyesen csoportosulnak-e. Ez a bizonyíték, nem a zöld teszt.
+
+```bash
+git commit -m "fix: wire Results to the stack discovery that already exists"
+```
