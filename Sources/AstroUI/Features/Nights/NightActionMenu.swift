@@ -90,8 +90,17 @@ public struct NightActionMenu: View {
     /// containment + existence check `FrameThumbnailCell.resolvedURL`/
     /// `ResultsView.resultURL` already apply to every other library-relative
     /// path this app resolves.
+    ///
+    /// One-letter-drift fix (2026-08-17): `target` arrives here as whatever
+    /// the caller's own `canonicalFolderName` computed, which is not
+    /// guaranteed to be the folder actually on disk (`ProjectsQuery.
+    /// resolvedFolderName`'s own doc comment has the NGC 7000 example) --
+    /// resolved before building the path so "Reveal in Finder" doesn't
+    /// silently disable itself for a project whose real folder is spelled
+    /// differently.
     private var nightDirectoryURL: URL? {
         guard let rootURL else { return nil }
+        let target = ProjectsQuery.resolvedFolderName(canonical: target, rootURL: rootURL)
         return FrameThumbnailCell.resolvedURL(rootURL: rootURL, relativePath: "sessions/\(target)/\(date)")
     }
 

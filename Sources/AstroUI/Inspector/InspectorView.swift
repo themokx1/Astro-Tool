@@ -254,11 +254,19 @@ private struct ProjectInspectorPanel: View {
         .accessibilityIdentifier("v2.inspector.project")
     }
 
+    /// One-letter-drift fix (2026-08-17): `snapshot.canonicalFolderName` is
+    /// the catalog's own idea of the folder name, which can disagree with
+    /// what the scanner actually found on disk (see `ProjectsQuery.
+    /// resolvedFolderName`'s own doc comment) -- resolved here so "Open"/
+    /// "Reveal in Finder" don't silently disable themselves for a project
+    /// whose real session folder is spelled differently than its catalog
+    /// canonical name.
     private var latestNightURL: URL? {
         guard let rootURL, let date = snapshot.nights.first?.night.localDate else { return nil }
+        let target = ProjectsQuery.resolvedFolderName(canonical: snapshot.canonicalFolderName, rootURL: rootURL)
         return FrameThumbnailCell.resolvedURL(
             rootURL: rootURL,
-            relativePath: "sessions/\(snapshot.canonicalFolderName)/\(date)"
+            relativePath: "sessions/\(target)/\(date)"
         )
     }
 
@@ -315,9 +323,12 @@ private struct NightInspectorPanel: View {
         .accessibilityIdentifier("v2.inspector.night")
     }
 
+    /// Same one-letter-drift fix as `ProjectInspectorPanel.latestNightURL`
+    /// above -- resolved against disk before it becomes a path.
     private var folderURL: URL? {
         guard let rootURL, let project = row.snapshot.projects.first else { return nil }
-        let target = ProjectsQuery.canonicalFolderName(for: project)
+        let canonical = ProjectsQuery.canonicalFolderName(for: project)
+        let target = ProjectsQuery.resolvedFolderName(canonical: canonical, rootURL: rootURL)
         return FrameThumbnailCell.resolvedURL(rootURL: rootURL, relativePath: "sessions/\(target)/\(row.date)")
     }
 
