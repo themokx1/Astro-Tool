@@ -112,7 +112,14 @@ public struct InsightsView: View {
             } else {
                 ContentUnavailableView(
                     "Insights unavailable", systemImage: "exclamationmark.triangle",
-                    description: Text(store.errorMessage ?? "The external index does not contain reportable sessions yet.")
+                    // V2 localization sweep (W3-13): `store.errorMessage` is
+                    // `String?` -- `?? "..."` used to resolve the whole
+                    // expression to `String`, so `Text(String)` picked the
+                    // verbatim overload and the fallback phrase never
+                    // localized. Two real `Text` values keep the dynamic
+                    // message verbatim while the fallback goes through
+                    // `Text`'s own `LocalizedStringKey` initializer.
+                    description: store.errorMessage.map(Text.init) ?? Text("The external index does not contain reportable sessions yet.")
                 )
             }
         }
@@ -189,8 +196,18 @@ public struct InsightsView: View {
         }
     }
 
+    // V2 localization sweep (W3-13): `title` used to be a plain `String`
+    // function parameter -- every call site (`"FWHM"`/`"Background"`/
+    // `"Efficiency"`) passed a literal, but `Text(title)` inside this
+    // function still resolved to the verbatim `StringProtocol` overload
+    // because the PARAMETER's declared type, not the call-site literal,
+    // decides which `Text` initializer is picked. "Background"/"Efficiency"
+    // already had `hu.lproj` entries and still never localized; "FWHM" stays
+    // untranslated on purpose either way (see `GlossaryView`'s own
+    // convention -- technical vocabulary stays English, and this file's
+    // `qualityMetricInfo`-style titles already follow it).
     private func trendChart(
-        title: String,
+        title: LocalizedStringKey,
         unit: String,
         points: [InsightTrendDatum],
         color: Color
@@ -233,7 +250,14 @@ public struct InsightsView: View {
                     Text(point.fwhmValue.map { $0.value.formatted(.number.precision(.fractionLength(2))) } ?? "—").monospacedDigit()
                     Text(point.backgroundEPerSecPerArcsec2?.formatted(.number.precision(.significantDigits(2...3))) ?? "—").monospacedDigit()
                     Text(point.efficiencyPercent.map { "\($0.formatted(.number.precision(.fractionLength(0))))%" } ?? "—").monospacedDigit()
-                    Text(point.setupDescriptor ?? "Unknown").lineLimit(1)
+                    // `setupDescriptor` is arbitrary equipment data (never
+                    // `nil` in a translatable sense) -- only the "Unknown"
+                    // fallback is UI copy, so it alone needs to route
+                    // through `Text`'s `LocalizedStringKey` initializer
+                    // rather than the whole `?? "Unknown"` expression
+                    // collapsing to `String` (same leak class as this file's
+                    // other two `?? "..."` fallbacks above).
+                    (point.setupDescriptor.map(Text.init) ?? Text("Unknown")).lineLimit(1)
                 }
                 .font(.caption)
             }
@@ -247,8 +271,22 @@ public struct InsightsView: View {
             MetricCard(title: "Nights", value: "\(insight.nightCount)", detail: "Capture sessions", systemImage: "moon.stars")
             MetricCard(title: "Targets", value: "\(insight.targetCount)", detail: "Unique objects", systemImage: "scope")
             MetricCard(title: "Light frames", value: "\(insight.frameCount)", detail: "Indexed and present", systemImage: "photo.stack")
-            MetricCard(title: "Average night", value: duration(insight.averageIntegrationPerNight), detail: LocalizedStringKey(insight.bestMonth.map { "Best month: \($0.month)" } ?? "No monthly data"), systemImage: "chart.bar.fill")
+            MetricCard(title: "Average night", value: duration(insight.averageIntegrationPerNight), detail: averageNightDetail(insight), systemImage: "chart.bar.fill")
         }
+    }
+
+    // V2 localization sweep (W3-13): this used to build a plain `String` via
+    // ordinary interpolation (`"Best month: \($0.month)"`) and wrap the
+    // ALREADY-SUBSTITUTED result in `LocalizedStringKey(...)` afterward --
+    // that produces a key equal to the finished sentence ("Best month:
+    // March 2026"), which matches no `hu.lproj` entry, instead of a key with
+    // a real `%@` argument ("Best month: %@", which DOES have one). Writing
+    // the interpolation directly in a function whose return type is already
+    // `LocalizedStringKey` (matching `SkyVerdictKind.displayLabel`'s own
+    // pattern) keeps the substituted month a genuine format argument.
+    private func averageNightDetail(_ insight: InsightsSnapshot) -> LocalizedStringKey {
+        guard let bestMonth = insight.bestMonth else { return "No monthly data" }
+        return "Best month: \(bestMonth.month)"
     }
 
     private func qualitySummary(_ insight: InsightsSnapshot) -> some View {

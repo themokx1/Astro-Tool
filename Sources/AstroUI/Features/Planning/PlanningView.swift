@@ -388,7 +388,16 @@ public struct PlanningView: View {
                                         // small lie: the model refusing an
                                         // out-of-range figure is not the same
                                         // as the catalog having no photometry.
-                                        Text(row.integrationConfidence == .fallback ? "No data" : "Beyond model range")
+                                        // V2 localization sweep (W3-13): a
+                                        // ternary of two string literals
+                                        // passed directly to `Text` resolves
+                                        // to `String`, not
+                                        // `LocalizedStringKey` (same trap
+                                        // `PlanningView`'s own "Saved"/"Save
+                                        // Target" button already works
+                                        // around below), so neither phrase
+                                        // ever localized.
+                                        Text(LocalizedStringKey(row.integrationConfidence == .fallback ? "No data" : "Beyond model range"))
                                             .font(.callout.weight(.medium))
                                             .foregroundStyle(.secondary)
                                     }
@@ -446,11 +455,16 @@ public struct PlanningView: View {
                     ContentUnavailableView(
                         "No Sky Path Available",
                         systemImage: "chart.xyaxis.line",
-                        description: Text(
+                        // V2 localization sweep (W3-13): same ternary-of-
+                        // literals leak as the Integration column fix above
+                        // -- `Text(cond ? "A" : "B")` resolves to `String`,
+                        // not `LocalizedStringKey`, so neither sentence ever
+                        // localized.
+                        description: Text(LocalizedStringKey(
                             store.skyAvailability == .available
                                 ? "This target's altitude sweep could not be computed for the chosen night."
                                 : "Open a library with a resolved site to see the target's path across the sky."
-                        )
+                        ))
                     )
                     .frame(maxWidth: .infinity, minHeight: 160)
                 }

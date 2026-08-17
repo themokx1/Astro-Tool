@@ -21,7 +21,21 @@ public struct SeriesInspector: View {
                 LabeledContent("Exposure", value: exposure)
                 LabeledContent("Sensor", value: snapshot.series.sensorMode.rawValue.uppercased())
                 LabeledContent("Passband", value: passband)
-                LabeledContent("Filter", value: snapshot.series.filterName ?? "No filter recorded")
+                // V2 localization sweep (W3-13): `LabeledContent(_:value:)`
+                // always renders its `value` as plain verbatim text, by
+                // design (it is meant for data, not UI copy) -- so
+                // `filterName ?? "No filter recorded"` never localized even
+                // though the phrase already had an `hu.lproj` entry. The
+                // content-closure initializer lets the real filter name
+                // (data) stay verbatim while the fallback goes through
+                // `Text`'s own `LocalizedStringKey` initializer.
+                LabeledContent("Filter") {
+                    if let filterName = snapshot.series.filterName {
+                        Text(filterName)
+                    } else {
+                        Text("No filter recorded")
+                    }
+                }
                 Menu("Choose Filter…") {
                     if settings.filters.isEmpty { Text("No saved filters") }
                     ForEach(settings.filters) { filter in

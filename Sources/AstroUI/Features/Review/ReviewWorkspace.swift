@@ -41,7 +41,18 @@ public struct ReviewWorkspace: View {
                     ContentUnavailableView(
                         "Review unavailable",
                         systemImage: "exclamationmark.triangle",
-                        description: Text(store.errorMessage ?? "This project could not be opened.")
+                        // V2 localization sweep (W3-13): `store.errorMessage`
+                        // is `String?` -- `?? "This project could not be
+                        // opened."` used to resolve the whole expression to
+                        // `String`, so `Text(String)` picked the verbatim
+                        // `StringProtocol` overload and the fallback never
+                        // localized even though the exact phrase already had
+                        // an `hu.lproj` entry. Building two real `Text`
+                        // values keeps the dynamic message verbatim (it is
+                        // never translatable system/domain text) while the
+                        // fallback phrase goes through `Text`'s own
+                        // `LocalizedStringKey` initializer.
+                        description: store.errorMessage.map(Text.init) ?? Text("This project could not be opened.")
                     )
                 }
             }
@@ -222,11 +233,26 @@ public struct ReviewWorkspace: View {
                 Text("CAPTURE SERIES").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
                 if nights.count > 1 {
-                    Menu(selectedNightFilter ?? "All nights") {
+                    // V2 localization sweep (W3-13): `selectedNightFilter` is
+                    // `String?` -- `Menu(selectedNightFilter ?? "All
+                    // nights")` used to resolve to `String`, routing through
+                    // `Menu`'s verbatim `StringProtocol` initializer and
+                    // never localizing "All nights" even though the phrase
+                    // already had an `hu.lproj` entry. A custom `label:`
+                    // keeps the selected night (real data) verbatim while
+                    // the "All nights" default goes through `Text`'s own
+                    // `LocalizedStringKey` initializer.
+                    Menu {
                         Button("All nights") { selectedNightFilter = nil }
                         Divider()
                         ForEach(nights, id: \.self) { night in
                             Button(night) { selectedNightFilter = night }
+                        }
+                    } label: {
+                        if let selectedNightFilter {
+                            Text(selectedNightFilter)
+                        } else {
+                            Text("All nights")
                         }
                     }
                     .font(.caption)
@@ -273,11 +299,19 @@ public struct ReviewWorkspace: View {
                 Divider()
                 HStack(spacing: 10) {
                     if !captureSlugs(in: selected).isEmpty {
-                        Menu(selectedCaptureSlug ?? "All capture groups") {
+                        // Same `String?` verbatim leak as the night filter
+                        // `Menu` above -- see its own comment.
+                        Menu {
                             Button("All capture groups") { selectedCaptureSlug = nil }
                             Divider()
                             ForEach(captureSlugs(in: selected), id: \.self) { slug in
                                 Button(slug) { selectedCaptureSlug = slug }
+                            }
+                        } label: {
+                            if let selectedCaptureSlug {
+                                Text(selectedCaptureSlug)
+                            } else {
+                                Text("All capture groups")
                             }
                         }
                         .font(.caption)
@@ -327,7 +361,7 @@ public struct ReviewWorkspace: View {
                         }
                         .width(min: 105, ideal: 120)
                         TableColumn("Library status") { row in
-                            Text(row.decision.logicallyExcluded ? "Excluded" : "Included")
+                            Text(row.decision.stackInclusionLabel)
                                 .foregroundStyle(row.decision.logicallyExcluded ? AstroTokens.Color.critical : .secondary)
                         }
                         .width(min: 100, ideal: 115)
@@ -583,7 +617,16 @@ private struct PercentileDot: View {
         }
     }
 
-    private static func tooltipText(_ result: LibraryPercentileResult) -> String {
+    // V2 localization sweep (W3-13): this used to return a plain `String`
+    // built with ordinary string interpolation, and `.help(String)` picks
+    // `View`'s verbatim `StringProtocol` overload -- neither sentence ever
+    // localized, and neither had an `hu.lproj` entry yet either (unlike most
+    // of this file's other leaks). Returning `LocalizedStringKey` and
+    // writing the interpolation directly in each branch (rather than
+    // building a `String` first and wrapping it after) keeps every
+    // substituted value a real `%@` argument in the extracted key, matching
+    // `SkyVerdictKind.displayLabel`'s own established pattern.
+    private static func tooltipText(_ result: LibraryPercentileResult) -> LocalizedStringKey {
         if result.isLowSample {
             return "Too few rated frames in this library yet (\(result.sampleCount)/\(LibraryPercentiles.minimumSampleSize))"
         }
@@ -616,23 +659,47 @@ private struct SeriesRow: View {
     }
 }
 
+/// V2 localization sweep (W3-13): `FrameVerdict.rawValue` is a lowercase
+/// Swift identifier ("accepted"/"rejected"/"undecided"), never meant for
+/// display -- `FrameInspector`'s "Verdict" row used to render
+/// `decision.verdict.rawValue.capitalized` directly, the exact
+/// raw-enum-value leak `PlanningFit.displayLabel`/`SkyVerdictKind
+/// .displayLabel` (`PlanningStore.swift`) were fixed for. Shared here (not
+/// duplicated into `FrameInspector.swift`) so `FrameVerdictLabel`'s own
+/// switch below can also fold into this one source of truth.
+extension FrameVerdict {
+    var displayLabel: LocalizedStringKey {
+        switch self {
+        case .accepted: "Accepted"
+        case .rejected: "Rejected"
+        case .undecided: "Undecided"
+        }
+    }
+}
+
+/// V2 localization sweep (W3-13): `decision.logicallyExcluded ? "Excluded" :
+/// "Included"` used to be written inline at both this file's own frame table
+/// and `FrameInspector`'s "Stack inclusion" row -- a ternary of two string
+/// literals passed directly to `Text`/`LabeledContent` resolves to `String`,
+/// not `LocalizedStringKey` (the same trap `PlanningView`'s "Saved"/"Save
+/// Target" button already worked around by wrapping the ternary in
+/// `LocalizedStringKey(...)` explicitly), so neither "Included" nor
+/// "Excluded" ever localized despite both already having `hu.lproj` entries.
+extension FrameDecisionRecord {
+    var stackInclusionLabel: LocalizedStringKey {
+        LocalizedStringKey(logicallyExcluded ? "Excluded" : "Included")
+    }
+}
+
 private struct FrameVerdictLabel: View {
     let decision: FrameDecisionRecord
 
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: icon).foregroundStyle(color)
-            Text(label)
+            Text(decision.verdict.displayLabel)
                 .foregroundStyle(color)
                 .font(.callout.weight(.medium))
-        }
-    }
-
-    private var label: LocalizedStringKey {
-        switch decision.verdict {
-        case .accepted: "Accepted"
-        case .rejected: "Rejected"
-        case .undecided: "Undecided"
         }
     }
 

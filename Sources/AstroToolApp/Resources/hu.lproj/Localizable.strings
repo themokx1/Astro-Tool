@@ -1276,3 +1276,24 @@
 "Not downloaded yet — Planning uses the built-in 217-object catalog." = "Még nincs letöltve — a Tervezés a beépített 217 objektumos katalógust használja.";
 "%lld cached targets, updated %@." = "%lld gyorsítótárazott célpont, frissítve: %@.";
 "Remove \"%@\"?" = "„%@” eltávolítása?";
+
+/* W3-13 (owner screenshot sweep): hand-added, not extraction-script-visible
+   -- every key below is reached through a ternary of two literals, a
+   `String?`-typed `?? "literal"` fallback, a `LocalizedStringKey`-typed
+   function/computed property whose body is a literal or interpolated
+   literal, or a `switch` returning a literal, none of which the extraction
+   script's literal-first-argument regex can see (see this file's own
+   earlier "MetricInfoButton.swift"/"ArchiveTaskPresentation" comments for
+   the same class of hand-added entry). */
+"This project could not be opened." = "Ezt a projektet nem sikerült megnyitni.";
+"The external index does not contain reportable sessions yet." = "A külső index még nem tartalmaz jelenthető sessiont.";
+"Included" = "Benne van";
+"No data" = "Nincs adat";
+"Beyond model range" = "A modell tartományán túl";
+"Too few rated frames in this library yet (%lld/%lld)" = "Még túl kevés értékelt képkocka van ebben a könyvtárban (%lld/%lld)";
+"Percentile %lld across every rated frame in this library." = "%lld. percentilis az összes, ebben a könyvtárban értékelt képkocka között.";
+"Best month: %@" = "Legjobb hónap: %@";
+"This target's altitude sweep could not be computed for the chosen night." = "Ehhez a célponthoz nem sikerült kiszámítani a magasság-görbét a kiválasztott éjszakára.";
+"Open a library with a resolved site to see the target's path across the sky." = "Nyiss meg egy könyvtárat feloldott megfigyelőhellyel, hogy lásd a célpont útját az égen.";
+"Finder metadata files" = "Finder metaadat-fájlok";
+"Hidden files Finder leaves behind in folders it has opened, like .DS_Store. They hold no image data." = "Rejtett fájlok, amelyeket a Finder hagy hátra a megnyitott mappákban, mint a .DS_Store. Nem tartalmaznak képadatot.";

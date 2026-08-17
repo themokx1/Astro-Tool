@@ -15,8 +15,16 @@ public struct FrameInspector: View {
                 LabeledContent("Source path", value: decision.relativePath)
             }
             Section("Decision") {
-                LabeledContent("Verdict", value: decision.verdict.rawValue.capitalized)
-                LabeledContent("Stack inclusion", value: decision.logicallyExcluded ? "Excluded" : "Included")
+                // V2 localization sweep (W3-13): both rows used to render a
+                // plain `String` value (`verdict.rawValue.capitalized`, and
+                // a ternary of two literals) through `LabeledContent`'s
+                // verbatim `value:` parameter -- neither ever localized.
+                // `FrameVerdict.displayLabel`/`FrameDecisionRecord
+                // .stackInclusionLabel` (`ReviewWorkspace.swift`, shared with
+                // that screen's own frame table) fix the same leak class
+                // here via the content-closure initializer.
+                LabeledContent("Verdict") { Text(decision.verdict.displayLabel) }
+                LabeledContent("Stack inclusion") { Text(decision.stackInclusionLabel) }
             }
         }
         .formStyle(.grouped)
