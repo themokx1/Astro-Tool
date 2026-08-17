@@ -51,6 +51,40 @@ public enum AstroTokens {
         /// it covers. Kept rather than deleted because the popover case is
         /// real and unbuilt, not because anything reads it.
         public static let surfaceRaised = dynamic(dark: 0x161D29, light: 0xFFFFFF)
+        /// The RECESSED layer -- a well sunk INTO the surface it sits in: a
+        /// grouped read-only block inside a card, a metric tile, a summary
+        /// panel. The third and last structural layer, completing the pair
+        /// `ground` and `surface` already formed. Never painted directly by
+        /// a feature view: it is the fill of `View.astroRecessedSurface(_:)`
+        /// (`AstroSurface.swift`), which owns the corner shape and the
+        /// padding with it, exactly as `astroRaisedSurface(_:)` does for
+        /// `surface`. `V2PolishSurfaceTests`'
+        /// `surfaceTokensAreOnlyPaintedByTheSharedTreatment` gates that.
+        ///
+        /// Deliberately DARKER THAN BOTH `ground` AND `surface`, in BOTH
+        /// appearances -- measured (relative luminance):
+        ///
+        /// | appearance | `recess` | `ground` | `surface` |
+        /// | ---------- | -------- | -------- | --------- |
+        /// | light      | .9166    | .9689    | 1.0000    |
+        /// | dark       | .0272    | .0384    | .0810     |
+        ///
+        /// That is the whole point of it being a token at all. The three
+        /// hand-rolled recipes it replaces were all `.quaternary` at some
+        /// strength (1.0, 0.5, 0.45), and `.quaternary` is a HIERARCHICAL
+        /// FOREGROUND style: it is black at ~10% alpha in light appearance
+        /// but WHITE at ~10% alpha in dark. Over `surface` it therefore
+        /// measures .9020/.9510/.9559 in light -- recessed, correctly -- and
+        /// .1711/.1261/.1216 in dark, every one of them LIGHTER than the
+        /// .0810 surface it was supposed to be sunk into. The app's
+        /// "recessed" wells were raised in dark mode, in all three places,
+        /// and no source-text gate could have seen it because the defect is
+        /// in what the system style resolves to, not in what the call site
+        /// says. Being an explicit two-appearance token is what makes the
+        /// direction checkable at all, which
+        /// `V2PolishSurfaceTests.theRecessedLayerIsDarkerThanBothInBothAppearances`
+        /// now does.
+        public static let recess = dynamic(dark: 0x05070C, light: 0xE6EAF2)
         /// Hairline divider, and the edge of a raised surface -- see
         /// `astroRaisedSurface(_:)` for why a card in light appearance needs
         /// one at all (a 4% fill delta is not, on its own, an edge).
