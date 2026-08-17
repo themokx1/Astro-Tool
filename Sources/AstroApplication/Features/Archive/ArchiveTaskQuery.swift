@@ -3,6 +3,20 @@ import Foundation
 
 public enum ArchiveTaskKind: String, CaseIterable, Sendable {
     case intermediateFiles
+    /// W3-13 (owner screenshot): `.DS_Store` (and any other file matching
+    /// `ArchiveTaskQuery.isSystemMetadataFile`) used to be grouped into
+    /// `.intermediateFiles` ("Stacking leftovers") along with genuine
+    /// stacking-tool byproducts (`.seq`/`.lst`/`_conv`/`_bkg`/`r_*`/`bkg_*`)
+    /// -- both match `AstroCore`'s own single "residue" audit category (see
+    /// `AstroConfig.residuePatterns`), but a Finder metadata file is not
+    /// stacking output, and showing it as an EXAMPLE PATH under "Stacking
+    /// leftovers" mischaracterized what the card was warning about. Split
+    /// out as its own kind rather than reclassified at the audit-rule level:
+    /// `ResidueRule` in `AstroCore` still emits one "residue" category for
+    /// both (unchanged, so `CleanupReport`/quarantine mechanics keep their
+    /// existing behavior), and `ArchiveTaskQuery.summary()`/`findings(for:)`
+    /// route by filename within that one category, purely for CARD display.
+    case osMetadata
     case duplicateContent
     case misplacedCalibration
     case brokenNames
@@ -26,6 +40,14 @@ public enum ArchiveTaskKind: String, CaseIterable, Sendable {
     public var findingCategories: [String] {
         switch self {
         case .intermediateFiles: ["residue"]
+        // Shares "residue" with `.intermediateFiles` on purpose -- see this
+        // case's own doc comment. `ArchiveTaskQuery.summary()`/`findings(for:)`
+        // never resolve a kind FROM a category via this property alone when
+        // the category is "residue" (they route by filename first); this
+        // value only feeds `ArchiveTaskDetailView`'s bulk quarantine-preview
+        // action, which already previews by raw category, not by kind, on
+        // both cards.
+        case .osMetadata: ["residue"]
         case .duplicateContent: ["duplicate-content"]
         case .misplacedCalibration: ["calib-in-wrong-dir", "orphan-calib-dir"]
         case .brokenNames: ["placeholder-name", "duplicated-catalog-prefix",
@@ -47,7 +69,7 @@ public enum ArchiveTaskKind: String, CaseIterable, Sendable {
     /// plan's own instruction not to invent a destructive action here).
     public var supportsBulkQuarantinePreview: Bool {
         switch self {
-        case .intermediateFiles, .duplicateContent: true
+        case .intermediateFiles, .osMetadata, .duplicateContent: true
         case .misplacedCalibration, .brokenNames, .corruption, .unverified, .auditNeverRun: false
         }
     }
@@ -190,9 +212,10 @@ public struct ArchiveTaskSummary: Equatable, Sendable {
 }
 
 /// Turns the latest audit run's and the latest verify run's findings into at
-/// most six cards -- one per `ArchiveTaskKind` -- instead of one row per
-/// finding. The 3 228 residue findings on the reference library are one
-/// card, not 3 228 rows.
+/// most seven cards -- one per non-`auditNeverRun` `ArchiveTaskKind` -- instead
+/// of one row per finding. The 3 228 residue findings on the reference
+/// library split into (at most) two cards by filename -- see
+/// `ArchiveTaskKind.osMetadata`'s own doc comment -- not 3 228 rows.
 ///
 /// Hard rule, gated by `ArchiveTaskQueryTests.everyCardIsActionable`: a card
 /// only exists if its `action` can actually run. Titles and explanatory
@@ -249,9 +272,7 @@ public struct ArchiveTaskQuery: Sendable {
             let category = row.string(0) ?? ""
             let path = row.string(1) ?? ""
             let size = row.int64(2) ?? 0
-            guard let kind = ArchiveTaskKind.allCases.first(where: {
-                $0.findingCategories.contains(category)
-            }) else {
+            guard let kind = Self.taskKind(forCategory: category, path: path) else {
                 var entry = uncoveredByCategory[category] ?? (files: 0, bytes: 0)
                 entry.files += 1
                 entry.bytes += size
@@ -296,10 +317,37 @@ public struct ArchiveTaskQuery: Sendable {
         return ArchiveTaskSummary(tasks: tasks, uncovered: uncovered)
     }
 
+    /// W3-13 (owner screenshot): resolves a raw finding row to the card it
+    /// belongs to. Every category except "residue" still maps to exactly one
+    /// kind via `findingCategories` (unchanged); "residue" itself now splits
+    /// by filename between `.osMetadata` (Finder junk like `.DS_Store`) and
+    /// `.intermediateFiles` (genuine stacking-tool byproducts), since both
+    /// kinds declare the SAME `findingCategories` and the generic
+    /// contains-based lookup could not tell them apart -- see
+    /// `ArchiveTaskKind.osMetadata`'s own doc comment for why the split
+    /// lives here rather than in `AstroCore`'s audit rule.
+    private static func taskKind(forCategory category: String, path: String) -> ArchiveTaskKind? {
+        guard category == "residue" else {
+            return ArchiveTaskKind.allCases.first { $0.findingCategories.contains(category) }
+        }
+        return Self.isSystemMetadataFile(path) ? .osMetadata : .intermediateFiles
+    }
+
+    /// The one place a "residue" finding's filename decides whether it is
+    /// Finder/OS junk or genuine stacking-tool output. Deliberately narrow
+    /// (an exact, case-sensitive match on the real macOS filename) rather
+    /// than a broader "looks like OS metadata" heuristic -- the owner's own
+    /// screenshot named `.DS_Store` specifically, and a pattern loose enough
+    /// to catch more risks silently reclassifying an actual stacking
+    /// byproduct that happens to share a naming quirk.
+    static func isSystemMetadataFile(_ path: String) -> Bool {
+        (path as NSString).lastPathComponent == ".DS_Store"
+    }
+
     private static func severity(for kind: ArchiveTaskKind) -> ArchiveTaskSeverity {
         switch kind {
         case .misplacedCalibration, .brokenNames, .corruption: .error
-        case .intermediateFiles, .duplicateContent: .reclaim
+        case .intermediateFiles, .osMetadata, .duplicateContent: .reclaim
         case .unverified: .attention
         case .auditNeverRun: .info
         }
@@ -311,7 +359,7 @@ public struct ArchiveTaskQuery: Sendable {
         switch kind {
         case .auditNeverRun:
             return .runAudit
-        case .intermediateFiles, .duplicateContent, .misplacedCalibration, .brokenNames, .corruption, .unverified:
+        case .intermediateFiles, .osMetadata, .duplicateContent, .misplacedCalibration, .brokenNames, .corruption, .unverified:
             // Task 3 (wave 3): more than one finding routes to this kind's
             // own "view all" list instead of handing back one arbitrary
             // path -- see `ArchiveTaskAction.showFindings`'s own doc
@@ -360,6 +408,21 @@ public struct ArchiveTaskQuery: Sendable {
                 path: path,
                 bytes: row.int64(2) ?? 0
             ))
+        }
+        // W3-13 (owner screenshot): `.intermediateFiles` and `.osMetadata`
+        // both query the same "residue" category (see
+        // `ArchiveTaskKind.osMetadata`'s own doc comment), so the SQL above
+        // cannot tell them apart on its own -- the same filename split
+        // `taskKind(forCategory:path:)` applies in `summary()` is applied
+        // again here, in Swift, so each kind's own "view all" list only ever
+        // shows the findings that kind's own card actually counted.
+        switch kind {
+        case .intermediateFiles:
+            results.removeAll { Self.isSystemMetadataFile($0.path) }
+        case .osMetadata:
+            results.removeAll { !Self.isSystemMetadataFile($0.path) }
+        default:
+            break
         }
         return results
     }

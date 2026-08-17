@@ -3,7 +3,7 @@ import Foundation
 import SwiftUI
 
 /// One card per problem KIND, not per finding -- `ArchiveTaskQuery` already
-/// rolled up thousands of individual findings into at most six tasks, and
+/// rolled up thousands of individual findings into at most seven tasks, and
 /// this view turns each into a single actionable card. The old library-health
 /// table listed every finding as its own row with a "Next step" column that
 /// was a static label; every card here carries a real button instead, and
@@ -97,6 +97,8 @@ struct ArchiveTaskCard: View {
         switch task.kind {
         case .intermediateFiles:
             "Intermediate output from stacking — regenerable from your raw frames. Your light frames are not touched."
+        case .osMetadata:
+            "Hidden files Finder leaves behind in folders it has opened, like .DS_Store. They hold no image data."
         case .duplicateContent:
             "Files whose exact contents already exist elsewhere. You choose which copy stays."
         case .misplacedCalibration:

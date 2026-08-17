@@ -372,6 +372,84 @@ struct ArchiveTaskQueryTests {
         #expect(findings.isEmpty)
     }
 
+    // MARK: - W3-13 (owner screenshot): .DS_Store is not "Stacking leftovers"
+
+    @Test(".DS_Store never lands in the stack-residue (.intermediateFiles) class")
+    func dsStoreNeverAppearsInStackResidueClass() async throws {
+        let index = try Self.makeIndexDatabase()
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("""
+            INSERT INTO files VALUES
+              ('.DS_Store', 6148, 'M42', '2026-01-05', 'other', 'sessions', 0),
+              ('calibration_library/.DS_Store', 6148, NULL, NULL, 'other', 'calibration', 0);
+            INSERT INTO findings VALUES
+              (40, 2, 'suspicious', 'residue', '.DS_Store', 'leftover'),
+              (41, 2, 'suspicious', 'residue', 'calibration_library/.DS_Store', 'leftover');
+            """)
+
+        let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).summary().tasks
+
+        let intermediates = try #require(tasks.first { $0.kind == .intermediateFiles })
+        #expect(!intermediates.evidencePaths.contains(".DS_Store"))
+        #expect(!intermediates.evidencePaths.contains("calibration_library/.DS_Store"))
+        // The standard fixture's own two non-.DS_Store residue findings
+        // (r_pp_a.fit, r_pp_b.fit) are all that should count here -- the two
+        // .DS_Store findings above must not inflate this card's total.
+        #expect(intermediates.affectedFileCount == 2)
+        #expect(intermediates.bytes == 3000)
+
+        let findingsForIntermediates = try await ArchiveTaskQuery(indexDatabaseForTesting: index)
+            .findings(for: .intermediateFiles)
+        #expect(!findingsForIntermediates.contains { $0.path.hasSuffix(".DS_Store") })
+    }
+
+    @Test(".DS_Store findings become their own 'Finder metadata files' card")
+    func dsStoreBecomesItsOwnCard() async throws {
+        let index = try Self.makeIndexDatabase()
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("""
+            INSERT INTO files VALUES
+              ('.DS_Store', 6148, 'M42', '2026-01-05', 'other', 'sessions', 0),
+              ('calibration_library/.DS_Store', 6148, NULL, NULL, 'other', 'calibration', 0);
+            INSERT INTO findings VALUES
+              (40, 2, 'suspicious', 'residue', '.DS_Store', 'leftover'),
+              (41, 2, 'suspicious', 'residue', 'calibration_library/.DS_Store', 'leftover');
+            """)
+
+        let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).summary().tasks
+
+        let osMetadata = try #require(tasks.first { $0.kind == .osMetadata })
+        #expect(osMetadata.affectedFileCount == 2)
+        #expect(osMetadata.bytes == 6148 + 6148)
+        #expect(osMetadata.severity == .reclaim)
+        #expect(Set(osMetadata.evidencePaths) == [".DS_Store", "calibration_library/.DS_Store"])
+
+        let findingsForOSMetadata = try await ArchiveTaskQuery(indexDatabaseForTesting: index)
+            .findings(for: .osMetadata)
+        #expect(Set(findingsForOSMetadata.map(\.path)) == [".DS_Store", "calibration_library/.DS_Store"])
+    }
+
+    @Test("Splitting residue by filename does not change the reclaimable total")
+    func residueSplitReconcilesWithTheOriginalTotal() async throws {
+        // GB-math guard: whatever the standard fixture's residue total was
+        // before this split (r_pp_a.fit + r_pp_b.fit = 3000, proven by
+        // `findingsCollapseIntoCards` above), adding .DS_Store findings and
+        // splitting the class must move bytes between cards, never drop or
+        // double-count them.
+        let index = try Self.makeIndexDatabase()
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("""
+            INSERT INTO files VALUES ('.DS_Store', 6148, 'M42', '2026-01-05', 'other', 'sessions', 0);
+            INSERT INTO findings VALUES (40, 2, 'suspicious', 'residue', '.DS_Store', 'leftover');
+            """)
+
+        let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).summary().tasks
+        let residueTotal = tasks
+            .filter { $0.kind == .intermediateFiles || $0.kind == .osMetadata }
+            .reduce(Int64(0)) { $0 + $1.bytes }
+        #expect(residueTotal == 3000 + 6148)
+    }
+
     @Test("findings(for:) reads the latest audit and verify runs independently, same as summary()")
     func findingsReadLatestRunsIndependently() async throws {
         let index = try Self.makeIndexDatabase()
