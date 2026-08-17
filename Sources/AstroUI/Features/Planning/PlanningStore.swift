@@ -44,6 +44,15 @@ public final class PlanningStore {
     /// Injectable so tests can supply a fixed site/date without a real
     /// FITS-backed library on disk.
     public typealias SkyContextProvider = @Sendable (URL?) async throws -> PlanningSkyContext?
+    /// W4-2: tonight's (or the planned night's) per-date cloud summaries for
+    /// whichever library is open, keyed the same "yyyy-MM-dd, named by the
+    /// night's start" way `DailyCloudSummary.date`/`NightSummary.date`
+    /// already are. `nil` means "no row" (weather off, or no site resolves);
+    /// throws `WeatherError` only when `WeatherService.fetch` itself throws
+    /// (no cached forecast to fall back on). Injectable for the same reason
+    /// `skyContextProvider` is: tests supply a fixed result without a real
+    /// network call.
+    public typealias WeatherProvider = @Sendable (URL?) async throws -> [String: DailyCloudSummary]?
 
     public let setups: [ImagingSetupProfile]
     /// AppKit's Picker re-asserts the bound selection during its own update
@@ -142,6 +151,21 @@ public final class PlanningStore {
     }
     public private(set) var skyAvailability: SkyAvailability = .pending
 
+    /// W4-2: the planned night's cloud picture -- one indicator for the
+    /// WHOLE table (every row shares tonight's sky, so this is per-night,
+    /// not a column repeating the same value on every row). `.hidden`
+    /// mirrors `HomeSnapshot`'s "no site configured -> no weather row, no
+    /// error" rule exactly (weather off, or no site resolves); `.error` is
+    /// the one case something IS shown despite there being no summary: a
+    /// fetch that failed outright with no cached forecast to fall back on.
+    public enum PlanningCloudState: Equatable, Sendable {
+        case hidden
+        case summary(DailyCloudSummary)
+        case beyondHorizon
+        case error(WeatherError)
+    }
+    public private(set) var cloudState: PlanningCloudState = .hidden
+
     /// The full recommendation pipeline's most recent result -- STORED, not
     /// computed. Build 20013 shipped a crash (and, with the underlying
     /// `NSException` swallowed, a multi-second 98%-CPU main-thread hang)
@@ -211,6 +235,7 @@ public final class PlanningStore {
     private let catalogSearch: CatalogSearch
     private let catalogProvider: CatalogProvider
     private let skyContextProvider: SkyContextProvider
+    private let weatherProvider: WeatherProvider
     /// `nonisolated(unsafe)`: only ever mutated on the main actor (`init`),
     /// but `deinit` is always `nonisolated` (it may run on any thread), so
     /// it needs to read this without a MainActor-isolation check. Safe --
@@ -266,13 +291,17 @@ public final class PlanningStore {
         /// later when unrelated edits re-rolled the layout -- which is exactly
         /// the failure mode the gate exists for, and why a source audit alone
         /// was never going to be enough.
-        skyContextProvider: SkyContextProvider? = nil
+        skyContextProvider: SkyContextProvider? = nil,
+        /// Same `Optional`-not-async-default shape as `skyContextProvider`
+        /// immediately above, for the identical reason.
+        weatherProvider: WeatherProvider? = nil
     ) {
         let safeSetups = setups.isEmpty ? PlanningStore.defaultSetups : setups
         self.setups = safeSetups
         self.defaults = defaults
         self.computeRecommendations = computeRecommendations
         self.skyContextProvider = skyContextProvider ?? PlanningStore.productionSkyContext
+        self.weatherProvider = weatherProvider ?? PlanningStore.productionWeather
         self.catalogProvider = catalogProvider ?? { PlanningStore.productionCatalog() }
         // Search the SAME catalog the ranking uses, so a target that appears
         // in the table can always be found by name and vice versa.
@@ -411,6 +440,7 @@ public final class PlanningStore {
         let referenceSurfaceBrightness = lastObservedReferenceSurfaceBrightness
         let rootURL = rootURL
         let resolveSkyContext = skyContextProvider
+        let resolveWeather = weatherProvider
         let compute = computeRecommendations
         let plannedDate = planningDate
         let targets = catalogProvider()
@@ -429,13 +459,23 @@ public final class PlanningStore {
                 // (tests injecting a fixed context); the picker owns this.
                 date: plannedDate ?? skyContext?.date ?? Date()
             )
-            let result = await Task.detached(priority: .userInitiated) {
+            // W4-2: fetched concurrently with the ranking compute, not after
+            // it -- the cloud indicator is on the same "one recompute" cadence
+            // as the table itself (same night/date, refetched on every
+            // `refresh()`; `WeatherService`'s own 1-hour cache absorbs the
+            // redundant calls a slider-driven `refresh()` burst would
+            // otherwise cause).
+            async let computedResult = Task.detached(priority: .userInitiated) {
                 compute(query)
             }.value
+            async let cloud = Self.resolveCloudState(weatherProvider: resolveWeather, rootURL: rootURL, date: query.date)
+            let result = await computedResult
+            let cloudState = await cloud
             guard let self, generation == self.recomputeGeneration else { return }
             self.recommendations = result
             self.skyAvailability = rootURL == nil ? .noLibrary : (skyContext == nil ? .noSite : .available)
             self.resolvedSite = skyContext?.site
+            self.cloudState = cloudState
             self.isComputing = false
             self.recomputeFilteredRecommendations()
             // Tonight's site/date may have just changed (a new library, or a
@@ -583,6 +623,69 @@ public final class PlanningStore {
             guard site.latitudeDeg != nil, site.longitudeDeg != nil else { return nil }
             return PlanningSkyContext(site: site, date: Date())
         }.value
+    }
+
+    /// W4-2: turns a `WeatherProvider` result into the state `PlanningView`'s
+    /// cloud indicator actually renders -- `nil` (disabled/no site) becomes
+    /// `.hidden`, a thrown `WeatherError` becomes `.error`, and a fetched
+    /// dictionary either has an entry for `date`'s night or doesn't (the
+    /// latter meaning `date` falls beyond Open-Meteo's 7-day horizon).
+    static func resolveCloudState(
+        weatherProvider: WeatherProvider,
+        rootURL: URL?,
+        date: Date
+    ) async -> PlanningCloudState {
+        do {
+            guard let summaries = try await weatherProvider(rootURL) else { return .hidden }
+            guard let summary = summaries[Self.nightDateKey(for: date)] else { return .beyondHorizon }
+            return .summary(summary)
+        } catch let error as WeatherError {
+            return .error(error)
+        } catch {
+            return .hidden
+        }
+    }
+
+    /// `yyyy-MM-dd` local-day key matching `DailyCloudSummary.date`'s own
+    /// "named by the night's start" convention -- deliberately its own
+    /// formatter rather than a shared one (same accepted per-file
+    /// duplication `Planner.swift`/`TrendQueries.swift`/`NewSessionView.swift`
+    /// already have for this exact format string).
+    private static func nightDateKey(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+
+    /// W4-2: tonight's (or the planned night's) per-date cloud summaries,
+    /// gated behind the exact same `config.weather.enabled` opt-in V1's
+    /// `AppState.loadWeather` reads (the same `config.json`, so a toggle
+    /// flipped from either V1's or V2's Settings takes effect here too).
+    /// Resolves the site independently of `productionSkyContext` -- the same
+    /// accepted duplication that method already has with
+    /// `HomeStore.productionNightContext`.
+    public static func productionWeather(rootURL: URL?) async throws -> [String: DailyCloudSummary]? {
+        guard let rootURL else { return nil }
+        struct ResolvedSite { let latitudeDeg: Double; let longitudeDeg: Double }
+        let resolved: ResolvedSite? = try await Task.detached(priority: .utility) {
+            let identity = LibraryIdentity(rootURL: rootURL)
+            let paths = try AppStoragePaths.production(libraryID: identity, libraryRoot: rootURL)
+            let database = try Database(path: paths.indexDatabase.path)
+            let configURL = rootURL.appendingPathComponent(".astro_tool/config.json")
+            var config = (try? AstroConfig.load(from: configURL)) ?? AstroConfig()
+            config.rootPath = rootURL.path
+            guard config.weather.enabled else { return nil }
+            let site = try Planner.resolveSite(db: database, config: config)
+            guard let latitudeDeg = site.latitudeDeg, let longitudeDeg = site.longitudeDeg else { return nil }
+            return ResolvedSite(latitudeDeg: latitudeDeg, longitudeDeg: longitudeDeg)
+        }.value
+        guard let resolved else { return nil }
+        let (_, summaries) = try await WeatherService.shared.fetch(
+            latitude: resolved.latitudeDeg, longitude: resolved.longitudeDeg
+        )
+        return summaries
     }
 
     public static let defaultSetups: [ImagingSetupProfile] = [

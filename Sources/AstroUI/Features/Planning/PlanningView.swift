@@ -178,6 +178,8 @@ public struct PlanningView: View {
                     .accessibilityIdentifier("v2.planning.today")
                     .help("Go back to planning for tonight.")
 
+                cloudIndicator
+
                 Divider().frame(height: 16)
 
                 Toggle(
@@ -212,6 +214,50 @@ public struct PlanningView: View {
                     .help("Review every target you've bookmarked from Planning.")
             }
         }
+    }
+
+    /// W4-2: one compact indicator for the planned night's cloud picture --
+    /// NOT a table column, since the whole table shares one night (every
+    /// row's ranking is computed against the SAME sky). Follows
+    /// `store.planningDate` the same way the ranking itself does: it's
+    /// recomputed inside `PlanningStore.refresh()`, on the same "night
+    /// changed" trigger. `.hidden` renders nothing at all -- weather off or
+    /// no site resolved mirrors Home's "no site configured -> no weather
+    /// row, no error" rule exactly.
+    @ViewBuilder
+    private var cloudIndicator: some View {
+        switch store.cloudState {
+        case .hidden:
+            EmptyView()
+        case .summary(let summary):
+            // Pre-formatted into a plain `String` (rather than interpolating
+            // the two `Int`s directly into the `Label` literal) so the
+            // localization key this generates is "Cloud tonight: %@" -- the
+            // same single-placeholder shape `NightRow`'s "Culminates %@"/
+            // "Visible %@" already use -- instead of a two-`Int` "%lld–%lld%%"
+            // key nothing else in this codebase's `hu.lproj` follows.
+            Label(
+                "Cloud tonight: \(Self.cloudRangeText(summary))",
+                systemImage: "cloud.fill"
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("v2.planning.cloud")
+        case .beyondHorizon:
+            Label("Forecast horizon is 7 days", systemImage: "cloud.fill")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("v2.planning.cloud")
+        case .error(let error):
+            Label(error.captionKey, systemImage: "cloud.fill")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("v2.planning.cloud")
+        }
+    }
+
+    private static func cloudRangeText(_ summary: DailyCloudSummary) -> String {
+        "\(Int(summary.minPercent.rounded()))–\(Int(summary.maxPercent.rounded()))%"
     }
 
     /// Task 4: bookmarks the selected row -- idempotent (re-clicking an
