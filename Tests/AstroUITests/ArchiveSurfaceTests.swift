@@ -331,7 +331,32 @@ struct ArchiveTaskDetailViewSurfaceTests {
         let text = try source()
         #expect(!text.contains("ScrollView"), "a Table inside a ScrollView is given unbounded height and never virtualizes -- see WorkspaceTablePage's own doc comment")
         #expect(text.contains("WorkspaceTablePage"))
-        #expect(text.contains("Table(store.findings)"))
+        // W4-7 item 3 (owner review): grouped by parent folder now, so the
+        // table is hierarchical (`store.rows`/`children:`), not the flat
+        // `Table(store.findings)` this used to assert on.
+        #expect(text.contains("Table(store.rows, children: \\.children"))
+    }
+
+    @Test("Findings group by parent folder -- a folder row is its own case, never a fake zero-byte file")
+    func findingsGroupByParentFolder() throws {
+        let text = try source()
+        #expect(text.contains("ArchiveFindingRow"), "must render the grouped row type, not the flat ArchiveFinding array directly")
+        #expect(text.contains("case .folder(let path, let fileCount, _):"), "a folder row must be its own case, not inferred from a file with 0 bytes")
+    }
+
+    @Test("The bulk quarantine action is gated on the page's own selection, never firing on an empty one")
+    func quarantineActionIsGatedOnSelection() throws {
+        let text = try source()
+        #expect(text.contains("@State private var selection: Set<String> = []"))
+        #expect(text.contains(".disabled(selection.isEmpty || accessMode != .mutationEnabled)"))
+    }
+
+    @Test("A finding kind with no sensible quarantine action explains what to do instead, never a dead-end page")
+    func noQuarantineKindsExplainWhatToDoInstead() throws {
+        let text = try source()
+        #expect(text.contains("noQuarantineActionRow"))
+        #expect(text.contains("case .unverified:"))
+        #expect(text.contains("case .misplacedCalibration, .brokenNames, .corruption:"))
     }
 
     @Test("Findings load through the generation-guarded store, never in a computed getter or body")
@@ -351,7 +376,11 @@ struct ArchiveTaskDetailViewSurfaceTests {
     @Test("Each row carries its own reveal-in-Finder action, validated the same way ArchiveView's own reveal is")
     func eachRowRevealsItsOwnPath() throws {
         let text = try source()
-        #expect(text.contains("revealInFinder(path: finding.path)"))
+        // W4-7 item 3: a row's reveal button now resolves its path from
+        // either case of `ArchiveFindingRow.kind` (folder or finding), not
+        // only `finding.path` -- see `revealButton(_:)`'s own local
+        // `path` binding.
+        #expect(text.contains("revealInFinder(path: path)"))
         #expect(text.contains("candidate.path.hasPrefix(root.path)"), "must confirm the resolved path never escapes the library root")
         #expect(text.contains("FileManager.default.fileExists(atPath: candidate.path)"))
     }

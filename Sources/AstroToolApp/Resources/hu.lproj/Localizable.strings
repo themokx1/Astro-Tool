@@ -1399,3 +1399,24 @@
 // egy ternáris kifejezésen keresztül ad vissza `LocalizedStringKey`-t, amit
 // az extraháló script nem lát, kézzel felvéve. A tulajdonos saját szava.
 "Only one measured session — more measurements are needed for a trend" = "1 mért session — a trendhez több mérés kell";
+
+/* W4-7 item 3 (owner review): `ArchiveTaskDetailView`'s folder grouping and
+   its new footer action row. "Move to Quarantine…"/"Run Check" are literal
+   `Button(...)` arguments the extraction script already sees; every other
+   entry below is a `LocalizedStringKey`-typed computed property reached
+   through a `switch`/ternary (`selectionSummaryText`,
+   `quarantineActionHelpText`, `noQuarantineExplanationText`) -- the same
+   extraction-invisible shape this file's own earlier "W3-13"/"W4-2" blocks
+   document -- hand-added here. "%lld files · %@" already existed (shared
+   with `CleanupPreviewView`'s own group row), so the new folder-heading
+   line needed no new key at all. */
+"Every finding behind this card, grouped by the folder it lives in." = "Ennek a kártyának minden találata, mappa szerint csoportosítva.";
+"Move to Quarantine…" = "Karanténba helyezés…";
+"Select one or more rows to continue" = "Válassz ki legalább egy sort a folytatáshoz";
+"%lld row(s) selected" = "%lld sor kiválasztva";
+"Requires write access. Enable write operations in Settings to move these to quarantine." = "Írási hozzáférést igényel. Engedélyezd az írási műveleteket a Beállításokban a karanténba helyezéshez.";
+"Moves this finding's whole category into quarantine for review, not only the selected rows -- confirm on the next screen before anything moves." = "Ez a találat egész kategóriáját karanténba helyezi átnézésre, nem csak a kiválasztott sorokat — a következő képernyőn kell megerősíteni, mielőtt bármi is mozogna.";
+"An unread or rewritten file cannot be fixed automatically. Run the check again to see if it is still unread." = "Egy olvashatatlan vagy felülírt fájlt nem lehet automatikusan javítani. Futtasd újra az ellenőrzést, hogy lásd, még mindig olvashatatlan-e.";
+"An unread or rewritten file cannot be fixed automatically. Run Check from the Archive page's toolbar to look again." = "Egy olvashatatlan vagy felülírt fájlt nem lehet automatikusan javítani. Futtasd az Ellenőrzést az Archívum oldal eszköztárából, hogy újra megnézd.";
+"There is no automatic fix for this. Use each row's Reveal in Finder button to inspect it and correct it by hand." = "Erre nincs automatikus javítás. Használd az egyes sorok Megjelenítés a Finderben gombját, hogy megvizsgáld és kézzel javítsd.";
+
