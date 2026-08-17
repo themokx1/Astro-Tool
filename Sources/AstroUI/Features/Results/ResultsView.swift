@@ -66,7 +66,16 @@ public final class ResultsStore {
     /// alongside `snapshot` -- everything the "Export Stack List" menu item
     /// needs to call `ExportService.stackList(target:date:)`, without the
     /// export menu having to know how to resolve either on its own. The
-    /// folder key is also the exact `target` the discovery runs against.
+    /// folder key is set from `loaded.target` in `apply` below, NOT the
+    /// project's raw `canonicalFolderName` -- one-letter-drift fix
+    /// (2026-08-17): those two used to be assumed interchangeable here, but
+    /// `stackResults(target:)` already resolves its `target` argument
+    /// against the library's real folders (`ResultsQuery.libraryFolder`)
+    /// before it ever reaches `StackDiscovery`, so an unresolved catalog
+    /// name landing back in this property would have handed the export menu
+    /// a folder the scanner never recorded (NGC 7000's own
+    /// `..._North_America_Nebula` vs. the real `..._North_American_Nebula`).
+    /// This IS now the exact `target` the discovery ran against.
     public private(set) var canonicalFolderName: String?
     public private(set) var latestNightDate: String?
 
@@ -100,7 +109,6 @@ public final class ResultsStore {
             let metadata = try metadataFactory(rootURL)
             let project = try await ProjectsQuery(metadata: metadata).project(id: projectID)
             guard generation == loadGeneration else { return }
-            canonicalFolderName = project?.canonicalFolderName
             latestNightDate = project?.nights.first?.night.localDate
 
             guard let target = project?.canonicalFolderName else {
@@ -126,6 +134,10 @@ public final class ResultsStore {
 
     private func apply(_ loaded: StackResultsSnapshot?, generation: Int) {
         guard generation == loadGeneration else { return }
+        // The resolved folder `stackResults(target:)` actually discovered
+        // against, not the caller's unresolved request -- see
+        // `canonicalFolderName`'s own doc comment above.
+        canonicalFolderName = loaded?.target
         snapshot = loaded
         var builtRows: [StackResultRow] = []
         var files: [String: StackResultFile] = [:]
