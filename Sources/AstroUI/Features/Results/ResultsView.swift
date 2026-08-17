@@ -707,12 +707,12 @@ public struct ResultsView: View {
     //
     // There is deliberately no lineage section. Lineage would name the
     // frames that went into a stack, and stack discovery cannot know that --
-    // it recognizes a finished output from its filename. The
-    // `results`/`lineage_edges` tables that could carry it have no writer
-    // anywhere in the product (see `ResultsQuery`'s own lineage-snapshot
-    // method, which documents the grep), so a lineage panel here would be a
-    // panel that can never fill. An empty section promising provenance is
-    // worse than not promising it.
+    // it recognizes a finished output from its filename. The two lineage
+    // tables that could once have carried it had no writer anywhere in the
+    // product and were dropped from the schema (W4-6, owner decision; see
+    // `MetadataSchema.versionEightSQL`'s own note), so a lineage panel here
+    // would be a panel that can never fill. An empty section promising
+    // provenance is worse than not promising it.
 
     @ViewBuilder
     private var resultDetail: some View {
