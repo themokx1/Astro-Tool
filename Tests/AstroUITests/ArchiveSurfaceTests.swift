@@ -34,6 +34,65 @@ struct ArchiveStripLayoutTests {
     }
 }
 
+/// W4-7 item 1 (owner review): "the archive map's colored strip ... explains
+/// nothing on the page". `ArchiveStripView`'s legend renders straight off
+/// `ArchiveStripLayout(slices:)` -- the exact same struct `ArchiveStripLayoutTests`
+/// above already covers -- so these are source-text checks (this repo's own
+/// "surface test" convention, see `ArchiveViewSurfaceTests`'s header) that the
+/// legend exists, is wired to the same `layout.segments` the strip itself
+/// draws from (never a parallel hardcoded class list), and that the red
+/// underline segment is labeled rather than left as an unexplained bar.
+struct ArchiveStripLegendSurfaceTests {
+    private var repositoryRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    private func source() throws -> String {
+        try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Features/Archive/ArchiveStripView.swift"),
+            encoding: .utf8
+        )
+    }
+
+    @Test("The legend is generated from the same layout.segments the strip itself draws, never a second hardcoded list")
+    func legendIsGeneratedFromTheSameSegments() throws {
+        let text = try source()
+        #expect(text.contains("private var legend:"), "ArchiveStripView must expose a legend under the strip")
+        #expect(text.contains("ForEach(Array(layout.segments.enumerated())"), "legend construction must be visible")
+        // The legend's own ForEach must be the same `layout.segments` the
+        // strip's ForEach above already iterates -- two separate ForEach
+        // call sites over the same property, not a second array literal.
+        let occurrences = text.components(separatedBy: "ForEach(Array(layout.segments.enumerated())").count - 1
+        #expect(occurrences == 2, "expected exactly one ForEach for the strip and one for the legend, both over layout.segments")
+        #expect(!text.contains("ArchiveClass.allCases"), "the legend must not build its own class list -- it must only ever show classes actually present in layout.segments")
+    }
+
+    @Test("Each legend entry reuses detailText(for:), so its size figure can never drift from the strip's own tooltip")
+    func legendReusesDetailText() throws {
+        let text = try source()
+        #expect(text.contains("detailText(for: segment)"), "the legend row must reuse the strip's own bytes/file-count text, not a re-derived copy")
+    }
+
+    @Test("The red underline segment is labeled in the legend, reusing the rail's own reclaim text")
+    func reclaimRailIsLabeledInTheLegend() throws {
+        let text = try source()
+        #expect(text.contains("reclaimLegendEntry"), "the legend must have its own entry for the reclaim rail")
+        #expect(text.contains("reclaimHelpText") && text.contains("private var reclaimLegendEntry"),
+                "the reclaim legend entry must reuse reclaimHelpText, the same sentence already explaining the rail's tooltip")
+    }
+
+    @Test("Every legend entry carries its own accessibility identifier")
+    func legendEntriesAreIdentifiable() throws {
+        let text = try source()
+        #expect(text.contains("\"v2.archive.strip.legend\""))
+        #expect(text.contains("v2.archive.strip.legend.reclaimable"))
+        #expect(text.contains("v2.archive.strip.legend.\\(identifier)"))
+    }
+}
+
 /// `ArchiveVerdict` is the one sentence at the top of the Archive page --
 /// pure data, built once from already-loaded `ArchiveTask`/`ArchiveMapSnapshot`
 /// state, so it is tested branch-by-branch here without rendering anything.

@@ -107,7 +107,72 @@ struct ArchiveStripView: View {
                 .accessibilityIdentifier("v2.archive.reclaim-rail")
                 .accessibilityLabel("Reclaimable space")
                 .accessibilityValue(reclaimHelpText)
+
+            legend
         }
+    }
+
+    /// W4-7 item 1 (owner review): the strip drew five colors and a red
+    /// underline with no key -- "the owner can't tell which color is which
+    /// class, and the red underline's meaning ... is a guess". This row is
+    /// generated from the exact same `layout.segments`/`reclaimFraction` the
+    /// strip and rail above already compute -- never a second, hand-typed
+    /// list of classes -- so the legend can never drift out of sync with
+    /// what is actually drawn. `LazyVGrid` (not a fixed `HStack`) because up
+    /// to six chips (five classes plus one residual) do not reliably fit one
+    /// physical line at every window width this page supports; it still
+    /// reads as "one compact row" at the page's normal width and wraps
+    /// gracefully rather than truncating or overflowing when it does not.
+    private var legend: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 168), spacing: AstroTokens.Spacing.standard)],
+            alignment: .leading, spacing: 4
+        ) {
+            ForEach(Array(layout.segments.enumerated()), id: \.offset) { _, segment in
+                legendEntry(for: segment)
+            }
+            reclaimLegendEntry
+        }
+        .accessibilityIdentifier("v2.archive.strip.legend")
+    }
+
+    /// Chip + class name + size, one line -- reuses `detailText(for:)`
+    /// verbatim (the same "bytes · files" text already shown in this
+    /// segment's own tooltip above), so the legend's numbers are always the
+    /// strip's own numbers, never a re-derived copy.
+    private func legendEntry(for segment: ArchiveStripLayout.Segment) -> some View {
+        let identifier = segment.archiveClass?.rawValue ?? "residual"
+        return HStack(spacing: 6) {
+            Circle()
+                .fill(segment.archiveClass.map(AstroTokens.Color.forArchiveClass) ?? AstroTokens.Color.edge)
+                .frame(width: 8, height: 8)
+            (Text(segment.archiveClass?.displayName ?? "Other") + Text(verbatim: " · ") + detailText(for: segment))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("v2.archive.strip.legend.\(identifier)")
+    }
+
+    /// Labels the red underline segment: it is `reclaimFraction`, i.e.
+    /// `reclaimableBytes / totalBytes` -- the same regenerable-output-plus-
+    /// duplicate-content total `ArchiveMapQuery.reclaimableCategories`
+    /// computes and the strip's own rail already renders. Reuses
+    /// `reclaimHelpText` verbatim rather than composing a second sentence
+    /// that says the same thing in different words.
+    private var reclaimLegendEntry: some View {
+        HStack(spacing: 6) {
+            Capsule()
+                .fill(AstroTokens.Color.critical)
+                .frame(width: 14, height: 5)
+            reclaimHelpText
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("v2.archive.strip.legend.reclaimable")
     }
 
     /// Task 10 prerequisite (the fourth instance of this wave's own
