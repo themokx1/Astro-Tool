@@ -474,7 +474,14 @@ public struct NewProjectView: View {
                     Text(selected.canonicalFolderName).font(.caption.monospaced()).textSelection(.enabled)
                 }
                 .padding(12)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
+                // W2-10 (2026-08-17, Liquid Glass): was a hand-rolled
+                // `.regularMaterial` + `AstroTokens.CornerRadius.panel` panel
+                // -- the informational strip is a single glance-and-confirm
+                // row (no Table/List, no dense data), so it gets real glass
+                // instead, matching `MetricCard`'s own reasoning.
+                // `ConcentricRectangle` (no explicit radius) matches the
+                // sheet it sits in rather than repeating the token.
+                .glassEffect(.regular, in: ConcentricRectangle())
             }
             if let saveError {
                 Label(saveError, systemImage: "exclamationmark.triangle.fill")

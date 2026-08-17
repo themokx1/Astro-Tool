@@ -261,7 +261,13 @@ struct SavedTargetNoteSheet: View {
             Text("Note for \(designation)").font(.headline)
             TextEditor(text: $note)
                 .frame(minWidth: 360, minHeight: 160)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.separator))
+                // W2-10: was a bare `RoundedRectangle(cornerRadius: 6)` --
+                // a radius derived from nothing, the exact "assorted small
+                // radii" defect the owner's corners complaint named.
+                // `ConcentricRectangle` (macOS 26) matches whatever corner
+                // this sheet itself resolves to instead of guessing a
+                // second number.
+                .overlay(ConcentricRectangle().stroke(.separator))
                 .accessibilityIdentifier("v2.planning.note")
             HStack {
                 Spacer()

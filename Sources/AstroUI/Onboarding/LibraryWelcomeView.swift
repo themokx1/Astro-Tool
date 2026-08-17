@@ -703,11 +703,23 @@ public struct LibraryWelcomeView: View {
                     systemImage: "externaldrive.badge.checkmark"
                 )
             }
-            .padding(AstroTokens.Spacing.standard)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
+            // W2-10 (2026-08-17): was a hand-rolled `.regularMaterial` +
+            // `AstroTokens.CornerRadius.panel` + its own edge stroke -- the
+            // exact shape `astroRaisedSurface` exists to replace elsewhere.
+            // Kept RAISED rather than glass: unlike the marketing tiles in
+            // `FirstScanSummaryView`, this well is a functional drop target
+            // that needs a legible accent highlight while dragging, and a
+            // solid surface reads that state change more clearly than glass
+            // would. The highlight itself is now a second overlay on top of
+            // the shared treatment's own hairline rather than a replacement
+            // for it, using `ConcentricRectangle` (no explicit radius) so it
+            // matches the shape `astroRaisedSurface` already published via
+            // `.containerShape` instead of repeating the token.
+            .astroRaisedSurface()
             .overlay {
-                RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel)
-                    .stroke(isDropTargeted ? AstroTokens.Color.accent : AstroTokens.Color.edge, lineWidth: isDropTargeted ? 2 : 1)
+                if isDropTargeted {
+                    ConcentricRectangle().stroke(AstroTokens.Color.accent, lineWidth: 2)
+                }
             }
             .dropDestination(for: URL.self) { urls, _ in
                 guard let root = urls.first else { return false }
@@ -732,7 +744,17 @@ public struct LibraryWelcomeView: View {
         .padding(AstroTokens.Spacing.spacious)
     }
 
-    private func safetyRow(_ title: String, detail: String, systemImage: String) -> some View {
+    // W2-10 (2026-08-17): `title`/`detail` used to be plain `String`
+    // parameters -- every call site below passes a literal, but the literal
+    // is bound to a `String`-typed parameter, so `Text(title)`/`Text(detail)`
+    // inside this function still resolve to the verbatim overload and never
+    // translate. Same defect class as `MetricCard.title` and
+    // `FirstScanSummaryView.countTile`'s own `label`, just one more
+    // undetected shape of it (a function parameter, not a stored property,
+    // so `V2PolishSurfaceTests.uiTextIsNeverAPlainString` -- which only scans
+    // `let`/`var` declarations and enum case associated values -- cannot see
+    // it).
+    private func safetyRow(_ title: LocalizedStringKey, detail: LocalizedStringKey, systemImage: String) -> some View {
         HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
             Image(systemName: systemImage)
                 .foregroundStyle(AstroTokens.Color.accent)

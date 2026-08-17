@@ -33,10 +33,19 @@ public struct FirstScanSummaryView: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack(spacing: AstroTokens.Spacing.standard) {
-                countTile(snapshot.projectCount, label: "Projects", systemImage: "folder")
-                countTile(snapshot.nightCount, label: "Nights", systemImage: "moon.stars")
-                countTile(snapshot.frameCount, label: "Frames", systemImage: "photo.stack")
+            // W2-10 (2026-08-17, Liquid Glass): three static count tiles on a
+            // one-time marketing screen -- title, hero number, no Table/List
+            // -- exactly `MetricCard`'s own shape, so they get real glass
+            // like it rather than the hand-rolled `.regularMaterial` panel
+            // this used to draw. `GlassEffectContainer` groups the three so
+            // they merge/morph as one region instead of each computing its
+            // own independent glass pass.
+            GlassEffectContainer {
+                HStack(spacing: AstroTokens.Spacing.standard) {
+                    countTile(snapshot.projectCount, label: "Projects", systemImage: "folder")
+                    countTile(snapshot.nightCount, label: "Nights", systemImage: "moon.stars")
+                    countTile(snapshot.frameCount, label: "Frames", systemImage: "photo.stack")
+                }
             }
 
             Text("Personalization is optional. Location, equipment, filters, and quality preferences can all be set up later.")
@@ -56,7 +65,13 @@ public struct FirstScanSummaryView: View {
         .padding(AstroTokens.Spacing.spacious)
     }
 
-    private func countTile(_ count: Int, label: String, systemImage: String) -> some View {
+    // W2-10: `label` used to be a plain `String`, which routes
+    // `Label(label, systemImage:)` to its verbatim `StringProtocol` overload
+    // instead of the translating `LocalizedStringKey` one -- "Projects",
+    // "Nights", "Frames" stayed English on a Hungarian first-scan screen.
+    // Same defect class as `MetricCard.title` (`WorkspaceComponents.swift`),
+    // fixed the same way.
+    private func countTile(_ count: Int, label: LocalizedStringKey, systemImage: String) -> some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
             Label(label, systemImage: systemImage)
                 .font(.callout)
@@ -67,10 +82,11 @@ public struct FirstScanSummaryView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(AstroTokens.Spacing.standard)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
-        .overlay {
-            RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel)
-                .stroke(AstroTokens.Color.edge, lineWidth: 1)
-        }
+        // `ConcentricRectangle` (no explicit radius) matches whichever
+        // container this tile ends up in, the same way `MetricCard` and
+        // `ArchiveTaskCard` already do -- see this file's own call site
+        // comment for why this became glass instead of staying a hand-rolled
+        // `.regularMaterial` card.
+        .glassEffect(.regular, in: ConcentricRectangle())
     }
 }
