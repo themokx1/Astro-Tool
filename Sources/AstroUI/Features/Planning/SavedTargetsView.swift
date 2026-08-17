@@ -187,8 +187,28 @@ public struct SavedTargetsView: View {
         }
     }
 
+    /// W3-12 finding 2: `SavedTargetsStore.perform(_:)` already set
+    /// `errorMessage` on every failed save/note-update/remove, but no view
+    /// ever read it back -- a failed remove or note edit left the row
+    /// exactly as it was with no visible reason why. Rendered above whichever
+    /// branch is showing, the same "loaded content plus an inline error line"
+    /// shape `SensorProfilesView`/`FrameBlinkReview`/`NightNoteSheet` already
+    /// use for their own store's `errorMessage`.
     @ViewBuilder
     private var content: some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+            if let errorMessage = store.errorMessage {
+                Text(errorMessage)
+                    .font(.callout)
+                    .foregroundStyle(AstroTokens.Color.critical)
+                    .accessibilityIdentifier("v2.planning.saved-error")
+            }
+            mainContent
+        }
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
         if rootURL == nil {
             ContentUnavailableView {
                 Label("Open a Library", systemImage: "bookmark")
