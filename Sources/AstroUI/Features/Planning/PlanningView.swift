@@ -95,41 +95,41 @@ public struct PlanningView: View {
     ]
 
     private var setupBar: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Picker("Setup", selection: $store.selectedSetupID) {
-                        ForEach(store.setups) { setup in Text(setup.name).tag(setup.id) }
-                    }
-                    .accessibilityIdentifier("v2.planning.setup")
-                    Spacer()
-                    if let fov = store.fieldOfView {
-                        Text("\(fov.widthDeg, format: .number.precision(.fractionLength(1)))° × \(fov.heightDeg, format: .number.precision(.fractionLength(1)))°")
-                            .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
-                    }
+        // Task 7 (2026-08-17, GroupBox removal): a heading plus spacing --
+        // this sits inside the toolbar slot, which already floats on its
+        // own glass bar (`WorkspaceTablePage.body`), so no additional
+        // surface belongs here.
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Text("Camera and optics").font(.headline)
+                MetricInfoButton(metrics: Self.setupMetricInfo)
+            }
+            HStack {
+                Picker("Setup", selection: $store.selectedSetupID) {
+                    ForEach(store.setups) { setup in Text(setup.name).tag(setup.id) }
                 }
-                if store.selectedSetup.isZoom {
-                    HStack {
-                        Text("\(store.selectedSetup.focalLengthMinMM, format: .number) mm").font(.caption).foregroundStyle(.secondary)
-                        Slider(
-                            value: Binding(
-                                get: { store.focalLength },
-                                set: { value in store.setFocalLength(value) }
-                            ),
-                            in: store.selectedSetup.focalLengthMinMM...store.selectedSetup.focalLengthMaxMM,
-                            step: 1
-                        )
-                        Text("\(store.focalLength, format: .number.precision(.fractionLength(0))) mm")
-                            .monospacedDigit().frame(width: 64, alignment: .trailing)
-                    }
-                    .accessibilityIdentifier("v2.planning.focal-length")
+                .accessibilityIdentifier("v2.planning.setup")
+                Spacer()
+                if let fov = store.fieldOfView {
+                    Text("\(fov.widthDeg, format: .number.precision(.fractionLength(1)))° × \(fov.heightDeg, format: .number.precision(.fractionLength(1)))°")
+                        .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
-            .padding(8)
-        } label: {
-            HStack(spacing: 6) {
-                Text("Camera and optics")
-                MetricInfoButton(metrics: Self.setupMetricInfo)
+            if store.selectedSetup.isZoom {
+                HStack {
+                    Text("\(store.selectedSetup.focalLengthMinMM, format: .number) mm").font(.caption).foregroundStyle(.secondary)
+                    Slider(
+                        value: Binding(
+                            get: { store.focalLength },
+                            set: { value in store.setFocalLength(value) }
+                        ),
+                        in: store.selectedSetup.focalLengthMinMM...store.selectedSetup.focalLengthMaxMM,
+                        step: 1
+                    )
+                    Text("\(store.focalLength, format: .number.precision(.fractionLength(0))) mm")
+                        .monospacedDigit().frame(width: 64, alignment: .trailing)
+                }
+                .accessibilityIdentifier("v2.planning.focal-length")
             }
         }
     }
@@ -261,7 +261,15 @@ public struct PlanningView: View {
     }
 
     private var recommendationList: some View {
-        GroupBox("Target recommendations") {
+        // Task 7 (2026-08-17, GroupBox removal): heading + Divider + content,
+        // `ReviewWorkspace.frameReview`'s own shape -- `WorkspaceTablePage`
+        // already gives this whole `table:` slot one solid
+        // `AstroTokens.Color.surface` background.
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Target recommendations").font(.headline)
+                .padding(.horizontal, AstroTokens.Spacing.standard)
+                .padding(.vertical, AstroTokens.Spacing.compact)
+            Divider()
             Group {
                 switch store.skyAvailability {
                 case .pending where store.recommendations.isEmpty:
@@ -402,7 +410,6 @@ public struct PlanningView: View {
                     }
                 }
             }
-            .padding(8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("v2.planning.recommendations")
@@ -415,7 +422,14 @@ public struct PlanningView: View {
     /// path (`selectTarget`/`recomputeSkyPath`), never here in `body` --
     /// this view only reads the store's already-computed `skyPath`.
     private var skyPathSection: some View {
-        GroupBox("Sky path tonight") {
+        // Task 7 (2026-08-17, GroupBox removal): heading plus spacing -- this
+        // is `WorkspaceTablePage`'s `footer` slot, which (unlike `table`)
+        // never had a surface of its own; the `GroupBox` was the only thing
+        // painting a background here, exactly the kind of box the owner
+        // reported. It sits directly on the page's own background now, the
+        // same as `HomeView`'s card-less sections.
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+            Text("Sky path tonight").font(.headline)
             Group {
                 if selectedTargetID == nil {
                     ContentUnavailableView(
@@ -442,7 +456,6 @@ public struct PlanningView: View {
                     .frame(maxWidth: .infinity, minHeight: 160)
                 }
             }
-            .padding(8)
         }
         .accessibilityIdentifier("v2.planning.sky-path-section")
     }

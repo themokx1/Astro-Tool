@@ -52,16 +52,18 @@ public struct ProjectsView: View {
                 MetricCard(title: "Nights", value: snapshot.map { "\($0.nightCount)" } ?? "—", detail: "Across the open library", systemImage: "moon.stars")
             }
 
-            GroupBox("Start cleanly") {
-                VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
-                    Label("Search by catalog number, English name, or Hungarian name.", systemImage: "sparkle.magnifyingglass")
-                    Label("AstroTool proposes one canonical folder name to prevent duplicates.", systemImage: "checkmark.seal")
-                    Button("New Project…", action: createProject)
-                        .buttonStyle(.borderedProminent)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(AstroTokens.Spacing.compact)
+            // Task 7 (2026-08-17, GroupBox removal): a heading plus spacing --
+            // this sits inside the toolbar slot, which already floats on its
+            // own glass bar (`WorkspaceTablePage.body`), so no additional
+            // surface belongs here.
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                Text("Start cleanly").font(.headline)
+                Label("Search by catalog number, English name, or Hungarian name.", systemImage: "sparkle.magnifyingglass")
+                Label("AstroTool proposes one canonical folder name to prevent duplicates.", systemImage: "checkmark.seal")
+                Button("New Project…", action: createProject)
+                    .buttonStyle(.borderedProminent)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if !store.projects.isEmpty {
                 TextField("Search projects, catalog, filter, setup, or status", text: $searchText)
@@ -102,7 +104,15 @@ public struct ProjectsView: View {
     @ViewBuilder
     private var tableContent: some View {
         if !store.projects.isEmpty {
-            GroupBox("Saved projects") {
+            // Task 7 (2026-08-17, GroupBox removal): heading + Divider +
+            // Table, `ReviewWorkspace.frameReview`'s own shape --
+            // `WorkspaceTablePage` already gives this whole `table:` slot
+            // one solid `AstroTokens.Color.surface` background.
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Saved projects").font(.headline)
+                    .padding(.horizontal, AstroTokens.Spacing.standard)
+                    .padding(.vertical, AstroTokens.Spacing.compact)
+                Divider()
                 Table(filteredRows, selection: projectSelection, sortOrder: $sortOrder) {
                     TableColumn("Project", value: \ProjectWorkspaceRow.project.displayName) { row in
                         VStack(alignment: .leading, spacing: 2) {
@@ -238,70 +248,81 @@ public struct ProjectsView: View {
     }
 }
 
+/// `ProjectAcquisitionDetail`/`ProjectNightSection` are unreferenced by any
+/// call site today -- `ProjectWorkspaceView`'s own overview/nights tabs
+/// replaced this detail pane in an earlier wave (see
+/// `ProjectsTableSelfSufficiencyTests.noBottomDetailStrip`, which pins that
+/// this file must never construct this type again as a bottom detail strip
+/// -- the owner's own "if it isn't in the list, put it in the list"
+/// complaint). Kept, not deleted: `V2BetaWorkspaceSurfaceTests
+/// .projectsExposeAcquisitionDetail` and
+/// `V2AccessibilityIdentifierSurfaceTests.projectsNightIdentifierIsUniquePerRow`
+/// still scan this file's source text for it, so removing the type outright
+/// is a test-surface decision outside this task's scope, not a safe cleanup
+/// -- Task 7 only owns the `GroupBox` inside it.
 private struct ProjectAcquisitionDetail: View {
     let snapshot: ProjectSnapshot
     let review: () -> Void
     let results: () -> Void
 
     var body: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(snapshot.project.displayName)
-                            .font(.title2.weight(.semibold))
-                        Text(snapshot.canonicalFolderName)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                    Spacer()
-                    Button("Review frames", action: review)
-                    Button("Results", action: results)
-                        .buttonStyle(.borderedProminent)
+        // Task 7 (2026-08-17, GroupBox removal): heading plus spacing, no
+        // additional surface -- see this file's other conversions for the
+        // same reasoning.
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
+            Label("Project acquisition", systemImage: "rectangle.stack").font(.headline)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(snapshot.project.displayName)
+                        .font(.title2.weight(.semibold))
+                    Text(snapshot.canonicalFolderName)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
                 }
-
-                HStack(spacing: AstroTokens.Spacing.standard) {
-                    MetricCard(
-                        title: "Usable integration",
-                        value: AstroFormat.duration(seconds: snapshot.integrationSeconds),
-                        detail: "\(snapshot.usableFrames) of \(snapshot.totalFrames) frames",
-                        systemImage: "timer"
-                    )
-                    MetricCard(
-                        title: "Nights",
-                        value: "\(snapshot.nights.count)",
-                        detail: "\(snapshot.series.count) capture series",
-                        systemImage: "moon.stars"
-                    )
-                    MetricCard(
-                        title: "Excluded",
-                        value: "\(snapshot.totalFrames - snapshot.usableFrames)",
-                        detail: "Rejected or archived frames",
-                        systemImage: "archivebox"
-                    )
-                }
-
-                Label {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(snapshot.nextAction.kind.titleKey).font(.headline)
-                        Text(snapshot.nextAction.kind.explanationKey)
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
-                } icon: {
-                    Image(systemName: "arrow.forward.circle.fill")
-                        .foregroundStyle(AstroTokens.Color.accent)
-                }
-
-                Divider()
-
-                ForEach(snapshot.nights) { night in
-                    ProjectNightSection(snapshot: night)
-                }
+                Spacer()
+                Button("Review frames", action: review)
+                Button("Results", action: results)
+                    .buttonStyle(.borderedProminent)
             }
-            .padding(AstroTokens.Spacing.compact)
-        } label: {
-            Label("Project acquisition", systemImage: "rectangle.stack")
+
+            HStack(spacing: AstroTokens.Spacing.standard) {
+                MetricCard(
+                    title: "Usable integration",
+                    value: AstroFormat.duration(seconds: snapshot.integrationSeconds),
+                    detail: "\(snapshot.usableFrames) of \(snapshot.totalFrames) frames",
+                    systemImage: "timer"
+                )
+                MetricCard(
+                    title: "Nights",
+                    value: "\(snapshot.nights.count)",
+                    detail: "\(snapshot.series.count) capture series",
+                    systemImage: "moon.stars"
+                )
+                MetricCard(
+                    title: "Excluded",
+                    value: "\(snapshot.totalFrames - snapshot.usableFrames)",
+                    detail: "Rejected or archived frames",
+                    systemImage: "archivebox"
+                )
+            }
+
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(snapshot.nextAction.kind.titleKey).font(.headline)
+                    Text(snapshot.nextAction.kind.explanationKey)
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+            } icon: {
+                Image(systemName: "arrow.forward.circle.fill")
+                    .foregroundStyle(AstroTokens.Color.accent)
+            }
+
+            Divider()
+
+            ForEach(snapshot.nights) { night in
+                ProjectNightSection(snapshot: night)
+            }
         }
         .accessibilityIdentifier("v2.projects.detail")
     }

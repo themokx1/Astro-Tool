@@ -104,16 +104,23 @@ public struct SeriesWorkspaceView: View {
                     MetricCard(title: "Integration", value: AstroFormat.duration(seconds: item.integrationSeconds), detail: "\(item.totalFrames) total frames", systemImage: "timer")
                     MetricCard(title: "Exposure", value: exposure, detail: LocalizedStringKey(item.series.binning), systemImage: "camera.shutter.button")
                 }
-                GroupBox("Capture settings") {
-                    Grid(alignment: .leading, horizontalSpacing: 32, verticalSpacing: 12) {
-                        row("Sensor mode", item.series.sensorMode.rawValue.uppercased())
-                        row("Passband", item.series.passband.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                        row("Filter", item.series.filterName ?? "Unfiltered")
-                        row("Setup", item.series.setupDescriptor)
-                        row("Gain / offset", gainOffset)
-                        row("Binning", item.series.binning)
-                    }.padding(8)
+                // Task 7 (2026-08-17, GroupBox removal): a label/value grid
+                // is exactly what a standard `Form`/`Section` renders --
+                // `FrameInspector`'s own `Form { Section("Frame") {
+                // LabeledContent(...) } }` is the precedent this follows,
+                // rather than a `GroupBox` wrapping a hand-rolled `Grid`.
+                Form {
+                    Section("Capture settings") {
+                        LabeledContent("Sensor mode", value: item.series.sensorMode.rawValue.uppercased())
+                        LabeledContent("Passband", value: item.series.passband.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
+                        LabeledContent("Filter", value: item.series.filterName ?? "Unfiltered")
+                        LabeledContent("Setup", value: item.series.setupDescriptor)
+                        LabeledContent("Gain / offset", value: gainOffset)
+                        LabeledContent("Binning", value: item.series.binning)
+                    }
                 }
+                .formStyle(.grouped)
+                .frame(maxWidth: .infinity)
             }
         case .frames:
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
@@ -136,9 +143,6 @@ public struct SeriesWorkspaceView: View {
         ])
     }
 
-    private func row(_ label: String, _ value: String) -> some View {
-        GridRow { Text(label).foregroundStyle(.secondary); Text(value).textSelection(.enabled) }
-    }
     private var exposure: String { "\(item.series.exposureSeconds.formatted(.number.precision(.fractionLength(0...1)))) s" }
     private var seriesTitle: String { [item.series.filterName, exposure].compactMap { $0 }.joined(separator: " · ") }
     private var gainOffset: String {

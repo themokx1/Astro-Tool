@@ -87,13 +87,18 @@ public struct NightsView: View {
                 MetricCard(title: "Morning triage", value: "\(store.needsReviewCount)", detail: "Needs review", systemImage: "checklist")
             }
             .accessibilityIdentifier("v2.nights.triage")
-            if mode == .history { GroupBox("Session model") {
+            // Task 7 (2026-08-17, GroupBox removal): a heading plus spacing --
+            // this sits inside the toolbar slot, which already floats on its
+            // own glass bar (`WorkspaceTablePage.body`), so no additional
+            // surface belongs here.
+            if mode == .history {
                 VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+                    Text("Session model").font(.headline)
                     Label("A night can contain multiple OSC, narrowband, exposure, and filter series.", systemImage: "square.stack.3d.up")
                     Label("Quality and reports stay comparable per series and roll up to the night.", systemImage: "chart.line.uptrend.xyaxis")
                 }
-                .frame(maxWidth: .infinity, alignment: .leading).padding(AstroTokens.Spacing.compact)
-            } }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if mode == .history, !store.availableMonths.isEmpty {
                 Picker("Month", selection: Binding(
                     get: { store.selectedMonth },
@@ -146,7 +151,16 @@ public struct NightsView: View {
     }
 
     private var observedNightsTable: some View {
-        GroupBox("Observed nights") {
+        // Task 7 (2026-08-17, GroupBox removal): heading + Divider + Table,
+        // `ReviewWorkspace.frameReview`'s own shape -- `WorkspaceTablePage`
+        // already gives this whole `table:` slot its one solid
+        // `AstroTokens.Color.surface` background, so a `GroupBox` here was
+        // a second, opaque box painted inside that surface.
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Observed nights").font(.headline)
+                .padding(.horizontal, AstroTokens.Spacing.standard)
+                .padding(.vertical, AstroTokens.Spacing.compact)
+            Divider()
             Table(store.visibleNights, selection: Binding(
                 get: { store.selectedNightID },
                 set: { store.selectNight($0) }
@@ -208,7 +222,13 @@ public struct NightsView: View {
     }
 
     private var calendarTable: some View {
-        GroupBox("Astronomical planning calendar") {
+        // Task 7 (2026-08-17, GroupBox removal): same fix as
+        // `observedNightsTable` above -- see its own comment.
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Astronomical planning calendar").font(.headline)
+                .padding(.horizontal, AstroTokens.Spacing.standard)
+                .padding(.vertical, AstroTokens.Spacing.compact)
+            Divider()
             Table(store.planningRows, sortOrder: $planningSortOrder) {
                 TableColumn("Night", value: \PlanningNightRow.summary.date) { Text($0.summary.date).font(.headline.monospacedDigit()) }
                 TableColumn("Darkness", value: \PlanningNightRow.astroDarkHoursSortKey) { Text($0.darkHours) }

@@ -292,7 +292,12 @@ public struct ProjectWorkspaceView: View {
                     MetricCard(title: "Frames", value: "\(snapshot.usableFrames)", detail: "\(snapshot.totalFrames - snapshot.usableFrames) excluded", systemImage: "photo.stack")
                     MetricCard(title: "Latest night", value: snapshot.nights.first?.night.localDate ?? "—", detail: LocalizedStringKey(snapshot.canonicalFolderName), systemImage: "moon.stars")
                 }
-                GroupBox("Next action") {
+                // Task 7 (2026-08-17, GroupBox removal): heading plus
+                // spacing -- this page's own `ScrollView`/section spacing
+                // already separates it from its neighbors, matching
+                // `ReviewWorkspace`'s own header sections.
+                VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+                    Text("Next action").font(.headline)
                     Label(snapshot.nextAction.kind.titleKey, systemImage: "arrow.forward.circle.fill")
                     Text(snapshot.nextAction.kind.explanationKey).foregroundStyle(.secondary)
                 }
@@ -313,22 +318,29 @@ public struct ProjectWorkspaceView: View {
             EmptyView()
         case .notes:
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
-                GroupBox("Acquisition goal") {
-                    LabeledContent("Integration goal") {
-                        HStack(spacing: 6) {
-                            TextField("Hours", value: $goalHours, format: .number.precision(.fractionLength(0...1)))
-                                .frame(width: 90)
-                            Text("hours").foregroundStyle(.secondary)
+                // Task 7 (2026-08-17, GroupBox removal): a standard `Form`/
+                // `Section` in place of two `GroupBox`es -- `FrameInspector`'s
+                // own `Form { Section("Frame") { LabeledContent(...) } }`
+                // shape is the precedent for the label/value row, and a
+                // `Section` holds the notes editor exactly as well as a
+                // `GroupBox` did, without a second opaque background.
+                Form {
+                    Section("Acquisition goal") {
+                        LabeledContent("Integration goal") {
+                            HStack(spacing: 6) {
+                                TextField("Hours", value: $goalHours, format: .number.precision(.fractionLength(0...1)))
+                                    .frame(width: 90)
+                                Text("hours").foregroundStyle(.secondary)
+                            }
                         }
                     }
-                    .padding(AstroTokens.Spacing.compact)
+                    Section("Project notes") {
+                        TextEditor(text: $projectNotes)
+                            .font(.body)
+                            .frame(minHeight: 180)
+                    }
                 }
-                GroupBox("Project notes") {
-                    TextEditor(text: $projectNotes)
-                        .font(.body)
-                        .frame(minHeight: 180)
-                        .padding(6)
-                }
+                .formStyle(.grouped)
                 if let saveError { Text(saveError).foregroundStyle(AstroTokens.Color.critical) }
                 HStack {
                     Text(annotation.map { "Last saved \($0.updatedAt.formatted(date: .abbreviated, time: .shortened))" } ?? "Not saved yet")

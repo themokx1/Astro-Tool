@@ -439,6 +439,7 @@
 "Select the latest night's session folder in its Finder window" = "Válaszd ki a legutóbbi éjszaka session-mappáját a Finder ablakában";
 "Select this night's session folder in its Finder window" = "Válaszd ki ennek az éjszakának a session-mappáját a Finder ablakában";
 "Sensor" = "Szenzor";
+"Sensor mode" = "Szenzor mód";
 "Sensor Profiles" = "Szenzorprofilok";
 "Series" = "Sorozat";
 "Series section" = "Sorozat szakasz";
@@ -566,6 +567,7 @@
 "Focal length" = "Fókusztávolság";
 "Folder" = "Mappa";
 "Gain" = "Erősítés";
+"Gain / offset" = "Erősítés / offset";
 "Group name" = "Csoport neve";
 "Health findings" = "Észlelt problémák";
 "Hours" = "Óra";

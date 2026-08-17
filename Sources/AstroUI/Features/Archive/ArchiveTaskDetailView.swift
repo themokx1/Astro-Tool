@@ -105,7 +105,19 @@ public struct ArchiveTaskDetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            GroupBox("All findings") {
+            // Task 7 (2026-08-17, GroupBox removal): heading + Divider +
+            // Table, `ReviewWorkspace.frameReview`'s own shape --
+            // `WorkspaceTablePage` already gives this whole `table:` slot
+            // one solid `AstroTokens.Color.surface` background, so a
+            // `GroupBox` here painted a second, opaque box inside it (the
+            // exact "box in a box" the owner reported). The heading text
+            // stays a plain sibling of the `Table`, never its glassed
+            // container, so `noTableOrListHasAGlassParent` still holds.
+            VStack(alignment: .leading, spacing: 0) {
+                Text("All findings").font(.headline)
+                    .padding(.horizontal, AstroTokens.Spacing.standard)
+                    .padding(.vertical, AstroTokens.Spacing.compact)
+                Divider()
                 Table(store.findings) {
                     TableColumn("Path") { finding in
                         Text(finding.path)

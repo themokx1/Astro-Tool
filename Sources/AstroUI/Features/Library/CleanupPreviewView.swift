@@ -161,28 +161,33 @@ public struct CleanupPreviewView: View {
                 if snapshot.groups.isEmpty {
                     ContentUnavailableView("Nothing to clean up", systemImage: "checkmark.circle", description: Text("The external index contains no recognized residue or cached duplicates."))
                 }
-                ForEach(snapshot.groups) { group in
-                    GroupBox(categoryTitle(group.category)) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Toggle(isOn: Binding(
-                                    get: { store.selectedCategories.contains(group.category) },
-                                    set: { _ in store.toggleSelection(group.category) }
-                                )) {
-                                    Text("\(group.fileCount) files · \(ByteCountFormatter.string(fromByteCount: group.totalBytes, countStyle: .file))")
-                                        .font(.headline)
-                                }
-                                .toggleStyle(.checkbox)
-                                .accessibilityIdentifier("v2.cleanup.select.\(group.category)")
-                            }
-                            ForEach(group.paths, id: \.self) { path in
-                                Label(path, systemImage: "doc").font(.caption.monospaced()).textSelection(.enabled)
-                            }
-                            if group.truncatedCount > 0 { Text("+ \(group.truncatedCount) more").foregroundStyle(.secondary) }
-                            Label("Proposed action: move to quarantine · never delete", systemImage: "archivebox")
-                                .font(.caption).foregroundStyle(AstroTokens.Color.attention)
-                        }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                // Task 7 (2026-08-17, GroupBox removal): a heading plus
+                // spacing per group, `Divider()`-separated rather than boxed
+                // -- `ForEach` inside this `ScrollView` (never `List`/
+                // `Table`, per the freeze rule) is the established shape
+                // here, so a Divider between homogeneous repeated groups
+                // keeps them from reading as one undifferentiated wall
+                // without reintroducing a nested opaque box.
+                ForEach(Array(snapshot.groups.enumerated()), id: \.element.category) { index, group in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(categoryTitle(group.category)).font(.headline)
+                        Toggle(isOn: Binding(
+                            get: { store.selectedCategories.contains(group.category) },
+                            set: { _ in store.toggleSelection(group.category) }
+                        )) {
+                            Text("\(group.fileCount) files · \(ByteCountFormatter.string(fromByteCount: group.totalBytes, countStyle: .file))")
+                        }
+                        .toggleStyle(.checkbox)
+                        .accessibilityIdentifier("v2.cleanup.select.\(group.category)")
+                        ForEach(group.paths, id: \.self) { path in
+                            Label(path, systemImage: "doc").font(.caption.monospaced()).textSelection(.enabled)
+                        }
+                        if group.truncatedCount > 0 { Text("+ \(group.truncatedCount) more").foregroundStyle(.secondary) }
+                        Label("Proposed action: move to quarantine · never delete", systemImage: "archivebox")
+                            .font(.caption).foregroundStyle(AstroTokens.Color.attention)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if index < snapshot.groups.count - 1 { Divider() }
                 }
             }.padding(24)
         }

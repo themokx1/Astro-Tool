@@ -51,7 +51,14 @@ public struct HomeView: View {
                 MetricCard(title: "Projects", value: "\(store.snapshot.projectCount)", detail: "In \(store.snapshot.libraryName ?? "library")", systemImage: "scope")
                 MetricCard(title: "Nights", value: "\(store.snapshot.nightCount)", detail: "Indexed observing sessions", systemImage: "moon.stars")
             }
-            GroupBox("Continue where it matters") {
+            // Task 7 (2026-08-17, GroupBox removal): a heading plus spacing,
+            // not a box on a box -- `GroupBox` painted macOS's default
+            // opaque grey panel here, which is exactly the "strange grey
+            // background" the owner reported. No replacement surface: this
+            // sits directly on `libraryOverview`'s own page background, the
+            // same way `ReviewWorkspace`'s section headers do.
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+                Text("Continue where it matters").font(.headline)
                 if let project = store.snapshot.nextProject {
                     HStack(spacing: 14) {
                         Image(systemName: "arrow.forward.circle.fill")
@@ -70,7 +77,6 @@ public struct HomeView: View {
                         .buttonStyle(.borderedProminent)
                         .accessibilityIdentifier("v2.home.open-project")
                     }
-                    .padding(8)
                 } else if store.snapshot.hasActiveProjectsExcludedTonight {
                     // Task 1 (owner feedback wave 3): the owner's own words --
                     // a comet with a stale coordinate was recommended as
@@ -88,7 +94,7 @@ public struct HomeView: View {
                     .frame(minHeight: 140)
                 } else {
                     Text("Create a project to start planning your next night.")
-                        .foregroundStyle(.secondary).padding(8)
+                        .foregroundStyle(.secondary)
                 }
             }
             tonightRecommendations
@@ -97,11 +103,13 @@ public struct HomeView: View {
     }
 
     private var tonightRecommendations: some View {
-        GroupBox {
-            planExportMenu
-        } label: {
+        // Task 7 (2026-08-17, GroupBox removal): same heading-plus-spacing
+        // fix as `libraryOverview` above -- the header row (title, info
+        // button, export menu) is `ReviewWorkspace.frameReview`'s own
+        // "HStack header, Divider, content" shape, not a `GroupBox` label.
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
             HStack {
-                Text("Best targets tonight")
+                Text("Best targets tonight").font(.headline)
                 MetricInfoButton(metrics: Self.tonightMetricInfo)
                 Spacer()
                 ExportMenu(
@@ -113,6 +121,8 @@ public struct HomeView: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
             }
+            Divider()
+            planExportMenu
         }
         .accessibilityIdentifier("v2.home.tonight-recommendations")
     }

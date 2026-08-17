@@ -123,41 +123,44 @@ public struct InsightsView: View {
     }
 
     private func qualityTrends(_ insight: InsightsSnapshot) -> some View {
-        GroupBox("Session quality trends") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Compare measured sessions over time. Lower FWHM and background are better; higher efficiency is better.")
-                        .font(.callout).foregroundStyle(.secondary)
-                    Spacer()
-                    Picker("Setup", selection: $selectedSetup) {
-                        Text("All setups").tag(String?.none)
-                        ForEach(insight.setupChoices, id: \.self) { Text($0).tag(Optional($0)) }
-                    }
-                    .frame(maxWidth: 280)
+        // Task 7 (2026-08-17, GroupBox removal): a heading plus spacing --
+        // `WorkspacePage` already separates each of its own top-level
+        // sections by `AstroTokens.Spacing.section`, so no extra surface or
+        // inset belongs here (see `ReviewWorkspace`'s own header+content
+        // sections for the same shape).
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Session quality trends").font(.headline)
+            HStack {
+                Text("Compare measured sessions over time. Lower FWHM and background are better; higher efficiency is better.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Spacer()
+                Picker("Setup", selection: $selectedSetup) {
+                    Text("All setups").tag(String?.none)
+                    ForEach(insight.setupChoices, id: \.self) { Text($0).tag(Optional($0)) }
                 }
-                HStack(alignment: .top, spacing: 12) {
-                    trendChart(
-                        title: "FWHM",
-                        unit: "arcsec / px",
-                        points: trendData(insight) { point in point.fwhmValue?.value },
-                        color: AstroTokens.Color.accent
-                    )
-                    trendChart(
-                        title: "Background",
-                        unit: "e⁻/s/arcsec²",
-                        points: trendData(insight) { $0.backgroundEPerSecPerArcsec2 },
-                        color: AstroTokens.Color.accent
-                    )
-                    trendChart(
-                        title: "Efficiency",
-                        unit: "%",
-                        points: trendData(insight) { $0.efficiencyPercent },
-                        color: AstroTokens.Color.accent
-                    )
-                }
-                recentTrendSessions(insight)
+                .frame(maxWidth: 280)
             }
-            .padding(8)
+            HStack(alignment: .top, spacing: 12) {
+                trendChart(
+                    title: "FWHM",
+                    unit: "arcsec / px",
+                    points: trendData(insight) { point in point.fwhmValue?.value },
+                    color: AstroTokens.Color.accent
+                )
+                trendChart(
+                    title: "Background",
+                    unit: "e⁻/s/arcsec²",
+                    points: trendData(insight) { $0.backgroundEPerSecPerArcsec2 },
+                    color: AstroTokens.Color.accent
+                )
+                trendChart(
+                    title: "Efficiency",
+                    unit: "%",
+                    points: trendData(insight) { $0.efficiencyPercent },
+                    color: AstroTokens.Color.accent
+                )
+            }
+            recentTrendSessions(insight)
         }
         .accessibilityIdentifier("v2.insights.quality-trends")
     }
@@ -241,7 +244,10 @@ public struct InsightsView: View {
     }
 
     private func qualitySummary(_ insight: InsightsSnapshot) -> some View {
-        GroupBox("Capture efficiency") {
+        // Task 7 (2026-08-17, GroupBox removal): heading plus spacing, same
+        // reasoning as `qualityTrends` above.
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+            Text("Capture efficiency").font(.headline)
             HStack(spacing: AstroTokens.Spacing.spacious) {
                 Label("\(insight.usableFrameCount) usable", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(AstroTokens.Color.ok)
@@ -251,61 +257,59 @@ public struct InsightsView: View {
                 Text(insight.captureEfficiency, format: .percent.precision(.fractionLength(0)))
                     .font(.title2.weight(.semibold).monospacedDigit())
             }
-            .padding(8)
         }
         .accessibilityIdentifier("v2.insights.quality")
     }
 
     private func filterBreakdown(_ insight: InsightsSnapshot) -> some View {
-        GroupBox("Filters and passbands") {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(insight.filterUsage.prefix(8)) { item in
-                    HStack {
-                        Image(systemName: "line.3.horizontal.decrease.circle")
-                            .foregroundStyle(AstroTokens.Color.accent)
-                        Text(item.name).lineLimit(1)
-                        Spacer()
-                        Text("\(item.frameCount) · \(duration(item.integrationSeconds))")
-                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                    }
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+            Text("Filters and passbands").font(.headline)
+            ForEach(insight.filterUsage.prefix(8)) { item in
+                HStack {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .foregroundStyle(AstroTokens.Color.accent)
+                    Text(item.name).lineLimit(1)
+                    Spacer()
+                    Text("\(item.frameCount) · \(duration(item.integrationSeconds))")
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
-                if insight.filterUsage.isEmpty {
-                    Text("No filter metadata yet").foregroundStyle(.secondary)
-                }
-            }.padding(8)
+            }
+            if insight.filterUsage.isEmpty {
+                Text("No filter metadata yet").foregroundStyle(.secondary)
+            }
         }
         .accessibilityIdentifier("v2.insights.filters")
     }
 
     private func setupBreakdown(_ insight: InsightsSnapshot) -> some View {
-        GroupBox("Equipment usage") {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(insight.setupUsage.prefix(8)) { item in
-                    HStack {
-                        Image(systemName: "camera.aperture")
-                            .foregroundStyle(AstroTokens.Color.accent)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(item.camera).lineLimit(1)
-                            if let focalLength = item.focalLength {
-                                Text("\(focalLength.formatted(.number.precision(.fractionLength(0...1)))) mm")
-                                    .font(.caption2).foregroundStyle(.secondary)
-                            }
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+            Text("Equipment usage").font(.headline)
+            ForEach(insight.setupUsage.prefix(8)) { item in
+                HStack {
+                    Image(systemName: "camera.aperture")
+                        .foregroundStyle(AstroTokens.Color.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.camera).lineLimit(1)
+                        if let focalLength = item.focalLength {
+                            Text("\(focalLength.formatted(.number.precision(.fractionLength(0...1)))) mm")
+                                .font(.caption2).foregroundStyle(.secondary)
                         }
-                        Spacer()
-                        Text("\(item.frameCount) · \(duration(item.integrationSeconds))")
-                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    Text("\(item.frameCount) · \(duration(item.integrationSeconds))")
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
-                if insight.setupUsage.isEmpty {
-                    Text("No equipment metadata yet").foregroundStyle(.secondary)
-                }
-            }.padding(8)
+            }
+            if insight.setupUsage.isEmpty {
+                Text("No equipment metadata yet").foregroundStyle(.secondary)
+            }
         }
         .accessibilityIdentifier("v2.insights.equipment")
     }
 
     private func activityChart(_ insight: InsightsSnapshot) -> some View {
-        GroupBox("Capture activity") {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+            Text("Capture activity").font(.headline)
             Chart(insight.months) { month in
                 BarMark(x: .value("Month", month.month), y: .value("Hours", month.integrationSeconds / 3600))
                     .foregroundStyle(AstroTokens.Color.accent.gradient)
@@ -313,28 +317,27 @@ public struct InsightsView: View {
             }
             .chartYAxisLabel("Integration hours")
             .frame(minHeight: 260)
-            .padding(8)
             .accessibilityIdentifier("v2.insights.activity")
         }
     }
 
     private func targetRanking(_ insight: InsightsSnapshot) -> some View {
-        GroupBox("Most photographed") {
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(Array(insight.topTargets.enumerated()), id: \.element.id) { index, target in
-                    HStack {
-                        Text("\(index + 1)").foregroundStyle(.secondary).frame(width: 18)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(target.target).lineLimit(1)
-                            Text("\(duration(target.integrationSeconds)) · \(target.nightCount) nights")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+            Text("Most photographed").font(.headline)
+            ForEach(Array(insight.topTargets.enumerated()), id: \.element.id) { index, target in
+                HStack {
+                    Text("\(index + 1)").foregroundStyle(.secondary).frame(width: 18)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(target.target).lineLimit(1)
+                        Text("\(duration(target.integrationSeconds)) · \(target.nightCount) nights")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
+                    Spacer()
                 }
-                if insight.topTargets.isEmpty { Text("No light frames yet").foregroundStyle(.secondary) }
-            }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
+            }
+            if insight.topTargets.isEmpty { Text("No light frames yet").foregroundStyle(.secondary) }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func duration(_ seconds: Double) -> String {

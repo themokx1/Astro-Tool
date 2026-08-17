@@ -177,17 +177,19 @@ public struct NightWorkspaceView: View {
                     MetricCard(title: "Series", value: row.seriesCount.formatted(), detail: LocalizedStringKey(row.filterSummary), systemImage: "square.stack.3d.up")
                     MetricCard(title: "Triage", value: row.triageState.rawValue, detail: "\(row.excludedFrames) excluded", systemImage: "checklist")
                 }
-                GroupBox("Projects captured this night") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(row.snapshot.projects, id: \.id) { project in
-                            HStack {
-                                Text(project.displayName)
-                                Spacer()
-                                Button("Open Project") { openProject(project) }
-                                    .buttonStyle(.link)
-                            }
+                // Task 7 (2026-08-17, GroupBox removal): heading plus
+                // spacing, no additional surface -- this already sits on
+                // this page's own background.
+                VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+                    Text("Projects captured this night").font(.headline)
+                    ForEach(row.snapshot.projects, id: \.id) { project in
+                        HStack {
+                            Text(project.displayName)
+                            Spacer()
+                            Button("Open Project") { openProject(project) }
+                                .buttonStyle(.link)
                         }
-                    }.padding(AstroTokens.Spacing.compact)
+                    }
                 }
             }
         case .series:
@@ -214,10 +216,12 @@ public struct NightWorkspaceView: View {
             }
         case .notes:
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
-                GroupBox("Session notes") {
+                // Task 7 (2026-08-17, GroupBox removal): same fix as
+                // "Projects captured this night" above.
+                VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+                    Text("Session notes").font(.headline)
                     Text("Bortle, SQM, seeing, transparency, wind, dew, and freeform notes are stored with this session's own files.")
                         .font(.callout).foregroundStyle(.secondary)
-                        .padding(AstroTokens.Spacing.compact)
                 }
                 Button("Edit Notes") { isEditingNotes = true }
                     .buttonStyle(.borderedProminent)
