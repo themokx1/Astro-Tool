@@ -124,6 +124,42 @@ struct NightNotesCommandTests {
         #expect(command.storeNotes(target: "M31", date: "2026-01-10") == [:])
     }
 
+    // MARK: - One-letter folder drift (W3-11, 2026-08-17)
+
+    /// Measured on the owner's real library: `NGC 7000`'s catalog-canonical
+    /// folder name is `NGC_7000_North_America_Nebula`, but the scanner
+    /// actually recorded its files under `NGC_7000_North_American_Nebula`.
+    /// `readmeNotes` used to match `session_notes` rows by exact string
+    /// equality against whatever `NightNoteSheet` handed it (the UI's own
+    /// `ProjectsQuery.canonicalFolderName(for:)`), so a project with this
+    /// exact drift would silently show none of its real README-sourced
+    /// notes.
+    @Test("readmeNotes resolves a catalog-canonical target name that has drifted from the on-disk folder")
+    func readmeNotesResolvesDriftedFolderName() throws {
+        let fixture = try NightNotesFixture.make()
+        defer { fixture.cleanup() }
+
+        let onDisk = "NGC_7000_North_American_Nebula"
+        let canonical = ProjectsQuery.canonicalFolderName(
+            for: ProjectRecord(id: UUID(), catalogID: "NGC 7000", displayName: "NGC 7000", phase: .processing)
+        )
+        #expect(canonical == "NGC_7000_North_America_Nebula")
+        #expect(canonical != onDisk)
+
+        // A scanned file is what makes `onDisk` a "known folder" for
+        // `resolvedTarget` to resolve `canonical` against -- same
+        // requirement `ExportServiceTests`' drift fixtures rely on.
+        _ = try fixture.db.upsertFile(FileRecord(
+            path: "sessions/\(onDisk)/2026-06-06/lights/a.fit", size: 1, mtime: 1_700_000_000,
+            ext: "fit", kind: "fits", area: .sessions, target: onDisk, sessionDate: "2026-06-06",
+            role: .light, scannedAt: 1_700_000_100
+        ))
+        try fixture.db.upsertSessionNotes(target: onDisk, date: "2026-06-06", notes: ["Camera": "ASI2600MM"])
+
+        let command = NightNotesCommand(db: fixture.db, root: fixture.libraryDir, accessMode: .mutationEnabled)
+        #expect(try command.readmeNotes(target: canonical, date: "2026-06-06") == ["Camera": "ASI2600MM"])
+    }
+
     @Test("Saving a note never touches that session's own README.txt")
     func saveNeverTouchesReadme() throws {
         let fixture = try NightNotesFixture.make()

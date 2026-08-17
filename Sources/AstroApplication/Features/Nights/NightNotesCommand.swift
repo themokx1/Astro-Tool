@@ -68,18 +68,36 @@ public struct NightNotesCommand: Sendable {
         return Self(db: database, root: root, accessMode: accessMode)
     }
 
+    /// One-letter-drift fix (2026-08-17): `target` arrives here as
+    /// `NightNoteSheet`'s own `ProjectsQuery.canonicalFolderName(for:)`,
+    /// which is not guaranteed to be the folder the scanner actually
+    /// recorded (same defect `ExportService.resolvedTarget`'s own doc
+    /// comment documents, with the NGC 7000 example). `readmeNotes` reads
+    /// `db.sessionNotes` by exact string match, so a drifted `target` would
+    /// silently hide a session's real README notes. Resolved once here
+    /// through the identical `TargetCatalog.existingFolder(for:among:)`
+    /// engine (via `ResultsQuery.libraryFolder`) so all three methods below
+    /// agree on the same folder identity within one command -- `readmeNotes`
+    /// resolving while `storeNotes`/`save` didn't would just trade one
+    /// inconsistency for another.
+    private func resolvedTarget(_ target: String) throws -> String {
+        let knownFolders = Array(Set(try db.allFiles(includeMissing: false).compactMap(\.target)))
+        return ResultsQuery.libraryFolder(matching: target, among: knownFolders) ?? target
+    }
+
     /// This session's README-parsed notes -- the scanner's own read-only
     /// `session_notes` table (`Database.sessionNotes`), never the
     /// note-editor's own store. Available in any `accessMode`.
     public func readmeNotes(target: String, date: String) throws -> [String: String] {
-        try db.sessionNotes(target: target, date: date)
+        try db.sessionNotes(target: try resolvedTarget(target), date: date)
     }
 
     /// This session's note-editor-only notes (`SessionNoteStore`, under
     /// `.astro_tool/notes/`) -- `[:]` for a session that was never edited.
     /// Available in any `accessMode`.
     public func storeNotes(target: String, date: String) -> [String: String] {
-        SessionNoteStore.load(target: target, date: date, root: root)
+        let target = (try? resolvedTarget(target)) ?? target
+        return SessionNoteStore.load(target: target, date: date, root: root)
     }
 
     /// Validates every non-blank key in `notes`, then writes them all via
@@ -103,6 +121,7 @@ public struct NightNotesCommand: Sendable {
                 throw NightNotesCommandError.invalidKey(trimmedKey)
             }
         }
+        let target = try resolvedTarget(target)
         let writeGuard = WriteGuard(root: root)
         try SessionNoteStore.save(target: target, date: date, notes: notes, using: writeGuard)
         return storeNotes(target: target, date: date)
