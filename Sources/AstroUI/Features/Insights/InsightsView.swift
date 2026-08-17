@@ -214,10 +214,20 @@ public struct InsightsView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.headline)
-            if points.isEmpty {
-                ContentUnavailableView("No measured values", systemImage: "chart.xyaxis.line")
-                    .frame(minHeight: 150)
-            } else {
+            // Task 6 (owner review wave 4-4): with fewer than two measured
+            // sessions there is no TREND to draw -- a lone `PointMark` (one
+            // dot, nothing to compare it to) or the old `ContentUnavailableView`
+            // graphic both used to render here regardless, implying there
+            // was something worth charting. `InsightTrendChartState` names
+            // the honest reason instead; the chart itself only ever renders
+            // once it can actually show a trend.
+            switch InsightTrendChartState(pointCount: points.count) {
+            case .noData, .singleSession:
+                Text(InsightTrendChartState.unavailableMessage(pointCount: points.count))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 150, alignment: .center)
+            case .trend:
                 Chart(points) { point in
                     LineMark(x: .value("Date", point.date), y: .value(unit, point.value))
                         .foregroundStyle(color)
@@ -225,6 +235,24 @@ public struct InsightsView: View {
                         .foregroundStyle(color)
                 }
                 .chartYAxisLabel(unit)
+                // Task 6: this axis is categorical (one distinct `String`
+                // session date per point, not a continuous scale), so Swift
+                // Charts' own default -- one tick per category -- used to
+                // cram a dozen-plus session dates into a third of the row's
+                // width until every single label shrank to nothing but its
+                // own ellipsis ("…"), worse than no label at all (the
+                // Efficiency chart's own defect, since it typically has the
+                // most measured sessions of the three). Explicit tick
+                // values thin that down to real, readable dates.
+                .chartXAxis {
+                    AxisMarks(values: InsightTrendChartState.thinnedAxisDates(points.map(\.date))) { value in
+                        AxisGridLine()
+                        AxisTick()
+                        if let date = value.as(String.self) {
+                            AxisValueLabel(date)
+                        }
+                    }
+                }
                 .frame(minHeight: 180)
             }
         }
@@ -408,4 +436,59 @@ private struct InsightTrendDatum: Identifiable {
     let date: String
     let target: String
     let value: Double
+}
+
+/// W4-4 item 6 (owner review): "with <2 measured sessions the three trend
+/// charts render" a lone dot, an empty-state graphic, and an x-axis of
+/// nothing but "…" -- three different symptoms of the same underlying
+/// problem, a chart drawn for data that cannot show a trend. This is the
+/// honest classification `InsightsView.trendChart` switches on instead of
+/// rendering `Chart` unconditionally; `internal` (not `private`), so
+/// `InsightTrendChartStateTests` can exercise it directly without rendering
+/// a view.
+enum InsightTrendChartState: Equatable {
+    /// No session has a measured value for this metric at all.
+    case noData
+    /// Exactly one session does -- a single point has nothing to compare
+    /// against and cannot show a trend, even though `Chart` would happily
+    /// draw one lone dot.
+    case singleSession
+    /// Two or more measured sessions -- enough to actually show a trend.
+    case trend
+
+    init(pointCount: Int) {
+        switch pointCount {
+        case 0: self = .noData
+        case 1: self = .singleSession
+        default: self = .trend
+        }
+    }
+
+    /// The owner's own two phrasings ("1 mért session — a trendhez több
+    /// mérés kell" / "Nincsenek mért értékek") -- hand-added at the
+    /// `hu.lproj` tail since both keys reach `Text` through a ternary here,
+    /// which the extraction script does not see. Never called for
+    /// `.trend`, which renders the chart itself instead.
+    static func unavailableMessage(pointCount: Int) -> LocalizedStringKey {
+        pointCount == 1
+            ? "Only one measured session — more measurements are needed for a trend"
+            : "No measured values"
+    }
+
+    /// Caps how many x-axis ticks a categorical (`String`-dated) trend
+    /// chart draws. With one tick per session and a dozen-plus measured
+    /// sessions crammed into a third of the row's width, Swift Charts used
+    /// to shrink every single label down to nothing but its own ellipsis
+    /// ("…") -- worse than no label at all (the Efficiency chart's own
+    /// defect, since it typically has the most measured sessions of the
+    /// three). Every Nth date, capped at `maxTicks`, keeps each surviving
+    /// label wide enough to actually read; below `maxTicks` sessions, every
+    /// date still gets its own tick, exactly as before this task.
+    static func thinnedAxisDates(_ dates: [String], maxTicks: Int = 6) -> [String] {
+        guard dates.count > maxTicks else { return dates }
+        let stride = Int((Double(dates.count) / Double(maxTicks)).rounded(.up))
+        return dates.enumerated().compactMap { index, date in
+            index.isMultiple(of: stride) ? date : nil
+        }
+    }
 }

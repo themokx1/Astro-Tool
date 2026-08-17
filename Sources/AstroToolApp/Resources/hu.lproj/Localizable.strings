@@ -1393,3 +1393,9 @@
 // W4-5: az integráció-oszlop többéjszakás keret-magyarázata -- interpolált
 // LocalizedStringKey, az extraháló script nem látja, kézzel felvéve.
 "~%@ nights at tonight's pace" = "~%@ éjszaka a mai tempóval";
+
+// W4-4 item 6 (owner review): az Insights trend-diagramok "kevesebb mint 2
+// mért session" esete -- `InsightTrendChartState.unavailableMessage(pointCount:)`
+// egy ternáris kifejezésen keresztül ad vissza `LocalizedStringKey`-t, amit
+// az extraháló script nem lát, kézzel felvéve. A tulajdonos saját szava.
+"Only one measured session — more measurements are needed for a trend" = "1 mért session — a trendhez több mérés kell";
