@@ -200,7 +200,16 @@ public struct SessionCreationCommand: Sendable {
 
         var relativePaths: [String] = []
         if !sessionAlreadyExists {
-            relativePaths += try WriteGuard.sessionTreeRelativePaths(target: targetFolder, dateDir: canonicalDate)
+            // W3-10 owner correction: "ezeket feleslegesen csinálja meg, a
+            // captures-be kellenek csak" -- a brand-new session created
+            // WITH a capture gets the minimal root (just its README; see
+            // `WriteGuard.createSessionRoot`'s own doc comment), never the
+            // classic date-level quartet `sessionTreeRelativePaths`
+            // describes -- that quartet only applies to the capture-LESS
+            // path, which still needs it as its own raw-frame destination.
+            relativePaths += capture == nil
+                ? try WriteGuard.sessionTreeRelativePaths(target: targetFolder, dateDir: canonicalDate)
+                : try WriteGuard.sessionRootRelativePaths(target: targetFolder, dateDir: canonicalDate)
         }
         if let capture {
             relativePaths += try WriteGuard.captureTreeRelativePaths(

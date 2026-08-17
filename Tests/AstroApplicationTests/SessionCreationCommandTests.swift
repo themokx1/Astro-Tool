@@ -188,6 +188,13 @@ struct SessionCreationCommandTests {
             catalogRaw: "M1", nameRaw: "Crab Nebula", date: "2026-08-11", catalogTarget: nil, capture: draft
         )
         #expect(preview.relativePaths.contains("sessions/M1_Crab_Nebula/2026-08-11/captures/sv220-nb/lights"))
+        // W3-10 owner correction: "ezeket feleslegesen csinálja meg, a
+        // captures-be kellenek csak" -- the preview must NOT claim the
+        // classic date-level quartet will be created once a capture is
+        // also being created; the engine no longer makes it.
+        for sub in ["lights", "flats", "darks", "biases"] {
+            #expect(!preview.relativePaths.contains("sessions/M1_Crab_Nebula/2026-08-11/\(sub)"))
+        }
 
         let receipt = try command.create(
             catalogRaw: "M1", nameRaw: "Crab Nebula", date: "2026-08-11", catalogTarget: nil, capture: draft
@@ -197,6 +204,15 @@ struct SessionCreationCommandTests {
         #expect(receipt.captureSlug == "sv220-nb")
         for relativePath in preview.relativePaths {
             #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(relativePath).path))
+        }
+        // The preview promised nothing beyond `preview.relativePaths` (plus
+        // shared calibration_library scaffolding) -- the classic quartet
+        // must genuinely not exist on disk either, not just be absent from
+        // the promise.
+        for sub in ["lights", "flats", "darks", "biases"] {
+            #expect(!FileManager.default.fileExists(
+                atPath: root.appendingPathComponent("sessions/M1_Crab_Nebula/2026-08-11/\(sub)").path
+            ))
         }
         #expect(try db.captureGroups(target: "M1_Crab_Nebula", date: "2026-08-11").map(\.slug) == ["sv220-nb"])
     }
@@ -218,6 +234,13 @@ struct SessionCreationCommandTests {
             catalogRaw: "M1", nameRaw: "Crab Nebula", date: "2026-08-11", catalogTarget: nil, capture: first
         )
         #expect(firstReceipt.sessionWasCreated)
+        // W3-10 owner correction: the classic date-level quartet must never
+        // exist once the session's first capture is created alongside it.
+        for sub in ["lights", "flats", "darks", "biases"] {
+            #expect(!FileManager.default.fileExists(
+                atPath: root.appendingPathComponent("sessions/M1_Crab_Nebula/2026-08-11/\(sub)").path
+            ))
+        }
 
         // The session date directory now exists -- preview must reflect
         // that a second capture is the only valid next step, and list

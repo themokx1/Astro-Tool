@@ -29,9 +29,25 @@ public enum SessionCreator {
         root: URL,
         indexedFolders: [String]
     ) -> String {
+        let diskFolders = onDiskSessionFolders(root: root)
+        return TargetCatalog.existingFolder(
+            for: target,
+            among: Array(Set(indexedFolders + diskFolders))
+        ) ?? TargetCatalog.canonicalFolderName(for: target)
+    }
+
+    /// The distinct directory names directly under `<root>/sessions` --
+    /// symlinks and hidden entries excluded. Broken out of `targetFolder`
+    /// (2026-08-17, one-letter-drift fix) so any V2 caller that needs
+    /// "what folder does this target actually live under on disk?" but has
+    /// no scanned `Database` at hand (the Finder-reveal actions in
+    /// `InspectorView`/`NightActionMenu`) can feed the same disk listing
+    /// into `TargetCatalog.existingFolder(for:among:)` this function already
+    /// uses, rather than re-deriving its own directory scan.
+    public static func onDiskSessionFolders(root: URL) -> [String] {
         let sessions = root.appendingPathComponent("sessions", isDirectory: true)
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
-        let diskFolders = (try? FileManager.default.contentsOfDirectory(
+        return (try? FileManager.default.contentsOfDirectory(
             at: sessions,
             includingPropertiesForKeys: Array(keys),
             options: [.skipsHiddenFiles]
@@ -42,11 +58,6 @@ public enum SessionCreator {
             else { return nil }
             return url.lastPathComponent
         } ?? []
-
-        return TargetCatalog.existingFolder(
-            for: target,
-            among: Array(Set(indexedFolders + diskFolders))
-        ) ?? TargetCatalog.canonicalFolderName(for: target)
     }
 
     /// - Parameters:
@@ -99,6 +110,18 @@ public enum SessionCreator {
     /// source-compatible and creates the unchanged classic tree; this one
     /// additionally creates and persists the explicitly requested first
     /// capture, and may therefore mention it in this brand-new README.
+    ///
+    /// W3-10 owner correction (screenshot of the shipped V2 preview):
+    /// "ezeket feleslegesen csinálja meg, a captures-be kellenek csak"
+    /// (these are made unnecessarily; they only belong under captures/) --
+    /// this overload creates the MINIMAL session root
+    /// (`WriteGuard.createSessionRoot`, not `.createSessionTree`), never the
+    /// classic date-level `lights/flats/darks/biases` quartet: once this
+    /// session's raw frames live under `captures/<slug>/{...}`, a parallel,
+    /// always-empty quartet at the session root only misleads the
+    /// card-copy workflow. The capture-LESS overload above is unaffected --
+    /// a session created with no capture at all still needs the classic
+    /// quartet as ITS OWN raw-frame destination.
     public static func create(
         root: URL,
         catalogRaw: String,
@@ -132,7 +155,7 @@ public enum SessionCreator {
             initialCapture: initialCapture
         )
         let writeGuard = WriteGuard(root: root)
-        var created = try writeGuard.createSessionTree(
+        var created = try writeGuard.createSessionRoot(
             target: targetFolder,
             dateDir: date,
             readme: readme
@@ -183,6 +206,7 @@ public enum SessionCreator {
         let createdAt = formatter.string(from: now)
 
         let initialCaptureSection: String
+        let folderMapSection: String
         if let initialCapture {
             initialCaptureSection = """
 
@@ -192,8 +216,26 @@ public enum SessionCreator {
             - Type: \(initialCapture.sensorMode.displayNameHU) · \(initialCapture.signalMode.displayNameHU)
             - Folder: sessions/\(targetFolder)/\(date)/captures/\(initialCapture.slug)
             """
+            // W3-10 owner correction: no classic date-level quartet exists
+            // in this mode (see `WriteGuard.createSessionRoot`'s own doc
+            // comment) -- the folder map must not claim it does. Points
+            // instead at the capture's own raw-frame destination and its
+            // own stack/process locations.
+            folderMapSection = """
+            - sessions/\(targetFolder)/\(date)/captures/\(initialCapture.slug) : RAW frames for this capture
+            - stacks/\(targetFolder)/\(date)/\(initialCapture.slug)          : stacking outputs for this capture
+            - processed/\(targetFolder)/\(date)/\(initialCapture.slug)       : final edits/exports for this capture
+            """
         } else {
             initialCaptureSection = ""
+            folderMapSection = """
+            - sessions/\(targetFolder)/\(date)/lights : RAW light frames
+            - sessions/\(targetFolder)/\(date)/flats  : RAW flats
+            - sessions/\(targetFolder)/\(date)/darks  : RAW darks
+            - sessions/\(targetFolder)/\(date)/biases   : RAW biases (if used)
+            - stacks/\(targetFolder)/\(date)          : stacking outputs
+            - processed/\(targetFolder)/\(date)       : final edits/exports
+            """
         }
 
         return """
@@ -208,12 +250,7 @@ public enum SessionCreator {
 
         Folder map
         ----------
-        - sessions/\(targetFolder)/\(date)/lights : RAW light frames
-        - sessions/\(targetFolder)/\(date)/flats  : RAW flats
-        - sessions/\(targetFolder)/\(date)/darks  : RAW darks
-        - sessions/\(targetFolder)/\(date)/biases   : RAW biases (if used)
-        - stacks/\(targetFolder)/\(date)          : stacking outputs
-        - processed/\(targetFolder)/\(date)       : final edits/exports
+        \(folderMapSection)
         \(initialCaptureSection)
 
         Fill in metadata (recommended)

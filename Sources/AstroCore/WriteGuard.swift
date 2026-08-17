@@ -137,6 +137,91 @@ public struct WriteGuard: Sendable {
         return created
     }
 
+    /// The exact root-relative paths `createSessionRoot(target:dateDir:
+    /// readme:)` creates -- just the README, mirroring that call's own
+    /// reduced `created` list. See `createSessionRoot`'s own doc comment
+    /// for why it omits the classic RAW quartet `createSessionTree` above
+    /// makes.
+    public static func sessionRootRelativePaths(target: String, dateDir: String) throws -> [String] {
+        try Self.validatePathComponent(target)
+        try Self.validatePathComponent(dateDir)
+        return ["sessions/\(target)/\(dateDir)/README.txt"]
+    }
+
+    /// W3-10 owner correction (screenshot of the shipped V2 preview): "ezeket
+    /// feleslegesen csinálja meg, a captures-be kellenek csak" (these are
+    /// made unnecessarily; they only belong under captures/) -- creates the
+    /// MINIMAL session root for a session whose first capture is created
+    /// alongside it: the session directory itself, its `README.txt`, and
+    /// the shared `calibration_library/{darks,flats,biases}` mkdir-p
+    /// scaffolding (same as `createSessionTree`) -- but deliberately NO
+    /// classic date-level `lights/flats/darks/biases` quartet and no bare
+    /// `stacks/<dateDir>`/`processed/<dateDir>`. Once every raw frame for
+    /// this session lives under a specific capture's own
+    /// `captures/<slug>/{...}` branch, a parallel, always-empty classic
+    /// quartet at the session root only misleads the card-copy workflow
+    /// (which of the two lights/ folders does this camera's SD card go
+    /// into?) -- it is dead weight, not a second valid destination. The
+    /// actual capture tree (`captures/<slug>/...`, plus that capture's own
+    /// `stacks/<dateDir>/<slug>`/`processed/<dateDir>/<slug>`) is created
+    /// separately by `createCaptureTree`, called right after this by
+    /// `SessionCreator`'s capture-aware overload -- `stacks/<dateDir>`/
+    /// `processed/<dateDir>` still end up existing on disk as ordinary
+    /// intermediate directories of THAT call, exactly as they do for
+    /// `CaptureManager.create` adding a capture to an already-existing
+    /// session; this call just never claims or tracks them as its own.
+    /// Throws `AstroError.writeForbidden` under the same conditions
+    /// `createSessionTree` does (invalid path components, or an
+    /// already-existing session date directory).
+    @discardableResult
+    public func createSessionRoot(
+        target: String,
+        dateDir: String,
+        readme: String
+    ) throws -> [URL] {
+        try Self.validatePathComponent(target)
+        try Self.validatePathComponent(dateDir)
+
+        let fm = FileManager.default
+        let sessionDir = root
+            .appendingPathComponent("sessions", isDirectory: true)
+            .appendingPathComponent(target, isDirectory: true)
+            .appendingPathComponent(dateDir, isDirectory: true)
+
+        guard !fm.fileExists(atPath: sessionDir.path) else {
+            throw AstroError.writeForbidden(path: sessionDir.path)
+        }
+
+        var created: [URL] = []
+
+        func ensureDir(_ url: URL) throws {
+            try Self.classifyingPermissionErrors(path: url.path) {
+                try fm.createDirectory(at: url, withIntermediateDirectories: true)
+            }
+            created.append(url)
+        }
+
+        // Not appended to `created` -- `createSessionTree` never lists the
+        // session date directory itself as one of its own created URLs
+        // either; only its leaf children are tracked.
+        try Self.classifyingPermissionErrors(path: sessionDir.path) {
+            try fm.createDirectory(at: sessionDir, withIntermediateDirectories: true)
+        }
+
+        let readmeURL = sessionDir.appendingPathComponent("README.txt", isDirectory: false)
+        try Self.classifyingPermissionErrors(path: readmeURL.path) {
+            try Data(readme.utf8).write(to: readmeURL, options: .withoutOverwriting)
+        }
+        created.append(readmeURL)
+
+        let calibDir = root.appendingPathComponent("calibration_library", isDirectory: true)
+        for sub in ["darks", "flats", "biases"] {
+            try ensureDir(calibDir.appendingPathComponent(sub, isDirectory: true))
+        }
+
+        return created
+    }
+
     /// The exact root-relative paths `createCaptureTree(target:dateDir:
     /// slug:)` creates for THIS capture -- same no-filesystem-access,
     /// same-order-as-the-real-call shape as `sessionTreeRelativePaths`

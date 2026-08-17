@@ -252,3 +252,54 @@ func previewedRelativePathsMatchWhatSessionCreatorActuallyCreates(
     #expect(readme.contains("SV220 dual-band"))
     #expect(readme.contains("captures/sv220-nb"))
 }
+
+/// W3-10 owner correction (2026-08-17, screenshot of the shipped preview):
+/// "ezeket feleslegesen csinálja meg, a captures-be kellenek csak" (these
+/// are made unnecessarily; they only belong under captures/) -- when a
+/// session is created WITH an initial capture, the classic date-level
+/// lights/flats/darks/biases quartet must NOT be created at all (it only
+/// misleads the card-copy workflow once the capture owns its own per-filter
+/// quartet); only the session root, the README, and
+/// captures/<slug>/{lights,flats,darks,biases} come into being. The
+/// capture-LESS overload (tested elsewhere) is unaffected -- a session with
+/// no capture at all still needs the classic quartet as ITS raw-frame
+/// destination.
+@Test func sessionCreatorWithInitialCaptureOmitsClassicDateLevelQuartet() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let db = try Database(path: ":memory:")
+    let draft = CaptureGroupDraft(
+        slug: "sv220-nb", displayName: "SV220 dual-band", sensorMode: .osc, signalMode: .dualBand,
+        filterManufacturer: "SVBONY", filterModel: "SV220"
+    )
+
+    let result = try SessionCreator.create(
+        root: root, catalogRaw: "M1", nameRaw: "Crab Nebula", date: "2026-08-17",
+        initialCapture: draft, db: db
+    )
+
+    let fm = FileManager.default
+    let sessionDir = "sessions/\(result.targetFolder)/2026-08-17"
+    for sub in ["lights", "flats", "darks", "biases"] {
+        #expect(!fm.fileExists(atPath: root.appendingPathComponent("\(sessionDir)/\(sub)").path), "\(sub) must not exist at the date level")
+    }
+    #expect(fm.fileExists(atPath: root.appendingPathComponent("\(sessionDir)/README.txt").path))
+    for sub in ["lights", "flats", "darks", "biases"] {
+        #expect(fm.fileExists(atPath: root.appendingPathComponent("\(sessionDir)/captures/sv220-nb/\(sub)").path))
+    }
+    // None of `result.createdURLs` may be one of the classic date-level
+    // quartet paths.
+    let forbidden = Set(["lights", "flats", "darks", "biases"].map {
+        root.appendingPathComponent("\(sessionDir)/\($0)").standardizedFileURL
+    })
+    #expect(Set(result.createdURLs.map(\.standardizedFileURL)).isDisjoint(with: forbidden))
+
+    let readme = try String(
+        contentsOf: root.appendingPathComponent("\(sessionDir)/README.txt"), encoding: .utf8
+    )
+    #expect(!readme.contains("lights : RAW light frames"))
+    #expect(!readme.contains("flats  : RAW flats"))
+    #expect(!readme.contains("darks  : RAW darks"))
+    #expect(!readme.contains("biases   : RAW biases"))
+    #expect(readme.contains("captures/sv220-nb"))
+}
