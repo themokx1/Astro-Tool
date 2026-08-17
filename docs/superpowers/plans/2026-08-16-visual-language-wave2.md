@@ -526,3 +526,42 @@ A `switch`-alapúak és a nem-első-argumentumú literálok a kinyerő script sz
 ```bash
 git commit -m "fix: gate the whole class of untranslatable UI text"
 ```
+
+---
+
+## Task 5c: A három eldöntetlen mező, és a halott cím kivezetése
+
+Az 5b. task három mezőt **szándékosan** hagyott eldöntetlenül, ahelyett hogy megtippelte volna. Itt vannak a döntések, plusz egy halott mező, amit ugyanaz a task talált.
+
+### 1. A halott `title` kivezetése
+
+`WorkspacePage.title` és `WorkspaceTablePage.title` (`Features/Workspace/WorkspaceComponents.swift:6,67`) tárolt property, mind a **hét** hívási hely átadja — és **egyik `body` sem olvassa**. A képernyőn látszó cím valójában minden hívási hely saját `.navigationTitle(...)`-jéből jön.
+
+Egy mező, amit hét helyen kitöltenek és sehol nem használnak, nem ártalmatlan: a következő olvasó azt hiszi, ez rajzolja a fejlécet, és oda írja a javítást, ahol semmi nem történik. **Törlendő**, mind a hét hívási helyről is. Az `eyebrow` paramétert is nézd meg ugyanezzel a szemmel — ha szintén nem rajzolódik, az is megy.
+
+### 2. `OperationHost.title` és `message` → fordítandó
+
+Ezek a **toastokban és a haladásjelzőn** jelennek meg — „Verifying integrity finished.", „Scanning library…". Ez a felhasználóhoz szóló próza, nem adat. Fordítandó.
+
+- `title` (23., 54. sor): 8 hívási hely, mind literál — egyenes átalakítás.
+- `message` (43. sor): ~25 hívási hely, és **néhány `error.localizedDescription`-t interpolál**. Ez a nehéz része: a hibaleírás futásidejű adat, tehát a mondat lefordítható fele és az interpolált hiba **külön** kell hogy maradjon. Ne egyetlen formátumkulcsba told — ha egy hívási hely nem bontható szét tisztán, hagyd `String`-en, tedd az allowlistre indoklással, és jelentsd.
+
+Az `OperationHost` `Sendable`; ha a `LocalizedStringKey` (ami nem `Sendable`) ezt eltöri, **állj meg és jelentsd** — az típusrendszer-szintű döntés, nem a te hívásod. A `ProjectWorkspaceRow` precedense ilyenkor `NSLocalizedString` eager feloldás.
+
+### 3. `GlobalSearchStore.subtitle` → szétválasztás, nem formátumkulcs
+
+Ma egy kategória-szót („Project", „Night", …) és interpolált adatot kever egyetlen `String`-be, hat hívási helyen.
+
+**Ne** csinálj belőle `"%@ · %@"` formátumkulcsot — az a kategóriát is adattá fokozná le, és a fordító nem látná a szavakat. Helyette a rekord hordozzon **kettőt**: egy `kind`-ot (lefordítható kulcs) és egy `detail`-t (nyers adat, marad `String`). A nézet két `Text`-ként rajzolja.
+
+**Files:** `Features/Workspace/WorkspaceComponents.swift` + a 7 hívási hely, `Operations/OperationHost.swift` + hívási helyei, `Features/Search/GlobalSearchStore.swift` + a nézete, `hu.lproj`, `V2PolishSurfaceTests.swift`
+
+- [ ] **Step 1:** a halott mezők törlése, suite zöld
+- [ ] **Step 2:** `OperationHost`, a `message` interpolációit egyesével átnézve
+- [ ] **Step 3:** a keresési találat szétválasztása
+- [ ] **Step 4:** az allowlist szűkítése azokra, amik tényleg maradnak, indoklással
+- [ ] **Step 5:** suite + commit
+
+```bash
+git commit -m "fix: translate the operation and search text, drop the dead titles"
+```
