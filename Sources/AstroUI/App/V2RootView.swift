@@ -262,6 +262,44 @@ public struct V2RootView: View {
     }
 }
 
+/// W4-4 item 1 (owner review, wave 4): "the inspector shows 'Nincs
+/// kijelölés' on pages with nothing to select" -- Home, Planning, Insights,
+/// the Archive map, Nights, the bare Projects list, and every other
+/// selection-less workspace route (Calibration, Conversion, Cleanup,
+/// Sensor Profiles, Archive findings, Review, Results) all resolve
+/// `ContentRoute.selection == nil`, so `InspectorView` renders nothing but
+/// its generic empty state there on every visit, permanently -- note this
+/// is `ContentRoute.selection`, a pure function of the route case itself
+/// (`.project`/`.projectSeries` always resolve non-nil here, by
+/// construction, regardless of the router's separately-tracked live
+/// `inspectorSelection`), not that live, tick-by-tick property -- so this
+/// stays a per-ROUTE-TYPE policy, immune to the exact `inspectorSelection`-
+/// vs-`contentRoute` divergence `InspectorView`'s own `isProjectRouteActive`
+/// fallback exists to paper over. Reusing `ContentRoute.selection` directly
+/// (not a second, independently-maintained route list) means this can never
+/// drift from what `InspectorView` itself would render.
+extension ContentRoute {
+    var hasInspectorContent: Bool { selection != nil }
+}
+
+/// W4-4 item 1: the pure decision behind `V2Shell`'s `.inspector()` mount,
+/// factored out of the view body so it is unit-testable without a running
+/// window (see `InspectorVisibilityPolicyTests`). On a route with real
+/// inspector content, the persisted, cross-route `AppRouter
+/// .isInspectorPresented` toggle governs visibility exactly as it did
+/// before this task. On a route with none (`!route.hasInspectorContent`)
+/// the column defaults to hidden regardless of that persisted flag --
+/// there is nothing to show there, ever -- but `overrideVisible` (`V2Shell`'s
+/// own per-route `@State`, reset whenever the route changes) still lets the
+/// toolbar button, and the panel's own "Hide Inspector" action, force it
+/// open for this one visit: the owner's own words, "the change is the
+/// default, not a lockout".
+enum InspectorVisibilityPolicy {
+    static func isPresented(route: ContentRoute, isInspectorPresented: Bool, overrideVisible: Bool) -> Bool {
+        route.hasInspectorContent ? isInspectorPresented : overrideVisible
+    }
+}
+
 @MainActor
 private struct V2Shell: View {
     @Bindable var router: AppRouter
@@ -291,6 +329,12 @@ private struct V2Shell: View {
     @State private var pendingMutationRootURL: URL?
     @State private var pendingMutationAccessMode: LibraryAccessMode = .readOnly
     @State private var sidebarBadges = SidebarBadgeStore()
+    /// W4-4 item 1: the toolbar/panel-"Hide Inspector" toggle's own escape
+    /// hatch on a route with no inspector content at all -- see
+    /// `InspectorVisibilityPolicy`'s own doc comment. Reset to `false`
+    /// whenever the route changes (below), so it never leaks a forced-open
+    /// state from one no-content route into a later, unrelated one.
+    @State private var inspectorOverrideVisible = false
     /// Task 10: the Archive page's own map/task data, owned here (once per
     /// window, same lifetime as `libraryHealthStore`) rather than freshly
     /// constructed per visit -- a re-scan/re-audit can complete while the
@@ -315,6 +359,61 @@ private struct V2Shell: View {
 
     private var libraryAccessMode: LibraryAccessMode {
         enableWriteOperations ? .mutationEnabled : .readOnly
+    }
+
+    /// W4-4 item 1: whether the `.inspector()` column below is actually
+    /// showing right now -- read by the toolbar button's own label/help so
+    /// it never claims "Hide Inspector" while the column is, in fact,
+    /// hidden (a no-content route with no override).
+    private var isInspectorColumnPresented: Bool {
+        InspectorVisibilityPolicy.isPresented(
+            route: router.contentRoute,
+            isInspectorPresented: router.isInspectorPresented,
+            overrideVisible: inspectorOverrideVisible
+        )
+    }
+
+    /// The `.inspector(isPresented:)` binding itself -- reads/writes through
+    /// `InspectorVisibilityPolicy`'s split (the persisted, cross-route flag
+    /// on a route with content; the per-route override otherwise) so a user
+    /// closing the column via its own system-provided drag/close affordance
+    /// updates the right piece of state either way.
+    private var inspectorPresentedBinding: Binding<Bool> {
+        Binding(
+            get: { isInspectorColumnPresented },
+            set: { newValue in
+                if router.contentRoute.hasInspectorContent {
+                    router.isInspectorPresented = newValue
+                } else {
+                    inspectorOverrideVisible = newValue
+                }
+            }
+        )
+    }
+
+    /// The toolbar button's action and `InspectorView`'s own "Hide
+    /// Inspector" button both call through here (`toggleInspectorColumn`/
+    /// `hideInspectorColumn` below) rather than `router.toggleInspector()`
+    /// directly -- on a no-content route that would flip the PERSISTED,
+    /// cross-route flag for no visible effect (the column would stay
+    /// hidden, `InspectorVisibilityPolicy` ignores that flag there), which
+    /// is exactly the "dead button" failure mode this task exists to
+    /// remove elsewhere (item 3). Routing through the same policy split
+    /// keeps the button honest on every route.
+    private func toggleInspectorColumn() {
+        if router.contentRoute.hasInspectorContent {
+            router.isInspectorPresented.toggle()
+        } else {
+            inspectorOverrideVisible.toggle()
+        }
+    }
+
+    private func hideInspectorColumn() {
+        if router.contentRoute.hasInspectorContent {
+            router.isInspectorPresented = false
+        } else {
+            inspectorOverrideVisible = false
+        }
     }
 
     var body: some View {
@@ -414,7 +513,19 @@ private struct V2Shell: View {
                 )
             }
         }
-        .inspector(isPresented: $router.isInspectorPresented) {
+        // W4-4 item 1: `router.isInspectorPresented` used to bind here
+        // directly, so the column rendered its "No Selection" empty state
+        // unconditionally on every route with nothing to inspect -- see
+        // `InspectorVisibilityPolicy`'s own doc comment. The reset below
+        // keeps `inspectorOverrideVisible` scoped to the route it was set
+        // on, so a forced-open empty panel on Home doesn't linger the next
+        // time Insights (also content-less) is visited.
+        .onChange(of: router.contentRoute) { _, newRoute in
+            if !newRoute.hasInspectorContent {
+                inspectorOverrideVisible = false
+            }
+        }
+        .inspector(isPresented: inspectorPresentedBinding) {
             InspectorView(
                 selection: router.inspectorSelection,
                 // W3-9 (Defect 3): `.project`/`.projectSeries` are the two
@@ -448,7 +559,7 @@ private struct V2Shell: View {
                 projectsStore: projectsStore,
                 nightsStore: nightsStore,
                 reviewStore: reviewStore,
-                hideInspector: router.toggleInspector
+                hideInspector: hideInspectorColumn
             )
         }
         .toolbar {
@@ -489,12 +600,12 @@ private struct V2Shell: View {
                 .accessibilityLabel("New project")
                 .accessibilityIdentifier("v2.toolbar.new-project")
 
-                Button(action: router.toggleInspector) {
+                Button(action: toggleInspectorColumn) {
                     Label("Inspector", systemImage: "sidebar.right")
                 }
-                .help(router.isInspectorPresented ? "Hide Inspector" : "Show Inspector")
+                .help(isInspectorColumnPresented ? "Hide Inspector" : "Show Inspector")
                 .accessibilityLabel(
-                    router.isInspectorPresented ? "Hide inspector" : "Show inspector"
+                    isInspectorColumnPresented ? "Hide inspector" : "Show inspector"
                 )
                 .accessibilityIdentifier("v2.toolbar.inspector")
             }
