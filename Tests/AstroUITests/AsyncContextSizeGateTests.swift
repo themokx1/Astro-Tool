@@ -58,10 +58,27 @@ struct AsyncContextSizeGateTests {
             .deletingLastPathComponent()
     }
 
-    /// Every `.o` SwiftPM produced for this package, across whichever build
-    /// configurations are present. Deliberately scans all of `.build` rather
-    /// than one configuration: a debug-only scan would silently stop gating a
-    /// release build.
+    /// Every `.o` produced for this package, keyed by the LINK it belongs to.
+    ///
+    /// Grouping matters and getting it wrong is how this gate first went
+    /// wrong (2026-08-17). It originally scanned all of `.build` flat, on the
+    /// reasoning that a debug-only scan would stop gating release builds.
+    /// But `.build` accumulates products from unrelated compilations:
+    /// SwiftPM's debug objects live in `.build/<triple>/debug/...` while
+    /// `build.sh` leaves an Xcode Release build in
+    /// `.build/apple/.../Release/.../{arm64,x86_64}/...`. A Release
+    /// whole-module build lays out an async context differently from a debug
+    /// incremental one, and arm64 differs from x86_64 -- legitimately.
+    ///
+    /// Compared flat, those differences read as the ODR bug, so the gate
+    /// began failing the moment anyone ran `build.sh`, naming four files
+    /// whose fix was already in the source. A gate that cries wolf gets
+    /// switched off, and this one guards a bug that silently corrupts the
+    /// task allocator, so its false positives are expensive.
+    ///
+    /// Two object files are only comparable if the same linker could pair
+    /// them: same configuration, same architecture. The key below is that
+    /// link identity, and the comparison happens strictly within a group.
     private func objectFiles() throws -> [URL] {
         let build = repositoryRoot.appendingPathComponent(".build")
         guard let enumerator = FileManager.default.enumerator(at: build, includingPropertiesForKeys: nil) else {
@@ -185,6 +202,25 @@ struct AsyncContextSizeGateTests {
         return String(decoding: bytes, as: UTF8.self)
     }
 
+    /// Which link an object belongs to: same configuration, same
+    /// architecture. Objects from different groups are never compared,
+    /// because different compilations legitimately size async contexts
+    /// differently.
+    static func linkIdentity(of object: URL) -> String {
+        let parts = object.pathComponents
+        // Xcode/`build.sh`: .build/apple/.../<Config>/<Target>.build/Objects-normal/<arch>/x.o
+        if let objectsIndex = parts.firstIndex(of: "Objects-normal"), objectsIndex + 1 < parts.count {
+            let arch = parts[objectsIndex + 1]
+            let config = parts.first { ["Debug", "Release"].contains($0) } ?? "xcode"
+            return "xcode/\(config)/\(arch)"
+        }
+        // SwiftPM: .build/<triple>/<config>/<Target>.build/x.o
+        if let buildIndex = parts.firstIndex(of: ".build"), buildIndex + 2 < parts.count {
+            return "swiftpm/\(parts[buildIndex + 1])/\(parts[buildIndex + 2])"
+        }
+        return "unknown"
+    }
+
     /// The gate. One weak async function pointer record, one context size --
     /// anywhere in the package, in any configuration that has been built.
     @Test("No weak async function pointer record is emitted with two different context sizes")
@@ -198,19 +234,30 @@ struct AsyncContextSizeGateTests {
             so it only runs meaningfully under `swift test`. Run `swift build --build-tests` first.
             """)
 
-        var sizesBySymbol: [String: [String: UInt32]] = [:]
+        // Grouped by link identity -- see `objectFiles()`'s own comment for
+        // why comparing across configurations or architectures produces
+        // false positives rather than findings.
+        var sizesByLinkAndSymbol: [String: [String: [String: UInt32]]] = [:]
         for object in objects {
+            let link = Self.linkIdentity(of: object)
             for (symbol, size) in try asyncContextSizes(in: object) {
-                sizesBySymbol[symbol, default: [:]][object.lastPathComponent] = size
+                sizesByLinkAndSymbol[link, default: [:]][symbol, default: [:]][object.lastPathComponent] = size
             }
         }
 
-        let offenders = sizesBySymbol.filter { Set($0.value.values).count > 1 }.sorted { $0.key < $1.key }
-        let report = offenders.map { symbol, sizes in
+        var offenders: [(link: String, symbol: String, sizes: [String: UInt32])] = []
+        for (link, bySymbol) in sizesByLinkAndSymbol {
+            for (symbol, sizes) in bySymbol where Set(sizes.values).count > 1 {
+                offenders.append((link, symbol, sizes))
+            }
+        }
+        offenders.sort { ($0.link, $0.symbol) < ($1.link, $1.symbol) }
+
+        let report = offenders.map { link, symbol, sizes in
             let copies = sizes.sorted { $0.value > $1.value }
                 .map { "\($0.value) bytes in \($0.key)" }
                 .joined(separator: ", ")
-            return "\n  \(symbol)\n    \(copies)"
+            return "\n  \(symbol)\n    [\(link)] \(copies)"
         }.joined()
 
         guard offenders.isEmpty else {

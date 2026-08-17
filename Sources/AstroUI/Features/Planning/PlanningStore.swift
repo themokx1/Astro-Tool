@@ -252,12 +252,27 @@ public final class PlanningStore {
         computeRecommendations: @escaping RecommendationsComputer = { $0.recommendations() },
         catalogSearch: CatalogSearch? = nil,
         catalogProvider: CatalogProvider? = nil,
-        skyContextProvider: @escaping SkyContextProvider = PlanningStore.productionSkyContext
+        /// Optional rather than an async default argument. Swift 6.3.3 emits
+        /// an async default's implicit closure as a `weak private external`
+        /// record whose context size differs between the defining module and
+        /// its clients; whichever copy the linker keeps, one side is wrong,
+        /// and the resume funclet overruns the task allocator. See
+        /// `docs/swift-async-default-arg-bug/` and `AsyncContextSizeGateTests`.
+        /// Resolving inside the body keeps the record non-external.
+        ///
+        /// This site was MISSED by the original sweep (`46c83c9`, which fixed
+        /// HomeStore/NightsStore/GlobalSearchStore/SiteSettingsStore) because
+        /// the sizes happened to agree at that moment. The gate caught it
+        /// later when unrelated edits re-rolled the layout -- which is exactly
+        /// the failure mode the gate exists for, and why a source audit alone
+        /// was never going to be enough.
+        skyContextProvider: SkyContextProvider? = nil
     ) {
         let safeSetups = setups.isEmpty ? PlanningStore.defaultSetups : setups
         self.setups = safeSetups
         self.defaults = defaults
         self.computeRecommendations = computeRecommendations
+        self.skyContextProvider = skyContextProvider ?? PlanningStore.productionSkyContext
         self.catalogProvider = catalogProvider ?? { PlanningStore.productionCatalog() }
         // Search the SAME catalog the ranking uses, so a target that appears
         // in the table can always be found by name and vice versa.
@@ -267,7 +282,6 @@ public final class PlanningStore {
         self.catalogSearch = catalogSearch ?? { query, source in
             TargetCatalog.search(query, limit: source.count, in: source)
         }
-        self.skyContextProvider = skyContextProvider
         let initial = safeSetups.first(where: \.isDefault) ?? safeSetups[0]
         selectedSetupID = initial.id
         focalLength = initial.defaultFocalLengthMM
