@@ -1082,6 +1082,187 @@ struct V2PolishSurfaceTests {
         }
         #expect(offenders.isEmpty, "GroupBox still used in: \(offenders.joined(separator: ", "))")
     }
+
+    // MARK: (p) Task 7b (2026-08-17) -- the page backdrop is opaque `ground`,
+    // or it is not the page backdrop.
+    //
+    // `AstroTokens.Color.ground` (`0xF6F7FB` light / `0x070A10` dark) is the
+    // grouped WINDOW BACKDROP half of this design system's own layering
+    // pair; `surface` (`0xFFFFFF` / `0x10151F`) is the CONTENT half raised
+    // on top of it. That pair is the macOS default for layered content --
+    // System Settings, Mail's message list, Finder's info panes -- and it
+    // only works when the backdrop is actually painted, at full strength.
+    //
+    // A PARTIAL `ground` is neither half. It is `ground` blended with
+    // whatever happens to be behind it, which means the resulting colour is
+    // one nobody chose and nobody can predict from reading the call site --
+    // and when what is behind it is the window itself (essentially white in
+    // light appearance), a 22-36% `ground` is very nearly white, which is
+    // how five workspace roots ended up flush with the white `surface`
+    // cards sitting on them. The four different strengths the tree carried
+    // at once (36% x4, 32%, 22%) are the tell: they were not a decision,
+    // they were five people guessing.
+    //
+    // The rule is therefore about STRENGTH, not about which files: paint
+    // `ground` opaque or do not paint it. The detector below is
+    // deliberately written against the token, so a NEW view inventing a
+    // sixth tint strength is caught the day it is written -- unlike a gate
+    // that had enumerated the five known offenders, which is exactly the
+    // failure mode `noInlineColorsInFeatureViews` and
+    // `uiTextIsNeverAPlainString` both document having been bitten by.
+
+    @Test("The partial-ground detector flags every shape a tint can be written in")
+    func groundOpacityGateDetectsViolations() {
+        // Same-line, the shape all five real offenders used.
+        #expect(!GroundOpacityGate.offendingLines(
+            in: ".background(AstroTokens.Color.ground.opacity(0.36))"
+        ).isEmpty)
+
+        // Wrapped across lines -- a detector that scanned line-by-line
+        // would miss this, and reformatting is not a fix.
+        #expect(!GroundOpacityGate.offendingLines(in: """
+            .background(
+                AstroTokens.Color.ground
+                    .opacity(0.22)
+            )
+            """).isEmpty)
+
+        // Whitespace around the member accesses, and a non-`.background`
+        // consumer (`fill`) -- the rule is about the token's strength, not
+        // about which modifier happens to receive it.
+        #expect(!GroundOpacityGate.offendingLines(
+            in: ".fill(AstroTokens.Color.ground . opacity( 0.5 ))"
+        ).isEmpty)
+
+        // Bare `.ground` (no `AstroTokens.Color` prefix), e.g. inside a
+        // `Color` extension or after a `typealias`.
+        #expect(!GroundOpacityGate.offendingLines(
+            in: ".background(.ground.opacity(0.9))"
+        ).isEmpty)
+    }
+
+    @Test("The partial-ground detector allows opaque ground and unrelated opacity")
+    func groundOpacityGateAllowsTheRealShape() {
+        // The two real paint sites in the tree today.
+        #expect(GroundOpacityGate.offendingLines(
+            in: ".background(AstroTokens.Color.ground)"
+        ).isEmpty)
+
+        // `.opacity` on something that is NOT `ground` must not trip it --
+        // fading a card, a chart series, a disabled control is all normal.
+        #expect(GroundOpacityGate.offendingLines(in: """
+            .background(AstroTokens.Color.surface.opacity(0.5))
+            .opacity(isEnabled ? 1 : 0.4)
+            Circle().fill(AstroTokens.Color.dataLight.opacity(0.3))
+            """).isEmpty)
+
+        // `ground` used opaquely, with an `.opacity` elsewhere in the same
+        // chain applying to the composed view rather than to the token --
+        // a different thing, and not what this gate is about.
+        #expect(GroundOpacityGate.offendingLines(in: """
+            .background(AstroTokens.Color.ground)
+            .opacity(0.5)
+            """).isEmpty)
+
+        // A word merely ENDING in "ground" is not the token.
+        #expect(GroundOpacityGate.offendingLines(
+            in: ".background(theme.playground.opacity(0.4))"
+        ).isEmpty)
+    }
+
+    /// The real-tree scan the two synthetic tests above exist to justify
+    /// trusting. See this task's own report for the red/green run performed
+    /// by reverting a real fix (`ReviewWorkspace`'s 22% tint) and watching
+    /// this test fail, then restoring it.
+    ///
+    /// What this does NOT catch, by construction:
+    /// - `ground` reached through a local alias or a computed property
+    ///   (`let base = AstroTokens.Color.ground` … `base.opacity(0.3)`) --
+    ///   a source-text scan cannot follow a binding.
+    /// - an opacity applied through a modifier other than `.opacity(`
+    ///   (`.blendMode`, a `LinearGradient` of `ground` stops with alpha, a
+    ///   `Material` over `ground`), which would produce a similarly
+    ///   unpredictable colour by a route this pattern does not describe.
+    /// - anything outside `Sources/AstroUI`.
+    @Test("No view in Sources/AstroUI paints ground at partial opacity")
+    func groundIsNeverPaintedAtPartialOpacity() throws {
+        var offenders: [String] = []
+        for file in try swiftFiles(under: "Sources/AstroUI") {
+            let source = Self.removingLineComments(try contents(file))
+            let lines = GroundOpacityGate.offendingLines(in: source)
+            if !lines.isEmpty {
+                offenders.append("\(file): line(s) \(lines.map(String.init).joined(separator: ", "))")
+            }
+        }
+        #expect(offenders.isEmpty, """
+            `ground` is the grouped window backdrop -- paint it opaque or do \
+            not paint it. A partial tint blends it with an unknown parent \
+            (in light appearance, a near-white window), which is how the \
+            page backdrop silently disappeared and left white `surface` \
+            cards on a white page. If this view needs to sit ON the \
+            backdrop rather than BE it, use `AstroTokens.Color.surface` (or \
+            a `.glassEffect`) instead of a weakened `ground`:
+            \(offenders.joined(separator: "\n"))
+            """)
+    }
+
+    /// The other half of the rule: the backdrop must actually be painted
+    /// somewhere. The rule above only forbids a WEAK `ground` -- deleting
+    /// the paint entirely satisfies it perfectly, which is precisely what
+    /// Task 6 did (three sites, on the incorrect theory that a transparent
+    /// detail pane would show the window's own macOS 26 system glass; on
+    /// macOS that material is in the sidebar and toolbar, never in a plain
+    /// window's content area, so the pane fell through to a near-white
+    /// window and the whole layering went flat).
+    ///
+    /// This one deliberately IS specific to `V2RootView`, and that is not
+    /// the "list of names" antipattern: the rule this file settled on is
+    /// that the detail column is the SINGLE owner of the page backdrop
+    /// (`DetailHost` has 21 routes and only 8 go through
+    /// `WorkspacePage`/`WorkspaceTablePage`, so per-page backdrops would
+    /// cover a minority of the app). A single owner can only be pinned by
+    /// naming it. What would make this a bad gate is if the owner moved and
+    /// this test kept passing -- it cannot, because it asserts the exact
+    /// token paint that constitutes ownership.
+    @Test("The detail column still paints the opaque ground backdrop it owns")
+    func theDetailColumnPaintsTheOpaqueBackdrop() throws {
+        let source = Self.removingLineComments(try contents("Sources/AstroUI/App/V2RootView.swift"))
+        #expect(source.contains(".background(AstroTokens.Color.ground)"), """
+            V2RootView's detail column is the single owner of the page \
+            backdrop -- without it every route falls through to the window \
+            background (near-white in light appearance) and every `surface` \
+            card on every page goes white-on-white. If ownership moved, \
+            move this assertion with it rather than deleting it.
+            """)
+    }
+}
+
+/// Detects `AstroTokens.Color.ground` (or a bare `.ground`) with an
+/// `.opacity(...)` applied directly to it -- the shape Task 7b's rule
+/// forbids. Scans across line breaks, so wrapping the expression does not
+/// hide it.
+///
+/// A standalone `enum` for the same reason as `GlassTableGate` above: both
+/// synthetic-snippet tests and the real-tree scan call the same function,
+/// and a snippet is not a file under `Sources/AstroUI`.
+enum GroundOpacityGate {
+    /// 1-based line numbers (matching how a human reads the source) where
+    /// `ground` is weakened by an `.opacity(` applied to the token itself.
+    ///
+    /// The leading `(?<![A-Za-z0-9_])` is what keeps an identifier merely
+    /// ENDING in "ground" (`playground`, `foreground`) from matching, while
+    /// still allowing both the fully-qualified `AstroTokens.Color.ground`
+    /// and a bare leading-dot `.ground`.
+    static func offendingLines(in source: String) -> [Int] {
+        let pattern = try! NSRegularExpression(
+            pattern: #"(?<![A-Za-z0-9_])ground\s*\.\s*opacity\s*\("#
+        )
+        let nsRange = NSRange(source.startIndex..., in: source)
+        return pattern.matches(in: source, range: nsRange).compactMap { match in
+            guard let range = Range(match.range, in: source) else { return nil }
+            return source[source.startIndex..<range.lowerBound].filter { $0 == "\n" }.count + 1
+        }
+    }
 }
 
 /// Detects the one shape Task 6's plan explicitly forbids: a `Table`/`List`
