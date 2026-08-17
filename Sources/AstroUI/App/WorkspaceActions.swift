@@ -19,17 +19,17 @@ import SwiftUI
 /// `==` rather than made to always report "changed".
 public struct WorkspaceAction: Identifiable {
     public let id: String
-    public let title: String
+    public let title: LocalizedStringKey
     public let systemImage: String
-    public let help: String?
+    public let help: LocalizedStringKey?
     public let isDisabled: Bool
     private let action: () -> Void
 
     public init(
         id: String,
-        title: String,
+        title: LocalizedStringKey,
         systemImage: String,
-        help: String? = nil,
+        help: LocalizedStringKey? = nil,
         isDisabled: Bool = false,
         action: @escaping () -> Void
     ) {
@@ -63,14 +63,14 @@ extension WorkspaceAction: Equatable {
 /// compares everything except `action`.
 public struct WorkspaceMenuItem: Identifiable {
     public let id: String
-    public let title: String
+    public let title: LocalizedStringKey
     public let systemImage: String?
     public let isDisabled: Bool
     private let action: () -> Void
 
     public init(
         id: String,
-        title: String,
+        title: LocalizedStringKey,
         systemImage: String? = nil,
         isDisabled: Bool = false,
         action: @escaping () -> Void
@@ -104,18 +104,18 @@ extension WorkspaceMenuItem: Equatable {
 /// comparable like every other `WorkspaceActionItem` payload.
 public struct WorkspaceActionMenu: Identifiable {
     public let id: String
-    public let title: String
+    public let title: LocalizedStringKey
     public let systemImage: String?
-    public let help: String?
+    public let help: LocalizedStringKey?
     public let isDisabled: Bool
     public let items: [WorkspaceMenuItem]
     private let primaryAction: (() -> Void)?
 
     public init(
         id: String,
-        title: String,
+        title: LocalizedStringKey,
         systemImage: String? = nil,
-        help: String? = nil,
+        help: LocalizedStringKey? = nil,
         isDisabled: Bool = false,
         items: [WorkspaceMenuItem],
         primaryAction: (() -> Void)? = nil

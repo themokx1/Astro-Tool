@@ -711,4 +711,22 @@ struct V2PolishSurfaceTests {
         }
         #expect(offenders.isEmpty, "use AstroFormat instead -- a second format for the same unit is a second truth: \(offenders.joined(separator: ", "))")
     }
+
+    // MARK: (l) Task 16 -- workspace toolbar action titles must be translatable.
+
+    @Test("Workspace toolbar actions carry translatable titles, not verbatim Strings")
+    func workspaceActionTitlesAreLocalizable() throws {
+        // `WorkspaceAction`/`WorkspaceActionMenu`/`WorkspaceMenuItem` used to
+        // declare `title`/`help` as plain `String`, which routes SwiftUI's
+        // `Label(_:systemImage:)`/`Text(_:)` calls in `V2RootView` to their
+        // verbatim overload instead of the `LocalizedStringKey` one -- every
+        // toolbar button title in the app (Review, Health, Nights, Planning,
+        // Calibration, Archive) stayed English on a Hungarian interface. Same
+        // defect as `MetricCard.title`, one layer up in shared infrastructure.
+        let source = try contents("Sources/AstroUI/App/WorkspaceActions.swift")
+        #expect(!source.contains("public let title: String"),
+                "a String title routes SwiftUI to its verbatim overload and never localizes")
+        #expect(!source.contains("public let help: String?"),
+                "same for the tooltip")
+    }
 }

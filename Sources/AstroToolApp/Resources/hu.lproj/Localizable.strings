@@ -818,21 +818,44 @@
 "Reading the archive…" = "Az archívum beolvasása…";
 
 // ArchiveView.swift's toolbar actions (Task 10 prerequisite) -- "Check
-// Library", its tooltip, and its "Fast" menu item. These entries are added
-// for forward-compatibility, but do NOT yet take effect: `WorkspaceAction`/
+// Library", its tooltip, and its "Fast" menu item. `WorkspaceAction`/
 // `WorkspaceActionMenu`/`WorkspaceMenuItem` (Sources/AstroUI/App/
-// WorkspaceActions.swift) type `title`/`help` as plain `String`, so
-// `V2RootView`'s toolbar renders them through `Label`/`Text`/`.help`'s
+// WorkspaceActions.swift) used to type `title`/`help` as plain `String`, so
+// `V2RootView`'s toolbar rendered them through `Label`/`Text`/`.help`'s
 // verbatim `StringProtocol` overload, never the `LocalizedStringKey` one --
-// the same class of defect `MetricCard.title` was fixed for, but here it is
-// in shared, wave-spanning toolbar infrastructure (used by every workspace,
-// not just Archive) rather than a single Archive-local view, so fixing the
-// TYPE is out of this task's scope. Until `WorkspaceAction.title`/`.help`
-// and `WorkspaceMenuItem.title` become `LocalizedStringKey`, these three
-// strings render in English regardless of this entry existing.
+// the same class of defect `MetricCard.title` was fixed for, but in shared,
+// wave-spanning toolbar infrastructure (used by every workspace, not just
+// Archive) rather than a single Archive-local view. Task 16 (2026-08-16,
+// Archive Map wave) changed `title`/`help` to `LocalizedStringKey`, so these
+// three entries -- and every other workspace's toolbar title/tooltip added
+// below -- now actually take effect.
 "Check Library" = "Könyvtár ellenőrzése";
 "Read through the library for leftovers, duplicates, and structural problems" = "Nézd át a könyvtárat maradványokért, duplikátumokért és szerkezeti hibákért";
 "Fast (Skip Duplicate Scan)" = "Gyors (duplikátum-keresés kihagyása)";
+
+// The rest of Task 16's workspace toolbar action titles/tooltips --
+// `title:`/`help:` are labelled, non-first-positional arguments of
+// `WorkspaceAction`/`WorkspaceActionMenu`/`WorkspaceMenuItem`'s own
+// initializers (`id:` is first), so `scripts/extract-localizable-strings.swift`
+// (which only extracts a literal that is a construct's FIRST positional
+// argument) never sees them -- hand-added here, same reasoning as
+// `ArchiveClass.displayName`/`ProjectWorkflowPhase.displayLabel` above.
+// Some of these titles echo a string that already had an entry above for a
+// DIFFERENT call site (a plain `Button("Rate Frames", …)` in
+// `NightActionMenu`, a sheet's `Text("Verify Integrity")` in `HealthView`)
+// -- those keep the ellipsis this toolbar's own title carries ("Rate
+// Frames…", "Verify Integrity…"), which makes them distinct keys, so they
+// get their own entries instead of colliding with the ellipsis-less ones.
+"Run Audit" = "Audit futtatása";
+"Scan the library for calibration gaps, duplicates, and organization issues" = "Nézd át a könyvtárat kalibrációs hiányosságok, duplikátumok és rendszerezési problémák után";
+"Verify Integrity…" = "Integritás ellenőrzése…";
+"Re-hash indexed files and compare against their stored checksums" = "Számold újra az indexelt fájlok ellenőrzőösszegét, és vesd össze a tárolt értékekkel";
+"Open the frame-by-frame review workspace for this project" = "Nyisd meg a projekt képkocka-áttekintő munkaterét";
+"Inspect stacks, processed variants, and their provenance" = "Vizsgáld meg a stackeket, a feldolgozott változatokat és eredetüket";
+"Rate Frames…" = "Képkockák értékelése…";
+"Full Re-measure (Siril + native)" = "Teljes újramérés (Siril + natív)";
+"Native Only (no Siril)" = "Csak natív (Siril nélkül)";
+"Review Frames…" = "Képkockák áttekintése…";
 
 // LibraryWelcomeView.swift (Task 14, 2026-08-16 owner screenshot) -- the
 // access-problem sheet used to show `error.localizedDescription` (Swift's
