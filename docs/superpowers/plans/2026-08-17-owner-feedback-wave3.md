@@ -121,3 +121,30 @@ git commit -m "fix: let Insights use the width it has"
 **T1 először** — az a képernyő, amit minden indításnál lát, és az a hiba, ami a legrosszabbat állítja. Aztán **T2** (mért, rossz szám), **T3** (az én 1. hullámos hibám), majd T4, T5, T6.
 
 A **Liquid Glass nem ebben a hullámban van** — az a 2. hullám 6. taskja, még nem futott le. A tulajdonos helyesen látta, hogy nincs ott.
+
+---
+
+## Task 5b: A sor-műveletek legyenek olvashatók hover nélkül
+
+**Kiváltó ok:** a tulajdonos azt írta, „a sorok gombjain nincs tooltip, nem tudom mit csinálnak". Utánanézve **a tooltipek megvannak, és magyarul is** (`.help("Review frames")` → „Képkockák áttekintése"). A 4. task ügynöke ezért azt jelentette, hogy nincs mit javítani.
+
+**Technikailag igaz, gyakorlatilag nem válasz.** A `ProjectsView` névtelen oszlopa 58 pont széles, benne két címke nélküli SF Symbol (`checklist`, `square.stack.3d.up`). Hogy bármit megtudj róluk, rá kell mutatnod és **várnod** kell a rendszer tooltip-késleltetését. A tooltip nem felfedezhetőség — végszükség. Ha egy funkció csak azon keresztül létezik, akkor gyakorlatilag rejtve van, és a felhasználó panasza pontos, még ha az ok nem az volt is, aminek látszott.
+
+**Ez a tanulság általánosítható:** „már van rá tooltip" soha nem elég válasz arra, hogy „nem tudom, mit csinál".
+
+**Files:** `Sources/AstroUI/Features/Projects/ProjectsView.swift`, `Sources/AstroUI/Features/Nights/NightsView.swift`, `hu.lproj`
+
+- [ ] **Step 1: Válaszd az affordanciát, és indokold**
+
+Két védhető út van; válassz egyet, és írd le a kommentben, miért:
+- **Szöveges címke az ikon mellé** — szélesebb oszlop, de nulla felfedezési költség.
+- **Egyetlen `⋯` menügomb soronként** — keskeny marad, és a három pont mindenki számára ismert „itt vannak a műveletek" jel; a menü elemei már szövegesek.
+
+A második valószínűleg jobb, mert a sor-műveletek száma nőni fog (a jobbklikk-menüben ma három van, az ikonsorban kettő — **ez maga is zavaró: két különböző készlet ugyanarra a sorra**). Egy menü egyesíti őket.
+
+- [ ] **Step 2:** a jobbklikk-menü és a sor-menü **ugyanazt** a készletet adja. Ma nem ugyanazt adják, és ez önmagában hiba.
+- [ ] **Step 3:** a tooltipek maradjanak — csak ne ők legyenek az egyetlen út.
+
+```bash
+git commit -m "fix: make row actions legible without hovering"
+```
