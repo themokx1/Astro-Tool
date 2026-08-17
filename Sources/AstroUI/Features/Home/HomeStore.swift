@@ -64,6 +64,16 @@ public struct HomeSnapshot: Equatable, Sendable {
     public let nextProject: ProjectRecord?
     public let nextProjectIntegrationSeconds: Double
     public let tonightRecommendations: [HomeTonightRecommendation]
+    /// Task 1 (owner feedback wave 3): `true` when at least one active
+    /// (`.collecting`/`.planned`) project exists but every one of them
+    /// resolved to a `SkyVerdict` the app already knows means "cannot be
+    /// pointed at tonight" (a comet's stale capture-time coordinate, no
+    /// resolvable coordinate at all, an altitude/window that never clears
+    /// the bar) -- so `nextProject` is honestly `nil` rather than the least
+    /// bad of a set of unshootable candidates. `HomeView` uses this to tell
+    /// "no active project exists yet" apart from "one exists, but none of
+    /// them can be continued tonight".
+    public let hasActiveProjectsExcludedTonight: Bool
 
     public init(
         libraryName: String?,
@@ -72,7 +82,8 @@ public struct HomeSnapshot: Equatable, Sendable {
         nightCount: Int = 0,
         nextProject: ProjectRecord? = nil,
         nextProjectIntegrationSeconds: Double = 0,
-        tonightRecommendations: [HomeTonightRecommendation] = []
+        tonightRecommendations: [HomeTonightRecommendation] = [],
+        hasActiveProjectsExcludedTonight: Bool = false
     ) {
         self.libraryName = libraryName
         self.nightContext = nightContext
@@ -81,6 +92,7 @@ public struct HomeSnapshot: Equatable, Sendable {
         self.nextProject = nextProject
         self.nextProjectIntegrationSeconds = nextProjectIntegrationSeconds
         self.tonightRecommendations = tonightRecommendations
+        self.hasActiveProjectsExcludedTonight = hasActiveProjectsExcludedTonight
     }
 
     /// Neutral preview content: it conveys the shape of the workspace without
@@ -165,9 +177,41 @@ public final class HomeStore {
         projectsStore: ProjectsStore,
         nightCount: Int
     ) async {
+        let plans: [TargetPlan] = if let rootURL {
+            (try? await tonightProvider(rootURL)) ?? []
+        } else {
+            []
+        }
+        tonightPlans = plans
+
+        // Task 1 (owner feedback wave 3): `Planner.plan` -- this store's own
+        // `tonightProvider` -- already stamps every plan with a `SkyVerdict`
+        // (the exact same verdict vocabulary `DiscoveryPlanner.discover`
+        // shares for Planning, see `AstroCore/Sky/NightSweep.swift`). Look
+        // that verdict up by normalized target/display name so "least
+        // collected active project" never picks a project whose only target
+        // the app already knows it cannot point at tonight (a comet with a
+        // stale coordinate, in the owner's own report).
+        var verdictByNormalizedName: [String: String] = [:]
+        for plan in plans {
+            verdictByNormalizedName[Self.normalized(plan.target)] = plan.verdict
+            verdictByNormalizedName[Self.normalized(plan.displayName)] = plan.verdict
+        }
+        func isKnownUnshootableTonight(_ project: ProjectRecord) -> Bool {
+            // No verdict on record at all (no plans fetched, or this
+            // project's target has no matching plan yet) -- an unknown
+            // target must never be penalized for a judgment the engine
+            // never actually made.
+            guard let verdict = verdictByNormalizedName[Self.normalized(project.catalogID)]
+                ?? verdictByNormalizedName[Self.normalized(project.displayName)]
+            else { return false }
+            return !Self.isShootableTonight(verdict: verdict)
+        }
+
         let active = projectsStore.projects.filter { $0.phase == .collecting || $0.phase == .planned }
+        let continuable = active.filter { !isKnownUnshootableTonight($0) }
         var ranked: [(ProjectRecord, Double)] = []
-        for project in active {
+        for project in continuable {
             let integration = (try? await projectsStore.projectSnapshot(id: project.id)?.integrationSeconds) ?? 0
             ranked.append((project, integration))
         }
@@ -175,19 +219,25 @@ public final class HomeStore {
             if $0.1 != $1.1 { return $0.1 < $1.1 }
             return $0.0.catalogID < $1.0.catalogID
         }
-        let plans: [TargetPlan] = if let rootURL {
-            (try? await tonightProvider(rootURL)) ?? []
-        } else {
-            []
-        }
-        tonightPlans = plans
+        // Honest, not silent: distinguishes "no active project exists yet"
+        // (show the create-a-project prompt) from "one exists, but none of
+        // them can be continued tonight" (say so instead of staying quiet).
+        let hasActiveProjectsExcludedTonight = next == nil && !active.isEmpty
+
         let coverage: [CalibNeed] = if let rootURL {
             (try? await calibCoverageProvider(rootURL)) ?? []
         } else {
             []
         }
         calibShoppingItems = CalibShoppingList.build(coverage: coverage, plans: plans)
-        let recommendations = plans.prefix(8).map { plan in
+
+        // Task 1: a plan the shared `SkyVerdict` engine already flagged as
+        // unshootable tonight (comet stale coordinate, no coordinate, low
+        // altitude, or a visible window under half an hour) must never be
+        // presented as one of the "best" targets -- see
+        // `isShootableTonight`'s own doc for exactly which verdicts qualify.
+        let shootablePlans = plans.filter { Self.isShootableTonight(verdict: $0.verdict) }
+        let recommendations = shootablePlans.prefix(8).map { plan in
             HomeTonightRecommendation(
                 projectID: Self.projectID(for: plan, projects: projectsStore.projects),
                 target: plan.target,
@@ -217,8 +267,32 @@ public final class HomeStore {
             nightCount: nightCount,
             nextProject: next?.0,
             nextProjectIntegrationSeconds: next?.1 ?? 0,
-            tonightRecommendations: recommendations
+            tonightRecommendations: Array(recommendations),
+            hasActiveProjectsExcludedTonight: hasActiveProjectsExcludedTonight
         )
+    }
+
+    /// `true` for the `SkyVerdict` cases that mean "this target is genuinely
+    /// observable tonight, at least in principle" (a plain good night, or one
+    /// where only the Moon is a complication -- still worth pointing at).
+    /// `false` for every case the shared engine already uses to say the app
+    /// itself cannot back this target as a suggestion: no resolvable
+    /// coordinate, a comet's stale capture-time coordinate, an altitude that
+    /// never clears the imaging threshold, or a window open for under half
+    /// an hour. This is the exact same `SkyVerdict` vocabulary
+    /// `Planner.plan` (this store's own tonight provider) and
+    /// `DiscoveryPlanner.discover` (Planning's engine) both already emit --
+    /// see `AstroCore/Sky/NightSweep.swift` -- so filtering here rides on
+    /// the one shared classification instead of a second, Home-specific
+    /// predicate over raw altitude/coordinate values that could silently
+    /// drift from Planning's own rule the way this bug started.
+    static func isShootableTonight(verdict: String) -> Bool {
+        switch SkyVerdict.parse(verdict) {
+        case .goodTonight, .moonInterferes:
+            true
+        case .noCoordinates, .cometStaleCoordinate, .lowAltitude, .notVisibleTonight, .unrecognized:
+            false
+        }
     }
 
     public static func productionTonight(rootURL: URL) async throws -> [TargetPlan] {

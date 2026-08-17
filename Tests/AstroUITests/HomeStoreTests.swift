@@ -1,6 +1,6 @@
 @testable import AstroUI
 import AstroApplication
-import AstroCore
+@testable import AstroCore
 import Foundation
 import Testing
 
@@ -75,6 +75,139 @@ struct HomeStoreTests {
 
         #expect(store.snapshot.nextProject == lean)
         #expect(store.snapshot.nextProjectIntegrationSeconds == 30)
+    }
+
+    @Test("Best targets tonight never includes a comet, a coordinate-less target, or a low-altitude target")
+    func homeExcludesTargetsTheEngineKnowsAreUnshootable() async throws {
+        // Task 1 (owner feedback wave 3): `Planner.plan`/`DiscoveryPlanner.discover`
+        // share the exact same `SkyVerdict` engine and already stamp these
+        // three cases with an unambiguous, unusable verdict -- `HomeStore`
+        // must act on that verdict instead of blindly taking `prefix(8)`.
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(tonightProvider: { _ in
+            [
+                TargetPlan(
+                    target: "C2025_R3_Panstarrs", displayName: "C/2025 R3 (Panstarrs)",
+                    usableIntegrationSeconds: 1200,
+                    verdict: SkyVerdict.cometStaleCoordinate, score: 0.9
+                ),
+                TargetPlan(
+                    target: "IC4604_RhoOphiuchi", displayName: "IC 4604 Rho Ophiuchi",
+                    usableIntegrationSeconds: 600,
+                    verdict: SkyVerdict.noCoordinate, score: 0.7
+                ),
+                TargetPlan(
+                    target: "M42_Orion", displayName: "M 42 Orion (Orion)",
+                    usableIntegrationSeconds: 900, maxAltitudeDeg: 9,
+                    verdict: SkyVerdict.tooLow(9), score: 0.6
+                ),
+                TargetPlan(
+                    target: "IC_1396", displayName: "Elefántormány-köd",
+                    usableIntegrationSeconds: 7200, goalSeconds: 36_000,
+                    culminationLocal: "01:14", maxAltitudeDeg: 79,
+                    visibleWindowLocal: "22:10–03:36", visibleHours: 5.5,
+                    moonIlluminationPercent: 11, moonSeparationDeg: 87,
+                    verdict: SkyVerdict.good, score: 0.92
+                ),
+            ]
+        })
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 1)
+
+        #expect(store.snapshot.tonightRecommendations.count == 1)
+        #expect(store.snapshot.tonightRecommendations.first?.target == "IC_1396")
+    }
+
+    @Test("Best targets tonight is an honest empty list, not a padded one, when nothing shootable remains")
+    func homeTonightRecommendationsEmptyWhenEverythingIsUnshootable() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(tonightProvider: { _ in
+            [
+                TargetPlan(
+                    target: "C2025_R3_Panstarrs", displayName: "C/2025 R3 (Panstarrs)",
+                    usableIntegrationSeconds: 1200,
+                    verdict: SkyVerdict.cometStaleCoordinate, score: 0.9
+                ),
+            ]
+        })
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 1)
+
+        #expect(store.snapshot.tonightRecommendations.isEmpty)
+    }
+
+    @Test("Continue where it matters never recommends a project whose only target is unshootable tonight")
+    func continueWhereItMattersSkipsUnshootableProjects() async throws {
+        // The owner's exact complaint: a comet with a stale coordinate was
+        // surfaced as "least collected active project" with an Open Project
+        // button, even though it cannot meaningfully be continued.
+        let metadata = try MetadataStore.temporary()
+        let comet = ProjectRecord(
+            id: UUID(), catalogID: "C2025_R3_Panstarrs_Wide", displayName: "C/2025 R3 (Panstarrs_Wide)",
+            phase: .collecting
+        )
+        let good = ProjectRecord(id: UUID(), catalogID: "IC_1396", displayName: "Elefántormány-köd", phase: .collecting)
+        let night = NightRecord(id: UUID(), localDate: "2026-08-08", timeZoneID: "Europe/Budapest")
+        // The comet has FAR less collected time -- if the filter didn't run,
+        // "least collected" would still pick it over `good`.
+        let cometSeries = makeSeries(project: comet.id, night: night.id, exposure: 20)
+        let goodSeries = makeSeries(project: good.id, night: night.id, exposure: 300)
+        try await metadata.save(MetadataWriteBatch(projects: [comet, good], nights: [night], series: [cometSeries, goodSeries]))
+        try await metadata.save(MetadataWriteBatch(frameDecisions: [
+            FrameDecisionRecord(id: UUID(), seriesID: cometSeries.id, relativePath: "c.fit", verdict: .accepted, logicallyExcluded: false),
+            FrameDecisionRecord(id: UUID(), seriesID: goodSeries.id, relativePath: "g.fit", verdict: .accepted, logicallyExcluded: false),
+        ]))
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(tonightProvider: { _ in
+            [
+                TargetPlan(
+                    target: comet.catalogID, displayName: comet.displayName,
+                    usableIntegrationSeconds: 20, verdict: SkyVerdict.cometStaleCoordinate, score: 0.9
+                ),
+                TargetPlan(
+                    target: good.catalogID, displayName: good.displayName,
+                    usableIntegrationSeconds: 90_000, verdict: SkyVerdict.good, score: 0.4
+                ),
+            ]
+        })
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 1)
+
+        #expect(store.snapshot.nextProject == good)
+    }
+
+    @Test("Continue where it matters says so honestly when every active project is unshootable tonight")
+    func continueWhereItMattersReportsWhenNothingQualifies() async throws {
+        let metadata = try MetadataStore.temporary()
+        let comet = ProjectRecord(
+            id: UUID(), catalogID: "C2025_R3_Panstarrs_Wide", displayName: "C/2025 R3 (Panstarrs_Wide)",
+            phase: .collecting
+        )
+        try await metadata.save(comet)
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(tonightProvider: { _ in
+            [
+                TargetPlan(
+                    target: comet.catalogID, displayName: comet.displayName,
+                    usableIntegrationSeconds: 20, verdict: SkyVerdict.cometStaleCoordinate, score: 0.9
+                ),
+            ]
+        })
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 1)
+
+        #expect(store.snapshot.nextProject == nil)
+        #expect(store.snapshot.hasActiveProjectsExcludedTonight == true)
     }
 
     @Test("Home renders whatever the night-context provider reports, honestly, instead of a fixed fake dusk/dawn plot")

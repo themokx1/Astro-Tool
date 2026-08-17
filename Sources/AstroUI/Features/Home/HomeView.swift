@@ -71,6 +71,21 @@ public struct HomeView: View {
                         .accessibilityIdentifier("v2.home.open-project")
                     }
                     .padding(8)
+                } else if store.snapshot.hasActiveProjectsExcludedTonight {
+                    // Task 1 (owner feedback wave 3): the owner's own words --
+                    // a comet with a stale coordinate was recommended as
+                    // "least collected active project" with an Open Project
+                    // button, even though it can't meaningfully be continued.
+                    // "Least collected" must never mean "least collected
+                    // among things you cannot shoot" -- when nothing
+                    // qualifies, say so instead of picking the worst
+                    // candidate.
+                    ContentUnavailableView {
+                        Label("Nothing continuable tonight", systemImage: "moon.zzz")
+                    } description: {
+                        Text("Every active project's target is one the app already knows it cannot point at right now -- a comet with a stale coordinate, a missing coordinate, or an altitude too low tonight.")
+                    }
+                    .frame(minHeight: 140)
                 } else {
                     Text("Create a project to start planning your next night.")
                         .foregroundStyle(.secondary).padding(8)
@@ -122,10 +137,26 @@ public struct HomeView: View {
 
     @ViewBuilder private var planExportMenu: some View {
         if store.snapshot.tonightRecommendations.isEmpty {
-            Text("No astronomical recommendation is available yet. Add a site or scan FITS coordinates to enable tonight planning.")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8)
+            // Task 1 (owner feedback wave 3): after filtering out targets the
+            // shared `SkyVerdict` engine already knows can't be shot tonight
+            // (comet stale coordinate, no coordinate, low altitude), this
+            // library may legitimately have nothing left to recommend. An
+            // empty, explained list is the honest outcome here -- not a list
+            // padded with unusable rows, and not a silent blank box either.
+            ContentUnavailableView {
+                Label("Nothing to shoot tonight", systemImage: "sparkles.slash")
+            } description: {
+                // Two distinct `Text("literal")` branches, not a ternary of
+                // two literals -- a ternary infers `String`, not
+                // `LocalizedStringKey`, and would silently stop localizing
+                // (see `LocalizationCoverageTests.saveTargetLocalizesDespiteTernary`).
+                if store.snapshot.nightContext.isConfigured {
+                    Text("Every target in this library is one the app already knows it cannot point at right now -- a comet with a stale coordinate, a missing coordinate, or an altitude too low tonight.")
+                } else {
+                    Text("Add a site or scan FITS coordinates to enable tonight planning.")
+                }
+            }
+            .frame(minHeight: 160)
         } else {
             VStack(spacing: 0) {
                 ForEach(store.snapshot.tonightRecommendations) { recommendation in

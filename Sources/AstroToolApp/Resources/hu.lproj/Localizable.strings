@@ -271,7 +271,6 @@
 "No Sky Path Available" = "Nincs elérhető égi pálya";
 "No account or cloud upload is required." = "Nincs szükség fiókra vagy felhőbe történő feltöltésre.";
 "No action required" = "Nincs teendő";
-"No astronomical recommendation is available yet. Add a site or scan FITS coordinates to enable tonight planning." = "Még nincs elérhető csillagászati javaslat. Adj meg egy helyszínt, vagy olvass be FITS-koordinátákat a ma éjszakai tervezés engedélyezéséhez.";
 "No equipment metadata yet" = "Még nincs eszköz-metaadat";
 "No file has moved. Review the exact source and destination first." = "Egyetlen fájl sem lett áthelyezve. Először tekintsd át a pontos forrást és célt.";
 "No filter metadata yet" = "Még nincs szűrő-metaadat";
@@ -1060,3 +1059,15 @@
 "finished." = "befejeződött.";
 "ended unexpectedly." = "váratlanul véget ért.";
 "Note" = "Jegyzet";
+
+// Owner feedback wave 3, Task 1: Home's honest "nothing shootable tonight"
+// empty states, added directly here because both live inside an `if`/`else`
+// branch of a `description:` ViewBuilder closure that the extraction
+// script's pattern list does pick up as a plain `Text("literal")` call, but
+// are added by hand per this project's own "verify with the script, don't
+// assume" rule for any new user-facing string.
+"Nothing to shoot tonight" = "Ma éjjel nincs mit fotózni";
+"Every target in this library is one the app already knows it cannot point at right now -- a comet with a stale coordinate, a missing coordinate, or an altitude too low tonight." = "Ennek a könyvtárnak minden célpontjáról tudja az app, hogy most nem lehet rá irányítani -- elavult koordinátájú üstökös, hiányzó koordináta, vagy ma éjjel túl alacsony magasság.";
+"Add a site or scan FITS coordinates to enable tonight planning." = "Adj meg egy helyszínt, vagy olvass be FITS-koordinátákat a ma éjszakai tervezés engedélyezéséhez.";
+"Nothing continuable tonight" = "Ma éjjel semmi sem folytatható";
+"Every active project's target is one the app already knows it cannot point at right now -- a comet with a stale coordinate, a missing coordinate, or an altitude too low tonight." = "Minden aktív projekt célpontjáról tudja az app, hogy most nem lehet rá irányítani -- elavult koordinátájú üstökös, hiányzó koordináta, vagy ma éjjel túl alacsony magasság.";
