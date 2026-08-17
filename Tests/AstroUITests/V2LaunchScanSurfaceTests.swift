@@ -40,7 +40,15 @@ struct V2LaunchScanSurfaceTests {
     @Test("An access-problem phase is rendered in the main shell, with Retry and Choose Another Library actions")
     func accessProblemIsRenderedInTheShell() throws {
         let source = try contents("Sources/AstroUI/App/V2RootView.swift")
-        #expect(source.contains("onboardingStore.phase.accessProblemMessage"))
+        // Task 5b (2026-08-17): `LibraryAccessProblemBanner` used to carry a
+        // plain `message: String` built from `accessProblemMessage`, rendered
+        // through `Text(String)` -- an untranslated leak called out by name
+        // in `LibraryWelcomeView.accessProblemMessage`'s own doc comment. It
+        // now carries the raw `accessProblem` case and renders through
+        // `LibraryWelcomeView.accessProblemText(for:)`, the same
+        // translatable mapping that view's own sheet already uses.
+        #expect(source.contains("onboardingStore.phase.accessProblem"))
+        #expect(source.contains("LibraryWelcomeView.accessProblemText(for: problem)"))
         #expect(source.contains("struct LibraryAccessProblemBanner"))
         #expect(source.contains("v2.shell.access-problem"))
         #expect(source.contains("v2.shell.access-problem.retry"))

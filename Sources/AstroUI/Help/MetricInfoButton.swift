@@ -11,14 +11,16 @@ import SwiftUI
 /// that surface needing a reference to the window's `AppRouter`.
 public struct MetricInfoButton: View {
     public struct Metric {
-        public let title: String
-        public let explanation: String
-        /// Exact `GlossaryView.Term.name` to open from this metric row.
-        /// Kept optional so a plain-language metric does not grow a
-        /// misleading glossary link merely for visual symmetry.
+        public let title: LocalizedStringKey
+        public let explanation: LocalizedStringKey
+        /// Exact `GlossaryView.Term.name` to open from this metric row --
+        /// stays `String` (a lookup key into `GlossaryView.terms`, not
+        /// prose; e.g. "FWHM", "Field of view (FOV) / framing fit"). Kept
+        /// optional so a plain-language metric does not grow a misleading
+        /// glossary link merely for visual symmetry.
         public let glossaryTerm: String?
 
-        public init(title: String, explanation: String, glossaryTerm: String? = nil) {
+        public init(title: LocalizedStringKey, explanation: LocalizedStringKey, glossaryTerm: String? = nil) {
             self.title = title
             self.explanation = explanation
             self.glossaryTerm = glossaryTerm

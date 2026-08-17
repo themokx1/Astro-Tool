@@ -8,7 +8,7 @@ import SwiftUI
 /// rendering any SwiftUI at all.
 public struct BreadcrumbCrumb: Identifiable, Equatable {
     public let id: Int
-    public let title: String
+    public let title: LocalizedStringKey
     public let isCurrent: Bool
 }
 
@@ -27,9 +27,17 @@ public enum BreadcrumbModel {
         path: [ContentRoute],
         label: (ContentRoute) -> String
     ) -> [BreadcrumbCrumb] {
-        var crumbs = [BreadcrumbCrumb(id: -1, title: sectionTitle, isCurrent: path.isEmpty)]
+        // Task 5b (2026-08-17): `sectionTitle`/`label` stay plain `String`
+        // here -- `label` mixes real prose ("Home", "Frame Review") with
+        // genuine data (a project's own display name, a night's date), and
+        // there is no single type that is honestly both. `BreadcrumbCrumb`
+        // itself IS `LocalizedStringKey` now (its own doc comment covers
+        // why): wrapping each value at construction gives prose a real
+        // translation lookup and leaves data to fall back to its own
+        // verbatim text when (as expected) no matching key exists.
+        var crumbs = [BreadcrumbCrumb(id: -1, title: LocalizedStringKey(sectionTitle), isCurrent: path.isEmpty)]
         for (index, route) in path.enumerated() {
-            crumbs.append(BreadcrumbCrumb(id: index, title: label(route), isCurrent: index == path.count - 1))
+            crumbs.append(BreadcrumbCrumb(id: index, title: LocalizedStringKey(label(route)), isCurrent: index == path.count - 1))
         }
         return crumbs
     }

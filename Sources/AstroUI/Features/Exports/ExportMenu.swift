@@ -23,6 +23,18 @@ public enum ExportFileWriter {
 /// always reflects whatever's on screen at that moment rather than data
 /// captured when the menu was built.
 public enum ExportMenuItem: Identifiable {
+    // Task 5b (2026-08-17): `title` stays `String` on both cases -- it also
+    // builds the `NSSavePanel` window title and interpolated toast messages
+    // in `ExportMenu.performFile`/`performClipboard` below ("\(title)
+    // failed: ...", "\(title) copied to clipboard"), both of which need a
+    // plain `String` (a `LocalizedStringKey` cannot be interpolated into a
+    // `String` or assigned to `NSSavePanel.title`). The actual display
+    // defect -- this enum was one of the seven pre-existing instances, see
+    // `V2PolishSurfaceTests.uiTextIsNeverAPlainString`'s own doc comment --
+    // is fixed at `ExportMenu.body`'s two `Label(itemTitle, systemImage:)`
+    // call sites, which now wrap the value as `LocalizedStringKey(itemTitle)`
+    // to force the translating overload.
+    //
     /// A file export: `make` renders the content once the user picks this
     /// item, returning content, a suggested `NSSavePanel` filename, and any
     /// warning lines to surface afterward (e.g. an unmapped AstroBin filter)
@@ -76,7 +88,12 @@ extension ExportMenuItem: Equatable {
 /// additionally raises a detail alert, since a toast alone scrolls past too
 /// quickly for something the user needs to act on in Settings.
 public struct ExportMenu: View {
-    let title: String
+    // Task 5b (2026-08-17): fixed to `LocalizedStringKey` -- unlike
+    // `ExportMenuItem.title` below, this is the menu's OWN visible label
+    // ("Export", "Export Plan"), used only for display (`Label(title,
+    // systemImage:)` below), so it carries no other, `String`-only use that
+    // would block the type change.
+    let title: LocalizedStringKey
     let systemImage: String
     let items: [ExportMenuItem]
     let accessibilityID: String
@@ -84,7 +101,7 @@ public struct ExportMenu: View {
     @State private var pendingWarning: String?
 
     public init(
-        title: String = "Export",
+        title: LocalizedStringKey = "Export",
         systemImage: String = "square.and.arrow.up",
         items: [ExportMenuItem],
         accessibilityID: String
@@ -103,13 +120,16 @@ public struct ExportMenu: View {
                     Button {
                         performFile(title: itemTitle, contentType: contentType, make: make)
                     } label: {
-                        Label(itemTitle, systemImage: itemImage)
+                        // `LocalizedStringKey(itemTitle)` forces the
+                        // translating overload -- see `ExportMenuItem`'s own
+                        // doc comment for why `itemTitle` stays `String`.
+                        Label(LocalizedStringKey(itemTitle), systemImage: itemImage)
                     }
                 case let .clipboard(itemTitle, itemImage, make):
                     Button {
                         performClipboard(title: itemTitle, make: make)
                     } label: {
-                        Label(itemTitle, systemImage: itemImage)
+                        Label(LocalizedStringKey(itemTitle), systemImage: itemImage)
                     }
                 case .divider:
                     Divider()

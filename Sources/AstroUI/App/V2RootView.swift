@@ -340,7 +340,7 @@ private struct V2Shell: View {
         }
         .navigationSplitViewStyle(.balanced)
         .overlay {
-            // V2 UI/UX audit section 2.2: `phase.accessProblemMessage` used
+            // V2 UI/UX audit section 2.2: `phase.accessProblem` used
             // to be set by `OnboardingStore.openAndScan` and read by nobody
             // -- the onboarding sheet that WOULD render it
             // (`LibraryWelcomeView.accessProblem(_:)`) is never presented in
@@ -350,9 +350,9 @@ private struct V2Shell: View {
             // explanation and no way back in. This renders that same honest
             // state directly in the main window, with the same two recovery
             // actions the sheet's own version offers.
-            if let message = onboardingStore.phase.accessProblemMessage {
+            if let problem = onboardingStore.phase.accessProblem {
                 LibraryAccessProblemBanner(
-                    message: message,
+                    problem: problem,
                     retry: retryLibraryAccess,
                     chooseAnotherLibrary: presentOnboarding
                 )
@@ -879,9 +879,17 @@ private struct V2Sidebar: View {
     }
 
     private func sectionRow(_ section: PrimarySection) -> some View {
-        Label(section.title, systemImage: section.systemImage)
+        // Task 5b (2026-08-17): `section.title` stays `String` at its
+        // declaration (see `PrimarySection.title`'s own doc comment and
+        // `V2PolishSurfaceTests.uiPropertyAllowlist`'s entry for this file)
+        // because `BreadcrumbBar`'s `sectionTitle: String` also consumes it
+        // -- wrapping it here as `LocalizedStringKey` is what actually fixes
+        // the sidebar's own translation (previously routed through `Label`'s
+        // verbatim overload exactly like the other seven instances of this
+        // defect).
+        Label(LocalizedStringKey(section.title), systemImage: section.systemImage)
             .tag(section)
-            .accessibilityLabel(section.title)
+            .accessibilityLabel(LocalizedStringKey(section.title))
             .accessibilityIdentifier("v2.sidebar.\(section.rawValue)")
             .badge(badgeCount(for: section))
             .help(badgeHelp(for: section) ?? "")
@@ -1481,10 +1489,10 @@ private struct RoutePendingLoadView: View {
 }
 
 private struct V2EmptyDetail: View {
-    let title: String
-    let message: String
+    let title: LocalizedStringKey
+    let message: LocalizedStringKey
     let systemImage: String
-    let actionTitle: String
+    let actionTitle: LocalizedStringKey
     let action: () -> Void
     let accessibilityIdentifier: String
 
@@ -1512,7 +1520,16 @@ private struct V2EmptyDetail: View {
 /// `LibraryWelcomeView.accessProblem(_:)`'s own two recovery actions, minus
 /// its "Close" (there is no sheet here to dismiss).
 private struct LibraryAccessProblemBanner: View {
-    let message: String
+    // Task 5b (2026-08-17): used to be a plain `message: String` built from
+    // `OnboardingPhase.accessProblemMessage`, rendered through `Text(String)`
+    // -- the exact defect this task's gate exists to catch, called out by
+    // name in `LibraryWelcomeView.accessProblemMessage`'s own doc comment
+    // ("out of Task 14's file list and still renders this as an untranslated
+    // Text(String)"). Now carries the raw problem and reuses
+    // `LibraryWelcomeView.accessProblemText(for:)` -- the same translatable
+    // mapping that view's own sheet already uses -- instead of a second,
+    // untranslated copy of it.
+    let problem: LibraryAccessProblem
     let retry: () -> Void
     let chooseAnotherLibrary: () -> Void
 
@@ -1520,7 +1537,7 @@ private struct LibraryAccessProblemBanner: View {
         ContentUnavailableView {
             Label("Library access needs attention", systemImage: "folder.badge.questionmark")
         } description: {
-            Text(message)
+            LibraryWelcomeView.accessProblemText(for: problem)
         } actions: {
             Button("Retry", action: retry)
                 .buttonStyle(.borderedProminent)
@@ -1550,7 +1567,7 @@ private struct V2PresentationPlaceholder: View {
         .frame(minWidth: 420, minHeight: 260)
     }
 
-    private var title: String {
+    private var title: LocalizedStringKey {
         switch route {
         case .newProject: "New Project"
         case .newNight: "New Night"
@@ -1576,6 +1593,17 @@ private struct V2PresentationPlaceholder: View {
 }
 
 private extension PrimarySection {
+    // Task 5b (2026-08-17): stays `String`, not `LocalizedStringKey` --
+    // `BreadcrumbBar(sectionTitle:)` also consumes this value (via
+    // `router.primarySection.title` in `DetailHost.body` below) as a plain
+    // `String`, on purpose (see `BreadcrumbModel.crumbs`'s own doc comment:
+    // its `label` closure mixes real prose with genuine data, so the whole
+    // pipeline stays `String` and wraps as `LocalizedStringKey` only at
+    // `BreadcrumbCrumb` construction). The real display defect -- this was
+    // rendered through `Label`'s verbatim overload in the sidebar, one of
+    // the seven pre-existing instances of this class of bug -- is fixed at
+    // `sectionRow`'s two call sites above, which wrap this value as
+    // `LocalizedStringKey` explicitly.
     var title: String {
         switch self {
         case .home: "Home"

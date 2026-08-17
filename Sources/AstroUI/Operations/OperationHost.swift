@@ -20,6 +20,13 @@ public final class OperationHost {
     public struct ActiveOperation: Identifiable, Sendable, Equatable {
         public let id: UUID
         public let kind: OperationKind
+        // Task 5b (2026-08-17) classification: UNDECIDED -- see
+        // `V2PolishSurfaceTests.uiPropertyAllowlist`'s entry for this file.
+        // Type-safe to convert to `LocalizedStringKey` (read only for
+        // display), but every one of its 8 `run(kind:title:...)` call sites
+        // across the app is a labelled argument invisible to the extraction
+        // script and would need a hand-added hu.lproj entry -- flagged for a
+        // decision rather than folded into this task under time pressure.
         public let title: String
         public let cancellationPolicy: CancellationPolicy
         public var phase: OperationPhase
@@ -40,6 +47,11 @@ public final class OperationHost {
     public struct Toast: Identifiable, Sendable, Equatable {
         public let id: UUID
         public let level: ToastLevel
+        // Task 5b (2026-08-17) classification: UNDECIDED, same reasoning as
+        // `ActiveOperation.title` above, but for 25 `operationHost.notify(...)`
+        // call sites, several interpolating `error.localizedDescription`
+        // alongside literal English fragments -- a larger, riskier
+        // hand-translation effort. Flagged, not guessed at.
         public let message: String
         public let createdAt: Date
         public let expiresAt: Date
@@ -51,6 +63,9 @@ public final class OperationHost {
     public struct OutcomeRecord: Identifiable, Sendable, Equatable {
         public let id: UUID
         public let kind: OperationKind
+        // Task 5b (2026-08-17) classification: UNDECIDED, same as
+        // `ActiveOperation.title` above (this is the same caller-supplied
+        // operation name, kept around after the operation finishes).
         public let title: String
         public let phase: OperationPhase
         public let finishedAt: Date

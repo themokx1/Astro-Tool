@@ -879,3 +879,129 @@
 "AstroTool could not complete this action. Try again, or choose a different library." = "Az AstroTool nem tudta végrehajtani ezt a műveletet. Próbáld újra, vagy válassz másik könyvtárat.";
 "Choose Library Again…" = "Könyvtár újbóli kiválasztása…";
 "Choose a Different Library…" = "Másik könyvtár kiválasztása…";
+
+// WorkspaceComponents.swift/HealthView.swift (Task 5b, 2026-08-17) -- 
+// `WorkspacePage`/`WorkspaceTablePage`'s `subtitle` used to be `String`
+// (invisible to the extraction script: it is a labelled, non-first-
+// positional argument of a bespoke initializer, not one of the script's
+// covered constructs), so every workspace's page subtitle stayed English
+// regardless of the Hungarian pass. Hand-added, one per call site
+// (`NightsView`, `InsightsView`, `ProjectsView`, `SavedTargetsView`,
+// `CalibrationView`, `PlanningView`, `HealthView` x2 for its
+// `accessMode`-dependent ternary).
+"Review each observing night without losing its series boundaries." = "Nézd át az egyes éjszakákat úgy, hogy a sorozathatáraik ne vesszenek el.";
+"See what you photographed, how much signal you collected, and how your activity changes over time." = "Nézd meg, mit fotóztál, mennyi jelet gyűjtöttél, és hogyan alakul az aktivitásod idővel.";
+"One target, every night, series, stack, and result — kept together." = "Egy célpont, minden éjszaka, sorozat, stack és eredmény — egy helyen.";
+"Targets you've bookmarked from Planning, with your own notes." = "A Tervezésből könyvjelzőzött célpontjaid, a saját jegyzeteiddel.";
+"Master-dark inventory and per-session linking, applied only through WriteGuard." = "Master-dark leltár és session-enkénti linkelés, kizárólag a WriteGuardon keresztül alkalmazva.";
+"Choose a setup first, then compare honest framing and integration estimates." = "Először válassz felszerelést, majd hasonlítsd össze az őszinte kereteket és integrációs becsléseket.";
+"Calibration and integrity checks that never modify source files; write operations are enabled for actions elsewhere in this library." = "Kalibrációs és integritásellenőrzések, amelyek sosem módosítják a forrásfájlokat; az írási műveletek a könyvtár más pontjain elérhető műveletekhez engedélyezettek.";
+"Actionable calibration and integrity checks without changing source files." = "Cselekvésre alkalmas kalibrációs és integritásellenőrzések a forrásfájlok módosítása nélkül.";
+
+// V2RootView.swift's `breadcrumbLabel(for:)` (Task 5b) -- a `switch`
+// returning `String`, invisible to the extraction script even though
+// `BreadcrumbCrumb.title` is `LocalizedStringKey` now (see
+// `BreadcrumbModel.crumbs`'s own doc comment for why the pipeline stays
+// `String` and wraps at construction instead). Most of its cases already
+// had entries from other call sites (`Home`, `Projects`, `Nights`, ...);
+// these three did not.
+"Health" = "Állapot";
+"Frame Review" = "Képkocka-áttekintés";
+"Cleanup" = "Rendrakás";
+
+// V2RootView.swift's `V2EmptyDetail` (Task 5b) -- `title`/`message`/
+// `actionTitle` were plain `String` (labelled, non-first-positional
+// arguments of a bespoke initializer). `title` ("Frame Review") already
+// has an entry above (`breadcrumbLabel`'s own case); these two do not.
+"Frame review opens from a project's own \"Review Frames\" action -- a bare frame identifier alone can't be resolved back to its project." = "A képkocka-áttekintés egy projekt saját „Képkockák áttekintése” műveletéből nyílik meg -- egy önmagában álló képkocka-azonosítóból nem állapítható meg, melyik projekthez tartozik.";
+"Go to Projects" = "Ugrás a Projektekhez";
+
+// V2RootView.swift's `V2PresentationPlaceholder.title` (Task 5b) -- a
+// `switch` returning `String`, now `LocalizedStringKey`, invisible to the
+// extraction script either way. "New Project"/"Glossary"/"First Steps"
+// already had entries from other call sites; these four did not.
+"New Night" = "Új éjszaka";
+"Confirm Change" = "Módosítás megerősítése";
+"Settings" = "Beállítások";
+"Folder Structure" = "Mappaszerkezet";
+
+// SettingsStore.swift's `EquipmentFilterPassband.title` (Task 5b) -- a
+// `switch` returning `String`, kept `String` (see
+// `V2PolishSurfaceTests.uiPropertyAllowlist`'s entry: a `TableColumn`
+// sort key needs `Comparable`); its two `Text(...)`/`Picker` display call
+// sites in `V2SettingsView.swift`/`SeriesInspector.swift` wrap it as
+// `LocalizedStringKey` explicitly, which needs these entries to actually
+// translate.
+"Broadband" = "Szélessáv";
+"Dual-band" = "Kétsáv";
+"Narrowband" = "Keskenysáv";
+"Not specified" = "Nincs megadva";
+
+// ExportMenu.swift (Task 5b) -- `ExportMenu.title` (now
+// `LocalizedStringKey`) and `ExportMenuItem`'s per-case `title` (kept
+// `String` of necessity, wrapped as `LocalizedStringKey` at its two
+// render sites -- see `V2PolishSurfaceTests.uiPropertyAllowlist`'s entry
+// for this file). All labelled, non-first-positional arguments,
+// invisible to the extraction script either way. "Night Report…"
+// already had an entry from its own `NightWorkspaceView` call site.
+"Export" = "Exportálás";
+"Export Plan" = "Terv exportálása";
+"Plan CSV…" = "Terv CSV…";
+"Copy Plan" = "Terv másolása";
+"Copy Calibration Shopping List" = "Kalibrációs bevásárlólista másolása";
+"Stack List…" = "Stacklista…";
+"Acquisition (AstroBin CSV)…" = "Felvételek (AstroBin CSV)…";
+"Acquisition (CSV)…" = "Felvételek (CSV)…";
+"Acquisition (Markdown)…" = "Felvételek (Markdown)…";
+"Target Report…" = "Célpontjelentés…";
+"Stack List (Latest Night)…" = "Stacklista (legutóbbi éjszaka)…";
+
+// MetricInfoButton.swift (Task 5b) -- `Metric.title`/`explanation` were
+// plain `String` (now `LocalizedStringKey`), passed as labelled
+// arguments to a bespoke initializer at three call sites (`HomeView`,
+// `PlanningView`, `ReviewWorkspace`), invisible to the extraction
+// script. "Verdict"/"Focal length"/"Integration"/"Score"/"Roundness"/
+// "Background"/"Sat. %"/"Percentile" already had entries; "FWHM" is
+// deliberately left untranslated (see `GlossaryView`'s own convention --
+// technical vocabulary stays English), so only its own explanation gets
+// an entry here, not the title itself.
+"Culmination" = "Delelés";
+"Max altitude" = "Max. magasság";
+"Field of view (FOV)" = "Látómező (FOV)";
+"When the target crosses the meridian at its highest altitude this night -- usually the best time to capture it." = "Amikor a célpont ezen az éjszakán áthalad a delelőn, a legnagyobb magasságában -- általában ekkor a legjobb lefotózni.";
+"The target's highest point above the horizon tonight. A higher altitude means a shorter, clearer path through the atmosphere." = "A célpont legmagasabb pontja a horizont felett ma éjjel. A nagyobb magasság rövidebb, tisztább utat jelent a légkörön át.";
+"A short, honest summary of tonight's visibility for this target, combining its visible window and altitude." = "Rövid, őszinte összefoglaló a célpont ma éjjeli láthatóságáról, a látható időablakot és a magasságot együtt figyelembe véve.";
+"The area of sky your sensor and optics cover, in degrees wide by degrees tall." = "Az égbolt azon területe, amelyet a szenzorod és az optikád lefed, fokban megadva, szélesség × magasság szerint.";
+"The optical system's focal length in millimeters. A longer focal length gives a narrower, more magnified field of view." = "Az optikai rendszer fókusztávolsága milliméterben. A hosszabb fókusztávolság szűkebb, nagyobb nagyítású látómezőt ad.";
+"The estimated total exposure time needed for a clean result at this setup's framing and sky conditions." = "A becsült teljes expozíciós idő, amely tiszta eredményhez szükséges ennél a felszerelésnél, a keretezés és az égi viszonyok mellett.";
+"This library's overall quality ranking for the frame, combining FWHM, roundness, background, and saturation into one number. Higher is better. The outlier flag next to a low score uses this library's z-score threshold." = "A könyvtár átfogó minőségi rangsorolása a képkockára, amely az FWHM-et, a kerekséget, a hátteret és a telítettséget egyetlen számba sűríti. Minél nagyobb, annál jobb. Az alacsony pontszám melletti kiugró jelzés a könyvtár z-score küszöbét használja.";
+"Full Width at Half Maximum -- how sharp the stars are. A smaller value is a sharper frame." = "„Full Width at Half Maximum” -- milyen élesek a csillagok. A kisebb érték élesebb képkockát jelent.";
+"How far star shapes deviate from a perfect circle. A high value can mean coma, trailing, or a guiding error." = "Mennyire tér el a csillagok alakja a tökéletes körtől. A magas érték komát, elhúzódást vagy vezetési hibát jelezhet.";
+"The measured sky-background level for the frame, in ADU unless a sensor profile makes e⁻/s/″² available." = "A képkocka mért égi háttérszintje, ADU-ban, kivéve ha egy szenzorprofil elérhetővé teszi az e⁻/s/″² mértékegységet.";
+"The fraction of pixels at or near the sensor's saturation point -- a high value can mean an overexposed core or a bright satellite trail." = "A szenzor telítési pontján vagy annak közelében lévő pixelek aránya -- a magas érték túlexponált magot vagy fényes műholdnyomot jelezhet.";
+"How this frame's score compares to every other frame measured in this library." = "Hogyan viszonyul ennek a képkockának a pontszáma a könyvtárban mért összes többi képkockához.";
+
+// FirstStepsView.swift (Task 5b) -- `Step.title`/`reason`/`actionTitle`
+// were plain `String` (now `LocalizedStringKey`), found while auditing
+// this file's neighbor properties, not by the gate itself (`reason`
+// isn't in its word list -- see the gate's own "what this does not
+// catch" note). All six steps' three fields, hand-added since they are
+// a static array literal, invisible to the extraction script.
+"Choose your image library" = "Válaszd ki a képkönyvtáradat";
+"AstroTool builds a local, read-only index of your capture folder -- nothing in it is ever moved or modified." = "Az AstroTool egy helyi, csak olvasható indexet épít a felvételkészítő mappádról -- semmi nem kerül benne áthelyezésre vagy módosításra.";
+"Check Library Health" = "Nézd meg a könyvtár állapotát";
+"See calibration gaps, duplicate files, and audit findings before you head out for another night." = "Nézd át a kalibrációs hiányosságokat, a duplikátumokat és az audit-találatokat, mielőtt kimész egy újabb éjszakára.";
+"Review your captured frames" = "Tekintsd át a felvett képkockáidat";
+"Accept, reject, and score frames from a session, then see how each series measures up." = "Fogadj el, utasíts el és pontozz képkockákat egy session-ből, majd nézd meg, hogyan teljesít az egyes sorozatok.";
+"Plan your next clear night" = "Tervezd meg a következő tiszta éjszakádat";
+"Compare honest framing and integration-time estimates for upcoming targets before you commit a night to one." = "Hasonlítsd össze a közelgő célpontok őszinte keretezését és integrációs idő becslését, mielőtt egy éjszakát rááldozol egyre.";
+"Track your observing nights" = "Kövesd nyomon a megfigyelési éjszakáidat";
+"See duty cycle, triage state, and which nights still need a decision." = "Nézd meg a kihasználtságot, a triázsállapotot, és hogy mely éjszakák várnak még döntésre.";
+"Learn the vocabulary" = "Ismerd meg a szakszavakat";
+"Look up any unfamiliar term -- FWHM, Bortle, dither, and the rest -- any time." = "Nézz utána bármely ismeretlen kifejezésnek -- FWHM, Bortle, dither és a többi -- bármikor.";
+"Open Library" = "Könyvtár megnyitása";
+"Open Health" = "Állapot megnyitása";
+"Open Projects" = "Projektek megnyitása";
+"Open Planning" = "Tervezés megnyitása";
+"Open Nights" = "Éjszakák megnyitása";
+"Open Glossary" = "Szójegyzék megnyitása";

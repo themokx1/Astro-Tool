@@ -32,7 +32,7 @@ public struct SeriesInspector: View {
                     TextField("Manufacturer", text: $manufacturer)
                     TextField("Model", text: $model)
                     Picker("Passband", selection: $newFilterPassband) {
-                        ForEach(EquipmentFilterPassband.allCases, id: \.self) { Text($0.title).tag($0) }
+                        ForEach(EquipmentFilterPassband.allCases, id: \.self) { Text(LocalizedStringKey($0.title)).tag($0) }
                     }
                     if let filterError { Text(filterError).foregroundStyle(.red) }
                     Button("Save and Use") {

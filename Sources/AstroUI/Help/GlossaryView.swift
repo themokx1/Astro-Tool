@@ -19,6 +19,17 @@ public struct GlossaryView: View {
     @State private var searchText = ""
 
     public struct Term: Identifiable {
+        // Task 5b (2026-08-17) classification: DATA, by hand -- `name` is
+        // not in this gate's word list (`title`/`help`/`label`/`caption`/
+        // `subtitle`/`explanation`/`actionTitle`/`message`/`placeholder`),
+        // so `V2PolishSurfaceTests.uiTextIsNeverAPlainString` never sees it;
+        // flagged for manual review by this task's own plan anyway. A
+        // glossary term's `name` ("FWHM", "Bortle scale", "z-score", ...) IS
+        // the vocabulary itself -- see this file's own doc comment above
+        // ("translated to English rather than transliterated"). Localizing
+        // it would look the term up as a key instead of showing it, and
+        // would break `anchor`-based scroll-to-term links, which match on
+        // this exact string.
         public let name: String
         public let definition: String
         public var id: String { name }

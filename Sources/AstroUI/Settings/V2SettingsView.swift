@@ -399,7 +399,12 @@ private struct EquipmentEvaluationSettingsView: View {
                     TableColumn("Filter", value: \EquipmentFilter.manufacturer) { filter in
                         Text([filter.manufacturer, filter.model].filter { !$0.isEmpty }.joined(separator: " "))
                     }
-                    TableColumn("Passband", value: \EquipmentFilter.passband.title) { filter in Text(filter.passband.title) }
+                    // Task 5b (2026-08-17): `passband.title` stays `String`
+                    // (see `EquipmentFilterPassband.title`'s own doc comment)
+                    // because `TableColumn(value:)` needs a `Comparable` sort
+                    // key, which `LocalizedStringKey` isn't -- wrapped as
+                    // `LocalizedStringKey` only for the cell's own `Text`.
+                    TableColumn("Passband", value: \EquipmentFilter.passband.title) { filter in Text(LocalizedStringKey(filter.passband.title)) }
                 }
                 .onChange(of: sortOrder) { _, newValue in store.setSortOrder(newValue) }
                 // A `maxHeight` cap, not a `minHeight` floor: this table sits
@@ -441,7 +446,7 @@ private struct EquipmentEvaluationSettingsView: View {
                 TextField("Manufacturer, e.g. SVBONY", text: $manufacturer)
                 TextField("Model, e.g. SV220", text: $model)
                 Picker("Passband", selection: $passband) {
-                    ForEach(EquipmentFilterPassband.allCases, id: \.self) { Text($0.title).tag($0) }
+                    ForEach(EquipmentFilterPassband.allCases, id: \.self) { Text(LocalizedStringKey($0.title)).tag($0) }
                 }
                 if let errorMessage { Text(errorMessage).foregroundStyle(AstroTokens.Color.critical) }
                 Button("Add Filter") {

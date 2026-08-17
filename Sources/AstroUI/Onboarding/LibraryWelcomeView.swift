@@ -21,15 +21,24 @@ public enum OnboardingPhase: Equatable, Sendable {
         return nil
     }
 
-    /// Plain-string fallback, kept for callers that only want a message --
-    /// today that is `V2RootView`'s `LibraryAccessProblemBanner` (main-shell
-    /// restore failures), which is out of Task 14's file list and still
-    /// renders this as an untranslated `Text(String)`. `LibraryWelcomeView`
-    /// itself no longer reads this: it switches on the `.accessProblem`
-    /// payload directly so it can render a translatable `Text` and derive
-    /// its buttons from `recovery` (see `LibraryAccessProblem`).
+    /// Plain-string fallback -- Task 5b (2026-08-17) removed this property's
+    /// last reader (`V2RootView`'s `LibraryAccessProblemBanner`, which used
+    /// to render this as an untranslated `Text(String)`; it now reads
+    /// `accessProblem` below instead and builds a translatable `Text` via
+    /// `LibraryWelcomeView.accessProblemText(for:)`, the same helper this
+    /// view's own body uses). Kept for any future caller that genuinely only
+    /// wants a plain, non-translating string (a log line, a diagnostics
+    /// dump); `LibraryWelcomeView` itself never reads this.
     public var accessProblemMessage: String? {
         if case .accessProblem(let problem) = self { return problem.fallbackMessage }
+        return nil
+    }
+
+    /// The raw `.accessProblem` payload, for a caller that wants to render
+    /// its own translatable copy (see `accessProblemMessage`'s doc comment
+    /// for why the plain-string version is no longer enough).
+    public var accessProblem: LibraryAccessProblem? {
+        if case .accessProblem(let problem) = self { return problem }
         return nil
     }
 
@@ -793,7 +802,12 @@ public struct LibraryWelcomeView: View {
     /// any literal-first-argument call, even inside a `switch`) -- their
     /// `hu.lproj` entries were added because the extraction script's
     /// `--missing` reported them, not because they were invisible to it.
-    private static func accessProblemText(for problem: LibraryAccessProblem) -> Text {
+    ///
+    /// Internal rather than `private` as of Task 5b (2026-08-17):
+    /// `V2RootView`'s `LibraryAccessProblemBanner` (main-shell restore
+    /// failures) now reuses this instead of carrying its own second,
+    /// untranslated copy of the same mapping.
+    static func accessProblemText(for problem: LibraryAccessProblem) -> Text {
         switch problem {
         case .notDirectory:
             Text("Choose a folder that contains your image library. Individual files cannot be scanned as a library.")
@@ -804,7 +818,7 @@ public struct LibraryWelcomeView: View {
         }
     }
 
-    private static func accessProblemText(for error: AstroError) -> Text {
+    static func accessProblemText(for error: AstroError) -> Text {
         switch error {
         case .accessDenied(let path):
             Text("AstroTool is not allowed to read \(path).")

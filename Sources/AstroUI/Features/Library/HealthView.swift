@@ -63,7 +63,7 @@ public struct HealthView: View {
     /// enabled for the Calibration/Cleanup actions this page links to --
     /// exactly the gap the audit flagged between Health's old unconditional
     /// "Read only" claim and Calibration's honest "Writable" one click away.
-    private var subtitleText: String {
+    private var subtitleText: LocalizedStringKey {
         accessMode == .mutationEnabled
             ? "Calibration and integrity checks that never modify source files; write operations are enabled for actions elsewhere in this library."
             : "Actionable calibration and integrity checks without changing source files."

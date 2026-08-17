@@ -614,7 +614,7 @@ private struct FrameVerdictLabel: View {
         }
     }
 
-    private var label: String {
+    private var label: LocalizedStringKey {
         switch decision.verdict {
         case .accepted: "Accepted"
         case .rejected: "Rejected"

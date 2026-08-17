@@ -7,6 +7,13 @@ public enum EquipmentFilterPassband: String, Codable, CaseIterable, Sendable {
     case narrowband
     case unknown
 
+    // Task 5b (2026-08-17): stays `String`, not `LocalizedStringKey` --
+    // `V2SettingsView`'s equipment table sorts its "Passband" column via
+    // `TableColumn(value: \EquipmentFilter.passband.title)`, which requires
+    // a `Comparable` sort key; `LocalizedStringKey` isn't one. Every actual
+    // display call site (`V2SettingsView.swift`, `SeriesInspector.swift`)
+    // wraps this value as `LocalizedStringKey(...)` at the `Text(...)` call
+    // instead, so translation works despite the stored type staying `String`.
     public var title: String {
         switch self {
         case .broadband: "Broadband"

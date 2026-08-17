@@ -729,4 +729,212 @@ struct V2PolishSurfaceTests {
         #expect(!source.contains("public let help: String?"),
                 "same for the tooltip")
     }
+
+    // MARK: (m) Task 5b -- catch the whole CLASS of untranslatable UI text.
+
+    /// UI-facing property names that, typed `String`, route SwiftUI's
+    /// `Text`/`Label`/`Button`/`.help`/etc. overload resolution to the
+    /// verbatim `StringProtocol` initializer instead of the translating
+    /// `LocalizedStringKey` one -- it compiles, it renders, it passes every
+    /// test, and it never translates. `MetricCard.title`, `ArchiveClass.
+    /// displayName`, `ArchiveTargetRow.displayName`, `ArchiveStripView.
+    /// reclaimHelpText`, `LibraryWelcomeView.actionableMessage`,
+    /// `WorkspaceAction`/`Menu`/`MenuItem.title`+`help`, and `ExportMenu`/
+    /// `ExportMenuItem.title` are seven separate, individually-fixed
+    /// instances of this exact defect -- nothing stopped an eighth
+    /// (`ExportMenu`'s own leak survived the sixth fix, in the SAME wave).
+    /// This test holds the SHAPE -- any UI-named `String` property anywhere
+    /// in `AstroUI` -- not any one name.
+    private static let uiPropertyNames = [
+        "title", "help", "label", "caption", "subtitle",
+        "explanation", "actionTitle", "message", "placeholder",
+    ]
+
+    /// `"<file>#<propertyName>"` pairs deliberately left `String`, each with
+    /// a reason specific to that field. "Left as-is for now" is not a
+    /// reason -- an unjustified exemption is a permanent hole six months
+    /// later (this wave already found one: a Task 2b gate exemption
+    /// justified by an audit that had finished a day earlier). A reason of
+    /// "UNDECIDED" is honest, not a loophole: it means a human still needs
+    /// to make this call -- see Task 5b's own report for which ones and why.
+    private static let uiPropertyAllowlist: [String: String] = [
+        "Sources/AstroUI/Features/Workspace/WorkspaceComponents.swift#title":
+            """
+            DEAD, not data: WorkspacePage/WorkspaceTablePage's own `title` is \
+            stored and supplied by all 7 call sites, but neither type's `body` \
+            ever reads it -- only `subtitle` renders (a 2026-08-14 audit \
+            removed the redundant eyebrow/title triple-labelling; see the \
+            comment above each `body`). The on-screen navigation title comes \
+            from each call site's own separate, already-`LocalizedStringKey` \
+            `.navigationTitle(...)` literal. Translating a field nobody draws \
+            would be theater; reported as dead in Task 5b's report instead.
+            """,
+        "Sources/AstroUI/Features/Exports/ExportMenu.swift#title":
+            """
+            DATA, of necessity: this entry covers `ExportMenuItem`'s own \
+            per-case `title` (the `.file`/`.clipboard` associated value), NOT \
+            `ExportMenu`'s own `title` (that one -- the menu's visible label, \
+            used only for display -- IS `LocalizedStringKey` now). \
+            `ExportMenuItem.title` also builds the `NSSavePanel` window title \
+            and interpolated toast messages ("\\(title) failed: ...", \
+            "\\(title) copied to clipboard") in `performFile`/`performClipboard` \
+            -- both require a plain `String`; a `LocalizedStringKey` cannot be \
+            interpolated into one or assigned to `NSSavePanel.title`. The real \
+            display defect is fixed at its two render sites in `ExportMenu.body`, \
+            which now force the translating overload with \
+            `Label(LocalizedStringKey(itemTitle), systemImage:)` -- translation \
+            works despite the stored type staying `String`.
+            """,
+        "Sources/AstroUI/Features/Search/GlobalSearchStore.swift#title":
+            """
+            DATA: a search result's `title` is the underlying record's own \
+            display name/date/filename (a project's `displayName`, a night's \
+            `date`, a file's last path component, a note's "key: value", a \
+            result's software name) -- never authored prose. Routing it \
+            through `LocalizedStringKey` would look up a target's folder name \
+            or a capture date as if it were a translation key.
+            """,
+        "Sources/AstroUI/Features/Search/GlobalSearchStore.swift#subtitle":
+            """
+            UNDECIDED: `subtitle` mixes a literal English category word \
+            ("Project", "Night", "Series", "File", "Note", "Result") with \
+            interpolated dynamic data (catalog IDs, dates, byte counts) built \
+            by string interpolation at 6 call sites inside `search(_:...)`, \
+            e.g. "Project \\u{b7} \\(catalogID) \\u{b7} \\(phase)". The \
+            category word IS real prose that should translate; the property \
+            as a whole is neither pure data nor a clean `LocalizedStringKey` \
+            conversion (that would need 6 new hand-written format-string \
+            hu.lproj entries and touches this store's `Sendable`/`Equatable` \
+            conformances). Left here rather than guessed at -- see Task 5b's \
+            report.
+            """,
+        "Sources/AstroUI/Operations/OperationHost.swift#title":
+            """
+            UNDECIDED: `ActiveOperation.title`/`OutcomeRecord.title` are \
+            caller-supplied operation names from 8 `run(kind:title:...)` call \
+            sites across the app, some literal ("Undoing conversion"), some \
+            interpolated ("Rating frames \\u{2014} \\(label)"). Converting to \
+            `LocalizedStringKey` is type-safe (both are read only for \
+            display, in `OperationStatusView`), but every one of those 8 call \
+            sites is a labelled, non-first-positional argument invisible to \
+            the extraction script, so each needs a hand-added hu.lproj entry \
+            -- a bounded but separate piece of work. Left here rather than \
+            folded in under time pressure -- see Task 5b's report.
+            """,
+        "Sources/AstroUI/Operations/OperationHost.swift#message":
+            """
+            UNDECIDED: same reasoning as this file's `title` entry, but for \
+            `Toast.message` -- 25 `operationHost.notify(...)` call sites \
+            across the app, several interpolating `error.localizedDescription` \
+            (not itself guaranteed to be stable, translatable text) alongside \
+            literal English fragments. Type-safe to convert (display-only), \
+            but a larger, riskier hand-translation effort than this task's \
+            other fixes. Flagged, not guessed at -- see Task 5b's report.
+            """,
+        "Sources/AstroUI/App/V2RootView.swift#title":
+            """
+            DATA, of necessity: covers `PrimarySection.title` (a `private \
+            extension` in this file) -- kept `String` because \
+            `BreadcrumbBar`'s own `sectionTitle: String` also consumes it \
+            (via `router.primarySection.title`), and `BreadcrumbModel.crumbs` \
+            deliberately keeps that whole pipeline `String` (see its own doc \
+            comment: its `label` closure mixes real prose with genuine data, \
+            so there is no single honestly-typed choice). The actual sidebar \
+            display defect -- `Label`/`accessibilityLabel` previously took \
+            this value verbatim, one of the seven pre-existing instances of \
+            this class of bug -- is fixed at `sectionRow`'s two call sites, \
+            which wrap it as `LocalizedStringKey` explicitly. (`V2EmptyDetail` \
+            and `V2PresentationPlaceholder`'s own `title` properties, earlier \
+            in this same file, ARE `LocalizedStringKey` now; this entry \
+            covers only `PrimarySection.title`.)
+            """,
+        "Sources/AstroUI/Settings/SettingsStore.swift#title":
+            """
+            DATA, of necessity: `EquipmentFilterPassband.title` is kept \
+            `String` because `V2SettingsView`'s equipment table sorts its \
+            "Passband" column via `TableColumn(value: \\EquipmentFilter.\
+            passband.title)`, which requires a `Comparable` sort key -- \
+            `LocalizedStringKey` isn't one. Every actual display call site \
+            (`V2SettingsView.swift`, `SeriesInspector.swift`) wraps this \
+            value as `LocalizedStringKey(...)` at its own `Text(...)`, so \
+            translation works despite the stored type staying `String`.
+            """,
+    ]
+
+    @Test("No user-facing text in AstroUI is typed as String")
+    func uiTextIsNeverAPlainString() throws {
+        let namePattern = Self.uiPropertyNames.joined(separator: "|")
+        // Stored/computed property declarations, e.g. `let title: String` or
+        // `public var help: String?`.
+        let propertyRegex = try NSRegularExpression(
+            pattern: #"\b(?:let|var)\s+(\#(namePattern))\s*:\s*String\??"#
+        )
+        // A SINGLE-LINE enum case associated value, e.g.
+        // `case clipboard(title: String, ...)`. Deliberately does not track
+        // paren balance across lines -- see this test's own "does not catch"
+        // note below for what that misses.
+        let enumCaseRegex = try NSRegularExpression(
+            pattern: #"\bcase\s+[A-Za-z_][A-Za-z0-9_]*\(.*\b(\#(namePattern))\s*:\s*String\??"#
+        )
+
+        var offenders: [String] = []
+        for file in try swiftFiles(under: "Sources/AstroUI") {
+            let source = Self.removingLineComments(try contents(file))
+            for (offset, line) in source.components(separatedBy: "\n").enumerated() {
+                let lineNumber = offset + 1
+                let nsRange = NSRange(line.startIndex..<line.endIndex, in: line)
+                for regex in [propertyRegex, enumCaseRegex] {
+                    guard let match = regex.firstMatch(in: line, range: nsRange),
+                          let nameRange = Range(match.range(at: 1), in: line)
+                    else { continue }
+                    let name = String(line[nameRange])
+                    if Self.uiPropertyAllowlist["\(file)#\(name)"] != nil { continue }
+                    offenders.append("\(file):\(lineNumber): `\(name)` is `String`")
+                    break
+                }
+            }
+        }
+
+        #expect(offenders.isEmpty, """
+            \(offenders.count) UI-named String propert(y/ies) in AstroUI will \
+            never localize -- a plain String selects SwiftUI's verbatim \
+            overload, so it compiles, renders, and passes every test without \
+            ever translating (see this test's own doc comment for the 7 \
+            instances that already shipped this way). Change the type to \
+            LocalizedStringKey, or -- ONLY if the value is genuinely data, a \
+            target name, a file path, a catalog designation -- add \
+            "<file>#<propertyName>" to uiPropertyAllowlist above with a \
+            reason specific to that field:
+            \(offenders.joined(separator: "\n"))
+            """)
+    }
+
+    // What this gate does NOT catch, by construction:
+    // - A property whose UI-facing name isn't one of `uiPropertyNames` above
+    //   (this task found two: `FirstStepsView.Step.reason`, fixed anyway
+    //   since it sat right next to `title`/`actionTitle` in the same struct,
+    //   and `GlossaryView.Term.name`, classified as data by hand). The list
+    //   is a heuristic, not a type system -- a ninth instance under a tenth
+    //   name is still possible.
+    // - An enum case's associated value declared across MULTIPLE lines
+    //   (`enumCaseRegex` only matches a single source line) -- e.g.
+    //   `ExportMenuItem.file(title: String, ...)` itself spans lines and is
+    //   invisible to this gate; only its single-line `.clipboard` sibling is
+    //   ever actually caught by the mechanism. Both cases share one
+    //   allowlist entry today because both are handled the same way at the
+    //   call site, but a future multi-line-only enum case with no
+    //   single-line sibling would slip through entirely.
+    // - Any file outside `Sources/AstroUI` (a `String`-typed UI property in
+    //   `AstroToolApp` or `AstroApplication` is out of this gate's scope).
+    // - A property already typed `LocalizedStringKey` but constructed from a
+    //   raw runtime `String` via `LocalizedStringKey(someValue)` at a
+    //   DIFFERENT, non-declaring call site -- this gate reads declarations,
+    //   not every construction call site, so it cannot tell a deliberate
+    //   "wrap a known-safe value as a lookup key" conversion (this task adds
+    //   several) from an accidental one.
+    // - Two DIFFERENT enum types in the same file sharing both a property
+    //   name and an allowlist reason -- the allowlist key is `file#name`,
+    //   not `file#type#name`, so it cannot distinguish them. Not a problem
+    //   for anything in this file today, but a real limitation of the key
+    //   shape if it ever comes up.
 }

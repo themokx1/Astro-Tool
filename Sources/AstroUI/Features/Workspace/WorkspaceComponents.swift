@@ -2,15 +2,23 @@ import AstroApplication
 import SwiftUI
 
 struct WorkspacePage<Content: View>: View {
+    // Task 5b (2026-08-17): `title` is stored and supplied by every one of
+    // this type's 7 call sites, but never read by `body` below -- only
+    // `subtitle` renders (see its own doc comment). Left `String` on
+    // purpose (see `V2PolishSurfaceTests.uiPropertyAllowlist`'s entry for
+    // this file/name): it is dead, not untranslated, and translating a
+    // field nobody draws would be theater. `eyebrow` is the same story, one
+    // property over -- not gated (its name isn't in `uiPropertyNames`), but
+    // just as dead.
     let eyebrow: String
     let title: String
-    let subtitle: String
+    let subtitle: LocalizedStringKey
     @ViewBuilder let content: Content
 
     init(
         eyebrow: String,
         title: String,
-        subtitle: String,
+        subtitle: LocalizedStringKey,
         @ViewBuilder content: () -> Content
     ) {
         self.eyebrow = eyebrow
@@ -63,9 +71,11 @@ struct WorkspacePage<Content: View>: View {
 /// full available width, since a `Table` benefits from the extra room for
 /// its columns.
 struct WorkspaceTablePage<Toolbar: View, TableContent: View, Footer: View>: View {
+    // Task 5b (2026-08-17): same dead-field story as `WorkspacePage.title`
+    // above -- stored, supplied by every call site, never read by `body`.
     let eyebrow: String
     let title: String
-    let subtitle: String
+    let subtitle: LocalizedStringKey
     @ViewBuilder let toolbar: Toolbar
     @ViewBuilder let table: TableContent
     @ViewBuilder let footer: Footer
@@ -73,7 +83,7 @@ struct WorkspaceTablePage<Toolbar: View, TableContent: View, Footer: View>: View
     init(
         eyebrow: String,
         title: String,
-        subtitle: String,
+        subtitle: LocalizedStringKey,
         @ViewBuilder toolbar: () -> Toolbar,
         @ViewBuilder table: () -> TableContent,
         @ViewBuilder footer: () -> Footer
@@ -113,7 +123,7 @@ extension WorkspaceTablePage where Footer == EmptyView {
     init(
         eyebrow: String,
         title: String,
-        subtitle: String,
+        subtitle: LocalizedStringKey,
         @ViewBuilder toolbar: () -> Toolbar,
         @ViewBuilder table: () -> TableContent
     ) {

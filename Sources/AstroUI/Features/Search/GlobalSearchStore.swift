@@ -16,6 +16,12 @@ public struct GlobalSearchResult: Identifiable, Equatable, Sendable {
     public var id: String { "\(kind.rawValue)|\(objectID?.uuidString ?? locator ?? title)" }
     public let kind: GlobalSearchResultKind
     public let objectID: UUID?
+    // Task 5b (2026-08-17) classification -- see
+    // `V2PolishSurfaceTests.uiPropertyAllowlist`'s entries for this file:
+    // `title` is DATA (the underlying record's own name/date/filename);
+    // `subtitle` is UNDECIDED (mixes a literal category word with
+    // interpolated data at 6 call sites in `search(_:...)` below -- flagged
+    // for a decision, not guessed at).
     public let title: String
     public let subtitle: String
     public let locator: String?
