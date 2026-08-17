@@ -140,6 +140,39 @@ private func makeTempRoot() throws -> URL {
     }
 }
 
+/// W3-10: V2's "New Session" sheet previews the exact paths a create will
+/// produce via `WriteGuard.sessionTreeRelativePaths` BEFORE the user
+/// confirms -- this pins that, for tricky catalog/name inputs (a dash-form
+/// designation, an apostrophe in the name, a custom non-catalog name), that
+/// preview list is exactly the set of `sessions`/`stacks`/`processed`
+/// directories and the README file `SessionCreator.create` actually
+/// produces, so the two can never silently drift apart. Deliberately checks
+/// as SETS (`Set(... ) == Set(...)`), not ordered arrays, since ordering is
+/// an implementation detail neither side promises to match the other on.
+@Test(arguments: [
+    ("IC 1396", "Elephant's Trunk Nebula", "2026-08-11"),
+    ("Sh2", "101", "2026-08-12"),
+    ("", "My Custom Target!!", "2026-08-13"),
+])
+func previewedRelativePathsMatchWhatSessionCreatorActuallyCreates(
+    catalogRaw: String, nameRaw: String, date: String
+) throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let result = try SessionCreator.create(root: root, catalogRaw: catalogRaw, nameRaw: nameRaw, date: date)
+
+    let previewedRelativePaths = try WriteGuard.sessionTreeRelativePaths(target: result.targetFolder, dateDir: date)
+    let previewedURLs = Set(previewedRelativePaths.map { root.appendingPathComponent($0).standardizedFileURL })
+
+    let calibBase = root.appendingPathComponent("calibration_library", isDirectory: true).standardizedFileURL.path
+    let actualSessionScopedURLs = Set(result.createdURLs.map(\.standardizedFileURL).filter {
+        !$0.path.hasPrefix(calibBase + "/")
+    })
+
+    #expect(previewedURLs == actualSessionScopedURLs)
+}
+
 @Test func sessionCreatorThrowsInvalidInputForNonCanonicalDate() throws {
     let root = try makeTempRoot()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -152,6 +185,31 @@ private func makeTempRoot() throws -> URL {
     } catch {
         Issue.record("expected AstroError.invalidInput, got \(error)")
     }
+}
+
+/// W3-10: previews the exact capture-tree paths `CaptureManager.create`
+/// will produce -- pins `WriteGuard.captureTreeRelativePaths` against what
+/// `CaptureManager.create` (called directly, the "add a second/third
+/// capture to an already-existing session" path) actually creates, so the
+/// two can never silently drift.
+@Test func previewedCaptureRelativePathsMatchWhatCaptureManagerActuallyCreates() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let db = try Database(path: ":memory:")
+    _ = try SessionCreator.create(root: root, catalogRaw: "M1", nameRaw: "Crab Nebula", date: "2026-08-11")
+
+    let draft = CaptureGroupDraft(
+        slug: "sv220-nb", displayName: "SV220 dual-band", sensorMode: .osc, signalMode: .dualBand,
+        filterManufacturer: "SVBONY", filterModel: "SV220"
+    )
+    let result = try CaptureManager.create(root: root, db: db, target: "M1_Crab_Nebula", date: "2026-08-11", draft: draft)
+
+    let previewedRelativePaths = try WriteGuard.captureTreeRelativePaths(
+        target: "M1_Crab_Nebula", dateDir: "2026-08-11", slug: "sv220-nb"
+    )
+    let previewedURLs = Set(previewedRelativePaths.map { root.appendingPathComponent($0).standardizedFileURL })
+    let actualURLs = Set(result.createdURLs.map(\.standardizedFileURL))
+    #expect(previewedURLs == actualURLs)
 }
 
 @Test func sessionCreatorCanAddAndPersistAnOptionalInitialCapture() throws {

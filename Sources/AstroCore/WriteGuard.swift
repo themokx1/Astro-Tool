@@ -51,6 +51,34 @@ public struct WriteGuard: Sendable {
     /// overwrites one; the sibling `stacks`/`processed`/
     /// `calibration_library` directories are ensured with mkdir -p semantics
     /// and are never themselves treated as a conflict.
+    /// The exact root-relative paths `createSessionTree(target:dateDir:
+    /// readme:)` creates for THIS session -- in the same left-to-right order,
+    /// computed with no filesystem access at all. Exists so a preview (V2's
+    /// "New Session" sheet) can show precisely what the real call below will
+    /// do before it runs, without a second hand-written copy of this list
+    /// that could silently drift from the real one -- `SessionCreatorTests
+    /// .previewedRelativePathsMatchWhatSessionCreatorActuallyCreates` pins
+    /// exactly that. Deliberately excludes `calibration_library/{darks,
+    /// flats,biases}`: those three directories are shared library
+    /// scaffolding `createSessionTree` ensures with mkdir-p semantics on
+    /// EVERY session creation (present whether or not this particular call
+    /// is what first created them), not something that belongs to this one
+    /// session -- a preview of "what will be created for this session"
+    /// should not claim ownership of a shared directory some earlier session
+    /// may already depend on.
+    public static func sessionTreeRelativePaths(target: String, dateDir: String) throws -> [String] {
+        try Self.validatePathComponent(target)
+        try Self.validatePathComponent(dateDir)
+        var paths: [String] = []
+        for sub in ["lights", "flats", "darks", "biases"] {
+            paths.append("sessions/\(target)/\(dateDir)/\(sub)")
+        }
+        paths.append("sessions/\(target)/\(dateDir)/README.txt")
+        paths.append("stacks/\(target)/\(dateDir)")
+        paths.append("processed/\(target)/\(dateDir)")
+        return paths
+    }
+
     @discardableResult
     public func createSessionTree(
         target: String,
@@ -107,6 +135,29 @@ public struct WriteGuard: Sendable {
         }
 
         return created
+    }
+
+    /// The exact root-relative paths `createCaptureTree(target:dateDir:
+    /// slug:)` creates for THIS capture -- same no-filesystem-access,
+    /// same-order-as-the-real-call shape as `sessionTreeRelativePaths`
+    /// above, and for the same reason: a preview (V2's "New Session"/"Add
+    /// Capture" sheet) can show exactly what the real call below will do,
+    /// with no second hand-written copy of the list to drift from it.
+    /// Deliberately excludes the `sessions/<target>/<date>/captures/<slug>`
+    /// wrapper directory itself and its `captures` parent -- like
+    /// `createCaptureTree`'s own returned URLs, this lists only the six
+    /// actual leaf destinations it creates.
+    public static func captureTreeRelativePaths(target: String, dateDir: String, slug: String) throws -> [String] {
+        try Self.validatePathComponent(target)
+        try Self.validatePathComponent(dateDir)
+        try Self.validatePathComponent(slug)
+        var paths: [String] = []
+        for sub in ["lights", "flats", "darks", "biases"] {
+            paths.append("sessions/\(target)/\(dateDir)/captures/\(slug)/\(sub)")
+        }
+        paths.append("stacks/\(target)/\(dateDir)/\(slug)")
+        paths.append("processed/\(target)/\(dateDir)/\(slug)")
+        return paths
     }
 
     /// Adds one canonical capture tree below an already existing exact
