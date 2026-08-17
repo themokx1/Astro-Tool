@@ -229,40 +229,58 @@ Commit: `fix: localize every workspace toolbar action title`
 
 ---
 
-## Task 6: Liquid Glass — a keretre, nem a tartalomra
+## Task 6: Liquid Glass — lebegő panelek, üveg kártyák
 
-**Egy szabály:** az üveg a keret, nem a tartalom. Olvasandó szöveg vagy adatsáv alatt **tilos** — a kontraszt nem tárgyalható.
+**A tulajdonos döntése (2026-08-17), a korábbi terv felülírása.** Az eredeti szöveg azt mondta: „az üveg a keret, nem a tartalom", és a tartalmi kártyákat tömör felületen hagyta. Megkérdeztem, mert a „liquid glasst sem látok sehol" visszajelzés után tudni akartam, mennyit vár — és **többet kért**: lebegő panelek, üveg kártyák.
 
-**Files:**
-- Modify: `Sources/AstroUI/App/V2RootView.swift` (shell), `Sources/AstroUI/Features/Archive/ArchiveView.swift`
-- Modify: `Sources/AstroUI/Features/Workspace/WorkspaceComponents.swift`
-- Test: `Tests/AstroUITests/V2PolishSurfaceTests.swift`
+Ez tehát nem mulasztás pótlása, hanem irányváltás. A visszafogottság indoka viszont **valós marad**, ezért nem törlöm, hanem korlátozom: üveg alatt a sűrű adat olvashatatlan. A megoldás nem az, hogy kevesebb üveg legyen, hanem hogy **az üveg a tartót kapja, a sűrű tartalom pedig tömör belső felületen üljön benne**.
 
-Az SDK 26.5-ben ellenőrzött, létező API-k: `glassEffect(_:in:)`, `Glass.regular/.clear/.identity`, `.tint(_:)`, `.interactive(_:)`, `GlassEffectContainer`, `glassEffectID(_:in:)`, `glassEffectUnion(id:in:)`, `glassEffectTransition(_:)`, `backgroundExtensionEffect()`, `scrollEdgeEffectStyle(_:for:)`, `.buttonStyle(.glass)` / `.glassProminent`, `ConcentricRectangle`.
+### Amit előre lemértem
+
+A telepített build **már macOS 26-os** (`minos 26.0`), tehát a rendszer a sidebart és a toolbart **kód nélkül** üvegesíti. Amit a tulajdonos „nem látok üveget"-ként érzékel, azt részben **mi magunk takarjuk el**:
+
+```
+WorkspaceComponents.swift:35   .background(AstroTokens.Color.ground.opacity(0.36))
+WorkspaceComponents.swift:96   .background(AstroTokens.Color.ground.opacity(0.36))
+V2RootView.swift:1547          .background(AstroTokens.Color.ground.opacity(0.36))
+```
+
+Egy 36%-os tónus az ablak anyaga fölött. **Ez megy először**, mert enélkül minden további üveg is tompa marad.
+
+### A szabály, ami marad
 
 | Réteg | Anyag |
 |---|---|
-| Sidebar, ablak-toolbar, menük | Rendszer-Liquid Glass — **újrafordításból jön, nem kell kód** |
-| Archívum fejléc-sáv | `surface` + `.backgroundExtensionEffect()`, hogy a sáv színe a toolbar alá fusson |
-| Kártyák, táblák, listasorok | `surface`/`surfaceRaised` + `edge` hajszálvonal, `ConcentricRectangle` sarokkal |
+| Sidebar, toolbar, menük | rendszer-üveg (újrafordításból, nincs kód) |
+| **Kártyák, panelek, inspector — a TARTÓ** | `glassEffect(.regular, in:)`, `ConcentricRectangle` sarokkal |
+| **Sűrű tartalom a tartón belül** (táblasorok, hosszú szöveg, adatsáv) | **tömör** `surface`, az üvegen ülve |
+| Lebegő akciósáv | `GlassEffectContainer` + `.buttonStyle(.glassProminent)` |
 | Görgetési él | `.scrollEdgeEffectStyle(.soft, for: .top)` |
+| Fejléc-sáv | `.backgroundExtensionEffect()` |
 
-- [ ] **Step 1: Kapu**
+Vagyis: a **kártya lebeg**, de a benne lévő 3 231 soros lista nem üvegen fut. Ez adja a látványt anélkül, hogy egy táblázat olvashatatlanná válna.
 
-```swift
-@Test("Glass never sits under readable content")
-func glassStaysOnChrome() throws {
-    for file in try filenames(under: "Sources/AstroUI/Features", recursive: true) {
-        let source = try strippingComments(contents(file))
-        #expect(!source.contains("glassEffect"),
-                "\(file): glass belongs to the shell (V2RootView), not to content views")
-    }
-}
+Használd a `GlassEffectContainer`-t, ahol több üvegelem van egymás mellett — külön-külön alkalmazva nem olvadnak össze, és a rendszer sem tudja optimalizálni.
+
+**Files:** `Sources/AstroUI/Features/Workspace/WorkspaceComponents.swift`, `Sources/AstroUI/App/V2RootView.swift`, `Sources/AstroUI/Features/Archive/*.swift`, `Sources/AstroUI/Inspector/*.swift`, `Tests/AstroUITests/V2PolishSurfaceTests.swift`
+
+- [ ] **Step 1: Le a saját tónussal** — a három `.background(...opacity(0.36))` törlése. Utána nézd meg, mennyi rendszer-üveg válik láthatóvá magától; ez a kiindulás, amihez a többit mérni kell.
+
+- [ ] **Step 2: A tartók kapnak üveget** — kártyák, panelek, inspector. `ConcentricRectangle` a sarokhoz, hogy az ablak lekerekítésével egyezzen.
+
+- [ ] **Step 3: A sűrű tartalom tömör marad** — a táblák, a hosszú magyarázó szövegek és az archívum-sáv a tartón **belül**, `surface` háttéren. **Kapu:** a `Table`/`List` közvetlen szülője soha ne legyen `glassEffect`-es.
+
+- [ ] **Step 4: Lebegő akciósáv és görgetési él.**
+
+- [ ] **Step 5: A kontrasztot ember nézi meg.**
+
+Ezt gép nem tudja eldönteni, és ez a task nem tesz úgy, mintha tudná. Építs, telepíts, és **készíts a tulajdonosnak egy rövid listát arról, mit nézzen meg**: a sűrű táblák olvashatóságát világos és sötét módban, a kártyaszöveget világos háttér előtt, és hogy a lebegés nem zavaró-e görgetés közben.
+
+Írd meg azt is a jelentésben, **hogyan lehet visszafogni**, ha sok — melyik egyetlen helyen kell a `.regular`-t `.clear`-re vagy tömörre váltani. Ez irányváltás volt; legyen olcsó visszafordítani.
+
+```bash
+git commit -m "feat: float the panels on the system's glass"
 ```
-
-- [ ] **Step 2–3:** implementáció, majd **vizuális ellenőrzés emberrel** — ezt gép nem tudja elvégezni, és a terv ne állítsa, hogy elvégezte. Commit: `feat: adopt the system's glass on the shell`.
-
----
 
 ## Task 7: A söprés — dobozok, mentegetőzések, ismétlések
 
