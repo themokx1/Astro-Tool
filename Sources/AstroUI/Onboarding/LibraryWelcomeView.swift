@@ -448,7 +448,7 @@ public final class OnboardingStore {
         guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else { return }
         let id = await operationHost.run(
             kind: kind,
-            title: "Scanning \(rootURL.lastPathComponent)",
+            title: "\(OperationHost.localized("Scanning")) \(rootURL.lastPathComponent)",
             cancellation: .cooperative
         ) { [weak self] in
             do {
@@ -505,20 +505,20 @@ public final class OnboardingStore {
     /// task so a slow or gated scan can never block the caller.
     public func rescan(operationHost: OperationHost) async {
         guard let root = selectedRoot else {
-            operationHost.notify(.info, message: "Choose a library before rescanning.")
+            operationHost.notify(.info, message: OperationHost.localized("Choose a library before rescanning."))
             return
         }
 
         let kind = OperationKind.scan(library: root.lastPathComponent)
         guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
-            operationHost.notify(.info, message: "A rescan of this library is already running.")
+            operationHost.notify(.info, message: OperationHost.localized("A rescan of this library is already running."))
             return
         }
 
         let progressBuffer = LatestOnboardingProgress()
         let id = await operationHost.run(
             kind: kind,
-            title: "Rescanning \(root.lastPathComponent)",
+            title: "\(OperationHost.localized("Rescanning")) \(root.lastPathComponent)",
             cancellation: .cooperative
         ) { [weak self] in
             guard let self else { return }

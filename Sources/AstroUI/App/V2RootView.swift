@@ -200,7 +200,7 @@ public struct V2RootView: View {
         let uiTestFixture = self.uiTestFixture
         let id = await operationHost.run(
             kind: kind,
-            title: "Preparing \(root.lastPathComponent)",
+            title: "\(OperationHost.localized("Preparing")) \(root.lastPathComponent)",
             cancellation: .unavailable
         ) {
             if let uiTestFixture {
@@ -787,7 +787,23 @@ private struct GlobalSearchPanel: View {
                                         .foregroundStyle(AstroTokens.Color.accent)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(result.title).font(.headline)
-                                        Text(result.subtitle).font(.caption).foregroundStyle(.secondary)
+                                        // Task 5c (2026-08-17): two `Text`s,
+                                        // not one recombined `String` -- the
+                                        // category word (`kind.searchLabel`)
+                                        // is translatable prose, `detail` is
+                                        // raw data (see both properties' own
+                                        // doc comments). Deliberately not
+                                        // `Text(a) + Text(b)` either: that
+                                        // operator is deprecated in macOS 26
+                                        // (see `ArchiveVerdict.detailText`'s
+                                        // own warning already on this build).
+                                        HStack(spacing: 4) {
+                                            Text(result.kind.searchLabel)
+                                            Text(verbatim: "·")
+                                            Text(result.detail)
+                                        }
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                     }
                                     Spacer()
                                     Image(systemName: "arrow.forward")

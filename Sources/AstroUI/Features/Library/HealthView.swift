@@ -70,7 +70,7 @@ public struct HealthView: View {
     }
 
     public var body: some View {
-        WorkspaceTablePage(eyebrow: "Read-only diagnostics", title: "Library Health", subtitle: subtitleText) {
+        WorkspaceTablePage(subtitle: subtitleText) {
             toolbarContent
         } table: {
             tableContent

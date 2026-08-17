@@ -758,17 +758,6 @@ struct V2PolishSurfaceTests {
     /// "UNDECIDED" is honest, not a loophole: it means a human still needs
     /// to make this call -- see Task 5b's own report for which ones and why.
     private static let uiPropertyAllowlist: [String: String] = [
-        "Sources/AstroUI/Features/Workspace/WorkspaceComponents.swift#title":
-            """
-            DEAD, not data: WorkspacePage/WorkspaceTablePage's own `title` is \
-            stored and supplied by all 7 call sites, but neither type's `body` \
-            ever reads it -- only `subtitle` renders (a 2026-08-14 audit \
-            removed the redundant eyebrow/title triple-labelling; see the \
-            comment above each `body`). The on-screen navigation title comes \
-            from each call site's own separate, already-`LocalizedStringKey` \
-            `.navigationTitle(...)` literal. Translating a field nobody draws \
-            would be theater; reported as dead in Task 5b's report instead.
-            """,
         "Sources/AstroUI/Features/Exports/ExportMenu.swift#title":
             """
             DATA, of necessity: this entry covers `ExportMenuItem`'s own \
@@ -794,42 +783,44 @@ struct V2PolishSurfaceTests {
             through `LocalizedStringKey` would look up a target's folder name \
             or a capture date as if it were a translation key.
             """,
-        "Sources/AstroUI/Features/Search/GlobalSearchStore.swift#subtitle":
-            """
-            UNDECIDED: `subtitle` mixes a literal English category word \
-            ("Project", "Night", "Series", "File", "Note", "Result") with \
-            interpolated dynamic data (catalog IDs, dates, byte counts) built \
-            by string interpolation at 6 call sites inside `search(_:...)`, \
-            e.g. "Project \\u{b7} \\(catalogID) \\u{b7} \\(phase)". The \
-            category word IS real prose that should translate; the property \
-            as a whole is neither pure data nor a clean `LocalizedStringKey` \
-            conversion (that would need 6 new hand-written format-string \
-            hu.lproj entries and touches this store's `Sendable`/`Equatable` \
-            conformances). Left here rather than guessed at -- see Task 5b's \
-            report.
-            """,
         "Sources/AstroUI/Operations/OperationHost.swift#title":
             """
-            UNDECIDED: `ActiveOperation.title`/`OutcomeRecord.title` are \
-            caller-supplied operation names from 8 `run(kind:title:...)` call \
-            sites across the app, some literal ("Undoing conversion"), some \
-            interpolated ("Rating frames \\u{2014} \\(label)"). Converting to \
-            `LocalizedStringKey` is type-safe (both are read only for \
-            display, in `OperationStatusView`), but every one of those 8 call \
-            sites is a labelled, non-first-positional argument invisible to \
-            the extraction script, so each needs a hand-added hu.lproj entry \
-            -- a bounded but separate piece of work. Left here rather than \
-            folded in under time pressure -- see Task 5b's report.
+            RESOLVED, not data: `ActiveOperation.title`/`OutcomeRecord.title` \
+            can't be `LocalizedStringKey` -- both types are `Sendable` (they \
+            cross the `Task.detached` boundary `run(kind:title:work:)` runs \
+            `work` on), and `LocalizedStringKey` itself is explicitly NOT \
+            `Sendable` (`extension LocalizedStringKey: Sendable` is \
+            `@available(*, unavailable)` in SwiftUI -- confirmed by compiling \
+            a throwaway `Sendable` conformance check against this SDK). Same \
+            fix as `ProjectWorkspaceRow.nextAction`: every `run(kind:title:...)` \
+            call site now resolves its own literal English fragment eagerly \
+            via `OperationHost.localized(_:)` (`NSLocalizedString` against \
+            `Bundle.main`) before interpolating any dynamic data (a filename, \
+            a target label) around it, so what lands in `title` is already- \
+            translated text, not an English literal waiting to be shown \
+            verbatim. See `OperationHost.localized(_:)`'s own doc comment for \
+            the full reasoning, and every call site under \
+            `Sources/AstroUI/**/*.swift` for the resolved fragments \
+            themselves (Task 5c, 2026-08-17).
             """,
         "Sources/AstroUI/Operations/OperationHost.swift#message":
             """
-            UNDECIDED: same reasoning as this file's `title` entry, but for \
-            `Toast.message` -- 25 `operationHost.notify(...)` call sites \
-            across the app, several interpolating `error.localizedDescription` \
-            (not itself guaranteed to be stable, translatable text) alongside \
-            literal English fragments. Type-safe to convert (display-only), \
-            but a larger, riskier hand-translation effort than this task's \
-            other fixes. Flagged, not guessed at -- see Task 5b's report.
+            RESOLVED, not data: same `Sendable`-vs-`LocalizedStringKey` \
+            conflict as this file's `title` entry, for `Toast.message`. \
+            Every `notify(_:message:)` call site and this file's own \
+            success/failure/cancellation toasts now resolve only their own \
+            literal English fragment via `OperationHost.localized(_:)`, \
+            interpolating `error.localizedDescription` (or a filename, or an \
+            already-resolved `title`) around the result rather than through \
+            it -- so runtime data never enters a translation key, matching \
+            this wave's own rule for `OperationHost.message` (Task 5c, \
+            2026-08-17). `NightNoteSheet.save()`'s own \
+            `store.errorMessage ?? "..."` is the one call site that stays \
+            partly opaque: `NightNoteStore.errorMessage` is itself either a \
+            raw `error.localizedDescription` or a fixed English literal \
+            depending which branch of its own `save()` set it, indistinguishable \
+            from here -- only that call site's own literal fallback branch is \
+            resolved, `store.errorMessage` itself is left as opaque data.
             """,
         "Sources/AstroUI/App/V2RootView.swift#title":
             """

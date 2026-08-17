@@ -67,12 +67,12 @@ public final class SensorProfilesStore {
     /// have measured real combos worth showing immediately.
     public func measure(operationHost: OperationHost) async {
         guard let rootURL else {
-            operationHost.notify(.info, message: "Choose a library before measuring sensors.")
+            operationHost.notify(.info, message: OperationHost.localized("Choose a library before measuring sensors."))
             return
         }
         let kind = OperationKind.sensorMeasurement(library: rootURL.lastPathComponent)
         guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
-            operationHost.notify(.info, message: "A sensor measurement is already running.")
+            operationHost.notify(.info, message: OperationHost.localized("A sensor measurement is already running."))
             return
         }
 
@@ -81,7 +81,7 @@ public final class SensorProfilesStore {
             let query = try queryFactory(rootURL)
             let counter = SensorMeasurementProgressCounter()
 
-            let id = await operationHost.run(kind: kind, title: "Measuring sensor profiles", cancellation: .cooperative) { [weak self] in
+            let id = await operationHost.run(kind: kind, title: OperationHost.localized("Measuring sensor profiles"), cancellation: .cooperative) { [weak self] in
                 do {
                     try Task.checkCancellation()
                     _ = try command.run(
@@ -99,7 +99,7 @@ public final class SensorProfilesStore {
                 OperationProgress(completed: counter.current)
             }
         } catch {
-            operationHost.notify(.failure, message: "Sensor measurement failed: \(error.localizedDescription)")
+            operationHost.notify(.failure, message: "\(OperationHost.localized("Sensor measurement failed:")) \(error.localizedDescription)")
         }
     }
 

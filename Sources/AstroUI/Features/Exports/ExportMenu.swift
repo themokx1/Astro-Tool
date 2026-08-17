@@ -167,12 +167,12 @@ public struct ExportMenu: View {
             panel.canCreateDirectories = true
             guard panel.runModal() == .OK, let url = panel.url else { return }
             try ExportFileWriter.write(content: rendered.content, to: url)
-            operationHost.notify(.success, message: "Exported \(url.lastPathComponent)")
+            operationHost.notify(.success, message: "\(OperationHost.localized("Exported")) \(url.lastPathComponent)")
             if !rendered.warnings.isEmpty {
                 pendingWarning = rendered.warnings.joined(separator: "\n")
             }
         } catch {
-            operationHost.notify(.failure, message: "\(title) failed: \(error.localizedDescription)")
+            operationHost.notify(.failure, message: "\(title) \(OperationHost.localized("failed:")) \(error.localizedDescription)")
         }
     }
 
@@ -182,9 +182,9 @@ public struct ExportMenu: View {
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
-            operationHost.notify(.success, message: "\(title) copied to clipboard")
+            operationHost.notify(.success, message: "\(title) \(OperationHost.localized("copied to clipboard"))")
         } catch {
-            operationHost.notify(.failure, message: "\(title) failed: \(error.localizedDescription)")
+            operationHost.notify(.failure, message: "\(title) \(OperationHost.localized("failed:")) \(error.localizedDescription)")
         }
     }
 }

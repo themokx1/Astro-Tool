@@ -134,13 +134,13 @@ public final class ReviewStore {
     /// run may have measured real frames worth showing immediately.
     public func rateSelectedSeries(mode: FrameRatingMode, operationHost: OperationHost) async {
         guard let rootURL, let projectID, let selected = selectedSeries else {
-            operationHost.notify(.info, message: "Select a capture series before rating its frames.")
+            operationHost.notify(.info, message: OperationHost.localized("Select a capture series before rating its frames."))
             return
         }
         let label = "\(snapshot?.project.displayName ?? "Project") · \(selected.series.exposureSeconds.formatted(.number.precision(.fractionLength(0...2))))s"
         let kind = OperationKind.rate(series: selected.series.id.uuidString)
         guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
-            operationHost.notify(.info, message: "Frame rating is already running for this series.")
+            operationHost.notify(.info, message: OperationHost.localized("Frame rating is already running for this series."))
             return
         }
 
@@ -149,7 +149,7 @@ public final class ReviewStore {
             let relativePaths = selected.decisions.map(\.relativePath)
             let box = FrameRatingProgressBox()
 
-            let id = await operationHost.run(kind: kind, title: "Rating frames — \(label)", cancellation: .cooperative) { [weak self] in
+            let id = await operationHost.run(kind: kind, title: "\(OperationHost.localized("Rating frames")) — \(label)", cancellation: .cooperative) { [weak self] in
                 do {
                     try Task.checkCancellation()
                     _ = try command.run(
@@ -170,7 +170,7 @@ public final class ReviewStore {
                 return OperationProgress(completed: progress.done, total: progress.total > 0 ? progress.total : nil)
             }
         } catch {
-            operationHost.notify(.failure, message: "Frame rating failed: \(error.localizedDescription)")
+            operationHost.notify(.failure, message: "\(OperationHost.localized("Frame rating failed:")) \(error.localizedDescription)")
         }
     }
 

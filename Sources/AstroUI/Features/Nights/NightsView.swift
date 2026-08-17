@@ -75,7 +75,7 @@ public struct NightsView: View {
     }
 
     private var nightsWorkspace: some View {
-        WorkspaceTablePage(eyebrow: "Capture history", title: "Nights", subtitle: "Review each observing night without losing its series boundaries.") {
+        WorkspaceTablePage(subtitle: "Review each observing night without losing its series boundaries.") {
             Picker("View", selection: $mode) {
                 ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }

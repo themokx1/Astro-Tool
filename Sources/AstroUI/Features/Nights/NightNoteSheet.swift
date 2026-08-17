@@ -203,10 +203,15 @@ public struct NightNoteSheet: View {
     private func save() async {
         let succeeded = await store.save()
         if succeeded {
-            operationHost.notify(.success, message: "Night notes saved.")
+            operationHost.notify(.success, message: OperationHost.localized("Night notes saved."))
             dismiss()
         } else {
-            operationHost.notify(.failure, message: store.errorMessage ?? "Saving night notes failed.")
+            // `store.errorMessage` is itself either a raw
+            // `error.localizedDescription` or a fixed English literal set
+            // by `NightNoteStore` (see its own `save()`) -- opaque either
+            // way from here, so only the fallback branch (this call site's
+            // own literal) is resolved.
+            operationHost.notify(.failure, message: store.errorMessage ?? OperationHost.localized("Saving night notes failed."))
         }
     }
 }

@@ -116,9 +116,9 @@ public struct NightActionMenu: View {
             panel.canCreateDirectories = true
             guard panel.runModal() == .OK, let url = panel.url else { return }
             try ExportFileWriter.write(content: export.content, to: url)
-            operationHost.notify(.success, message: "Exported \(url.lastPathComponent)")
+            operationHost.notify(.success, message: "\(OperationHost.localized("Exported")) \(url.lastPathComponent)")
         } catch {
-            operationHost.notify(.failure, message: "Night Report failed: \(error.localizedDescription)")
+            operationHost.notify(.failure, message: "\(OperationHost.localized("Night Report failed:")) \(error.localizedDescription)")
         }
     }
 
@@ -140,7 +140,7 @@ public struct NightActionMenu: View {
         guard let rootURL else { return }
         let kind = OperationKind.rate(series: "night-\(nightID.uuidString)")
         guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
-            operationHost.notify(.info, message: "Frame rating is already running for this night.")
+            operationHost.notify(.info, message: OperationHost.localized("Frame rating is already running for this night."))
             return
         }
         Task {
@@ -154,12 +154,12 @@ public struct NightActionMenu: View {
                 }
                 let relativePaths = gatheredPaths
                 guard !relativePaths.isEmpty else {
-                    operationHost.notify(.info, message: "No frames to rate for this night.")
+                    operationHost.notify(.info, message: OperationHost.localized("No frames to rate for this night."))
                     return
                 }
                 let command = try FrameRatingCommand.production(rootURL: rootURL)
                 _ = await operationHost.run(
-                    kind: kind, title: "Rating Frames — \(target) · \(date)", cancellation: .cooperative
+                    kind: kind, title: "\(OperationHost.localized("Rating Frames")) — \(target) · \(date)", cancellation: .cooperative
                 ) {
                     try Task.checkCancellation()
                     _ = try command.run(
@@ -167,7 +167,7 @@ public struct NightActionMenu: View {
                     )
                 }
             } catch {
-                operationHost.notify(.failure, message: "Frame rating failed: \(error.localizedDescription)")
+                operationHost.notify(.failure, message: "\(OperationHost.localized("Frame rating failed:")) \(error.localizedDescription)")
             }
         }
     }

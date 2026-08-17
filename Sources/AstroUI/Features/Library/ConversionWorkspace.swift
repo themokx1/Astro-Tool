@@ -145,7 +145,7 @@ public final class ConversionStore {
         do {
             let command = try commandFactory(rootURL, accessMode)
             let kind = OperationKind.convert(session: "\(plan.scope.target)/\(plan.scope.date)")
-            let title = plan.mode == .physical ? "Applying conversion" : "Saving capture organization"
+            let title = OperationHost.localized(plan.mode == .physical ? "Applying conversion" : "Saving capture organization")
             _ = await operationHost.run(kind: kind, title: title, cancellation: .unavailable) { [weak self] in
                 let receipt = try command.apply(plan)
                 await self?.recordReceipt(receipt)
@@ -166,7 +166,7 @@ public final class ConversionStore {
         do {
             let command = try commandFactory(rootURL, accessMode)
             let kind = OperationKind.convert(session: "\(receipt.scope.target)/\(receipt.scope.date)")
-            _ = await operationHost.run(kind: kind, title: "Undoing conversion", cancellation: .unavailable) { [weak self] in
+            _ = await operationHost.run(kind: kind, title: OperationHost.localized("Undoing conversion"), cancellation: .unavailable) { [weak self] in
                 let rolledBack = try command.rollback(receipt)
                 await self?.recordRolledBack(rolledBack)
             }

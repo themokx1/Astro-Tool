@@ -147,8 +147,6 @@ public struct SavedTargetsView: View {
 
     public var body: some View {
         WorkspacePage(
-            eyebrow: "Planning",
-            title: "Saved Targets",
             subtitle: "Targets you've bookmarked from Planning, with your own notes."
         ) {
             content

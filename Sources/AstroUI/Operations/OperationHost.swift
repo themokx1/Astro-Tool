@@ -20,13 +20,21 @@ public final class OperationHost {
     public struct ActiveOperation: Identifiable, Sendable, Equatable {
         public let id: UUID
         public let kind: OperationKind
-        // Task 5b (2026-08-17) classification: UNDECIDED -- see
-        // `V2PolishSurfaceTests.uiPropertyAllowlist`'s entry for this file.
-        // Type-safe to convert to `LocalizedStringKey` (read only for
-        // display), but every one of its 8 `run(kind:title:...)` call sites
-        // across the app is a labelled argument invisible to the extraction
-        // script and would need a hand-added hu.lproj entry -- flagged for a
-        // decision rather than folded into this task under time pressure.
+        // Task 5c (2026-08-17) resolution of the Task 5b UNDECIDED entry:
+        // `ActiveOperation` has to stay `Sendable` (it crosses from the
+        // `Task.detached` in `run(kind:title:work:)` onto this MainActor
+        // type), and `LocalizedStringKey` is explicitly NOT `Sendable`
+        // (`extension LocalizedStringKey: Sendable` is marked
+        // `@available(*, unavailable)` in SwiftUI) -- so this can't just
+        // change type the way `MetricCard`'s properties did. Same fix as
+        // `ProjectWorkspaceRow.nextAction`: every `run(kind:title:...)` call
+        // site now resolves its literal English fragment eagerly via
+        // `OperationHost.localized(_:)` (a thin `NSLocalizedString` wrapper)
+        // before interpolating any dynamic data (a filename, a target
+        // label) around it, so the runtime data never enters the
+        // translation key. See `OperationHost.localized(_:)`'s own doc
+        // comment and `V2PolishSurfaceTests.uiPropertyAllowlist`'s entry for
+        // this file.
         public let title: String
         public let cancellationPolicy: CancellationPolicy
         public var phase: OperationPhase
@@ -47,11 +55,19 @@ public final class OperationHost {
     public struct Toast: Identifiable, Sendable, Equatable {
         public let id: UUID
         public let level: ToastLevel
-        // Task 5b (2026-08-17) classification: UNDECIDED, same reasoning as
-        // `ActiveOperation.title` above, but for 25 `operationHost.notify(...)`
-        // call sites, several interpolating `error.localizedDescription`
-        // alongside literal English fragments -- a larger, riskier
-        // hand-translation effort. Flagged, not guessed at.
+        // Task 5c (2026-08-17) resolution of the Task 5b UNDECIDED entry:
+        // same `Sendable`-vs-`LocalizedStringKey` conflict as
+        // `ActiveOperation.title` above, but for every `notify(_:message:)`
+        // call site plus this file's own success/failure/cancellation
+        // toasts. Several interpolate `error.localizedDescription` -- a
+        // runtime string that must never become part of a translation key
+        // -- so each call site now resolves only its own literal English
+        // fragment via `OperationHost.localized(_:)` and interpolates the
+        // error text (or a filename, or an already-resolved `title`)
+        // around that, never through it. One call site
+        // (`NightNoteSheet.save()`) stays partly opaque -- see
+        // `V2PolishSurfaceTests.uiPropertyAllowlist`'s entry for this file
+        // for why.
         public let message: String
         public let createdAt: Date
         public let expiresAt: Date
@@ -63,9 +79,9 @@ public final class OperationHost {
     public struct OutcomeRecord: Identifiable, Sendable, Equatable {
         public let id: UUID
         public let kind: OperationKind
-        // Task 5b (2026-08-17) classification: UNDECIDED, same as
-        // `ActiveOperation.title` above (this is the same caller-supplied
-        // operation name, kept around after the operation finishes).
+        // Task 5c (2026-08-17): same resolution as `ActiveOperation.title`
+        // above -- this is the same caller-supplied, already-resolved
+        // operation name, kept around after the operation finishes.
         public let title: String
         public let phase: OperationPhase
         public let finishedAt: Date
@@ -102,6 +118,27 @@ public final class OperationHost {
         case .failure: 8
         case .success, .info: 4.5
         }
+    }
+
+    /// Eagerly resolves an English literal fragment against `hu.lproj`, the
+    /// same pattern `ProjectNextActionKind.localizedTitle`/
+    /// `.localizedExplanation` use for `ProjectWorkspaceRow`. `ActiveOperation`,
+    /// `Toast`, and `OutcomeRecord` are all `Sendable` -- required, since
+    /// `run(kind:title:work:)` carries `title` across the `Task.detached`
+    /// boundary it runs `work` on -- and `LocalizedStringKey` itself is
+    /// explicitly not `Sendable` (`extension LocalizedStringKey: Sendable`
+    /// is `@available(*, unavailable)` in SwiftUI), so none of those three
+    /// types can hold one the way `MetricCard`'s properties do.
+    ///
+    /// Callers pass only the literal English words they would otherwise
+    /// have wrapped in `Text("...")` -- never a fully-assembled sentence --
+    /// and interpolate any dynamic data (a filename, a target label, an
+    /// `error.localizedDescription`) around the resolved result, not
+    /// through it. That keeps the runtime data out of the translation key
+    /// entirely: the `hu.lproj` entry this looks up is always a fixed,
+    /// finite English phrase, never a string built at runtime.
+    nonisolated static func localized(_ text: String) -> String {
+        NSLocalizedString(text, bundle: .main, comment: "")
     }
 
     /// Registers `work` with `OperationCenter` under `kind` and starts running
@@ -143,7 +180,7 @@ public final class OperationHost {
                 try await work()
                 if await self.center.finish(id) {
                     await self.finalize(id: id, kind: kind, title: title, phase: .succeeded)
-                    await self.enqueueToast(.success, "\(title) finished.")
+                    await self.enqueueToast(.success, "\(title) \(Self.localized("finished."))")
                 } else {
                     await self.reconcileSuccessRace(id: id, kind: kind, title: title)
                 }
@@ -152,7 +189,7 @@ public final class OperationHost {
             } catch {
                 if await self.center.fail(id, message: error.localizedDescription) {
                     await self.finalize(id: id, kind: kind, title: title, phase: .failed)
-                    await self.enqueueToast(.failure, "\(title) failed: \(error.localizedDescription)")
+                    await self.enqueueToast(.failure, "\(title) \(Self.localized("failed:")) \(error.localizedDescription)")
                 } else {
                     await self.reconcileRaceOutcome(id: id, kind: kind, title: title)
                 }
@@ -287,7 +324,7 @@ public final class OperationHost {
         let recordedPhase = await center.state(id)?.phase ?? .cancelled
         await finalize(id: id, kind: kind, title: title, phase: recordedPhase)
         if recordedPhase != .cancelled {
-            await enqueueToast(.info, "\(title) ended unexpectedly.")
+            await enqueueToast(.info, "\(title) \(Self.localized("ended unexpectedly."))")
         }
     }
 
@@ -312,7 +349,7 @@ public final class OperationHost {
         }
         await center.forceSucceed(id)
         await finalize(id: id, kind: kind, title: title, phase: .succeeded)
-        await enqueueToast(.success, "\(title) finished.")
+        await enqueueToast(.success, "\(title) \(Self.localized("finished."))")
     }
 
     private func enqueueToast(_ level: ToastLevel, _ message: String) async {

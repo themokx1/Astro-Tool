@@ -346,7 +346,7 @@ final class ExtendedCatalogUpdateStore {
         lastErrorMessage = nil
         let fetcher = fetcherFactory()
         let cache = self.cache
-        _ = await operationHost.run(kind: .catalogFetch, title: "Updating catalog", cancellation: .cooperative) { [weak self] in
+        _ = await operationHost.run(kind: .catalogFetch, title: OperationHost.localized("Updating catalog"), cancellation: .cooperative) { [weak self] in
             do {
                 let targets = try await fetcher.fetchAll(isCancelled: { Task.isCancelled })
                 try Task.checkCancellation()

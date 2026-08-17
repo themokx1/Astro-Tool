@@ -113,7 +113,12 @@ struct V2BetaWorkspaceSurfaceTests {
         let search = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Search/GlobalSearchStore.swift"), encoding: .utf8)
         let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
         #expect(search.contains("case series"))
-        #expect(search.contains("Series ·"))
+        // Task 5c (2026-08-17): the category word used to be a literal
+        // "Series · " prefix baked into `subtitle` itself (never
+        // localized); it now lives on `GlobalSearchResultKind.searchLabel`
+        // instead, a `LocalizedStringKey` the view renders as its own
+        // `Text`, independent of `GlobalSearchResult.detail`'s raw data.
+        #expect(search.contains("case .series: \"Series\""))
         #expect(search.contains("series.filterName"))
         #expect(shell.contains("case .series"))
         #expect(shell.contains("guard let objectID = result.objectID"))

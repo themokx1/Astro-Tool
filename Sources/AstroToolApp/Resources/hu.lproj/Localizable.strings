@@ -1005,3 +1005,58 @@
 "Open Planning" = "Tervezés megnyitása";
 "Open Nights" = "Éjszakák megnyitása";
 "Open Glossary" = "Szójegyzék megnyitása";
+
+// OperationHost.swift / GlobalSearchStore.swift (Task 5c, 2026-08-17) --
+// `ActiveOperation.title`/`OutcomeRecord.title`/`Toast.message` stayed
+// `String` (both types are `Sendable`, `LocalizedStringKey` explicitly is
+// not), so every call site now resolves its own literal English fragment
+// eagerly via `OperationHost.localized(_:)` (`NSLocalizedString` against
+// `Bundle.main`) and interpolates any dynamic data (a filename, a target
+// label, an `error.localizedDescription`) around the resolved result. Those
+// `NSLocalizedString` calls are invisible to
+// `scripts/extract-localizable-strings.swift` (it only scans SwiftUI
+// constructs whose FIRST positional argument is a literal), so every
+// fragment is hand-added here. `GlobalSearchResultKind.searchLabel`'s
+// `switch`-return literals are hand-added for the same reason -- a `switch`
+// return is invisible to the same script -- except "Note", every other case
+// word ("Project", "Night", "Series", "File", "Result") already had an
+// entry from elsewhere in this file.
+"Updating catalog" = "Katalógus frissítése";
+"Measuring sensor profiles" = "Szenzorprofilok mérése";
+"Undoing conversion" = "Konverzió visszavonása";
+"Running audit" = "Audit futtatása";
+"Running audit (fast)" = "Audit futtatása (gyors)";
+"Verifying integrity" = "Integritás ellenőrzése";
+"Verifying integrity (sample)" = "Integritás ellenőrzése (minta)";
+"Applying conversion" = "Konverzió alkalmazása";
+"Saving capture organization" = "Felvételek rendszerezésének mentése";
+"Preparing" = "Előkészítés";
+"Rating Frames" = "Képkockák értékelése";
+"Rating frames" = "Képkockák értékelése";
+"Scanning" = "Beolvasás";
+"Rescanning" = "Újrabeolvasás";
+"Frame rating is already running for this night." = "A képkocka-értékelés már fut erre az éjszakára.";
+"No frames to rate for this night." = "Nincs értékelhető képkocka ehhez az éjszakához.";
+"Night notes saved." = "Az éjszakai jegyzetek elmentve.";
+"Saving night notes failed." = "Az éjszakai jegyzetek mentése sikertelen.";
+"Choose a library before measuring sensors." = "Válassz könyvtárat a szenzorok mérése előtt.";
+"A sensor measurement is already running." = "Már fut egy szenzormérés.";
+"Choose a library before running an audit." = "Válassz könyvtárat az audit futtatása előtt.";
+"An audit is already running for this library." = "Már fut egy audit ehhez a könyvtárhoz.";
+"Choose a library before verifying integrity." = "Válassz könyvtárat az integritás ellenőrzése előtt.";
+"An integrity verification is already running for this library." = "Már fut egy integritás-ellenőrzés ehhez a könyvtárhoz.";
+"Choose a library before rescanning." = "Válassz könyvtárat az újrabeolvasás előtt.";
+"A rescan of this library is already running." = "Már fut ennek a könyvtárnak az újrabeolvasása.";
+"Select a capture series before rating its frames." = "Válassz felvételi sorozatot a képkockái értékelése előtt.";
+"Frame rating is already running for this series." = "A képkocka-értékelés már fut erre a sorozatra.";
+"Exported" = "Exportálva";
+"copied to clipboard" = "a vágólapra másolva";
+"Night Report failed:" = "Az éjszakai jelentés sikertelen:";
+"Frame rating failed:" = "A képkocka-értékelés sikertelen:";
+"Sensor measurement failed:" = "A szenzormérés sikertelen:";
+"Audit failed:" = "Az audit sikertelen:";
+"Integrity verification failed:" = "Az integritás-ellenőrzés sikertelen:";
+"failed:" = "sikertelen:";
+"finished." = "befejeződött.";
+"ended unexpectedly." = "váratlanul véget ért.";
+"Note" = "Jegyzet";

@@ -139,13 +139,13 @@ public final class LibraryHealthStore {
     /// itself was never mounted this session and so never called `load`.
     public func runAudit(mode: AuditRunMode, rootURL: URL?, operationHost: OperationHost) async {
         guard let rootURL else {
-            operationHost.notify(.info, message: "Choose a library before running an audit.")
+            operationHost.notify(.info, message: OperationHost.localized("Choose a library before running an audit."))
             return
         }
         let standardizedRoot = rootURL.standardizedFileURL
         let kind = OperationKind.audit(library: standardizedRoot.path)
         guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
-            operationHost.notify(.info, message: "An audit is already running for this library.")
+            operationHost.notify(.info, message: OperationHost.localized("An audit is already running for this library."))
             return
         }
 
@@ -154,7 +154,7 @@ public final class LibraryHealthStore {
             self.metadata = metadata
             self.rootURL = standardizedRoot
             let command = try auditCommandFactory(standardizedRoot, metadata)
-            let title = mode == .full ? "Running audit" : "Running audit (fast)"
+            let title = OperationHost.localized(mode == .full ? "Running audit" : "Running audit (fast)")
             _ = await operationHost.run(kind: kind, title: title, cancellation: .cooperative) { [weak self] in
                 do {
                     try Task.checkCancellation()
@@ -166,7 +166,7 @@ public final class LibraryHealthStore {
                 await self?.refresh()
             }
         } catch {
-            operationHost.notify(.failure, message: "Audit failed: \(error.localizedDescription)")
+            operationHost.notify(.failure, message: "\(OperationHost.localized("Audit failed:")) \(error.localizedDescription)")
         }
     }
 
@@ -178,13 +178,13 @@ public final class LibraryHealthStore {
     /// reason `runAudit` does.
     public func verifyIntegrity(options: VerifyRunOptions, rootURL: URL?, operationHost: OperationHost) async {
         guard let rootURL else {
-            operationHost.notify(.info, message: "Choose a library before verifying integrity.")
+            operationHost.notify(.info, message: OperationHost.localized("Choose a library before verifying integrity."))
             return
         }
         let standardizedRoot = rootURL.standardizedFileURL
         let kind = OperationKind.verify(library: standardizedRoot.path)
         guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
-            operationHost.notify(.info, message: "An integrity verification is already running for this library.")
+            operationHost.notify(.info, message: OperationHost.localized("An integrity verification is already running for this library."))
             return
         }
 
@@ -194,7 +194,7 @@ public final class LibraryHealthStore {
             self.rootURL = standardizedRoot
             let command = try auditCommandFactory(standardizedRoot, metadata)
             let box = HealthOperationProgressBox()
-            let title = options.sampleFraction == nil ? "Verifying integrity" : "Verifying integrity (sample)"
+            let title = OperationHost.localized(options.sampleFraction == nil ? "Verifying integrity" : "Verifying integrity (sample)")
 
             let id = await operationHost.run(kind: kind, title: title, cancellation: .cooperative) { [weak self] in
                 do {
@@ -217,7 +217,7 @@ public final class LibraryHealthStore {
                 return OperationProgress(completed: progress.done, total: progress.total > 0 ? progress.total : nil)
             }
         } catch {
-            operationHost.notify(.failure, message: "Integrity verification failed: \(error.localizedDescription)")
+            operationHost.notify(.failure, message: "\(OperationHost.localized("Integrity verification failed:")) \(error.localizedDescription)")
         }
     }
 

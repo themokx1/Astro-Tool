@@ -38,8 +38,6 @@ public struct PlanningView: View {
 
     public var body: some View {
         WorkspaceTablePage(
-            eyebrow: "Next clear night",
-            title: "Planning",
             subtitle: "Choose a setup first, then compare honest framing and integration estimates."
         ) {
             setupBar

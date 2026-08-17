@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 import AstroApplication
 import AstroCore
 
@@ -10,6 +11,27 @@ public enum GlobalSearchResultKind: String, Sendable {
     case file
     case note
     case result
+
+    /// The translatable category word shown alongside `GlobalSearchResult
+    /// .detail` (e.g. "Project", "Night"). Task 5c (2026-08-17): this used
+    /// to be baked as a literal English prefix into `subtitle` itself
+    /// (`"Project · \(catalogID) · ..."`), which never localized -- but it
+    /// turns out to be entirely redundant with this enum's own case, one
+    /// per `GlobalSearchResult.kind`. Computed here rather than stored,
+    /// since `GlobalSearchResult` stays `Sendable` and `LocalizedStringKey`
+    /// itself is not: a computed `LocalizedStringKey` property on this
+    /// plain `Sendable` enum costs nothing, unlike a stored one on the
+    /// result struct would.
+    public var searchLabel: LocalizedStringKey {
+        switch self {
+        case .project: "Project"
+        case .night: "Night"
+        case .series: "Series"
+        case .file: "File"
+        case .note: "Note"
+        case .result: "Result"
+        }
+    }
 }
 
 public struct GlobalSearchResult: Identifiable, Equatable, Sendable {
@@ -17,26 +39,33 @@ public struct GlobalSearchResult: Identifiable, Equatable, Sendable {
     public let kind: GlobalSearchResultKind
     public let objectID: UUID?
     // Task 5b (2026-08-17) classification -- see
-    // `V2PolishSurfaceTests.uiPropertyAllowlist`'s entries for this file:
-    // `title` is DATA (the underlying record's own name/date/filename);
-    // `subtitle` is UNDECIDED (mixes a literal category word with
-    // interpolated data at 6 call sites in `search(_:...)` below -- flagged
-    // for a decision, not guessed at).
+    // `V2PolishSurfaceTests.uiPropertyAllowlist`'s entry for this file:
+    // `title` is DATA (the underlying record's own name/date/filename).
     public let title: String
-    public let subtitle: String
+    /// The record's own dynamic detail -- a catalog ID, a date, a byte
+    /// count, a filter/setup descriptor -- never authored prose. DATA, same
+    /// reasoning as `title` above. Task 5c (2026-08-17) split this out of
+    /// what used to be `subtitle` (a `"Category · detail"` `String` that
+    /// mixed a literal, translatable category word into the same field as
+    /// this data): the category word now lives on `kind.searchLabel`
+    /// instead, and this holds only what is left. `GlobalSearchPanel`
+    /// draws the two as separate `Text`s rather than recombining them into
+    /// one formatted string, so the category word stays independently
+    /// translatable.
+    public let detail: String
     public let locator: String?
 
     public init(
         kind: GlobalSearchResultKind,
         objectID: UUID? = nil,
         title: String,
-        subtitle: String,
+        detail: String,
         locator: String? = nil
     ) {
         self.kind = kind
         self.objectID = objectID
         self.title = title
-        self.subtitle = subtitle
+        self.detail = detail
         self.locator = locator
     }
 }
@@ -85,7 +114,7 @@ public final class GlobalSearchStore {
         var found = projectMatches.map {
             GlobalSearchResult(
                 kind: .project, objectID: $0.id, title: $0.displayName,
-                subtitle: "Project · \($0.catalogID) · \($0.phase.rawValue.capitalized)"
+                detail: "\($0.catalogID) · \($0.phase.rawValue.capitalized)"
             )
         }
         let normalized = Self.normalized(trimmed)
@@ -98,7 +127,7 @@ public final class GlobalSearchStore {
         }.map {
             GlobalSearchResult(
                 kind: .night, objectID: $0.id, title: $0.date,
-                subtitle: "Night · \($0.projectSummary) · \($0.integrationSummary)"
+                detail: "\($0.projectSummary) · \($0.integrationSummary)"
             )
         })
         for night in nights.nights {
@@ -114,7 +143,7 @@ public final class GlobalSearchStore {
                     kind: .series,
                     objectID: series.id,
                     title: project?.displayName ?? "Capture series",
-                    subtitle: "Series · \([series.filterName, "\(series.exposureSeconds.formatted(.number.precision(.fractionLength(0...1)))) s", series.setupDescriptor].compactMap { $0 }.joined(separator: " · "))"
+                    detail: "\([series.filterName, "\(series.exposureSeconds.formatted(.number.precision(.fractionLength(0...1)))) s", series.setupDescriptor].compactMap { $0 }.joined(separator: " · "))"
                 ))
             }
         }
@@ -123,7 +152,7 @@ public final class GlobalSearchStore {
                 GlobalSearchResult(
                     kind: .file,
                     title: URL(fileURLWithPath: hit.path).lastPathComponent,
-                    subtitle: "File · \(hit.kind.uppercased()) · \(ByteCountFormatter.string(fromByteCount: hit.sizeBytes, countStyle: .file))",
+                    detail: "\(hit.kind.uppercased()) · \(ByteCountFormatter.string(fromByteCount: hit.sizeBytes, countStyle: .file))",
                     locator: hit.path
                 )
             })
@@ -133,7 +162,7 @@ public final class GlobalSearchStore {
                     kind: .note,
                     objectID: projectID,
                     title: "\(hit.key): \(hit.value)",
-                    subtitle: "Note · \(hit.target) · \(hit.date)",
+                    detail: "\(hit.target) · \(hit.date)",
                     locator: "\(hit.target)|\(hit.date)|\(hit.key)"
                 )
             })
@@ -155,7 +184,7 @@ public final class GlobalSearchStore {
                     kind: .result,
                     objectID: entry.resultID,
                     title: title,
-                    subtitle: "Result · \(entry.projectName) · \(entry.role.rawValue.capitalized)",
+                    detail: "\(entry.projectName) · \(entry.role.rawValue.capitalized)",
                     locator: entry.projectID.uuidString
                 )
             })

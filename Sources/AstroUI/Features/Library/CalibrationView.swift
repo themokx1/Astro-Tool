@@ -70,8 +70,6 @@ public struct CalibrationView: View {
 
     public var body: some View {
         WorkspaceTablePage(
-            eyebrow: "Read-only inventory · explicit linking",
-            title: "Calibration",
             subtitle: "Master-dark inventory and per-session linking, applied only through WriteGuard."
         ) {
             toolbarContent

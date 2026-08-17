@@ -69,7 +69,7 @@ public struct InsightsView: View {
     }
 
     public var body: some View {
-        WorkspacePage(eyebrow: "Long-term signal", title: "Insights", subtitle: "See what you photographed, how much signal you collected, and how your activity changes over time.") {
+        WorkspacePage(subtitle: "See what you photographed, how much signal you collected, and how your activity changes over time.") {
             if let insight = store.snapshot {
                 Picker("Period", selection: $selectedYear) {
                     Text("All years").tag(Int?.none)

@@ -38,8 +38,6 @@ public struct ProjectsView: View {
 
     private var projectsWorkspace: some View {
         WorkspaceTablePage(
-            eyebrow: "Your sky",
-            title: "Projects",
             subtitle: "One target, every night, series, stack, and result — kept together."
         ) {
             HStack(spacing: AstroTokens.Spacing.standard) {
