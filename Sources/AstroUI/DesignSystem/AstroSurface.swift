@@ -135,9 +135,21 @@ struct AstroRaisedSurface: ViewModifier {
             content
                 .padding(inset)
                 .clipShape(shape)
-                .background(AstroTokens.Color.surface, in: shape)
+                // The shadow lives on the BACKGROUND SHAPE, not on the
+                // composed view. `.shadow` applied to the outer view would
+                // make SwiftUI rasterize everything inside the card to
+                // compute the silhouette -- for `WorkspaceTablePage`'s table
+                // slot that is up to 3,231 rows, re-rendered on every scroll
+                // frame, in a project that has already spent five rounds
+                // fixing table-layout freezes. The silhouette is a rounded
+                // rectangle either way, so computing it from the rectangle
+                // is both cheaper and more honest.
+                .background {
+                    shape
+                        .fill(AstroTokens.Color.surface)
+                        .shadow(color: shadowColor, radius: 3, y: 1)
+                }
                 .overlay { shape.strokeBorder(AstroTokens.Color.edge, lineWidth: 1) }
-                .shadow(color: shadowColor, radius: 3, y: 1)
                 .containerShape(shape)
                 .environment(\.astroIsInsideRaisedSurface, true)
         }

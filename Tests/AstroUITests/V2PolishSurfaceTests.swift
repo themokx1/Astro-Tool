@@ -1401,7 +1401,7 @@ struct V2PolishSurfaceTests {
         // The collapsed branch must paint NOTHING -- no fill, no hairline,
         // no shadow. Checked by counting: each painted layer appears exactly
         // once in the file, in the non-nested branch only.
-        for painted in [".background(AstroTokens.Color.surface", ".strokeBorder(AstroTokens.Color.edge", ".shadow(color: shadowColor"] {
+        for painted in [".fill(AstroTokens.Color.surface", ".strokeBorder(AstroTokens.Color.edge", ".shadow(color: shadowColor"] {
             #expect(source.components(separatedBy: painted).count == 2,
                     "\(painted) must appear exactly once -- the collapsed branch paints nothing")
         }
