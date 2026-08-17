@@ -1277,6 +1277,82 @@
 "%lld cached targets, updated %@." = "%lld gyorsítótárazott célpont, frissítve: %@.";
 "Remove \"%@\"?" = "„%@” eltávolítása?";
 
+/* W3-10: V2 had a "New Project" sheet but no session-creation entry point
+   anywhere -- the owner's own report: "Projektet tudok hozzá adni, de új
+   sessiont nem tudok, legalábbis nem találom a gombot." The engine
+   (SessionCreator/WriteGuard in AstroCore) already existed; this wires the
+   shared NewSessionView/NewSessionStore (Sources/AstroUI/Features/Library/
+   NewSessionView.swift) into the Project workspace's header action, the
+   Projects page's row action, and a new Nights page toolbar action. Most of
+   these are plain `Text("...")`/`Button("...")`/`Label("...", ...)` literals
+   the extraction script already finds; the ones hand-added below are either
+   `NewSessionStore`'s own computed-property/function-returned
+   `LocalizedStringKey`s (invisible to the script the same way every other
+   switch/function-returned key in this file is -- see the block just above),
+   the `.help(store.disabledReasonKey ?? "...")` fallback (a `??`, likewise
+   invisible), or `OperationHost.localized(...)` call sites (see that
+   mechanism's own block earlier in this file). "session" stays English per
+   this file's own glossary at the top. */
+"New Session…" = "Új session…";
+"New Session" = "Új session létrehozása";
+"Choose the night; AstroTool builds the whole folder skeleton." = "Válaszd ki az éjszakát; az AstroTool felépíti a teljes mappavázat.";
+"Existing Project" = "Meglévő projekt";
+"Custom Target" = "Egyedi célpont";
+"No projects yet — type a catalog number and target name instead." = "Még nincs projekt — írj be katalógusszámot és célpont nevet helyette.";
+"Choose a project" = "Válassz egy projektet";
+"Catalog number (optional, e.g. C 14)" = "Katalógusszám (opcionális, pl. C 14)";
+"Target name" = "Célpont neve";
+"Date (YYYY-MM-DD)" = "Dátum (YYYY-MM-DD)";
+"Invalid date — the YYYY-MM-DD format is required." = "Érvénytelen dátum — YYYY-MM-DD formátum szükséges.";
+"Will create: %@/%@" = "Létrejön: %@/%@";
+"This session already exists." = "Ez a session már létezik.";
+"Create Session" = "Létrehozás";
+"Create the session folders" = "A session-mappák létrehozása";
+"Create a new session for this project — you only pick the date" = "Új session létrehozása ehhez a projekthez — csak a dátumot kell kiválasztanod";
+"Create a new session — pick an existing project or a custom target" = "Új session létrehozása — válassz meglévő projektet vagy adj meg egyedi célpontot";
+"The catalog number and target name resolve to an empty folder name." = "A katalógusszám és a célpont neve üres mappanevet eredményez.";
+"AstroTool could not preview this session." = "Az AstroTool nem tudta előnézetezni ezt a session-t.";
+"Requires write access. Enable write operations in Settings to create this session." = "Írási hozzáférést igényel. Engedélyezd az írási műveleteket a Beállításokban ennek a session-nek a létrehozásához.";
+"Requires write access. Enable write operations in Settings to undo this." = "Írási hozzáférést igényel. Engedélyezd az írási műveleteket a Beállításokban ennek a visszavonásához.";
+"The folder is no longer empty — it was not removed." = "A mappa már nem üres — nem lett eltávolítva.";
+"AstroTool could not undo this session." = "Az AstroTool nem tudta visszavonni ezt a session-t.";
+"Creating session" = "Session létrehozása";
+"Undoing session creation" = "Session létrehozásának visszavonása";
+"The folder was created." = "A mappa létrejött.";
+"The session will appear once the first light frames are scanned into it." = "A session az első beolvasott képkockákkal jelenik meg.";
+"Undone — the empty folders were removed." = "Visszavonva — az üres mappák eltávolítva.";
+"Done" = "Kész";
+
+/* W3-10 mid-task owner correction (2026-08-17): "sessions/<célpont>/<dátum>/
+   s ez nem elég feltétlenül, kell bele capture is! egy nap lehet 2-3
+   capture is, különböző filterekkel, gyújtótávolsággal stb" -- a night can
+   hold 2-3 captures under different filters/setups, so the sheet also
+   exposes `SessionCreator`'s capture-aware overload (`CaptureManager`) and
+   supports adding a second/third capture to an already-existing session
+   date, never just the bare date folder. `CaptureGroupDraft` (AstroCore)
+   has no focal-length/exposure field at creation time -- those are derived
+   from scanned FITS headers later, never entered here -- so the fields
+   exposed are exactly what the engine models: display name, sensor mode,
+   signal mode, filter manufacturer/model (mirrors V1's own
+   `NewSessionSheet` "Első capture-gyűjtés" section field-for-field). "The
+   capture was added."/"Add Capture" are a `receipt.sessionWasCreated ?`/
+   `preview.sessionAlreadyExists == true ?` ternary each, invisible to the
+   extraction script for the same reason every other ternary in this file
+   is (see this file's own glossary note on that construct). */
+"Create a capture" = "Capture-gyűjtés létrehozása";
+"OSC · No Filter" = "OSC · szűrő nélkül";
+"OSC · Dual-Band" = "OSC · dual-band";
+"Capture name" = "Gyűjtés neve";
+"Filter maker" = "Szűrő gyártó";
+"Filter model" = "Modell";
+"Creates its own lights/flats/darks/biases branch and stack/process location below this session." = "A sessionön belül külön lights/flats/darks/biases ágat, valamint külön stack és process helyet hoz létre.";
+"Nothing will be created — enable “Create a capture” above." = "Semmi nem jön létre — kapcsold be fent a „Capture-gyűjtés létrehozása” opciót.";
+"No captures recorded for this night yet." = "Ehhez az éjszakához még nincs rögzített capture.";
+"Captures already in this session:" = "A sessionben már meglévő capture-ök:";
+"Add another capture below for a different filter, exposure series, or setup." = "Adj hozzá egy újabb capture-t egy másik szűrőhöz, expozíciós sorozathoz vagy összeállításhoz.";
+"Add Capture" = "Capture hozzáadása";
+"The capture was added." = "A capture hozzáadva.";
+
 /* W3-13 (owner screenshot sweep): hand-added, not extraction-script-visible
    -- every key below is reached through a ternary of two literals, a
    `String?`-typed `?? "literal"` fallback, a `LocalizedStringKey`-typed

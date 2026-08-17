@@ -5,6 +5,11 @@ public struct ProjectsView: View {
     let snapshot: LibrarySnapshot?
     @Bindable var store: ProjectsStore
     let createProject: () -> Void
+    /// W3-10: the row action set's "New Session…" -- opens the shared
+    /// "New Session" sheet prefilled with this row's own catalog target, the
+    /// same prefill `ProjectWorkspaceView`'s header action uses for the
+    /// project it has open.
+    let createSession: (ProjectRecord) -> Void
     let chooseLibrary: () -> Void
     let reviewProject: (ProjectRecord) -> Void
     let showResults: (ProjectRecord) -> Void
@@ -222,6 +227,7 @@ public struct ProjectsView: View {
     @ViewBuilder
     private func projectRowActions(_ row: ProjectWorkspaceRow) -> some View {
         Button("Open Project") { openProject(row.project) }
+        Button("New Session…") { createSession(row.project) }
         Button("Review Frames") { reviewProject(row.project) }
         Button("Results") { showResults(row.project) }
     }

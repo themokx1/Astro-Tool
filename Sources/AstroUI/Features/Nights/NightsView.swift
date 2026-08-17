@@ -25,6 +25,9 @@ public struct NightsView: View {
     @Bindable var store: NightsStore
     let accessMode: LibraryAccessMode
     let chooseLibrary: () -> Void
+    /// W3-10: opens the shared "New Session" sheet, unprefilled -- the user
+    /// picks an existing project or types a catalog number and target name.
+    let createSession: () -> Void
     let openNight: (UUID) -> Void
     let openCalibration: () -> Void
     let openInsights: (String?) -> Void
@@ -47,6 +50,7 @@ public struct NightsView: View {
         store: NightsStore,
         accessMode: LibraryAccessMode = .readOnly,
         chooseLibrary: @escaping () -> Void,
+        createSession: @escaping () -> Void = {},
         openNight: @escaping (UUID) -> Void,
         openCalibration: @escaping () -> Void = {},
         openInsights: @escaping (String?) -> Void = { _ in }
@@ -56,6 +60,7 @@ public struct NightsView: View {
         self.store = store
         self.accessMode = accessMode
         self.chooseLibrary = chooseLibrary
+        self.createSession = createSession
         self.openNight = openNight
         self.openCalibration = openCalibration
         self.openInsights = openInsights
@@ -91,6 +96,21 @@ public struct NightsView: View {
                 MetricCard(title: "Morning triage", value: "\(store.needsReviewCount)", detail: "Needs review", systemImage: "checklist")
             }
             .accessibilityIdentifier("v2.nights.triage")
+            // W3-10: the owner's own report -- "Projektet tudok hozzá adni,
+            // de új sessiont nem tudok, legalábbis nem találom a gombot."
+            // (I can add a project, but not a new session -- or at least I
+            // can't find the button.) V2 had no session-creation entry point
+            // anywhere; this is the unprefilled one -- the user picks an
+            // existing project or types a catalog/name.
+            HStack {
+                Spacer()
+                Button(action: createSession) {
+                    Label("New Session…", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .help("Create a new session — pick an existing project or a custom target")
+                .accessibilityIdentifier("v2.nights.new-session")
+            }
             // Task 7 (2026-08-17, GroupBox removal): a heading plus spacing --
             // this sits inside the toolbar slot, which already floats on its
             // own glass bar (`WorkspaceTablePage.body`), so no additional

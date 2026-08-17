@@ -6,6 +6,9 @@ public struct ProjectWorkspaceView: View {
     let snapshot: ProjectSnapshot
     let rootURL: URL?
     let accessMode: LibraryAccessMode
+    /// W3-10: opens the shared "New Session" sheet, prefilled with this
+    /// project's own catalog target -- the user only picks the date.
+    let createSession: () -> Void
     let review: () -> Void
     let results: () -> Void
     let openNight: (UUID) -> Void
@@ -46,6 +49,7 @@ public struct ProjectWorkspaceView: View {
         accessMode: LibraryAccessMode = .readOnly,
         annotation: ProjectAnnotationRecord?,
         router: AppRouter,
+        createSession: @escaping () -> Void = {},
         review: @escaping () -> Void,
         results: @escaping () -> Void,
         openNight: @escaping (UUID) -> Void,
@@ -59,6 +63,7 @@ public struct ProjectWorkspaceView: View {
         self.accessMode = accessMode
         self.annotation = annotation
         self.router = router
+        self.createSession = createSession
         self.review = review
         self.results = results
         self.openNight = openNight
@@ -144,6 +149,12 @@ public struct ProjectWorkspaceView: View {
             // expects them -- above the content they act on, not tucked away
             // in the corner toolbar.
             HStack(spacing: 8) {
+                Button(action: createSession) {
+                    Label("New Session…", systemImage: "moon.stars")
+                }
+                .help("Create a new session for this project — you only pick the date")
+                .accessibilityIdentifier("v2.project.page.new-session")
+
                 Button(action: review) {
                     Label("Review Frames", systemImage: "checkmark.rectangle.stack")
                 }
@@ -189,6 +200,13 @@ public struct ProjectWorkspaceView: View {
         WorkspaceActions([
             .exportMenu(WorkspaceActionExportMenu(
                 id: "v2.project.export", items: projectExportItems, accessibilityID: "v2.project.export"
+            )),
+            .button(WorkspaceAction(
+                id: "v2.project.new-session",
+                title: "New Session…",
+                systemImage: "moon.stars",
+                help: "Create a new session for this project — you only pick the date",
+                action: createSession
             )),
             .button(WorkspaceAction(
                 id: "v2.project.review",

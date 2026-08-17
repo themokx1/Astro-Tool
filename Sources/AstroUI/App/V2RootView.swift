@@ -278,6 +278,15 @@ private struct V2Shell: View {
     @State private var showsSearch = false
     @State private var globalSearch = GlobalSearchStore()
     @State private var newProjectInitialQuery = ""
+    /// W3-10: the "New Session" sheet's own prefill -- `nil` for the Nights
+    /// page's unprefilled entry point, set for the Project workspace/
+    /// Projects-page entry points that already know the target. Held as a
+    /// side channel here rather than as `PresentationRoute.newNight`'s own
+    /// associated value, the exact same way `newProjectInitialQuery` above
+    /// is kept outside `PresentationRoute.newProject` -- one route case, one
+    /// external field, matching this file's own established convention
+    /// instead of adding a second, differently-shaped one.
+    @State private var newSessionPrefill: SessionCreationPrefill?
     @State private var pendingMutationPlan: LibraryMutationPlan?
     @State private var pendingMutationRootURL: URL?
     @State private var pendingMutationAccessMode: LibraryAccessMode = .readOnly
@@ -326,6 +335,7 @@ private struct V2Shell: View {
                     newProjectInitialQuery = designation
                     router.present(.newProject)
                 },
+                createSession: presentNewSession,
                 rescan: performRescan,
                 runAudit: performAudit,
                 accessMode: libraryAccessMode,
@@ -549,6 +559,19 @@ private struct V2Shell: View {
                     },
                     onLibraryFindingsChanged: refreshSidebarBadges
                 )
+            } else if presentation == .newNight,
+                      let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback {
+                NewSessionView(
+                    rootURL: rootURL,
+                    accessMode: libraryAccessMode,
+                    indexedFolders: projectsStore.projects.map(ProjectsQuery.canonicalFolderName(for:)),
+                    prefill: newSessionPrefill,
+                    existingProjects: projectsStore.projects,
+                    dismiss: {
+                        router.dismissPresentation()
+                        newSessionPrefill = nil
+                    }
+                )
             } else if case .glossary(let anchor) = presentation {
                 GlossaryView(anchor: anchor, dismiss: router.dismissPresentation)
             } else if presentation == .folderStructure {
@@ -614,6 +637,16 @@ private struct V2Shell: View {
             libraryHealthStore.onLibraryFindingsChanged = refreshSidebarBadges
         }
         .onChange(of: nightsStore.nights) { _, _ in refreshSidebarBadges() }
+    }
+
+    /// W3-10: the ONE place that opens the "New Session" sheet -- Project
+    /// workspace's header action, Projects page's row action, and Nights
+    /// page's toolbar action (threaded down through `DetailHost` as
+    /// `createSession` below) all call this same function, `prefill: nil`
+    /// for the unprefilled Nights entry point.
+    private func presentNewSession(prefill: SessionCreationPrefill?) {
+        newSessionPrefill = prefill
+        router.present(.newNight)
     }
 
     private func presentOnboarding() {
@@ -1073,6 +1106,11 @@ private struct DetailHost: View {
     let libraryRootFallback: URL?
     let chooseLibrary: () -> Void
     let createPlannedProject: (String) -> Void
+    /// W3-10: opens the shared "New Session" sheet -- `nil` prefill for the
+    /// Nights page's own unprefilled toolbar action, a resolved prefill for
+    /// the Project workspace's header action and the Projects page's row
+    /// action.
+    let createSession: (SessionCreationPrefill?) -> Void
     let rescan: () -> Void
     /// Task 10: backs `ArchiveView`'s "Check Library" toolbar action and its
     /// task cards' own "Run Check"/"Run Audit" actions -- wired straight to
@@ -1218,6 +1256,7 @@ private struct DetailHost: View {
                 snapshot: onboardingStore.phase.summary,
                 store: projectsStore,
                 createProject: { router.present(.newProject) },
+                createSession: { project in createSession(.project(project)) },
                 chooseLibrary: chooseLibrary,
                 reviewProject: { project in router.push(.review(projectID: project.id)) },
                 showResults: { project in router.push(.resultsWorkspace(projectID: project.id)) },
@@ -1239,6 +1278,7 @@ private struct DetailHost: View {
                     accessMode: accessMode,
                     annotation: projectsStore.selectedProjectAnnotation,
                     router: router,
+                    createSession: { createSession(.project(snapshot.project)) },
                     review: { router.push(.review(projectID: snapshot.project.id)) },
                     results: { router.push(.resultsWorkspace(projectID: snapshot.project.id)) },
                     openNight: { id in
@@ -1345,6 +1385,7 @@ private struct DetailHost: View {
                 store: nightsStore,
                 accessMode: accessMode,
                 chooseLibrary: chooseLibrary,
+                createSession: { createSession(nil) },
                 openNight: { id in
                     nightsStore.selectNight(id)
                     router.push(.night(id.uuidString))
