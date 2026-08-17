@@ -948,12 +948,6 @@ private struct V2Shell: View {
             guard let objectID = result.objectID else { return }
             router.navigate(to: .projects)
             Task { try? await projectsStore.selectProject(objectID) }
-        case .result:
-            guard let objectID = result.objectID,
-                  let locator = result.locator,
-                  let projectID = UUID(uuidString: locator) else { return }
-            Task { try? await projectsStore.selectProject(projectID) }
-            router.navigate(toContent: .result(objectID.uuidString))
         }
     }
 
@@ -1046,7 +1040,6 @@ private struct GlobalSearchPanel: View {
         case .series: "square.stack.3d.up"
         case .file: "doc"
         case .note: "note.text"
-        case .result: "square.stack.3d.up"
         }
     }
 }
@@ -1558,13 +1551,23 @@ private struct DetailHost: View {
                 action: { router.navigate(to: .projects) },
                 accessibilityIdentifier: "v2.detail.review-frame"
             )
-        case .result(let rawID):
-            ResultInspectorPanel(
-                resultIDString: rawID,
-                metadataStore: projectsStore.metadataStore,
-                projectID: projectsStore.selectedProjectID
+        case .result:
+            // W4-6 (owner decision): this destination used to render
+            // `ResultInspectorPanel`, backed by the two lineage tables --
+            // no writer anywhere in the product ever populated them, and
+            // schema v8 drops them. Global search
+            // no longer produces a `.result` hit either, so this route is
+            // reachable only from a stale restored window state or an old
+            // deep link; an honest placeholder beats a panel that could
+            // never have shown anything real.
+            V2EmptyDetail(
+                title: "Result",
+                message: "Result provenance isn't tracked -- stacking and selection happen in Siril.",
+                systemImage: "square.stack.3d.up",
+                actionTitle: "Go to Projects",
+                action: { router.navigate(to: .projects) },
+                accessibilityIdentifier: "v2.detail.result"
             )
-            .navigationTitle("Result")
         case .review(let projectID):
             if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback {
                 ReviewWorkspace(store: reviewStore, rootURL: rootURL, projectID: projectID)

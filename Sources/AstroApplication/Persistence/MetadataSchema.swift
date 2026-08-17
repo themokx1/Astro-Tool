@@ -12,11 +12,10 @@ public enum MetadataStoreError: Error, Equatable, Sendable {
     case unsafeMetadataDatabase
     case metadataDestinationChanged
     case invalidField(record: String, field: String)
-    case resultDependencyCycle
 }
 
 public enum MetadataSchema {
-    public static let currentVersion = 7
+    public static let currentVersion = 8
 
     static let versionOneSQL = """
     CREATE TABLE projects(
@@ -188,6 +187,36 @@ public enum MetadataSchema {
     );
     """
 
+    /// W4-6 (owner decision, 2026-08-17): drops `results`/`lineage_edges`,
+    /// the two tables from `versionTwoSQL` that no writer anywhere in V1 or
+    /// V2 has ever inserted a row into (verified against the owner's real
+    /// `metadata.sqlite`: 0 rows in both, always). The owner stacks in
+    /// Siril and selects there by hand -- "válogatás és az archiválás
+    /// kell... szóval eltávolítás" ("triage and archiving is what's
+    /// needed... so removal") -- this app's job is triage and archiving,
+    /// not lineage tracking.
+    ///
+    /// `results` first, `lineage_edges` second: `DROP TABLE` with
+    /// `PRAGMA foreign_keys = ON` performs an implicit `DELETE FROM` before
+    /// removing the table, and that delete is checked against every FK that
+    /// still exists at that moment. On a real (empty) install both deletes
+    /// affect zero rows and the order is inert. Dropping `results` first
+    /// only matters for the failure path this same ordering makes possible
+    /// to test deterministically: with a `lineage_edges` row still present
+    /// referencing a `results` row, `DROP TABLE results`'s implicit delete
+    /// hits that row's `ON DELETE RESTRICT` and fails outright (proven at
+    /// the SQLite level before writing this), which rolls the whole
+    /// migration transaction back via `transaction(in:_:)` below -- see
+    /// `MetadataStoreTests.failedVersionEightMigrationDoesNotAdvanceVersion`.
+    /// The reverse order would let `lineage_edges` drop silently while
+    /// `results` (still referenced by nothing at that point) might not fail
+    /// at all, which would defeat that test's ability to force a real
+    /// rollback to check.
+    static let versionEightSQL = """
+    DROP TABLE results;
+    DROP TABLE lineage_edges;
+    """
+
     static func migrate(_ database: SQLiteDB) throws {
         try transaction(in: database) {
             var version = try readVersion(in: database)
@@ -256,6 +285,14 @@ public enum MetadataSchema {
                 try database.exec(versionSevenSQL)
                 try database.run(
                     "UPDATE metadata_schema SET version = 7 WHERE singleton = 1;"
+                )
+                version = 7
+            }
+
+            if version < 8 {
+                try database.exec(versionEightSQL)
+                try database.run(
+                    "UPDATE metadata_schema SET version = 8 WHERE singleton = 1;"
                 )
             }
         }

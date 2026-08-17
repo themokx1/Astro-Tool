@@ -2,18 +2,6 @@ import AstroCore
 import Darwin
 import Foundation
 
-/// A single result joined with the display name of the project that owns
-/// it, for library-wide (cross-project) contexts such as global search.
-public struct ResultProjectSummary: Equatable, Sendable {
-    public let result: ResultRecord
-    public let projectName: String
-
-    public init(result: ResultRecord, projectName: String) {
-        self.result = result
-        self.projectName = projectName
-    }
-}
-
 /// One Planning-saved target (wave 5 Task 4, schema v6) -- a bookmarked
 /// catalog designation with an optional free-text note. Lives here rather
 /// than alongside `AuditAcknowledgementRecord` in `Domain/LibraryObjects.swift`
@@ -40,8 +28,6 @@ public struct MetadataWriteBatch: Sendable {
     public var nights: [NightRecord]
     public var series: [SeriesRecord]
     public var frameDecisions: [FrameDecisionRecord]
-    public var results: [ResultRecord]
-    public var lineageEdges: [LineageEdgeRecord]
     public var reviewStates: [ReviewStateRecord]
     public var mutationJournal: [MutationJournalRecord]
 
@@ -50,8 +36,6 @@ public struct MetadataWriteBatch: Sendable {
         nights: [NightRecord] = [],
         series: [SeriesRecord] = [],
         frameDecisions: [FrameDecisionRecord] = [],
-        results: [ResultRecord] = [],
-        lineageEdges: [LineageEdgeRecord] = [],
         reviewStates: [ReviewStateRecord] = [],
         mutationJournal: [MutationJournalRecord] = []
     ) {
@@ -59,8 +43,6 @@ public struct MetadataWriteBatch: Sendable {
         self.nights = nights
         self.series = series
         self.frameDecisions = frameDecisions
-        self.results = results
-        self.lineageEdges = lineageEdges
         self.reviewStates = reviewStates
         self.mutationJournal = mutationJournal
     }
@@ -137,14 +119,6 @@ public actor MetadataStore {
         try transaction { try upsert(frameDecision) }
     }
 
-    public func save(_ result: ResultRecord) throws {
-        try transaction { try upsert(result) }
-    }
-
-    public func save(_ lineageEdge: LineageEdgeRecord) throws {
-        try transaction { try upsert(lineageEdge) }
-    }
-
     public func save(_ reviewState: ReviewStateRecord) throws {
         try transaction { try upsert(reviewState) }
     }
@@ -159,8 +133,6 @@ public actor MetadataStore {
             for record in batch.nights { try upsert(record) }
             for record in batch.series { try upsert(record) }
             for record in batch.frameDecisions { try upsert(record) }
-            for record in batch.results { try upsert(record) }
-            for record in batch.lineageEdges { try upsert(record) }
             for record in batch.reviewStates { try upsert(record) }
             for record in batch.mutationJournal { try upsert(record) }
         }
@@ -344,76 +316,6 @@ public actor MetadataStore {
             bind: [.text(seriesID.databaseText)]
         ) { row in records.append(try Self.frameDecision(from: row)) }
         return records
-    }
-
-    public func result(id: UUID) throws -> ResultRecord? {
-        var record: ResultRecord?
-        try database.query(
-            """
-            SELECT id, project_id, parent_result_id, kind, role, relative_path,
-                   created_at, software_name, software_version
-            FROM results WHERE id = ?;
-            """,
-            bind: [.text(id.databaseText)]
-        ) { row in record = try Self.result(from: row) }
-        return record
-    }
-
-    public func results(projectID: UUID) throws -> [ResultRecord] {
-        var records: [ResultRecord] = []
-        try database.query(
-            """
-            SELECT id, project_id, parent_result_id, kind, role, relative_path,
-                   created_at, software_name, software_version
-            FROM results WHERE project_id = ? ORDER BY created_at, id;
-            """,
-            bind: [.text(projectID.databaseText)]
-        ) { row in records.append(try Self.result(from: row)) }
-        return records
-    }
-
-    /// Every result across every project, joined with the owning project's
-    /// display name. Backs library-wide result-content search, which has no
-    /// single project to scope to the way `results(projectID:)` does.
-    public func allResults() throws -> [ResultProjectSummary] {
-        var records: [ResultProjectSummary] = []
-        try database.query(
-            """
-            SELECT results.id, results.project_id, results.parent_result_id, results.kind, results.role,
-                   results.relative_path, results.created_at, results.software_name, results.software_version,
-                   projects.display_name
-            FROM results
-            JOIN projects ON projects.id = results.project_id
-            ORDER BY results.created_at, results.id;
-            """
-        ) { row in records.append(try Self.resultProjectSummary(from: row)) }
-        return records
-    }
-
-    public func lineageEdges(resultID: UUID) throws -> [LineageEdgeRecord] {
-        var records: [LineageEdgeRecord] = []
-        try database.query(
-            """
-            SELECT id, result_id, source_kind,
-                   COALESCE(source_series_id, source_frame_id, source_result_id)
-            FROM lineage_edges WHERE result_id = ? ORDER BY source_kind, id;
-            """,
-            bind: [.text(resultID.databaseText)]
-        ) { row in records.append(try Self.lineageEdge(from: row)) }
-        return records
-    }
-
-    public func lineageEdge(id: UUID) throws -> LineageEdgeRecord? {
-        var record: LineageEdgeRecord?
-        try database.query(
-            """
-            SELECT id, result_id, source_kind,
-                   COALESCE(source_series_id, source_frame_id, source_result_id)
-            FROM lineage_edges WHERE id = ?;
-            """,
-            bind: [.text(id.databaseText)]
-        ) { row in record = try Self.lineageEdge(from: row) }
-        return record
     }
 
     public func reviewState(id: UUID) throws -> ReviewStateRecord? {
@@ -1096,81 +998,6 @@ public actor MetadataStore {
         )
     }
 
-    private func upsert(_ record: ResultRecord) throws {
-        try Self.validate(record)
-        try validateDependency(resultID: record.id, dependsOn: record.parentResultID)
-        try database.run(
-            """
-            INSERT INTO results(
-              id, project_id, parent_result_id, kind, role, relative_path,
-              created_at, software_name, software_version
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-              project_id = excluded.project_id,
-              parent_result_id = excluded.parent_result_id,
-              kind = excluded.kind,
-              role = excluded.role,
-              relative_path = excluded.relative_path,
-              created_at = excluded.created_at,
-              software_name = excluded.software_name,
-              software_version = excluded.software_version;
-            """,
-            bind: [
-                .text(record.id.databaseText),
-                .text(record.projectID.databaseText),
-                record.parentResultID.map { .text($0.databaseText) } ?? .null,
-                .text(record.kind.rawValue),
-                .text(record.role.rawValue),
-                record.relativePath.map(SQLiteValue.text) ?? .null,
-                .real(record.createdAt.timeIntervalSince1970),
-                record.softwareName.map(SQLiteValue.text) ?? .null,
-                record.softwareVersion.map(SQLiteValue.text) ?? .null,
-            ]
-        )
-    }
-
-    private func upsert(_ record: LineageEdgeRecord) throws {
-        if record.sourceKind == .result {
-            try validateDependency(
-                resultID: record.resultID,
-                dependsOn: record.sourceID,
-                excludingLineageEdgeID: record.id
-            )
-        }
-        let sources: (series: SQLiteValue, frame: SQLiteValue, result: SQLiteValue)
-        switch record.sourceKind {
-        case .series:
-            sources = (.text(record.sourceID.databaseText), .null, .null)
-        case .frame:
-            sources = (.null, .text(record.sourceID.databaseText), .null)
-        case .result:
-            sources = (.null, .null, .text(record.sourceID.databaseText))
-        }
-        try database.run(
-            """
-            INSERT INTO lineage_edges(
-              id, result_id, source_kind, source_series_id, source_frame_id, source_result_id
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-              result_id = excluded.result_id,
-              source_kind = excluded.source_kind,
-              source_series_id = excluded.source_series_id,
-              source_frame_id = excluded.source_frame_id,
-              source_result_id = excluded.source_result_id;
-            """,
-            bind: [
-                .text(record.id.databaseText),
-                .text(record.resultID.databaseText),
-                .text(record.sourceKind.rawValue),
-                sources.series,
-                sources.frame,
-                sources.result,
-            ]
-        )
-    }
-
     private func upsert(_ record: ReviewStateRecord) throws {
         try Self.validateFinite(
             record.updatedAt.timeIntervalSince1970,
@@ -1221,45 +1048,6 @@ public actor MetadataStore {
         )
     }
 
-    private func validateDependency(
-        resultID: UUID,
-        dependsOn dependencyID: UUID?,
-        excludingLineageEdgeID: UUID? = nil
-    ) throws {
-        guard let dependencyID else { return }
-        guard dependencyID != resultID else {
-            throw MetadataStoreError.resultDependencyCycle
-        }
-
-        var reachesResult = false
-        try database.query(
-            """
-            WITH RECURSIVE dependencies(id) AS (
-              SELECT ?
-              UNION
-              SELECT results.parent_result_id
-              FROM results JOIN dependencies ON results.id = dependencies.id
-              WHERE results.parent_result_id IS NOT NULL
-              UNION
-              SELECT lineage_edges.source_result_id
-              FROM lineage_edges JOIN dependencies ON lineage_edges.result_id = dependencies.id
-              WHERE lineage_edges.source_kind = 'result'
-                AND lineage_edges.source_result_id IS NOT NULL
-                AND lineage_edges.id <> ?
-            )
-            SELECT 1 FROM dependencies WHERE id = ? LIMIT 1;
-            """,
-            bind: [
-                .text(dependencyID.databaseText),
-                .text(excludingLineageEdgeID?.databaseText ?? ""),
-                .text(resultID.databaseText),
-            ]
-        ) { _ in reachesResult = true }
-        guard !reachesResult else {
-            throw MetadataStoreError.resultDependencyCycle
-        }
-    }
-
     private static func validate(_ record: NightRecord) throws {
         guard validCivilDate(record.localDate) else {
             throw MetadataStoreError.invalidField(record: "nights", field: "local_date")
@@ -1282,14 +1070,6 @@ public actor MetadataStore {
         if let offset = record.offset {
             try validateFinite(offset, record: "series", field: "offset")
         }
-    }
-
-    private static func validate(_ record: ResultRecord) throws {
-        try validateFinite(
-            record.createdAt.timeIntervalSince1970,
-            record: "results",
-            field: "created_at"
-        )
     }
 
     private static func validateFinite(
@@ -1390,57 +1170,6 @@ public actor MetadataStore {
             relativePath: relativePath,
             verdict: verdict,
             logicallyExcluded: logicallyExcluded != 0
-        )
-    }
-
-    private static func result(from row: SQLiteRow) throws -> ResultRecord {
-        let idText = row.string(0) ?? ""
-        let parentText = row.string(2)
-        guard let id = UUID(uuidString: idText),
-              let projectID = row.string(1).flatMap(UUID.init(uuidString:)),
-              parentText == nil || UUID(uuidString: parentText!) != nil,
-              let kindText = row.string(3),
-              let kind = ResultKind(rawValue: kindText),
-              let roleText = row.string(4),
-              let role = ResultRole(rawValue: roleText),
-              let createdAt = row.double(6)
-        else { throw MetadataStoreError.invalidRecord(table: "results", id: idText) }
-        let record = ResultRecord(
-            id: id,
-            projectID: projectID,
-            parentResultID: parentText.flatMap(UUID.init(uuidString:)),
-            kind: kind,
-            role: role,
-            relativePath: row.string(5),
-            createdAt: Date(timeIntervalSince1970: createdAt),
-            softwareName: row.string(7),
-            softwareVersion: row.string(8)
-        )
-        try validate(record)
-        return record
-    }
-
-    private static func resultProjectSummary(from row: SQLiteRow) throws -> ResultProjectSummary {
-        let record = try Self.result(from: row)
-        guard let projectName = row.string(9) else {
-            throw MetadataStoreError.invalidRecord(table: "results", id: record.id.uuidString)
-        }
-        return ResultProjectSummary(result: record, projectName: projectName)
-    }
-
-    private static func lineageEdge(from row: SQLiteRow) throws -> LineageEdgeRecord {
-        let idText = row.string(0) ?? ""
-        guard let id = UUID(uuidString: idText),
-              let resultID = row.string(1).flatMap(UUID.init(uuidString:)),
-              let kindText = row.string(2),
-              let sourceKind = LineageSourceKind(rawValue: kindText),
-              let sourceID = row.string(3).flatMap(UUID.init(uuidString:))
-        else { throw MetadataStoreError.invalidRecord(table: "lineage_edges", id: idText) }
-        return LineageEdgeRecord(
-            id: id,
-            resultID: resultID,
-            sourceKind: sourceKind,
-            sourceID: sourceID
         )
     }
 
