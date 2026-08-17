@@ -80,7 +80,6 @@ public struct InspectorView: View {
                 // from, never re-queried here.
                 ProjectInspectorPanel(
                     snapshot: snapshot,
-                    annotation: projectsStore.selectedProjectAnnotation,
                     rootURL: rootURL
                 )
             } else {
@@ -121,7 +120,6 @@ public struct InspectorView: View {
            snapshot.id == id {
             ProjectInspectorPanel(
                 snapshot: snapshot,
-                annotation: projectsStore.selectedProjectAnnotation,
                 rootURL: rootURL
             )
         } else {
@@ -210,13 +208,23 @@ public struct InspectorView: View {
     }
 }
 
-/// Project selection's inspector content: identity, progress toward its
-/// integration goal, and the two Finder quick actions the plan calls for
-/// -- both resolved against the latest night's session folder, the only
-/// on-disk location a (potentially many-night) project maps to directly.
+/// Project selection's inspector content: identity and the two Finder
+/// quick actions the plan calls for -- both resolved against the latest
+/// night's session folder, the only on-disk location a (potentially
+/// many-night) project maps to directly.
+///
+/// Task 2 (owner review wave 4-4): "the project page duplicates itself into
+/// the inspector" -- this used to ALSO carry a "Progress" section
+/// (Integration/usable frames/latest night, plus an optional goal
+/// `ProgressView`) that repeated `ProjectWorkspaceView`'s own three hero
+/// metric cards (Integráció/Képkockák/Legutóbbi éjszaka) as a second set of
+/// rows, side by side with the page itself. One fact, one home: the page
+/// keeps its hero cards, and this panel keeps only what is NOT already
+/// shown there -- identity and Quick actions. `annotation` (the goal-hours
+/// value the removed section alone read) is dropped from this panel
+/// entirely along with it; nothing else here used it.
 private struct ProjectInspectorPanel: View {
     let snapshot: ProjectSnapshot
-    let annotation: ProjectAnnotationRecord?
     let rootURL: URL?
 
     var body: some View {
@@ -226,15 +234,6 @@ private struct ProjectInspectorPanel: View {
                 LabeledContent("Name", value: snapshot.project.displayName)
                 LabeledContent("Folder", value: snapshot.canonicalFolderName)
                 LabeledContent("Phase") { Text(snapshot.project.phase.displayLabel) }
-            }
-            Section("Progress") {
-                LabeledContent("Integration", value: AstroFormat.duration(seconds: snapshot.integrationSeconds))
-                if let goalHours = annotation?.integrationGoalHours, goalHours > 0 {
-                    LabeledContent("Goal", value: "\(goalHours.formatted(.number.precision(.fractionLength(0...1)))) h")
-                    ProgressView(value: min(1, (snapshot.integrationSeconds / 3600) / goalHours))
-                }
-                LabeledContent("Usable frames", value: "\(snapshot.usableFrames)")
-                LabeledContent("Latest night", value: snapshot.nights.first?.night.localDate ?? "—")
             }
             Section("Quick actions") {
                 Button("Open in Finder", systemImage: "folder", action: openLatestNightFolder)
@@ -347,6 +346,14 @@ private struct NightInspectorPanel: View {
 /// the same capture-settings fields `SeriesWorkspaceView` already shows,
 /// from `ProjectSeriesSnapshot` -- no filter-assignment editor, since that
 /// belongs to the series workspace itself, not a supplementary panel.
+///
+/// Task 2 (owner review wave 4-4): "Check .projectSeries for the same
+/// pattern" -- this used to ALSO carry a "Frames" section (Usable/Excluded/
+/// Integration) that repeated `SeriesWorkspaceView`'s own "Usable"/
+/// "Integration" hero metric cards as a second set of rows. Dropped for the
+/// same "one fact, one home" reason as `ProjectInspectorPanel`'s own
+/// "Progress" section above; Capture/Setup stay, since nothing on the page
+/// itself shows them as hero cards.
 private struct SeriesSummaryPanel: View {
     let item: ProjectSeriesSnapshot
 
@@ -361,11 +368,6 @@ private struct SeriesSummaryPanel: View {
             Section("Setup") {
                 LabeledContent("Equipment", value: item.series.setupDescriptor)
                 LabeledContent("Binning", value: item.series.binning)
-            }
-            Section("Frames") {
-                LabeledContent("Usable", value: "\(item.usableFrames)")
-                LabeledContent("Excluded", value: "\(item.excludedFrames)")
-                LabeledContent("Integration", value: AstroFormat.duration(seconds: item.integrationSeconds))
             }
         }
         .formStyle(.grouped)
