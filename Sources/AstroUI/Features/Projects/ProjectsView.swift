@@ -52,41 +52,40 @@ public struct ProjectsView: View {
         WorkspaceTablePage(
             subtitle: "One target, every night, series, stack, and result — kept together."
         ) {
+            // W4-3a (2026-08-17 owner-feedback, second complaint): the
+            // owner's own words, twice -- "a projektek oldal felső fele,
+            // konkrétan white space és haszontalan infó és szöveg", then "a
+            // projektek oldal fele még mindig felesleges infó". This slot
+            // used to stack two metric cards (the 13 was only ever this
+            // table's own row count; the 20 belonged to Nights -- neither
+            // linked anywhere), a permanent "Tiszta kezdés" onboarding card
+            // with two explainer bullets, a full-width search row, and a
+            // lone right-aligned Rate All strip: ~45% of the viewport spent
+            // before the table. Now: one action row, search left/New
+            // Project/Rate All right, nothing else -- the explainer bullets
+            // moved into `NewProjectView` itself (see its own doc comment),
+            // since that is the one moment they are actually relevant.
             HStack(spacing: AstroTokens.Spacing.standard) {
-                MetricCard(title: "Projects", value: snapshot.map { "\($0.projectCount)" } ?? "—", detail: "Recognized target folders", systemImage: "folder")
-                MetricCard(title: "Nights", value: snapshot.map { "\($0.nightCount)" } ?? "—", detail: "Across the open library", systemImage: "moon.stars")
-            }
-
-            // Task 7 (2026-08-17, GroupBox removal): a heading plus spacing --
-            // this sits inside the toolbar slot, which already floats on its
-            // own glass bar (`WorkspaceTablePage.body`), so no additional
-            // surface belongs here.
-            VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
-                Text("Start cleanly").font(.headline)
-                Label("Search by catalog number, English name, or Hungarian name.", systemImage: "sparkle.magnifyingglass")
-                Label("AstroTool proposes one canonical folder name to prevent duplicates.", systemImage: "checkmark.seal")
+                if !store.projects.isEmpty {
+                    TextField("Search projects, catalog, filter, setup, or status", text: $searchText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 360)
+                        .accessibilityIdentifier("v2.projects.search")
+                        .onChange(of: searchText) { _, value in
+                            Task { visibleProjects = (try? await store.search(value)) ?? [] }
+                        }
+                }
+                Spacer()
                 Button("New Project…", action: createProject)
                     .buttonStyle(.borderedProminent)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            if !store.projects.isEmpty {
-                TextField("Search projects, catalog, filter, setup, or status", text: $searchText)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier("v2.projects.search")
-                    .onChange(of: searchText) { _, value in
-                        Task { visibleProjects = (try? await store.search(value)) ?? [] }
-                    }
                 // Task 4 (2026-08-17 owner-feedback wave 3): the owner's own
                 // words -- "ezt úgy is kéne tudnom, hogy minden projektre
                 // ráengedni" (run the whole-project rate across every
-                // project). Page-level, not toolbar: this page never
-                // publishes to `WorkspaceActionCenter` at all (it is a
+                // project). Page-level, not toolbar/`WorkspaceActionCenter`:
+                // this page never publishes to that center at all (it is a
                 // section ROOT, not a pushed workspace), so a bulk action
-                // like this one has no drill-down to survive and needs no
-                // toolbar copy.
-                HStack {
-                    Spacer()
+                // like this one has no drill-down to survive.
+                if !store.projects.isEmpty {
                     Button(action: rateAllProjects) {
                         Label("Rate All Projects", systemImage: "star.leadinghalf.filled")
                     }
@@ -447,6 +446,17 @@ public struct NewProjectView: View {
             TextField("Catalog number or target name", text: $search)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("v2.new-project.search")
+            // W4-3a (2026-08-17 owner-feedback, second complaint): moved
+            // down from a permanent "Tiszta kezdés" card that used to sit
+            // atop `ProjectsView` on every visit -- see that view's own doc
+            // comment. This sheet's header already covers the OTHER
+            // explainer ("AstroTool will keep its identity canonical" =
+            // one canonical folder name, no duplicates), so only the
+            // search-scope sentence moves here; repeating both would just
+            // relocate the duplication instead of removing it.
+            Text("Search by catalog number, English name, or Hungarian name.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ContentUnavailableView {
                     Label("Find a target", systemImage: "scope")
