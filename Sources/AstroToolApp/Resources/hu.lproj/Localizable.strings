@@ -1389,3 +1389,7 @@
 "No connection to Open-Meteo" = "Nincs kapcsolat az Open-Meteóval";
 "Open-Meteo returned an invalid response" = "Az Open-Meteo hibás választ adott";
 "Open-Meteo's response could not be processed" = "Az Open-Meteo válasza nem feldolgozható";
+
+// W4-5: az integráció-oszlop többéjszakás keret-magyarázata -- interpolált
+// LocalizedStringKey, az extraháló script nem látja, kézzel felvéve.
+"~%@ nights at tonight's pace" = "~%@ éjszaka a mai tempóval";

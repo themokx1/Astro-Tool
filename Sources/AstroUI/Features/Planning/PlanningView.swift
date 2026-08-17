@@ -428,6 +428,15 @@ public struct PlanningView: View {
                                     if let hours = row.integrationHours {
                                         Text("≈ \(hours, format: .number.precision(.fractionLength(1))) h")
                                             .font(.headline.monospacedDigit())
+                                        // W4-5 (owner report): "≈ 27.9 h" alone read as a
+                                        // broken per-night figure. It is a multi-night
+                                        // exposure budget -- tie it to tonight's real
+                                        // dark-hours pace so the reader sees both.
+                                        if let nights = row.integrationNightsAtTonightsPace {
+                                            Text("~\(nights, format: .number.rounded(rule: .up).precision(.fractionLength(0))) nights at tonight's pace")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
                                     } else {
                                         // Two different "no number" cases, and
                                         // conflating them would be its own
