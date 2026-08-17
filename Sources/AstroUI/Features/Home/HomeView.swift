@@ -29,7 +29,11 @@ public struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.spacious) {
                 header
-                NightContextRail(context: store.snapshot.nightContext)
+                NightContextRail(
+                    context: store.snapshot.nightContext,
+                    cloud: store.snapshot.nightCloud,
+                    cloudError: store.snapshot.nightCloudError
+                )
                 if store.snapshot.libraryName == nil {
                     emptyLibrary
                 } else {
@@ -304,6 +308,14 @@ public struct HomeView: View {
 /// unconfigured state -- never a decorative fake plot.
 private struct NightContextRail: View {
     let context: HomeSnapshot.NightContext
+    /// W4-2: tonight's Open-Meteo cloud picture, `nil` whenever there is
+    /// nothing honest to show (weather off, no site resolved, or the fetch
+    /// hasn't landed yet) -- per spec, that means no row at all, not a
+    /// loading placeholder or an invented value.
+    let cloud: HomeSnapshot.NightCloud?
+    /// The one case something IS shown despite `cloud` being `nil`: a fetch
+    /// that failed outright with no cached forecast to fall back on.
+    let cloudError: WeatherError?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -354,6 +366,8 @@ private struct NightContextRail: View {
                 }
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
+
+                cloudRow
             } else {
                 Text("No observing site is resolved for this library yet, so tonight's dusk-to-dawn window can't be shown here. AstroTool derives it automatically from your FITS files' own site coordinates once they're indexed.")
                     .font(.caption)
@@ -375,5 +389,70 @@ private struct NightContextRail: View {
                 : "Night context: no site configured for this library yet."
         )
         .accessibilityIdentifier("v2.home.night-context")
+    }
+
+    /// W4-2: V1's Tonight page "Felhőzet" tile vocabulary (dusk-to-dawn
+    /// percent transition plus an "Open-Meteo · HH:mm" fetched-at caption),
+    /// added as one more row on the same card rather than a separate tile --
+    /// this rail is already keyed to the same dusk/dawn window the cloud
+    /// numbers themselves are computed against.
+    @ViewBuilder
+    private var cloudRow: some View {
+        if let cloud {
+            HStack(spacing: 6) {
+                Image(systemName: "cloud.fill").foregroundStyle(.secondary)
+                Text("Cloudiness")
+                cloudValueText(cloud)
+                Spacer()
+                Text("Open-Meteo · \(Self.hmFormatter.string(from: cloud.fetchedAt))")
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption.monospacedDigit())
+            .accessibilityIdentifier("v2.home.night-cloud")
+        } else if let cloudError {
+            HStack(spacing: 6) {
+                Image(systemName: "cloud.fill").foregroundStyle(.secondary)
+                Text("Cloudiness")
+                Text(cloudError.captionKey)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("v2.home.night-cloud-error")
+        }
+    }
+
+    /// `nil` dusk/dawn (both, per `HomeStore.productionWeather`'s own
+    /// contract) means tonight falls beyond Open-Meteo's 7-day horizon --
+    /// the same honest message `PlanningView`'s cloud indicator shows for
+    /// the identical case, rather than a blank or a guess.
+    private func cloudValueText(_ cloud: HomeSnapshot.NightCloud) -> Text {
+        guard let dusk = cloud.duskPercent, let dawn = cloud.dawnPercent else {
+            return Text("Forecast horizon is 7 days")
+        }
+        return Text(verbatim: "\(Int(dusk.rounded()))% → \(Int(dawn.rounded()))%")
+    }
+
+    private static let hmFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+}
+
+/// W4-2: `WeatherError.message` is a raw Hungarian `String` (V1's own
+/// display convention, read straight by `TonightPage`) -- handing that to
+/// `Text(_:)` in V2 would always select the verbatim `StringProtocol`
+/// overload and never resolve through `hu.lproj`. Same dual-representation
+/// split as `NightRow.TriageState.displayLabel`/`.localizedText`
+/// (`NightsStore.swift`): this is the `LocalizedStringKey` side, for V2 only.
+extension WeatherError {
+    var captionKey: LocalizedStringKey {
+        switch self {
+        case .network: "No connection to Open-Meteo"
+        case .invalidResponse: "Open-Meteo returned an invalid response"
+        case .decode: "Open-Meteo's response could not be processed"
+        }
     }
 }

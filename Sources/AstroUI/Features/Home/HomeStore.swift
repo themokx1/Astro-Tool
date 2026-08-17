@@ -75,6 +75,26 @@ public struct HomeSnapshot: Equatable, Sendable {
         )
     }
 
+    /// W4-2: tonight's Open-Meteo cloud picture for the resolved site, dusk
+    /// to dawn -- the exact vocabulary V1's Tonight page "Felhőzet" tile
+    /// already uses (`TonightPage.cloudTileInfo`), computed against the SAME
+    /// twilight window `productionNightContext` resolves `leadingLabel`/
+    /// `trailingLabel` from. `nil` dusk/dawn percents (rather than `nil` for
+    /// the whole struct) is the "beyond the 7-day horizon" honest case --
+    /// `WeatherProvider`/`NightForecast.cloudPercent`'s own 90-minute
+    /// tolerance is what actually produces that.
+    public struct NightCloud: Equatable, Sendable {
+        public let duskPercent: Double?
+        public let dawnPercent: Double?
+        public let fetchedAt: Date
+
+        public init(duskPercent: Double?, dawnPercent: Double?, fetchedAt: Date) {
+            self.duskPercent = duskPercent
+            self.dawnPercent = dawnPercent
+            self.fetchedAt = fetchedAt
+        }
+    }
+
     public let libraryName: String?
     public let nightContext: NightContext
     public let projectCount: Int
@@ -92,6 +112,16 @@ public struct HomeSnapshot: Equatable, Sendable {
     /// "no active project exists yet" apart from "one exists, but none of
     /// them can be continued tonight".
     public let hasActiveProjectsExcludedTonight: Bool
+    /// `nil` whenever there is nothing real to show: weather disabled
+    /// (`config.weather.enabled == false`), no site resolved, or the fetch
+    /// hasn't landed yet -- `HomeView` shows no cloud row at all in every one
+    /// of those cases (W4-2 spec: "no site configured -> no weather row, no
+    /// error"). `nightCloudError` is the ONE case where something IS shown
+    /// despite `nightCloud` being `nil`: a fetch that failed with no cached
+    /// forecast to fall back on (`WeatherService.fetch`'s only throwing
+    /// case).
+    public let nightCloud: NightCloud?
+    public let nightCloudError: WeatherError?
 
     public init(
         libraryName: String?,
@@ -101,7 +131,9 @@ public struct HomeSnapshot: Equatable, Sendable {
         nextProject: ProjectRecord? = nil,
         nextProjectIntegrationSeconds: Double = 0,
         tonightRecommendations: [HomeTonightRecommendation] = [],
-        hasActiveProjectsExcludedTonight: Bool = false
+        hasActiveProjectsExcludedTonight: Bool = false,
+        nightCloud: NightCloud? = nil,
+        nightCloudError: WeatherError? = nil
     ) {
         self.libraryName = libraryName
         self.nightContext = nightContext
@@ -111,6 +143,8 @@ public struct HomeSnapshot: Equatable, Sendable {
         self.nextProjectIntegrationSeconds = nextProjectIntegrationSeconds
         self.tonightRecommendations = tonightRecommendations
         self.hasActiveProjectsExcludedTonight = hasActiveProjectsExcludedTonight
+        self.nightCloud = nightCloud
+        self.nightCloudError = nightCloudError
     }
 
     /// Neutral preview content: it conveys the shape of the workspace without
@@ -133,6 +167,13 @@ public final class HomeStore {
     /// `tonightProvider`/`calibCoverageProvider` are: it lets tests supply a
     /// fixed result without needing a real FITS-backed library on disk.
     public typealias NightContextProvider = @Sendable (URL) async throws -> HomeSnapshot.NightContext
+    /// W4-2: resolves tonight's cloud picture for an open library -- `nil`
+    /// when weather is off or no site resolves (the honest "no row" case),
+    /// throws `WeatherError` only when `WeatherService.fetch` itself throws
+    /// (no cached forecast to fall back on). Injectable for the same reason
+    /// every other provider here is: tests supply a fixed result without a
+    /// real network call.
+    public typealias WeatherProvider = @Sendable (URL) async throws -> HomeSnapshot.NightCloud?
     public private(set) var snapshot: HomeSnapshot
     /// The full plan `tonightRecommendations` was sliced from (`prefix(8)`,
     /// display-only) -- kept around so the "Export Plan" menu
@@ -148,8 +189,16 @@ public final class HomeStore {
     private let tonightProvider: TonightProvider
     private let calibCoverageProvider: CalibCoverageProvider
     private let nightContextProvider: NightContextProvider
+    private let weatherProvider: WeatherProvider
+    /// Bumped at the start of every `loadWeather(rootURL:)` call and captured
+    /// into that call's own local `generation` -- the weather fetch runs as
+    /// its own fire-and-forget `Task` (never awaited by `configure`, so a
+    /// slow or failed forecast can't delay the rest of the dashboard), and a
+    /// second library open before the first fetch lands must not let the
+    /// stale one win. Same guard shape as `PlanningStore.recomputeGeneration`.
+    private var weatherGeneration = 0
 
-    /// All three providers are `Optional`/`nil` rather than defaulted
+    /// All four providers are `Optional`/`nil` rather than defaulted
     /// directly to the `production…` methods, and must stay that way: an
     /// `async` default argument is re-emitted as a `weak`/`linkonce_odr`
     /// async function pointer record in every module that uses it, with a
@@ -166,16 +215,69 @@ public final class HomeStore {
         snapshot: HomeSnapshot = .unconfigured,
         tonightProvider: TonightProvider? = nil,
         calibCoverageProvider: CalibCoverageProvider? = nil,
-        nightContextProvider: NightContextProvider? = nil
+        nightContextProvider: NightContextProvider? = nil,
+        weatherProvider: WeatherProvider? = nil
     ) {
         self.snapshot = snapshot
         self.tonightProvider = tonightProvider ?? HomeStore.productionTonight
         self.calibCoverageProvider = calibCoverageProvider ?? HomeStore.productionCalibCoverage
         self.nightContextProvider = nightContextProvider ?? HomeStore.productionNightContext
+        self.weatherProvider = weatherProvider ?? HomeStore.productionWeather
     }
 
     public func replaceSnapshot(_ snapshot: HomeSnapshot) {
         self.snapshot = snapshot
+    }
+
+    /// W4-2: fetches tonight's cloud picture for `rootURL` and folds it into
+    /// `snapshot`, off `configure`'s own critical path -- weather is opt-in
+    /// side data (same posture as V1's `AppState.loadWeather`) and must never
+    /// delay the dashboard the way an awaited call would. Called once from
+    /// `configure(libraryName:rootURL:projectsStore:nightCount:)` after that
+    /// snapshot lands, and safe to call again on its own (e.g. a future "open
+    /// a different library while the first fetch is still in flight" case)
+    /// thanks to `weatherGeneration`.
+    private func loadWeather(rootURL: URL?) {
+        weatherGeneration += 1
+        let generation = weatherGeneration
+        guard let rootURL else {
+            snapshot = Self.withCloud(snapshot, nightCloud: nil, nightCloudError: nil)
+            return
+        }
+        let provider = weatherProvider
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let cloud = try await provider(rootURL)
+                guard generation == self.weatherGeneration else { return }
+                self.snapshot = Self.withCloud(self.snapshot, nightCloud: cloud, nightCloudError: nil)
+            } catch let error as WeatherError {
+                guard generation == self.weatherGeneration else { return }
+                self.snapshot = Self.withCloud(self.snapshot, nightCloud: nil, nightCloudError: error)
+            } catch {
+                guard generation == self.weatherGeneration else { return }
+                self.snapshot = Self.withCloud(self.snapshot, nightCloud: nil, nightCloudError: nil)
+            }
+        }
+    }
+
+    private static func withCloud(
+        _ snapshot: HomeSnapshot,
+        nightCloud: HomeSnapshot.NightCloud?,
+        nightCloudError: WeatherError?
+    ) -> HomeSnapshot {
+        HomeSnapshot(
+            libraryName: snapshot.libraryName,
+            nightContext: snapshot.nightContext,
+            projectCount: snapshot.projectCount,
+            nightCount: snapshot.nightCount,
+            nextProject: snapshot.nextProject,
+            nextProjectIntegrationSeconds: snapshot.nextProjectIntegrationSeconds,
+            tonightRecommendations: snapshot.tonightRecommendations,
+            hasActiveProjectsExcludedTonight: snapshot.hasActiveProjectsExcludedTonight,
+            nightCloud: nightCloud,
+            nightCloudError: nightCloudError
+        )
     }
 
     public func configure(libraryName: String, projects: [ProjectRecord], nightCount: Int) {
@@ -288,6 +390,10 @@ public final class HomeStore {
             tonightRecommendations: Array(recommendations),
             hasActiveProjectsExcludedTonight: hasActiveProjectsExcludedTonight
         )
+        // Fire-and-forget, same reasoning as V1's `AppState.loadWeather`
+        // (called right after its own site-scoped load lands): weather is
+        // opt-in side data, never allowed to delay this method's own await.
+        loadWeather(rootURL: rootURL)
     }
 
     /// `true` for the `SkyVerdict` cases that mean "this target is genuinely
@@ -404,6 +510,47 @@ public final class HomeStore {
                 trailingLabel: trailingLabel, nowFraction: nowFraction
             )
         }.value
+    }
+
+    /// W4-2: tonight's dusk-to-dawn cloud picture, gated behind the exact
+    /// same `config.weather.enabled` opt-in V1's `AppState.loadWeather` reads
+    /// (this is the same `config.json`, so a toggle flipped from either V1's
+    /// or V2's Settings takes effect here too) -- returns `nil`, not an
+    /// error, for "disabled" and "no site resolves", both honest "nothing to
+    /// show" cases. Resolves the site independently of `productionNightContext`
+    /// (a second `Planner.resolveSite` call rather than threading the first
+    /// one's result through) -- the same accepted duplication
+    /// `productionSkyContext`/`productionNightContext` already have between
+    /// each other, needed here because this method must stay independently
+    /// callable (and testable) without entangling `NightContextProvider`'s
+    /// own contract.
+    public static func productionWeather(rootURL: URL) async throws -> HomeSnapshot.NightCloud? {
+        struct ResolvedSite { let latitudeDeg: Double; let longitudeDeg: Double }
+        let resolved: ResolvedSite? = try await Task.detached(priority: .utility) {
+            let identity = LibraryIdentity(rootURL: rootURL)
+            let paths = try AppStoragePaths.production(libraryID: identity, libraryRoot: rootURL)
+            let database = try Database(path: paths.indexDatabase.path)
+            let configURL = rootURL.appendingPathComponent(".astro_tool/config.json")
+            var config = (try? AstroConfig.load(from: configURL)) ?? AstroConfig()
+            config.rootPath = rootURL.path
+            guard config.weather.enabled else { return nil }
+            let site = try Planner.resolveSite(db: database, config: config)
+            guard let latitudeDeg = site.latitudeDeg, let longitudeDeg = site.longitudeDeg else { return nil }
+            return ResolvedSite(latitudeDeg: latitudeDeg, longitudeDeg: longitudeDeg)
+        }.value
+        guard let resolved else { return nil }
+
+        let now = Date()
+        let timeZone = TimeZone.current
+        let twilight = SunMoon.astronomicalTwilight(
+            nightOf: now, latDeg: resolved.latitudeDeg, lonDeg: resolved.longitudeDeg, timeZone: timeZone
+        )
+        let (forecast, _) = try await WeatherService.shared.fetch(
+            latitude: resolved.latitudeDeg, longitude: resolved.longitudeDeg
+        )
+        let duskPercent = twilight.duskUTC.flatMap { forecast.cloudPercent(nearestTo: $0) }
+        let dawnPercent = twilight.dawnUTC.flatMap { forecast.cloudPercent(nearestTo: $0) }
+        return HomeSnapshot.NightCloud(duskPercent: duskPercent, dawnPercent: dawnPercent, fetchedAt: forecast.fetchedAt)
     }
 
     /// Darks + flats concatenated into one list -- same "one merged coverage
