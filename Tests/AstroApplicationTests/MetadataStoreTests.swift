@@ -171,42 +171,6 @@ struct MetadataStoreTests {
         #expect(saved.map(\.designation) == ["IC 1396", "M 42", "M 31"])
     }
 
-    @Test("allResults joins every project's results with the owning project name")
-    func allResultsJoinsProjectNamesAcrossProjects() async throws {
-        let store = try MetadataStore.temporary()
-        let firstProject = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Elephant's Trunk", phase: .processing)
-        let secondProject = ProjectRecord(id: UUID(), catalogID: "M 31", displayName: "Andromeda Galaxy", phase: .collecting)
-        let firstResult = ResultRecord(
-            id: UUID(), projectID: firstProject.id, parentResultID: nil, kind: .stack, role: .intermediate,
-            relativePath: "stacks/master.fit", createdAt: Date(timeIntervalSince1970: 1_786_400_000),
-            softwareName: "Siril", softwareVersion: "1.4"
-        )
-        let secondResult = ResultRecord(
-            id: UUID(), projectID: secondProject.id, parentResultID: nil, kind: .processingVariant, role: .final,
-            relativePath: "processed/final.fit", createdAt: Date(timeIntervalSince1970: 1_786_500_000),
-            softwareName: "PixInsight", softwareVersion: "1.9"
-        )
-        try await store.save(MetadataWriteBatch(
-            projects: [firstProject, secondProject],
-            results: [firstResult, secondResult]
-        ))
-
-        let all = try await store.allResults()
-
-        #expect(all.count == 2)
-        let first = try #require(all.first { $0.result.id == firstResult.id })
-        #expect(first.projectName == firstProject.displayName)
-        let second = try #require(all.first { $0.result.id == secondResult.id })
-        #expect(second.projectName == secondProject.displayName)
-    }
-
-    @Test("allResults on an empty database returns an empty list")
-    func allResultsOnEmptyDatabaseIsEmpty() async throws {
-        let store = try MetadataStore.temporary()
-
-        #expect(try await store.allResults().isEmpty)
-    }
-
     @Test("All UUID workflow records round-trip with stable lineage")
     func metadataRoundTripsStableIdentityAndLineage() async throws {
         let fixture = try StoreFixture.make()
@@ -218,8 +182,6 @@ struct MetadataStoreTests {
         try await store.save(records.night)
         try await store.save(records.series)
         try await store.save(records.frameDecision)
-        try await store.save(records.result)
-        try await store.save(records.lineage)
         try await store.save(records.reviewState)
         try await store.save(records.mutationJournal)
 
@@ -227,8 +189,6 @@ struct MetadataStoreTests {
         #expect(try await store.night(id: records.night.id) == records.night)
         #expect(try await store.series(id: records.series.id) == records.series)
         #expect(try await store.frameDecision(id: records.frameDecision.id) == records.frameDecision)
-        #expect(try await store.result(id: records.result.id) == records.result)
-        #expect(try await store.lineageEdge(id: records.lineage.id) == records.lineage)
         #expect(try await store.reviewState(id: records.reviewState.id) == records.reviewState)
         #expect(try await store.mutationJournal(id: records.mutationJournal.id) == records.mutationJournal)
     }
@@ -283,27 +243,6 @@ struct MetadataStoreTests {
         #expect(try await store.series(id: orphan.id) == nil)
     }
 
-    @Test("Lineage rejects a typed source UUID that does not exist")
-    func orphanLineageSourceIsRejected() async throws {
-        let fixture = try StoreFixture.make()
-        defer { fixture.remove() }
-        let store = try MetadataStore(databaseURL: fixture.databaseURL)
-        let records = SampleRecords.make()
-        try await store.save(records.project)
-        try await store.save(records.result)
-        let orphan = LineageEdgeRecord(
-            id: UUID(),
-            resultID: records.result.id,
-            sourceKind: .series,
-            sourceID: UUID()
-        )
-
-        await #expect(throws: AstroError.self) {
-            try await store.save(orphan)
-        }
-        #expect(try await store.lineageEdge(id: orphan.id) == nil)
-    }
-
     @Test("A failed batch rolls back every earlier write")
     func failedBatchRollsBack() async throws {
         let fixture = try StoreFixture.make()
@@ -346,8 +285,6 @@ struct MetadataStoreTests {
             "nights",
             "series",
             "frame_decisions",
-            "results",
-            "lineage_edges",
             "review_states",
             "mutation_journal",
             "project_annotations",
@@ -360,17 +297,19 @@ struct MetadataStoreTests {
             "idx_series_project",
             "idx_series_night",
             "idx_frame_decisions_series",
-            "idx_results_project",
-            "idx_results_parent",
-            "idx_lineage_result",
-            "idx_lineage_series_source",
-            "idx_lineage_frame_source",
-            "idx_lineage_result_source",
             "idx_review_states_series",
             "idx_mutation_journal_operation",
             "idx_project_annotations_updated",
             "idx_audit_run_history_ran_at",
             "idx_planning_saved_targets_saved_at",
+        ]))
+        // W4-6 (owner decision): schema v8 drops `results`/`lineage_edges`
+        // -- no writer anywhere in the product ever populated them. A fresh
+        // database must never materialize them, not even transiently.
+        #expect(objects.tables.isDisjoint(with: ["results", "lineage_edges"]))
+        #expect(objects.indexes.isDisjoint(with: [
+            "idx_results_project", "idx_results_parent", "idx_lineage_result",
+            "idx_lineage_series_source", "idx_lineage_frame_source", "idx_lineage_result_source",
         ]))
     }
 
@@ -552,6 +491,88 @@ struct MetadataStoreTests {
         #expect(!scanCompletionsIsATable, "the v7 table must never have been created")
     }
 
+    // MARK: - Dropping the unwritten lineage schema (schema v8, W4-6)
+
+    @Test("A version-seven database migrates to version eight, dropping the unwritten lineage tables")
+    func migratesVersionSevenToVersionEight() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "M 31", displayName: "Andromeda Galaxy", phase: .collecting
+        )
+        try createVersionSevenDatabase(at: fixture.databaseURL, project: project)
+
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+
+        // Same forward-safety as `migratesVersionSixToVersionSeven`: pins
+        // the v7 -> v8 step's own effect, not a specific final version
+        // number, so a later v9+ doesn't break this assertion.
+        #expect(try await store.schemaVersion() == MetadataSchema.currentVersion)
+        #expect(try await store.project(id: project.id) == project)
+        // v7's own data must still be intact after the v8 migration.
+        #expect(try await store.lastScanCompletedAt() == nil)
+        #expect(try await store.savedTargets().isEmpty)
+        #expect(try await store.acknowledgements().isEmpty)
+
+        let database = try SQLiteDB(path: fixture.databaseURL.path)
+        #expect(try !tableExists("results", in: database))
+        #expect(try !tableExists("lineage_edges", in: database))
+    }
+
+    @Test("A failed version-eight migration rolls back DDL, leaves the old version stamp, and keeps existing lineage rows")
+    func failedVersionEightMigrationDoesNotAdvanceVersion() throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "M 31", displayName: "Andromeda Galaxy", phase: .collecting
+        )
+        try createVersionSevenDatabase(at: fixture.databaseURL, project: project)
+        let firstResultID = UUID().uuidString.lowercased()
+        let secondResultID = UUID().uuidString.lowercased()
+        do {
+            // A `lineage_edges` row still pointing at a `results` row forces
+            // `DROP TABLE results`'s own implicit `DELETE FROM` (see
+            // `MetadataSchema.versionEightSQL`'s doc comment) into that
+            // row's `ON DELETE RESTRICT` -- proven at the raw SQLite level
+            // before writing that migration, not assumed. Two rows because
+            // `lineage_edges`'s own CHECK forbids a row citing itself as its
+            // source; the second row is only there to be a valid, distinct
+            // source.
+            let database = try SQLiteDB(path: fixture.databaseURL.path)
+            let projectIDText = project.id.uuidString.lowercased()
+            for resultID in [firstResultID, secondResultID] {
+                try database.run(
+                    """
+                    INSERT INTO results(id, project_id, kind, role, created_at)
+                    VALUES (?, ?, 'stack', 'intermediate', 0);
+                    """,
+                    bind: [.text(resultID), .text(projectIDText)]
+                )
+            }
+            try database.run(
+                """
+                INSERT INTO lineage_edges(id, result_id, source_kind, source_result_id)
+                VALUES (?, ?, 'result', ?);
+                """,
+                bind: [.text(UUID().uuidString.lowercased()), .text(firstResultID), .text(secondResultID)]
+            )
+        }
+
+        #expect(throws: AstroError.self) {
+            _ = try MetadataStore(databaseURL: fixture.databaseURL)
+        }
+
+        let database = try SQLiteDB(path: fixture.databaseURL.path)
+        #expect(try schemaVersion(in: database) == 7)
+        #expect(try tableExists("results", in: database))
+        #expect(try tableExists("lineage_edges", in: database))
+        var survivingResultIDs: [String] = []
+        try database.query("SELECT id FROM results ORDER BY id;") { row in
+            if let id = row.string(0) { survivingResultIDs.append(id) }
+        }
+        #expect(Set(survivingResultIDs) == Set([firstResultID, secondResultID]))
+    }
+
     @Test("A schema newer than this build is rejected without modification")
     func futureSchemaIsRejected() throws {
         let fixture = try StoreFixture.make()
@@ -644,70 +665,6 @@ struct MetadataStoreTests {
         )
         await #expect(throws: MetadataStoreError.self) {
             try await store.save(invalidSeries)
-        }
-
-        let invalidResult = ResultRecord(
-            id: UUID(),
-            projectID: records.project.id,
-            parentResultID: nil,
-            kind: .stack,
-            role: .final,
-            relativePath: nil,
-            createdAt: Date(timeIntervalSince1970: .infinity),
-            softwareName: nil,
-            softwareVersion: nil
-        )
-        await #expect(throws: MetadataStoreError.self) {
-            try await store.save(invalidResult)
-        }
-    }
-
-    @Test("Result dependencies reject self references and multi-node cycles")
-    func resultDependencyCyclesAreRejected() async throws {
-        let fixture = try StoreFixture.make()
-        defer { fixture.remove() }
-        let store = try MetadataStore(databaseURL: fixture.databaseURL)
-        let records = SampleRecords.make()
-        try await store.save(records.project)
-
-        let firstID = UUID()
-        let secondID = UUID()
-        let first = result(id: firstID, projectID: records.project.id, parentID: nil)
-        let second = result(id: secondID, projectID: records.project.id, parentID: firstID)
-        try await store.save(first)
-        try await store.save(second)
-
-        await #expect(throws: MetadataStoreError.self) {
-            try await store.save(self.result(
-                id: firstID,
-                projectID: records.project.id,
-                parentID: secondID
-            ))
-        }
-        await #expect(throws: MetadataStoreError.self) {
-            try await store.save(self.result(
-                id: UUID(),
-                projectID: records.project.id,
-                parentID: nil,
-                forcedSelfParent: true
-            ))
-        }
-
-        let third = result(id: UUID(), projectID: records.project.id, parentID: nil)
-        try await store.save(third)
-        try await store.save(LineageEdgeRecord(
-            id: UUID(),
-            resultID: third.id,
-            sourceKind: .result,
-            sourceID: second.id
-        ))
-        await #expect(throws: MetadataStoreError.self) {
-            try await store.save(LineageEdgeRecord(
-                id: UUID(),
-                resultID: first.id,
-                sourceKind: .result,
-                sourceID: third.id
-            ))
         }
     }
 
@@ -846,11 +803,6 @@ struct MetadataStoreTests {
         #expect(FrameVerdict.allCases.map(\.rawValue) == [
             "undecided", "accepted", "rejected",
         ])
-        #expect(ResultKind.allCases.map(\.rawValue) == ["stack", "processing_variant"])
-        #expect(ResultRole.allCases.map(\.rawValue) == [
-            "intermediate", "starless", "mask", "final",
-        ])
-        #expect(LineageSourceKind.allCases.map(\.rawValue) == ["series", "frame", "result"])
         #expect(ReviewStatus.allCases.map(\.rawValue) == ["pending", "in_progress", "complete"])
         #expect(MutationJournalStatus.allCases.map(\.rawValue) == [
             "planned", "applying", "applied", "rolling_back", "rolled_back", "failed",
@@ -863,25 +815,6 @@ struct MetadataStoreTests {
       version INTEGER NOT NULL CHECK(version >= 0)
     );
     """
-
-    private func result(
-        id: UUID,
-        projectID: UUID,
-        parentID: UUID?,
-        forcedSelfParent: Bool = false
-    ) -> ResultRecord {
-        ResultRecord(
-            id: id,
-            projectID: projectID,
-            parentResultID: forcedSelfParent ? id : parentID,
-            kind: .processingVariant,
-            role: .intermediate,
-            relativePath: nil,
-            createdAt: Date(timeIntervalSince1970: 1_786_404_200),
-            softwareName: "AstroTool",
-            softwareVersion: "2.0.0"
-        )
-    }
 
     private func createVersionOneDatabase(
         at url: URL,
@@ -1041,6 +974,39 @@ struct MetadataStoreTests {
         }
     }
 
+    private func createVersionSevenDatabase(
+        at url: URL,
+        project: ProjectRecord? = nil
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let database = try SQLiteDB(path: url.path)
+        try database.exec(Self.schemaVersionSQL)
+        try database.exec(MetadataSchema.versionOneSQL)
+        try database.exec(MetadataSchema.versionTwoSQL)
+        try database.exec(MetadataSchema.versionThreeSQL)
+        try database.exec(MetadataSchema.versionFourSQL)
+        try database.exec(MetadataSchema.versionFiveSQL)
+        try database.exec(MetadataSchema.versionSixSQL)
+        try database.exec(MetadataSchema.versionSevenSQL)
+        try database.run(
+            "INSERT INTO metadata_schema(singleton, version) VALUES (1, 7);"
+        )
+        if let project {
+            try database.run(
+                "INSERT INTO projects(id, catalog_id, display_name, phase) VALUES (?, ?, ?, ?);",
+                bind: [
+                    .text(project.id.uuidString.lowercased()),
+                    .text(project.catalogID),
+                    .text(project.displayName),
+                    .text(project.phase.rawValue),
+                ]
+            )
+        }
+    }
+
     private func schemaObjects(at url: URL) throws -> (tables: Set<String>, indexes: Set<String>) {
         let database = try SQLiteDB(path: url.path)
         var tables = Set<String>()
@@ -1079,8 +1045,6 @@ private struct SampleRecords {
     let night: NightRecord
     let series: SeriesRecord
     let frameDecision: FrameDecisionRecord
-    let result: ResultRecord
-    let lineage: LineageEdgeRecord
     let reviewState: ReviewStateRecord
     let mutationJournal: MutationJournalRecord
 
@@ -1118,29 +1082,11 @@ private struct SampleRecords {
             verdict: .accepted,
             logicallyExcluded: false
         )
-        let result = ResultRecord(
-            id: UUID(),
-            projectID: project.id,
-            parentResultID: nil,
-            kind: .stack,
-            role: .intermediate,
-            relativePath: "IC1396/Results/stack-001.fit",
-            createdAt: Date(timeIntervalSince1970: 1_786_403_900),
-            softwareName: "Siril",
-            softwareVersion: "1.4.0"
-        )
         return Self(
             project: project,
             night: night,
             series: series,
             frameDecision: frame,
-            result: result,
-            lineage: LineageEdgeRecord(
-                id: UUID(),
-                resultID: result.id,
-                sourceKind: .series,
-                sourceID: series.id
-            ),
             reviewState: ReviewStateRecord(
                 id: UUID(),
                 seriesID: series.id,
@@ -1194,5 +1140,73 @@ private struct StoreFixture {
 
     func remove() {
         try? FileManager.default.removeItem(at: container)
+    }
+}
+
+/// W4-6 (owner decision): keeps the removed lineage schema removed. Follows
+/// this repo's established "surface" suite convention (`V2ShellSurfaceTests`,
+/// `V2PolishSurfaceTests`): a literal source-text scan rather than a
+/// compile-time check, because the risk this guards against is someone
+/// re-adding raw SQL against `lineage_edges`/`results` (or a new type shaped
+/// like `ResultRecord`/`LineageEdgeRecord`) without the compiler ever
+/// noticing -- those tables simply won't exist at runtime, which fails loud
+/// in a debug build but not in review.
+///
+/// Deliberately does NOT gate on the bare word "results": that collides with
+/// the live `ResultsQuery`/`StackResultsSnapshot`/`ResultsView` stack-
+/// discovery feature this removal does not touch (see `ResultsQuery.swift`).
+/// The literal SQL shapes below (`FROM results`, `INTO results(`, etc.) are
+/// how the dead table was actually queried; `ResultsQuery`/`ResultsView`
+/// never contain them because they read `StackDiscovery`, not SQL.
+@Suite("Dead lineage schema stays dead")
+struct DeadLineageSchemaGateTests {
+    private var repositoryRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    /// Repository-relative paths of every `.swift` file under `relativePath`,
+    /// recursing into subdirectories. Same enumeration approach as
+    /// `V2PolishSurfaceTests.swiftFiles(under:)`.
+    private func swiftFiles(under relativePath: String) throws -> [String] {
+        let directory = repositoryRoot.appendingPathComponent(relativePath)
+        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil) else {
+            return []
+        }
+        var found: [String] = []
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            found.append(url.path.replacingOccurrences(of: repositoryRoot.path + "/", with: ""))
+        }
+        return found
+    }
+
+    @Test("No source file constructs the dropped record types or queries the dropped tables")
+    func deadLineageSchemaHasNoSourceReferences() throws {
+        // `MetadataSchema.swift` is the one file allowed to still say
+        // `lineage_edges`/`results` as literal text: `versionTwoSQL` must
+        // keep creating them (a v1 database still has to pass through that
+        // step on its way to v8), and `versionEightSQL` is the `DROP TABLE`
+        // that removes them. Nothing else has a reason to.
+        let schemaFile = "Sources/AstroApplication/Persistence/MetadataSchema.swift"
+        let bannedEverywhere = ["ResultRecord(", "LineageEdgeRecord("]
+        let bannedOutsideSchema = [
+            "lineage_edges",
+            "FROM results", "INTO results(", "TABLE results(", "JOIN results",
+        ]
+
+        for path in try swiftFiles(under: "Sources") {
+            let source = try String(
+                contentsOf: repositoryRoot.appendingPathComponent(path), encoding: .utf8
+            )
+            for banned in bannedEverywhere {
+                #expect(!source.contains(banned), "\(path) still references dropped schema token '\(banned)'")
+            }
+            guard path != schemaFile else { continue }
+            for banned in bannedOutsideSchema {
+                #expect(!source.contains(banned), "\(path) still references dropped schema token '\(banned)'")
+            }
+        }
     }
 }
