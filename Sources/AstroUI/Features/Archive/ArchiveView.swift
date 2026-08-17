@@ -115,7 +115,15 @@ public struct ArchiveView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AstroTokens.Color.ground.opacity(0.36))
+        // Task 6 (2026-08-17, Liquid Glass): same self-inflicted 36% ground
+        // tint as `WorkspaceComponents.swift`'s two page containers, over
+        // the same macOS 26 system glass -- removed with no replacement.
+        // `loadedState` below hosts a `List` directly (its own targets/tasks
+        // rows), so this root is never given a `.glassEffect` of its own:
+        // that would put dense content under a blurred ancestor with no
+        // solid layer between them, the exact failure this task's gate
+        // exists to catch. The floating card treatment lives one level
+        // down, on `ArchiveTaskCard` itself.
         .navigationTitle("Archive")
         .accessibilityLabel("Archive")
         .accessibilityIdentifier("v2.detail.library")
@@ -246,6 +254,10 @@ public struct ArchiveView: View {
                 }
             }
             .listStyle(.inset)
+            // Task 6 (2026-08-17, Liquid Glass): a soft blend into the
+            // verdict header/strip above rather than a hard scroll seam --
+            // the list's own rows/cards stay solid regardless.
+            .scrollEdgeEffectStyle(.soft, for: .top)
             .accessibilityIdentifier("v2.archive.list")
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }

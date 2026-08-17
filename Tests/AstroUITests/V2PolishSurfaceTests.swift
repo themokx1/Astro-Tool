@@ -943,4 +943,215 @@ struct V2PolishSurfaceTests {
     //   not `file#type#name`, so it cannot distinguish them. Not a problem
     //   for anything in this file today, but a real limitation of the key
     //   shape if it ever comes up.
+
+    // MARK: (n) Task 6 (2026-08-17, Liquid Glass) -- a Table/List must never
+    // have a glassEffect parent.
+
+    /// Two synthetic-source tests exercise `GlassTableGate.offendingLines`
+    /// directly against hand-written snippets BEFORE the real-tree scan
+    /// below trusts it: `glassTableGateDetectsAViolation` proves the
+    /// detector actually fires on the exact failure mode this gate exists
+    /// to prevent (a `Table`/`List` whose direct container is glassed,
+    /// either by a chained `.glassEffect(` or by `GlassEffectContainer`
+    /// itself), and `glassTableGateAllowsTheRealShape` proves it does NOT
+    /// fire on the shape this task's own code actually uses (glass on the
+    /// container, an explicit solid `.background` between it and the
+    /// table). Without these two, a future edit that quietly weakened the
+    /// detector (e.g. by only matching `.glassEffect(.regular` and missing
+    /// a tinted/interactive variant) could still show a clean real-tree
+    /// scan for the wrong reason -- no violation existed to catch, not
+    /// because the detector would have caught one.
+    @Test("The Table/List-glass-parent detector flags a deliberate violation")
+    func glassTableGateDetectsAViolation() {
+        let chainedAfterClosure = """
+            struct BadCard: View {
+                var body: some View {
+                    VStack {
+                        Table(rows) {
+                            TableColumn("Path") { row in Text(row.path) }
+                        }
+                    }
+                    .glassEffect(.regular, in: ConcentricRectangle())
+                }
+            }
+            """
+        #expect(!GlassTableGate.offendingLines(in: chainedAfterClosure).isEmpty)
+
+        let glassEffectContainerItself = """
+            struct BadList: View {
+                var body: some View {
+                    GlassEffectContainer {
+                        List(rows) { row in Text(row.path) }
+                    }
+                }
+            }
+            """
+        #expect(!GlassTableGate.offendingLines(in: glassEffectContainerItself).isEmpty)
+
+        // Same failure mode as `chainedAfterClosure` above, but with an
+        // unrelated modifier (`.padding()`) sitting between the container's
+        // closing brace and the `.glassEffect(` call -- the detector must
+        // keep scanning chained modifier lines rather than stopping at the
+        // first one that is not itself `.glassEffect(`.
+        let anotherModifierBeforeGlassEffect = """
+            struct BadTable: View {
+                var body: some View {
+                    VStack {
+                        Table(rows) {
+                            TableColumn("x") { r in Text(r.x) }
+                        }
+                    }
+                    .padding()
+                    .glassEffect(.regular.tint(.blue), in: ConcentricRectangle())
+                }
+            }
+            """
+        #expect(!GlassTableGate.offendingLines(in: anotherModifierBeforeGlassEffect).isEmpty)
+    }
+
+    @Test("The Table/List-glass-parent detector allows the container-glass/dense-content-solid split")
+    func glassTableGateAllowsTheRealShape() {
+        // Mirrors `WorkspaceTablePage.body` and `ArchiveTaskDetailView
+        // .tableContent`'s own real shape: the OUTER page carries the glass,
+        // a `GroupBox` is the table's actual direct parent, and an explicit
+        // solid `.background` sits between the two -- never `.glassEffect`
+        // touching the same container as the table.
+        let realShape = """
+            struct GoodPage: View {
+                var body: some View {
+                    VStack {
+                        GlassEffectContainer {
+                            toolbar
+                                .glassEffect(.regular, in: ConcentricRectangle())
+                        }
+                        GroupBox("Findings") {
+                            Table(rows) {
+                                TableColumn("Path") { row in Text(row.path) }
+                            }
+                        }
+                        .background(AstroTokens.Color.surface, in: ConcentricRectangle())
+                    }
+                    .padding()
+                }
+            }
+            """
+        #expect(GlassTableGate.offendingLines(in: realShape).isEmpty)
+    }
+
+    /// The real-tree scan the two synthetic tests above exist to justify
+    /// trusting: every `.swift` file under `Sources/AstroUI` today, checked
+    /// with the exact same detector. This is the gate itself, not a demo of
+    /// it -- see this task's own report for the actual red/green run
+    /// performed against a temporary real violation before this test was
+    /// written (introduced in `ArchiveTaskDetailView.swift`, confirmed this
+    /// test failed, then reverted).
+    @Test("No Table or List in Sources/AstroUI has a glassEffect container as its direct parent")
+    func noTableOrListHasAGlassParent() throws {
+        var offenders: [String] = []
+        for file in try swiftFiles(under: "Sources/AstroUI") {
+            let source = Self.removingLineComments(try contents(file))
+            let lines = GlassTableGate.offendingLines(in: source)
+            if !lines.isEmpty {
+                offenders.append("\(file): line(s) \(lines.map(String.init).joined(separator: ", "))")
+            }
+        }
+        #expect(offenders.isEmpty, "Table/List with a glassEffect container as its direct parent: \(offenders.joined(separator: "; "))")
+    }
+}
+
+/// Detects the one shape Task 6's plan explicitly forbids: a `Table`/`List`
+/// view construction whose DIRECT enclosing container is itself glassed --
+/// either by `GlassEffectContainer` wrapping it, or by a `.glassEffect(`
+/// modifier chained onto that same container (before or after its trailing
+/// closure). Dense rows rendered on top of a blurred, moving background are
+/// unreadable; the plan's whole design keeps glass on the container and
+/// dense content on an explicit solid `surface` one layer in
+/// (`WorkspaceTablePage.body`, `ArchiveTaskDetailView.tableContent`).
+///
+/// A standalone `enum` rather than a nested type: both a synthetic-snippet
+/// test suite and a real-tree scan call the same function, and a synthetic
+/// snippet is not itself a file under `Sources/AstroUI`, so this cannot be
+/// folded into that scan's own helpers.
+///
+/// What this does NOT catch, by construction: it scans ONE FILE's source
+/// text at a time, so it cannot see a glass ancestor introduced in a
+/// DIFFERENT file. `WorkspaceTablePage.body` (`WorkspaceComponents.swift`)
+/// wraps its own `toolbar` slot in `GlassEffectContainer`/`.glassEffect(`,
+/// but every real `Table`/`List` call site lives one file away, inside the
+/// `table:` closure each of its eight callers supplies -- invisible to a
+/// single-file scan either way. That cross-file case is handled by
+/// construction instead: `WorkspaceTablePage.body` gives `table` its own
+/// explicit solid `.background(AstroTokens.Color.surface, ...)`, so no
+/// caller can put a `Table`/`List` under real glass by using this
+/// component as intended, regardless of what this gate can see.
+enum GlassTableGate {
+    /// 1-based line numbers (matching how a human would read the source)
+    /// where a `Table(`/`List(` construction's direct enclosing block is
+    /// glassed.
+    static func offendingLines(in source: String) -> [Int] {
+        let lines = source.components(separatedBy: "\n")
+        let constructorPattern = try! NSRegularExpression(pattern: #"(?<![A-Za-z0-9_.])(Table|List)\("#)
+        var offenders: [Int] = []
+        for (index, line) in lines.enumerated() {
+            let nsRange = NSRange(line.startIndex..., in: line)
+            guard constructorPattern.firstMatch(in: line, range: nsRange) != nil else { continue }
+            if directContainerIsGlassed(lines: lines, targetIndex: index) {
+                offenders.append(index + 1)
+            }
+        }
+        return offenders
+    }
+
+    /// Finds the nearest `{` that directly encloses `lines[targetIndex]` by
+    /// walking backward with a brace-balance counter (closing braces seen
+    /// while walking up push the counter positive -- a nested block we must
+    /// skip past; the first `{` that would take it negative is the block
+    /// that actually opens around our line, with no other block boundary in
+    /// between). Then checks three places a `.glassEffect` could reach that
+    /// exact block: `GlassEffectContainer` or `.glassEffect(` on the opening
+    /// statement itself (including any multi-line chain immediately above
+    /// it), or `.glassEffect(` chained onto the block AFTER its matching
+    /// closing `}` (found the same way, forward).
+    private static func directContainerIsGlassed(lines: [String], targetIndex: Int) -> Bool {
+        var depth = 0
+        var openerIndex: Int?
+        var i = targetIndex - 1
+        while i >= 0 {
+            depth += lines[i].filter { $0 == "}" }.count
+            depth -= lines[i].filter { $0 == "{" }.count
+            if depth < 0 { openerIndex = i; break }
+            i -= 1
+        }
+        guard let openerIndex else { return false }
+
+        var openStatement = lines[openerIndex]
+        var j = openerIndex - 1
+        while j >= 0 {
+            let trimmed = lines[j].trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix(".") || trimmed.hasSuffix(",") || trimmed.hasSuffix("(") else { break }
+            openStatement = lines[j] + "\n" + openStatement
+            j -= 1
+        }
+        if openStatement.contains(".glassEffect(") || openStatement.contains("GlassEffectContainer") {
+            return true
+        }
+
+        var forwardDepth = 1
+        var k = openerIndex + 1
+        while k < lines.count {
+            forwardDepth += lines[k].filter { $0 == "{" }.count
+            forwardDepth -= lines[k].filter { $0 == "}" }.count
+            if forwardDepth == 0 { break }
+            k += 1
+        }
+        guard k < lines.count else { return false }
+        var m = k + 1
+        while m < lines.count {
+            let trimmed = lines[m].trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix(".") else { break }
+            if trimmed.hasPrefix(".glassEffect(") { return true }
+            m += 1
+        }
+        return false
+    }
 }

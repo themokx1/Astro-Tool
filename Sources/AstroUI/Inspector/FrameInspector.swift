@@ -20,6 +20,11 @@ public struct FrameInspector: View {
             }
         }
         .formStyle(.grouped)
+        // Task 6 (2026-08-17, Liquid Glass): same treatment as
+        // `SeriesInspector` -- see its own comment. Used only as
+        // `ReviewWorkspace`'s own embedded inspector pane, never as an
+        // ancestor of that screen's `List`/`Table`.
+        .glassEffect(.regular, in: ConcentricRectangle())
         .accessibilityIdentifier("v2.review.frame-inspector")
     }
 

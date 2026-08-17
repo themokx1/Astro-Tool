@@ -1544,7 +1544,11 @@ private struct V2EmptyDetail: View {
         }
         .navigationTitle(title)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AstroTokens.Color.ground.opacity(0.36))
+        // Task 6 (2026-08-17, Liquid Glass): one of the three measured,
+        // self-inflicted 36% `ground` tints painted directly over the
+        // window's own macOS 26 system glass -- removed with no
+        // replacement. A full-pane empty state is not a card/panel, so it
+        // is left transparent rather than glassed.
         .accessibilityLabel(title)
         .accessibilityIdentifier(accessibilityIdentifier)
     }

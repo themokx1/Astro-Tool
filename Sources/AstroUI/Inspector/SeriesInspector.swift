@@ -60,6 +60,15 @@ public struct SeriesInspector: View {
             }
         }
         .formStyle(.grouped)
+        // Task 6 (2026-08-17, Liquid Glass): same panel-gets-glass treatment
+        // as `InspectorView`'s own Form-based panels -- a `Form` of
+        // `LabeledContent`/`Menu`/`TextField` rows, never a `Table`/`List`.
+        // Used both as the sidebar inspector's own series panel and
+        // `ReviewWorkspace`'s embedded one; in both call sites it sits in
+        // its own pane/branch, never as an ancestor of that screen's own
+        // `List`/`Table` (`ReviewWorkspace.seriesList`/`frameReview` are
+        // separate `HSplitView` panes, not descendants of this view).
+        .glassEffect(.regular, in: ConcentricRectangle())
         .accessibilityIdentifier("v2.review.inspector")
     }
 

@@ -46,14 +46,22 @@ struct ArchiveTaskCard: View {
                 .accessibilityIdentifier("v2.archive.task.\(task.kind.rawValue).action")
         }
         .padding(AstroTokens.Spacing.standard)
-        .background(AstroTokens.Color.surface, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
-        .overlay {
-            RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel)
-                .stroke(task.severity == .error
-                    ? AstroTokens.Color.critical.opacity(0.34) : AstroTokens.Color.edge, lineWidth: 1)
-        }
+        // Task 6 (2026-08-17, Liquid Glass): the literal "kártya" (card) the
+        // plan's own example sentence names -- it floats now, via true
+        // glass rather than the former flat `surface` fill. Its own content
+        // is a headline, a sentence, and a handful of evidence paths, never
+        // a `Table`/`List`, so it carries none of that gate's restrictions.
+        // An error card keeps its distinct identity through a red glass
+        // tint rather than the former stroked-red border.
+        .glassEffect(cardGlass, in: ConcentricRectangle())
         .contextMenu { Button("Mark as Acknowledged…", action: onAcknowledge) }
         .accessibilityIdentifier("v2.archive.task.\(task.kind.rawValue)")
+    }
+
+    private var cardGlass: Glass {
+        task.severity == .error
+            ? .regular.tint(AstroTokens.Color.critical.opacity(0.18))
+            : .regular
     }
 
     // `.reclaim` severity is a byte count the user can win back;

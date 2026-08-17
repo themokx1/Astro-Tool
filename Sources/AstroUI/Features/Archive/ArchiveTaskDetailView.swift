@@ -73,7 +73,14 @@ public struct ArchiveTaskDetailView: View {
                 Button("Preview Quarantine…") {
                     openQuarantinePreview(Set(kind.findingCategories))
                 }
-                .buttonStyle(.borderedProminent)
+                // Task 6 (2026-08-17, Liquid Glass): this row is
+                // `WorkspaceTablePage`'s own "toolbar" slot, which now
+                // floats as one glass bar above the table (see that type's
+                // own comment) -- `.glassProminent` is the button style
+                // Apple pairs with a glass surface; the former
+                // `.borderedProminent` drew its own opaque capsule, which
+                // read as a flat patch sitting on top of translucent glass.
+                .buttonStyle(.glassProminent)
                 .accessibilityIdentifier("v2.archive.task-detail.preview-quarantine")
             }
         }

@@ -32,7 +32,16 @@ struct WorkspacePage<Content: View>: View {
             .frame(maxWidth: 920, alignment: .leading)
             .padding(AstroTokens.Spacing.spacious)
         }
-        .background(AstroTokens.Color.ground.opacity(0.36))
+        // Task 6 (2026-08-17, Liquid Glass): this used to paint a 36% tint
+        // of `ground` over the whole page -- on macOS 26 that sits directly
+        // on top of the window's own system glass (already frosting the
+        // sidebar/toolbar with no code at all) and mutes it to nothing. No
+        // replacement background: this is page-level scaffolding, not a
+        // card/panel, so it is left transparent and shows the window's own
+        // material directly. `.scrollEdgeEffectStyle` gives the scroll
+        // position itself a soft blend into whatever sits above it (the
+        // toolbar) instead of a hard content/chrome seam.
+        .scrollEdgeEffectStyle(.soft, for: .top)
     }
 }
 
@@ -84,16 +93,47 @@ struct WorkspaceTablePage<Toolbar: View, TableContent: View, Footer: View>: View
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 920, alignment: .leading)
 
-            toolbar
+            // Task 6 (2026-08-17, Liquid Glass): the "lebegő akciósáv"
+            // (floating action bar) row of the plan's own material table.
+            // Every `WorkspaceTablePage` caller's own filter/search/action
+            // row now floats as one glass bar above its table, in a single
+            // shared spot rather than eight separate call sites.
+            //
+            // *** DIAL-IT-BACK POINT ***: if this reads as too much glass,
+            // change `.regular` immediately below to `.identity` (or delete
+            // the `GlassEffectContainer`/`.glassEffect` pair and put back a
+            // plain `toolbar` line) -- every page built on this component
+            // reverts at once, because this is the one place all eight of
+            // them share.
+            GlassEffectContainer {
+                toolbar
+                    .padding(.horizontal, AstroTokens.Spacing.standard)
+                    .padding(.vertical, AstroTokens.Spacing.compact)
+                    .glassEffect(.regular, in: ConcentricRectangle())
+            }
 
+            // Task 6: the dense content itself -- up to 3,231 rows in the
+            // real reference library's worst case (see
+            // `ArchiveTaskDetailView`'s own doc comment) -- stays on an
+            // explicit SOLID `surface`, never glass. This is the one
+            // container in the file whose direct child is a caller-supplied
+            // `Table`/`List`, so it is exactly the shape
+            // `V2PolishSurfaceTests`'s `noTableOrListHasAGlassParent` gate
+            // exists to keep solid: `.background` here, never
+            // `.glassEffect`.
             table
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(AstroTokens.Color.surface, in: ConcentricRectangle())
 
             footer
         }
         .padding(AstroTokens.Spacing.spacious)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(AstroTokens.Color.ground.opacity(0.36))
+        // Task 6: the same self-inflicted 36% tint `WorkspacePage` used to
+        // paint -- removed for the same reason, with no replacement. This
+        // outer frame is page scaffolding around the toolbar/table pair
+        // above, not itself a card, so it stays transparent over the
+        // window's own system glass.
     }
 }
 
@@ -134,10 +174,13 @@ struct MetricCard: View {
         }
         .frame(maxWidth: .infinity, minHeight: 96, alignment: .leading)
         .padding(AstroTokens.Spacing.standard)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
-        .overlay {
-            RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel)
-                .stroke(AstroTokens.Color.edge, lineWidth: 1)
-        }
+        // Task 6 (2026-08-17, Liquid Glass): a real "kártya" (card) in the
+        // plan's own sense -- a title, a hero value, a detail line, never a
+        // Table/List -- so it is one of the containers that gets true glass
+        // instead of the former `.regularMaterial` approximation.
+        // `ConcentricRectangle` (no explicit radius) matches the nearest
+        // enclosing container's own corner rounding rather than a fixed
+        // value baked in here.
+        .glassEffect(.regular, in: ConcentricRectangle())
     }
 }

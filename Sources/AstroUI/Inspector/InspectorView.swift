@@ -203,6 +203,11 @@ private struct ProjectInspectorPanel: View {
             }
         }
         .formStyle(.grouped)
+        // Task 6 (2026-08-17, Liquid Glass): the inspector row of the
+        // plan's own material table -- a `Form` of `LabeledContent`/`Button`
+        // rows, never a `Table`/`List`, so it is one of the containers that
+        // gets real glass rather than the panel's system-default fill.
+        .glassEffect(.regular, in: ConcentricRectangle())
         .accessibilityIdentifier("v2.inspector.project")
     }
 
@@ -255,6 +260,9 @@ private struct NightInspectorPanel: View {
             }
         }
         .formStyle(.grouped)
+        // Task 6 (2026-08-17, Liquid Glass): same treatment as
+        // `ProjectInspectorPanel` above -- see its own comment.
+        .glassEffect(.regular, in: ConcentricRectangle())
         .accessibilityIdentifier("v2.inspector.night")
     }
 
@@ -301,6 +309,9 @@ private struct SeriesSummaryPanel: View {
             }
         }
         .formStyle(.grouped)
+        // Task 6 (2026-08-17, Liquid Glass): same treatment as
+        // `ProjectInspectorPanel` -- see its own comment.
+        .glassEffect(.regular, in: ConcentricRectangle())
         .accessibilityIdentifier("v2.inspector.series-summary")
     }
 
@@ -387,6 +398,9 @@ private struct ResultProvenancePanel: View {
             }
         }
         .formStyle(.grouped)
+        // Task 6 (2026-08-17, Liquid Glass): same treatment as
+        // `ProjectInspectorPanel` -- see its own comment.
+        .glassEffect(.regular, in: ConcentricRectangle())
         .accessibilityIdentifier("v2.inspector.result")
     }
 
