@@ -3,9 +3,14 @@ import Foundation
 /// One hour's cloud-cover forecast sample, in the device's current time
 /// zone (see `WeatherService`'s doc comment on why -- this app treats
 /// "local" the same way `Planner`/`SkyTrack` already do everywhere else).
-struct HourlyCloud: Sendable, Equatable {
-    let time: Date
-    let cloudCoverPercent: Double
+public struct HourlyCloud: Sendable, Equatable {
+    public let time: Date
+    public let cloudCoverPercent: Double
+
+    public init(time: Date, cloudCoverPercent: Double) {
+        self.time = time
+        self.cloudCoverPercent = cloudCoverPercent
+    }
 }
 
 /// A whole fetched forecast window (Open-Meteo's 7-day hourly series) plus
@@ -13,9 +18,14 @@ struct HourlyCloud: Sendable, Equatable {
 /// "Felhőzet" tile's "Open-Meteo · HH:mm" caption, and (via
 /// `WeatherService`'s cache-on-failure fallback) can be OLDER than "now" when
 /// the most recent re-fetch failed but a previous one is still on hand.
-struct NightForecast: Sendable, Equatable {
-    let hours: [HourlyCloud]
-    let fetchedAt: Date
+public struct NightForecast: Sendable, Equatable {
+    public let hours: [HourlyCloud]
+    public let fetchedAt: Date
+
+    public init(hours: [HourlyCloud], fetchedAt: Date) {
+        self.hours = hours
+        self.fetchedAt = fetchedAt
+    }
 
     /// Nearest-hour cloud-cover lookup, `nil` when `hours` is empty OR the
     /// nearest sample is more than 90 minutes from `date` -- the latter is
@@ -23,7 +33,7 @@ struct NightForecast: Sendable, Equatable {
     /// come back honestly empty instead of silently reusing day 7's last
     /// sample for a much later date (PLAN-R10.md ground rule #2, "őszinte
     /// n/a").
-    func cloudPercent(nearestTo date: Date) -> Double? {
+    public func cloudPercent(nearestTo date: Date) -> Double? {
         guard let nearest = hours.min(by: {
             abs($0.time.timeIntervalSince(date)) < abs($1.time.timeIntervalSince(date))
         }) else { return nil }
@@ -38,21 +48,32 @@ struct NightForecast: Sendable, Equatable {
 /// date. `date` uses the same "yyyy-MM-dd, named by the night's start"
 /// convention `NightSummary.date` already uses (e.g. the 02:00 sample on the
 /// morning of the 2nd belongs to the night dated the 1st).
-struct DailyCloudSummary: Sendable, Equatable {
-    let date: String
-    let minPercent: Double
-    let maxPercent: Double
-    let meanPercent: Double
+public struct DailyCloudSummary: Sendable, Equatable {
+    public let date: String
+    public let minPercent: Double
+    public let maxPercent: Double
+    public let meanPercent: Double
+
+    public init(date: String, minPercent: Double, maxPercent: Double, meanPercent: Double) {
+        self.date = date
+        self.minPercent = minPercent
+        self.maxPercent = maxPercent
+        self.meanPercent = meanPercent
+    }
 }
 
 /// `WeatherService.fetch`'s failure modes, with ready-to-show Hungarian
 /// messages -- short enough to fit the Tonight page tile's caption line.
-enum WeatherError: Error, Sendable {
+/// V1 (`TonightPage`) reads `.message` directly; V2 (AstroUI) maps these
+/// cases to `LocalizedStringKey` instead, since a `String` handed to
+/// `Text(_:)` never resolves through `hu.lproj` (see AstroUI's own
+/// `WeatherError` display extension).
+public enum WeatherError: Error, Sendable {
     case network
     case invalidResponse
     case decode
 
-    var message: String {
+    public var message: String {
         switch self {
         case .network: return "Nincs kapcsolat az Open-Meteóval."
         case .invalidResponse: return "Az Open-Meteo hibás választ adott."
@@ -61,16 +82,19 @@ enum WeatherError: Error, Sendable {
     }
 }
 
-/// Open-Meteo cloud-cover forecast client -- app layer ONLY. AstroCore never
-/// makes a network call (PLAN-R10.md ground rule #6); this is the one place
-/// in the whole app that does, and it is only ever reached from
-/// `AppState.loadWeather()`'s own opt-in guard (`config.weather.enabled`).
-/// An `actor` rather than a plain class so concurrent `fetch` calls (e.g. a
-/// dashboard reload firing while a previous fetch for a different,
-/// just-changed coordinate is still in flight) serialize through the same
-/// cache without any manual locking.
-actor WeatherService {
-    static let shared = WeatherService()
+/// Open-Meteo cloud-cover forecast client -- app-workflow layer ONLY.
+/// AstroCore never makes a network call (PLAN-R10.md ground rule #6); this is
+/// the one place in the whole app that does. V1 reaches it only from
+/// `AppState.loadWeather()`'s own opt-in guard (`config.weather.enabled`);
+/// V2's Home/Planning/Nights stores apply the identical guard before ever
+/// calling `fetch`. An `actor` rather than a plain class so concurrent
+/// `fetch` calls (e.g. a dashboard reload firing while a previous fetch for a
+/// different, just-changed coordinate is still in flight) serialize through
+/// the same cache without any manual locking -- and so V1 and V2 share the
+/// exact same in-memory cache when both are looking at the same library's
+/// site in the same process.
+public actor WeatherService {
+    public static let shared = WeatherService()
 
     private struct CacheEntry {
         let forecast: NightForecast
@@ -94,7 +118,7 @@ actor WeatherService {
     /// coordinate -- however stale -- rather than throwing, so a transient
     /// outage never blanks out data the tile/calendar were already showing.
     /// Only throws when there is NO cached data at all to fall back to.
-    func fetch(latitude: Double, longitude: Double) async throws -> (NightForecast, [String: DailyCloudSummary]) {
+    public func fetch(latitude: Double, longitude: Double) async throws -> (NightForecast, [String: DailyCloudSummary]) {
         let roundedLat = (latitude * 100).rounded() / 100
         let roundedLon = (longitude * 100).rounded() / 100
         let key = Self.cacheKey(latitude: roundedLat, longitude: roundedLon)
@@ -194,7 +218,11 @@ actor WeatherService {
 
     // MARK: - Daily summary (calendar column)
 
-    private static let isoDateFormatter: DateFormatter = {
+    /// `yyyy-MM-dd` local-day formatter, public so V2 stores can turn a
+    /// planned night's `Date` into the same key `dailySummaries(from:)` below
+    /// buckets by, without each maintaining its own duplicate formatter that
+    /// could silently drift out of sync with this one.
+    public static let isoDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone.current

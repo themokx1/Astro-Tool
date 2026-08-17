@@ -1,4 +1,5 @@
 import AppKit
+import AstroApplication
 import AstroCore
 import Foundation
 import Observation
