@@ -226,6 +226,16 @@ public final class ReviewStore {
         return try ReviewCommands(metadata: metadata).archivePlan(relativePath: decision.relativePath)
     }
 
+    /// W3-12 finding 3: used to be written straight through with no
+    /// `do`/`catch` at all, and its one call site (`ReviewWorkspace.inspector
+    /// (for:)`) wrapped it in `try?` -- a failed filter assignment vanished
+    /// with no message AND no correction, since `SeriesInspector`'s own
+    /// "Save and Use" flow cleared its manufacturer/model fields and any
+    /// local `filterError` immediately after firing this off, before the
+    /// write had actually settled (a lie: the form read as "done" whether or
+    /// not the write landed). Now matches `setVerdict`/`open`'s own shape --
+    /// `errorMessage` set on failure, then rethrown so the caller (now doing
+    /// real error handling instead of `try?`) can react too.
     public func assignFilter(_ filter: EquipmentFilter) async throws {
         guard let metadata, let projectID else { throw ReviewStoreError.reviewNotOpen }
         guard let selected = selectedSeries?.series else { throw ReviewStoreError.seriesNotSelected }
@@ -244,7 +254,13 @@ public final class ReviewStore {
             filterID: filter.id.uuidString.lowercased(), gain: selected.gain,
             offset: selected.offset, binning: selected.binning
         )
-        try await metadata.save(updated)
-        snapshot = try await ReviewQuery(metadata: metadata).project(projectID)
+        do {
+            try await metadata.save(updated)
+            snapshot = try await ReviewQuery(metadata: metadata).project(projectID)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+            throw error
+        }
     }
 }

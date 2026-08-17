@@ -88,6 +88,36 @@ struct ReviewStoreTests {
         #expect(store.quality(for: "lights/SV220_001.fit")?.background != nil)
     }
 
+    // W3-12 finding 3: `assignFilter` used to write straight through with no
+    // `do`/`catch`, and its one call site wrapped it in `try?` -- a failed
+    // write vanished silently. Forces a REAL write failure (rather than a
+    // synthetic one) by deleting the series' own project row out from under
+    // the store through a second raw connection to the same sqlite file, so
+    // the next `series` upsert trips `series.project_id REFERENCES
+    // projects(id)`.
+
+    @Test("A failed filter assignment surfaces an error and never claims the frame is on a different filter")
+    func assignFilterSurfacesWriteFailure() async throws {
+        let fixture = try await ReviewStoreFixture.make()
+        let store = ReviewStore(metadataFactory: { _ in fixture.metadata })
+        try await store.open(rootURL: fixture.root, projectID: fixture.project.id)
+        let originalFilterName = store.selectedSeries?.series.filterName
+
+        let raw = try SQLiteDB(path: fixture.metadata.databaseURL.path)
+        try raw.run("DELETE FROM projects WHERE id = ?;", bind: [.text(fixture.project.id.uuidString.lowercased())])
+
+        let filter = EquipmentFilter(id: UUID(), manufacturer: "SVBONY", model: "SV220", passband: .dualBand)
+        await #expect(throws: (any Error).self) {
+            try await store.assignFilter(filter)
+        }
+
+        #expect(store.errorMessage != nil, "a failed write must surface, not vanish")
+        #expect(
+            store.selectedSeries?.series.filterName == originalFilterName,
+            "a failed write must not leave the UI claiming the new filter stuck"
+        )
+    }
+
     @Test("Rating with no series selected notifies instead of crashing")
     func rateWithNoSeriesSelectedNoOps() async throws {
         let store = ReviewStore(

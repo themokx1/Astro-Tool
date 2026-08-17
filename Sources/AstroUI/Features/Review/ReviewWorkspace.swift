@@ -487,7 +487,7 @@ public struct ReviewWorkspace: View {
             FrameInspector(decision: decision)
         } else {
             SeriesInspector(snapshot: selected) { filter in
-                Task { try? await store.assignFilter(filter) }
+                try await store.assignFilter(filter)
             }
         }
     }

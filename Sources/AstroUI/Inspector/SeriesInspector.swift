@@ -3,14 +3,19 @@ import SwiftUI
 
 public struct SeriesInspector: View {
     public let snapshot: ReviewSeriesSnapshot
-    public let assignFilter: (EquipmentFilter) -> Void
+    /// W3-12 finding 3: used to be fire-and-forget (`(EquipmentFilter) ->
+    /// Void`), so this view had no way to know whether the assignment it
+    /// just requested actually landed. `async throws` lets both call sites
+    /// below await the real outcome and only report success (clearing the
+    /// "Add a new filter" fields) once the write has genuinely settled.
+    public let assignFilter: (EquipmentFilter) async throws -> Void
     @State private var settings = SettingsStore()
     @State private var manufacturer = ""
     @State private var model = ""
     @State private var newFilterPassband = EquipmentFilterPassband.unknown
     @State private var filterError: String?
 
-    public init(snapshot: ReviewSeriesSnapshot, assignFilter: @escaping (EquipmentFilter) -> Void = { _ in }) {
+    public init(snapshot: ReviewSeriesSnapshot, assignFilter: @escaping (EquipmentFilter) async throws -> Void = { _ in }) {
         self.snapshot = snapshot
         self.assignFilter = assignFilter
     }
@@ -39,20 +44,26 @@ public struct SeriesInspector: View {
                 Menu("Choose Filter…") {
                     if settings.filters.isEmpty { Text("No saved filters") }
                     ForEach(settings.filters) { filter in
-                        Button(filterTitle(filter)) { assignFilter(filter) }
+                        Button(filterTitle(filter)) { assign(filter) }
                     }
                 }
+                // W3-12 finding 3: moved out of the `DisclosureGroup` below
+                // so a failure from EITHER path above (an existing filter
+                // from the menu, or a brand-new one from "Save and Use")
+                // is visible regardless of whether that group happens to be
+                // expanded -- a collapsed group used to hide the only place
+                // this error ever rendered.
+                if let filterError { Text(filterError).foregroundStyle(.red) }
                 DisclosureGroup("Add a new filter") {
                     TextField("Manufacturer", text: $manufacturer)
                     TextField("Model", text: $model)
                     Picker("Passband", selection: $newFilterPassband) {
                         ForEach(EquipmentFilterPassband.allCases, id: \.self) { Text(LocalizedStringKey($0.title)).tag($0) }
                     }
-                    if let filterError { Text(filterError).foregroundStyle(.red) }
                     Button("Save and Use") {
                         do {
                             let filter = try settings.createFilter(manufacturer: manufacturer, model: model, passband: newFilterPassband)
-                            assignFilter(filter); manufacturer = ""; model = ""; newFilterPassband = .unknown; filterError = nil
+                            assign(filter) { manufacturer = ""; model = ""; newFilterPassband = .unknown }
                         } catch { filterError = error.localizedDescription }
                     }
                 }
@@ -98,5 +109,24 @@ public struct SeriesInspector: View {
 
     private func filterTitle(_ filter: EquipmentFilter) -> String {
         [filter.manufacturer, filter.model].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    /// Awaits `assignFilter`'s real outcome before doing anything else --
+    /// `onSuccess` (the "Add a new filter" form's own field-clearing) only
+    /// runs once the write has actually landed, and any failure surfaces
+    /// through `filterError` instead of being dropped on the floor. W3-12
+    /// finding 3: this replaces the old fire-and-forget `assignFilter(filter)`
+    /// call that cleared the form immediately regardless of whether the
+    /// write behind it ever succeeded.
+    private func assign(_ filter: EquipmentFilter, onSuccess: @escaping () -> Void = {}) {
+        Task {
+            do {
+                try await assignFilter(filter)
+                filterError = nil
+                onSuccess()
+            } catch {
+                filterError = error.localizedDescription
+            }
+        }
     }
 }
