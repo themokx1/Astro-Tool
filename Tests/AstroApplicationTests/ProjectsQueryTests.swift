@@ -85,6 +85,59 @@ struct ProjectsQueryTests {
         #expect(snapshot.nights.last?.series.first?.excludedFrames == 1)
     }
 
+    // MARK: - resolvedFolderName (W3-11, one-letter-drift fix, 2026-08-17)
+
+    private func makeTempRoot() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("projects-query-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// The exact defect this ticket exists for: NGC 7000's catalog-canonical
+    /// folder name (`canonicalFolderName(for:)`'s own output, "America") vs.
+    /// the real on-disk spelling ("American") the owner's library actually
+    /// uses. `InspectorView`'s Finder-reveal actions and `NightActionMenu`'s
+    /// "Reveal in Finder" both resolve through this function before building
+    /// a path -- before this fix they built the path straight from the
+    /// (wrong) catalog-canonical spelling and always found nothing.
+    @Test("resolvedFolderName finds a drifted on-disk folder for the same catalog identity")
+    func resolvedFolderNameResolvesDriftedOnDiskFolder() throws {
+        let root = try makeTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let onDisk = "NGC_7000_North_American_Nebula"
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("sessions/\(onDisk)"), withIntermediateDirectories: true
+        )
+        let canonical = "NGC_7000_North_America_Nebula"
+
+        #expect(ProjectsQuery.resolvedFolderName(canonical: canonical, rootURL: root) == onDisk)
+    }
+
+    @Test("resolvedFolderName leaves an already-correct folder name unchanged")
+    func resolvedFolderNameLeavesMatchingFolderUnchanged() throws {
+        let root = try makeTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = "IC_1396_Elephants_Trunk_Nebula"
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("sessions/\(folder)"), withIntermediateDirectories: true
+        )
+
+        #expect(ProjectsQuery.resolvedFolderName(canonical: folder, rootURL: root) == folder)
+    }
+
+    @Test("resolvedFolderName falls back to the requested name when nothing on disk matches")
+    func resolvedFolderNameFallsBackWhenNothingMatches() throws {
+        let root = try makeTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        // No `sessions/` directory at all -- a brand-new project with no
+        // session created yet.
+        #expect(
+            ProjectsQuery.resolvedFolderName(canonical: "M_31_Andromeda_Galaxy", rootURL: root)
+                == "M_31_Andromeda_Galaxy"
+        )
+    }
+
     private func series(projectID: UUID, nightID: UUID, exposure: Double) -> SeriesRecord {
         SeriesRecord(
             id: UUID(), projectID: projectID, nightID: nightID,

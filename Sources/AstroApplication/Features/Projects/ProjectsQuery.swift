@@ -132,6 +132,32 @@ public struct ProjectsQuery: Sendable {
         return Sanitizer.sanitize(project.catalogID)
     }
 
+    /// `canonical` (typically `canonicalFolderName(for:)`'s own return),
+    /// resolved against the library's real `sessions/` directories.
+    ///
+    /// One-letter-drift fix (2026-08-17): `canonicalFolderName` answers
+    /// "what folder SHOULD this catalog identity live under" from the
+    /// catalog's own English name alone -- it has no way to know that a
+    /// real library's on-disk spelling has drifted from that, e.g. NGC
+    /// 7000's canonical `NGC_7000_North_America_Nebula` vs. the 62 real
+    /// files sitting under `NGC_7000_North_American_Nebula`. Every V2
+    /// caller that turns a project into an actual filesystem path (the
+    /// Finder-reveal actions in `InspectorView`/`NightActionMenu`) needs the
+    /// folder that is really there, not the one the catalog would have
+    /// chosen. This asks the exact same engine the Results page and
+    /// `ExportService` already resolve exports through --
+    /// `TargetCatalog.existingFolder(for:among:)` via `ResultsQuery.
+    /// libraryFolder(matching:among:)` -- against a plain directory listing
+    /// (`SessionCreator.onDiskSessionFolders`) rather than a scanned
+    /// `Database`, since these call sites only ever have `rootURL`. Falls
+    /// back to `canonical` unchanged when nothing on disk matches (a
+    /// brand-new project with no session yet, or a project whose catalog
+    /// entry no longer exists) -- never a fuzzy guess of its own.
+    public static func resolvedFolderName(canonical: String, rootURL: URL) -> String {
+        let diskFolders = SessionCreator.onDiskSessionFolders(root: rootURL)
+        return ResultsQuery.libraryFolder(matching: canonical, among: diskFolders) ?? canonical
+    }
+
     public func project(id: UUID) async throws -> ProjectSnapshot? {
         guard let project = try await metadata.project(id: id) else { return nil }
         let series = try await metadata.series(projectID: id)
