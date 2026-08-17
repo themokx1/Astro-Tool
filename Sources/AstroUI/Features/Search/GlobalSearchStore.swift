@@ -10,7 +10,6 @@ public enum GlobalSearchResultKind: String, Sendable {
     case series
     case file
     case note
-    case result
 
     /// The translatable category word shown alongside `GlobalSearchResult
     /// .detail` (e.g. "Project", "Night"). Task 5c (2026-08-17): this used
@@ -29,7 +28,6 @@ public enum GlobalSearchResultKind: String, Sendable {
         case .series: "Series"
         case .file: "File"
         case .note: "Note"
-        case .result: "Result"
         }
     }
 }
@@ -74,27 +72,20 @@ public struct GlobalSearchResult: Identifiable, Equatable, Sendable {
 @Observable
 public final class GlobalSearchStore {
     public typealias LibrarySearch = @Sendable (String, URL) async throws -> SearchResults
-    public typealias ResultsSearch = @Sendable (URL) async throws -> [ResultSearchEntry]
     public private(set) var results: [GlobalSearchResult] = []
     public private(set) var isSearching = false
     private let librarySearch: LibrarySearch
-    private let resultsSearch: ResultsSearch
 
-    /// Both providers are `Optional`/`nil` rather than defaulted directly to
-    /// the `production…` methods, and must stay that way: an `async` default
+    /// `librarySearch` is `Optional`/`nil` rather than defaulted directly to
+    /// `productionSearch`, and must stay that way: an `async` default
     /// argument is re-emitted as a `weak`/`linkonce_odr` async function
     /// pointer record in every module that uses it, with a different context
-    /// size in the declaring module than in a client (128 vs 112, and 80 vs
-    /// 64, for these two) -- a link that pairs the big body with the small
-    /// record corrupts the task allocator. Resolving in the body keeps the
-    /// closure private to this module. `AsyncContextSizeGateTests` gates
-    /// this and carries the full account.
-    public init(
-        librarySearch: LibrarySearch? = nil,
-        resultsSearch: ResultsSearch? = nil
-    ) {
+    /// size in the declaring module than in a client -- a link that pairs
+    /// the big body with the small record corrupts the task allocator.
+    /// Resolving in the body keeps the closure private to this module.
+    /// `AsyncContextSizeGateTests` gates this and carries the full account.
+    public init(librarySearch: LibrarySearch? = nil) {
         self.librarySearch = librarySearch ?? GlobalSearchStore.productionSearch
-        self.resultsSearch = resultsSearch ?? GlobalSearchStore.productionResultsSearch
     }
 
     public func search(
@@ -167,28 +158,6 @@ public final class GlobalSearchStore {
                 )
             })
         }
-        if let rootURL, let resultEntries = try? await resultsSearch(rootURL) {
-            found.append(contentsOf: resultEntries.filter { entry in
-                let haystack = Self.normalized([
-                    entry.softwareName, entry.softwareVersion, entry.role.rawValue,
-                    entry.kind.rawValue, entry.relativePath, entry.projectName,
-                ].compactMap { $0 }.joined(separator: " "))
-                return haystack.contains(normalized)
-            }.map { entry in
-                let softwareLabel = [entry.softwareName, entry.softwareVersion]
-                    .compactMap { $0 }.joined(separator: " ")
-                let title = softwareLabel.isEmpty
-                    ? (entry.relativePath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Result")
-                    : softwareLabel
-                return GlobalSearchResult(
-                    kind: .result,
-                    objectID: entry.resultID,
-                    title: title,
-                    detail: "\(entry.projectName) · \(entry.role.rawValue.capitalized)",
-                    locator: entry.projectID.uuidString
-                )
-            })
-        }
         results = found
     }
 
@@ -208,16 +177,6 @@ public final class GlobalSearchStore {
                 seen.insert("\($0.target)|\($0.date)|\($0.key)").inserted
             })
             return result
-        }.value
-    }
-
-    /// Every result across every project in the library, unfiltered --
-    /// `search(_:)` applies the same normalized, diacritic-insensitive match
-    /// it already uses for nights and series.
-    public static func productionResultsSearch(_ rootURL: URL) async throws -> [ResultSearchEntry] {
-        try await Task.detached(priority: .userInitiated) {
-            let metadata = try await ProjectsStore.productionMetadata(rootURL: rootURL)
-            return try await ResultsQuery(metadata: metadata).librarySearchEntries()
         }.value
     }
 
