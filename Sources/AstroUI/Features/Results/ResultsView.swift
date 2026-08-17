@@ -390,16 +390,34 @@ public struct ResultsView: View {
             .width(min: 36, ideal: 36, max: 36)
             TableColumn("Name") { row in nameCell(row) }
                 .width(min: 200, ideal: 320)
-            TableColumn("Kind") { row in variantBadge(row.file.variantKind) }
-                .width(min: 84, ideal: 100)
+            // Task 5 (owner review wave 4-4): the "Eredeti"/"Original" badge
+            // used to render for EVERY row, including every family (parent)
+            // row -- whose own file is always the untouched original stack,
+            // so the column's value there never varies. A column whose
+            // value is constant is noise, not information; only a variant
+            // (child) row's kind can actually differ from the family it
+            // belongs to (starless/starmask/edited/export), so only variant
+            // rows keep the badge.
+            TableColumn("Kind") { row in
+                if case .variant = row.kind {
+                    variantBadge(row.file.variantKind)
+                }
+            }
+            .width(min: 84, ideal: 100)
             TableColumn("Exposure") { row in exposureCell(row) }
                 .width(min: 110, ideal: 160)
             TableColumn("Location") { row in locationLabel(row.file.location) }
                 .width(min: 70, ideal: 84)
+            // Task 5: Size/Night narrowed (the owner's own suggestion) --
+            // "245.3 MB" and a "YYYY-MM-DD" session date both fit
+            // comfortably in less room than before, and the table needed a
+            // horizontal scrollbar at the default window width without this
+            // (see this file's own `nameCell`/`Kind` fixes above for the
+            // other two contributors to that same defect).
             TableColumn("Size") { row in Text(AstroFormat.bytes(row.file.sizeBytes)) }
-                .width(min: 70, ideal: 90)
+                .width(min: 55, ideal: 65)
             TableColumn("Night") { row in Text(row.file.sessionDate ?? "—") }
-                .width(min: 90, ideal: 100)
+                .width(min: 75, ideal: 85)
             // Task 5b's rule, applied here too: a row action must be legible
             // without hovering, and the right-click menu and the row menu
             // must be the SAME set -- one function, both call sites.
@@ -463,6 +481,19 @@ public struct ResultsView: View {
     /// its `starless_`/`starmask_` prefix -- so the marker that makes THIS
     /// file different is visible at a glance instead of buried in a long
     /// flat filename. V1 `StacksSegment.markerHighlightedName`'s own logic.
+    ///
+    /// Task 5 (owner review wave 4-4): this cell used to truncate from the
+    /// MIDDLE ("mu cephei 068x300sec 1...le-2-0x"), which can still swallow
+    /// the exact drizzle/edit-chain/time fragment that makes a long variant
+    /// name distinguishable from its siblings -- the full name already
+    /// lives in the detail pane (`resultDetail` below), so this cell only
+    /// needs to keep the part that differs at a glance.
+    /// `.truncationMode(.head)` removes characters from the BEGINNING,
+    /// keeping the END (the tail) visible -- the same direction this
+    /// codebase already uses for exactly this reason on `ArchiveTaskCard`'s
+    /// own evidence-path `Text`, which keeps a path's own distinguishing
+    /// filename readable while its shared leading directory structure
+    /// truncates away.
     @ViewBuilder
     private func nameCell(_ row: StackResultRow) -> some View {
         HStack(spacing: 5) {
@@ -482,12 +513,12 @@ public struct ResultsView: View {
             case .family(let group):
                 Text(group.stem.replacingOccurrences(of: "_", with: " "))
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(.head)
                     .help(group.base.fileName)
             case .variant(let file, let stem):
                 markerHighlightedName(for: file, stem: stem)
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(.head)
                     .help(file.relativePath)
             }
         }
