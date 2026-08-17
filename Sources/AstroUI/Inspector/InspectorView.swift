@@ -18,8 +18,33 @@ import SwiftUI
 /// production actually constructs today, see `LibrarySelection.frame`'s
 /// own doc comment) renders an honest, quiet placeholder rather than
 /// pretending to show something -- never a silent no-op.
+///
+/// W3-9 (Defect 3): an owner screenshot showed the project detail page open
+/// (real project metadata visible in the detail column) while this
+/// inspector showed its generic "No Selection" empty state -- two
+/// contradictory states implying the app didn't know what was open. The
+/// cause: this view only ever rendered from `selection`
+/// (`AppRouter.inspectorSelection`), which is a narrower concept than "what
+/// route is currently open" -- it is `nil` on plenty of ticks where a
+/// project legitimately IS open in the detail column but nothing MORE
+/// specific (a night/series/frame/result) is selected inside it. The old
+/// body treated that exactly like "nothing is open at all". Finder's own
+/// inspector doesn't do this: with no specific item selected it shows the
+/// CURRENT FOLDER, not a blank panel -- the folder is the fallback, not the
+/// empty state. `isProjectRouteActive` is that same fallback signal here:
+/// when true, a missing `selection` falls back to the currently open
+/// project's own `ProjectInspectorPanel` (already loaded in
+/// `projectsStore.selectedProject`, the same data `ProjectWorkspaceView`
+/// itself renders from); the "No Selection" empty state is now reserved for
+/// when there is truly no context at all (Home, Nights, Planning, Library,
+/// Insights, or the bare Projects list).
 public struct InspectorView: View {
     public let selection: LibrarySelection?
+    /// `true` whenever the active route sits inside the Projects journey
+    /// below its own list root (a project is open in the detail column,
+    /// whether or not anything more specific is selected inside it) -- see
+    /// this type's own doc comment.
+    public let isProjectRouteActive: Bool
     public let rootURL: URL?
     public let projectsStore: ProjectsStore
     public let nightsStore: NightsStore
@@ -29,6 +54,7 @@ public struct InspectorView: View {
 
     public init(
         selection: LibrarySelection?,
+        isProjectRouteActive: Bool = false,
         rootURL: URL?,
         projectsStore: ProjectsStore,
         nightsStore: NightsStore,
@@ -36,6 +62,7 @@ public struct InspectorView: View {
         hideInspector: @escaping () -> Void = {}
     ) {
         self.selection = selection
+        self.isProjectRouteActive = isProjectRouteActive
         self.rootURL = rootURL
         self.projectsStore = projectsStore
         self.nightsStore = nightsStore
@@ -47,6 +74,15 @@ public struct InspectorView: View {
         Group {
             if let selection {
                 selectionDetails(selection)
+            } else if isProjectRouteActive, let snapshot = projectsStore.selectedProject {
+                // The route's own context, per this type's own doc comment --
+                // the exact same data `ProjectWorkspaceView` itself renders
+                // from, never re-queried here.
+                ProjectInspectorPanel(
+                    snapshot: snapshot,
+                    annotation: projectsStore.selectedProjectAnnotation,
+                    rootURL: rootURL
+                )
             } else {
                 ContentUnavailableView {
                     Label("No Selection", systemImage: "sidebar.right")
@@ -157,8 +193,15 @@ public struct InspectorView: View {
         )
     }
 
+    // W3-9 sweep: `title`/`message` used to be `String`, so every call site
+    // below -- despite passing literal text -- routed through `Label`/
+    // `Text`'s verbatim overload once the literal crossed this function's
+    // own parameter boundary (the same class of bug this task exists to
+    // fix, just via a helper function instead of a store). `LocalizedStringKey`
+    // lets each call site's literal actually localize, with no call site
+    // changes needed.
     @ViewBuilder
-    private func unavailable(_ title: String, systemImage: String, message: String) -> some View {
+    private func unavailable(_ title: LocalizedStringKey, systemImage: String, message: LocalizedStringKey) -> some View {
         ContentUnavailableView {
             Label(title, systemImage: systemImage)
         } description: {
@@ -243,7 +286,13 @@ private struct NightInspectorPanel: View {
                 LabeledContent("Date", value: row.date)
                 LabeledContent("Projects", value: row.projectSummary.isEmpty ? "—" : row.projectSummary)
                 LabeledContent("Series", value: "\(row.seriesCount)")
-                LabeledContent("Status", value: row.triageState.rawValue)
+                // `LabeledContent(_:value:)` always renders `value:` with
+                // `Text(verbatim:)`, whatever type it's given -- `.rawValue`
+                // used to leak English here even after `TriageState` gained
+                // its own `displayLabel`/`localizedText` pair (W3-9 sweep);
+                // `localizedText` is the eagerly-resolved `String` this
+                // specific call shape needs.
+                LabeledContent("Status", value: row.triageState.localizedText)
             }
             Section("Frames") {
                 LabeledContent("Usable", value: "\(row.snapshot.usableFrames)")
@@ -294,9 +343,9 @@ private struct SeriesSummaryPanel: View {
         Form {
             Section("Capture") {
                 LabeledContent("Exposure", value: exposure)
-                LabeledContent("Sensor", value: item.series.sensorMode.rawValue.uppercased())
+                LabeledContent("Sensor", value: item.series.sensorMode.localizedText)
                 LabeledContent("Passband", value: passband)
-                LabeledContent("Filter", value: item.series.filterName ?? "No filter recorded")
+                LabeledContent("Filter", value: item.series.filterName ?? NSLocalizedString("No filter recorded", bundle: .main, comment: ""))
             }
             Section("Setup") {
                 LabeledContent("Equipment", value: item.series.setupDescriptor)
@@ -320,7 +369,43 @@ private struct SeriesSummaryPanel: View {
     }
 
     private var passband: String {
-        item.series.passband.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+        item.series.passband.localizedText
+    }
+}
+
+/// `LabeledContent(_:value:)` always renders `value:` with `Text(verbatim:)`
+/// (see `NightInspectorPanel`'s own comment above) -- these three eagerly
+/// resolve the same way `SeriesPassband.localizedText`/
+/// `NightRow.TriageState.localizedText` do, for the enums this file's
+/// `SeriesSummaryPanel`/`ResultProvenancePanel` render through `LabeledContent`.
+extension SeriesSensorMode {
+    var localizedText: String {
+        switch self {
+        case .osc: NSLocalizedString("OSC", bundle: .main, comment: "")
+        case .mono: NSLocalizedString("MONO", bundle: .main, comment: "")
+        case .dslr: NSLocalizedString("DSLR", bundle: .main, comment: "")
+        case .unknown: NSLocalizedString("Unknown", bundle: .main, comment: "")
+        }
+    }
+}
+
+extension ResultRole {
+    var localizedText: String {
+        switch self {
+        case .intermediate: NSLocalizedString("Intermediate", bundle: .main, comment: "")
+        case .starless: NSLocalizedString("Starless", bundle: .main, comment: "")
+        case .mask: NSLocalizedString("Mask", bundle: .main, comment: "")
+        case .final: NSLocalizedString("Final", bundle: .main, comment: "")
+        }
+    }
+}
+
+extension ResultKind {
+    var localizedText: String {
+        switch self {
+        case .stack: NSLocalizedString("Stack", bundle: .main, comment: "")
+        case .processingVariant: NSLocalizedString("Processing variant", bundle: .main, comment: "")
+        }
     }
 }
 
@@ -380,8 +465,8 @@ private struct ResultProvenancePanel: View {
     var body: some View {
         Form {
             Section("Result") {
-                LabeledContent("Role", value: result.role.rawValue.capitalized)
-                LabeledContent("Kind", value: result.kind.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
+                LabeledContent("Role", value: result.role.localizedText)
+                LabeledContent("Kind", value: result.kind.localizedText)
                 LabeledContent("Created", value: result.createdAt.formatted(date: .abbreviated, time: .shortened))
                 LabeledContent("Software", value: softwareLabel)
             }
@@ -392,7 +477,7 @@ private struct ResultProvenancePanel: View {
                 LabeledContent("Calibration assets", value: "\(result.calibrationAssets.count)")
             }
             Section("File") {
-                Text(result.relativePath ?? "No path recorded")
+                Text(LocalizedStringKey(result.relativePath ?? "No path recorded"))
                     .font(.callout.monospaced())
                     .textSelection(.enabled)
             }
@@ -406,6 +491,6 @@ private struct ResultProvenancePanel: View {
 
     private var softwareLabel: String {
         let joined = [result.softwareName, result.softwareVersion].compactMap { $0 }.joined(separator: " ")
-        return joined.isEmpty ? "Unknown" : joined
+        return joined.isEmpty ? NSLocalizedString("Unknown", bundle: .main, comment: "") : joined
     }
 }

@@ -407,6 +407,33 @@ private struct V2Shell: View {
         .inspector(isPresented: $router.isInspectorPresented) {
             InspectorView(
                 selection: router.inspectorSelection,
+                // W3-9 (Defect 3): `.project`/`.projectSeries` are the two
+                // `ContentRoute` cases this file's own `destination(for:)`
+                // only ever renders once `projectsStore.selectedProject`
+                // already matches the pushed ID (see their own `if let
+                // snapshot = projectsStore.selectedProject, snapshot.id ==
+                // id` guards a few lines below) -- so whenever one of them
+                // is the active route, a project IS open in the detail
+                // column, on every tick, even the ones where nothing MORE
+                // specific (a night/series row) is additionally selected.
+                // `InspectorView` uses this to fall back to that project's
+                // own context panel instead of the generic empty state (see
+                // its own doc comment for the Finder-inspector reasoning).
+                // Deliberately NOT the whole `.projects`-primary-section
+                // journey: `.review`/`.resultsWorkspace`/`.result` all load
+                // their OWN project independently of `selectedProject` (by
+                // `projectID`, straight from `projectsStore.projects`/a
+                // query) and can be reached from the Projects LIST's row
+                // actions without `selectedProject` ever having been synced
+                // to that row -- falling back there could show a stale,
+                // mismatched project's data instead of an honest "not
+                // available" state.
+                isProjectRouteActive: {
+                    switch router.contentRoute {
+                    case .project, .projectSeries: true
+                    default: false
+                    }
+                }(),
                 rootURL: onboardingStore.selectedRoot ?? libraryRootFallback,
                 projectsStore: projectsStore,
                 nightsStore: nightsStore,
