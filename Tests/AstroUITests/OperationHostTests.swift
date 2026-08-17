@@ -122,6 +122,91 @@ struct OperationHostTests {
         )
     }
 
+    // MARK: - A confirmation must not expire while nobody can see it
+    //
+    // Toast lifetimes used to be pure wall clock: stamped at completion,
+    // gone 4.5s later whether or not the window was on screen. But the
+    // operations that go through `run(kind:title:work:)` are the long ones
+    // -- scan, audit, verify, project-wide rating, a conversion that MOVES
+    // FILES -- and they are made cancellable background work precisely so
+    // the user can go elsewhere while they run. Doing exactly that produced
+    // the app's real silent-success window: start a file operation, switch
+    // to another app, it succeeds, the toast announces it to an empty
+    // screen, and you come back to an app that looks as idle as if you had
+    // never asked. See `OperationHost.setToastPresentationActive(_:)`.
+
+    @Test("A confirmation that arrives while the app is in the background is still there when the user comes back")
+    func toastPostedWhileHiddenSurvivesUntilTheAppIsVisibleAgain() async throws {
+        var now = Date(timeIntervalSince1970: 0)
+        let host = OperationHost(center: OperationCenter(), clock: { now }, toastLifetime: { _ in 4.5 })
+        host.setToastPresentationActive(true)
+
+        // The user switches to another app, and a minute later the
+        // file-moving conversion they kicked off finishes.
+        host.setToastPresentationActive(false)
+        now = now.addingTimeInterval(60)
+        _ = await host.run(kind: .convert(session: "2026-08-08"), title: "Converting 2026-08-08") {}
+        try await waitUntil { !host.toasts.isEmpty }
+
+        // Five more minutes away. Under wall-clock expiry the confirmation
+        // was gone 4.5 seconds in, unseen.
+        now = now.addingTimeInterval(300)
+        host.expireToasts(now: now)
+        #expect(host.toasts.count == 1, "a confirmation must not expire while it is off screen")
+
+        // They come back. It is still there, with its whole lifetime ahead.
+        host.setToastPresentationActive(true)
+        now = now.addingTimeInterval(4)
+        host.expireToasts(now: now)
+        #expect(host.toasts.count == 1, "the lifetime runs from when the toast became visible")
+
+        now = now.addingTimeInterval(1)
+        host.expireToasts(now: now)
+        #expect(host.toasts.isEmpty, "and then it expires normally")
+    }
+
+    @Test("A confirmation half-read before the app is hidden gets back exactly its remaining lifetime, not a fresh one")
+    func partlyShownToastResumesWithOnlyItsRemainingLifetime() async throws {
+        var now = Date(timeIntervalSince1970: 0)
+        let host = OperationHost(center: OperationCenter(), clock: { now }, toastLifetime: { _ in 4 })
+        host.setToastPresentationActive(true)
+        host.notify(.success, message: "Converted 12 files.")
+
+        now = now.addingTimeInterval(3) // 3 of the 4 seconds already on screen
+        host.setToastPresentationActive(false)
+        now = now.addingTimeInterval(600) // ten minutes elsewhere
+        host.setToastPresentationActive(true)
+
+        now = now.addingTimeInterval(0.5)
+        host.expireToasts(now: now)
+        #expect(host.toasts.count == 1, "half of the one remaining second has been spent")
+
+        now = now.addingTimeInterval(0.6)
+        host.expireToasts(now: now)
+        #expect(host.toasts.isEmpty, "the remaining second is spent -- it does not get a whole new lifetime")
+    }
+
+    @Test("Coming back to the front with nothing to restore is an observable no-op")
+    func resumingToastPresentationWithNoToastsDoesNotNotify() async throws {
+        // Same `@Observable` discipline `expireToasts(now:)` is held to: an
+        // unconditional write to `toasts` invalidates the whole root-mounted
+        // shell, which is what froze the V2 UI at build 20017.
+        let host = OperationHost(center: OperationCenter())
+        host.setToastPresentationActive(false)
+        let counter = NotificationCounter()
+
+        withObservationTracking {
+            _ = host.toasts
+        } onChange: {
+            counter.increment()
+        }
+
+        host.setToastPresentationActive(true)
+
+        try await Task.sleep(nanoseconds: 20_000_000)
+        #expect(counter.value == 0)
+    }
+
     // MARK: - `outcome(of:)`/`errorMessage(for:)` (Task 2: the launch-scan
     // preparation pipeline needs to react inline to a `run`-registered
     // operation's actual result, unlike every other fire-and-forget caller).

@@ -48,10 +48,12 @@ public final class OperationHost {
         case info
     }
 
-    /// One transient outcome bubble. `expiresAt` is computed once at creation
-    /// from the injected `clock` and `toastLifetime`, so expiry is a pure
+    /// One transient outcome bubble. `expiresAt` is computed at creation from
+    /// the injected `clock` and `toastLifetime`, so expiry is a pure
     /// comparison (`expireToasts(now:)`) rather than something that depends
-    /// on a live timer actually having fired.
+    /// on a live timer actually having fired. It is a `var` rather than a
+    /// `let` because `setToastPresentationActive(_:)` pushes it forward by
+    /// however long the toast spent off screen -- see that method.
     public struct Toast: Identifiable, Sendable, Equatable {
         public let id: UUID
         public let level: ToastLevel
@@ -70,7 +72,7 @@ public final class OperationHost {
         // for why.
         public let message: String
         public let createdAt: Date
-        public let expiresAt: Date
+        public internal(set) var expiresAt: Date
     }
 
     /// One finished operation, kept around briefly so `OperationStatusView`'s
@@ -102,6 +104,9 @@ public final class OperationHost {
     private let clock: () -> Date
     private let toastLifetime: (ToastLevel) -> TimeInterval
     private var runningTasks: [UUID: Task<Void, Never>] = [:]
+    /// When the toast layer stopped being on screen, or `nil` while it is.
+    /// See `setToastPresentationActive(_:)`.
+    private var toastsHiddenSince: Date?
 
     public init(
         center: OperationCenter,
@@ -299,9 +304,73 @@ public final class OperationHost {
     /// froze the V2 shell (diagnosed by sampling the live frozen process at
     /// build 20017). Reading `toasts` here (the `contains` check) does not
     /// itself notify -- only the write below does.
+    /// Nothing expires while the toast layer is off screen -- a toast the
+    /// user never had the chance to read has not spent any of its lifetime.
+    /// See `setToastPresentationActive(_:)`.
     public func expireToasts(now: Date) {
+        guard toastsHiddenSince == nil else { return }
         guard toasts.contains(where: { $0.expiresAt <= now }) else { return }
         toasts.removeAll { $0.expiresAt <= now }
+    }
+
+    /// `expireToasts(now:)` against this host's own clock -- what
+    /// `ToastOverlay`'s timer calls, so the wall clock is read in exactly one
+    /// place (`clock`) instead of the view stamping toasts with one clock and
+    /// expiring them against another.
+    public func expireToastsNow() {
+        expireToasts(now: clock())
+    }
+
+    /// Tells the host whether the toast layer is somewhere a user could
+    /// actually read it. `ToastOverlay` drives this from the app's active
+    /// state; while it is `false`, toast lifetimes are frozen, and when it
+    /// goes back to `true` every live toast gets back exactly the lifetime it
+    /// spent off screen.
+    ///
+    /// This closes the app's real silent-success window. A toast's `expiresAt`
+    /// used to be pure wall clock: created at completion, gone 4.5 seconds
+    /// later whether or not anyone was looking. But the operations that route
+    /// through `run(kind:title:work:)` are the long ones -- a library scan, a
+    /// full audit, an integrity verify, a project-wide rating, a conversion
+    /// that MOVES FILES -- and this app deliberately makes them cancellable
+    /// background work precisely so the user can go and do something else
+    /// while they run. Do that, and the sequence is: the user starts a file
+    /// operation, switches to another app, the operation succeeds, its toast
+    /// appears and expires against an audience of nobody, and the user comes
+    /// back to an app that looks exactly as idle as if they had never asked.
+    /// The only surviving trace was `recentOutcomes` behind the toolbar's
+    /// Activity popover -- a place to look something up, not a way to be
+    /// told. For an app whose iron rule is that every file operation gets a
+    /// preview, a confirmation, a receipt and an undo, "it worked, but we
+    /// only mentioned it while you were out of the room" is a hole in the
+    /// promise, not a cosmetic nit.
+    ///
+    /// Each toast is credited only for the time it was actually hidden --
+    /// `max(hiddenSince, createdAt)` -- so a toast that appears midway
+    /// through an absence gets its full lifetime from the moment the user
+    /// returns, and one that was already half-shown gets only its remaining
+    /// half. Idempotent: repeated calls with the same value do nothing.
+    public func setToastPresentationActive(_ isActive: Bool) {
+        guard isActive else {
+            if toastsHiddenSince == nil { toastsHiddenSince = clock() }
+            return
+        }
+        guard let hiddenSince = toastsHiddenSince else { return }
+        toastsHiddenSince = nil
+        let now = clock()
+        guard !toasts.isEmpty else { return }
+        let restored = toasts.map { toast -> Toast in
+            var toast = toast
+            let hiddenFor = now.timeIntervalSince(max(hiddenSince, toast.createdAt))
+            if hiddenFor > 0 {
+                toast.expiresAt = toast.expiresAt.addingTimeInterval(hiddenFor)
+            }
+            return toast
+        }
+        // Same `@Observable` discipline as `expireToasts(now:)`: only write
+        // (and so invalidate every observer) when something actually changed.
+        guard restored != toasts else { return }
+        toasts = restored
     }
 
     // MARK: - Private
