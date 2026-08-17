@@ -1037,8 +1037,11 @@ private struct V2Sidebar: View {
     /// earlier visit still sitting underneath) -- either way the child row's
     /// own page is what ends up on screen, never a stale sibling underneath
     /// it.
+    // W3-13 leftover, applied by the coordinator: `String` here forced
+    // Label/accessibilityLabel through their verbatim overloads, so the
+    // sidebar's "Calibration" never translated no matter what hu.lproj said.
     private func libraryChildRow(
-        title: String,
+        title: LocalizedStringKey,
         systemImage: String,
         route: ContentRoute,
         accessibilityID: String
