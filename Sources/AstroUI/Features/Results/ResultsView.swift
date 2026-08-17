@@ -404,6 +404,21 @@ public struct ResultsView: View {
             .width(28)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
+        // W3-9 (screenshot defects): was implicitly proposed the whole
+        // `HSplitView` pane's height (no `.frame(maxHeight:)` of its own),
+        // so a project with only a handful of stack families painted empty
+        // alternating stripes below its last real row all the way to the
+        // bottom of the pane -- see `tableMaxHeight`'s own doc comment
+        // (`WorkspaceComponents.swift`) for the mechanism. This is a
+        // hierarchical `Table(children:)`, so the true visible row count
+        // (families plus whichever are expanded) changes with user
+        // interaction; capping on `store.rows.count` alone (top-level
+        // families, never the expanded children) is simpler and still
+        // correct for this fix's own purpose -- it only needs to rule out
+        // an unbounded proposal, not track the exact rendered row count,
+        // and a family with expanded children pushes the intrinsic content
+        // height past the cap anyway once there are enough rows to matter.
+        .frame(maxWidth: .infinity, maxHeight: tableMaxHeight(rowCount: store.rows.count))
         .contextMenu(forSelectionType: String.self) { rowIDs in
             if let id = rowIDs.first, let file = store.file(rowID: id) {
                 rowActionMenu(file)
