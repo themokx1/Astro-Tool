@@ -118,6 +118,14 @@ public enum ContentRoute: Hashable, Codable, Sendable {
 public enum PresentationRoute: Hashable, Sendable, Identifiable {
     case newProject
     case newNight
+    /// W4-1: the card-import wizard -- "plug in the ASI Air storage and the
+    /// Canon R8, build the dedicated capture folders in a few clicks, and
+    /// copy the files in" (the owner's own words for the app's most
+    /// important workflow). One route, presented from both Home's toolbar
+    /// action and the Library section's own toolbar action, the same
+    /// "one router presentation, several entry points" shape `.newNight`
+    /// already has.
+    case importCapture
     case mutationConfirmation(UUID)
     case settingsDeepLink(String)
     /// Wave 3 Task 7: Help ▸ Glossary -- `anchor`, when set, is the exact
@@ -133,6 +141,7 @@ public enum PresentationRoute: Hashable, Sendable, Identifiable {
     public enum ID: Hashable, Sendable {
         case newProject
         case newNight
+        case importCapture
         case mutationConfirmation(UUID)
         case settingsDeepLink(String)
         case glossary
@@ -144,6 +153,7 @@ public enum PresentationRoute: Hashable, Sendable, Identifiable {
         switch self {
         case .newProject: .newProject
         case .newNight: .newNight
+        case .importCapture: .importCapture
         case .mutationConfirmation(let id): .mutationConfirmation(id)
         case .settingsDeepLink(let destination): .settingsDeepLink(destination)
         case .glossary: .glossary

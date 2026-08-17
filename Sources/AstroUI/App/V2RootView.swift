@@ -600,6 +600,22 @@ private struct V2Shell: View {
                 .accessibilityLabel("New project")
                 .accessibilityIdentifier("v2.toolbar.new-project")
 
+                // W4-1: the owner's own most-important workflow -- "plug in
+                // the ASI Air storage and the Canon R8, build the dedicated
+                // capture folders in a few clicks, and copy the files in".
+                // A permanent shell-level control (rather than something
+                // nested inside `HomeView`/a Library page view) so it is
+                // visible from Home AND the Library section without editing
+                // either page -- the brief's two named entry points, met by
+                // one control, the same "one router presentation, several
+                // named entry points" shape `.newNight` already uses.
+                Button(action: { router.present(.importCapture) }) {
+                    Label("Import from Card…", systemImage: "sdcard")
+                }
+                .help("Copy capture files from a card or the ASI Air's storage")
+                .accessibilityLabel("Import from card")
+                .accessibilityIdentifier("v2.toolbar.import-capture")
+
                 Button(action: toggleInspectorColumn) {
                     Label("Inspector", systemImage: "sidebar.right")
                 }
@@ -682,6 +698,16 @@ private struct V2Shell: View {
                         router.dismissPresentation()
                         newSessionPrefill = nil
                     }
+                )
+            } else if presentation == .importCapture,
+                      let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback {
+                CaptureImportView(
+                    rootURL: rootURL,
+                    accessMode: libraryAccessMode,
+                    indexedFolders: projectsStore.projects.map(ProjectsQuery.canonicalFolderName(for:)),
+                    existingProjects: projectsStore.projects,
+                    dismiss: router.dismissPresentation,
+                    runScan: performRescan
                 )
             } else if case .glossary(let anchor) = presentation {
                 GlossaryView(anchor: anchor, dismiss: router.dismissPresentation)
@@ -1845,6 +1871,7 @@ private struct V2PresentationPlaceholder: View {
         switch route {
         case .newProject: "New Project"
         case .newNight: "New Night"
+        case .importCapture: "Import from Card"
         case .mutationConfirmation: "Confirm Change"
         case .settingsDeepLink: "Settings"
         case .glossary: "Glossary"
@@ -1857,6 +1884,7 @@ private struct V2PresentationPlaceholder: View {
         switch route {
         case .newProject: "folder.badge.plus"
         case .newNight: "moon.stars"
+        case .importCapture: "sdcard"
         case .mutationConfirmation: "checkmark.shield"
         case .settingsDeepLink: "gearshape"
         case .glossary: "character.book.closed"
