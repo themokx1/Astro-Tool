@@ -157,6 +157,19 @@ public struct PlanningView: View {
     /// The planner's fixed filter and action bar. It lives in
     /// `WorkspaceTablePage`'s non-scrolling toolbar slot, so it stays put
     /// while the target table scrolls underneath it.
+    ///
+    /// W4-3b (owner's second Projects complaint, same disease here): this
+    /// used to be one undifferentiated band -- date + "Today" + two
+    /// checkboxes + search field + four buttons, filters and actions
+    /// interleaved in no particular order. Regrouped WITHOUT changing any
+    /// behavior: filters/inputs (date, search, the two checkboxes) now read
+    /// left to right on one line, actions (Plan Project primary, Save
+    /// Target, Note…) sit right-aligned on the line below, and "Saved
+    /// Targets" -- the one control here that navigates away rather than
+    /// acting on the selected row -- is set off after its own `Divider`
+    /// instead of blending into the action cluster. The cloud indicator
+    /// (W4-2, a sibling's work) stays exactly where it already was, next to
+    /// the date it describes.
     private var filterBar: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
             HStack(spacing: AstroTokens.Spacing.standard) {
@@ -180,35 +193,46 @@ public struct PlanningView: View {
 
                 cloudIndicator
 
-                Divider().frame(height: 16)
+                TextField("Catalog number, English or Hungarian name", text: $store.searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 280)
+                    .accessibilityIdentifier("v2.planning.search")
 
-                Toggle(
-                    "Hide targets that aren't photographable",
-                    isOn: Binding(
-                        get: { !store.showLowAltitudeTargets },
-                        set: { store.showLowAltitudeTargets = !$0 }
+                // The two filter checkboxes used to sit loose in the band,
+                // one per row -- grouped into one compact `Menu` so this
+                // filter row reads as "date, search, filters", not a wall of
+                // individual controls.
+                Menu {
+                    Toggle(
+                        "Hide targets that aren't photographable",
+                        isOn: Binding(
+                            get: { !store.showLowAltitudeTargets },
+                            set: { store.showLowAltitudeTargets = !$0 }
+                        )
                     )
-                )
-                .toggleStyle(.checkbox)
-                .accessibilityIdentifier("v2.planning.hide-unobservable")
-                .help("Targets that never clear the imaging altitude on the chosen night.")
+                    .accessibilityIdentifier("v2.planning.hide-unobservable")
+                    .help("Targets that never clear the imaging altitude on the chosen night.")
+                    Toggle("Useful framing only", isOn: $store.usefulFramingOnly)
+                        .accessibilityIdentifier("v2.planning.useful-framing-only")
+                } label: {
+                    Label("Filters", systemImage: "line.3.horizontal.decrease.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .accessibilityIdentifier("v2.planning.filters-menu")
 
                 Spacer()
-
+            }
+            HStack(spacing: AstroTokens.Spacing.standard) {
+                Spacer()
                 Button("Plan Project") { planSelectedTarget() }
+                    .buttonStyle(.borderedProminent)
                     .disabled(selectedTargetID == nil)
                     .accessibilityIdentifier("v2.planning.plan-project")
                     .help("Create a project for the selected target.")
-            }
-            HStack(spacing: AstroTokens.Spacing.standard) {
-                TextField("Catalog number, English or Hungarian name", text: $store.searchText)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier("v2.planning.search")
-                Toggle("Useful framing only", isOn: $store.usefulFramingOnly)
-                    .toggleStyle(.checkbox)
-                Spacer()
                 saveTargetButton
                 noteButton
+                Divider().frame(height: 16)
                 Button("Saved Targets") { openSavedTargets() }
                     .accessibilityIdentifier("v2.planning.open-saved")
                     .help("Review every target you've bookmarked from Planning.")
