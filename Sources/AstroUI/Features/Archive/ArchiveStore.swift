@@ -16,6 +16,7 @@ import Observation
 public final class ArchiveStore {
     public typealias MapFactory = @Sendable (URL) async throws -> ArchiveMapSnapshot
     public typealias TaskFactory = @Sendable (URL) async throws -> ArchiveTaskSummary
+    public typealias MetadataFactory = @MainActor @Sendable (URL) throws -> MetadataStore
 
     public private(set) var snapshot: ArchiveMapSnapshot?
     /// Convenience for the view: the cards half of the last-loaded
@@ -48,6 +49,7 @@ public final class ArchiveStore {
 
     private let mapFactory: MapFactory
     private let taskFactory: TaskFactory
+    private let metadataFactory: MetadataFactory
     private var generation = 0
 
     public init(
@@ -56,10 +58,12 @@ public final class ArchiveStore {
         },
         taskFactory: @escaping TaskFactory = { rootURL in
             try await ArchiveTaskQuery.production(rootURL: rootURL).summary()
-        }
+        },
+        metadataFactory: @escaping MetadataFactory = ArchiveStore.productionMetadata
     ) {
         self.mapFactory = mapFactory
         self.taskFactory = taskFactory
+        self.metadataFactory = metadataFactory
     }
 
     public func load(rootURL: URL) async {
@@ -92,5 +96,48 @@ public final class ArchiveStore {
         visibleRows = snapshot.rows.filter { row in
             row.slices.contains { $0.archiveClass == selectedClass }
         }
+    }
+
+    /// Marks one archive task's finding group as acknowledged, then reloads
+    /// so the card actually disappears. Routed through `OperationHost`
+    /// rather than this store's own `errorMessage` -- `errorState`/
+    /// `ArchiveView`'s own branch order treats a non-nil `errorMessage` as
+    /// "the whole page failed to load" (it blanks `snapshot`/`tasks` right
+    /// alongside it), which would wrongly blank an already-loaded map out
+    /// from under the user over a single card's write failure. `OperationHost`
+    /// gives a failed acknowledge the same toast receipt every other V2
+    /// write gets instead -- W3-12 replaces `ArchiveView.acknowledge`'s own
+    /// empty `catch` (a failed write used to leave the card on screen with
+    /// no visible reason why) with this.
+    public func acknowledge(
+        _ task: ArchiveTask,
+        note: String?,
+        rootURL: URL,
+        operationHost: OperationHost
+    ) async {
+        let standardizedRoot = rootURL.standardizedFileURL
+        let kind = OperationKind.acknowledge(library: standardizedRoot.path)
+        guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
+            operationHost.notify(.info, message: OperationHost.localized("An acknowledgement is already being saved for this library."))
+            return
+        }
+        do {
+            let metadata = try metadataFactory(standardizedRoot)
+            let title = OperationHost.localized("Acknowledging finding")
+            _ = await operationHost.run(kind: kind, title: title, cancellation: .unavailable) { [weak self] in
+                try await metadata.acknowledgeFindingGroup(
+                    category: ArchiveTask.ackCategory, groupKey: task.ackGroupKey, note: note
+                )
+                await self?.load(rootURL: standardizedRoot)
+            }
+        } catch {
+            operationHost.notify(.failure, message: "\(OperationHost.localized("Could not save acknowledgement:")) \(error.localizedDescription)")
+        }
+    }
+
+    public static func productionMetadata(rootURL: URL) throws -> MetadataStore {
+        let identity = LibraryIdentity(rootURL: rootURL)
+        let storage = try AppStoragePaths.production(libraryID: identity, libraryRoot: rootURL)
+        return try MetadataStore(storagePaths: storage)
     }
 }

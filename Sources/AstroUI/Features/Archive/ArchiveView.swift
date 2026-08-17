@@ -146,10 +146,10 @@ public struct ArchiveView: View {
             ArchiveAcknowledgeSheet(
                 task: task,
                 onAcknowledge: { note in
-                    Task {
-                        await acknowledge(task, note: note)
-                        acknowledgeRequest = nil
+                    if let rootURL {
+                        Task { await store.acknowledge(task, note: note, rootURL: rootURL, operationHost: operationHost) }
                     }
+                    acknowledgeRequest = nil
                 },
                 onCancel: { acknowledgeRequest = nil }
             )
@@ -419,23 +419,6 @@ public struct ArchiveView: View {
             }
         }
         NSWorkspace.shared.activateFileViewerSelecting([root])
-    }
-
-    // MARK: Acknowledge
-
-    private func acknowledge(_ task: ArchiveTask, note: String?) async {
-        guard let rootURL else { return }
-        do {
-            let identity = LibraryIdentity(rootURL: rootURL)
-            let storage = try AppStoragePaths.production(libraryID: identity, libraryRoot: rootURL)
-            let metadata = try MetadataStore(storagePaths: storage)
-            try await metadata.acknowledgeFindingGroup(category: ArchiveTask.ackCategory, groupKey: task.ackGroupKey, note: note)
-            await store.load(rootURL: rootURL)
-        } catch {
-            // Best-effort: a failed metadata write just leaves the card
-            // visible, which is the safe outcome -- there is nothing else
-            // actionable to show for it here.
-        }
     }
 
     // MARK: Toolbar actions -- published on lifecycle events only, never body

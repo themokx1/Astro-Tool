@@ -15,6 +15,13 @@ public enum OperationKind: Hashable, Sendable {
     /// reorganized, not a brand-new one being made).
     case createSession(target: String)
     case sensorMeasurement(library: String)
+    /// W3-12: `ArchiveStore.acknowledge`'s finding-group write -- gives a
+    /// failed acknowledge the same toast receipt every other V2 write gets,
+    /// instead of the empty `catch` `ArchiveView.acknowledge` used to have
+    /// (a failed write left the card on screen with no visible reason why).
+    /// Keyed per-library so a second acknowledge on the same library cannot
+    /// race the first, matching `.audit`/`.verify`'s own shape.
+    case acknowledge(library: String)
     /// The opt-in "Update Catalog" action (Settings ▸ Planning): downloads
     /// the extended SIMBAD/VizieR target catalog into `CatalogCache`. Not
     /// per-library (the extended catalog is the same regardless of which

@@ -89,6 +89,58 @@ struct ArchiveStoreTests {
         store.selectedClass = .light
         #expect(store.filterChangeCount == first)
     }
+
+    // W3-12 finding 1: `ArchiveView.acknowledge` used to open its own
+    // `MetadataStore` inline and swallow any write failure in an empty
+    // `catch` -- a failed acknowledge left the card on screen with nothing
+    // telling the user why. `ArchiveStore.acknowledge` replaces that with a
+    // real, injectable write path that reports through `OperationHost`,
+    // exactly like every other V2 write.
+
+    @Test("Acknowledging a task notifies success and reloads the map once the write lands")
+    func acknowledgeSucceedsAndReloads() async throws {
+        let loadCount = ArchiveStoreTestCounter()
+        let store = ArchiveStore(
+            mapFactory: { _ in await loadCount.increment(); return .stub(totalBytes: 500) },
+            taskFactory: { _ in ArchiveTaskSummary(tasks: [], uncovered: .none) },
+            metadataFactory: { _ in try MetadataStore.temporary() }
+        )
+        let host = OperationHost(center: OperationCenter())
+        let task = ArchiveTask.stub(kind: .intermediateFiles, bytes: 400)
+
+        await store.acknowledge(task, note: "known", rootURL: URL(fileURLWithPath: "/tmp/lib"), operationHost: host)
+        await host.settle()
+
+        #expect(host.toasts.contains { $0.level == .success })
+        #expect(await loadCount.value == 1, "acknowledging must reload the map so the card actually disappears")
+    }
+
+    @Test("A failing acknowledge write notifies failure instead of leaving the card silently unchanged")
+    func acknowledgeFailureNotifiesInsteadOfSwallowing() async throws {
+        struct Boom: Error, LocalizedError { var errorDescription: String? { "metadata store unavailable" } }
+        let loadCount = ArchiveStoreTestCounter()
+        let store = ArchiveStore(
+            mapFactory: { _ in await loadCount.increment(); return .stub(totalBytes: 500) },
+            taskFactory: { _ in ArchiveTaskSummary(tasks: [], uncovered: .none) },
+            metadataFactory: { _ in throw Boom() }
+        )
+        let host = OperationHost(center: OperationCenter())
+        let task = ArchiveTask.stub(kind: .intermediateFiles, bytes: 400)
+
+        await store.acknowledge(task, note: nil, rootURL: URL(fileURLWithPath: "/tmp/lib"), operationHost: host)
+        await host.settle()
+
+        #expect(host.toasts.contains { $0.level == .failure && $0.message.contains("metadata store unavailable") })
+        #expect(await loadCount.value == 0, "a failed acknowledge must not silently pretend a reload happened")
+    }
+}
+
+/// A plain `Sendable` counter for `mapFactory`/`taskFactory` closures (both
+/// `@Sendable`) to increment from off the main actor -- mirrors
+/// `WorkspaceActionsTests`' own `NotificationCounter`.
+private actor ArchiveStoreTestCounter {
+    private(set) var value = 0
+    func increment() { value += 1 }
 }
 
 /// A one-shot suspension point the test opens by hand, so "a slow load is
