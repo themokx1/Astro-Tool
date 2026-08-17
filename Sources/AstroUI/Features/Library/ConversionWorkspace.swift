@@ -362,8 +362,12 @@ public struct ConversionWorkspace: View {
                 } else {
                     Text("Names, sensor, signal, and filter can be corrected before applying. The slug is fixed since every move/assignment refers to it.")
                         .font(.caption).foregroundStyle(.secondary)
-                    ForEach(plan.proposedGroups) { proposed in
+                    // Task 7 (2026-08-17, GroupBox removal): a heading per
+                    // card, `Divider()`-separated rather than boxed -- see
+                    // `groupEditorCard`'s own comment.
+                    ForEach(Array(plan.proposedGroups.enumerated()), id: \.element.id) { index, proposed in
                         groupEditorCard(proposed)
+                        if index < plan.proposedGroups.count - 1 { Divider() }
                     }
                 }
             } else if let planErrorMessage = store.planErrorMessage {
@@ -374,34 +378,35 @@ public struct ConversionWorkspace: View {
         .accessibilityIdentifier("v2.conversion.review-step")
     }
 
+    /// Task 7 (2026-08-17, GroupBox removal): a heading plus spacing --
+    /// `GroupBox` painted an opaque box per card here; the call site
+    /// (`reviewStep` above) now separates repeated cards with a `Divider()`
+    /// instead, so they stay visually distinct without a nested surface.
     @ViewBuilder
     private func groupEditorCard(_ proposed: ProposedCaptureGroup) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    TextField("Group name", text: nameBinding(for: proposed))
-                        .accessibilityIdentifier("v2.conversion.group-name")
-                    Text(proposed.draft.slug).font(.body.monospaced()).foregroundStyle(.secondary)
-                }
-                HStack {
-                    Picker("Sensor", selection: sensorBinding(for: proposed)) {
-                        ForEach(SensorMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
-                    }
-                    .accessibilityIdentifier("v2.conversion.group-sensor")
-                    Picker("Signal", selection: signalBinding(for: proposed)) {
-                        ForEach(SignalMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
-                    }
-                    .accessibilityIdentifier("v2.conversion.group-signal")
-                }
-                TextField("Filter", text: filterNameBinding(for: proposed))
-                    .accessibilityIdentifier("v2.conversion.group-filter")
-            }
-            .padding(6)
-        } label: {
+        VStack(alignment: .leading, spacing: 10) {
             Label(
                 proposed.existingGroupID == nil ? "New capture group" : "Updates an existing capture group",
                 systemImage: proposed.existingGroupID == nil ? "plus.circle" : "arrow.triangle.2.circlepath.circle"
             )
+            .font(.headline)
+            HStack {
+                TextField("Group name", text: nameBinding(for: proposed))
+                    .accessibilityIdentifier("v2.conversion.group-name")
+                Text(proposed.draft.slug).font(.body.monospaced()).foregroundStyle(.secondary)
+            }
+            HStack {
+                Picker("Sensor", selection: sensorBinding(for: proposed)) {
+                    ForEach(SensorMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .accessibilityIdentifier("v2.conversion.group-sensor")
+                Picker("Signal", selection: signalBinding(for: proposed)) {
+                    ForEach(SignalMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .accessibilityIdentifier("v2.conversion.group-signal")
+            }
+            TextField("Filter", text: filterNameBinding(for: proposed))
+                .accessibilityIdentifier("v2.conversion.group-filter")
         }
     }
 
@@ -459,8 +464,12 @@ public struct ConversionWorkspace: View {
             Text("These files could not be matched automatically. Applying is blocked until every one is decided.")
                 .foregroundStyle(.secondary)
             if let plan = store.plan {
-                ForEach(plan.ambiguities) { ambiguity in
+                // Task 7 (2026-08-17, GroupBox removal): a heading per card,
+                // `Divider()`-separated rather than boxed -- see
+                // `ambiguityCard`'s own comment.
+                ForEach(Array(plan.ambiguities.enumerated()), id: \.element.id) { index, ambiguity in
                     ambiguityCard(ambiguity)
+                    if index < plan.ambiguities.count - 1 { Divider() }
                 }
                 if plan.ambiguities.isEmpty {
                     Label("Every file is assigned to a capture group.", systemImage: "checkmark.seal.fill")
@@ -472,21 +481,23 @@ public struct ConversionWorkspace: View {
         .accessibilityIdentifier("v2.conversion.ambiguity-step")
     }
 
+    /// Task 7 (2026-08-17, GroupBox removal): same fix as `groupEditorCard`
+    /// above -- the `GroupBox` here had no explicit `label:` at all (its own
+    /// `Label` was just the content's first row), so removing it changes
+    /// nothing but the opaque background.
     private func ambiguityCard(_ ambiguity: ConversionAmbiguity) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Label(ambiguity.titleEnglish, systemImage: "questionmark.diamond.fill")
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(AstroTokens.Color.attention)
-                Text(ambiguity.explanationEnglish).font(.caption).foregroundStyle(.secondary)
-                Text("\(ambiguity.affectedPaths.count) file(s): \(ambiguity.affectedPaths.prefix(3).map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))")
-                    .font(.caption.monospaced()).lineLimit(2)
-                HStack {
-                    Picker("Belongs to", selection: choiceBinding(for: ambiguity)) {
-                        ForEach(ambiguity.candidateGroupSlugs, id: \.self) { Text($0).tag($0) }
-                    }
-                    Button("Record Decision") { store.resolveAmbiguity(ambiguity) }
-                        .buttonStyle(.borderedProminent)
+        VStack(alignment: .leading, spacing: 8) {
+            Label(ambiguity.titleEnglish, systemImage: "questionmark.diamond.fill")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(AstroTokens.Color.attention)
+            Text(ambiguity.explanationEnglish).font(.caption).foregroundStyle(.secondary)
+            Text("\(ambiguity.affectedPaths.count) file(s): \(ambiguity.affectedPaths.prefix(3).map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))")
+                .font(.caption.monospaced()).lineLimit(2)
+            HStack {
+                Picker("Belongs to", selection: choiceBinding(for: ambiguity)) {
+                    ForEach(ambiguity.candidateGroupSlugs, id: \.self) { Text($0).tag($0) }
                 }
+                Button("Record Decision") { store.resolveAmbiguity(ambiguity) }
+                    .buttonStyle(.borderedProminent)
             }
         }
     }
@@ -521,19 +532,20 @@ public struct ConversionWorkspace: View {
         } else {
             Label("\(plan.moves.count) file(s) will move", systemImage: "arrow.triangle.branch").font(.headline)
         }
-        GroupBox("Assignments and moves") {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("\(plan.summary.fileAssignmentCount) file assignment(s) · \(plan.summary.moveCount) move(s) · \(plan.summary.directoryCount) new folder(s)")
-                    .font(.callout)
-                if !plan.conflicts.isEmpty {
-                    ForEach(plan.conflicts) { conflict in
-                        Label("\(conflict.path): \(conflict.messageEnglish)", systemImage: "xmark.octagon.fill")
-                            .font(.caption).foregroundStyle(AstroTokens.Color.critical)
-                    }
+        // Task 7 (2026-08-17, GroupBox removal): heading plus spacing, no
+        // additional surface.
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+            Text("Assignments and moves").font(.headline)
+            Text("\(plan.summary.fileAssignmentCount) file assignment(s) · \(plan.summary.moveCount) move(s) · \(plan.summary.directoryCount) new folder(s)")
+                .font(.callout)
+            if !plan.conflicts.isEmpty {
+                ForEach(plan.conflicts) { conflict in
+                    Label("\(conflict.path): \(conflict.messageEnglish)", systemImage: "xmark.octagon.fill")
+                        .font(.caption).foregroundStyle(AstroTokens.Color.critical)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading).padding(6)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         if store.accessMode != .mutationEnabled {
             Label("Requires write access. Enable write operations in Settings to apply this conversion.", systemImage: "lock.shield")
                 .font(.caption).foregroundStyle(.secondary)

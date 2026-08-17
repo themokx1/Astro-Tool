@@ -143,7 +143,15 @@ public struct CalibrationView: View {
     }
 
     private var coverageTable: some View {
-        GroupBox("Session coverage") {
+        // Task 7 (2026-08-17, GroupBox removal): heading + Divider + Table,
+        // `ReviewWorkspace.frameReview`'s own shape -- `WorkspaceTablePage`
+        // already gives this whole `table:` slot one solid
+        // `AstroTokens.Color.surface` background.
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Session coverage").font(.headline)
+                .padding(.horizontal, AstroTokens.Spacing.standard)
+                .padding(.vertical, AstroTokens.Spacing.compact)
+            Divider()
             Table(sortedCoverageRows, selection: $selectedCoverageID, sortOrder: $coverageSortOrder) {
                 TableColumn("Combo", value: \CalibrationCoverageRow.tempSortKey) { row in
                     Text("\(AstroFormat.coefficient(row.need.exposureSeconds)) s / \(row.need.tempC.map { AstroFormat.coefficient($0) + " °C" } ?? "—")")
@@ -178,7 +186,13 @@ public struct CalibrationView: View {
     }
 
     private func mastersTable(rootURL: URL) -> some View {
-        GroupBox("Master darks") {
+        // Task 7 (2026-08-17, GroupBox removal): same fix as `coverageTable`
+        // above -- see its own comment.
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Master darks").font(.headline)
+                .padding(.horizontal, AstroTokens.Spacing.standard)
+                .padding(.vertical, AstroTokens.Spacing.compact)
+            Divider()
             Table(
                 store.masters, selection: $selectedMasterID,
                 sortOrder: Binding(get: { store.mastersSortOrder }, set: { store.setMastersSortOrder($0) })

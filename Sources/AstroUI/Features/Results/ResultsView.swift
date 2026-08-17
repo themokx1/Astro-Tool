@@ -402,22 +402,31 @@ public struct ResultsView: View {
                         metric("Created", result.createdAt.formatted(date: .abbreviated, time: .shortened))
                         metric("Software", [result.softwareName, result.softwareVersion].compactMap { $0 }.joined(separator: " ").nilIfEmpty ?? "Unknown")
                     }
-                    GroupBox("Lineage") {
-                        VStack(alignment: .leading, spacing: 10) {
+                    // Task 7 (2026-08-17, GroupBox removal): a label/value
+                    // list is exactly what a standard `Form`/`Section`
+                    // renders -- `FrameInspector`'s own `Form { Section(...)
+                    // { LabeledContent(...) } }` shape is the precedent,
+                    // rather than a `GroupBox` wrapping hand-rolled rows.
+                    Form {
+                        Section("Lineage") {
                             lineageRow("Input series", count: result.inputSeriesIDs.count, icon: "camera.aperture")
                             lineageRow("Input frames", count: result.sourceFrameIDs.count, icon: "photo.stack")
                             lineageRow("Source result", count: result.sourceResultIDs.count, icon: "arrow.triangle.branch")
                             lineageRow("Calibration assets", count: result.calibrationAssets.count, icon: "circle.lefthalf.filled")
                             if let parent = result.parentResultID {
-                                Text("Parent · \(parent.uuidString)").font(.caption.monospaced()).foregroundStyle(.secondary)
+                                LabeledContent("Parent") {
+                                    Text(parent.uuidString).font(.caption.monospaced()).foregroundStyle(.secondary)
+                                }
                             }
-                        }.frame(maxWidth: .infinity, alignment: .leading).padding(AstroTokens.Spacing.compact)
-                    }.accessibilityIdentifier("v2.results.lineage")
-                    GroupBox("File") {
-                        Text(result.relativePath ?? "No path recorded")
-                            .font(.callout.monospaced()).textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(AstroTokens.Spacing.compact)
+                        }
+                        .accessibilityIdentifier("v2.results.lineage")
+                        Section("File") {
+                            Text(result.relativePath ?? "No path recorded")
+                                .font(.callout.monospaced()).textSelection(.enabled)
+                        }
                     }
+                    .formStyle(.grouped)
+                    .frame(maxWidth: .infinity)
                     Spacer()
                 }.padding(AstroTokens.Spacing.section)
             }
@@ -434,7 +443,11 @@ public struct ResultsView: View {
     }
 
     private func lineageRow(_ title: String, count: Int, icon: String) -> some View {
-        HStack { Label(title, systemImage: icon); Spacer(); Text("\(count)").foregroundStyle(.secondary) }
+        LabeledContent {
+            Text("\(count)").foregroundStyle(.secondary)
+        } label: {
+            Label(title, systemImage: icon)
+        }
     }
 }
 

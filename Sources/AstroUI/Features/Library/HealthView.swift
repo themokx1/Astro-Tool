@@ -178,7 +178,15 @@ public struct HealthView: View {
     @ViewBuilder
     private var tableContent: some View {
         if store.snapshot != nil {
-            GroupBox("Health findings") {
+            // Task 7 (2026-08-17, GroupBox removal): heading + Divider +
+            // Table, `ReviewWorkspace.frameReview`'s own shape --
+            // `WorkspaceTablePage` already gives this whole `table:` slot
+            // one solid `AstroTokens.Color.surface` background.
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Health findings").font(.headline)
+                    .padding(.horizontal, AstroTokens.Spacing.standard)
+                    .padding(.vertical, AstroTokens.Spacing.compact)
+                Divider()
                 Table(displayedItems, selection: $selectedFindingID, sortOrder: $sortOrder) {
                     TableColumn("Finding", value: \LibraryHealthItem.title) { item in
                         HStack(alignment: .top, spacing: 10) {
@@ -249,35 +257,39 @@ public struct HealthView: View {
             // renders the same facts V1's `AuditPage` showed (files
             // checked, mismatches, when it ran), for this session's most
             // recent run.
+            // Task 7 (2026-08-17, GroupBox removal): heading plus spacing --
+            // this is `WorkspaceTablePage`'s `footer` slot, which (unlike
+            // `table`) never had a surface of its own; the `GroupBox` was
+            // the only thing painting a background here.
             if let summary = store.lastVerifySummary {
-                GroupBox("Last verification (this session)") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: AstroTokens.Spacing.standard) {
-                            Text("\(summary.checked) checked").font(.callout.monospacedDigit())
-                            Text("\(summary.ok) ok").foregroundStyle(AstroTokens.Color.ok)
-                            if summary.contentChanged > 0 {
-                                Text("\(summary.contentChanged) likely corrupted").foregroundStyle(AstroTokens.Color.critical)
-                            }
-                            if summary.modifiedInPlace > 0 {
-                                Text("\(summary.modifiedInPlace) suspicious").foregroundStyle(AstroTokens.Color.attention)
-                            }
-                            if summary.modified > 0 {
-                                Text("\(summary.modified) modified").foregroundStyle(.secondary)
-                            }
-                            if summary.readErrors > 0 {
-                                Text("\(summary.readErrors) unreadable").foregroundStyle(AstroTokens.Color.attention)
-                            }
-                            Spacer()
+                VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+                    Text("Last verification (this session)").font(.headline)
+                    HStack(spacing: AstroTokens.Spacing.standard) {
+                        Text("\(summary.checked) checked").font(.callout.monospacedDigit())
+                        Text("\(summary.ok) ok").foregroundStyle(AstroTokens.Color.ok)
+                        if summary.contentChanged > 0 {
+                            Text("\(summary.contentChanged) likely corrupted").foregroundStyle(AstroTokens.Color.critical)
                         }
-                        if summary.contentChanged > 0 || summary.modifiedInPlace > 0 {
-                            Text("See the Integrity findings below for exactly which files, and restore them from backup.")
-                                .font(.caption).foregroundStyle(.secondary)
+                        if summary.modifiedInPlace > 0 {
+                            Text("\(summary.modifiedInPlace) suspicious").foregroundStyle(AstroTokens.Color.attention)
                         }
+                        if summary.modified > 0 {
+                            Text("\(summary.modified) modified").foregroundStyle(.secondary)
+                        }
+                        if summary.readErrors > 0 {
+                            Text("\(summary.readErrors) unreadable").foregroundStyle(AstroTokens.Color.attention)
+                        }
+                        Spacer()
+                    }
+                    if summary.contentChanged > 0 || summary.modifiedInPlace > 0 {
+                        Text("See the Integrity findings below for exactly which files, and restore them from backup.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 .accessibilityIdentifier("v2.health.last-verify-summary")
             }
-            GroupBox("Audit run history") {
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+                Text("Audit run history").font(.headline)
                 if snapshot.auditRuns.isEmpty {
                     Text("No recorded audit runs yet.").foregroundStyle(.secondary)
                 } else {

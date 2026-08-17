@@ -327,6 +327,7 @@
 "Organize one session" = "Egy session rendszerezése";
 "Outlier" = "Kiugró érték";
 "Outlier: scores well below this session's other frames" = "Kiugró érték: jóval a session többi képkockájának pontszáma alatt van";
+"Parent" = "Szülő";
 "Parent · %@" = "Szülő · %@";
 "Passband" = "Áteresztési sáv";
 "Path" = "Elérési út";

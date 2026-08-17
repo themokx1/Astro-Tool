@@ -1057,6 +1057,31 @@ struct V2PolishSurfaceTests {
         }
         #expect(offenders.isEmpty, "Table/List with a glassEffect container as its direct parent: \(offenders.joined(separator: "; "))")
     }
+
+    // MARK: (o) Task 7 (2026-08-17) -- GroupBox is a blocker, not a tidy-up.
+    //
+    // `GroupBox` paints macOS's own opaque, non-configurable grey background
+    // plus its own padding and corner radius -- none of it drawn from
+    // `AstroTokens`. Task 6 (Liquid Glass) put real glass on cards, panels
+    // and inspectors, but every `GroupBox` painted right over it: the owner
+    // installed the build and reported "not glassy, strange grey box in a
+    // box, inconsistent padding/margins/corners, things hanging over the
+    // edge" -- one cause (this type), three symptoms. `ReviewWorkspace`
+    // (0 `GroupBox`, 0 `WorkspacePage`) is the one screen he singled out as
+    // beautiful, and it never used this type at all. Grouping is a heading
+    // plus spacing (`ReviewWorkspace.frameReview`'s own "HStack header,
+    // Divider, content" shape), or a standard `Form`/`Section` for
+    // label-value rows (`FrameInspector`'s own shape) -- never a border on
+    // a border.
+    @Test("No feature view uses GroupBox -- it paints an opaque box over the design")
+    func noGroupBoxInFeatureViews() throws {
+        var offenders: [String] = []
+        for file in try swiftFiles(under: "Sources/AstroUI/Features") {
+            let source = Self.removingLineComments(try contents(file))
+            if source.contains("GroupBox") { offenders.append(file) }
+        }
+        #expect(offenders.isEmpty, "GroupBox still used in: \(offenders.joined(separator: ", "))")
+    }
 }
 
 /// Detects the one shape Task 6's plan explicitly forbids: a `Table`/`List`
