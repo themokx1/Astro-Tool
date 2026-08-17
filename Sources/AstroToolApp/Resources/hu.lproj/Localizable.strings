@@ -1112,3 +1112,18 @@
 "Every finding behind this card, each with its own path." = "Ennek a kártyának minden találata, mindegyik a saját elérési útjával.";
 "Loading findings…" = "Találatok betöltése…";
 "Findings" = "Találatok";
+
+// Owner feedback wave 3, Task 4: "az akcióknak legyen otthonuk" -- a page's
+// primary action moved back onto the page itself (ProjectWorkspaceView/
+// NightWorkspaceView/SeriesWorkspaceView headers), plus the new project-wide/
+// library-wide frame rating (ProjectRatingRunner) and the series page's
+// explicit Back button. Auto-extracted (`Button(...)`/`Label(...)`/`.help(...)`
+// literals), listed here per the script's own `--missing` report:
+"Rate Entire Project" = "Egész projekt értékelése";
+"Rate All Projects" = "Összes projekt értékelése";
+"Measure quality for every night and series in this project" = "Minőség mérése ennek a projektnek minden éjszakájára és sorozatára";
+"Measure quality for every night and series across every project in this library" = "Minőség mérése ennek a könyvtárnak minden projektjére, minden éjszakára és sorozatra";
+"Measure quality for every series captured this night" = "Minőség mérése minden, ma éjjel felvett sorozatra";
+"Rate every frame captured this night" = "Minden ma éjjel felvett képkocka értékelése";
+"Back to Project" = "Vissza a projekthez";
+"Return to %@" = "Vissza ide: %@";

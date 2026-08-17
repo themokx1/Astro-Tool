@@ -25,6 +25,11 @@ public struct ProjectWorkspaceView: View {
     @State private var saveError: String?
     @State private var isSaving = false
     @Environment(WorkspaceActionCenter.self) private var workspaceActionCenter
+    /// Task 4 (2026-08-17 owner-feedback wave 3): backs the page-level
+    /// "Rate Entire Project" action in `header` below -- the owner's own
+    /// words: "az egészet tudjam értékelni, az összes session összes
+    /// capture, ezt úgy is kéne tudnom, hogy minden projektre ráengedni".
+    @Environment(OperationHost.self) private var operationHost
     /// Wave 4 (post-20014) fix: this view's own stable identity within
     /// `WorkspaceActionCenter` -- see that type's own doc comment for why
     /// publishing is now owner-keyed rather than a per-body-pass focused
@@ -95,13 +100,16 @@ public struct ProjectWorkspaceView: View {
         .background(AstroTokens.Color.ground.opacity(0.36))
         .navigationTitle(snapshot.project.displayName)
         .accessibilityIdentifier("v2.project.workspace")
-        // Wave 4 Task 2: this workspace's own primary actions (Export,
-        // Review Frames, Results) used to be an in-body button row in
-        // `header` below -- they now render in the shell's own stable
-        // toolbar instead (see `WorkspaceActions`'s doc comment), so the
-        // header keeps ONLY identity (title/summary) plus the global
-        // breadcrumb above it (Wave 4 Task 3 removed the redundant
-        // "Project" eyebrow prefix that used to duplicate that breadcrumb).
+        // Task 4 (2026-08-17 owner-feedback wave 3): reverses Wave 4 Task 2's
+        // "actions live only in the shell's stable toolbar" decision -- the
+        // owner could not find them there ("nem tetszik hogy az akció gomb
+        // ... fent van a jobb sarokban, nem a page része"). `header` below
+        // now carries this page's own primary actions directly, ABOVE the
+        // content they act on; the toolbar keeps its own copy (published via
+        // `workspaceActions` below) since it still earns its place surviving
+        // drill-down into a pushed night/series (see `WorkspaceActionCenter`'s
+        // own doc comment for why that mechanism itself is being kept, just
+        // no longer the ONLY place these actions render).
         // Wave 4 (post-20014) fix: published from discrete lifecycle/state-
         // change events rather than from `body` itself -- see
         // `WorkspaceActionCenter`'s own doc comment.
@@ -116,12 +124,55 @@ public struct ProjectWorkspaceView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(snapshot.project.displayName).font(.title2.weight(.semibold))
-            Text("\(AstroFormat.duration(seconds: snapshot.integrationSeconds)) usable · \(snapshot.nights.count) nights · \(snapshot.series.count) series")
-                .font(.callout).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(snapshot.project.displayName).font(.title2.weight(.semibold))
+                Text("\(AstroFormat.duration(seconds: snapshot.integrationSeconds)) usable · \(snapshot.nights.count) nights · \(snapshot.series.count) series")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            // Task 4: the page's own primary actions, right where the owner
+            // expects them -- above the content they act on, not tucked away
+            // in the corner toolbar.
+            HStack(spacing: 8) {
+                Button(action: review) {
+                    Label("Review Frames", systemImage: "checkmark.rectangle.stack")
+                }
+                .help("Open the frame-by-frame review workspace for this project")
+                .accessibilityIdentifier("v2.project.page.review")
+
+                Button(action: results) {
+                    Label("Results", systemImage: "square.stack.3d.up")
+                }
+                .help("Inspect stacks, processed variants, and their provenance")
+                .accessibilityIdentifier("v2.project.page.results")
+
+                Button(action: rateEntireProject) {
+                    Label("Rate Entire Project", systemImage: "star.leadinghalf.filled")
+                }
+                .help("Measure quality for every night and series in this project")
+                .accessibilityIdentifier("v2.project.page.rate")
+            }
+            .buttonStyle(.bordered)
         }
         .padding(AstroTokens.Spacing.spacious)
+    }
+
+    /// Task 4: rates every night/series of this ONE project -- reuses
+    /// `ProjectRatingRunner` (itself a thin batching layer over
+    /// `FrameRatingCommand`, the same engine `ReviewStore.rateSelectedSeries`/
+    /// `NightActionMenu.rateFrames` already use), reporting progress/
+    /// cancellation through the shared `operationHost` exactly like every
+    /// other long-running V2 operation.
+    private func rateEntireProject() {
+        guard let rootURL else { return }
+        Task {
+            await ProjectRatingRunner.run(
+                scope: .project(id: snapshot.project.id, displayName: snapshot.project.displayName),
+                rootURL: rootURL,
+                metadataFactory: ProjectsStore.productionMetadata,
+                operationHost: operationHost
+            )
+        }
     }
 
     private var workspaceActions: WorkspaceActions {
@@ -142,6 +193,13 @@ public struct ProjectWorkspaceView: View {
                 systemImage: "square.stack.3d.up",
                 help: "Inspect stacks, processed variants, and their provenance",
                 action: results
+            )),
+            .button(WorkspaceAction(
+                id: "v2.project.rate",
+                title: "Rate Entire Project",
+                systemImage: "star.leadinghalf.filled",
+                help: "Measure quality for every night and series in this project",
+                action: rateEntireProject
             )),
         ])
     }

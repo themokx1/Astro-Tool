@@ -9,6 +9,11 @@ public struct ProjectsView: View {
     let reviewProject: (ProjectRecord) -> Void
     let showResults: (ProjectRecord) -> Void
     let openProject: (ProjectRecord) -> Void
+    /// Task 4 (2026-08-17 owner-feedback wave 3): backs "Rate All Projects"
+    /// below -- the owner's own words: "ezt úgy is kéne tudnom, hogy minden
+    /// projektre ráengedni" (run the whole-project rate across every
+    /// project).
+    @Environment(OperationHost.self) private var operationHost
     @State private var searchText = ""
     @State private var visibleProjects: [ProjectRecord] = []
     /// Mirrors `ProjectsStore.sortOrder`. The table needs a `Binding`, but
@@ -63,6 +68,22 @@ public struct ProjectsView: View {
                     .onChange(of: searchText) { _, value in
                         Task { visibleProjects = (try? await store.search(value)) ?? [] }
                     }
+                // Task 4 (2026-08-17 owner-feedback wave 3): the owner's own
+                // words -- "ezt úgy is kéne tudnom, hogy minden projektre
+                // ráengedni" (run the whole-project rate across every
+                // project). Page-level, not toolbar: this page never
+                // publishes to `WorkspaceActionCenter` at all (it is a
+                // section ROOT, not a pushed workspace), so a bulk action
+                // like this one has no drill-down to survive and needs no
+                // toolbar copy.
+                HStack {
+                    Spacer()
+                    Button(action: rateAllProjects) {
+                        Label("Rate All Projects", systemImage: "star.leadinghalf.filled")
+                    }
+                    .help("Measure quality for every night and series across every project in this library")
+                    .accessibilityIdentifier("v2.projects.rate-all")
+                }
             }
         } table: {
             tableContent
@@ -143,6 +164,23 @@ public struct ProjectsView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// Task 4: rates every night/series of EVERY project in the open
+    /// library -- reuses `ProjectRatingRunner`, the same batching layer over
+    /// `FrameRatingCommand` that `ProjectWorkspaceView.rateEntireProject`
+    /// uses for a single project, so there is exactly one rating pipeline,
+    /// not a second one reinvented for the "all projects" case.
+    private func rateAllProjects() {
+        guard let rootURL = store.rootURL else { return }
+        Task {
+            await ProjectRatingRunner.run(
+                scope: .allProjects(libraryName: rootURL.lastPathComponent),
+                rootURL: rootURL,
+                metadataFactory: ProjectsStore.productionMetadata,
+                operationHost: operationHost
+            )
         }
     }
 

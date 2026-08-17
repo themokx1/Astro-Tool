@@ -122,6 +122,20 @@ public struct NightActionMenu: View {
         }
     }
 
+    /// Rates every frame across every series of THIS night -- a thin wrapper
+    /// over `Self.rateFrames(target:date:nightID:rootURL:metadataFactory:
+    /// operationHost:)` below, which does the actual work. Kept as an
+    /// instance method (rather than inlining the static call at the button's
+    /// own `action:` site) so `Button("Rate Frames", ..., action: rateFrames)`
+    /// -- the exact call shape `NightActionMenuTests` pins down -- keeps
+    /// working unchanged.
+    private func rateFrames() {
+        Self.rateFrames(
+            target: target, date: date, nightID: nightID, rootURL: rootURL,
+            metadataFactory: metadataFactory, operationHost: operationHost
+        )
+    }
+
     /// Rates every frame across every series of THIS night through
     /// `FrameRatingCommand` -- the "night scope" `FrameRatingCommand`
     /// itself doesn't offer directly (it anchors off a hand-picked
@@ -136,7 +150,22 @@ public struct NightActionMenu: View {
     /// session only, a known, narrow limitation of reusing the
     /// single-session command for a multi-project night rather than
     /// re-deriving `Rater`'s own scope logic here.
-    private func rateFrames() {
+    ///
+    /// Task 4 (2026-08-17 owner-feedback wave 3) extracted this out of the
+    /// instance method above so `NightsView`'s own row-level "Rate Frames"
+    /// icon button can trigger the exact same behavior without needing a
+    /// live `NightActionMenu` view (and its `@Environment(OperationHost.self)`)
+    /// around it -- the owner asked for the Nights page to carry both a row
+    /// button AND the ability to rate a night directly, not only through this
+    /// menu's own context-menu presentation.
+    static func rateFrames(
+        target: String,
+        date: String,
+        nightID: UUID,
+        rootURL: URL?,
+        metadataFactory: @escaping NightsStore.MetadataFactory,
+        operationHost: OperationHost
+    ) {
         guard let rootURL else { return }
         let kind = OperationKind.rate(series: "night-\(nightID.uuidString)")
         guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {

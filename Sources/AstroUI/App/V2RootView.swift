@@ -1237,7 +1237,11 @@ private struct DetailHost: View {
                     item: item,
                     project: projectSnapshot.project,
                     night: night.night,
-                    review: { router.push(.review(projectID: projectSnapshot.project.id)) }
+                    review: { router.push(.review(projectID: projectSnapshot.project.id)) },
+                    // Task 4 (2026-08-17 owner-feedback wave 3): a visible
+                    // way back from the series page -- see
+                    // `SeriesWorkspaceView.back`'s own doc comment.
+                    back: { router.pop() }
                 )
             } else {
                 // Wave 4 navigation-rework code-review fix: unlike `.project`

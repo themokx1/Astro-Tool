@@ -839,6 +839,21 @@ struct V2PolishSurfaceTests {
             in this same file, ARE `LocalizedStringKey` now; this entry \
             covers only `PrimarySection.title`.)
             """,
+        "Sources/AstroUI/Features/Projects/ProjectRatingRunner.swift#title":
+            """
+            RESOLVED, not data: same `String`-not-`LocalizedStringKey` shape
+            as `OperationHost.swift#title` right above, for the exact same
+            reason -- this local `title` is built to be passed straight into
+            `operationHost.run(kind:title:...)`, whose own `title` parameter
+            is `String` (it crosses the `Task.detached` boundary `run` starts,
+            and `LocalizedStringKey` is not `Sendable`). Both branches resolve
+            their own literal English fragment via `OperationHost.localized(_:)`
+            ("Rating Frames", "All Projects") before interpolating a project's
+            `displayName`/the library's folder name around it, so what lands
+            in `title` is already-translated text, never an English literal
+            waiting to be shown verbatim (Task 4, 2026-08-17 owner-feedback
+            wave 3).
+            """,
         "Sources/AstroUI/Settings/SettingsStore.swift#title":
             """
             DATA, of necessity: `EquipmentFilterPassband.title` is kept \

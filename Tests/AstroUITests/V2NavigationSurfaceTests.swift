@@ -263,17 +263,31 @@ struct V2NavigationSurfaceTests {
         #expect(breadcrumb.contains("v2.breadcrumb"))
     }
 
-    @Test("ProjectWorkspaceView's header carries only identity -- its old action buttons are gone")
-    func projectWorkspaceHeaderHasNoActionButtons() throws {
+    @Test("ProjectWorkspaceView's header carries the page's own primary actions, and the toolbar keeps its own copy")
+    func projectWorkspaceHeaderCarriesItsOwnPageActions() throws {
+        // Task 4 (2026-08-17 owner-feedback wave 3) deliberately reverses
+        // Wave 4 Task 2's "actions live only in the shell's stable toolbar"
+        // decision -- the owner could not find them there ("nem tetszik hogy
+        // az akció gomb ... fent van a jobb sarokban, nem a page része").
+        // This gate used to assert the OPPOSITE (`projectWorkspaceHeaderHasNoActionButtons`,
+        // Wave 4 Task 2's own gate) -- that assertion is intentionally
+        // retired, not merely relaxed, since the design it pinned down is
+        // the one being overturned here.
         let project = try contents("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift")
-        // The old in-body buttons are gone by exact call shape...
-        #expect(!project.contains("Button(\"Review Frames\", action: review)"))
-        #expect(!project.contains("Button(\"Results\", action: results)"))
-        // ...and each moved action is now published as a structured
-        // `WorkspaceAction`/`WorkspaceActionItem` with its own stable id,
-        // reachable through the shell's own toolbar instead.
+        // The page's own header now carries real, distinctly-identified
+        // buttons for this workspace's primary actions...
+        #expect(project.contains("v2.project.page.review"))
+        #expect(project.contains("v2.project.page.results"))
+        #expect(project.contains("v2.project.page.rate"))
+        #expect(project.contains("Button(action: review)"))
+        #expect(project.contains("Button(action: results)"))
+        // ...and each ALSO stays published as a structured
+        // `WorkspaceAction`/`WorkspaceActionItem` with its own stable id, so
+        // the shell's toolbar keeps its own copy (which still earns its
+        // place surviving drill-down into a pushed night/series).
         #expect(project.contains("v2.project.review"))
         #expect(project.contains("v2.project.results"))
+        #expect(project.contains("v2.project.rate"))
         #expect(project.contains("workspaceActionCenter.publish(owner:"))
     }
 

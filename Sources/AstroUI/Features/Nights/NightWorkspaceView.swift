@@ -23,6 +23,11 @@ public struct NightWorkspaceView: View {
     @Bindable var router: AppRouter
     @State private var isEditingNotes = false
     @Environment(WorkspaceActionCenter.self) private var workspaceActionCenter
+    /// Task 4 (2026-08-17 owner-feedback wave 3): backs the page-level
+    /// "Rate Frames" action in `header` below -- see
+    /// `ProjectWorkspaceView.operationHost`'s own doc comment for the same
+    /// reasoning.
+    @Environment(OperationHost.self) private var operationHost
     /// Wave 4 (post-20014) fix: see `ProjectWorkspaceView.actionOwner`'s own
     /// doc comment -- same reasoning here.
     @State private var actionOwner = UUID().uuidString
@@ -58,10 +63,46 @@ public struct NightWorkspaceView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(row.projectSummary).font(.title2.weight(.semibold))
-                Text("\(row.snapshot.usableFrames) usable · \(row.excludedFrames) excluded · \(row.integrationSummary)")
-                    .font(.callout).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(row.projectSummary).font(.title2.weight(.semibold))
+                    Text("\(row.snapshot.usableFrames) usable · \(row.excludedFrames) excluded · \(row.integrationSummary)")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                // Task 4 (2026-08-17 owner-feedback wave 3): the page's own
+                // primary actions, above the content they act on -- the
+                // toolbar keeps its own copy (`workspaceActions` below,
+                // still useful once a night's own project/frame review is
+                // pushed on top of this workspace).
+                if let project = row.snapshot.projects.first {
+                    HStack(spacing: 8) {
+                        Button { reviewProject(project) } label: {
+                            Label("Review Frames", systemImage: "checkmark.rectangle.stack")
+                        }
+                        .accessibilityIdentifier("v2.night.page.review")
+
+                        Button { openProject(project) } label: {
+                            Label("Open Project", systemImage: "folder")
+                        }
+                        .accessibilityIdentifier("v2.night.page.open-project")
+
+                        Button {
+                            NightActionMenu.rateFrames(
+                                target: ProjectsQuery.canonicalFolderName(for: project),
+                                date: row.date,
+                                nightID: row.id,
+                                rootURL: rootURL,
+                                metadataFactory: ProjectsStore.productionMetadata,
+                                operationHost: operationHost
+                            )
+                        } label: {
+                            Label("Rate Frames", systemImage: "star.leadinghalf.filled")
+                        }
+                        .help("Measure quality for every series captured this night")
+                        .accessibilityIdentifier("v2.night.page.rate")
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
             .padding(AstroTokens.Spacing.spacious)
             Divider()
@@ -97,12 +138,14 @@ public struct NightWorkspaceView: View {
                 )
             }
         }
-        // Wave 4 Task 2: Export/Night Actions/Review Frames/Open Project
-        // used to be an in-body button row in this same header -- they now
-        // render in the shell's own stable toolbar (see `WorkspaceActions`'s
-        // doc comment), so the header above keeps only identity plus the
-        // global breadcrumb above it (Wave 4 Task 3 removed the redundant
-        // "Night" eyebrow prefix that used to duplicate that breadcrumb).
+        // Task 4 (2026-08-17 owner-feedback wave 3) reverses Wave 4 Task 2's
+        // "Export/Night Actions/Review Frames/Open Project live only in the
+        // shell's stable toolbar" decision -- Review Frames/Open Project/
+        // Rate Frames are back in the header above, directly on the page;
+        // the toolbar (`workspaceActions` below) keeps its own copy, plus
+        // Export and the full Night Actions menu the header does not
+        // duplicate (Wave 4 Task 3's removed "Night" eyebrow prefix stays
+        // gone -- redundant with the global breadcrumb either way).
         // Wave 4 (post-20014) fix: published from discrete lifecycle/state-
         // change events rather than from `body` itself -- see
         // `WorkspaceActionCenter`'s own doc comment.
