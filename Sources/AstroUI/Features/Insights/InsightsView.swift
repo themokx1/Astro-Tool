@@ -83,6 +83,10 @@ public struct InsightsView: View {
                     Task { await store.load(rootURL: rootURL, year: year) }
                 }
                 metrics(insight)
+                if insight.hasDuplicateExposure {
+                    Text("Duplicate frames in the index were counted once — raw index total before dedup: \(duration(insight.grossIntegrationSeconds))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 qualitySummary(insight)
                 qualityTrends(insight)
                 HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
@@ -228,7 +232,7 @@ public struct InsightsView: View {
 
     private func metrics(_ insight: InsightsSnapshot) -> some View {
         HStack(spacing: AstroTokens.Spacing.standard) {
-            MetricCard(title: "Integration", value: duration(insight.integrationSeconds), detail: "Verified light exposure", systemImage: "timer")
+            MetricCard(title: "Integration", value: duration(insight.integrationSeconds), detail: "Deduplicated, verified exposure", systemImage: "timer")
             MetricCard(title: "Nights", value: "\(insight.nightCount)", detail: "Capture sessions", systemImage: "moon.stars")
             MetricCard(title: "Targets", value: "\(insight.targetCount)", detail: "Unique objects", systemImage: "scope")
             MetricCard(title: "Light frames", value: "\(insight.frameCount)", detail: "Indexed and present", systemImage: "photo.stack")

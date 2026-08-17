@@ -650,7 +650,7 @@
 "Detected date-based sessions" = "Dátum alapján észlelt sessionök";
 "Indexed read-only" = "Indexelve, csak olvasható";
 "Needs review" = "Áttekintésre vár";
-"Verified light exposure" = "Ellenőrzött light expozíció";
+"Deduplicated, verified exposure" = "Dedupolt, ellenőrzött expozíció";
 "Capture sessions" = "Felvételi sessionök";
 "Unique objects" = "Egyedi objektumok";
 "Indexed and present" = "Indexelve és jelen van";
@@ -1071,3 +1071,15 @@
 "Add a site or scan FITS coordinates to enable tonight planning." = "Adj meg egy helyszínt, vagy olvass be FITS-koordinátákat a ma éjszakai tervezés engedélyezéséhez.";
 "Nothing continuable tonight" = "Ma éjjel semmi sem folytatható";
 "Every active project's target is one the app already knows it cannot point at right now -- a comet with a stale coordinate, a missing coordinate, or an altitude too low tonight." = "Minden aktív projekt célpontjáról tudja az app, hogy most nem lehet rá irányítani -- elavult koordinátájú üstökös, hiányzó koordináta, vagy ma éjjel túl alacsony magasság.";
+
+// Owner feedback wave 3, Task 2: Insights' "Integration" metric card used to
+// show a naive SUM(exptime) that double-counted every hardlinked/duplicate
+// light frame in the index (51h31m on the owner's real library, ~44h true).
+// The card's own "Deduplicated, verified exposure" detail label is a
+// MetricCard `detail:` string, which the extraction script deliberately does
+// not cover (see scripts/extract-localizable-strings.swift's own comment on
+// that construct) -- added by hand above, in place of the stale "Verified
+// light exposure" entry it replaces. This caption key IS auto-extracted
+// (interpolated `Text(...)` literal), listed here per the script's own
+// `--missing` report.
+"Duplicate frames in the index were counted once — raw index total before dedup: %@" = "A duplikált light-keretek az indexben csak egyszer számítanak — nyers index-összeg dedup előtt: %@";
