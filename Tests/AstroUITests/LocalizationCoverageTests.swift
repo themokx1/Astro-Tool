@@ -275,4 +275,85 @@ struct LocalizationCoverageTests {
             #expect(translated.contains(key), "missing Hungarian translation for \"\(key)\"")
         }
     }
+
+    // MARK: - W3-9 regression (owner screenshot, 2026-08-17)
+    //
+    // The 9th/10th instances of the same bug class, via two sub-variants
+    // none of the tests above catch: (1) a Store builds a plain `String`
+    // display property by direct interpolation (`HomeStore.NightContext
+    // .leadingLabel`/`.centerLabel`/`.trailingLabel`), and (2) a domain-layer
+    // enum's own `String`-typed rendering (`SkyVerdictKind.english`,
+    // `NightRow.TriageState.rawValue`, `CatalogTargetKind.rawValue`, and
+    // siblings) gets displayed raw. Both route through `Text`'s verbatim
+    // overload no matter what `hu.lproj` says, because the PROPERTY's
+    // static type decides the overload, not the literal that produced its
+    // value.
+
+    @Test("Domain-layer/engine enum cases fixed by this sweep are translated")
+    func w3t9EngineEnumDisplayLabelsAreTranslated() throws {
+        let translated = try parseStringsFile(
+            repositoryRoot.appendingPathComponent("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
+        )
+        let expected = [
+            // SkyVerdictKind.displayLabel (PlanningStore.swift)
+            "good tonight", "no coordinates", "not visible tonight",
+            "comet -- stored coordinate is from capture time, not valid for tonight",
+            "low (max %lld°)", "Moon interferes (%lld°, %@)",
+            // CatalogTargetKind.displayLabel
+            "Galaxy", "Emission nebula", "Planetary nebula", "Supernova remnant",
+            "Open cluster", "Globular cluster", "Reflection nebula", "Dark nebula",
+            // PlanningEstimateConfidence.displayLabel
+            "Curated", "Estimated", "Fallback",
+            // NightRow.TriageState.displayLabel/.localizedText (NightsStore.swift)
+            "Ready", "Needs review", "No usable frames",
+            // SeriesPassband.displayLabel/.localizedText
+            "Broadband", "Dual band", "Narrowband", "LRGB", "Luminance", "Unfiltered",
+        ]
+        for key in expected {
+            #expect(translated.contains(key), "missing Hungarian translation for \"\(key)\"")
+        }
+    }
+
+    /// The store-composed-`String` sub-variant: a `Store` type in
+    /// `Sources/AstroUI` assigns (`name = "..."`) or passes as a labeled
+    /// constructor argument (`name: "..."`) a NON-EMPTY string literal
+    /// directly to a property/parameter whose name ends in `Label`/`Title`/
+    /// `Text` (case-sensitive, so a lowercase `title:`/`text:` parameter --
+    /// e.g. `MetricCard(title: "Reference")`, whose `title` IS
+    /// `LocalizedStringKey`-typed and localizes correctly -- never matches).
+    /// `""` alone is excluded: it is how this codebase initializes editable
+    /// `TextField` buffers (`SiteSettingsStore.latitudeText`, `PlanningStore
+    /// .searchText`), never a display phrase.
+    ///
+    /// This is deliberately narrow, not a general string-literal ban: it
+    /// exists to catch `HomeStore.NightContext.leadingLabel`/`.centerLabel`/
+    /// `.trailingLabel`'s exact shape specifically, both of its two
+    /// manifestations (a labeled constructor argument, `leadingLabel:
+    /// "Dusk"`, and a bare re-assignment, `centerLabel = "Before tonight's
+    /// dusk"`). Verified by hand against the pre-fix `HomeStore.swift` (this
+    /// task's own git history): this exact pattern matches every one of the
+    /// 8 lines that file used to have, and matches none of them once they
+    /// route through `NSLocalizedString(...)`/`String(format:
+    /// NSLocalizedString(...), ...)` -- neither of those right-hand sides
+    /// starts with a `"` immediately after the `:`/`=`, which is exactly
+    /// what this pattern requires to match at all.
+    @Test("Store files never assign or pass a non-empty string literal directly to a Label/Title/Text-suffixed property")
+    func storeFilesNeverDirectlyAssignDisplayStringLiterals() throws {
+        let pattern = try NSRegularExpression(pattern: #"\b[A-Za-z_]*(?:Label|Title|Text)\s*[:=]\s*"[^"]+""#)
+        let astroUIRoot = repositoryRoot.appendingPathComponent("Sources/AstroUI")
+        var violations: [String] = []
+        for file in try swiftFiles(under: astroUIRoot) where file.lastPathComponent.hasSuffix("Store.swift") {
+            guard let source = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let nsRange = NSRange(source.startIndex..<source.endIndex, in: source)
+            for match in pattern.matches(in: source, range: nsRange) {
+                guard let range = Range(match.range, in: source) else { continue }
+                let line = source.distance(from: source.startIndex, to: range.lowerBound)
+                violations.append("\(file.lastPathComponent) offset \(line): \(source[range])")
+            }
+        }
+        #expect(
+            violations.isEmpty,
+            "Store-composed display string(s) bypassing localization -- route these through NSLocalizedString/String(format:)/LocalizedStringKey instead: \(violations.joined(separator: " | "))"
+        )
+    }
 }

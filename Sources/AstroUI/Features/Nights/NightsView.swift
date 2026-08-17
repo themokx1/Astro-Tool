@@ -15,6 +15,10 @@ public struct NightsView: View {
     private enum Mode: String, CaseIterable {
         case history = "Observed"
         case calendar = "Next 30 nights"
+
+        /// W3-9: the segmented picker below used to render `Text($0.rawValue)`
+        /// -- a `String`, so it always chose `Text`'s verbatim overload.
+        var displayLabel: LocalizedStringKey { LocalizedStringKey(rawValue) }
     }
     let snapshot: LibrarySnapshot?
     let rootURL: URL?
@@ -77,7 +81,7 @@ public struct NightsView: View {
     private var nightsWorkspace: some View {
         WorkspaceTablePage(subtitle: "Review each observing night without losing its series boundaries.") {
             Picker("View", selection: $mode) {
-                ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                ForEach(Mode.allCases, id: \.self) { Text($0.displayLabel).tag($0) }
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("v2.nights.mode")
@@ -178,7 +182,7 @@ public struct NightsView: View {
                 TableColumn("Integration", value: \NightRow.snapshot.integrationSeconds) { Text($0.integrationSummary).monospacedDigit() }
                     .width(min: 75, ideal: 90)
                 TableColumn("Triage", value: \NightRow.triageState.rawValue) { night in
-                    Label(night.triageState.rawValue, systemImage: night.triageState == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                    Label(night.triageState.displayLabel, systemImage: night.triageState == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                         .foregroundStyle(night.triageState == .ready ? AstroTokens.Color.ok : AstroTokens.Color.attention)
                 }
                 .width(min: 110, ideal: 125)
@@ -231,10 +235,19 @@ public struct NightsView: View {
             Divider()
             Table(store.planningRows, sortOrder: $planningSortOrder) {
                 TableColumn("Night", value: \PlanningNightRow.summary.date) { Text($0.summary.date).font(.headline.monospacedDigit()) }
-                TableColumn("Darkness", value: \PlanningNightRow.astroDarkHoursSortKey) { Text($0.darkHours) }
+                // `darkHours`/`bestTargets` are `String`, mixing already-
+                // Hungarian engine text, plain formatted numbers, and (on
+                // the rarer fallback paths) an English literal -- wrapping
+                // in `LocalizedStringKey(...)` at the call site is the same
+                // fix `NightWorkspaceView`'s own `MetricCard(detail:
+                // LocalizedStringKey(row.filterSummary))` already uses, and
+                // the ternary below is the same "wrap the whole ternary"
+                // workaround `PlanningView`'s Save/Saved button uses (see
+                // `LocalizationCoverageTests.saveTargetLocalizesDespiteTernary`).
+                TableColumn("Darkness", value: \PlanningNightRow.astroDarkHoursSortKey) { Text(LocalizedStringKey($0.darkHours)) }
                 TableColumn("Moon", value: \PlanningNightRow.summary.moonIlluminationPercent) { Text($0.moon).monospacedDigit() }
                     .width(min: 65, ideal: 75)
-                TableColumn("Best target windows") { Text($0.bestTargets.isEmpty ? "No usable target window" : $0.bestTargets).lineLimit(1) }
+                TableColumn("Best target windows") { Text(LocalizedStringKey($0.bestTargets.isEmpty ? "No usable target window" : $0.bestTargets)).lineLimit(1) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityIdentifier("v2.nights.planning-calendar")

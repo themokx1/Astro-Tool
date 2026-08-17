@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 public enum PrimarySection: String, CaseIterable, Codable, Hashable, Sendable {
     case home
@@ -295,4 +296,31 @@ public enum NightWorkspaceTab: String, CaseIterable, Hashable, Codable, Sendable
     case series = "Series"
     case frames = "Frames"
     case notes = "Notes"
+}
+
+/// W3-9: both segmented pickers used to render `Text($0.rawValue)` --
+/// `rawValue` is `String`, so `Text` always chose its verbatim overload
+/// regardless of `hu.lproj`. Same fix as every other engine/view enum in
+/// this sweep: map the case, not the raw value, to a `LocalizedStringKey`.
+extension ProjectWorkspaceTab {
+    var displayLabel: LocalizedStringKey {
+        switch self {
+        case .overview: "Overview"
+        case .nights: "Nights"
+        case .series: "Series"
+        case .results: "Results"
+        case .notes: "Notes"
+        }
+    }
+}
+
+extension NightWorkspaceTab {
+    var displayLabel: LocalizedStringKey {
+        switch self {
+        case .overview: "Overview"
+        case .series: "Series"
+        case .frames: "Frames"
+        case .notes: "Notes"
+        }
+    }
 }

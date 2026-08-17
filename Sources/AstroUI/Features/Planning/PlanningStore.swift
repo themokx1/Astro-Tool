@@ -626,3 +626,83 @@ extension PlanningFit {
         }
     }
 }
+
+/// W3-9: `SkyVerdictKind.english` (`AstroCore/Sky/NightSweep.swift`) is the
+/// domain layer's English-only rendering, documented there as "today's only
+/// renderer" for non-UI consumers -- `HomeView` (`Text(...verdict).english`)
+/// and this file's own `PlanningRecommendationsTable`/`skyDetail` used to
+/// render it directly, the exact "domain-layer strings displayed raw" leak
+/// this task's own doc names ("good tonight" reaching a Hungarian screen
+/// verbatim). Same fix as `PlanningFit`/`ProjectWorkflowPhase` above: map
+/// the engine's *case* -- never its rendered English sentence -- to a
+/// `LocalizedStringKey` here, at the view layer. `AstroCore` keeps emitting
+/// English-only `.english` for whatever other consumer still wants it.
+extension SkyVerdictKind {
+    var displayLabel: LocalizedStringKey {
+        switch self {
+        case .noCoordinates: "no coordinates"
+        case .notVisibleTonight: "not visible tonight"
+        case .goodTonight: "good tonight"
+        case .cometStaleCoordinate:
+            "comet -- stored coordinate is from capture time, not valid for tonight"
+        case let .lowAltitude(maxDeg):
+            "low (max \(Int(maxDeg.rounded()))°)"
+        case let .moonInterferes(separationDeg, illuminationPercent):
+            // The `%` sign is baked into `percentText` (a plain `String`,
+            // interpolated here as a single `%@` argument) rather than
+            // written as a literal `%` inside this `LocalizedStringKey`
+            // template -- a bare `%` in a format-string TEMPLATE needs `%%`
+            // escaping (see `SkyVerdict.moonInterferes`'s own `String(format:)`
+            // call in `AstroCore`), which this sidesteps entirely: the
+            // substituted VALUE of a `%@` argument is never re-parsed for
+            // `%` signs of its own.
+            "Moon interferes (\(Int(separationDeg.rounded()))°, \(Self.percentText(illuminationPercent)))"
+        case let .unrecognized(raw):
+            // No closed case to translate -- `LocalizedStringKey(raw)`
+            // behaves exactly like `.english`'s own fallback (return the
+            // original text unchanged) when `raw` has no `hu.lproj` entry,
+            // which it never will since this is meant to be unreachable
+            // (see `SkyVerdict.parse`'s own doc comment).
+            LocalizedStringKey(raw)
+        }
+    }
+
+    private static func percentText(_ value: Double) -> String { "\(Int(value.rounded()))%" }
+}
+
+/// `CatalogTargetKind.rawValue` (`AstroCore/Sky/TargetCatalog.swift`) is a
+/// camelCase Swift identifier ("emissionNebula"), never meant for display --
+/// `PlanningView`'s target-kind caption used to render it directly
+/// (`Text(row.target.kind.rawValue)`), which was broken even before
+/// considering localization. Mapped to a `LocalizedStringKey` here, same
+/// pattern as every other engine-enum-to-display-label fix in this file.
+extension CatalogTargetKind {
+    var displayLabel: LocalizedStringKey {
+        switch self {
+        case .galaxy: "Galaxy"
+        case .emissionNebula: "Emission nebula"
+        case .planetaryNebula: "Planetary nebula"
+        case .supernovaRemnant: "Supernova remnant"
+        case .openCluster: "Open cluster"
+        case .globularCluster: "Globular cluster"
+        case .reflectionNebula: "Reflection nebula"
+        case .darkNebula: "Dark nebula"
+        case .other: "Other"
+        }
+    }
+}
+
+/// `PlanningEstimateConfidence.rawValue.capitalized`
+/// (`AstroApplication/Features/Planning/PlanningQuery.swift`) rendered its
+/// raw Swift case name ("Curated"/"Estimated"/"Fallback"/"Unknown") directly
+/// -- same leak class as `CatalogTargetKind` above.
+extension PlanningEstimateConfidence {
+    var displayLabel: LocalizedStringKey {
+        switch self {
+        case .curated: "Curated"
+        case .estimated: "Estimated"
+        case .fallback: "Fallback"
+        case .unknown: "Unknown"
+        }
+    }
+}

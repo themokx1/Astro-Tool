@@ -308,7 +308,7 @@ public struct PlanningView: View {
                                 HStack(spacing: 6) {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(displayName(row)).font(.headline)
-                                        Text(row.target.kind.rawValue).font(.caption).foregroundStyle(.secondary)
+                                        Text(row.target.kind.displayLabel).font(.caption).foregroundStyle(.secondary)
                                     }
                                     if savedTargetsStore.isSaved(row.target.designation) {
                                         Image(systemName: "bookmark.fill")
@@ -358,14 +358,14 @@ public struct PlanningView: View {
                             TableColumn("Tonight's sky") { row in
                                 VStack(alignment: .leading, spacing: 2) {
                                     if row.isLowAltitude {
-                                        Label(row.skyVerdict.english, systemImage: "exclamationmark.triangle.fill")
+                                        Label(row.skyVerdict.displayLabel, systemImage: "exclamationmark.triangle.fill")
                                             .font(.callout.weight(.semibold))
                                             .foregroundStyle(AstroTokens.Color.attention)
                                     } else {
                                         Text("\(row.maxAltitudeDeg ?? 0, format: .number.precision(.fractionLength(0)))° max alt")
                                             .fontWeight(.medium)
                                     }
-                                    Text(skyDetail(row)).font(.caption).foregroundStyle(.secondary)
+                                    skyDetail(row).font(.caption).foregroundStyle(.secondary)
                                 }
                             }
                             .width(min: 165, ideal: 200)
@@ -392,7 +392,7 @@ public struct PlanningView: View {
                                             .font(.callout.weight(.medium))
                                             .foregroundStyle(.secondary)
                                     }
-                                    Text(row.integrationConfidence.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
+                                    Text(row.integrationConfidence.displayLabel).font(.caption).foregroundStyle(.secondary)
                                 }
                             }
                             .width(min: 105, ideal: 135)
@@ -465,18 +465,26 @@ public struct PlanningView: View {
         (factor * 100).formatted(.number.precision(.fractionLength(0))) + "%"
     }
 
-    private func skyDetail(_ row: PlanningRecommendation) -> String {
-        var parts: [String] = []
+    /// W3-9: used to return `String` (joining fragments like `"…h visible"`,
+    /// `"culm. …"`, `"Moon …°"`, or falling back to `row.skyVerdict.english`)
+    /// -- the exact same view-composed-`String` leak `recommendationDetailText`
+    /// in `HomeView.swift` had, and its fallback doubled as the domain-layer
+    /// `.english` leak `SkyVerdictKind.displayLabel` now fixes. Returning
+    /// `Text` built from one real `Text("literal")` per fragment keeps every
+    /// piece a genuine extraction-script call site.
+    private func skyDetail(_ row: PlanningRecommendation) -> Text {
+        var parts: [Text] = []
         if let visibleHours = row.visibleHours {
-            parts.append("\(visibleHours.formatted(.number.precision(.fractionLength(1))))h visible")
+            parts.append(Text("\(visibleHours.formatted(.number.precision(.fractionLength(1))))h visible"))
         }
         if let culmination = row.culminationLocal {
-            parts.append("culm. \(culmination)")
+            parts.append(Text("culm. \(culmination)"))
         }
         if let moonSeparation = row.moonSeparationDeg {
-            parts.append("Moon \(moonSeparation.formatted(.number.precision(.fractionLength(0))))°")
+            parts.append(Text("Moon \(moonSeparation.formatted(.number.precision(.fractionLength(0))))°"))
         }
-        return parts.isEmpty ? row.skyVerdict.english : parts.joined(separator: " · ")
+        guard let first = parts.first else { return Text(row.skyVerdict.displayLabel) }
+        return parts.dropFirst().reduce(first) { $0 + Text(verbatim: " · ") + $1 }
     }
 
     private func displayName(_ row: PlanningRecommendation) -> String {

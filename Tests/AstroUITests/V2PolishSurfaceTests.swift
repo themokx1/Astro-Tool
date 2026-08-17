@@ -334,7 +334,15 @@ struct V2PolishSurfaceTests {
     @Test("HomeView translates the engine's raw verdict before rendering it")
     func homeViewTranslatesTheVerdictBeforeRendering() throws {
         let source = try contents("Sources/AstroUI/Features/Home/HomeView.swift")
-        #expect(source.contains("SkyVerdict.parse(recommendation.verdict).english"))
+        // W3-9: `.english` was itself the leak this task fixed -- a
+        // domain-layer `String` rendered directly, so `Text(String)` always
+        // chose the verbatim, never-localized overload ("good tonight"
+        // reaching a Hungarian screen verbatim). `.displayLabel`
+        // (`PlanningStore.swift`'s `SkyVerdictKind` extension) maps the same
+        // structured parse to a `LocalizedStringKey` instead; the underlying
+        // guarantee this test exists to pin -- render the STRUCTURED parse,
+        // never the raw engine verdict string -- is unchanged.
+        #expect(source.contains("SkyVerdict.parse(recommendation.verdict).displayLabel"))
         #expect(!source.contains("Text(recommendation.verdict)"), "HomeView must not render the raw engine verdict directly")
     }
 

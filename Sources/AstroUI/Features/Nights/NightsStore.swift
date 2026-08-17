@@ -2,13 +2,27 @@ import AstroApplication
 import AstroCore
 import Foundation
 import Observation
+import SwiftUI
 
 public struct NightRow: Equatable, Sendable, Identifiable {
     public enum TriageState: String, Sendable {
         case ready = "Ready"
         case needsReview = "Needs review"
         case empty = "No usable frames"
+
+        /// W3-9: `NightsView`'s "Triage" column and `ProjectWorkspaceView`'s
+        /// own copy of this table both used to render `.rawValue` directly
+        /// (`Label(night.triageState.rawValue, ...)`) -- a `String`, so
+        /// `Label` always chose its verbatim overload no matter what
+        /// `hu.lproj` said. Same dual-property fix as
+        /// `ProjectNextActionKind.titleKey`/`.localizedTitle`
+        /// (`ProjectsStore.swift`): `displayLabel` for view bodies that take
+        /// `LocalizedStringKey` directly (`Label`/`Text`), `localizedText`
+        /// for `MetricCard.value`, which stays `String`-typed by design.
+        var displayLabel: LocalizedStringKey { LocalizedStringKey(rawValue) }
+        var localizedText: String { NSLocalizedString(rawValue, bundle: .main, comment: "") }
     }
+
     public let snapshot: NightSnapshot
     public var id: UUID { snapshot.id }
     public var date: String { snapshot.night.localDate }
@@ -20,6 +34,10 @@ public struct NightRow: Equatable, Sendable, Identifiable {
         Array(Set(snapshot.series.map { Int($0.exposureSeconds.rounded()) }))
             .sorted().map { "\($0) s" }.joined(separator: ", ")
     }
+    /// `NightWorkspaceView`'s only caller already wraps this in
+    /// `LocalizedStringKey(row.filterSummary)` (the ternary-of-literals
+    /// workaround `PlanningView`'s Save/Saved button also uses) -- the
+    /// English fallback below just needs its `hu.lproj` entry.
     public var filterSummary: String {
         let filters = Array(Set(snapshot.series.compactMap(\.filterName))).sorted()
         return filters.isEmpty ? "No filter metadata" : filters.joined(separator: ", ")
@@ -54,9 +72,15 @@ public struct PlanningNightRow: Equatable, Sendable, Identifiable {
     /// comment), which sorts lowest (as if darkness were 0h) rather than
     /// crashing the column's sort.
     public var astroDarkHoursSortKey: Double { summary.astroDarkHours ?? -1 }
+    /// `note` (when present) is already Hungarian text `Planner` generates
+    /// directly for its V1/CLI consumers (e.g. "nincs site-koordináta") --
+    /// passing it through `LocalizedStringKey` at the call site
+    /// (`NightsView.swift`) is harmless (an unmatched key just displays as
+    /// itself). Only the English fallback below, for the rarer case where
+    /// even `note` is `nil`, needed its own `hu.lproj` entry.
     public var darkHours: String {
         summary.astroDarkHours.map { "\($0.formatted(.number.precision(.fractionLength(1)))) h" }
-            ?? (summary.note ?? "No astronomical darkness")
+            ?? (summary.note ?? NSLocalizedString("No astronomical darkness", bundle: .main, comment: ""))
     }
     public var moon: String {
         "\(summary.moonIlluminationPercent.formatted(.number.precision(.fractionLength(0))))%"
@@ -204,5 +228,46 @@ public final class NightsStore {
             config.rootPath = rootURL.path
             return try Planner.month(nights: 30, db: database, config: config)
         }.value
+    }
+}
+
+/// W3-9: `NightWorkspaceView`'s "Mode" column used to render
+/// `$0.series.passband.rawValue.replacingOccurrences(of: "_", with: " ").capitalized`
+/// -- deriving a display string from the raw case name (`"dual_band"` ->
+/// "Dual band") rather than translating the case itself, so it stayed
+/// English no matter what `hu.lproj` said. Same engine-enum-to-display-label
+/// fix as `PlanningFit`/`ProjectWorkflowPhase`/`SkyVerdictKind`.
+extension SeriesPassband {
+    var displayLabel: LocalizedStringKey {
+        switch self {
+        case .broadband: "Broadband"
+        case .dualBand: "Dual band"
+        case .narrowband: "Narrowband"
+        case .lrgb: "LRGB"
+        case .luminance: "Luminance"
+        case .unfiltered: "Unfiltered"
+        case .other: "Other"
+        case .unknown: "Unknown"
+        }
+    }
+
+    /// For `LabeledContent(_:value:)` call sites (`InspectorView.swift`'s
+    /// `SeriesSummaryPanel`) -- that specific SwiftUI initializer renders its
+    /// `value:` with `Text(verbatim:)` regardless of the value's type, so
+    /// only an eagerly-resolved `String` actually localizes there;
+    /// `displayLabel` above (a lazy `LocalizedStringKey`) would silently stay
+    /// English in that one call shape. Same dual-property split as
+    /// `NightRow.TriageState.displayLabel`/`.localizedText`.
+    var localizedText: String {
+        switch self {
+        case .broadband: NSLocalizedString("Broadband", bundle: .main, comment: "")
+        case .dualBand: NSLocalizedString("Dual band", bundle: .main, comment: "")
+        case .narrowband: NSLocalizedString("Narrowband", bundle: .main, comment: "")
+        case .lrgb: NSLocalizedString("LRGB", bundle: .main, comment: "")
+        case .luminance: NSLocalizedString("Luminance", bundle: .main, comment: "")
+        case .unfiltered: NSLocalizedString("Unfiltered", bundle: .main, comment: "")
+        case .other: NSLocalizedString("Other", bundle: .main, comment: "")
+        case .unknown: NSLocalizedString("Unknown", bundle: .main, comment: "")
+        }
     }
 }

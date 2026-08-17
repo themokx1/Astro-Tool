@@ -52,8 +52,26 @@ public struct HomeSnapshot: Equatable, Sendable {
 
         /// Neutral, honest default: no site has been resolved for the open
         /// library (or none is open yet), so there is nothing real to plot.
+        ///
+        /// V2 UI/UX audit (W3-9): these three used to be plain English
+        /// literals assigned straight into `String` properties -- the exact
+        /// "store-composed display string" leak class this task's own doc
+        /// names (`leadingLabel`/`centerLabel`/`trailingLabel` are `String`,
+        /// so `NightContextRail`'s `Text(context.leadingLabel)` etc. always
+        /// select `Text`'s verbatim, never-localized overload no matter what
+        /// `hu.lproj` says). Restructuring these into an enum/`Date` pair
+        /// would touch `NightContextRail`'s accessibility-label string
+        /// interpolation too; eagerly resolving through `NSLocalizedString`
+        /// here instead matches the already-established
+        /// `ProjectNextActionKind.localizedTitle`/`.localizedExplanation`
+        /// pattern (`ProjectsStore.swift`) -- same "String(localized) in the
+        /// store" fix this task's own instructions call out as acceptable
+        /// when restructuring is invasive.
         public static let unconfigured = NightContext(
-            isConfigured: false, leadingLabel: "Dusk", centerLabel: "Site not configured", trailingLabel: "Dawn"
+            isConfigured: false,
+            leadingLabel: NSLocalizedString("Dusk", bundle: .main, comment: ""),
+            centerLabel: NSLocalizedString("Site not configured", bundle: .main, comment: ""),
+            trailingLabel: NSLocalizedString("Dawn", bundle: .main, comment: "")
         )
     }
 
@@ -336,8 +354,10 @@ public final class HomeStore {
             )
             guard let duskUTC = twilight.duskUTC, let dawnUTC = twilight.dawnUTC else {
                 return HomeSnapshot.NightContext(
-                    isConfigured: true, leadingLabel: "Dusk", centerLabel: "No astronomical night tonight at this latitude",
-                    trailingLabel: "Dawn"
+                    isConfigured: true,
+                    leadingLabel: NSLocalizedString("Dusk", bundle: .main, comment: ""),
+                    centerLabel: NSLocalizedString("No astronomical night tonight at this latitude", bundle: .main, comment: ""),
+                    trailingLabel: NSLocalizedString("Dawn", bundle: .main, comment: "")
                 )
             }
 
@@ -345,8 +365,18 @@ public final class HomeStore {
             formatter.dateStyle = .none
             formatter.timeStyle = .short
             formatter.timeZone = timeZone
-            let leadingLabel = "Dusk \(formatter.string(from: duskUTC))"
-            let trailingLabel = "Dawn \(formatter.string(from: dawnUTC))"
+            // Eagerly localized `String(format:)` over an `NSLocalizedString`
+            // format string -- same fix as `.unconfigured` above, needed
+            // here too because these labels are still plain `String`
+            // properties handed straight to `Text(...)`.
+            let leadingLabel = String(
+                format: NSLocalizedString("Dusk %@", bundle: .main, comment: ""),
+                formatter.string(from: duskUTC)
+            )
+            let trailingLabel = String(
+                format: NSLocalizedString("Dawn %@", bundle: .main, comment: ""),
+                formatter.string(from: dawnUTC)
+            )
             let windowSeconds = dawnUTC.timeIntervalSince(duskUTC)
             let nowFraction: Double? = windowSeconds > 0
                 ? min(max(now.timeIntervalSince(duskUTC) / windowSeconds, 0), 1)
@@ -354,12 +384,19 @@ public final class HomeStore {
 
             let centerLabel: String
             if now < duskUTC {
-                centerLabel = "Before tonight's dusk"
+                centerLabel = NSLocalizedString("Before tonight's dusk", bundle: .main, comment: "")
             } else if now > dawnUTC {
-                centerLabel = "After tonight's dawn"
+                centerLabel = NSLocalizedString("After tonight's dawn", bundle: .main, comment: "")
             } else {
                 let remainingMinutes = Int(dawnUTC.timeIntervalSince(now) / 60)
-                centerLabel = "\(remainingMinutes / 60)h \(remainingMinutes % 60)m to dawn"
+                // `%ld`, not `%d`: `String(format:)` follows C `printf`
+                // conventions, where `%d` expects a 32-bit `Int32` -- `Int`
+                // is 64-bit (`long`) on every Apple platform this app ships
+                // on, which is exactly what `%ld` expects.
+                centerLabel = String(
+                    format: NSLocalizedString("%ldh %ldm to dawn", bundle: .main, comment: ""),
+                    remainingMinutes / 60, remainingMinutes % 60
+                )
             }
 
             return HomeSnapshot.NightContext(

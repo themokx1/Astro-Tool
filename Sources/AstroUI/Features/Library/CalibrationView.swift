@@ -33,6 +33,11 @@ public struct CalibrationView: View {
         case coverage = "Session coverage"
         case masters = "Master darks"
         var id: String { rawValue }
+
+        /// W3-9: the segmented picker below used to render `Text(section.rawValue)`
+        /// -- a `String`, so it always chose `Text`'s verbatim overload even
+        /// though both case labels already had `hu.lproj` entries.
+        var displayLabel: LocalizedStringKey { LocalizedStringKey(rawValue) }
     }
 
     let rootURL: URL?
@@ -111,7 +116,7 @@ public struct CalibrationView: View {
             }
             Picker("Section", selection: $selectedSection) {
                 ForEach(Section.allCases) { section in
-                    Text(section.rawValue).tag(section)
+                    Text(section.displayLabel).tag(section)
                 }
             }
             .pickerStyle(.segmented)

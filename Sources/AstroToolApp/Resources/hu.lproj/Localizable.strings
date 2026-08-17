@@ -1130,4 +1130,120 @@
 "Measure quality for every series captured this night" = "Minőség mérése minden, ma éjjel felvett sorozatra";
 "Rate every frame captured this night" = "Minden ma éjjel felvett képkocka értékelése";
 "Back to Project" = "Vissza a projekthez";
+
+// W3-9 (owner screenshot, 2026-08-17): the 9th/10th instances of the
+// "String selects Text's verbatim overload" bug class -- two sub-variants
+// the existing extraction script and its gates don't see: (1) store-composed
+// display strings (`HomeStore.NightContext`'s labels, built by string
+// interpolation into a plain `String` property) and (2) domain-layer
+// strings displayed raw (`SkyVerdictKind.english`, `NightRow.TriageState
+// .rawValue`, `CatalogTargetKind.rawValue`, and siblings). See
+// `HomeStore.swift`, `PlanningStore.swift`'s `SkyVerdictKind`/
+// `CatalogTargetKind`/`PlanningEstimateConfidence` extensions,
+// `NightsStore.swift`'s `TriageState`/`SeriesPassband` extensions, and
+// `InspectorView.swift` for the call sites. Auto-extracted (literal
+// `Text(...)` interpolations the script DOES cover):
+"Culminates %@" = "Delelés: %@";
+"Least collected active project · %@ so far." = "A legkevesebbet gyűjtött aktív projekt · eddig %@.";
+"Open the project and plan its first capture series." = "Nyisd meg a projektet, és tervezd meg az első felvételi sorozatát.";
+"Visible %@" = "Látható %@";
+"%@° max" = "%@° maximum";
+"%@h visible" = "%@ óra látható";
+"culm. %@" = "delel. %@";
+"Moon %@°" = "Hold %@°";
+//
+// Hand-added, invisible to the extraction script (switch-returned
+// `LocalizedStringKey`, `NSLocalizedString`/`String(format:)` calls in a
+// store, and `LocalizedStringKey(...)`-wrapped runtime strings -- none of
+// these are a literal first argument to a covered construct):
+"Dusk" = "Szürkület";
+"Dawn" = "Hajnal";
+"Dusk %@" = "Szürkület %@";
+"Dawn %@" = "Hajnal %@";
+"Site not configured" = "Nincs beállított megfigyelőhely";
+"No astronomical night tonight at this latitude" = "Ezen a szélességen ma nincs csillagászati éjszaka";
+"Before tonight's dusk" = "A ma esti szürkület előtt";
+"After tonight's dawn" = "A ma esti hajnal után";
+"%ldh %ldm to dawn" = "%ld ó %ld p a hajnalig";
+"good tonight" = "ma éjjel jó";
+"no coordinates" = "nincs koordináta";
+"not visible tonight" = "nem látszik ma éjjel";
+"comet -- stored coordinate is from capture time, not valid for tonight" = "üstökös -- a tárolt koordináta a felvétel idejéből való, ma már nem érvényes";
+"low (max %lld°)" = "alacsony (max %lld°)";
+"Moon interferes (%lld°, %@)" = "Hold zavar (%lld°, %@)";
+"Galaxy" = "Galaxis";
+"Emission nebula" = "Emissziós köd";
+"Planetary nebula" = "Planetáris köd";
+"Supernova remnant" = "Szupernóva-maradvány";
+"Open cluster" = "Nyílthalmaz";
+"Globular cluster" = "Gömbhalmaz";
+"Reflection nebula" = "Reflexiós köd";
+"Dark nebula" = "Sötét köd";
+"Curated" = "Válogatott";
+"Estimated" = "Becsült";
+"Fallback" = "Tartalék";
+"Unknown" = "Ismeretlen";
+"Ready" = "Kész";
+"No usable frames" = "Nincs használható képkocka";
+"Dual band" = "Kettős sáv";
+"Luminance" = "Fényesség";
+"LRGB" = "LRGB";
+"OSC" = "OSC";
+"MONO" = "MONO";
+"DSLR" = "DSLR";
+"Intermediate" = "Köztes";
+"Starless" = "Csillagmentes";
+"Mask" = "Maszk";
+"Final" = "Végleges";
+"Stack" = "Stack";
+"Processing variant" = "Feldolgozási változat";
+"No filter recorded" = "Nincs rögzített szűrő";
+"No path recorded" = "Nincs rögzített elérési út";
+"Not saved yet" = "Még nincs mentve";
+"Last saved %@" = "Utoljára mentve: %@";
+"No astronomical darkness" = "Nincs csillagászati sötétség";
+"No filter metadata" = "Nincs szűrő-metaadat";
+"No usable target window" = "Nincs használható célpont-ablak";
+"Unfiltered" = "Szűretlen";
+"Overview" = "Áttekintés";
+"Observed" = "Megfigyelt";
+"Next 30 nights" = "Következő 30 éjszaka";
+"This project's details aren't loaded in this window yet." = "Ennek a projektnek az adatai még nincsenek betöltve ebben az ablakban.";
+"This night's details aren't loaded in this window yet." = "Ennek az éjszakának az adatai még nincsenek betöltve ebben az ablakban.";
+"Open this series' project to inspect its capture settings." = "Nyisd meg a sorozat projektjét a felvételi beállítások megtekintéséhez.";
+"Frame details are shown while reviewing frames in the Review workspace." = "A képkocka részletei az Áttekintés munkaterületen, a képkockák áttekintése közben jelennek meg.";
 "Return to %@" = "Vissza ide: %@";
+
+/* Task 7 (2026-08-17 owner-feedback wave 3): the Results page, rewired to
+   StackDiscovery. The keys below the blank line are invisible to
+   scripts/extract-localizable-strings.swift and were added by hand: they are
+   returned from a `switch` (StackVariantKind / StackResultLocation /
+   StackResultCategory -> LocalizedStringKey) or passed to a construct the
+   script does not scan (ProgressView), so no literal ever sits as a scanned
+   construct's first positional argument. */
+"%@ · finished stacks and their variants" = "%@ · kész stackek és változataik";
+"%lld stack families · %lld files" = "%lld stack-család · %lld fájl";
+"%lld×%@ s" = "%lld×%@ s";
+"· best: %@" = "· legjobb: %@";
+"Actions for this file" = "Műveletek ezzel a fájllal";
+"Best exposure" = "Legjobb expozíció";
+"Dimensions" = "Méretek";
+"Files in this family" = "Fájlok ebben a családban";
+"Frame count and integration come from the file's FITS header, not its name." = "A képkockaszám és az integráció a fájl FITS-headeréből származik, nem a nevéből.";
+"Modified" = "Módosítva";
+"No finished stacks yet" = "Még nincs kész stack";
+"Open this file with its default application" = "A fájl megnyitása az alapértelmezett alkalmazással";
+"Select a stack" = "Válassz egy stacket";
+"Stack family" = "Stack-család";
+"Stack this project's frames with your own software and save the output anywhere in the library — under stacks, under processed, or straight into the session folder. Every variant of it shows up here, grouped with the stack it came from." = "Stackeld a projekt képkockáit a saját szoftvereddel, és mentsd a kimenetet bárhová a könyvtárban — a stacks vagy a processed alá, akár egyenesen a session-mappába. Minden változata megjelenik itt, a stack mellé csoportosítva, amelyikből készült.";
+"from FITS header" = "a FITS-headerből";
+
+"Looking for finished stacks…" = "Kész stackek keresése…";
+"Original" = "Eredeti";
+"Edited" = "Szerkesztett";
+"Star mask" = "Csillagmaszk";
+"Session folder" = "Session-mappa";
+"Library root" = "Könyvtár gyökere";
+"Calibration master candidate" = "Kalibrációs master-jelölt";
+"Processed output" = "Feldolgozott kimenet";
+"Classified as" = "Besorolás";

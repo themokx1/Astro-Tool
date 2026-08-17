@@ -72,10 +72,20 @@ public struct HomeView: View {
                             .font(.title2).foregroundStyle(AstroTokens.Color.accent)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(project.displayName).font(.headline)
-                            Text(project.phase == .collecting
-                                ? "Least collected active project · \(AstroFormat.duration(seconds: store.snapshot.nextProjectIntegrationSeconds)) so far."
-                                : "Open the project and plan its first capture series.")
-                                .font(.callout).foregroundStyle(.secondary)
+                            // Two distinct `Text("literal")` branches, not a
+                            // ternary of two literals -- a ternary infers
+                            // `String`, not `LocalizedStringKey` (same trap
+                            // `planExportMenu`'s own comment below documents,
+                            // and `PlanningView`'s Save/Saved fix works
+                            // around a second way -- see
+                            // `LocalizationCoverageTests.saveTargetLocalizesDespiteTernary`).
+                            if project.phase == .collecting {
+                                Text("Least collected active project · \(AstroFormat.duration(seconds: store.snapshot.nextProjectIntegrationSeconds)) so far.")
+                                    .font(.callout).foregroundStyle(.secondary)
+                            } else {
+                                Text("Open the project and plan its first capture series.")
+                                    .font(.callout).foregroundStyle(.secondary)
+                            }
                         }
                         Spacer()
                         Button("Open Project") {
@@ -187,21 +197,23 @@ public struct HomeView: View {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(recommendation.displayName).font(.headline)
-                            Text([
-                                recommendation.visibleWindow.map { "Visible \($0)" },
-                                recommendation.culmination.map { "Culminates \($0)" },
-                                recommendation.maxAltitude.map { "\($0.formatted(.number.precision(.fractionLength(0))))° max" }
-                            ].compactMap { $0 }.joined(separator: " · "))
+                            recommendationDetailText(recommendation)
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
                         // `HomeTonightRecommendation.verdict` is still
                         // `Planner.plan`'s own raw Hungarian sentence (V1/CLI's
-                        // own consumer, unchanged) -- `SkyVerdict.parse(...)
-                        // .english` is the same structured-parse translation
-                        // `PlanningView` uses, so this English UI never shows
-                        // it directly (V2 UI/UX audit, 2026-08-15, section 4).
-                        Text(SkyVerdict.parse(recommendation.verdict).english)
+                        // own consumer, unchanged) -- `SkyVerdict.parse(...)`
+                        // gives the structured `SkyVerdictKind` `PlanningView`
+                        // also renders from. W3-9: `.english` used to be
+                        // rendered directly (a domain-layer `String`, so
+                        // `Text(String)` always chose the verbatim overload,
+                        // "good tonight" leaking straight through the
+                        // Hungarian UI) -- `.displayLabel` maps the case to a
+                        // `LocalizedStringKey` instead, at this view layer
+                        // (see `PlanningStore.swift`'s `SkyVerdictKind`
+                        // extension, next to `PlanningFit.displayLabel`).
+                        Text(SkyVerdict.parse(recommendation.verdict).displayLabel)
                             .font(.caption.weight(.medium))
                             .foregroundStyle(AstroTokens.Color.accent)
                         if let projectID = recommendation.projectID {
@@ -217,6 +229,30 @@ public struct HomeView: View {
                 }
             }
             .padding(.horizontal, 8)
+        }
+    }
+
+    /// W3-9: this used to be a single `Text(String)` built by joining an
+    /// array of optionally-`nil` interpolated `String` fragments
+    /// ("Visible …", "Culminates …", "…° max") with `" · "` -- exactly the
+    /// store/view-composed-`String` leak this task's own doc names, and
+    /// invisible to the extraction script twice over (the fragments are
+    /// nested inside a `.map` closure, and the whole thing is joined before
+    /// ever reaching `Text`). Building one `Text` per present fragment and
+    /// concatenating them with `+` keeps each fragment a real `Text("…")`
+    /// literal call site -- the same recipe `ArchiveVerdictHeader.reclaimText`
+    /// already uses for its own two-clause sentence.
+    @ViewBuilder
+    private func recommendationDetailText(_ recommendation: HomeTonightRecommendation) -> some View {
+        let parts: [Text] = [
+            recommendation.visibleWindow.map { Text("Visible \($0)") },
+            recommendation.culmination.map { Text("Culminates \($0)") },
+            recommendation.maxAltitude.map { Text("\($0.formatted(.number.precision(.fractionLength(0))))° max") },
+        ].compactMap { $0 }
+        if let first = parts.first {
+            parts.dropFirst().reduce(first) { $0 + Text(verbatim: " · ") + $1 }
+        } else {
+            Text(verbatim: "")
         }
     }
 

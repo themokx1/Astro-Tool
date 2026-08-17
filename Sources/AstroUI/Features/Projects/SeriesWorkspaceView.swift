@@ -14,6 +14,9 @@ public struct SeriesWorkspaceView: View {
     private enum Tab: String, CaseIterable {
         case overview = "Overview"
         case frames = "Frames"
+
+        /// W3-9: the segmented picker below used to render `Text($0.rawValue)`.
+        var displayLabel: LocalizedStringKey { LocalizedStringKey(rawValue) }
     }
 
     let item: ProjectSeriesSnapshot
@@ -68,7 +71,7 @@ public struct SeriesWorkspaceView: View {
             .padding(AstroTokens.Spacing.spacious)
             Divider()
             Picker("Series section", selection: $tab) {
-                ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                ForEach(Tab.allCases, id: \.self) { Text($0.displayLabel).tag($0) }
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, AstroTokens.Spacing.spacious)
