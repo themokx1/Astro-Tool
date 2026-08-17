@@ -127,7 +127,8 @@ public struct NightWorkspaceView: View {
                 }
             }
         }
-        .background(AstroTokens.Color.ground.opacity(0.36))
+        // Task 7b (2026-08-17): self-tint removed -- `V2RootView`'s detail
+        // column owns the single opaque `ground` page backdrop now.
         .navigationTitle(row.date)
         .accessibilityIdentifier("v2.night.workspace")
         .sheet(isPresented: $isEditingNotes) {

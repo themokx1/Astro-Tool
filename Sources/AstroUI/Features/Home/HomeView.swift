@@ -39,7 +39,10 @@ public struct HomeView: View {
             .frame(maxWidth: 760, alignment: .leading)
             .padding(AstroTokens.Spacing.spacious)
         }
-        .background(AstroTokens.Color.ground.opacity(0.36))
+        // Task 7b (2026-08-17): the 36% `ground` self-tint is gone, not
+        // made opaque. This view is only ever rendered inside `V2RootView`'s
+        // detail column, which now owns the page backdrop for all 21 routes
+        // -- see the `.background(AstroTokens.Color.ground)` there.
         .navigationTitle("Home")
         .accessibilityLabel("Home")
         .accessibilityIdentifier("v2.detail.home")

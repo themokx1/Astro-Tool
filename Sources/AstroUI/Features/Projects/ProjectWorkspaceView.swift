@@ -97,7 +97,8 @@ public struct ProjectWorkspaceView: View {
                 }
             }
         }
-        .background(AstroTokens.Color.ground.opacity(0.36))
+        // Task 7b (2026-08-17): self-tint removed -- `V2RootView`'s detail
+        // column owns the single opaque `ground` page backdrop now.
         .navigationTitle(snapshot.project.displayName)
         .accessibilityIdentifier("v2.project.workspace")
         // Task 4 (2026-08-17 owner-feedback wave 3): reverses Wave 4 Task 2's

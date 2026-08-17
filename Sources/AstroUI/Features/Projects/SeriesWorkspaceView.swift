@@ -78,7 +78,8 @@ public struct SeriesWorkspaceView: View {
                 content.padding(AstroTokens.Spacing.spacious)
             }
         }
-        .background(AstroTokens.Color.ground.opacity(0.36))
+        // Task 7b (2026-08-17): self-tint removed -- `V2RootView`'s detail
+        // column owns the single opaque `ground` page backdrop now.
         .navigationTitle(seriesTitle)
         .accessibilityIdentifier("v2.series.workspace")
         // Task 4 (2026-08-17 owner-feedback wave 3) reverses Wave 4 Task 2's

@@ -650,7 +650,13 @@ public struct LibraryWelcomeView: View {
             }
         }
         .frame(minWidth: 560, idealWidth: 620, minHeight: 440)
-        .background(AstroTokens.Color.ground.opacity(0.32))
+        // Task 7b (2026-08-17): opaque, not the former 32% tint. This is the
+        // one page root left that `V2RootView`'s detail column does NOT
+        // cover -- it is the onboarding SHEET (presented from `V2RootView`
+        // line ~492), a window of its own, so it owns its own backdrop
+        // under the same rule: a page root paints `ground` at full opacity,
+        // never a partial tint over whatever happens to be behind it.
+        .background(AstroTokens.Color.ground)
         .fileImporter(
             isPresented: $isChoosingLibrary,
             allowedContentTypes: [.folder],

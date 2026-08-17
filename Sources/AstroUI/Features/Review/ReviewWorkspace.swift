@@ -46,7 +46,10 @@ public struct ReviewWorkspace: View {
                 }
             }
         }
-        .background(AstroTokens.Color.ground.opacity(0.22))
+        // Task 7b (2026-08-17): the odd-one-out 22% `ground` self-tint --
+        // a third convention next to the other four views' 36% -- is gone.
+        // `V2RootView`'s detail column owns the single opaque `ground` page
+        // backdrop now, and this view is only ever rendered inside it.
         .task(id: projectID) {
             try? await store.open(rootURL: rootURL, projectID: projectID)
         }

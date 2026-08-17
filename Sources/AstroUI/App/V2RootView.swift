@@ -337,6 +337,52 @@ private struct V2Shell: View {
                 },
                 libraryFindingsChanged: refreshSidebarBadges
             )
+            // Task 7b (2026-08-17): THE page backdrop, and the only one.
+            //
+            // Task 6 removed the three `ground` tints that used to sit on
+            // `WorkspacePage`/`WorkspaceTablePage`/`V2EmptyDetail` on the
+            // theory that a transparent detail pane would show "the
+            // window's own macOS 26 system glass". That theory is wrong for
+            // THIS column: on macOS the system material lives in the
+            // sidebar and the toolbar, never in a plain window's content
+            // area, so a transparent detail pane falls through to the
+            // window background -- essentially white in light appearance.
+            // `surface` is `0xFFFFFF` in light, so every card, table slot
+            // and panel became white-on-white, and `MetricCard`'s
+            // `.glassEffect(.regular)` had nothing with tonal contrast to
+            // refract and read as a flat grey rectangle.
+            //
+            // The fix is the macOS default for layered content, not a new
+            // layout language: a grouped window backdrop (`ground`) with
+            // content surfaces (`surface`) raised on top of it -- exactly
+            // what System Settings, Mail's message list and Finder's info
+            // panes do, and exactly the token pair this design system
+            // already had. OPAQUE, deliberately: the old 36%/22%/32% tints
+            // were a symptom of nobody being sure what the layer meant, and
+            // a partial `ground` over an unknown parent is a colour nobody
+            // chose. `V2PolishSurfaceTests.groundIsNeverPaintedAtPartialOpacity`
+            // gates that.
+            //
+            // Applied HERE, at the detail column, rather than on each page:
+            // `DetailHost` has 21 routes and only 8 of them go through
+            // `WorkspacePage`/`WorkspaceTablePage`, so backgrounding those
+            // components would have left Archive, Results, Conversion,
+            // Cleanup, Sensor Profiles and the frame/result detail pages
+            // still flat white. One owner, every route. The five workspace
+            // roots that used to tint themselves (`HomeView`,
+            // `ProjectWorkspaceView`, `NightWorkspaceView`,
+            // `SeriesWorkspaceView`, `ReviewWorkspace`) are rendered only
+            // ever inside this column, so their self-tints are gone rather
+            // than made opaque -- a page paints `ground` only when it owns
+            // a whole pane or sheet that this column does not already
+            // cover (`LibraryWelcomeView`, the onboarding sheet, is the one
+            // such case left).
+            //
+            // The sidebar and the toolbar are deliberately NOT painted:
+            // they are siblings of this column, and they are where macOS
+            // genuinely does put its own material. Nothing here reaches
+            // them.
+            .background(AstroTokens.Color.ground)
         }
         .navigationSplitViewStyle(.balanced)
         .overlay {
@@ -1544,11 +1590,13 @@ private struct V2EmptyDetail: View {
         }
         .navigationTitle(title)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Task 6 (2026-08-17, Liquid Glass): one of the three measured,
-        // self-inflicted 36% `ground` tints painted directly over the
-        // window's own macOS 26 system glass -- removed with no
-        // replacement. A full-pane empty state is not a card/panel, so it
-        // is left transparent rather than glassed.
+        // Task 6 (2026-08-17, Liquid Glass): one of the three 36% `ground`
+        // tints it removed on the "the window's own system glass will show
+        // through" theory Task 7b disproved. Still no background here, but
+        // for a real reason now: this view is rendered by `DetailHost`, and
+        // the detail column above it paints the opaque `ground` backdrop
+        // for every route. A full-pane empty state is not a card/panel, so
+        // it stays transparent rather than glassed.
         .accessibilityLabel(title)
         .accessibilityIdentifier(accessibilityIdentifier)
     }

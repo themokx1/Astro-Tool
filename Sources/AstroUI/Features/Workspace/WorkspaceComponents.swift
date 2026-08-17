@@ -33,14 +33,22 @@ struct WorkspacePage<Content: View>: View {
             .padding(AstroTokens.Spacing.spacious)
         }
         // Task 6 (2026-08-17, Liquid Glass): this used to paint a 36% tint
-        // of `ground` over the whole page -- on macOS 26 that sits directly
-        // on top of the window's own system glass (already frosting the
-        // sidebar/toolbar with no code at all) and mutes it to nothing. No
-        // replacement background: this is page-level scaffolding, not a
-        // card/panel, so it is left transparent and shows the window's own
-        // material directly. `.scrollEdgeEffectStyle` gives the scroll
-        // position itself a soft blend into whatever sits above it (the
-        // toolbar) instead of a hard content/chrome seam.
+        // of `ground` over the whole page, and Task 6 removed it with no
+        // replacement, on the theory that a transparent page would show
+        // "the window's own macOS 26 system glass". Task 7b disproved that
+        // theory -- on macOS the system material is in the sidebar and the
+        // toolbar, not in a plain window's content area, so this page fell
+        // through to a white window background and every `surface` card on
+        // it went white-on-white.
+        //
+        // Still no background HERE, though: the page backdrop now has a
+        // single owner one level up, `V2RootView`'s detail column
+        // (`.background(AstroTokens.Color.ground)`), which covers all 21
+        // routes rather than just the 8 that happen to use this component.
+        // This stays page-level scaffolding, not a card/panel.
+        // `.scrollEdgeEffectStyle` gives the scroll position itself a soft
+        // blend into whatever sits above it (the toolbar) instead of a hard
+        // content/chrome seam.
         .scrollEdgeEffectStyle(.soft, for: .top)
     }
 }
@@ -129,11 +137,14 @@ struct WorkspaceTablePage<Toolbar: View, TableContent: View, Footer: View>: View
         }
         .padding(AstroTokens.Spacing.spacious)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // Task 6: the same self-inflicted 36% tint `WorkspacePage` used to
-        // paint -- removed for the same reason, with no replacement. This
-        // outer frame is page scaffolding around the toolbar/table pair
-        // above, not itself a card, so it stays transparent over the
-        // window's own system glass.
+        // Task 6 removed the same self-inflicted 36% tint `WorkspacePage`
+        // used to paint, for the same (wrong) reason -- see that view's own
+        // comment above and Task 7b's correction. Still no background here:
+        // this outer frame is page scaffolding around the toolbar/table
+        // pair above, not itself a card, and `V2RootView`'s detail column
+        // is the single owner of the opaque `ground` backdrop it sits on.
+        // The `surface` behind `table` a few lines up is the raised layer
+        // that reads AGAINST that backdrop.
     }
 }
 
