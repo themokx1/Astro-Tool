@@ -119,7 +119,11 @@ public struct NightWorkspaceView: View {
                 // ScrollView) cannot virtualize its rows -- see
                 // `WorkspaceTablePage`'s own doc comment for the same fix
                 // applied to the main table-hosting workspaces.
+                // Task 7c: same treatment the eight `WorkspaceTablePage`
+                // routes get for their own tables -- `.flush`, so AppKit's
+                // row insets and scroller reach the card's edge.
                 seriesTable
+                    .astroRaisedSurface(.flush)
                     .padding(AstroTokens.Spacing.spacious)
             } else {
                 ScrollView {
@@ -178,9 +182,9 @@ public struct NightWorkspaceView: View {
                     MetricCard(title: "Series", value: row.seriesCount.formatted(), detail: LocalizedStringKey(row.filterSummary), systemImage: "square.stack.3d.up")
                     MetricCard(title: "Triage", value: row.triageState.rawValue, detail: "\(row.excludedFrames) excluded", systemImage: "checklist")
                 }
-                // Task 7 (2026-08-17, GroupBox removal): heading plus
-                // spacing, no additional surface -- this already sits on
-                // this page's own background.
+                // Task 7 (2026-08-17, GroupBox removal): `GroupBox`'s
+                // opaque grey panel gone for good; Task 7c gives the block
+                // back a presence through the one shared raised surface.
                 VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
                     Text("Projects captured this night").font(.headline)
                     ForEach(row.snapshot.projects, id: \.id) { project in
@@ -192,6 +196,8 @@ public struct NightWorkspaceView: View {
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .astroRaisedSurface()
             }
         case .series:
             // `body` above renders `seriesTable` directly for this tab (a
@@ -200,7 +206,7 @@ public struct NightWorkspaceView: View {
             // switch stays exhaustive without a catch-all `default:`.
             EmptyView()
         case .frames:
-            VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
                 Text("Frame review is per-project. Pick a project captured this night to review its frames.")
                     .font(.callout).foregroundStyle(.secondary)
                 ForEach(row.snapshot.projects, id: \.id) { project in
@@ -215,10 +221,13 @@ public struct NightWorkspaceView: View {
                     ContentUnavailableView("No projects", systemImage: "photo.stack", description: Text("This night has no associated project to review frames for."))
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .astroRaisedSurface()
         case .notes:
-            VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
-                // Task 7 (2026-08-17, GroupBox removal): same fix as
-                // "Projects captured this night" above.
+            // Task 7c: the explanation and its action are one block, so they
+            // share one surface -- the inner `VStack` is a grouping WITHIN
+            // the card (heading plus spacing), never a second card.
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
                 VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
                     Text("Session notes").font(.headline)
                     Text("Bortle, SQM, seeing, transparency, wind, dew, and freeform notes are stored with this session's own files.")
@@ -228,6 +237,8 @@ public struct NightWorkspaceView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(rootURL == nil || row.snapshot.projects.first == nil)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .astroRaisedSurface()
         }
     }
 

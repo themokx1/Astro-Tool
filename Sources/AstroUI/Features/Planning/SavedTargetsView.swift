@@ -233,6 +233,10 @@ public struct SavedTargetsView: View {
                 Divider()
             }
         }
+        // Task 7c: a divider-separated list of saved targets is content, not
+        // page scaffolding, so it reads on the one raised layer.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .astroRaisedSurface()
         .accessibilityIdentifier("v2.planning.saved-list")
     }
 }

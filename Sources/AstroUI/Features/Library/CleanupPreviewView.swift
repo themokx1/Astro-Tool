@@ -146,7 +146,13 @@ public struct CleanupPreviewView: View {
                 .accessibilityIdentifier("v2.cleanup.apply-quarantine")
             }.padding(16)
         }
-        .background(.background)
+        // Task 7c: was `.background(.background)` -- see
+        // `ResultsView.workspaceContent`'s own comment at the same spot for
+        // why an edge-to-edge window-coloured fill undid Task 7b's backdrop.
+        // One raised panel on the backdrop instead, `.flush` because the
+        // header/footer bars and their dividers reach its edges themselves.
+        .astroRaisedSurface(.flush)
+        .padding(AstroTokens.Spacing.spacious)
         .task { await store.load(rootURL: rootURL, accessMode: accessMode) }
         .accessibilityIdentifier("v2.cleanup.preview")
     }

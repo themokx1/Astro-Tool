@@ -213,7 +213,20 @@ public struct ResultsView: View {
                 }
             }
         }
-        .background(.background)
+        // Task 7c (2026-08-17): this used to paint `.background(.background)`
+        // -- the window background, i.e. essentially white in light
+        // appearance -- edge to edge across the whole detail pane, which
+        // covered the `ground` backdrop Task 7b had just restored and left
+        // this route reading as one flat white rectangle with no layer
+        // structure at all. It is a single self-contained panel (header,
+        // divider, split content), so it becomes ONE raised surface on the
+        // backdrop, `.flush` because its own header/divider chrome already
+        // reaches its edges. The page gutter matches
+        // `WorkspacePage`/`WorkspaceTablePage`'s own `spacious`, so this
+        // route lines up with the eight table pages instead of being the
+        // one screen with no margin.
+        .astroRaisedSurface(.flush)
+        .padding(AstroTokens.Spacing.spacious)
         .task { await store.load(rootURL: rootURL, projectID: project.id) }
         .onChange(of: sortOrder) { _, newValue in store.setSortOrder(newValue) }
         // Wave 4 Task 3: a distinct identifier while embedded (no header) as

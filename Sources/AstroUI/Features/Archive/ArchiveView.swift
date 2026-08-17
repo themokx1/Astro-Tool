@@ -218,6 +218,13 @@ public struct ArchiveView: View {
             if let verdict {
                 ArchiveVerdictHeader(verdict: verdict)
             }
+            // Task 7c: the strip is the page's one dense data graphic --
+            // a proportional band plus its legend -- so it reads on the
+            // raised layer. The `List` below deliberately does NOT: it
+            // hosts `ArchiveTaskCard`, which is `.glassEffect`, and putting
+            // a fill behind glass is the exact layering mistake Task 7b
+            // was undoing. `List` already draws macOS's own list background
+            // for its rows.
             ArchiveStripView(
                 slices: snapshot.slices,
                 reclaimableBytes: snapshot.reclaimableBytes,
@@ -225,6 +232,8 @@ public struct ArchiveView: View {
                 selectedClass: store.selectedClass,
                 onSelect: { store.selectedClass = $0 }
             )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .astroRaisedSurface()
             List {
                 if !store.tasks.isEmpty {
                     Section("Needs you") {

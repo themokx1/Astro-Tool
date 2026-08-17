@@ -123,11 +123,10 @@ public struct InsightsView: View {
     }
 
     private func qualityTrends(_ insight: InsightsSnapshot) -> some View {
-        // Task 7 (2026-08-17, GroupBox removal): a heading plus spacing --
-        // `WorkspacePage` already separates each of its own top-level
-        // sections by `AstroTokens.Spacing.section`, so no extra surface or
-        // inset belongs here (see `ReviewWorkspace`'s own header+content
-        // sections for the same shape).
+        // Task 7 (2026-08-17, GroupBox removal): `GroupBox`'s opaque grey
+        // panel is gone from here for good. Task 7c gives the section back a
+        // real presence in the one shared way -- see the `.astroRaisedSurface()`
+        // at the bottom of this function.
         VStack(alignment: .leading, spacing: 12) {
             Text("Session quality trends").font(.headline)
             HStack {
@@ -162,6 +161,15 @@ public struct InsightsView: View {
             }
             recentTrendSessions(insight)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Task 7c: ONE surface for this whole section. The three
+        // `trendChart(...)` sub-blocks and `recentTrendSessions` inside it
+        // stay bare on purpose -- they are groupings WITHIN a card, and
+        // grouping within a card is a heading plus spacing, never a second
+        // card. (Were one of them to grow its own `.astroRaisedSurface()`
+        // anyway, the modifier's environment guard would collapse it rather
+        // than paint the box-in-box the owner reported.)
+        .astroRaisedSurface()
         .accessibilityIdentifier("v2.insights.quality-trends")
     }
 
@@ -258,6 +266,8 @@ public struct InsightsView: View {
                     .font(.title2.weight(.semibold).monospacedDigit())
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .astroRaisedSurface()
         .accessibilityIdentifier("v2.insights.quality")
     }
 
@@ -278,6 +288,8 @@ public struct InsightsView: View {
                 Text("No filter metadata yet").foregroundStyle(.secondary)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .astroRaisedSurface()
         .accessibilityIdentifier("v2.insights.filters")
     }
 
@@ -304,6 +316,8 @@ public struct InsightsView: View {
                 Text("No equipment metadata yet").foregroundStyle(.secondary)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .astroRaisedSurface()
         .accessibilityIdentifier("v2.insights.equipment")
     }
 
@@ -319,6 +333,8 @@ public struct InsightsView: View {
             .frame(minHeight: 260)
             .accessibilityIdentifier("v2.insights.activity")
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .astroRaisedSurface()
     }
 
     private func targetRanking(_ insight: InsightsSnapshot) -> some View {
@@ -338,6 +354,7 @@ public struct InsightsView: View {
             if insight.topTargets.isEmpty { Text("No light frames yet").foregroundStyle(.secondary) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .astroRaisedSurface()
     }
 
     private func duration(_ seconds: Double) -> String {

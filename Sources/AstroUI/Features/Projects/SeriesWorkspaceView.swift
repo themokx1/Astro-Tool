@@ -124,12 +124,16 @@ public struct SeriesWorkspaceView: View {
                 .frame(maxWidth: .infinity)
             }
         case .frames:
-            VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
+            // Task 7c: a sentence plus its action is a content block, so it
+            // reads on the raised layer rather than as loose text on grey.
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
                 Text("\(item.usableFrames) usable · \(item.excludedFrames) excluded frames in this series.")
                     .font(.callout).foregroundStyle(.secondary)
                 Button("Review Frames") { review() }
                     .buttonStyle(.borderedProminent)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .astroRaisedSurface()
         }
     }
 

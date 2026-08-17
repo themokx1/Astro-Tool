@@ -257,10 +257,11 @@ public struct HealthView: View {
             // renders the same facts V1's `AuditPage` showed (files
             // checked, mismatches, when it ran), for this session's most
             // recent run.
-            // Task 7 (2026-08-17, GroupBox removal): heading plus spacing --
-            // this is `WorkspaceTablePage`'s `footer` slot, which (unlike
-            // `table`) never had a surface of its own; the `GroupBox` was
-            // the only thing painting a background here.
+            // Task 7 (2026-08-17, GroupBox removal): `GroupBox`'s opaque
+            // grey panel is gone from this footer slot for good. Task 7c
+            // gives both footer blocks the one shared raised surface, so
+            // they read as content against the backdrop rather than as
+            // loose text under the table.
             if let summary = store.lastVerifySummary {
                 VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
                     Text("Last verification (this session)").font(.headline)
@@ -286,6 +287,8 @@ public struct HealthView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .astroRaisedSurface()
                 .accessibilityIdentifier("v2.health.last-verify-summary")
             }
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
@@ -309,6 +312,8 @@ public struct HealthView: View {
                     .frame(maxHeight: 140)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .astroRaisedSurface()
             .accessibilityIdentifier("v2.health.audit-history")
         }
     }

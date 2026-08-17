@@ -240,7 +240,12 @@ public struct ConversionWorkspace: View {
             Divider()
             footer
         }
-        .background(.background)
+        // Task 7c: was `.background(.background)` -- see
+        // `ResultsView.workspaceContent`'s own comment at the same spot. The
+        // wizard is one panel (header, step rail, content, footer), so it is
+        // one raised surface, `.flush` because those bars own their edges.
+        .astroRaisedSurface(.flush)
+        .padding(AstroTokens.Spacing.spacious)
         .task { await store.load(rootURL: rootURL, accessMode: accessMode) }
         .accessibilityIdentifier("v2.conversion.workspace")
     }

@@ -50,6 +50,17 @@ public struct ReviewWorkspace: View {
         // a third convention next to the other four views' 36% -- is gone.
         // `V2RootView`'s detail column owns the single opaque `ground` page
         // backdrop now, and this view is only ever rendered inside it.
+        //
+        // Task 7c: which left this screen -- the one the owner singled out
+        // as beautiful -- as bare panes directly on that backdrop. It is one
+        // self-contained panel (header, divider, three-pane split), so it
+        // becomes ONE raised surface, `.flush` because its own header and
+        // splitter chrome already reach its edges, with the same `spacious`
+        // page gutter every other route has. Nothing inside it changes: the
+        // three panes stay separated by `HSplitView`'s own splitters, not by
+        // three nested cards.
+        .astroRaisedSurface(.flush)
+        .padding(AstroTokens.Spacing.spacious)
         .task(id: projectID) {
             try? await store.open(rootURL: rootURL, projectID: projectID)
         }

@@ -82,6 +82,9 @@ public struct ProjectWorkspaceView: View {
             .padding(.vertical, AstroTokens.Spacing.standard)
             .accessibilityIdentifier("v2.project.workspace.tab")
             if router.projectTab == .results {
+                // `ProjectResultsPane` -> `ResultsView` raises and insets
+                // itself (Task 7c), exactly as it does on the standalone
+                // `.resultsWorkspace` route, so no gutter is added here.
                 resultsContent
             } else if router.projectTab == .nights || router.projectTab == .series {
                 // Deliberately NOT inside the `ScrollView` below, for the
@@ -89,7 +92,13 @@ public struct ProjectWorkspaceView: View {
                 // proposed an unbounded height cannot virtualize its rows --
                 // see `WorkspaceTablePage`'s own doc comment for the same
                 // fix applied to the main table-hosting workspaces.
+                // Task 7c: the Nights/Series tabs are dense `Table`s, the
+                // same content shape `WorkspaceTablePage` raises on its own
+                // eight pages -- `.flush` so AppKit's row insets and
+                // scroller reach the card edge, with the same `spacious`
+                // page gutter around it as everywhere else.
                 tableTabContent
+                    .astroRaisedSurface(.flush)
                     .padding(AstroTokens.Spacing.spacious)
             } else {
                 ScrollView {
@@ -293,15 +302,18 @@ public struct ProjectWorkspaceView: View {
                     MetricCard(title: "Frames", value: "\(snapshot.usableFrames)", detail: "\(snapshot.totalFrames - snapshot.usableFrames) excluded", systemImage: "photo.stack")
                     MetricCard(title: "Latest night", value: snapshot.nights.first?.night.localDate ?? "—", detail: LocalizedStringKey(snapshot.canonicalFolderName), systemImage: "moon.stars")
                 }
-                // Task 7 (2026-08-17, GroupBox removal): heading plus
-                // spacing -- this page's own `ScrollView`/section spacing
-                // already separates it from its neighbors, matching
-                // `ReviewWorkspace`'s own header sections.
+                // Task 7 (2026-08-17, GroupBox removal): `GroupBox`'s
+                // opaque grey panel is gone for good. Task 7c gives the
+                // block back a presence through the one shared raised
+                // surface -- the MetricCards above it stay glass, since
+                // glass and the raised layer are alternatives, not layers.
                 VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
                     Text("Next action").font(.headline)
                     Label(snapshot.nextAction.kind.titleKey, systemImage: "arrow.forward.circle.fill")
                     Text(snapshot.nextAction.kind.explanationKey).foregroundStyle(.secondary)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .astroRaisedSurface()
             }
         case .nights, .series:
             // `body` above renders `tableTabContent` directly for these tabs

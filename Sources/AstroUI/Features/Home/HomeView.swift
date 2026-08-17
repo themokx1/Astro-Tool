@@ -57,9 +57,13 @@ public struct HomeView: View {
             // Task 7 (2026-08-17, GroupBox removal): a heading plus spacing,
             // not a box on a box -- `GroupBox` painted macOS's default
             // opaque grey panel here, which is exactly the "strange grey
-            // background" the owner reported. No replacement surface: this
-            // sits directly on `libraryOverview`'s own page background, the
-            // same way `ReviewWorkspace`'s section headers do.
+            // background" the owner reported.
+            //
+            // Task 7c: "no GroupBox" left this as bare text on the grey
+            // backdrop, which is the opposite failure. It is a real content
+            // block -- a heading, a recommendation, an action -- so it gets
+            // the one raised surface, lighter than `ground` rather than
+            // `GroupBox`'s grey-over-white.
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
                 Text("Continue where it matters").font(.headline)
                 if let project = store.snapshot.nextProject {
@@ -100,6 +104,8 @@ public struct HomeView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .astroRaisedSurface()
             tonightRecommendations
         }
         .accessibilityIdentifier("v2.home.library-overview")
@@ -127,6 +133,11 @@ public struct HomeView: View {
             Divider()
             planExportMenu
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Task 7c: same reasoning as `libraryOverview`'s "Continue where it
+        // matters" block above -- a heading, a divider and a list of rows is
+        // a content block, and a content block belongs on the raised layer.
+        .astroRaisedSurface()
         .accessibilityIdentifier("v2.home.tonight-recommendations")
     }
 
@@ -314,12 +325,13 @@ private struct NightContextRail: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(AstroTokens.Spacing.standard)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
-        .overlay {
-            RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel)
-                .stroke(AstroTokens.Color.edge, lineWidth: 1)
-        }
+        // Task 7c: this was a hand-rolled card -- `.regularMaterial` plus its
+        // own stroke, padding and radius -- i.e. a third convention next to
+        // the table slot's flat `surface` fill and `MetricCard`'s glass. The
+        // material was also the wrong layer for a rail that sits ON the page
+        // rather than floating above it: it refracts the backdrop instead of
+        // reading as content. One treatment now, same as every other block.
+        .astroRaisedSurface()
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             context.isConfigured

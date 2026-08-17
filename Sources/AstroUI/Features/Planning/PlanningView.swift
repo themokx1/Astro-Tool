@@ -422,12 +422,11 @@ public struct PlanningView: View {
     /// path (`selectTarget`/`recomputeSkyPath`), never here in `body` --
     /// this view only reads the store's already-computed `skyPath`.
     private var skyPathSection: some View {
-        // Task 7 (2026-08-17, GroupBox removal): heading plus spacing -- this
-        // is `WorkspaceTablePage`'s `footer` slot, which (unlike `table`)
-        // never had a surface of its own; the `GroupBox` was the only thing
-        // painting a background here, exactly the kind of box the owner
-        // reported. It sits directly on the page's own background now, the
-        // same as `HomeView`'s card-less sections.
+        // Task 7 (2026-08-17, GroupBox removal): `GroupBox`'s opaque grey
+        // panel is gone from this footer slot for good. Task 7c: it is a
+        // chart with a heading -- real content, not page scaffolding -- so
+        // it reads on the same raised layer as the table above it rather
+        // than as a chart floating loose on the backdrop.
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
             Text("Sky path tonight").font(.headline)
             Group {
@@ -457,6 +456,8 @@ public struct PlanningView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .astroRaisedSurface()
         .accessibilityIdentifier("v2.planning.sky-path-section")
     }
 
