@@ -1199,12 +1199,18 @@ private struct V2Sidebar: View {
         }
     }
 
-    private func badgeHelp(for section: PrimarySection) -> String? {
+    // W4-7 item 2 + the verbatim-String trap: this returned `String?`, so
+    // both tooltips rendered verbatim English forever regardless of
+    // hu.lproj. `LocalizedStringKey` interpolation emits `%lld` keys the
+    // extraction script cannot see -- both are hand-added to hu.lproj.
+    private func badgeHelp(for section: PrimarySection) -> LocalizedStringKey? {
         switch section {
         case .nights where badges.nightsNeedingAttention > 0:
             "\(badges.nightsNeedingAttention) night(s) need review"
+        // The badge now sums the Archive page's own cards, so the tooltip
+        // says exactly how to derive it -- add up the cards.
         case .library where badges.libraryAttentionCount > 0:
-            "\(badges.libraryAttentionCount) health finding(s) need attention, including calibration gaps"
+            "\(badges.libraryAttentionCount) file(s) need attention -- the sum of the Archive page's cards"
         default: nil
         }
     }

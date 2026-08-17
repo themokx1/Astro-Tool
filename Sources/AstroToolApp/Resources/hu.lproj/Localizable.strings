@@ -1487,3 +1487,7 @@
 "The session will appear once the next library scan runs." = "A session a következő könyvtár-beolvasás után fog megjelenni.";
 "Run Scan Now" = "Beolvasás indítása most";
 "AstroTool could not copy the files. The source card was not modified." = "Az AstroTool nem tudta lemásolni a fájlokat. A forrás kártya nem módosult.";
+
+// W4-7: a sidebar-badge tooltipek -- interpolált LocalizedStringKey, kézzel felvéve.
+"%lld night(s) need review" = "%lld éjszaka vár áttekintésre";
+"%lld file(s) need attention -- the sum of the Archive page's cards" = "%lld fájl vár rád -- az Archívum lap kártyáinak összege";

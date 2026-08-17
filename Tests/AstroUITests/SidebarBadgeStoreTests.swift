@@ -14,8 +14,8 @@ struct SidebarBadgeStoreTests {
         try await nightsStore.open(rootURL: fixture.root)
 
         let badges = SidebarBadgeStore(
-            healthQueryFactory: { _ in
-                LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: fixture.metadata)
+            taskSummaryFactory: { _ in
+                try await ArchiveTaskQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: fixture.metadata).summary()
             }
         )
 
@@ -32,8 +32,8 @@ struct SidebarBadgeStoreTests {
         try await nightsStore.open(rootURL: fixture.root)
 
         let badges = SidebarBadgeStore(
-            healthQueryFactory: { _ in
-                LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: fixture.metadata)
+            taskSummaryFactory: { _ in
+                try await ArchiveTaskQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: fixture.metadata).summary()
             }
         )
 
@@ -54,8 +54,8 @@ struct SidebarBadgeStoreTests {
         try await nightsStore.open(rootURL: fixture.root)
 
         let badges = SidebarBadgeStore(
-            healthQueryFactory: { _ in
-                LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: fixture.metadata)
+            taskSummaryFactory: { _ in
+                try await ArchiveTaskQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: fixture.metadata).summary()
             }
         )
 
@@ -67,7 +67,7 @@ struct SidebarBadgeStoreTests {
     @Test("A health-query failure leaves the library badge at zero rather than crashing")
     func healthQueryFailureIsHandledGracefully() async throws {
         let fixture = try await Self.makeReadyFixture()
-        let badges = SidebarBadgeStore(healthQueryFactory: { _ in throw SidebarBadgeStoreTestFailure.queryFailed })
+        let badges = SidebarBadgeStore(taskSummaryFactory: { _ in throw SidebarBadgeStoreTestFailure.queryFailed })
 
         await badges.refresh(rootURL: fixture.root, nights: [])
 
@@ -104,6 +104,18 @@ struct SidebarBadgeStoreTests {
 
         let scanner = LibraryScanner(config: config, db: db)
         _ = try scanner.scan()
+
+        // W4-7 item 2: the badge now sums ArchiveTaskQuery.summary()'s cards
+        // (the same query the Archive page renders), which reads the latest
+        // AUDIT run's findings -- so the fixture seeds one, in exactly the
+        // shape AuditEngine writes (mirrors ArchiveTaskQueryTests' rows).
+        let raw = try SQLiteDB(path: storage.indexDatabase.path)
+        try raw.exec("INSERT INTO runs(kind, started_at, root) VALUES('audit', 2000.0, '\(root.path)');")
+        try raw.exec("""
+            INSERT INTO findings(run_id, severity, category, path, message)
+            VALUES ((SELECT MAX(id) FROM runs WHERE kind='audit'),
+                    'suspicious', 'residue', 'sessions/IC_1396/2026-08-08/lights/light.fit', 'leftover');
+            """)
 
         let metadata = try MetadataStore.temporary()
         let project = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "IC 1396", phase: .collecting)
