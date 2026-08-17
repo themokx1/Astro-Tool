@@ -8,6 +8,48 @@ történik.
 
 ## [Unreleased]
 
+## [2.0.0-rc.3] - 2026-08-17
+
+### Hozzáadva
+
+- **Archívum-térkép** — a `Library` szekció helyén: ítélet-mondat elöl, egyetlen
+  sáv az egész könyvtár bájtjairól kategóriánként, alatta a visszanyerhető rész,
+  legfeljebb hat teendő-kártya (mindegyiken végrehajtható művelettel) és
+  célpontonkénti bontás. A karantén-előnézet a kártya kategóriájára előre
+  kiválasztva nyílik.
+- **Saját vizuális nyelv** — paletta, amelyben minden szín egy dolgot jelent, és
+  mindkét megjelenéshez saját értéke van; egységes típusskála tabuláris
+  számokkal; közös formázó (egy mértékegység, egy formátum).
+
+### Javítva
+
+- **Swift fordítóhiba megkerülése:** modulhatárt átlépő async alapértelmezett
+  argumentumok eltérő méretű async-kontextust emittáltak, ami a task-allokátor
+  túlírásához és véletlenszerű összeomláshoz vezethetett. Hét hely javítva,
+  bináris szintű ellenőrzéssel (`docs/swift-async-default-arg-bug/`).
+- A hibaüzenetek a valódi okot nevezik meg, és a gombjaik a hiba fajtájából
+  származnak; belső típusnév és hibakód nem jelenik meg többé.
+- A fejléc nem állítja, hogy „semmi nem sérült", ha integritás-ellenőrzés soha
+  nem futott.
+- A frissesség-jelzés valós adatra épül: a beolvasás rögzíti a befejezését,
+  csak sikeres futás után.
+- A célponthoz nem köthető fájlok saját sort kapnak a térképen.
+
+### Eltávolítva
+
+- A „Move to Archive…" művelet, amely olyat ígért, amit az app semmilyen
+  kódúton nem hajtott végre.
+
+### Ismert korlátok
+
+- A vizuális átépítés félúton van: a rendszer üveg-anyagai, a
+  doboz-egyszerűsítés és a mozgás még hátravan.
+- A toolbar gombfeliratai magyar felületen is angolul jelennek meg.
+- A tesztkészlet időnként piros egy `OperationHost` időzítési kérdés miatt
+  (a művelet „késznek" látszhat a sikerjelzés megjelenése előtt). Vizsgálat
+  alatt; adatvesztést nem okoz.
+
+
 ### Breaking change (minimum macOS 26 — Task 1)
 
 **A V2-nek mostantól macOS 26 vagy újabb kell.** A csomag korábban macOS
