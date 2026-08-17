@@ -335,7 +335,7 @@ struct LibraryMutationAuthorizerTests {
         let plan = try fixture.plan([("a.fit", "Archive/a.fit")])
         try await fixture.authorizer.register(plan)
         try FileManager.default.removeItem(at: fixture.url("Archive"))
-        let before = try descriptorCount()
+        let before = descriptorCount(under: fixture.container)
 
         for _ in 0..<128 {
             await #expect(throws: LibraryMutationError.unsafeDestination) {
@@ -343,7 +343,9 @@ struct LibraryMutationAuthorizerTests {
             }
         }
 
-        #expect(try descriptorCount() <= before + 2)
+        // 128 failed preflights: a leak of even one descriptor per attempt
+        // would be unmistakable here, so no slack is needed or wanted.
+        #expect(descriptorCount(under: fixture.container) <= before)
     }
 
     @Test("Failed post-rename compensation is durable and reports partial rollback failure")
@@ -603,6 +605,42 @@ private final class LockedFlag: @unchecked Sendable {
     }
 }
 
-private func descriptorCount() throws -> Int {
-    try FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count
+/// How many of this process's open descriptors point somewhere under `root`.
+///
+/// Scoped to `root` rather than counting `/dev/fd` wholesale, which is what
+/// this used to do. `/dev/fd` is process-global, and `swift test` runs all
+/// 113 suites in one process: the others are opening and closing SQLite
+/// databases, FITS fixtures and subprocess pipes throughout, so the ambient
+/// count drifts by more than any tolerance a leak check could usefully set,
+/// and `failedPreflightClosesEveryDescriptor` failed on that drift in
+/// roughly every parallel run while passing under `--no-parallel`. A
+/// descriptor resolving into a per-test temporary directory can only belong
+/// to that test, so this measures the thing the assertion is actually about
+/// and is indifferent to whatever the rest of the run is doing.
+private func resolvedPath(of url: URL) -> String {
+    url.withUnsafeFileSystemRepresentation { pointer in
+        guard let pointer, let resolved = realpath(pointer, nil) else { return url.path }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+}
+
+private func descriptorCount(under root: URL) -> Int {
+    // `realpath(3)` on both sides is load-bearing. Temporary directories
+    // live under `/var/folders/...`; `/var` is a symlink to `/private/var`,
+    // and `F_GETPATH` always reports the resolved `/private/var/...` form
+    // while Foundation's own `path`/`standardizedFileURL`/
+    // `resolvingSymlinksInPath()` all keep reporting `/var/...`. Comparing
+    // those two directly matches nothing at all, so an earlier version of
+    // this helper counted zero descriptors under any root whatsoever -- a
+    // check that could not fail. Caught by deliberately leaking 128 handles
+    // and watching the test stay green anyway.
+    let prefix = resolvedPath(of: root)
+    let entries = (try? FileManager.default.contentsOfDirectory(atPath: "/dev/fd")) ?? []
+    return entries.reduce(into: 0) { count, entry in
+        guard let descriptor = Int32(entry) else { return }
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard fcntl(descriptor, F_GETPATH, &buffer) != -1 else { return }
+        if String(cString: buffer).hasPrefix(prefix) { count += 1 }
+    }
 }
