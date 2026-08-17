@@ -41,6 +41,23 @@ public struct IntegrationTimeInput: Equatable, Sendable {
 /// Ten hours at μ=22 mag/arcsec², f/5 and reference throughput is the
 /// approachable baseline. Surface-brightness signal-to-noise is squared,
 /// therefore one magnitude fainter needs 10^0.8 (about 6.31) more time.
+///
+/// Deliberately time-of-night-agnostic: `hours(...)` is a pure photometric
+/// ratio against the reference target/setup, with no dusk/dawn/altitude
+/// input at all. The number it returns is a TOTAL exposure budget an
+/// astrophotographer would accumulate across as many nights as it takes --
+/// it is not, and was never meant to be, "hours available tonight", so it
+/// routinely and correctly exceeds a single night's astronomical darkness
+/// for anything fainter than the reference. `PlanningQuery` is what has a
+/// notion of "tonight" at all (`nightConditions`, `DiscoveryPlanner`'s
+/// night-bounded `visibleHours`) -- see its `integrationEstimate(...)` and
+/// `PlanningRecommendation.integrationNightsAtTonightsPace`, which divides
+/// this model's output by that per-night figure rather than conflating the
+/// two (2026-08-17 owner report: "az integráció tévesen azt nézi csak,
+/// mikor van fent a célpont, azt nem, hogy mettől meddig van éjszaka" --
+/// investigation found this model was never consulting up-time or night
+/// bounds in the first place; the fix is exposing the multi-night relationship
+/// explicitly instead of leaving a bare, easy-to-misread hour count).
 public enum IntegrationTimeModel {
     public static let referenceHours = 10.0
     public static let referenceSurfaceBrightness = 22.0

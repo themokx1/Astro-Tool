@@ -42,6 +42,23 @@ public struct PlanningRecommendation: Equatable, Sendable, Identifiable {
     public let integrationHours: Double?
     public let integrationSource: String
     public let integrationConfidence: PlanningEstimateConfidence
+    /// `integrationHours` divided by tonight's own `visibleHours` (below) --
+    /// how many nights *like tonight* it would take to accumulate the full
+    /// estimate. `integrationHours` is a pure photometric total (see
+    /// `IntegrationTimeModel`'s own doc comment); it has no notion of
+    /// daytime, twilight, or a single night's darkness at all, so it
+    /// routinely runs well past one night's dark window for anything
+    /// fainter than the reference target -- that is correct, not a bug.
+    /// What was missing is tying it back to "tonight" for the reader: a bare
+    /// "≈ 27.9 h" next to "6.1 h visible tonight" reads as broken even
+    /// though the two numbers answer different questions (2026-08-17 owner
+    /// report). `nil` when there is nothing honest to divide: no
+    /// integration estimate at all, or zero usable hours tonight (below the
+    /// altitude threshold all night, or no astronomical darkness at this
+    /// site/date -- see `nightConditions` and `DiscoveryPlanner.discover`'s
+    /// own "no dark window" case, both of which already yield a clean `nil`
+    /// `visibleHours` rather than a negative or full-day figure).
+    public let integrationNightsAtTonightsPace: Double?
     /// The following five fields come from `DiscoveryPlanner.discover` --
     /// the same tonight's-sky engine `Planner.plan` uses for the user's own
     /// library -- evaluated for `PlanningQuery.site`/`date`. All `nil` only
@@ -201,6 +218,15 @@ public struct PlanningQuery: Sendable {
             )
             let sky = skyByDesignation[target.designation]
             let isLowAltitude = (sky?.maxAltitudeDeg).map { $0 < minAltitudeDeg } ?? true
+            // `sky?.visibleHours` is already the intersection of "target
+            // above `minAltitudeDeg`" and "astronomical night"
+            // (`DiscoveryPlanner.discover` -> `NightSweep.sweep`, bounded to
+            // `SunMoon.astronomicalTwilight`'s dusk...dawn) -- reused as-is,
+            // no second darkness computation here.
+            let nightsNeeded: Double? = {
+                guard let hours = estimate.hours, let visible = sky?.visibleHours, visible > 0 else { return nil }
+                return hours / visible
+            }()
             let photographable = PlanningScore.photographableFactor(
                 visibleHours: sky?.visibleHours, darknessHours: night.darknessHours
             )
@@ -225,6 +251,7 @@ public struct PlanningQuery: Sendable {
                 integrationHours: estimate.hours,
                 integrationSource: estimate.source,
                 integrationConfidence: estimate.confidence,
+                integrationNightsAtTonightsPace: nightsNeeded,
                 maxAltitudeDeg: sky?.maxAltitudeDeg,
                 visibleHours: sky?.visibleHours,
                 culminationLocal: sky?.culminationLocal,
