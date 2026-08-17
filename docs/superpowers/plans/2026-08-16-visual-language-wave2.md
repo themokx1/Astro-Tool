@@ -282,34 +282,70 @@ Ezt gép nem tudja eldönteni, és ez a task nem tesz úgy, mintha tudná. Épí
 git commit -m "feat: float the panels on the system's glass"
 ```
 
-## Task 7: A söprés — dobozok, mentegetőzések, ismétlések
+## Task 7: A GroupBox-réteg eltávolítása — ez a blokkoló, nem csinosítás
 
-**Files:** minden `Sources/AstroUI/Features/**` nézet, ami érintett.
+**Ez a task rangot váltott.** A tervben „söprés"-ként szerepelt. A 6. task (üveg) telepítése után a tulajdonos ezt írta:
 
-Három konkrét minta, mindegyik a spec 6. fejezetéből:
+> *„Érdemileg nem látom üvegesnek… nem egységesek a padding-ek, margók és a lekerekítések, vannak amik kilógnak oldalt és van amikor doboz a dobozban fura szürke hátteret kap. egyedül a képkockák áttekintése gomb vezet olyan felületre ahol látszik a glass és az nagyon nagyon szép is."*
 
-1. **Dobozban-doboz.** Az `InsightsView`-ban 6 `GroupBox` van, több nézetben 3. Egy fogalom = egy felület. A beágyazott `GroupBox`-ok kivezetendők; a csoportosítást térköz és fejléc adja, nem keret a kereten.
-2. **Mentegetőző felirat.** Ha egy szám mellé cáfolat kell (a `HealthView:138` a példa), akkor **a szám megy el**, nem a cáfolat marad. Sekély vizsgálat kap egy őszinte mondatot vagy semmit — de nem főcím-számot.
-3. **`N / M` oszlopok, ahol a nevező képernyőnként mást jelent** (P10, 4 hely). Minden ilyen oszlop mondja meg a fejlécében vagy a `.help()`-jében, mi a nevező.
+Lemérve, és az ok egyértelmű:
 
-- [ ] **Step 1: Kapu a dobozmélységre**
+```
+ReviewWorkspace (amit szépnek talál):  0 GroupBox,  0 WorkspacePage
+InsightsView    6 GroupBox      PlanningView  3      NightsView  3
+ProjectsView    3               HomeView      2      ArchiveView 0 (de WorkspacePage-ben)
+```
+
+És **sehol nincs saját `GroupBoxStyle`** — tehát minden `GroupBox` a macOS alapértelmezett, **átlátszatlan** szürke dobozát rajzolja.
+
+**A tulajdonos három panasza ugyanannak az egy oknak a három tünete:**
+
+1. **„nem látom üvegesnek"** — az üveg ott van, a `GroupBox` tömör háttere ráfest.
+2. **„fura szürke háttér dobozban dobozban"** — ez maga a rendszer alapértelmezett `GroupBox`-háttere, egymásba ágyazva.
+3. **„nem egységesek a paddingek, margók, lekerekítések, kilógnak oldalt"** — a `GroupBox` a saját belső méreteit és sarkát hozza, amik nem egyeznek az `AstroTokens.Spacing`/`CornerRadius` értékeivel.
+
+Vagyis a 6. task munkája nem hibás — **le van takarva**. Ez a task szedi le róla a takarót.
+
+### A referencia
+
+A `ReviewWorkspace` a bizonyíték, hogy a rendszer működik, ha nem festünk rá. **Olvasd el, és azt kövesd** — ne találj ki új elrendezést. Csoportosítást térköz és fejléc ad, nem keret a kereten.
+
+**Files:** `Sources/AstroUI/Features/**` minden `GroupBox`-ot használó nézet, `Sources/AstroUI/Features/Workspace/WorkspaceComponents.swift`
+
+- [ ] **Step 1: Kapu előbb, bizonyítva**
 
 ```swift
-@Test("No view nests a GroupBox inside a GroupBox")
-func noNestedGroupBoxes() throws {
-    // Two frames around one idea reads as two ideas. Grouping is spacing
-    // and a heading, not a border on a border.
+@Test("No feature view uses GroupBox -- it paints an opaque box over the design")
+func noGroupBoxInFeatureViews() throws {
+    // GroupBox brings macOS's default opaque grey background plus its own
+    // padding and corner radius. That background hides the glass beneath it,
+    // and those metrics do not match AstroTokens' -- which is exactly the
+    // "grey box in a box, inconsistent padding, no glass" the owner reported.
+    // Grouping is spacing and a heading, not a border on a border.
     for file in try filenames(under: "Sources/AstroUI/Features", recursive: true) {
-        #expect(maxGroupBoxDepth(in: try contents(file)) <= 1, "\(file) nests GroupBoxes")
+        #expect(!(try strippingComments(contents(file))).contains("GroupBox"),
+                "\(file) still uses GroupBox")
     }
 }
 ```
 
-A `maxGroupBoxDepth` segédfüggvény zárójel-egyensúlyt számol; írd meg a tesztfájlban, és **igazold, hogy tényleg fog**: adj hozzá ideiglenesen egy beágyazott `GroupBox`-ot, nézd meg, hogy bukik, vond vissza.
+Futtasd a jelenlegi fán — **17 előfordulást** kell megneveznie hat fájlban.
 
-- [ ] **Step 2–3:** söprés fájlonként, commit (`refactor: one surface per idea`).
+- [ ] **Step 2: Fájlonként, a Review mintája szerint**
 
----
+Minden `GroupBox` helyére: fejléc (`AstroType.sectionTitle`) + `AstroTokens.Spacing` térköz, és ahol tényleg felület kell, ott `surface` + `ConcentricRectangle`, **nem** doboz a dobozban. Fájlonként fordíts és futtasd a suite-ot.
+
+- [ ] **Step 3: Az egységes méretek**
+
+A tulajdonos kilógó margókat is látott. A söprés után **nézd meg, marad-e olyan hely, ahol nem `AstroTokens.Spacing`-ből jön a térköz vagy nem `CornerRadius`-ból a sarok** — és ha igen, jelentsd, ne találgass új értékeket.
+
+- [ ] **Step 4: Build, telepítés, és a tulajdonos szeme**
+
+Ez a task azzal zárul, hogy a tulajdonos megnézi. A 6. task már megírta neki, mit figyeljen; itt az a kérdés, hogy **most látszik-e az üveg** azokon az oldalakon, ahol eddig nem, és **egységesek-e a méretek**.
+
+```bash
+git commit -m "fix: remove the opaque layer that was hiding the design"
+```
 
 ## Task 8: Mozgás — állapotváltozás, nem hangulat
 
