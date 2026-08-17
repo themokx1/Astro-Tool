@@ -60,14 +60,39 @@ struct ArchiveTaskQueryTests {
 
         let duplicates = try #require(tasks.first { $0.kind == .duplicateContent })
         #expect(duplicates.bytes == 500)
-        // Task 10 prerequisite: the duplicate card no longer promises a
-        // distinct comparison surface (`.compareDuplicates`, deleted) --
-        // it resolves to the same `.previewQuarantine` action every other
-        // reclaimable card uses, with its own correct category.
-        #expect(duplicates.action == .previewQuarantine(categories: ["duplicate-content"]))
+        // Task 3 (wave 3): exactly one finding -- the direct, one-hop
+        // Finder reveal, not a detour through a one-row list. Reclaim kinds
+        // no longer get an unconditional `.previewQuarantine` regardless of
+        // count (see `ArchiveTaskAction.showFindings`'s own doc comment).
+        #expect(duplicates.action == .revealInFinder(path: "dupe.fit"))
 
         let misplaced = try #require(tasks.first { $0.kind == .misplacedCalibration })
         #expect(misplaced.severity == .error)
+        #expect(misplaced.action == .revealInFinder(path: "flats/x.tif"))
+    }
+
+    @Test("A card with more than one finding routes to its own findings list instead of one arbitrary path")
+    func multipleFindingsRouteToShowFindings() async throws {
+        let index = try Self.makeIndexDatabase()
+        let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).summary().tasks
+
+        // The standard fixture's 'residue' category has two findings
+        // (r_pp_a.fit, r_pp_b.fit) -- this is Task 3's own fix for the wave
+        // 1 bug: `.revealInFinder` used to hand back only the first of the
+        // two, silently dropping the other.
+        let intermediates = try #require(tasks.first { $0.kind == .intermediateFiles })
+        #expect(intermediates.action == .showFindings(kind: .intermediateFiles))
+    }
+
+    @Test("A card with exactly one finding still reveals it directly in Finder")
+    func singleFindingRevealsDirectly() async throws {
+        let index = try Self.makeIndexDatabase()
+        let tasks = try await ArchiveTaskQuery(indexDatabaseForTesting: index).summary().tasks
+
+        // 'calib-in-wrong-dir' has exactly one finding in the standard
+        // fixture -- a detour through a one-row list would be worse, not
+        // better, so this stays the direct Finder reveal.
+        let misplaced = try #require(tasks.first { $0.kind == .misplacedCalibration })
         #expect(misplaced.action == .revealInFinder(path: "flats/x.tif"))
     }
 
@@ -274,5 +299,90 @@ struct ArchiveTaskQueryTests {
 
         let summary = try await ArchiveTaskQuery(indexDatabaseForTesting: index).summary()
         #expect(summary.uncovered == .none)
+    }
+
+    // MARK: - findings(for:) -- Task 3 (wave 3): the full set behind a card
+
+    @Test("findings(for:) returns every matching finding, not capped at summary()'s evidence limit")
+    func findingsReturnsEveryFindingUncapped() async throws {
+        let index = try Self.makeIndexDatabase()
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("""
+            INSERT INTO files VALUES('r_pp_c.fit', 10, 'M42', '2026-01-05', 'other', 'sessions', 0),
+                                    ('r_pp_d.fit', 10, 'M42', '2026-01-05', 'other', 'sessions', 0);
+            INSERT INTO findings VALUES(5, 2, 'suspicious', 'residue', 'r_pp_c.fit', 'leftover'),
+                                       (6, 2, 'suspicious', 'residue', 'r_pp_d.fit', 'leftover');
+            """)
+
+        let findings = try await ArchiveTaskQuery(indexDatabaseForTesting: index).findings(for: .intermediateFiles)
+        #expect(findings.count == 4, "summary()'s own evidenceLimit of 3 must not leak into this method")
+        #expect(Set(findings.map(\.path)) == ["r_pp_a.fit", "r_pp_b.fit", "r_pp_c.fit", "r_pp_d.fit"])
+    }
+
+    @Test("findings(for:) carries each finding's own byte size")
+    func findingsCarryTheirOwnBytes() async throws {
+        let index = try Self.makeIndexDatabase()
+        let findings = try await ArchiveTaskQuery(indexDatabaseForTesting: index).findings(for: .intermediateFiles)
+        let a = try #require(findings.first { $0.path == "r_pp_a.fit" })
+        #expect(a.bytes == 1000)
+    }
+
+    @Test("findings(for:) pools every category a kind maps to")
+    func findingsPoolEveryCategoryForAKind() async throws {
+        let index = try Self.makeIndexDatabase()
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("""
+            INSERT INTO files VALUES('flats/y.tif', 40, 'C2025', '2026-04-18', 'other', 'sessions', 0);
+            INSERT INTO findings VALUES(21, 2, 'sure_error', 'orphan-calib-dir', 'flats/y.tif', 'orphan');
+            """)
+
+        // .misplacedCalibration maps BOTH 'calib-in-wrong-dir' and
+        // 'orphan-calib-dir' -- the same pooling `summary()` already does,
+        // now exercised for the full-detail query too.
+        let findings = try await ArchiveTaskQuery(indexDatabaseForTesting: index).findings(for: .misplacedCalibration)
+        #expect(Set(findings.map(\.path)) == ["flats/x.tif", "flats/y.tif"])
+    }
+
+    @Test("findings(for:) excludes findings with no usable path")
+    func findingsExcludeEmptyPaths() async throws {
+        let index = try Self.makeIndexDatabase()
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("""
+            INSERT INTO findings VALUES(20, 2, 'sure_error', 'placeholder-name', '', 'no path to open');
+            """)
+
+        let findings = try await ArchiveTaskQuery(indexDatabaseForTesting: index).findings(for: .brokenNames)
+        #expect(findings.isEmpty)
+    }
+
+    @Test("findings(for:) returns nothing for a kind with no findingCategories")
+    func findingsReturnsNothingForAuditNeverRunKind() async throws {
+        let index = try Self.makeIndexDatabase()
+        let findings = try await ArchiveTaskQuery(indexDatabaseForTesting: index).findings(for: .auditNeverRun)
+        #expect(findings.isEmpty)
+    }
+
+    @Test("findings(for:) returns nothing before any audit has run")
+    func findingsReturnsNothingBeforeAnyAudit() async throws {
+        let index = try Self.makeIndexDatabase(withFindings: false)
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("DELETE FROM runs WHERE kind = 'audit';")
+
+        let findings = try await ArchiveTaskQuery(indexDatabaseForTesting: index).findings(for: .intermediateFiles)
+        #expect(findings.isEmpty)
+    }
+
+    @Test("findings(for:) reads the latest audit and verify runs independently, same as summary()")
+    func findingsReadLatestRunsIndependently() async throws {
+        let index = try Self.makeIndexDatabase()
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("INSERT INTO runs VALUES(4,'audit',4000.0);")
+        try db.exec("INSERT INTO findings VALUES(13, 4, 'suspicious', 'residue', 'r_pp_a.fit', 'leftover');")
+
+        let corruption = try await ArchiveTaskQuery(indexDatabaseForTesting: index).findings(for: .corruption)
+        #expect(corruption.map(\.path) == ["rot.fit"], "the verify run's findings survive a newer audit run")
+
+        let intermediates = try await ArchiveTaskQuery(indexDatabaseForTesting: index).findings(for: .intermediateFiles)
+        #expect(intermediates.count == 1, "only the LATEST audit run's residue findings count")
     }
 }

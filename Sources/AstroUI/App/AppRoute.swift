@@ -82,6 +82,14 @@ public enum ContentRoute: Hashable, Codable, Sendable {
     /// Wave 4 Task 1: the sensor-profiles workspace as a route (was nested
     /// inside `HealthView`'s own `.overlay`).
     case sensorProfiles
+    /// Task 3 (wave 3): the destination behind a task card's own primary
+    /// button once its finding count is greater than one -- see
+    /// `ArchiveTaskAction.showFindings`'s own doc comment for the wave 1 bug
+    /// this replaces. Carries the raw `ArchiveTaskKind.rawValue`, not the
+    /// enum itself, mirroring `.project(String)`/`.night(String)`'s own
+    /// raw-identifier shape -- this keeps `ArchiveTaskKind` free of a
+    /// `Codable` conformance it would otherwise only need for this one route.
+    case archiveTaskDetail(String)
 
     public var primarySection: PrimarySection {
         switch self {
@@ -89,7 +97,7 @@ public enum ContentRoute: Hashable, Codable, Sendable {
         case .projects, .project, .projectSeries, .result, .review, .resultsWorkspace: .projects
         case .nights, .night, .reviewFrame: .nights
         case .planning, .savedTargets: .planning
-        case .library, .health, .calibration, .conversion, .cleanup, .sensorProfiles: .library
+        case .library, .health, .calibration, .conversion, .cleanup, .sensorProfiles, .archiveTaskDetail: .library
         case .insights: .insights
         }
     }

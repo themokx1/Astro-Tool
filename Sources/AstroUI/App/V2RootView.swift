@@ -1088,6 +1088,8 @@ private struct DetailHost: View {
         case .conversion: "Organize Session"
         case .cleanup: "Cleanup"
         case .sensorProfiles: "Sensor Profiles"
+        case .archiveTaskDetail(let rawKind):
+            ArchiveTaskKind(rawValue: rawKind).map(ArchiveTaskPresentation.titleText(for:)) ?? "Findings"
         }
     }
 
@@ -1372,6 +1374,20 @@ private struct DetailHost: View {
             } else {
                 noLibraryPlaceholder(title: "Sensor Profiles", systemImage: "sensor")
             }
+        case .archiveTaskDetail(let rawKind):
+            if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback,
+               let kind = ArchiveTaskKind(rawValue: rawKind) {
+                ArchiveTaskDetailView(
+                    rootURL: rootURL,
+                    kind: kind,
+                    openQuarantinePreview: { categories in
+                        router.pendingCleanupCategories = categories.isEmpty ? nil : categories
+                        router.push(.cleanup)
+                    }
+                )
+            } else {
+                noLibraryPlaceholder(title: "Findings", systemImage: "list.bullet")
+            }
         }
     }
 
@@ -1409,6 +1425,7 @@ private struct DetailHost: View {
                 router.pendingCleanupCategories = categories.isEmpty ? nil : categories
                 router.push(.cleanup)
             },
+            openTaskDetail: { kind in router.push(.archiveTaskDetail(kind.rawValue)) },
             runAudit: runAudit,
             store: archiveStore
         )

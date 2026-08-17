@@ -19,7 +19,11 @@ public enum ArchiveTaskKind: String, CaseIterable, Sendable {
     case auditNeverRun
 
     /// The raw `findings.category` values that roll up into this card.
-    var findingCategories: [String] {
+    /// `public`: `ArchiveTaskDetailView` (AstroUI) reads this directly to
+    /// build its own bulk quarantine-preview action's categories, keeping
+    /// this mapping the single source of truth rather than a second copy
+    /// re-derived at the UI layer.
+    public var findingCategories: [String] {
         switch self {
         case .intermediateFiles: ["residue"]
         case .duplicateContent: ["duplicate-content"]
@@ -29,6 +33,22 @@ public enum ArchiveTaskKind: String, CaseIterable, Sendable {
         case .corruption: ["content-changed"]
         case .unverified: ["modified-in-place", "verify-read-error"]
         case .auditNeverRun: []
+        }
+    }
+
+    /// Task 3 (wave 3): whether `ArchiveTaskDetailView`'s own "view all"
+    /// list shows a bulk quarantine-preview action for this kind, in
+    /// addition to each row's own reveal-in-Finder button. `true` only for
+    /// the two reclaim kinds -- regenerable output and byte-identical
+    /// copies -- where a quarantine-then-apply pass is a safe, reversible-
+    /// until-applied action. `false` for every error kind: there is no
+    /// honest bulk response to invent for a checksum mismatch or a broken
+    /// folder name, whose only real answer is "go look at it" (see the
+    /// plan's own instruction not to invent a destructive action here).
+    public var supportsBulkQuarantinePreview: Bool {
+        switch self {
+        case .intermediateFiles, .duplicateContent: true
+        case .misplacedCalibration, .brokenNames, .corruption, .unverified, .auditNeverRun: false
         }
     }
 }
@@ -59,6 +79,15 @@ public enum ArchiveTaskAction: Equatable, Sendable {
     /// own prerequisite note in the plan for why.
     case previewQuarantine(categories: [String])
     case revealInFinder(path: String)
+    /// Task 3 (wave 3): more than one finding no longer hands back one
+    /// arbitrary path -- this is the fix for the wave 1 design error
+    /// `revealInFinder`'s own doc comment above describes ("33 kalibráció
+    /// rossz mappában" opened whichever finding happened to sort first and
+    /// silently ignored the other 32). Names its own `kind` so the UI can
+    /// push `ArchiveTaskDetailView`, which loads every one of that kind's
+    /// findings itself via `ArchiveTaskQuery.findings(for:)` rather than
+    /// this action carrying them.
+    case showFindings(kind: ArchiveTaskKind)
     case runAudit
     /// Only ever produced internally, and filtered out before `tasks()`
     /// returns -- a card with no action must not reach the UI. Deliberately
@@ -125,6 +154,25 @@ public struct UncoveredFindings: Equatable, Sendable {
         self.count = count
         self.bytes = bytes
         self.categories = categories
+    }
+}
+
+/// One raw finding behind a task card, carrying its own real path -- what
+/// `ArchiveTask.evidencePaths` deliberately could not, since that array is
+/// capped at `ArchiveTaskQuery.evidenceLimit` (built to illustrate a card,
+/// not to back a list). Fetched only by `ArchiveTaskQuery.findings(for:)`,
+/// on demand when a card's own "view all" route is actually pushed -- never
+/// as part of `summary()` itself, so a 3 231-finding card costs nothing
+/// extra until its own detail page is opened.
+public struct ArchiveFinding: Equatable, Sendable, Identifiable {
+    public let id: Int64
+    public let path: String
+    public let bytes: Int64
+
+    public init(id: Int64, path: String, bytes: Int64) {
+        self.id = id
+        self.path = path
+        self.bytes = bytes
     }
 }
 
@@ -261,15 +309,59 @@ public struct ArchiveTaskQuery: Sendable {
         for kind: ArchiveTaskKind, entry: (files: Int, bytes: Int64, paths: [String])
     ) -> ArchiveTaskAction {
         switch kind {
-        case .intermediateFiles, .duplicateContent:
-            .previewQuarantine(categories: kind.findingCategories)
-        case .misplacedCalibration, .brokenNames, .corruption, .unverified:
-            // Honest gate: with no concrete path there is nothing to open,
-            // so no card is produced at all (see this type's doc comment).
-            entry.paths.first.map { ArchiveTaskAction.revealInFinder(path: $0) } ?? .unavailable
         case .auditNeverRun:
-            .runAudit
+            return .runAudit
+        case .intermediateFiles, .duplicateContent, .misplacedCalibration, .brokenNames, .corruption, .unverified:
+            // Task 3 (wave 3): more than one finding routes to this kind's
+            // own "view all" list instead of handing back one arbitrary
+            // path -- see `ArchiveTaskAction.showFindings`'s own doc
+            // comment. Exactly one finding keeps the direct, one-hop Finder
+            // reveal: a detour through a one-row list would be worse, not
+            // better. Honest gate either way: with no concrete path at all
+            // there is nothing to open, so no card is produced at all (see
+            // this type's own doc comment).
+            if entry.files > 1 { return .showFindings(kind: kind) }
+            return entry.paths.first.map { ArchiveTaskAction.revealInFinder(path: $0) } ?? .unavailable
         }
+    }
+
+    /// Every one of `kind`'s own findings from the latest audit and verify
+    /// runs -- unlike `summary()`'s own `ArchiveTask.evidencePaths`, this is
+    /// never capped at `evidenceLimit`. Backs `ArchiveTaskDetailView`, the
+    /// route `ArchiveTaskAction.showFindings` pushes to. Findings with no
+    /// usable path are dropped, same honesty gate `summary()` applies before
+    /// ever handing a path to Finder.
+    public func findings(for kind: ArchiveTaskKind) async throws -> [ArchiveFinding] {
+        let categories = kind.findingCategories
+        guard !categories.isEmpty else { return [] }
+
+        let db = try SQLiteDB(readOnlyPath: indexDatabase.standardizedFileURL.path)
+        guard try Self.hasAuditRun(db: db) else { return [] }
+
+        let placeholders = categories.map { _ in "?" }.joined(separator: ", ")
+        var results: [ArchiveFinding] = []
+        try db.query(
+            """
+            SELECT d.id, d.path, COALESCE(f.size, 0)
+            FROM findings d LEFT JOIN files f ON f.path = d.path
+            WHERE d.category IN (\(placeholders))
+              AND d.run_id IN (
+                    (SELECT MAX(id) FROM runs WHERE kind = 'audit'),
+                    (SELECT MAX(id) FROM runs WHERE kind = 'verify')
+                  )
+            ORDER BY d.id;
+            """,
+            bind: categories.map { SQLiteValue.text($0) }
+        ) { row in
+            let path = row.string(1) ?? ""
+            guard !path.isEmpty else { return }
+            results.append(ArchiveFinding(
+                id: row.int64(0) ?? 0,
+                path: path,
+                bytes: row.int64(2) ?? 0
+            ))
+        }
+        return results
     }
 
     private static func hasAuditRun(db: SQLiteDB) throws -> Bool {

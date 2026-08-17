@@ -1083,3 +1083,32 @@
 // (interpolated `Text(...)` literal), listed here per the script's own
 // `--missing` report.
 "Duplicate frames in the index were counted once — raw index total before dedup: %@" = "A duplikált light-keretek az indexben csak egyszer számítanak — nyers index-összeg dedup előtt: %@";
+
+// Owner feedback wave 3, Task 3: "A kártya vigyen valahová, ne egy
+// útvonalra" -- a task card with more than one finding used to send
+// `revealInFinder(path:)` one arbitrary path (the wave 1 design error --
+// see `ArchiveTaskAction.showFindings`'s own doc comment). Its own primary
+// button now pushes `ArchiveTaskDetailView`, listing every one of that
+// kind's findings with its own path and its own reveal-in-Finder button.
+//
+// Auto-extracted (interpolated `Text(...)`/`Label(...)`/`TableColumn(...)`
+// literals), listed here per the script's own `--missing` report:
+"%@ finding(s) · %@" = "%@ találat · %@";
+"Could not read findings" = "Nem sikerült beolvasni a találatokat";
+"Nothing here anymore" = "Itt már nincs semmi";
+"A newer check no longer finds anything of this kind." = "Egy újabb ellenőrzés már nem talál ilyet.";
+"Size" = "Méret";
+//
+// Hand-added, invisible to the extraction script: `ArchiveTaskCard
+// .actionTitle` is a `switch` over `task.action` (same localization-safety
+// shape `ArchiveTaskPresentation`'s own header documents); `WorkspaceTablePage
+// (subtitle:)` is a named parameter on a custom initializer, not one of the
+// script's covered constructs; `ProgressView(...)` is not covered either
+// (same gap `ArchiveView.swift`'s own "Reading the archive…" entry
+// documents); `V2RootView.breadcrumbLabel`'s fallback is a plain `String`
+// switch.
+"View %@ Files" = "%@ fájl megtekintése";
+"No Action Available" = "Nincs elérhető művelet";
+"Every finding behind this card, each with its own path." = "Ennek a kártyának minden találata, mindegyik a saját elérési útjával.";
+"Loading findings…" = "Találatok betöltése…";
+"Findings" = "Találatok";

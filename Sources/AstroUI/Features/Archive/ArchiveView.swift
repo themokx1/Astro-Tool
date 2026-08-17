@@ -46,6 +46,12 @@ public struct ArchiveView: View {
     /// before pushing `.cleanup` -- this view has no `router` of its own to
     /// do that itself.
     let openQuarantinePreview: (Set<String>) -> Void
+    /// Task 3 (wave 3): pushes `ArchiveTaskDetailView` for a card whose own
+    /// `ArchiveTaskAction.showFindings(kind:)` fired -- i.e. its finding
+    /// count is greater than one, so its own primary button can no longer
+    /// honestly hand back a single arbitrary path (see that action's own
+    /// doc comment for the wave 1 bug this replaces).
+    let openTaskDetail: (ArchiveTaskKind) -> Void
     /// Runs the read-only audit. Never called directly by this view for
     /// "Run Check" task-card presses without going through this same
     /// closure -- there is exactly one audit entry point, matching the
@@ -69,6 +75,7 @@ public struct ArchiveView: View {
         rescan: @escaping () -> Void,
         convertSession: @escaping () -> Void,
         openQuarantinePreview: @escaping (Set<String>) -> Void,
+        openTaskDetail: @escaping (ArchiveTaskKind) -> Void,
         runAudit: @escaping (AuditRunMode) -> Void,
         store: ArchiveStore = ArchiveStore()
     ) {
@@ -78,6 +85,7 @@ public struct ArchiveView: View {
         self.rescan = rescan
         self.convertSession = convertSession
         self.openQuarantinePreview = openQuarantinePreview
+        self.openTaskDetail = openTaskDetail
         self.runAudit = runAudit
         self.store = store
     }
@@ -288,6 +296,8 @@ public struct ArchiveView: View {
             openQuarantinePreview(Set(categories))
         case .revealInFinder(let path):
             revealInFinder(relativePath: path)
+        case .showFindings(let kind):
+            openTaskDetail(kind)
         case .runAudit:
             runAudit(.full)
         case .unavailable:

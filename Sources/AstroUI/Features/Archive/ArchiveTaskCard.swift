@@ -78,17 +78,12 @@ struct ArchiveTaskCard: View {
     // The type must be spelled out explicitly on every one of these three
     // properties, or a ternary/`??` inside a branch can silently widen the
     // inferred type back to `String`.
-    private var title: LocalizedStringKey {
-        switch task.kind {
-        case .intermediateFiles: "Stacking leftovers"
-        case .duplicateContent: "Byte-identical copies"
-        case .misplacedCalibration: "Calibration in the wrong folder"
-        case .brokenNames: "Folder names that break scanning"
-        case .corruption: "Checksum mismatch"
-        case .unverified: "Could not be confirmed"
-        case .auditNeverRun: "Not checked yet"
-        }
-    }
+    //
+    // Task 3 (wave 3): the switch itself now lives in `ArchiveTaskPresentation`,
+    // shared with `ArchiveTaskDetailView`'s own `navigationTitle` and the
+    // breadcrumb label, so the card and its own "view all" destination can
+    // never show two different names for the same kind.
+    private var title: LocalizedStringKey { ArchiveTaskPresentation.title(for: task.kind) }
 
     private var explanation: LocalizedStringKey {
         switch task.kind {
@@ -115,16 +110,24 @@ struct ArchiveTaskCard: View {
         }
     }
 
+    // Task 3 (wave 3): worded by what the action ITSELF does, not by kind --
+    // "Megjelenítés a Finderben" for 33 items was a false promise (the
+    // owner's own words: a single button cannot open 33 items in Finder).
+    // Switches on `task.action`, not `task.kind`, so the label always
+    // matches what tapping the button actually does: a kind whose card
+    // currently has more than one finding says so in the count, a kind with
+    // exactly one still says it opens Finder directly.
     private var actionTitle: LocalizedStringKey {
-        switch task.kind {
-        // Task 10 prerequisite: both cards resolve to the same
-        // `.previewQuarantine` action now (see `ArchiveTaskAction`'s own
-        // doc comment), so both get the button label that matches what
-        // actually happens -- "Compare Copies…" promised a surface this
-        // wave never built.
-        case .intermediateFiles, .duplicateContent: "Preview Quarantine…"
-        case .misplacedCalibration, .brokenNames, .corruption, .unverified: "Reveal in Finder"
-        case .auditNeverRun: "Run Check"
+        switch task.action {
+        case .previewQuarantine: "Preview Quarantine…"
+        case .revealInFinder: "Reveal in Finder"
+        case .showFindings: "View \(task.affectedFileCount.formatted()) Files"
+        case .runAudit: "Run Check"
+        // Gated out before a card ever reaches this view
+        // (`ArchiveTaskQueryTests.everyCardIsActionable`) -- reachable here
+        // only if that gate regresses, so this string is never actually
+        // shown to anyone.
+        case .unavailable: "No Action Available"
         }
     }
 }

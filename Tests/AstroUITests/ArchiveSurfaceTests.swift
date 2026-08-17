@@ -235,6 +235,67 @@ struct ArchiveViewSurfaceTests {
         // of this page had.
         #expect(source.contains("let openQuarantinePreview: (Set<String>) -> Void"))
     }
+
+    // MARK: Task 3 (wave 3) -- the card's own action forwards to the
+    // "view all" route, not a bare Finder reveal, once its finding count is
+    // greater than one.
+
+    @Test("perform(_:) forwards .showFindings to openTaskDetail with the action's own kind")
+    func showFindingsForwardsToOpenTaskDetail() throws {
+        let source = try archiveSource()
+        #expect(source.contains("case .showFindings(let kind):"))
+        #expect(source.contains("openTaskDetail(kind)"))
+        #expect(source.contains("let openTaskDetail: (ArchiveTaskKind) -> Void"))
+    }
+}
+
+/// Literal source-text checks for `ArchiveTaskDetailView.swift`, following
+/// this file's own established "surface test" convention -- see
+/// `ArchiveViewSurfaceTests`'s own header.
+struct ArchiveTaskDetailViewSurfaceTests {
+    private var repositoryRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    private func source() throws -> String {
+        try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Features/Archive/ArchiveTaskDetailView.swift"),
+            encoding: .utf8
+        )
+    }
+
+    @Test("The findings table is never nested inside a ScrollView -- WorkspaceTablePage owns the bounded height")
+    func tableIsNeverInsideAScrollView() throws {
+        let text = try source()
+        #expect(!text.contains("ScrollView"), "a Table inside a ScrollView is given unbounded height and never virtualizes -- see WorkspaceTablePage's own doc comment")
+        #expect(text.contains("WorkspaceTablePage"))
+        #expect(text.contains("Table(store.findings)"))
+    }
+
+    @Test("Findings load through the generation-guarded store, never in a computed getter or body")
+    func findingsLoadThroughTheStore() throws {
+        let text = try source()
+        #expect(text.contains("@Bindable var store: ArchiveTaskDetailStore"))
+        #expect(text.contains(".task { await store.load(rootURL: rootURL, kind: kind) }"))
+    }
+
+    @Test("The bulk quarantine action is gated by the kind's own capability, not hardcoded per view")
+    func bulkActionIsGatedByKindCapability() throws {
+        let text = try source()
+        #expect(text.contains("kind.supportsBulkQuarantinePreview"))
+        #expect(text.contains("openQuarantinePreview(Set(kind.findingCategories))"))
+    }
+
+    @Test("Each row carries its own reveal-in-Finder action, validated the same way ArchiveView's own reveal is")
+    func eachRowRevealsItsOwnPath() throws {
+        let text = try source()
+        #expect(text.contains("revealInFinder(path: finding.path)"))
+        #expect(text.contains("candidate.path.hasPrefix(root.path)"), "must confirm the resolved path never escapes the library root")
+        #expect(text.contains("FileManager.default.fileExists(atPath: candidate.path)"))
+    }
 }
 
 private extension ArchiveMapSnapshot {
