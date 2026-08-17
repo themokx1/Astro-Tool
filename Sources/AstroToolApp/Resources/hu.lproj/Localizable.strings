@@ -1247,3 +1247,32 @@
 "Calibration master candidate" = "Kalibrációs master-jelölt";
 "Processed output" = "Feldolgozott kimenet";
 "Classified as" = "Besorolás";
+
+/* W2-10 (2026-08-17, corners/glass/localization polish): HealthView's
+   category picker used to render `Text(value.rawValue.capitalized)` --
+   LibraryHealthCategory's own English case name, string-capitalized -- which
+   never localizes (a plain String selects Text's verbatim overload). Fixed
+   by LibraryHealthCategory.displayLabel (HealthView.swift), a switch
+   returning LocalizedStringKey and therefore invisible to
+   scripts/extract-localizable-strings.swift, so its entries are hand-added
+   here. "Duplicates" and "Organization" already had entries above (reused
+   as-is); "Flat"/"Dark"/"Bias" are deliberately NOT given entries -- this
+   file's own glossary (top of file) already states "light/dark/flat/bias
+   and stack stay English", so the intended behavior is the literal-fallback
+   this file documents for a key with no entry, not a translation. */
+"Integrity" = "Integritás";
+"Storage" = "Tárhely";
+
+/* W2-10 (2026-08-17): three more switch/function-returned
+   LocalizedStringKey leaks in V2SettingsView.swift -- effectiveSourceCaption
+   and catalogStatusText (the Settings screen's own extended-catalog SEARCH
+   feature, which downloads SIMBAD/VizieR's target catalog) and
+   removalTitle (the equipment filter list's removal confirmation). None of
+   these were ever a literal Text("...") argument, so
+   scripts/extract-localizable-strings.swift cannot see them; hand-added
+   here the same way every other switch-returned key in this file is. */
+"From this library's configured observing site." = "A könyvtár beállított megfigyelési helyéről.";
+"Derived automatically from this library's own scanned FITS headers -- no site is explicitly configured." = "Automatikusan származtatva a könyvtár beolvasott FITS-headerjeiből -- nincs kifejezetten beállítva megfigyelési hely.";
+"Not downloaded yet — Planning uses the built-in 217-object catalog." = "Még nincs letöltve — a Tervezés a beépített 217 objektumos katalógust használja.";
+"%lld cached targets, updated %@." = "%lld gyorsítótárazott célpont, frissítve: %@.";
+"Remove \"%@\"?" = "„%@” eltávolítása?";

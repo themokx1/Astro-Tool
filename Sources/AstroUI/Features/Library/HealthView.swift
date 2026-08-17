@@ -160,7 +160,7 @@ public struct HealthView: View {
                 Picker("Category", selection: $category) {
                     Text("All findings").tag(LibraryHealthCategory?.none)
                     ForEach(LibraryHealthCategory.allCases, id: \.rawValue) { value in
-                        Text(value.rawValue.capitalized).tag(Optional(value))
+                        Text(value.displayLabel).tag(Optional(value))
                     }
                 }
                 .pickerStyle(.segmented)
@@ -519,4 +519,30 @@ private struct VerifyIntegritySheet: View {
 
 private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
+/// W2-10 (2026-08-17, corners/glass/localization polish): the category
+/// picker used to render `Text(value.rawValue.capitalized)` -- `rawValue` is
+/// `LibraryHealthQuery.swift`'s own English enum case name ("flat", "dark",
+/// "bias", ...), and `.capitalized` returns a plain `String`, which routes
+/// `Text` to its verbatim `StringProtocol` overload instead of the
+/// translating `LocalizedStringKey` one. Same defect, same fix, as
+/// `SkyVerdictKind.displayLabel` (`PlanningStore.swift`) and
+/// `PlanningFit.displayLabel`: map the engine's *case* -- never a
+/// string-transformed version of its raw value -- to a `LocalizedStringKey`
+/// at the view layer, by hand, since a `switch` returning a
+/// `LocalizedStringKey` is invisible to `scripts/extract-localizable-strings
+/// .swift`.
+extension LibraryHealthCategory {
+    var displayLabel: LocalizedStringKey {
+        switch self {
+        case .flat: "Flat"
+        case .dark: "Dark"
+        case .bias: "Bias"
+        case .storage: "Storage"
+        case .integrity: "Integrity"
+        case .duplicates: "Duplicates"
+        case .organization: "Organization"
+        }
+    }
 }

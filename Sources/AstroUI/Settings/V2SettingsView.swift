@@ -194,7 +194,14 @@ private struct LocationSettingsView: View {
         .accessibilityIdentifier("v2.settings.site")
     }
 
-    private func effectiveSourceCaption(_ source: SiteSettingsStore.EffectiveSiteSource) -> String {
+    // W2-10 (2026-08-17): this used to return a plain `String`, which routes
+    // `Text(effectiveSourceCaption(...))` to its verbatim `StringProtocol`
+    // overload and never translates -- same defect class as `HealthView`'s
+    // `rawValue.capitalized` leak, just shaped as a `switch`-returning
+    // function rather than a computed property. `LocalizedStringKey`
+    // entries hand-added to hu.lproj (invisible to the extraction script for
+    // the same reason every other switch-returned key in this codebase is).
+    private func effectiveSourceCaption(_ source: SiteSettingsStore.EffectiveSiteSource) -> LocalizedStringKey {
         switch source {
         case .configured: "From this library's configured observing site."
         case .derivedFromFITS: "Derived automatically from this library's own scanned FITS headers -- no site is explicitly configured."
@@ -272,7 +279,17 @@ private struct ExtendedCatalogSettingsSection: View {
         }
     }
 
-    private var catalogStatusText: String {
+    // W2-10 (2026-08-17): same fix as `effectiveSourceCaption` above -- a
+    // plain `String` never translates through `Text(catalogStatusText)`.
+    // The extended target catalog is this settings screen's own SEARCH
+    // feature (it downloads SIMBAD/VizieR's target catalog so Planning can
+    // look targets up offline), which is why its status line was one of the
+    // two leaks reported for this file. Hand-added to hu.lproj: the
+    // interpolated branch's placeholders follow `scripts/extract
+    // -localizable-strings.swift`'s own inference (`Int` -> `%lld`,
+    // `.formatted(` -> `%@`), the same convention already used for every
+    // other hand-added interpolated key in that file.
+    private var catalogStatusText: LocalizedStringKey {
         guard let count = store.cachedTargetCount, let fetchedAt = store.lastFetchedAt else {
             return "Not downloaded yet — Planning uses the built-in 217-object catalog."
         }
@@ -459,7 +476,13 @@ private struct EquipmentEvaluationSettingsView: View {
         }.formStyle(.grouped)
     }
 
-    private func removalTitle(for filter: EquipmentFilter) -> String {
+    // W2-10 (2026-08-17): same String-never-translates defect as
+    // `effectiveSourceCaption`/`catalogStatusText` above, for the equipment
+    // filter list's own confirmation dialog title. `name` is genuine DATA
+    // (a filter's manufacturer/model), interpolated into the sentence rather
+    // than through it, matching every other hand-added interpolated key in
+    // this codebase.
+    private func removalTitle(for filter: EquipmentFilter) -> LocalizedStringKey {
         let name = [filter.manufacturer, filter.model].filter { !$0.isEmpty }.joined(separator: " ")
         return "Remove \"\(name)\"?"
     }
