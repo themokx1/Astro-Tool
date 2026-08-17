@@ -90,11 +90,15 @@ struct V2PolishSurfaceTests {
         #expect(source.contains("case .series"))
         #expect(source.contains("SeriesInspector("))
 
-        // result: a provenance summary (the Results workspace's own
-        // lineage vocabulary), not just the raw result identifier.
+        // result: W4-6 (owner decision) removed the lineage-vocabulary
+        // provenance panel this used to render -- it read the `results`/
+        // `lineage_edges` tables, which no writer anywhere in the product
+        // ever populated and which schema v8 drops. `.result` now renders
+        // the same honest, named placeholder as every other selection this
+        // window cannot resolve, rather than a panel that could never have
+        // shown anything real.
         #expect(source.contains("case .result"))
-        #expect(source.contains("ResultsQuery("))
-        #expect(source.contains("Lineage"))
+        #expect(source.contains("\"Result\", systemImage:"))
 
         // Nothing selected still gets a quiet, honest empty state.
         #expect(source.contains("ContentUnavailableView"))

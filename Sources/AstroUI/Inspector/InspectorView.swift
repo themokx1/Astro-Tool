@@ -6,11 +6,11 @@ import SwiftUI
 /// switches on the router's current selection and renders real content
 /// sourced from the stores already open in this window (`ProjectsStore`/
 /// `NightsStore`/`ReviewStore`), the same data their own detail views
-/// already show. No new queries are introduced here except `ResultsQuery`
-/// for the result case, which -- like every store's own `open()` -- simply
-/// calls an existing query type against the already-open `MetadataStore`;
-/// no result-lineage store exists anywhere in the environment to reuse
-/// instead (`ResultsView` keeps its own `ResultsStore` entirely private).
+/// already show. W4-6 (owner decision) removed the `.result` case's own
+/// query: it read the two lineage tables, which no writer anywhere in the
+/// product ever populated and which schema v8 drops. `.result` now renders
+/// the same honest placeholder as `.frame`, a structurally-possible-but-
+/// unreachable selection.
 ///
 /// Every branch that cannot find real data for its selection (the
 /// project/night/series/result string doesn't resolve against what's
@@ -108,8 +108,8 @@ public struct InspectorView: View {
             seriesPanel(rawID)
         case .frame:
             framePanel()
-        case .result(let rawID):
-            resultPanel(rawID)
+        case .result:
+            resultPanel()
         }
     }
 
@@ -183,11 +183,19 @@ public struct InspectorView: View {
     }
 
     @ViewBuilder
-    private func resultPanel(_ rawID: String) -> some View {
-        ResultInspectorPanel(
-            resultIDString: rawID,
-            metadataStore: projectsStore.metadataStore,
-            projectID: projectsStore.selectedProjectID
+    private func resultPanel() -> some View {
+        // W4-6 (owner decision): the two lineage tables this panel used to
+        // read (via `ResultInspectorPanel`/`ResultsQuery.
+        // snapshot(projectID:)`) had no writer anywhere in the product and
+        // were dropped in schema v8 -- the owner stacks in Siril and selects
+        // there by hand; this app's job is triage and archiving, not
+        // lineage. `.result` selections are otherwise unreachable today
+        // (global search no longer produces them either), but the case
+        // itself stays on `LibrarySelection` for now, so this renders an
+        // honest placeholder rather than a removed panel type.
+        unavailable(
+            "Result", systemImage: "square.stack.3d.up",
+            message: "Result provenance isn't tracked -- stacking and selection happen in Siril."
         )
     }
 
@@ -390,7 +398,7 @@ private struct SeriesSummaryPanel: View {
 /// (see `NightInspectorPanel`'s own comment above) -- these three eagerly
 /// resolve the same way `SeriesPassband.localizedText`/
 /// `NightRow.TriageState.localizedText` do, for the enums this file's
-/// `SeriesSummaryPanel`/`ResultProvenancePanel` render through `LabeledContent`.
+/// `SeriesSummaryPanel` renders through `LabeledContent`.
 extension SeriesSensorMode {
     var localizedText: String {
         switch self {
@@ -402,108 +410,3 @@ extension SeriesSensorMode {
     }
 }
 
-extension ResultRole {
-    var localizedText: String {
-        switch self {
-        case .intermediate: NSLocalizedString("Intermediate", bundle: .main, comment: "")
-        case .starless: NSLocalizedString("Starless", bundle: .main, comment: "")
-        case .mask: NSLocalizedString("Mask", bundle: .main, comment: "")
-        case .final: NSLocalizedString("Final", bundle: .main, comment: "")
-        }
-    }
-}
-
-extension ResultKind {
-    var localizedText: String {
-        switch self {
-        case .stack: NSLocalizedString("Stack", bundle: .main, comment: "")
-        case .processingVariant: NSLocalizedString("Processing variant", bundle: .main, comment: "")
-        }
-    }
-}
-
-/// Result selection's inspector content: a provenance summary in the same
-/// vocabulary as `ResultsView`'s own (private) `resultDetail` -- role,
-/// kind, software, and lineage counts -- loaded through `ResultsQuery`
-/// against the already-open `MetadataStore` `ProjectsStore` exposes.
-/// `metadataStore`/`projectID` are both `nil` until a project is open in
-/// this window (the only way `.result` selections are reached today: a
-/// global-search hit or a deep link, both of which select the owning
-/// project first), so this degrades to an honest placeholder rather than
-/// querying with no store or no project to scope the lookup to.
-///
-/// Wave 4 Task 1: also reused directly as `V2RootView`'s
-/// `.navigationDestination` content for the `.result(String)` route (a
-/// lean provenance panel, per the navigation-rework plan) -- not `private`
-/// so `V2RootView.swift` can construct it too.
-struct ResultInspectorPanel: View {
-    let resultIDString: String
-    let metadataStore: MetadataStore?
-    let projectID: UUID?
-    @State private var result: ResultLineageSnapshot?
-    @State private var isLoading = false
-
-    var body: some View {
-        Group {
-            if let result {
-                ResultProvenancePanel(result: result)
-            } else if isLoading {
-                ProgressView("Reading result lineage…")
-            } else {
-                ContentUnavailableView {
-                    Label("Result", systemImage: "square.stack.3d.up")
-                } description: {
-                    Text("Open this result from its project or from search to inspect its provenance here.")
-                }
-            }
-        }
-        .task(id: taskID) { await load() }
-    }
-
-    private var taskID: String { "\(resultIDString)|\(projectID?.uuidString ?? "-")" }
-
-    private func load() async {
-        result = nil
-        guard let metadataStore, let projectID, let resultID = UUID(uuidString: resultIDString) else { return }
-        isLoading = true
-        defer { isLoading = false }
-        let snapshot = try? await ResultsQuery(metadata: metadataStore).snapshot(projectID: projectID)
-        result = snapshot?.results.first { $0.id == resultID }
-    }
-}
-
-private struct ResultProvenancePanel: View {
-    let result: ResultLineageSnapshot
-
-    var body: some View {
-        Form {
-            Section("Result") {
-                LabeledContent("Role", value: result.role.localizedText)
-                LabeledContent("Kind", value: result.kind.localizedText)
-                LabeledContent("Created", value: result.createdAt.formatted(date: .abbreviated, time: .shortened))
-                LabeledContent("Software", value: softwareLabel)
-            }
-            Section("Lineage") {
-                LabeledContent("Input series", value: "\(result.inputSeriesIDs.count)")
-                LabeledContent("Input frames", value: "\(result.sourceFrameIDs.count)")
-                LabeledContent("Source results", value: "\(result.sourceResultIDs.count)")
-                LabeledContent("Calibration assets", value: "\(result.calibrationAssets.count)")
-            }
-            Section("File") {
-                Text(LocalizedStringKey(result.relativePath ?? "No path recorded"))
-                    .font(.callout.monospaced())
-                    .textSelection(.enabled)
-            }
-        }
-        .formStyle(.grouped)
-        // Task 6 (2026-08-17, Liquid Glass): same treatment as
-        // `ProjectInspectorPanel` -- see its own comment.
-        .glassEffect(.regular, in: ConcentricRectangle())
-        .accessibilityIdentifier("v2.inspector.result")
-    }
-
-    private var softwareLabel: String {
-        let joined = [result.softwareName, result.softwareVersion].compactMap { $0 }.joined(separator: " ")
-        return joined.isEmpty ? NSLocalizedString("Unknown", bundle: .main, comment: "") : joined
-    }
-}

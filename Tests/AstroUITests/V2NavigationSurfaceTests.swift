@@ -77,8 +77,12 @@ struct V2NavigationSurfaceTests {
 
         // The two routes the old flat switch's `default:` silently dropped
         // to an empty view now have their OWN named case in DetailHost's
-        // destination switch -- no bare `default:` swallowing them.
-        #expect(root.contains("case .result(let rawID):"))
+        // destination switch -- no bare `default:` swallowing them. `.result`
+        // dropped its `let rawID` binding when W4-6 (owner decision) removed
+        // the lineage lookup that used to read it (see `MetadataSchema.
+        // versionEightSQL`'s own note); the case itself is still its own,
+        // not folded into `default:`.
+        #expect(root.contains("case .result:"))
         #expect(root.contains("case .reviewFrame:"))
 
         let destinationStart = try #require(root.range(of: "private func destination(for route: ContentRoute)"))
@@ -395,17 +399,20 @@ struct V2NavigationSurfaceTests {
 
         let redundantPattern = "Task { try? await projectsStore.selectProject("
         let occurrences = root.components(separatedBy: redundantPattern).count - 1
-        // The legitimate survivors are all `openSearchResult` global-search
-        // jumps (`.project`, `.series`, `.note`, `.result`) -- none of them
-        // push `.project(id)` (they jump to the Projects section root, or to
-        // `.projectSeries`/`.result` instead), so the `.project` destination's
+        // The legitimate survivors are the remaining `openSearchResult`
+        // global-search jumps (`.project`, `.series`, `.note`) -- none of
+        // them push `.project(id)` (they jump to the Projects section root,
+        // or to `.projectSeries` instead), so the `.project` destination's
         // own recovery task never runs for them and each needs its own
-        // proactive select. The Home/Projects/Night sites that DO push
-        // straight onto `.project(id)` must no longer duplicate that
-        // destination's own fallback `.task`.
+        // proactive select. (`.result` was a fourth survivor here until
+        // W4-6 (owner decision) removed it along with the rest of the dead
+        // lineage schema -- global search no longer produces a `.result`
+        // hit at all, so there is nothing left to jump to.) The Home/
+        // Projects/Night sites that DO push straight onto `.project(id)`
+        // must no longer duplicate that destination's own fallback `.task`.
         #expect(
-            occurrences == 4,
-            "Expected only the four global-search jumps to still proactively select; found \(occurrences)"
+            occurrences == 3,
+            "Expected only the three global-search jumps to still proactively select; found \(occurrences)"
         )
 
         // The `.project` destination's own single-loader fallback must still
