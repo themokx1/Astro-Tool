@@ -103,21 +103,40 @@ struct ProjectsStoreTests {
         #expect(store.selectedProjectID == project.id)
     }
 
-    @Test("Projects defaults to name-ascending and re-sorts workspaceRows on demand")
+    @Test("Projects defaults to most-recent-capture-first and re-sorts workspaceRows on demand")
     func sortsWorkspaceRowsByColumn() async throws {
+        // Task 5 (2026-08-17 owner-feedback wave 3): the owner's own words --
+        // "rossz a sorrend, az kell előre kerüljön, amiben az utolsó gyüjtés
+        // van" (whichever project has the most recent capture belongs at
+        // the top). `alpha` sorts first alphabetically but `zulu` has the
+        // more recent night, so the default order must put `zulu` first.
         let metadata = try MetadataStore.temporary()
         let alpha = ProjectRecord(id: UUID(), catalogID: "NGC 7000", displayName: "Alpha Target", phase: .collecting)
         let zulu = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Zulu Target", phase: .collecting)
-        try await metadata.save(MetadataWriteBatch(projects: [alpha, zulu]))
+        let alphaNight = NightRecord(id: UUID(), localDate: "2026-08-01", timeZoneID: "Europe/Budapest")
+        let zuluNight = NightRecord(id: UUID(), localDate: "2026-08-10", timeZoneID: "Europe/Budapest")
+        let alphaSeries = SeriesRecord(
+            id: UUID(), projectID: alpha.id, nightID: alphaNight.id, setupID: nil,
+            setupDescriptor: "ASI2600MC · 261 mm", sensorMode: .osc, passband: .broadband,
+            exposureSeconds: 60, filterName: nil, filterID: nil, gain: nil, offset: nil, binning: "1x1"
+        )
+        let zuluSeries = SeriesRecord(
+            id: UUID(), projectID: zulu.id, nightID: zuluNight.id, setupID: nil,
+            setupDescriptor: "ASI2600MC · 261 mm", sensorMode: .osc, passband: .broadband,
+            exposureSeconds: 60, filterName: nil, filterID: nil, gain: nil, offset: nil, binning: "1x1"
+        )
+        try await metadata.save(MetadataWriteBatch(
+            projects: [alpha, zulu], nights: [alphaNight, zuluNight], series: [alphaSeries, zuluSeries]
+        ))
         let store = ProjectsStore(metadataFactory: { _ in metadata })
 
         try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
 
-        #expect(store.workspaceRows.map(\.project.displayName) == ["Alpha Target", "Zulu Target"])
-
-        store.setSortOrder([KeyPathComparator(\ProjectWorkspaceRow.project.displayName, order: .reverse)])
-
         #expect(store.workspaceRows.map(\.project.displayName) == ["Zulu Target", "Alpha Target"])
+
+        store.setSortOrder([KeyPathComparator(\ProjectWorkspaceRow.project.displayName, order: .forward)])
+
+        #expect(store.workspaceRows.map(\.project.displayName) == ["Alpha Target", "Zulu Target"])
     }
 
     @Test("Switching selection between projects never leaves the annotation mismatched with the selected snapshot")

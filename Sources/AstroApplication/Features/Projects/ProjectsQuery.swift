@@ -37,6 +37,15 @@ public struct ProjectSeriesSnapshot: Equatable, Sendable, Identifiable {
     public let totalFrames: Int
     public let usableFrames: Int
     public let excludedFrames: Int
+    /// Frames whose `FrameVerdict` is still `.undecided` -- same distinction
+    /// `NightSnapshot.undecidedFrames`'s own doc comment makes: rejecting a
+    /// frame is a completed decision, an unreviewed one is not. Added
+    /// (2026-08-17 owner-feedback wave 3, Task 5) so the project workspace's
+    /// own Nights tab (`ProjectNightsSummary`) can show the same triage
+    /// signal the top-level Nights table already does, rather than telling
+    /// the reader frame counts with no sense of which nights still need
+    /// attention.
+    public let undecidedFrames: Int
     public let integrationSeconds: Double
     public var id: UUID { series.id }
     public var filterName: String? { series.filterName }
@@ -52,6 +61,10 @@ public struct ProjectNightSnapshot: Equatable, Sendable, Identifiable {
     public var id: UUID { night.id }
     public var totalFrames: Int { series.reduce(0) { $0 + $1.totalFrames } }
     public var usableFrames: Int { series.reduce(0) { $0 + $1.usableFrames } }
+    /// Rolled up the same way `usableFrames`/`totalFrames` already are --
+    /// see `ProjectSeriesSnapshot.undecidedFrames`'s own doc comment for why
+    /// this exists.
+    public var undecidedFrames: Int { series.reduce(0) { $0 + $1.undecidedFrames } }
     public var integrationSeconds: Double { series.reduce(0) { $0 + $1.integrationSeconds } }
 }
 
@@ -127,11 +140,13 @@ public struct ProjectsQuery: Sendable {
         for record in series {
             let decisions = try await metadata.frameDecisions(seriesID: record.id)
             let usable = decisions.filter { !$0.logicallyExcluded && $0.verdict != .rejected }.count
+            let undecided = decisions.filter { $0.verdict == .undecided }.count
             seriesByNight[record.nightID, default: []].append(ProjectSeriesSnapshot(
                 series: record,
                 totalFrames: decisions.count,
                 usableFrames: usable,
                 excludedFrames: decisions.count - usable,
+                undecidedFrames: undecided,
                 integrationSeconds: Double(usable) * record.exposureSeconds
             ))
         }

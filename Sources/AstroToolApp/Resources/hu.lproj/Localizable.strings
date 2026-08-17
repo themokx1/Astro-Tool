@@ -344,7 +344,6 @@
 "Planning calendar unavailable" = "A tervezési naptár nem érhető el";
 "Planning ranks targets by where they actually are in the sky tonight. Open a library first." = "A Tervezés a célpontokat aszerint rangsorolja, hogy ma éjjel ténylegesen hol vannak az égen. Először nyiss meg egy könyvtárat.";
 "Prepare the next clear night" = "Készülj fel a következő tiszta éjszakára";
-"Prepared stacks and processed variants will appear here with their sources and software provenance." = "Az elkészített stackek és a feldolgozott változatok itt jelennek meg a forrásaikkal és a szoftveres eredetükkel együtt.";
 "Preview" = "Előnézet";
 "Preview Cleanup…" = "Tisztítás előnézete…";
 "Preview Link…" = "Összekapcsolás előnézete…";
@@ -630,6 +629,7 @@
 "Source" = "Forrás";
 "Source path" = "Forrás elérési út";
 "Source results" = "Forrás eredmények";
+"Stack and process this project's reviewed frames with your own software, then save the output under this project's stacks or processed folder — it will show up here with its sources and provenance." = "Stackeld és dolgozd fel ennek a projektnek az áttekintett képkockáit a saját szoftvereddel, majd mentsd az eredményt a projekt stacks vagy processed mappájába — itt fog megjelenni a forrásaival és eredetével együtt.";
 "Stack inclusion" = "Stack-tartalmazás";
 "Start cleanly" = "Tiszta kezdés";
 "Surface brightness" = "Felületi fényesség";

@@ -81,14 +81,19 @@ public final class ResultsStore {
 public struct ProjectResultsPane: View {
     let rootURL: URL
     let project: ProjectRecord
+    /// Task 5 (2026-08-17 owner-feedback wave 3): forwarded straight into
+    /// `ResultsView`'s own empty-state action -- see that type's own
+    /// `review` doc comment for why it exists.
+    let review: () -> Void
 
-    public init(rootURL: URL, project: ProjectRecord) {
+    public init(rootURL: URL, project: ProjectRecord, review: @escaping () -> Void = {}) {
         self.rootURL = rootURL
         self.project = project
+        self.review = review
     }
 
     public var body: some View {
-        ResultsView(rootURL: rootURL, project: project, showsHeader: false)
+        ResultsView(rootURL: rootURL, project: project, showsHeader: false, review: review)
     }
 }
 
@@ -96,6 +101,16 @@ public struct ResultsView: View {
     let rootURL: URL
     let project: ProjectRecord
     let showsHeader: Bool
+    /// Task 5 (2026-08-17 owner-feedback wave 3): the owner's own words --
+    /// "result oldalban nincs semmi" (there's nothing in the Results page).
+    /// The empty state's text was already accurate, it just offered no way
+    /// forward. Results in this app are recorded from a project's reviewed
+    /// frames (stacked/processed with the user's own software, then
+    /// indexed) -- `review` routes the empty state's own action button to
+    /// that actual first step, rather than leaving the reader at a dead
+    /// end. Defaults to a no-op so existing previews/tests that never
+    /// reach this branch don't need to supply one.
+    let review: () -> Void
     @State private var store: ResultsStore
     @State private var selectedResultID: UUID?
     /// Mirrors `ResultsStore.sortOrder`. The table needs a `Binding`, but
@@ -110,10 +125,14 @@ public struct ResultsView: View {
     /// doc comment -- same reasoning here.
     @State private var actionOwner = UUID().uuidString
 
-    public init(rootURL: URL, project: ProjectRecord, showsHeader: Bool = true, store: ResultsStore = ResultsStore()) {
+    public init(
+        rootURL: URL, project: ProjectRecord, showsHeader: Bool = true,
+        review: @escaping () -> Void = {}, store: ResultsStore = ResultsStore()
+    ) {
         self.rootURL = rootURL
         self.project = project
         self.showsHeader = showsHeader
+        self.review = review
         _store = State(initialValue: store)
     }
 
@@ -179,10 +198,18 @@ public struct ResultsView: View {
                     resultDetail(snapshot).frame(minWidth: 220)
                 }
             } else {
+                // Task 5 (2026-08-17 owner-feedback wave 3): this used to
+                // stop at `description:` -- an accurate sentence with no
+                // route anywhere. `actions:` now names the actual first
+                // step (review this project's frames, then stack/process
+                // them with your own software) and gives a real button to
+                // it, instead of leaving the reader at a dead end.
                 ContentUnavailableView {
                     Label("No results recorded", systemImage: "square.stack.3d.up.slash")
                 } description: {
-                    Text("Prepared stacks and processed variants will appear here with their sources and software provenance.")
+                    Text("Stack and process this project's reviewed frames with your own software, then save the output under this project's stacks or processed folder — it will show up here with its sources and provenance.")
+                } actions: {
+                    Button("Review Frames", action: review)
                 }
             }
         }

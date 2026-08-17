@@ -64,10 +64,17 @@ public final class ProjectsStore {
 
     public private(set) var projects: [ProjectRecord] = []
     /// V2 UI/UX audit (2026-08-14) systemic pattern S7: the Projects
-    /// table's header used to look clickable and do nothing. Default is
-    /// project name ascending.
+    /// table's header used to look clickable and do nothing.
+    ///
+    /// Task 5 (2026-08-17 owner-feedback wave 3): default used to be project
+    /// name ascending -- the owner's own words: "rossz a sorrend, az kell
+    /// előre kerüljön, amiben az utolsó gyűjtés van" (wrong order; whichever
+    /// project has the most recent capture belongs at the top). Default is
+    /// now most-recent-capture-first, i.e. `latestNightSortKey` descending;
+    /// a project with no nights yet sorts last (`latestNightSortKey`'s own
+    /// doc comment) rather than winning ties against projects that do.
     public private(set) var sortOrder: [KeyPathComparator<ProjectWorkspaceRow>] = [
-        KeyPathComparator(\ProjectWorkspaceRow.project.displayName, order: .forward)
+        KeyPathComparator(\ProjectWorkspaceRow.latestNightSortKey, order: .reverse)
     ]
     public private(set) var workspaceRows: [ProjectWorkspaceRow] = []
     public private(set) var isLoading = false

@@ -257,7 +257,7 @@ public struct ProjectWorkspaceView: View {
     /// does.
     @ViewBuilder private var resultsContent: some View {
         if let rootURL {
-            ProjectResultsPane(rootURL: rootURL, project: snapshot.project)
+            ProjectResultsPane(rootURL: rootURL, project: snapshot.project, review: review)
         } else {
             ContentUnavailableView(
                 "No library open",
@@ -380,27 +380,44 @@ private struct ProjectNightsSummary: View {
             TableColumn("Series", value: \ProjectNightSnapshot.series.count) { Text($0.series.count.formatted()).monospacedDigit() }
             TableColumn("Usable", value: \ProjectNightSnapshot.usableFrames) { Text($0.usableFrames.formatted()).monospacedDigit() }
             TableColumn("Integration", value: \ProjectNightSnapshot.integrationSeconds) { Text(AstroFormat.duration(seconds: $0.integrationSeconds)).monospacedDigit() }
+            // Task 5 (2026-08-17 owner-feedback wave 3): the owner's own
+            // words -- "a nighs ... oldalak butucskák, pár infó van csak
+            // kint" (the Nights tab is dumb, only a little info is out).
+            // This is the exact signal the top-level Nights table already
+            // shows (`NightsView.observedNightsTable`'s own "Triage"
+            // column) -- which nights still need morning review -- so a
+            // project's own Nights tab reads the same at a glance instead
+            // of making the reader open every night to find out.
+            TableColumn("Triage") { night in
+                let state = triageState(for: night)
+                Label(state.rawValue, systemImage: state == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                    .foregroundStyle(state == .ready ? AstroTokens.Color.ok : AstroTokens.Color.attention)
+            }
+            .width(min: 110, ideal: 125)
+            // Task 5: a visible row action, not only the right-click menu --
+            // built from the SAME `nightActionMenu(for:)` function the
+            // context menu below calls, per Task 5b's "one set, not two"
+            // convention (see `ProjectsView.projectRowActions`'s own doc
+            // comment for the fuller rationale).
+            TableColumn("") { night in
+                Menu {
+                    nightActionMenu(for: night)
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("More actions")
+                .accessibilityIdentifier("v2.projects.night-actions.\(night.id.uuidString)")
+            }
+            .width(40)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: sortOrder) { _, _ in recomputeSortedNights() }
         .task(id: snapshot) { recomputeSortedNights() }
         .contextMenu(forSelectionType: UUID.self) { nightIDs in
             if let id = nightIDs.first, let night = snapshot.nights.first(where: { $0.id == id }) {
-                NightActionMenu(
-                    target: snapshot.canonicalFolderName,
-                    date: night.night.localDate,
-                    setupDescriptor: night.series.first?.series.setupDescriptor,
-                    nightID: night.id,
-                    rootURL: rootURL,
-                    openNight: { openNight(id) },
-                    editNotes: {
-                        noteEditorTarget = NightNoteEditingTarget(
-                            target: snapshot.canonicalFolderName, date: night.night.localDate
-                        )
-                    },
-                    openCalibration: openCalibration,
-                    openInsights: openInsights
-                )
+                nightActionMenu(for: night)
             }
         } primaryAction: { nightIDs in
             if let id = nightIDs.first { openNight(id) }
@@ -415,11 +432,60 @@ private struct ProjectNightsSummary: View {
         }
     }
 
+    /// The ONE place this row's action set is declared -- both the row's
+    /// "..." overflow menu and its right-click context menu build from this
+    /// same function (Task 5b's convention, applied here too).
+    @ViewBuilder
+    private func nightActionMenu(for night: ProjectNightSnapshot) -> some View {
+        NightActionMenu(
+            target: snapshot.canonicalFolderName,
+            date: night.night.localDate,
+            setupDescriptor: night.series.first?.series.setupDescriptor,
+            nightID: night.id,
+            rootURL: rootURL,
+            openNight: { openNight(night.id) },
+            editNotes: {
+                noteEditorTarget = NightNoteEditingTarget(
+                    target: snapshot.canonicalFolderName, date: night.night.localDate
+                )
+            },
+            openCalibration: openCalibration,
+            openInsights: openInsights
+        )
+    }
+
+    /// Same business rule `NightRow.triageState`'s own doc comment defines
+    /// (a night needs review only while frames are still `.undecided`, not
+    /// merely because some were rejected) -- reuses `NightRow.TriageState`
+    /// itself rather than a second, parallel enum, applied here to
+    /// `ProjectNightSnapshot` instead of `NightSnapshot`.
+    private func triageState(for night: ProjectNightSnapshot) -> NightRow.TriageState {
+        if night.usableFrames == 0 { return .empty }
+        return night.undecidedFrames > 0 ? .needsReview : .ready
+    }
+
     private func recomputeSortedNights() {
         var rows = snapshot.nights
         if !sortOrder.isEmpty { rows.sort(using: sortOrder) }
         sortedNights = rows
     }
+}
+
+/// Task 5 (2026-08-17 owner-feedback wave 3): `ProjectSeriesSnapshot` itself
+/// carries no night reference (it is nested UNDER `ProjectNightSnapshot` in
+/// `AstroApplication`'s own model) -- flattening `snapshot.nights.flatMap
+/// (\.series)` the way this view used to therefore lost which night each
+/// series belonged to. For a project with more than one night, two series
+/// under the same filter/exposure became indistinguishable, which was
+/// exactly the owner's complaint ("a ... seris oldalak butucskák, pár infó
+/// van csak kint" -- the Series tab is dumb, only a little info is out).
+/// This row wrapper carries the night's date alongside its series purely at
+/// the view layer, the same way `ProjectWorkspaceRow` wraps engine data for
+/// `ProjectsView` -- no change needed to the `AstroApplication` model.
+private struct ProjectSeriesRow: Identifiable, Equatable {
+    let nightDate: String
+    let series: ProjectSeriesSnapshot
+    var id: UUID { series.id }
 }
 
 private struct ProjectSeriesSummary: View {
@@ -429,32 +495,64 @@ private struct ProjectSeriesSummary: View {
     /// Small local array (see `ProjectNightsSummary.sortOrder`'s own doc
     /// comment for why this is cached in `@State` rather than a store).
     /// Default is filter name ascending.
-    @State private var sortOrder: [KeyPathComparator<ProjectSeriesSnapshot>] = [
-        KeyPathComparator(\ProjectSeriesSnapshot.filterSortKey, order: .forward)
+    @State private var sortOrder: [KeyPathComparator<ProjectSeriesRow>] = [
+        KeyPathComparator(\ProjectSeriesRow.series.filterSortKey, order: .forward)
     ]
-    @State private var sortedSeries: [ProjectSeriesSnapshot] = []
+    @State private var sortedSeries: [ProjectSeriesRow] = []
 
     var body: some View {
         Table(sortedSeries, selection: $selection, sortOrder: $sortOrder) {
-            TableColumn("Filter", value: \ProjectSeriesSnapshot.filterSortKey) { Text($0.filterName ?? "Unfiltered") }
-            TableColumn("Exposure", value: \ProjectSeriesSnapshot.series.exposureSeconds) { Text("\($0.series.exposureSeconds.formatted()) s").monospacedDigit() }
-            TableColumn("Setup", value: \ProjectSeriesSnapshot.series.setupDescriptor) { Text($0.series.setupDescriptor).lineLimit(1) }
-            TableColumn("Frames", value: \ProjectSeriesSnapshot.usableFrames) { Text("\($0.usableFrames) / \($0.excludedFrames)").monospacedDigit() }
+            TableColumn("Night", value: \ProjectSeriesRow.nightDate) { Text($0.nightDate).monospacedDigit() }
+                .width(min: 85, ideal: 100)
+            TableColumn("Filter", value: \ProjectSeriesRow.series.filterSortKey) { Text($0.series.filterName ?? "Unfiltered") }
+            TableColumn("Exposure", value: \ProjectSeriesRow.series.series.exposureSeconds) { Text("\($0.series.series.exposureSeconds.formatted()) s").monospacedDigit() }
+            TableColumn("Setup", value: \ProjectSeriesRow.series.series.setupDescriptor) { Text($0.series.series.setupDescriptor).lineLimit(1) }
+            TableColumn("Frames", value: \ProjectSeriesRow.series.usableFrames) { Text("\($0.series.usableFrames) / \($0.series.excludedFrames)").monospacedDigit() }
+            // Task 5: a visible row action, not only the right-click menu --
+            // built from the SAME `seriesActionMenu(for:)` function the
+            // context menu below calls (Task 5b's "one set, not two"
+            // convention -- see `ProjectsView.projectRowActions`'s own doc
+            // comment for the fuller rationale). Only one action exists
+            // today, but the menu (not a bare icon button) is what keeps
+            // this row and its context menu from drifting apart the moment
+            // a second one is added.
+            TableColumn("") { row in
+                Menu {
+                    seriesActionMenu(for: row)
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("More actions")
+                .accessibilityIdentifier("v2.projects.series-actions.\(row.id.uuidString)")
+            }
+            .width(40)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: sortOrder) { _, _ in recomputeSortedSeries() }
         .task(id: snapshot) { recomputeSortedSeries() }
         .contextMenu(forSelectionType: UUID.self) { seriesIDs in
-            if let id = seriesIDs.first {
-                Button("Open Series") { openSeries(id) }
+            if let id = seriesIDs.first, let row = sortedSeries.first(where: { $0.id == id }) {
+                seriesActionMenu(for: row)
             }
         } primaryAction: { seriesIDs in
             if let id = seriesIDs.first { openSeries(id) }
         }
     }
 
+    /// The ONE place this row's action set is declared -- both the row's
+    /// "..." overflow menu and its right-click context menu build from this
+    /// same function (Task 5b's convention, applied here too).
+    @ViewBuilder
+    private func seriesActionMenu(for row: ProjectSeriesRow) -> some View {
+        Button("Open Series") { openSeries(row.id) }
+    }
+
     private func recomputeSortedSeries() {
-        var rows = snapshot.nights.flatMap(\.series)
+        var rows = snapshot.nights.flatMap { night in
+            night.series.map { ProjectSeriesRow(nightDate: night.night.localDate, series: $0) }
+        }
         if !sortOrder.isEmpty { rows.sort(using: sortOrder) }
         sortedSeries = rows
     }

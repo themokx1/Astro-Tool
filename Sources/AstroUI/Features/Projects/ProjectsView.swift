@@ -19,9 +19,11 @@ public struct ProjectsView: View {
     /// Mirrors `ProjectsStore.sortOrder`. The table needs a `Binding`, but
     /// the actual re-sort happens in the store's `workspaceRows` (see
     /// `PlanningView.sortOrder`'s own doc comment for why that split
-    /// exists).
+    /// exists). Task 5 (2026-08-17 owner-feedback wave 3): default is
+    /// most-recent-capture-first -- see `ProjectsStore.sortOrder`'s own doc
+    /// comment for why.
     @State private var sortOrder: [KeyPathComparator<ProjectWorkspaceRow>] = [
-        KeyPathComparator(\ProjectWorkspaceRow.project.displayName, order: .forward)
+        KeyPathComparator(\ProjectWorkspaceRow.latestNightSortKey, order: .reverse)
     ]
 
     public var body: some View {

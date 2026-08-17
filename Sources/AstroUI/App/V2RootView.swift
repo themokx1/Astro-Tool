@@ -1346,7 +1346,7 @@ private struct DetailHost: View {
         case .resultsWorkspace(let projectID):
             if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback,
                let project = projectsStore.projects.first(where: { $0.id == projectID }) {
-                ResultsView(rootURL: rootURL, project: project)
+                ResultsView(rootURL: rootURL, project: project, review: { router.push(.review(projectID: projectID)) })
             } else {
                 noLibraryPlaceholder(title: "Results", systemImage: "square.stack.3d.up")
             }
