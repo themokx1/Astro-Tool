@@ -1717,6 +1717,232 @@ struct V2PolishSurfaceTests {
             + 0.7152 * resolved.greenComponent
             + 0.0722 * resolved.blueComponent
     }
+
+    // MARK: (s) W2-10 (2026-08-17) -- corners: one radius family, no
+    // literals invented at a call site.
+    //
+    // The owner's own words: "lekerekítések is legyenek szépek" (corners
+    // should be beautiful too). `AstroTokens.CornerRadius.panel` is the one
+    // radius every surface (`AstroSurface.swift`) already draws from; a
+    // `RoundedRectangle(cornerRadius: 6)` or a `.cornerRadius(10)` typed at
+    // a call site is a radius nobody chose and nothing else in the app
+    // matches -- the same "assorted small radii" defect the corners
+    // complaint names. Two vocabularies are exempt, by NAME + FILE, not by
+    // directory: chart marks (`Chart`'s own bar corner rounding) and
+    // small (<=32pt) data-graphic/thumbnail chips, both of which are a
+    // decorative scale below anything `AstroTokens.CornerRadius.panel` is
+    // meant to describe. Every occurrence found sweeping `Sources/AstroUI`
+    // for `cornerRadius`/`RoundedRectangle(` at this task's start is listed
+    // here explicitly; a NEW literal anywhere else is caught the day it is
+    // written.
+
+    @Test("The corner-radius-literal detector flags every shape a literal radius can be written in")
+    func cornerRadiusLiteralGateDetectsViolations() {
+        #expect(!CornerRadiusLiteralGate.offendingLines(in: "RoundedRectangle(cornerRadius: 6)").isEmpty)
+        #expect(!CornerRadiusLiteralGate.offendingLines(in: ".overlay(RoundedRectangle(cornerRadius: 10).stroke(.separator))").isEmpty)
+        #expect(!CornerRadiusLiteralGate.offendingLines(in: "Rectangle().cornerRadius(4)").isEmpty)
+        // Wrapped across lines, and with unusual spacing -- reformatting is
+        // not a fix.
+        #expect(!CornerRadiusLiteralGate.offendingLines(in: """
+            RoundedRectangle(
+                cornerRadius:   8
+            )
+            """).isEmpty)
+    }
+
+    @Test("The corner-radius-literal detector allows the token, ConcentricRectangle, and the two named exemptions")
+    func cornerRadiusLiteralGateAllowsTheRealShapes() {
+        #expect(CornerRadiusLiteralGate.offendingLines(
+            in: "RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel, style: .continuous)"
+        ).isEmpty)
+        #expect(CornerRadiusLiteralGate.offendingLines(in: "ConcentricRectangle()").isEmpty)
+        // A radius that happens to start with a token-like identifier rather
+        // than a digit must not be mistaken for a literal.
+        #expect(CornerRadiusLiteralGate.offendingLines(in: ".background(x, in: RoundedRectangle(cornerRadius: someToken))").isEmpty)
+    }
+
+    /// The real-tree scan, with the two chart/thumbnail exemptions this
+    /// task's own report enumerates: `ArchiveStripView`/`ArchiveTargetRowView`
+    /// (data-graphic bar clips, radius 5/4) and `FrameThumbnailCell` (a
+    /// 28pt thumbnail chip, radius 4) are decorative scale below a panel
+    /// radius, not a second surface vocabulary; `InsightsView`'s `BarMark
+    /// .cornerRadius(4)` is `Chart`'s own mark-rounding API, which does not
+    /// accept a token. Each exemption is matched by its EXACT source
+    /// substring, not by file name alone, so a second, different literal
+    /// added to one of these same files is still caught.
+    private static let cornerRadiusLiteralExemptions: [(file: String, substring: String)] = [
+        ("ArchiveStripView.swift", "RoundedRectangle(cornerRadius: 5)"),
+        ("ArchiveTargetRowView.swift", "RoundedRectangle(cornerRadius: 4)"),
+        ("FrameThumbnailCell.swift", "RoundedRectangle(cornerRadius: 4)"),
+        ("InsightsView.swift", ".cornerRadius(4)"),
+    ]
+
+    @Test("No cornerRadius literal exists under Sources/AstroUI outside the token and the named chart/thumbnail exemptions")
+    func noCornerRadiusLiteralsOutsideTheTokenFamily() throws {
+        var offenders: [String] = []
+        for file in try swiftFiles(under: "Sources/AstroUI") {
+            let filename = (file as NSString).lastPathComponent
+            let source = Self.removingLineComments(try contents(file))
+            let exemptSubstrings = Self.cornerRadiusLiteralExemptions
+                .filter { $0.file == filename }
+                .map(\.substring)
+            let lines = source.components(separatedBy: "\n")
+            for lineNumber in CornerRadiusLiteralGate.offendingLines(in: source) {
+                let line = lines[lineNumber - 1]
+                if exemptSubstrings.contains(where: { line.contains($0) }) { continue }
+                offenders.append("\(file):\(lineNumber)")
+            }
+        }
+        #expect(offenders.isEmpty, """
+            A cornerRadius literal that matches nothing else in the app -- \
+            use AstroTokens.CornerRadius.panel (via .astroRaisedSurface()/\
+            .astroRecessedSurface()), or ConcentricRectangle() to match an \
+            enclosing container's own shape:
+            \(offenders.joined(separator: "\n"))
+            """)
+    }
+
+    // MARK: (t) W2-10 (2026-08-17) -- sibling glass shapes must share a
+    // GlassEffectContainer.
+    //
+    // The owner asked for more Liquid Glass; `GlassEffectContainer` is what
+    // lets the system MERGE and MORPH sibling glass shapes instead of each
+    // one compositing its own independent blur pass next to the others --
+    // without it, two or more glass shapes side by side look like two
+    // separate panes of glass touching, not one coherent material. This
+    // gate is deliberately narrow: it only flags `.glassEffect(` literals
+    // that are LEXICAL siblings (share the same nearest enclosing block) in
+    // the SAME file, because a source-text scan cannot follow a shape
+    // reached through a helper function/computed property/another file --
+    // `FirstScanSummaryView.countTile`'s three call sites are exactly that
+    // blind spot (one `.glassEffect(` literal, called three times), and are
+    // wrapped in `GlassEffectContainer` at their call site by construction
+    // rather than by anything this gate can see.
+    @Test("The glass-sibling detector flags glass shapes that share a parent with no GlassEffectContainer ancestor")
+    func glassSiblingGateDetectsViolations() {
+        let ungrouped = """
+            struct BadRow: View {
+                var body: some View {
+                    HStack {
+                        Text("a").glassEffect(.regular, in: ConcentricRectangle())
+                        Text("b").glassEffect(.regular, in: ConcentricRectangle())
+                    }
+                }
+            }
+            """
+        #expect(GlassSiblingGate.offendingLines(in: ungrouped) == [4, 5])
+
+        // Three siblings, not just two -- the walk must group ALL of them,
+        // not just a pair.
+        let threeUngrouped = """
+            HStack {
+                a.glassEffect(.regular, in: ConcentricRectangle())
+                b.glassEffect(.regular, in: ConcentricRectangle())
+                c.glassEffect(.regular, in: ConcentricRectangle())
+            }
+            """
+        #expect(GlassSiblingGate.offendingLines(in: threeUngrouped).count == 3)
+    }
+
+    @Test("The glass-sibling detector allows a GlassEffectContainer ancestor and lone glass shapes")
+    func glassSiblingGateAllowsTheRealShapes() {
+        let grouped = """
+            struct GoodRow: View {
+                var body: some View {
+                    GlassEffectContainer {
+                        HStack {
+                            Text("a").glassEffect(.regular, in: ConcentricRectangle())
+                            Text("b").glassEffect(.regular, in: ConcentricRectangle())
+                        }
+                    }
+                }
+            }
+            """
+        #expect(GlassSiblingGate.offendingLines(in: grouped).isEmpty)
+
+        // A single glass shape with no sibling needs no container -- most of
+        // the tree's glass sites (MetricCard, the Inspector panels, the
+        // ProjectsView folder-preview chip) are exactly this shape.
+        let lone = """
+            struct GoodCard: View {
+                var body: some View {
+                    VStack { Text("a") }
+                        .glassEffect(.regular, in: ConcentricRectangle())
+                }
+            }
+            """
+        #expect(GlassSiblingGate.offendingLines(in: lone).isEmpty)
+
+        // Two glass shapes far apart in unrelated blocks/properties of the
+        // same file -- `InspectorView`'s own real shape (four `.glassEffect(`
+        // sites, one per selection-kind property, never rendered together).
+        let unrelatedProperties = """
+            struct GoodInspector: View {
+                private var project: some View {
+                    VStack { Text("p") }.glassEffect(.regular, in: ConcentricRectangle())
+                }
+                private var night: some View {
+                    VStack { Text("n") }.glassEffect(.regular, in: ConcentricRectangle())
+                }
+            }
+            """
+        #expect(GlassSiblingGate.offendingLines(in: unrelatedProperties).isEmpty)
+    }
+
+    /// The real-tree scan the three synthetic tests above exist to justify
+    /// trusting.
+    @Test("No sibling glass shapes in Sources/AstroUI share a parent without a GlassEffectContainer ancestor")
+    func noGlassSiblingsShareAParentWithoutAContainer() throws {
+        var offenders: [String] = []
+        for file in try swiftFiles(under: "Sources/AstroUI") {
+            let source = Self.removingLineComments(try contents(file))
+            let lines = GlassSiblingGate.offendingLines(in: source)
+            if !lines.isEmpty {
+                offenders.append("\(file): line(s) \(lines.map(String.init).joined(separator: ", "))")
+            }
+        }
+        #expect(offenders.isEmpty, """
+            Sibling glass shapes with no GlassEffectContainer ancestor look \
+            like separate panes of glass rather than one material -- wrap \
+            them together, the way WorkspaceTablePage's toolbar slot and \
+            FirstScanSummaryView's three count tiles already do:
+            \(offenders.joined(separator: "; "))
+            """)
+    }
+
+    // MARK: (u) W2-10 (2026-08-17) -- hand-verified translations for the two
+    // leftover localization leaks another agent reported but could not
+    // reach: `LibraryHealthCategory.displayLabel` (`HealthView.swift`) and
+    // three `V2SettingsView.swift` switch/function-returned
+    // `LocalizedStringKey`s, none of which are literal `Text("...")`
+    // arguments and are therefore invisible to
+    // `scripts/extract-localizable-strings.swift` and to
+    // `LocalizationCoverageTests`'s automated coverage check -- same shape
+    // as `archiveClassDisplayNamesAreTranslated` above, for this task's own
+    // two fixes.
+    @Test("LibraryHealthCategory.displayLabel and the three V2SettingsView leaks have Hungarian translations")
+    func w2t10LocalizationLeaksAreTranslated() throws {
+        let strings = try contents("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
+        let expectedEntries = [
+            #""Integrity" = "Integritás";"#,
+            #""Storage" = "Tárhely";"#,
+            #""From this library's configured observing site." = "A könyvtár beállított megfigyelési helyéről.";"#,
+            #""Derived automatically from this library's own scanned FITS headers -- no site is explicitly configured." = "Automatikusan származtatva a könyvtár beolvasott FITS-headerjeiből -- nincs kifejezetten beállítva megfigyelési hely.";"#,
+            #""Not downloaded yet — Planning uses the built-in 217-object catalog." = "Még nincs letöltve — a Tervezés a beépített 217 objektumos katalógust használja.";"#,
+            #""%lld cached targets, updated %@." = "%lld gyorsítótárazott célpont, frissítve: %@.";"#,
+            #""Remove \"%@\"?" = "„%@” eltávolítása?";"#,
+        ]
+        for entry in expectedEntries {
+            #expect(strings.contains(entry), "hu.lproj is missing: \(entry)")
+        }
+        // "Flat"/"Dark"/"Bias" are deliberately absent -- this file's own
+        // glossary states they stay English, so `LibraryHealthCategory
+        // .displayLabel`'s three matching cases must resolve to the literal
+        // fallback, not an invented translation.
+        for englishOnly in ["\"Flat\" = ", "\"Dark\" = ", "\"Bias\" = "] {
+            #expect(!strings.contains(englishOnly), "hu.lproj should not translate '\(englishOnly)' -- the glossary keeps flat/dark/bias in English")
+        }
+    }
 }
 
 /// Detects a `.astroRaisedSurface(` applied inside a block that is itself
@@ -2058,6 +2284,109 @@ enum GlassTableGate {
             guard trimmed.hasPrefix(".") else { break }
             if trimmed.hasPrefix(".glassEffect(") { return true }
             m += 1
+        }
+        return false
+    }
+}
+
+/// Detects a numeric literal handed to `cornerRadius:` (either
+/// `RoundedRectangle(cornerRadius:)` or the deprecated `.cornerRadius(_:)`
+/// view modifier) -- the "assorted small radii" the owner's corners
+/// complaint named, none of them derived from `AstroTokens.CornerRadius
+/// .panel`. Deliberately matches only a DIGIT immediately after the colon/
+/// open-paren, which is what keeps a token reference
+/// (`cornerRadius: AstroTokens.CornerRadius.panel`) or a variable
+/// (`cornerRadius: someToken`) from ever matching -- this gate is about
+/// literals invented at the call site, not about the token itself.
+///
+/// A standalone `enum` for the same reason as every other detector in this
+/// file: a synthetic snippet is not a file under `Sources/AstroUI`, and both
+/// the snippet tests and the real-tree scan need to call the same function.
+enum CornerRadiusLiteralGate {
+    private static let pattern = try! NSRegularExpression(
+        pattern: #"(?:cornerRadius\s*:\s*|\.cornerRadius\s*\(\s*)[0-9]"#
+    )
+
+    /// 1-based line numbers (matching how a human reads the source) where a
+    /// `cornerRadius` is given a numeric literal. Scans across line breaks
+    /// via `\s*`, so wrapping the call does not hide it.
+    static func offendingLines(in source: String) -> [Int] {
+        let nsRange = NSRange(source.startIndex..., in: source)
+        return pattern.matches(in: source, range: nsRange).compactMap { match in
+            guard let range = Range(match.range, in: source) else { return nil }
+            return source[source.startIndex..<range.lowerBound].filter { $0 == "\n" }.count + 1
+        }
+    }
+}
+
+/// Detects `.glassEffect(` applications that are LEXICAL SIBLINGS -- they
+/// share the same nearest enclosing `{...}` block -- with no
+/// `GlassEffectContainer` anywhere in that block's ancestor chain. Two or
+/// more glass shapes side by side with no shared container each composite
+/// their own independent blur pass rather than merging into one material,
+/// which is the opposite of what "more Liquid Glass" (the owner's own ask)
+/// is supposed to read like.
+///
+/// What this does NOT catch, by construction: a glass shape reached through
+/// a helper function, a computed property, or another file -- exactly the
+/// same class of blind spot `RaisedSurfaceGate`/`GlassTableGate` already
+/// document, and for the same reason (a lexical brace walk cannot follow a
+/// call). `FirstScanSummaryView.countTile` is this shape today: one
+/// `.glassEffect(` literal in the function body, called three times, so
+/// only one lexical occurrence ever exists for this gate to see -- its
+/// `GlassEffectContainer` wrapping is correct by construction at the call
+/// site, not by anything this gate verifies.
+enum GlassSiblingGate {
+    /// 1-based line numbers of every `.glassEffect(` application that has at
+    /// least one sibling `.glassEffect(` in the same immediate enclosing
+    /// block, with no `GlassEffectContainer` in that block's ancestor chain.
+    static func offendingLines(in source: String) -> [Int] {
+        let lines = source.components(separatedBy: "\n")
+        let glassLineIndices = lines.indices.filter { lines[$0].contains(".glassEffect(") }
+        guard glassLineIndices.count > 1 else { return [] }
+
+        var groups: [Int: [Int]] = [:]
+        for index in glassLineIndices {
+            guard let opener = enclosingOpener(lines: lines, of: index) else { continue }
+            groups[opener, default: []].append(index)
+        }
+
+        var offenders: [Int] = []
+        for (opener, members) in groups where members.count > 1 {
+            if !hasGlassContainerAncestor(lines: lines, from: opener) {
+                offenders.append(contentsOf: members)
+            }
+        }
+        return offenders.map { $0 + 1 }.sorted()
+    }
+
+    /// The nearest `{` that directly encloses `lines[index]`, found the same
+    /// way every other brace walker in this file finds it: closing braces
+    /// seen while walking backward push a balance counter positive (a
+    /// sibling block to skip past); the first `{` that would take it
+    /// negative is the block that actually opens around this line.
+    private static func enclosingOpener(lines: [String], of index: Int) -> Int? {
+        var depth = 0
+        var i = index - 1
+        while i >= 0 {
+            depth += lines[i].filter { $0 == "}" }.count
+            depth -= lines[i].filter { $0 == "{" }.count
+            if depth < 0 { return i }
+            i -= 1
+        }
+        return nil
+    }
+
+    /// Whether `GlassEffectContainer` appears on the opener line itself
+    /// (its usual shape -- `GlassEffectContainer {` opens the very block
+    /// being checked) or on any OUTER enclosing block's opener line, walked
+    /// the same way `RaisedSurfaceGate.hasRaisedAncestor` walks outward for
+    /// the nesting rule.
+    private static func hasGlassContainerAncestor(lines: [String], from openerIndex: Int) -> Bool {
+        var current: Int? = openerIndex
+        while let index = current {
+            if lines[index].contains("GlassEffectContainer") { return true }
+            current = enclosingOpener(lines: lines, of: index)
         }
         return false
     }
