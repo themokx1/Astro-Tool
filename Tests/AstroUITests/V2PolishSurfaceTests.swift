@@ -1,4 +1,7 @@
+import AppKit
+import AstroUI
 import Foundation
+import SwiftUI
 import Testing
 
 /// Wave 3 Task 8: the Apple-HIG polish sweep's own gate. Follows this
@@ -1234,6 +1237,358 @@ struct V2PolishSurfaceTests {
             card on every page goes white-on-white. If ownership moved, \
             move this assertion with it rather than deleting it.
             """)
+    }
+
+    // MARK: (q) Task 7c (2026-08-17) -- there is ONE raised layer, and it
+    // never contains itself.
+    //
+    // Task 7 removed 35 `GroupBox`es and Task 7b restored the `ground`
+    // backdrop underneath them. What was left was a backdrop with nothing on
+    // it: `surface` was painted at exactly one site in the whole tree
+    // (`WorkspaceTablePage`'s table slot), `surfaceRaised` at none, and the
+    // one `.shadow(` belonged to a toast. Outside the eight table pages,
+    // every route was bare text on grey -- and in LIGHT appearance, which is
+    // what the owner runs, `ground` (`0xF6F7FB`) and `surface` (`0xFFFFFF`)
+    // are a 4% tonal step apart, so even the one painted surface had no
+    // edge.
+    //
+    // `View.astroRaisedSurface(_:)` (`DesignSystem/AstroSurface.swift`) is
+    // the single treatment that fixes that: one fill, one hairline, one
+    // shadow, one corner shape, one padding value. The three gates below
+    // hold the three properties that make it a design system rather than a
+    // 36th kind of box.
+
+    @Test("The raised-surface nesting detector flags a deliberate box-in-box")
+    func raisedSurfaceGateDetectsNesting() {
+        // The literal defect the owner reported for `GroupBox`: "doboz a
+        // dobozban" -- a card whose content is another card.
+        let nested = """
+            struct BadCard: View {
+                var body: some View {
+                    VStack {
+                        VStack {
+                            Text("inner")
+                        }
+                        .astroRaisedSurface()
+                    }
+                    .astroRaisedSurface()
+                }
+            }
+            """
+        // Only the INNER one is reported: the outer surface is legitimate,
+        // it is the second one that has nowhere to be.
+        #expect(RaisedSurfaceGate.nestedOccurrences(in: nested) == [7])
+
+        // Two levels apart rather than immediately adjacent -- the walk must
+        // keep going outward, not stop at the first enclosing block.
+        let nestedDeeper = """
+            struct BadCard: View {
+                var body: some View {
+                    VStack {
+                        HStack {
+                            Section {
+                                Text("inner").astroRaisedSurface()
+                            }
+                        }
+                    }
+                    .astroRaisedSurface(.flush)
+                }
+            }
+            """
+        #expect(!RaisedSurfaceGate.nestedOccurrences(in: nestedDeeper).isEmpty)
+
+        // The outer surface declared by wrapping rather than by chaining,
+        // with an unrelated modifier between the closing brace and the call.
+        let modifierInBetween = """
+            struct BadCard: View {
+                var body: some View {
+                    VStack {
+                        Text("inner").astroRaisedSurface()
+                    }
+                    .padding()
+                    .astroRaisedSurface()
+                }
+            }
+            """
+        #expect(!RaisedSurfaceGate.nestedOccurrences(in: modifierInBetween).isEmpty)
+    }
+
+    @Test("The raised-surface nesting detector allows siblings and lone surfaces")
+    func raisedSurfaceGateAllowsTheRealShape() {
+        // Two cards side by side on the same page is the NORMAL shape --
+        // Insights renders six of them. Neither encloses the other.
+        let siblings = """
+            struct GoodPage: View {
+                var body: some View {
+                    VStack {
+                        VStack { Text("a") }
+                            .astroRaisedSurface()
+                        VStack { Text("b") }
+                            .astroRaisedSurface()
+                    }
+                }
+            }
+            """
+        #expect(RaisedSurfaceGate.nestedOccurrences(in: siblings).isEmpty)
+
+        // A helper property that raises, declared as a SIBLING of the body
+        // that uses it, is not lexical nesting -- and must not be reported
+        // as such, or every file with a `private var card: some View` would
+        // fail. (The cross-file/cross-function case this cannot see is
+        // handled at runtime instead -- see the collapse gate below.)
+        let helperProperty = """
+            struct GoodPage: View {
+                var body: some View {
+                    VStack {
+                        card
+                    }
+                }
+
+                private var card: some View {
+                    VStack { Text("a") }
+                        .astroRaisedSurface()
+                }
+            }
+            """
+        #expect(RaisedSurfaceGate.nestedOccurrences(in: helperProperty).isEmpty)
+    }
+
+    /// The real-tree scan the two synthetic tests above exist to justify
+    /// trusting.
+    ///
+    /// What this does NOT catch, by construction: a raised surface reached
+    /// through a helper function, a computed property, or another file --
+    /// a lexical brace walk cannot follow a call. That case is covered by
+    /// construction rather than by scanning: `AstroRaisedSurface` publishes
+    /// `astroIsInsideRaisedSurface` into the environment and a nested
+    /// application collapses to its inset alone, which
+    /// `theRaisedSurfaceCollapsesWhenNested` below pins down.
+    @Test("No raised surface in Sources/AstroUI contains another raised surface")
+    func noRaisedSurfaceNestsInsideAnother() throws {
+        var offenders: [String] = []
+        for file in try swiftFiles(under: "Sources/AstroUI") {
+            let source = Self.removingLineComments(try contents(file))
+            let lines = RaisedSurfaceGate.nestedOccurrences(in: source)
+            if !lines.isEmpty {
+                offenders.append("\(file): line(s) \(lines.map(String.init).joined(separator: ", "))")
+            }
+        }
+        #expect(offenders.isEmpty, """
+            A raised surface inside a raised surface is the "doboz a dobozban" \
+            defect that made `GroupBox` unusable -- a border on a border, with \
+            two paddings and two corner radii. Grouping WITHIN a card is a \
+            heading plus spacing or a `Divider`, exactly as macOS does it:
+            \(offenders.joined(separator: "\n"))
+            """)
+    }
+
+    /// The runtime half of the same rule, and the reason the lexical gate
+    /// above is allowed to have blind spots. Asserted as a structural
+    /// property of the modifier, the same way
+    /// `theDetailColumnPaintsTheOpaqueBackdrop` asserts the backdrop's single
+    /// owner: if the guard is deleted, a helper-function or cross-file
+    /// nesting starts painting a second card and nothing else in this suite
+    /// would notice.
+    @Test("The raised-surface modifier collapses instead of painting a second card")
+    func theRaisedSurfaceCollapsesWhenNested() throws {
+        let source = Self.removingLineComments(try contents("Sources/AstroUI/DesignSystem/AstroSurface.swift"))
+        #expect(source.contains("@Environment(\\.astroIsInsideRaisedSurface) private var isNested"),
+                "the modifier no longer reads whether an ancestor already raised")
+        #expect(source.contains("if isNested {"),
+                "the modifier no longer branches on the nesting guard")
+        #expect(source.contains(".environment(\\.astroIsInsideRaisedSurface, true)"),
+                "the modifier no longer publishes the guard to its descendants")
+        // The collapsed branch must paint NOTHING -- no fill, no hairline,
+        // no shadow. Checked by counting: each painted layer appears exactly
+        // once in the file, in the non-nested branch only.
+        for painted in [".background(AstroTokens.Color.surface", ".strokeBorder(AstroTokens.Color.edge", ".shadow(color: shadowColor"] {
+            #expect(source.components(separatedBy: painted).count == 2,
+                    "\(painted) must appear exactly once -- the collapsed branch paints nothing")
+        }
+    }
+
+    /// One file, one justified exemption: `AstroSurface.swift` is the shared
+    /// treatment itself, and something has to actually paint the token.
+    private static let surfacePaintExemptFiles: Set<String> = ["AstroSurface.swift"]
+
+    @Test("No view outside the shared treatment paints surface or surfaceRaised")
+    func surfaceTokensAreOnlyPaintedByTheSharedTreatment() throws {
+        // Stated as a rule over the whole source tree, deliberately NOT as a
+        // list of view names: the failure mode this file has documented
+        // three times over (`noInlineColorsInFeatureViews`,
+        // `uiTextIsNeverAPlainString`, `groundIsNeverPaintedAtPartialOpacity`)
+        // is a gate that enumerated the offenders an audit happened to find,
+        // and was therefore blind to the next one written. A NEW view that
+        // hand-rolls its own card is caught the day it is written.
+        //
+        // Matches the token by name in any form -- fully qualified
+        // (`AstroTokens.Color.surface`), through the enum
+        // (`Color.surfaceRaised`), or bare (`.surface` after a `typealias`).
+        // The leading `\.` is what anchors it to a member access, so no
+        // lookbehind is wanted here: the character before the dot is the
+        // END of the qualifier (`...Color.surface`), and a `(?<![A-Za-z0-9_])`
+        // in front of the dot would reject exactly the fully-qualified form
+        // this gate most needs to catch. (It did, when first written --
+        // caught by running the gate against a deliberately-injected
+        // `.background(AstroTokens.Color.surfaceRaised)` and watching it
+        // pass.) The trailing lookahead is real: it keeps a longer
+        // identifier (`.surfaceArea`) from matching, and it must try
+        // `surfaceRaised` before `surface` or the alternation settles on the
+        // shorter branch.
+        let pattern = try NSRegularExpression(
+            pattern: #"\.(surfaceRaised|surface)(?![A-Za-z0-9_])"#
+        )
+        var offenders: [String] = []
+        for file in try swiftFiles(under: "Sources/AstroUI") {
+            if Self.surfacePaintExemptFiles.contains((file as NSString).lastPathComponent) { continue }
+            // `AstroTokens.swift` DECLARES the tokens; declaring is not
+            // painting. Matched by the declaration form specifically rather
+            // than exempting the whole file, so a stray paint added to it
+            // later is still caught.
+            let source = Self.removingLineComments(try contents(file))
+            for (offset, line) in source.components(separatedBy: "\n").enumerated() {
+                if line.contains("public static let surface") { continue }
+                let nsRange = NSRange(line.startIndex..<line.endIndex, in: line)
+                guard pattern.firstMatch(in: line, range: nsRange) != nil else { continue }
+                offenders.append("\(file):\(offset + 1)")
+            }
+        }
+        #expect(offenders.isEmpty, """
+            `surface`/`surfaceRaised` are the FILL of the one raised layer, \
+            not a colour a view picks up on its own -- a bare fill has no \
+            edge, and in light appearance it is a 4% step off `ground`, which \
+            is how the tree ended up with a backdrop and nothing readable on \
+            it. Use `.astroRaisedSurface()` (or `.astroRaisedSurface(.flush)` \
+            for a `Table`/`List`/self-chromed panel), which owns the fill, \
+            the hairline, the shadow, the corner shape and the padding \
+            together:
+            \(offenders.joined(separator: "\n"))
+            """)
+    }
+
+    /// Resolves the three structural tokens through
+    /// `NSAppearance.performAsCurrentDrawingAppearance` and asserts the
+    /// direction of the layering in BOTH appearances: raised is lighter than
+    /// the backdrop, never the other way round. `GroupBox`'s defect was not
+    /// only that it painted its own box -- it painted a GREY one over white
+    /// content, i.e. the layering upside down. A token edit that reversed
+    /// `ground` and `surface` would leave every source-text gate in this file
+    /// perfectly green.
+    @Test("Raised is lighter than the backdrop in both appearances, and the edge is distinct from both")
+    @MainActor
+    func theRaisedLayerIsLighterThanTheBackdrop() {
+        for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
+            guard let appearance = NSAppearance(named: appearanceName) else {
+                Issue.record("Could not build \(appearanceName.rawValue)")
+                continue
+            }
+            appearance.performAsCurrentDrawingAppearance {
+                let ground = Self.luminance(of: AstroTokens.Color.ground)
+                let surface = Self.luminance(of: AstroTokens.Color.surface)
+                let raised = Self.luminance(of: AstroTokens.Color.surfaceRaised)
+                let edge = Self.luminance(of: AstroTokens.Color.edge)
+                #expect(surface > ground, "\(appearanceName.rawValue): surface must be lighter than ground")
+                #expect(raised >= surface, "\(appearanceName.rawValue): surfaceRaised must not be darker than surface")
+                #expect(abs(edge - surface) > 0.01, "\(appearanceName.rawValue): the hairline must be distinguishable from the surface it edges")
+            }
+        }
+    }
+
+    /// Relative luminance of a token resolved in whatever appearance is
+    /// current. `usingColorSpace(.sRGB)` because a dynamic `NSColor` has no
+    /// components until it is resolved into a concrete space.
+    @MainActor
+    private static func luminance(of color: SwiftUI.Color) -> Double {
+        guard let resolved = NSColor(color).usingColorSpace(.sRGB) else { return .nan }
+        return 0.2126 * resolved.redComponent
+            + 0.7152 * resolved.greenComponent
+            + 0.0722 * resolved.blueComponent
+    }
+}
+
+/// Detects a `.astroRaisedSurface(` applied inside a block that is itself
+/// raised -- the box-in-box defect. Walks OUTWARD through every enclosing
+/// brace block (not just the direct parent, unlike `GlassTableGate` below,
+/// whose rule genuinely is about the direct container only), because a card
+/// three levels down inside another card is the same defect.
+///
+/// A standalone `enum` for the same reason as `GlassTableGate` and
+/// `GroundOpacityGate`: synthetic snippets and the real-tree scan call the
+/// same function, and a snippet is not a file under `Sources/AstroUI`.
+enum RaisedSurfaceGate {
+    private static let modifier = ".astroRaisedSurface("
+
+    /// 1-based line numbers (matching how a human reads the source) of every
+    /// raised surface that has a raised ancestor in the same file.
+    static func nestedOccurrences(in source: String) -> [Int] {
+        let lines = source.components(separatedBy: "\n")
+        var offenders: [Int] = []
+        for (index, line) in lines.enumerated() where line.contains(modifier) {
+            if hasRaisedAncestor(lines: lines, from: index) {
+                offenders.append(index + 1)
+            }
+        }
+        return offenders
+    }
+
+    private static func hasRaisedAncestor(lines: [String], from targetIndex: Int) -> Bool {
+        var childIndex = targetIndex
+        while let openerIndex = enclosingOpener(lines: lines, of: childIndex) {
+            if blockIsRaised(lines: lines, openerIndex: openerIndex) { return true }
+            childIndex = openerIndex
+        }
+        return false
+    }
+
+    /// The nearest `{` that directly encloses `lines[index]`, found by
+    /// walking backward with a brace-balance counter -- closing braces seen
+    /// on the way up push the counter positive (a sibling block to skip
+    /// past); the first `{` that would take it negative is the one that
+    /// actually opens around this line.
+    private static func enclosingOpener(lines: [String], of index: Int) -> Int? {
+        var depth = 0
+        var i = index - 1
+        while i >= 0 {
+            depth += lines[i].filter { $0 == "}" }.count
+            depth -= lines[i].filter { $0 == "{" }.count
+            if depth < 0 { return i }
+            i -= 1
+        }
+        return nil
+    }
+
+    /// Whether the block opened at `openerIndex` carries the modifier --
+    /// either on its own opening statement (including a multi-line chain
+    /// immediately above it) or chained after its matching closing brace,
+    /// possibly behind other modifiers.
+    private static func blockIsRaised(lines: [String], openerIndex: Int) -> Bool {
+        var openStatement = lines[openerIndex]
+        var j = openerIndex - 1
+        while j >= 0 {
+            let trimmed = lines[j].trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix(".") || trimmed.hasSuffix(",") || trimmed.hasSuffix("(") else { break }
+            openStatement = lines[j] + "\n" + openStatement
+            j -= 1
+        }
+        if openStatement.contains(modifier) { return true }
+
+        var depth = 1
+        var k = openerIndex + 1
+        while k < lines.count {
+            depth += lines[k].filter { $0 == "{" }.count
+            depth -= lines[k].filter { $0 == "}" }.count
+            if depth == 0 { break }
+            k += 1
+        }
+        guard k < lines.count else { return false }
+        var m = k + 1
+        while m < lines.count {
+            let trimmed = lines[m].trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix(".") else { break }
+            if trimmed.hasPrefix(modifier) { return true }
+            m += 1
+        }
+        return false
     }
 }
 
