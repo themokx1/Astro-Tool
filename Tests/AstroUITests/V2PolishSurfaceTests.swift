@@ -1718,6 +1718,55 @@ struct V2PolishSurfaceTests {
             + 0.0722 * resolved.blueComponent
     }
 
+    // MARK: (r2) W2-10 (2026-08-17) -- flush content is clipped to the
+    // surface's own shape, unconditionally.
+    //
+    // Part 1 of this task ("lekerekítések is legyenek szépek" -- corners
+    // should be beautiful) asked for `.flush` content (a `Table`/`List`)
+    // to be clipped to its card's rounded shape so square corners cannot
+    // punch through. That clip already existed at this task's start
+    // (Task 7c/7d, `AstroRaisedSurface`/`AstroRecessedSurface.body`'s
+    // `.clipShape(shape)`) -- but it is applied in the SAME branch for
+    // both `AstroSurfaceFit` cases, which is easy to state and easy to
+    // silently break by adding a second switch on `fit` later. This test
+    // pins the structural guarantee down directly, rather than trusting a
+    // one-time reading of the file.
+    @Test("AstroSurfaceFit is switched on in exactly one place (inset), so flush content cannot get a different clip/fill/shadow than padded content")
+    func fitOnlyEverChangesThePaddingValue() throws {
+        let source = try contents("Sources/AstroUI/DesignSystem/AstroSurface.swift")
+        // Each case must appear EXACTLY once (not `min`-of-the-two, which a
+        // first draft of this test used and which stayed green when a
+        // defect added a second `case .flush` alone, with no matching
+        // `case .padded` -- caught by injecting exactly that shape and
+        // watching this version fail where the `min` version did not; see
+        // this task's own report for the transcript). A second occurrence
+        // of EITHER case anywhere in this file means `fit` is being
+        // switched on a second time, outside `inset`.
+        let paddedCaseCount = source.components(separatedBy: "case .padded").count - 1
+        let flushCaseCount = source.components(separatedBy: "case .flush").count - 1
+        #expect(paddedCaseCount == 1, "`case .padded` must be switched on in exactly one place (`inset`) -- found \(paddedCaseCount)")
+        #expect(flushCaseCount == 1, "`case .flush` must be switched on in exactly one place (`inset`) -- found \(flushCaseCount)")
+    }
+
+    @Test("Neither shared treatment's body branches beyond the single nested/non-nested if-else")
+    func bothTreatmentsHaveExactlyOneBranchPoint() throws {
+        let source = try contents("Sources/AstroUI/DesignSystem/AstroSurface.swift")
+        // `AstroRaisedSurface.body`/`AstroRecessedSurface.body` each have
+        // exactly one branch point: `if isNested { ... } else { ... }`. An
+        // `else if` anywhere in this file would mean a THIRD path was
+        // added -- the exact shape of the real defect this test exists to
+        // catch (a `fit`-conditional branch that gives `.flush` a
+        // different clip/fill/shadow than `.padded`, silently skipping
+        // `.clipShape(shape)` for exactly the content -- a `Table`/`List`
+        // -- this task's corners fix is about). Counting occurrences of
+        // `.clipShape(shape)` alone does NOT catch this: a defect that
+        // moves the existing call into a narrower branch leaves the
+        // literal text's occurrence count unchanged, which is exactly why
+        // this checks branch SHAPE instead of a call count.
+        #expect(!source.contains("else if"), "an `else if` means a third branch was added to a shared treatment's body -- verify `.flush` still reaches `.clipShape(shape)`")
+        #expect(source.components(separatedBy: "if isNested {").count - 1 == 2, "each treatment must have exactly one nested/non-nested branch point")
+    }
+
     // MARK: (s) W2-10 (2026-08-17) -- corners: one radius family, no
     // literals invented at a call site.
     //
