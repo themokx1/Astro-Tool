@@ -15,6 +15,15 @@ public enum OperationKind: Hashable, Sendable {
     /// reorganized, not a brand-new one being made).
     case createSession(target: String)
     case sensorMeasurement(library: String)
+    /// W4-1: the card-import wizard's own copy step -- copies files from an
+    /// external source (an SD card, an ASI Air's storage) into an
+    /// already-created capture tree. Its own kind, distinct from
+    /// `.createSession` (that one only ever mkdir's/writes a README; this
+    /// one copies potentially gigabytes of frame data and is cancellable
+    /// mid-copy) and from `.convert` (that one MOVES files already inside
+    /// the library; this one only ever ADDS new ones from outside it, and
+    /// never touches the source).
+    case importCapture(target: String)
     /// W3-12: `ArchiveStore.acknowledge`'s finding-group write -- gives a
     /// failed acknowledge the same toast receipt every other V2 write gets,
     /// instead of the empty `catch` `ArchiveView.acknowledge` used to have

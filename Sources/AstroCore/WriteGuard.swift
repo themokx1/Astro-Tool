@@ -689,6 +689,111 @@ public struct WriteGuard: Sendable {
         return destFileURL
     }
 
+    /// Copies one external file (from a card-import source -- an SD card, an
+    /// ASI Air's storage, any arbitrary folder the user picked) into one
+    /// leaf of an already-existing canonical capture tree -- the copy-half
+    /// counterpart of `createCaptureTree` above, and the card-import
+    /// wizard's ONLY way to place bytes in the library, keeping this type's
+    /// "sole filesystem-writing component" contract intact for that feature
+    /// too.
+    ///
+    /// Unlike every other `WriteGuard` write, `sourceURL` is NOT required to
+    /// live under `root` -- it names a file on the card/volume the user is
+    /// importing from, which is the entire point of this call. Only the
+    /// DESTINATION is guarded:
+    ///
+    /// - `destDirRelative` must be *exactly* `sessions/<target>/<date>/
+    ///   captures/<slug>/(lights|flats|darks|biases)` -- six components, the
+    ///   same shape `captureTreeRelativePaths(target:dateDir:slug:)` already
+    ///   produces for these four leaves, both as a raw component check and,
+    ///   again, via `standardizedFileURL` containment inside
+    ///   `<root>/sessions/` for defense in depth. This never creates a
+    ///   session or capture tree itself -- `createCaptureTree`/
+    ///   `SessionCreationCommand` are what must have already made this
+    ///   directory exist; a missing one is the caller's bug, not something
+    ///   this call papers over by mkdir-p'ing an arbitrary new capture into
+    ///   existence.
+    /// - The destination file name is `destFileName` when given, otherwise
+    ///   the source file's own last path component -- validated as a single
+    ///   ordinary path component either way, so a pathological name can
+    ///   never smuggle a `/`/`..` traversal into the destination.
+    ///
+    /// If a file already sits at the resolved destination, this makes NO
+    /// change and returns `nil` -- the wizard's own "same-name file already
+    /// there -> skip and report, never overwrite" rule, same shape as
+    /// `linkCalibrationFile`/`linkStackListFile`'s own re-run behavior.
+    ///
+    /// Otherwise copies to a hidden temp name inside the SAME destination
+    /// directory first, then atomically renames it into place -- so a copy
+    /// that is interrupted (app quit, disk full, cancelled operation) never
+    /// leaves a half-written file at the real destination name; a failure
+    /// at either the copy or the rename step deletes the temp file before
+    /// rethrowing. Permission failures are reclassified as
+    /// `AstroError.accessDenied`, same as every other write in this type;
+    /// a missing `sourceURL` throws `AstroError.pathNotFound`.
+    @discardableResult
+    public func copyCaptureFile(
+        sourceURL: URL,
+        destDirRelative: String,
+        destFileName: String? = nil
+    ) throws -> URL? {
+        let destComponents = destDirRelative.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard destComponents.count == 6,
+              destComponents[0] == "sessions",
+              destComponents[3] == "captures",
+              ["lights", "flats", "darks", "biases"].contains(destComponents[5])
+        else {
+            throw AstroError.writeForbidden(path: destDirRelative)
+        }
+        let target = destComponents[1]
+        let dateDir = destComponents[2]
+        let slug = destComponents[4]
+        try Self.validatePathComponent(target)
+        try Self.validatePathComponent(dateDir)
+        try Self.validatePathComponent(slug)
+
+        let sessionsBase = root.appendingPathComponent("sessions", isDirectory: true).standardizedFileURL
+        let destDirCandidate = root.appendingPathComponent(destDirRelative, isDirectory: true).standardizedFileURL
+        guard destDirCandidate.path.hasPrefix(sessionsBase.path + "/") else {
+            throw AstroError.writeForbidden(path: destDirRelative)
+        }
+
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: sourceURL.path) else {
+            throw AstroError.pathNotFound(path: sourceURL.path)
+        }
+
+        let fileName = destFileName ?? sourceURL.lastPathComponent
+        try Self.validatePathComponent(fileName)
+        let destFileURL = destDirCandidate.appendingPathComponent(fileName, isDirectory: false)
+
+        guard !fm.fileExists(atPath: destFileURL.path) else {
+            return nil
+        }
+
+        let tempFileURL = destDirCandidate.appendingPathComponent(
+            ".importing-\(UUID().uuidString)-\(fileName)", isDirectory: false
+        )
+
+        try Self.classifyingPermissionErrors(path: destFileURL.path) {
+            try fm.createDirectory(at: destDirCandidate, withIntermediateDirectories: true)
+            do {
+                try fm.copyItem(at: sourceURL, to: tempFileURL)
+            } catch {
+                try? fm.removeItem(at: tempFileURL)
+                throw error
+            }
+            do {
+                try fm.moveItem(at: tempFileURL, to: destFileURL)
+            } catch {
+                try? fm.removeItem(at: tempFileURL)
+                throw error
+            }
+        }
+
+        return destFileURL
+    }
+
     /// Runs a filesystem-writing `body`, reclassifying a permission failure
     /// (TCC / EPERM / EACCES -- e.g. a read-only root, or a directory whose
     /// TCC grant was revoked mid-session) as `AstroError.accessDenied(path:)`

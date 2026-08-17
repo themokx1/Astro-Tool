@@ -207,8 +207,12 @@ public enum DuplicateFinder {
     /// Not `private` (R11-T14): `FixityVerifier` re-hashes the exact same
     /// way to compare against a cached hash, and re-implementing the same
     /// chunked/autoreleasepool'd streaming logic there would just be a
-    /// second copy to keep in sync.
-    static func sha256Hash(of url: URL) throws -> String {
+    /// second copy to keep in sync. `public` (card-import wizard,
+    /// AstroApplication): copy verification needs the exact same streaming
+    /// SHA-256 to compare a freshly-copied library file against its source
+    /// on the card, rather than a second hand-rolled hasher in a different
+    /// module.
+    public static func sha256Hash(of url: URL) throws -> String {
         guard let handle = FileHandle(forReadingAtPath: url.path) else {
             throw AstroError.pathNotFound(path: url.path)
         }

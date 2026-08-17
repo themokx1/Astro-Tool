@@ -522,13 +522,10 @@ public final class LibraryScanner {
         _ = try db.upsertFile(refinedRecord)
     }
 
+    /// Delegates to `FrameRoleFromHeader` -- see that type's doc comment for
+    /// why this is no longer its own copy of the predicate.
     private static func roleFromImagetyp(_ imagetyp: String) -> FrameRole? {
-        let lower = imagetyp.lowercased()
-        if lower.contains("light") { return .light }
-        if lower.contains("flat") { return .flat }
-        if lower.contains("dark") { return .dark }
-        if lower.contains("bias") { return .bias }
-        return nil
+        FrameRoleFromHeader.role(fromImagetyp: imagetyp)
     }
 
     // MARK: - Metadata capture
@@ -707,12 +704,23 @@ public final class LibraryScanner {
 
     // MARK: - Kind bucket
 
+    /// Extensions this scanner records as `kind == "fits"` -- FITS proper
+    /// plus its gzip'd `.fz` sibling. `public` (card-import wizard): the
+    /// source-card scan step needs the exact same "does this file count as
+    /// a capture frame at all" list the library scanner already uses,
+    /// rather than a second, hand-picked one that could silently drift from
+    /// it (e.g. missing `.fz`, or adding an extension this scanner would
+    /// never index).
+    public static let fitsExtensions: Set<String> = ["fit", "fits", "fz"]
+    /// Extensions this scanner records as `kind == "raw"` -- camera RAW
+    /// (Canon CR3 today). `public` for the same cross-module reuse reason
+    /// as `fitsExtensions` above.
+    public static let rawExtensions: Set<String> = ["cr3"]
+
     private static func kind(for ext: String) -> String {
+        if fitsExtensions.contains(ext) { return "fits" }
+        if rawExtensions.contains(ext) { return "raw" }
         switch ext {
-        case "fit", "fits", "fz":
-            return "fits"
-        case "cr3":
-            return "raw"
         case "tif", "png", "jpg", "jpeg":
             return "image"
         case "xmp":
