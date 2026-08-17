@@ -140,22 +140,41 @@ public struct ProjectsView: View {
                     TableColumn("Next") { row in
                         Text(row.nextAction).lineLimit(1).help(row.nextActionExplanation)
                     }
+                    // Task 5b (2026-08-17 owner-feedback wave 3): this used
+                    // to be two bare icon buttons (`checklist`,
+                    // `square.stack.3d.up`) -- readable only by hovering
+                    // each one out to its `.help()` tooltip, and missing
+                    // "Open Project" entirely (the row's own context menu
+                    // had three actions, this strip had two: one row, two
+                    // different sets). Chose a single "..." overflow menu
+                    // over widening the column with labelled buttons: the
+                    // row's action set is not fixed -- `NightsView`'s own
+                    // row menu (below) already needs seven items behind one
+                    // button, and a labelled-button strip would need
+                    // re-widening every time this list grows. `More`/
+                    // `projectRowActions(_:)` is the exact affordance
+                    // `ResultsView.resultActions` and the shell toolbar's
+                    // "Night Actions" menu already use elsewhere in this
+                    // app, so this is one convention, not a bespoke one.
+                    // The context menu below now builds from the SAME
+                    // `projectRowActions(_:)` function, so the two can never
+                    // drift back into different sets.
                     TableColumn("") { row in
-                        HStack(spacing: 4) {
-                            Button { reviewProject(row.project) } label: { Image(systemName: "checklist") }
-                                .help("Review frames")
-                            Button { showResults(row.project) } label: { Image(systemName: "square.stack.3d.up") }
-                                .help("Results")
+                        Menu {
+                            projectRowActions(row)
+                        } label: {
+                            Label("More", systemImage: "ellipsis.circle")
                         }
-                        .buttonStyle(.borderless)
-                    }.width(58)
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .help("More actions")
+                        .accessibilityIdentifier("v2.projects.row-actions.\(row.id.uuidString)")
+                    }.width(40)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contextMenu(forSelectionType: UUID.self) { ids in
                     if let id = ids.first, let row = store.workspaceRows.first(where: { $0.id == id }) {
-                        Button("Open Project") { openProject(row.project) }
-                        Button("Review Frames") { reviewProject(row.project) }
-                        Button("Results") { showResults(row.project) }
+                        projectRowActions(row)
                     }
                 } primaryAction: { ids in
                     if let id = ids.first, let row = store.workspaceRows.first(where: { $0.id == id }) {
@@ -182,6 +201,17 @@ public struct ProjectsView: View {
                 operationHost: operationHost
             )
         }
+    }
+
+    /// Task 5b (2026-08-17 owner-feedback wave 3): the ONE place this row's
+    /// action set is declared -- both the row's own "..." overflow menu and
+    /// its right-click context menu build from this same function, so they
+    /// can never again offer two different sets for the same row.
+    @ViewBuilder
+    private func projectRowActions(_ row: ProjectWorkspaceRow) -> some View {
+        Button("Open Project") { openProject(row.project) }
+        Button("Review Frames") { reviewProject(row.project) }
+        Button("Results") { showResults(row.project) }
     }
 
     private var filteredRows: [ProjectWorkspaceRow] {

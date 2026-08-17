@@ -253,6 +253,7 @@
 "Moon" = "Hold";
 "Moon %@° away tonight" = "A Hold ma éjjel %@° távolságra van";
 "More" = "Több";
+"More actions" = "További műveletek";
 "Move to Archive…" = "Áthelyezés archívumba…";
 "Names, sensor, signal, and filter can be corrected before applying. The slug is fixed since every move/assignment refers to it." = "A nevek, a szenzor, a jel és a szűrő az alkalmazás előtt javíthatók. A slug rögzített, mivel minden áthelyezés/hozzárendelés erre hivatkozik.";
 "New Project" = "Új projekt";

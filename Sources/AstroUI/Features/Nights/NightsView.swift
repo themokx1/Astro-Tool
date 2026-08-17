@@ -36,13 +36,6 @@ public struct NightsView: View {
     @State private var planningSortOrder: [KeyPathComparator<PlanningNightRow>] = [
         KeyPathComparator(\PlanningNightRow.summary.date, order: .forward)
     ]
-    /// Task 4 (2026-08-17 owner-feedback wave 3): the owner asked for a
-    /// visible row action on this table, not only the (already-present)
-    /// right-click `NightActionMenu` -- "nights oldal ... kellene akció
-    /// gomb, amivel lehet őket értékelni és row button is akcióknak". The
-    /// row's own "Rate Frames" icon button below calls
-    /// `NightActionMenu.rateFrames` directly.
-    @Environment(OperationHost.self) private var operationHost
 
     public init(
         snapshot: LibrarySnapshot?,
@@ -175,27 +168,31 @@ public struct NightsView: View {
                         .foregroundStyle(night.triageState == .ready ? AstroTokens.Color.ok : AstroTokens.Color.attention)
                 }
                 .width(min: 110, ideal: 125)
-                // Task 4 (2026-08-17 owner-feedback wave 3): a visible row
-                // action, not only the right-click `NightActionMenu` --
-                // matches `ProjectsView`'s own icon-column convention.
+                // Task 4 (2026-08-17 owner-feedback wave 3) first gave this
+                // column a single visible "Rate Frames" icon button, since
+                // the owner could only reach any row action through the
+                // right-click `NightActionMenu`. Task 5b (same wave)
+                // replaced that single-action button with this "..."
+                // overflow menu once auditing `ProjectsView`'s own row strip
+                // turned up the same underlying problem here: a one-icon
+                // row strip and a seven-item context menu are still two
+                // different sets for the same row, just an obviously
+                // incomplete one instead of an obviously wrong one. The
+                // menu's content is `actionMenu(for:openNight:)` -- the
+                // EXACT function the context menu below already calls -- so
+                // the row and the right-click menu can never drift apart.
                 TableColumn("") { night in
-                    if let project = night.snapshot.projects.first {
-                        Button {
-                            NightActionMenu.rateFrames(
-                                target: ProjectsQuery.canonicalFolderName(for: project),
-                                date: night.date,
-                                nightID: night.id,
-                                rootURL: rootURL,
-                                metadataFactory: ProjectsStore.productionMetadata,
-                                operationHost: operationHost
-                            )
-                        } label: { Image(systemName: "star.leadinghalf.filled") }
-                            .buttonStyle(.borderless)
-                            .help("Rate every frame captured this night")
-                            .accessibilityIdentifier("v2.nights.rate.\(night.id.uuidString)")
+                    Menu {
+                        actionMenu(for: night, openNight: { openNight(night.id) })
+                    } label: {
+                        Label("More", systemImage: "ellipsis.circle")
                     }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("More actions")
+                    .accessibilityIdentifier("v2.nights.row-actions.\(night.id.uuidString)")
                 }
-                .width(36)
+                .width(40)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contextMenu(forSelectionType: UUID.self) { nightIDs in
