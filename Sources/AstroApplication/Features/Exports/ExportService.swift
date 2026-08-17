@@ -48,6 +48,33 @@ public struct ExportService: Sendable {
         self.rootURL = rootURL
     }
 
+    /// Resolves `target` against the library's actually-scanned folders
+    /// before handing it to any `AstroCore` export engine.
+    ///
+    /// One-letter-drift fix (2026-08-17): every method below used to pass
+    /// its `target` straight through to `AcquisitionExport`/`TargetReport`/
+    /// `NightReport`/`StackList`, and every one of those engines matches
+    /// `db.allFiles`/`SessionStatsQueries` rows by exact string equality.
+    /// V2's own UI hands this `target` in as `ProjectsQuery.
+    /// canonicalFolderName(for:)` -- the catalog's own idea of the folder
+    /// name -- which is NOT guaranteed to be the spelling the scanner
+    /// actually recorded (measured on the owner's real library: NGC 7000's
+    /// canonical `NGC_7000_North_America_Nebula` vs. the 62 real files under
+    /// `NGC_7000_North_American_Nebula`). An exact match silently exported
+    /// nothing for that project. This asks the identical resolver the
+    /// Results page already fixed this same defect with --
+    /// `TargetCatalog.existingFolder(for:among:)` via `ResultsQuery.
+    /// libraryFolder(matching:among:)`, never a new comparison of its own --
+    /// against the distinct target folders the scanner actually recorded,
+    /// same source `ResultsQuery.production`'s own `libraryTargets` reads.
+    /// Falls back to `target` unchanged when nothing resolves, so an
+    /// unscanned/free-text target keeps failing exactly as loudly as before
+    /// (see `nightReportThrowsForUnknownSession`).
+    private func resolvedTarget(_ target: String) throws -> String {
+        let knownFolders = Array(Set(try db.allFiles(includeMissing: false).compactMap(\.target)))
+        return ResultsQuery.libraryFolder(matching: target, among: knownFolders) ?? target
+    }
+
     /// Opens the production index DB/config for `rootURL`, same "read the
     /// already-scanned library, never re-scan" shape every other V2
     /// `.production(rootURL:)` factory (`CalibrationQuery`, `FrameQualityQuery`,
@@ -70,6 +97,7 @@ public struct ExportService: Sendable {
     /// warning (`AcquisitionExport.unmappedAstrobinFilters`) -- exactly the
     /// pair V1's `exportAcquisition` computes before writing/toasting.
     public func acquisitionExport(target: String, format: ExportFormat) throws -> AcquisitionExportResult {
+        let target = try resolvedTarget(target)
         let content = try AcquisitionExport.render(target: target, format: format, db: db, config: config)
         let unmapped = format == .astrobin
             ? try AcquisitionExport.unmappedAstrobinFilters(target: target, db: db, config: config)
@@ -86,6 +114,7 @@ public struct ExportService: Sendable {
 
     /// The full "everything about one target" HTML report (`TargetReport.render`).
     public func targetReport(target: String) throws -> RenderedExport {
+        let target = try resolvedTarget(target)
         let html = try TargetReport.render(target: target, db: db, config: config)
         return RenderedExport(content: html, suggestedFilename: "target-\(Sanitizer.sanitize(target)).html")
     }
@@ -94,6 +123,7 @@ public struct ExportService: Sendable {
 
     /// One session's HTML night-report card (`NightReport.render`).
     public func nightReport(target: String, date: String) throws -> RenderedExport {
+        let target = try resolvedTarget(target)
         let html = try NightReport.render(target: target, date: date, db: db, config: config)
         return RenderedExport(content: html, suggestedFilename: "\(Sanitizer.sanitize(target))-\(date).html")
     }
@@ -106,6 +136,7 @@ public struct ExportService: Sendable {
     /// `StackList.export` would write to `manifest.csv`, without hardlinking
     /// anything onto disk.
     public func stackList(target: String, date: String, keepFraction: Double = 0.8) throws -> RenderedExport {
+        let target = try resolvedTarget(target)
         let selection = try StackList.select(
             target: target, date: date, keepFraction: keepFraction, db: db, config: config
         )

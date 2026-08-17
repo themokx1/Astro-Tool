@@ -226,6 +226,108 @@ struct ExportServiceTests {
         #expect(result.content == expected)
     }
 
+    // MARK: - One-letter folder drift (W3-11, 2026-08-17)
+    //
+    // Measured on the owner's real library: the `NGC 7000` project's
+    // catalog-canonical folder name is `NGC_7000_North_America_Nebula`, but
+    // every one of its 62 real stack files sits under
+    // `NGC_7000_North_American_Nebula` -- one letter of drift between
+    // "America" and "American". `ProjectWorkspaceView`'s export menu (and
+    // `ResultsView`'s, and `NightActionMenu.exportNightReport`) all hand
+    // `ExportService` the CATALOG-canonical name, not the on-disk one. Before
+    // this fix every method below matched `db`/`SessionStatsQueries` rows by
+    // exact string equality against that name and silently produced an empty
+    // (or throwing) export for the library's largest target. These four
+    // tests drive the exact drifted spelling through `ExportService` itself
+    // (not the underlying `AstroCore` engine directly) so they only pass once
+    // `ExportService` does its own resolution.
+
+    /// The catalog-canonical name `ProjectsQuery`/the UI's export menus
+    /// actually hand `ExportService`, deliberately NOT the spelling the
+    /// fixture's files are written under below.
+    private static let driftedCanonicalTarget = ProjectsQuery.canonicalFolderName(
+        for: ProjectRecord(id: UUID(), catalogID: "NGC 7000", displayName: "NGC 7000", phase: .processing)
+    )
+    private static let driftedOnDiskTarget = "NGC_7000_North_American_Nebula"
+
+    @Test("Acquisition export resolves a catalog-canonical target name that has drifted from the on-disk folder")
+    func acquisitionExportResolvesDriftedFolderName() throws {
+        let fixture = try ExportServiceFixture.make()
+        defer { fixture.cleanup() }
+        let onDisk = Self.driftedOnDiskTarget
+        let canonical = Self.driftedCanonicalTarget
+        #expect(canonical == "NGC_7000_North_America_Nebula")
+        #expect(canonical != onDisk)
+
+        try fixture.writeFITSLight("sessions/\(onDisk)/2026-01-10/lights/a.fit", exptime: 300)
+        try fixture.scan()
+
+        let expected = try AcquisitionExport.render(target: onDisk, format: .csv, db: fixture.db, config: fixture.config)
+        let result = try fixture.exportService().acquisitionExport(target: canonical, format: .csv)
+
+        #expect(result.content == expected)
+        #expect(result.content.contains(onDisk))
+        #expect(result.content.split(separator: "\n").count > 1, "expected a header plus at least one session row")
+    }
+
+    @Test("Target report resolves a catalog-canonical target name that has drifted from the on-disk folder")
+    func targetReportResolvesDriftedFolderName() throws {
+        let fixture = try ExportServiceFixture.make()
+        defer { fixture.cleanup() }
+        let onDisk = Self.driftedOnDiskTarget
+        let canonical = Self.driftedCanonicalTarget
+
+        try fixture.writeFITSLight("sessions/\(onDisk)/2026-01-10/lights/a.fit", exptime: 300)
+        try fixture.scan()
+
+        let expected = try TargetReport.render(target: onDisk, db: fixture.db, config: fixture.config)
+        let result = try fixture.exportService().targetReport(target: canonical)
+
+        #expect(result.content == expected)
+        #expect(result.content.contains(onDisk))
+    }
+
+    @Test("Night report resolves a catalog-canonical target name that has drifted from the on-disk folder")
+    func nightReportResolvesDriftedFolderName() throws {
+        let fixture = try ExportServiceFixture.make()
+        defer { fixture.cleanup() }
+        let onDisk = Self.driftedOnDiskTarget
+        let canonical = Self.driftedCanonicalTarget
+
+        try fixture.writeFITSLight("sessions/\(onDisk)/2026-01-10/lights/a.fit", exptime: 300)
+        try fixture.scan()
+
+        let expected = try NightReport.render(target: onDisk, date: "2026-01-10", db: fixture.db, config: fixture.config)
+        let result = try fixture.exportService().nightReport(target: canonical, date: "2026-01-10")
+
+        #expect(result.content == expected)
+    }
+
+    @Test("Stack list resolves a catalog-canonical target name that has drifted from the on-disk folder -- the flagship 'empty export' bug")
+    func stackListResolvesDriftedFolderName() throws {
+        let fixture = try ExportServiceFixture.make()
+        defer { fixture.cleanup() }
+        let onDisk = Self.driftedOnDiskTarget
+        let canonical = Self.driftedCanonicalTarget
+
+        try fixture.writeFITSLight("sessions/\(onDisk)/2026-01-10/lights/a.fit", exptime: 300)
+        try fixture.writeFITSLight("sessions/\(onDisk)/2026-01-10/lights/b.fit", exptime: 300)
+        try fixture.writeFITSLight("sessions/\(onDisk)/2026-01-10/lights/c.fit", exptime: 300)
+        try fixture.scan()
+
+        let selection = try StackList.select(target: onDisk, date: "2026-01-10", db: fixture.db, config: fixture.config)
+        let expected = StackList.renderManifest(selection, libraryRoot: fixture.libraryDir)
+
+        // Before the fix: an exact match against `canonical` finds no rows
+        // at all -- `StackList.select` throws `AstroError.pathNotFound`
+        // rather than the real, non-empty manifest asserted below.
+        let result = try fixture.exportService().stackList(target: canonical, date: "2026-01-10")
+
+        #expect(result.content == expected)
+        #expect(!selection.selectedPaths.isEmpty, "the fixture's own control selection must be non-empty for this test to mean anything")
+        #expect(result.content.contains("file,filter,score,fwhm_px,session_date,verdict,linked_name"))
+    }
+
     // MARK: - Tonight's plan
 
     @Test("Plan CSV renders through PlanExport, unchanged")
