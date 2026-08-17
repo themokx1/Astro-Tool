@@ -364,8 +364,13 @@ private struct ProjectNightSection: View {
                 .padding(.vertical, 5)
             }
         }
-        .padding(12)
-        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
+        // Task 7d (2026-08-17): was `.padding(12)` plus
+        // `.background(.quaternary.opacity(0.45), in: RoundedRectangle(...))`
+        // -- one of three different strengths of the same hierarchical style
+        // used as a well across the app, and (like the other two) LIGHTER
+        // than the surface it sat in whenever the user was in dark
+        // appearance. See `astroRecessedSurface`'s own doc comment.
+        .astroRecessedSurface()
         .accessibilityIdentifier("v2.projects.night.\(snapshot.id.uuidString)")
     }
 

@@ -136,8 +136,14 @@ public struct MutationConfirmationSheet: View {
                 LabeledContent("Destination", value: quarantineDestinationDirectory)
                     .help("Files move under .astro_tool/cleanup_quarantine — never deleted.")
             }
-            .padding(AstroTokens.Spacing.compact)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
+            // Task 7d (2026-08-17): was `.padding(.compact)` plus
+            // `.background(.quaternary, in: RoundedRectangle(...))` -- the
+            // strongest of the app's three hand-rolled well recipes, and the
+            // one whose light-appearance strength this treatment's token is
+            // closest to. In dark appearance it painted white at 10% over
+            // `surface`, i.e. a RAISED block on a confirm sheet whose whole
+            // job is to read as an inset summary of what is about to happen.
+            .astroRecessedSurface()
 
             Label("Files are moved into quarantine, never deleted.", systemImage: "archivebox")
                 .font(.caption).foregroundStyle(.secondary)
