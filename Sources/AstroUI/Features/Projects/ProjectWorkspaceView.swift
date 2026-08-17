@@ -2,6 +2,45 @@ import AstroApplication
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// W4-4 item 3 (owner review): "Következő lépés ... looks like a button but
+/// is dead" -- the "Next action" card's arrow icon + imperative text used to
+/// render for every `ProjectNextActionKind` with no action attached at all.
+/// This maps each case to exactly one of three real outcomes -- reused by
+/// `ProjectWorkspaceView.nextActionAffordance` below, and unit-tested
+/// directly (`ProjectNextActionAffordanceTests`) without rendering a view.
+enum ProjectNextActionAffordance: Equatable {
+    /// Opens the shared New Session sheet, prefilled with this project --
+    /// the exact same action `header`'s own "New Session…" button already
+    /// performs (`ProjectWorkspaceView.createSession`), never a second code
+    /// path.
+    case startSession
+    /// Opens this project's own Results tab/workspace -- the exact same
+    /// action `header`'s own "Results" button already performs
+    /// (`ProjectWorkspaceView.results`). `.keepProcessing`'s own explanation
+    /// ("Check the stacks and the results' lineage") names this
+    /// destination directly.
+    case viewResults
+    /// There is no single destination page for "the project is done;
+    /// export the shareable summary" -- it is a choice of file format, not
+    /// a place to go -- so this renders the SAME `ExportMenu` the page's
+    /// own export action already offers, a real affordance rather than a
+    /// push to somewhere that does not exist.
+    case exportSummary
+    /// No sensible single destination -- `.archived`'s own explanation is
+    /// "Nothing to do." This renders as plain text with no button chrome,
+    /// never a fake affordance.
+    case none
+
+    init(_ kind: ProjectNextActionKind) {
+        switch kind {
+        case .planFirstNight, .startCollecting, .keepCollecting: self = .startSession
+        case .keepProcessing: self = .viewResults
+        case .writeFinalReport: self = .exportSummary
+        case .archived: self = .none
+        }
+    }
+}
+
 public struct ProjectWorkspaceView: View {
     let snapshot: ProjectSnapshot
     let rootURL: URL?
@@ -111,6 +150,23 @@ public struct ProjectWorkspaceView: View {
                 }
             }
         }
+        // Task 4 (owner review wave 4-4, item 4): with little content (the
+        // Sorozat/Series tab's 5 rows, say) this `VStack` used to be proposed
+        // the whole pane's height by `DetailHost`'s `NavigationStack` but
+        // never claimed it -- `header`/`Divider`/the segmented `Picker`/
+        // `tableTabContent`'s own row-capped `Table` (see `tableMaxHeight`'s
+        // own doc comment) together are shorter than the pane, and a
+        // hugging `VStack` with no `.frame(maxHeight:)` of its own is
+        // centered in whatever extra room its parent gives it -- so the
+        // header rendered ~40% down the page instead of pinned to the top.
+        // The Overview/Notes tabs never showed this because they wrap
+        // `content` in a `ScrollView` (below), and `ScrollView` always
+        // claims its full proposed height and top-aligns its content
+        // regardless of how little of it there is. `alignment: .top` here
+        // makes every tab behave like that ScrollView case: claim the full
+        // height, start at the top, and let unused space fall below the
+        // content instead of splitting it above and below.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // Task 7b (2026-08-17): self-tint removed -- `V2RootView`'s detail
         // column owns the single opaque `ground` page backdrop now.
         .navigationTitle(snapshot.project.displayName)
@@ -327,7 +383,7 @@ public struct ProjectWorkspaceView: View {
                 // glass and the raised layer are alternatives, not layers.
                 VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
                     Text("Next action").font(.headline)
-                    Label(snapshot.nextAction.kind.titleKey, systemImage: "arrow.forward.circle.fill")
+                    nextActionAffordance
                     Text(snapshot.nextAction.kind.explanationKey).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -398,6 +454,42 @@ public struct ProjectWorkspaceView: View {
                     .accessibilityIdentifier("v2.project.save-details")
                 }
             }
+        }
+    }
+
+    /// Task 3 (owner review wave 4-4): the "Next action" card's own control
+    /// -- each `ProjectNextActionAffordance` case reuses one of this view's
+    /// OWN existing closures (`createSession`/`results`, the same ones
+    /// `header`'s buttons already call, or the export items `header`'s own
+    /// export menu already builds), never a second, parallel code path.
+    /// `.none` renders `Label` with no button chrome at all, so the card
+    /// never promises an action it cannot perform.
+    @ViewBuilder
+    private var nextActionAffordance: some View {
+        switch ProjectNextActionAffordance(snapshot.nextAction.kind) {
+        case .startSession:
+            Button(action: createSession) {
+                Label(snapshot.nextAction.kind.titleKey, systemImage: "arrow.forward.circle.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("v2.project.next-action")
+        case .viewResults:
+            Button(action: results) {
+                Label(snapshot.nextAction.kind.titleKey, systemImage: "arrow.forward.circle.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("v2.project.next-action")
+        case .exportSummary:
+            ExportMenu(
+                title: snapshot.nextAction.kind.titleKey,
+                systemImage: "arrow.forward.circle.fill",
+                items: projectExportItems,
+                accessibilityID: "v2.project.next-action"
+            )
+        case .none:
+            Label(snapshot.nextAction.kind.titleKey, systemImage: "checkmark.circle")
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("v2.project.next-action")
         }
     }
 }
