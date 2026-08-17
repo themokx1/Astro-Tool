@@ -138,23 +138,37 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(quickLook.contains("QLPreviewPanel"))
     }
 
-    @Test("Results is a provenance table with safe file actions")
+    /// Task 7 (2026-08-17 owner-feedback wave 3): this gate used to pin the
+    /// column names of the lineage table (`"Result"`/`"Created"`/
+    /// `"Software"`) that read `metadata.results(projectID:)` -- a table
+    /// with no writer anywhere in the product. Like its sibling in
+    /// `V2ShellSurfaceTests`, it was green throughout, because a source-text
+    /// check on column titles cannot tell a populated table from an empty
+    /// one. The page now shows discovered stack FAMILIES (base file plus its
+    /// starless/edited/export variants nested under it), so this holds that
+    /// shape instead: a hierarchical table, and one action set shared by the
+    /// row menu and the right-click menu.
+    @Test("Results is a hierarchical stack-family table with safe file actions")
     func resultsWorkspaceActionsContract() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let workspace = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Results/ResultsView.swift"), encoding: .utf8)
-        // V2 UI/UX audit (2026-08-14) systemic pattern S7: sortable since
-        // the v2/v2.1 follow-up -- reads from the store's own cached,
-        // re-sorted `results` rather than the raw snapshot.
-        #expect(workspace.contains("Table(store.results, selection: $selectedResultID, sortOrder: $sortOrder)"))
-        #expect(workspace.contains("TableColumn(\"Result\""))
-        #expect(workspace.contains("TableColumn(\"Created\""))
-        #expect(workspace.contains("TableColumn(\"Software\""))
+        // Variants nest under the family they belong to -- the fix for V1's
+        // own "dozens of flat unmanageable rows" complaint, which the engine
+        // (`StackDiscovery.groupedStacks`) already solves.
+        #expect(workspace.contains("Table(store.rows, children: \\.children, selection: $selectedRowID)"))
+        #expect(workspace.contains("TableColumn(\"Name\""))
+        #expect(workspace.contains("TableColumn(\"Exposure\""))
+        #expect(workspace.contains("TableColumn(\"Location\""))
         #expect(workspace.contains("Open Result"))
         #expect(workspace.contains("Show in Finder"))
         #expect(workspace.contains("Copy Path"))
-        #expect(workspace.contains("contextMenu(forSelectionType: UUID.self"))
+        #expect(workspace.contains("contextMenu(forSelectionType: String.self"))
         #expect(workspace.contains("v2.results.table"))
+        // Task 5b's rule: the row menu and the context menu must be the same
+        // function, so they cannot drift into two different sets.
+        #expect(workspace.components(separatedBy: "rowActionMenu(").count >= 4,
+                "the row menu and the context menu must both call the one action-set function")
     }
 
     @Test("Health, planning, and equipment use actionable work tables")

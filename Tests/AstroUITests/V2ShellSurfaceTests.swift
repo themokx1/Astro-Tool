@@ -445,7 +445,19 @@ struct V2ShellSurfaceTests {
         #expect(store.contains("SensorMeasurementCommand"))
     }
 
-    @Test("Results expose lineage, publish readiness and an honest empty state")
+    /// Task 7 (2026-08-17 owner-feedback wave 3) replaced this gate's own
+    /// subject. It used to require `v2.results.lineage`, `v2.results.
+    /// publishable`, "Input series" and "Source result" -- the vocabulary of
+    /// the `results`/`lineage_edges` tables. **This gate was green for the
+    /// entire life of a page that was structurally empty for every user**,
+    /// because nothing in the product has ever written a row into either
+    /// table: it pinned the shape of a screen with no data behind it. A
+    /// gate that asserts a section EXISTS says nothing about whether that
+    /// section can ever contain anything.
+    ///
+    /// The rule it holds now is the one that would have caught the original
+    /// defect: this page must read a source the product actually writes.
+    @Test("Results reads a data source the product actually writes, and says so honestly when there is none")
     func resultsWorkspaceContract() throws {
         let source = try String(
             contentsOf: repositoryRoot.appendingPathComponent(
@@ -453,11 +465,19 @@ struct V2ShellSurfaceTests {
             ),
             encoding: .utf8
         )
-        for identifier in ["v2.results.workspace", "v2.results.lineage", "v2.results.publishable"] {
+        for identifier in ["v2.results.workspace", "v2.results.table", "v2.results.summary"] {
             #expect(source.contains(identifier))
         }
-        #expect(source.contains("No results recorded"))
-        #expect(source.contains("Input series"))
-        #expect(source.contains("Source result"))
+        // The store must go through the query that calls `StackDiscovery`,
+        // never the dead lineage snapshot.
+        #expect(source.contains("stackResults(target:"))
+        #expect(!source.contains("snapshot(projectID:"),
+                "the results/lineage_edges tables have no writer -- this page must not read them")
+        // Honest empty state: it names what is missing (a finished stack),
+        // not a table row that could never have existed.
+        #expect(source.contains("No finished stacks yet"))
+        // And it must not promise a provenance panel discovery cannot fill.
+        #expect(!source.contains("Input series"))
+        #expect(!source.contains("Source result"))
     }
 }
