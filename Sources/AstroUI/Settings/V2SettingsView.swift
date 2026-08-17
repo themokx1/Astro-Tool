@@ -233,12 +233,30 @@ private struct PlanningSettingsView: View {
 /// Opt-in "wider catalog" section (wave-5 Task 5): same posture as the
 /// Open-Meteo weather integration -- OFF by default, and Settings itself
 /// states exactly what a query sends (catalogue names/coordinates only,
-/// never anything about the user's own library). Drives its own private
-/// `OperationHost`/`OperationCenter` pair rather than reaching for the main
-/// window's shared one: Settings is built inside `AstroToolApp`'s separate
-/// `Settings { }` scene (see `AstroToolApp.swift`), never a child of the
-/// `WindowGroup` that owns `V2RootView`'s `OperationHost`, so there is no
-/// shared instance to borrow here.
+/// never anything about the user's own library).
+///
+/// W3-12 (orphan `OperationHost` cleanup): this used to drive its own private
+/// `OperationHost`/`OperationCenter` pair, reasoning that Settings is built
+/// inside `AstroToolApp`'s separate `Settings { }` scene (see
+/// `AstroToolApp.swift`), never a child of the `WindowGroup` that owns
+/// `V2RootView`'s `OperationHost`, so there was no shared instance to borrow.
+/// True, but that `OperationHost` was carrying dead weight: `OperationHost
+/// .run` always queues a success/failure toast, and the `Settings { }` scene
+/// mounts no `ToastOverlay` anywhere to ever render one -- every toast this
+/// store ever produced was created, sat in `toasts` unread, and vanished
+/// with the store itself. Nothing was actually SILENT (this section's own
+/// inline "Updating catalog…"/Cancel row and `lastErrorMessage` line already
+/// said everything a toast would have), so mounting a `ToastOverlay` here
+/// just to give those toasts an audience would be solving a problem that
+/// does not exist, in a scene where every other section (`LocationSettingsView`
+/// 's save/error line, `EquipmentEvaluationSettingsView`'s `errorMessage`,
+/// `IntegrationsSupportSettingsView`'s `saveErrorMessage`) already reports
+/// through plain inline `@State`, never a toast. Removing the host instead
+/// keeps this section on the SAME convention as its five siblings in this
+/// file, with the exact same user-visible progress/cancel/error surface as
+/// before -- just backed by a local `Task` this store now owns directly
+/// instead of borrowing `OperationHost`'s machinery for a scene it was never
+/// built for.
 private struct ExtendedCatalogSettingsSection: View {
     @AppStorage("v2.settings.extended-catalog") private var extendedCatalogEnabled = true
     @State private var store = ExtendedCatalogUpdateStore()
@@ -253,12 +271,12 @@ private struct ExtendedCatalogSettingsSection: View {
             )
             .font(.caption).foregroundStyle(.secondary)
 
-            if let activeOperation = store.operationHost.activeOperations.first(where: { $0.kind == .catalogFetch }) {
+            if store.isUpdating {
                 HStack {
                     ProgressView().controlSize(.small)
                     Text("Updating catalog…")
                     Spacer()
-                    Button("Cancel") { Task { await store.operationHost.cancel(id: activeOperation.id) } }
+                    Button("Cancel") { store.cancelUpdate() }
                         .accessibilityIdentifier("v2.settings.update-catalog-cancel")
                 }
             } else {
@@ -297,22 +315,33 @@ private struct ExtendedCatalogSettingsSection: View {
     }
 }
 
-/// Runs the extended-catalog download through `OperationHost` (progress +
-/// cooperative cancel) and persists the result via `CatalogCache` -- the
-/// "download once, then work offline" contract `CatalogFetcher`'s own doc
-/// comment describes. `cache`/`fetcherFactory` are injectable purely for
-/// tests; production callers get the real Application-Support-backed cache
-/// and `URLSession`-backed fetcher.
+/// Runs the extended-catalog download (progress + cooperative cancel) and
+/// persists the result via `CatalogCache` -- the "download once, then work
+/// offline" contract `CatalogFetcher`'s own doc comment describes.
+/// `cache`/`fetcherFactory` are injectable purely for tests; production
+/// callers get the real Application-Support-backed cache and
+/// `URLSession`-backed fetcher.
+///
+/// W3-12: used to route through a private `OperationHost`/`OperationCenter`
+/// pair for exactly this progress/cancel/error surface -- see
+/// `ExtendedCatalogSettingsSection`'s own doc comment for why that host was
+/// dead weight in this scene (no `ToastOverlay` ever mounted to read its
+/// toasts) and was removed in favor of the plain `isUpdating`/
+/// `lastErrorMessage` shape every other Settings section already uses.
+/// `runningTask` reimplements only the one piece `OperationHost` was
+/// actually earning its keep for here -- cooperative cancellation of the
+/// in-flight fetch.
 @MainActor
 @Observable
 final class ExtendedCatalogUpdateStore {
-    let operationHost = OperationHost(center: OperationCenter())
+    private(set) var isUpdating = false
     private(set) var lastFetchedAt: Date?
     private(set) var cachedTargetCount: Int?
     private(set) var lastErrorMessage: String?
 
     private let cache: CatalogCache
     private let fetcherFactory: @Sendable () -> CatalogFetcher
+    private var runningTask: Task<Void, Never>?
 
     init(
         cache: CatalogCache = ExtendedCatalogUpdateStore.productionCache(),
@@ -360,23 +389,42 @@ final class ExtendedCatalogUpdateStore {
     }
 
     func startUpdate() async {
+        guard runningTask == nil else { return }
         lastErrorMessage = nil
+        isUpdating = true
         let fetcher = fetcherFactory()
         let cache = self.cache
-        _ = await operationHost.run(kind: .catalogFetch, title: OperationHost.localized("Updating catalog"), cancellation: .cooperative) { [weak self] in
+        let task = Task { [weak self] in
             do {
                 let targets = try await fetcher.fetchAll(isCancelled: { Task.isCancelled })
                 try Task.checkCancellation()
                 let payload = CatalogCachePayload(fetchedAt: Date(), targets: targets)
                 try cache.save(payload)
-                await self?.reloadCachedSummary()
+                await self?.finishUpdate { $0.reloadCachedSummary() }
             } catch is CancellationError {
-                throw CancellationError()
+                await self?.finishUpdate { _ in }
             } catch {
-                await self?.recordError(error)
-                throw error
+                await self?.finishUpdate { $0.recordError(error) }
             }
         }
+        runningTask = task
+        await task.value
+    }
+
+    /// Requests cooperative cancellation of an in-flight `startUpdate()` --
+    /// `CatalogFetcher.fetchAll`'s own `isCancelled` closure checks
+    /// `Task.isCancelled`, so this is the same cooperative shape
+    /// `OperationHost.cancel(id:)` used before, just against the one task
+    /// this store owns directly instead of one registered with a shared
+    /// center.
+    func cancelUpdate() {
+        runningTask?.cancel()
+    }
+
+    private func finishUpdate(_ apply: (ExtendedCatalogUpdateStore) -> Void) {
+        apply(self)
+        isUpdating = false
+        runningTask = nil
     }
 
     private func recordError(_ error: Error) {

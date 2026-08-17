@@ -266,11 +266,21 @@ struct V2SettingsTests {
         #expect(source.contains(".disabled(!extendedCatalogEnabled)"))
     }
 
-    @Test("The catalog update runs through OperationHost with cooperative cancellation")
-    func updateCatalogRunsThroughOperationHost() throws {
+    // W3-12 (orphan `OperationHost` cleanup): `ExtendedCatalogUpdateStore`
+    // used to route its progress/cancel/error surface through a private
+    // `OperationHost`/`OperationCenter` pair whose toasts had no
+    // `ToastOverlay` anywhere in the `Settings { }` scene to ever render --
+    // dead weight, not a silent failure (the inline status/error text below
+    // already said everything a toast would have). Removed in favor of the
+    // same local `isUpdating`/`lastErrorMessage` shape every other Settings
+    // section in this file already uses.
+
+    @Test("The catalog update reports progress and cooperative cancellation through the store's own local state, not a borrowed OperationHost")
+    func updateCatalogUsesLocalStateNotOperationHost() throws {
         let source = try contents("Sources/AstroUI/Settings/V2SettingsView.swift")
-        #expect(source.contains("operationHost.run(kind: .catalogFetch"))
-        #expect(source.contains("cancellation: .cooperative"))
+        #expect(!source.contains("OperationHost(center:"), "Settings must not construct its own OperationHost with no ToastOverlay to ever render its toasts")
+        #expect(source.contains("store.isUpdating"))
+        #expect(source.contains("store.cancelUpdate()"))
         #expect(source.contains("v2.settings.update-catalog-cancel"))
     }
 
