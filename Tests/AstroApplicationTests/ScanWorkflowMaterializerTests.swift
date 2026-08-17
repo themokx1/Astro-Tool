@@ -3,6 +3,22 @@ import AstroCore
 import Foundation
 import Testing
 
+/// File-local FITS header fixture -- mirrors `SessionConversionCommandTests`'
+/// own `sessionConversionHeaderData` (this codebase's convention: each test
+/// file keeps its own copy rather than sharing one).
+private func scanWorkflowMaterializerTestFITSCard(_ s: String) -> String {
+    s + String(repeating: " ", count: 80 - s.count)
+}
+
+private func scanWorkflowMaterializerTestFITSData(_ cards: [String]) -> Data {
+    var text = cards.map(scanWorkflowMaterializerTestFITSCard).joined()
+    let remainder = text.count % 2880
+    if remainder != 0 {
+        text += String(repeating: " ", count: 2880 - remainder)
+    }
+    return Data(text.utf8)
+}
+
 @Suite("Scan workflow materializer")
 struct ScanWorkflowMaterializerTests {
     @Test("A scanned IC 1396 night becomes project, night, distinct series and review frames")
@@ -90,6 +106,55 @@ struct ScanWorkflowMaterializerTests {
         ))
         #expect(try await metadata.projects().isEmpty)
         #expect(try await metadata.nights().isEmpty)
+    }
+
+    /// W3-10: end-to-end proof for the "New Session" sheet's own receipt
+    /// message ("the session will appear once the first light frames are
+    /// scanned into it") -- unlike every other fixture in this file (which
+    /// inserts rows straight into the scan index DB), this one runs the
+    /// REAL pipeline a user would actually trigger: `SessionCreator.create`
+    /// makes the on-disk folder skeleton with zero files in it, a REAL
+    /// `LibraryScanner.scan()` indexes that root exactly as a rescan would,
+    /// and `ScanWorkflowMaterializer.materialize` reads that real index. An
+    /// empty session must not fabricate a project/night/series/frame row
+    /// from folder existence alone.
+    @Test("A freshly created, still-empty session produces no project or night until real frames are scanned")
+    func emptySessionProducesNothingUntilFramesExist() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AstroTool-EmptySessionMaterializer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        _ = try SessionCreator.create(root: root, catalogRaw: "M1", nameRaw: "Crab Nebula", date: "2026-08-11")
+
+        var config = AstroConfig()
+        config.rootPath = root.path
+        let indexURL = root.appendingPathComponent(".astro_tool/scan-index.sqlite")
+        try FileManager.default.createDirectory(at: indexURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let scanDB = try Database(path: indexURL.path)
+        _ = try LibraryScanner(config: config, db: scanDB).scan()
+
+        let metadata = try MetadataStore.temporary()
+        let summary = try await ScanWorkflowMaterializer.materialize(indexDatabase: indexURL, metadata: metadata)
+
+        #expect(summary == ScanWorkflowMaterializationSummary(projects: 0, nights: 0, series: 0, frames: 0))
+        #expect(try await metadata.projects().isEmpty)
+        #expect(try await metadata.nights().isEmpty)
+
+        // Now drop a real light frame into the empty session and rescan --
+        // the same folder DOES appear once real content exists, proving
+        // this isn't a permanent blind spot, only an honest "not yet".
+        let lightsDir = root.appendingPathComponent("sessions/M1_Crab_Nebula/2026-08-11/lights")
+        try scanWorkflowMaterializerTestFITSData([
+            "SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2",
+            "EXPTIME = 60", "IMAGETYP= 'LIGHT'", "END",
+        ]).write(to: lightsDir.appendingPathComponent("light1.fit"))
+        _ = try LibraryScanner(config: config, db: scanDB).scan()
+        let secondSummary = try await ScanWorkflowMaterializer.materialize(indexDatabase: indexURL, metadata: metadata)
+
+        #expect(secondSummary.projects == 1)
+        #expect(secondSummary.nights == 1)
+        #expect(try await metadata.nights().first?.localDate == "2026-08-11")
     }
 
     // MARK: - Scan completion freshness (wave 6 Task 15)

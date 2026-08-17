@@ -8,6 +8,12 @@ public enum OperationKind: Hashable, Sendable {
     case verify(library: String)
     case export(project: String)
     case convert(session: String)
+    /// W3-10: the "New Session" sheet's own create/undo -- mkdir-only
+    /// scaffolding (`sessions/flats/darks/biases/README`, `stacks/`,
+    /// `processed/`), never a move, so it gets its own kind rather than
+    /// reusing `.convert` (which names an existing session being
+    /// reorganized, not a brand-new one being made).
+    case createSession(target: String)
     case sensorMeasurement(library: String)
     /// The opt-in "Update Catalog" action (Settings ▸ Planning): downloads
     /// the extended SIMBAD/VizieR target catalog into `CatalogCache`. Not
