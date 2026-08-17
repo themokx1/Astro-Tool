@@ -267,12 +267,28 @@ public struct NightsView: View {
                 TableColumn("Darkness", value: \PlanningNightRow.astroDarkHoursSortKey) { Text(LocalizedStringKey($0.darkHours)) }
                 TableColumn("Moon", value: \PlanningNightRow.summary.moonIlluminationPercent) { Text($0.moon).monospacedDigit() }
                     .width(min: 65, ideal: 75)
+                // W4-2: `store.nightWeather` is keyed by the exact same
+                // "yyyy-MM-dd, night-start" date string `summary.date`
+                // already is -- a date simply missing from the dictionary
+                // covers every honest "nothing to show" case at once
+                // (weather off, no site, or beyond Open-Meteo's 7-day
+                // horizon), rendered as the same "—" this table already uses
+                // for other missing values.
+                TableColumn("Cloud") { row in
+                    Text(cloudSummaryText(for: row.summary.date)).monospacedDigit()
+                }
+                .width(min: 65, ideal: 85)
                 TableColumn("Best target windows") { Text(LocalizedStringKey($0.bestTargets.isEmpty ? "No usable target window" : $0.bestTargets)).lineLimit(1) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityIdentifier("v2.nights.planning-calendar")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func cloudSummaryText(for date: String) -> String {
+        guard let summary = store.nightWeather[date] else { return "—" }
+        return "\(Int(summary.minPercent.rounded()))–\(Int(summary.maxPercent.rounded()))%"
     }
 
     /// `NightActionMenu`'s shared action set for one night row -- V1's

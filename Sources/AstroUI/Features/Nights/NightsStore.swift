@@ -97,14 +97,28 @@ public struct PlanningNightRow: Equatable, Sendable, Identifiable {
 public final class NightsStore {
     public typealias MetadataFactory = @MainActor @Sendable (URL) throws -> MetadataStore
     public typealias CalendarProvider = @Sendable (URL) async throws -> [NightSummary]
+    /// W4-2: per-date cloud summaries for the open library's resolved site --
+    /// `nil` when weather is off or no site resolves (the honest "no data"
+    /// case `calendarTable`'s "Felhő" column then renders as "—" for every
+    /// row, the same way a date simply missing from the dictionary already
+    /// does for "beyond the 7-day horizon"). Injectable for the same reason
+    /// `calendarProvider` is: tests supply a fixed result without a real
+    /// network call.
+    public typealias WeatherProvider = @Sendable (URL) async throws -> [String: DailyCloudSummary]?
     public private(set) var nights: [NightRow] = []
     public private(set) var planningNights: [NightSummary] = []
+    /// Keyed the same "yyyy-MM-dd, named by the night's start" way
+    /// `PlanningNightRow.id`/`summary.date` already are, so `calendarTable`
+    /// can look a night's cloud summary up by that same date string with no
+    /// extra formatting.
+    public private(set) var nightWeather: [String: DailyCloudSummary] = [:]
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
     public private(set) var selectedMonth: String?
     public private(set) var selectedNightID: UUID?
     private let metadataFactory: MetadataFactory
     private let calendarProvider: CalendarProvider
+    private let weatherProvider: WeatherProvider
 
     /// `calendarProvider` is `Optional`/`nil` rather than defaulted directly
     /// to `NightsStore.productionCalendar`, and MUST stay that way: an
@@ -126,10 +140,14 @@ public final class NightsStore {
     /// record, and is deliberately left as an ordinary default.
     public init(
         metadataFactory: @escaping MetadataFactory = ProjectsStore.productionMetadata,
-        calendarProvider: CalendarProvider? = nil
+        calendarProvider: CalendarProvider? = nil,
+        /// Same `Optional`-not-async-default shape as `calendarProvider`
+        /// immediately above, for the identical reason.
+        weatherProvider: WeatherProvider? = nil
     ) {
         self.metadataFactory = metadataFactory
         self.calendarProvider = calendarProvider ?? NightsStore.productionCalendar
+        self.weatherProvider = weatherProvider ?? NightsStore.productionWeather
     }
 
     public var availableMonths: [String] {
@@ -210,6 +228,12 @@ public final class NightsStore {
             let metadata = try metadataFactory(rootURL.standardizedFileURL)
             nights = try await NightsQuery(metadata: metadata).nights().map(NightRow.init)
             planningNights = (try? await calendarProvider(rootURL.standardizedFileURL)) ?? []
+            // W4-2: weather is opt-in side data (same posture as V1's
+            // `AppState.loadWeather`) -- a disabled toggle, no site, or an
+            // outright fetch failure all fall back to `[:]` rather than
+            // failing `open(rootURL:)` itself, so a flaky Open-Meteo call
+            // never blocks the calendar the rest of this method just loaded.
+            nightWeather = (try? await weatherProvider(rootURL.standardizedFileURL)) ?? [:]
             recomputeVisibleNights()
             recomputePlanningRows()
         } catch {
@@ -228,6 +252,35 @@ public final class NightsStore {
             config.rootPath = rootURL.path
             return try Planner.month(nights: 30, db: database, config: config)
         }.value
+    }
+
+    /// W4-2: per-date cloud summaries for the library's resolved site, gated
+    /// behind the exact same `config.weather.enabled` opt-in V1's
+    /// `AppState.loadWeather` reads (the same `config.json`, so a toggle
+    /// flipped from either V1's or V2's Settings takes effect here too).
+    /// `nil` for "disabled" or "no site resolves" (both honest "no data"
+    /// cases); resolves the site independently of `productionCalendar` --
+    /// the same accepted duplication `HomeStore`/`PlanningStore`'s own
+    /// production providers already have with each other.
+    public static func productionWeather(rootURL: URL) async throws -> [String: DailyCloudSummary]? {
+        struct ResolvedSite { let latitudeDeg: Double; let longitudeDeg: Double }
+        let resolved: ResolvedSite? = try await Task.detached(priority: .utility) {
+            let identity = LibraryIdentity(rootURL: rootURL)
+            let paths = try AppStoragePaths.production(libraryID: identity, libraryRoot: rootURL)
+            let database = try Database(path: paths.indexDatabase.path)
+            let configURL = rootURL.appendingPathComponent(".astro_tool/config.json")
+            var config = (try? AstroConfig.load(from: configURL)) ?? AstroConfig()
+            config.rootPath = rootURL.path
+            guard config.weather.enabled else { return nil }
+            let site = try Planner.resolveSite(db: database, config: config)
+            guard let latitudeDeg = site.latitudeDeg, let longitudeDeg = site.longitudeDeg else { return nil }
+            return ResolvedSite(latitudeDeg: latitudeDeg, longitudeDeg: longitudeDeg)
+        }.value
+        guard let resolved else { return nil }
+        let (_, summaries) = try await WeatherService.shared.fetch(
+            latitude: resolved.latitudeDeg, longitude: resolved.longitudeDeg
+        )
+        return summaries
     }
 }
 
