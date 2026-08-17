@@ -186,7 +186,7 @@ struct ConversionWorkspaceTests {
         let host = OperationHost(center: OperationCenter())
 
         await store.applyPlan(operationHost: host)
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
 
         #expect(store.lastReceipt?.status == .applied)
         #expect(store.plan == nil)
@@ -207,10 +207,10 @@ struct ConversionWorkspaceTests {
         let source = fixture.root.appendingPathComponent(move.sourceRelative)
         let host = OperationHost(center: OperationCenter())
         await store.applyPlan(operationHost: host)
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
 
         await store.undoReceipt(operationHost: host)
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
 
         #expect(store.lastReceipt?.status == .rolledBack)
         #expect(FileManager.default.fileExists(atPath: source.path))

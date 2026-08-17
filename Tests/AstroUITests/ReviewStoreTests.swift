@@ -80,7 +80,7 @@ struct ReviewStoreTests {
         let host = OperationHost(center: OperationCenter())
 
         await store.rateSelectedSeries(mode: .nativeOnly, operationHost: host)
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
 
         #expect(host.toasts.contains { $0.level == .success })
         // The fixture frame's own real pixels rate to a real background

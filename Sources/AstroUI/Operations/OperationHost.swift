@@ -266,6 +266,33 @@ public final class OperationHost {
         return recentOutcomes.first(where: { $0.id == id })?.phase ?? .failed
     }
 
+    /// Awaits every operation currently in flight, including any started
+    /// while this is waiting, and returns once nothing is running.
+    ///
+    /// Exists so that a caller who needs to observe the settled state does
+    /// not have to poll for it. Tests used to spin on
+    /// `activeOperations.isEmpty` behind a two-second wall-clock deadline,
+    /// which is a bet that `run`'s `Task.detached` gets scheduled inside two
+    /// seconds -- and on a busy machine it does not: the whole
+    /// `swift test` run shares one fixed-width cooperative pool, so the two
+    /// seconds are not two seconds of this operation's time, they are two
+    /// seconds of every suite's contention. That bet losing is a failure
+    /// report about the machine, not about the code, and a suite that
+    /// reports those is a suite people learn to ignore. Awaiting the task
+    /// itself has no deadline to lose: it is as fast as the work and as slow
+    /// as the machine, and either way it is correct.
+    ///
+    /// The loop re-checks rather than snapshotting once, because finishing
+    /// one operation can start another (a store's completion handler
+    /// chaining a refresh), and "settled" has to mean settled.
+    public func settle() async {
+        while let task = runningTasks.values.first {
+            await task.value
+            // `finalize` clears the entry from `runningTasks` on this actor
+            // before the task returns, so this terminates.
+        }
+    }
+
     /// The human-readable failure message `OperationCenter` recorded for
     /// `id`, if any -- `ActiveOperation`/`OutcomeRecord` deliberately don't
     /// carry this (a toast already renders it once, and most callers need

@@ -88,7 +88,7 @@ struct LibraryHealthStoreTests {
         let host = OperationHost(center: OperationCenter())
 
         await store.runAudit(mode: .full, rootURL: fixture.root, operationHost: host)
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
 
         #expect(host.toasts.contains { $0.level == .success })
         #expect(store.snapshot?.auditRuns.count == 1)
@@ -130,7 +130,7 @@ struct LibraryHealthStoreTests {
             rootURL: fixture.root,
             operationHost: host
         )
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
 
         #expect(host.toasts.contains { $0.level == .success })
         #expect(store.lastVerifySummary?.checked == 1)
@@ -183,7 +183,7 @@ struct LibraryHealthStoreTests {
             rootURL: fixture.root,
             operationHost: host
         )
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
         #expect(!(store.snapshot?.items.contains { $0.category == .integrity && $0.severity != .healthy } ?? true))
 
         // Now change the file's content and size -- both its recorded size
@@ -197,7 +197,7 @@ struct LibraryHealthStoreTests {
             rootURL: fixture.root,
             operationHost: host
         )
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
 
         let finding = try #require(store.snapshot?.items.first { $0.category == .integrity && $0.severity != .healthy })
         #expect(finding.detail.contains("light.fit"))

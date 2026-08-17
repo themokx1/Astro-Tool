@@ -22,7 +22,7 @@ struct OperationHostTests {
         #expect(await center.state(id)?.phase == .running)
 
         gate.open()
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
         #expect(await center.state(id)?.phase == .succeeded)
     }
 
@@ -32,7 +32,7 @@ struct OperationHostTests {
 
         let id = await host.run(kind: .export(project: "P"), title: "Exporting P") {}
 
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
         #expect(host.toasts.contains { $0.level == .success })
         #expect(!host.activeOperations.contains { $0.id == id })
     }
@@ -49,7 +49,7 @@ struct OperationHostTests {
             throw Boom()
         }
 
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
         #expect(await center.state(id)?.phase == .failed)
         #expect(host.toasts.contains { $0.level == .failure && $0.message.contains("boom") })
     }
@@ -244,7 +244,7 @@ struct OperationHostTests {
     func outcomeAfterAlreadyFinished() async throws {
         let host = OperationHost(center: OperationCenter())
         let id = await host.run(kind: .loadHome(library: "A"), title: "Preparing A") {}
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
 
         #expect(await host.outcome(of: id) == .succeeded)
     }
@@ -328,7 +328,7 @@ struct OperationHostTests {
         #expect(await center.state(id)?.phase == .cancelled)
 
         gate.open()
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
 
         // The work actually completed successfully -- the honest outcome is
         // success, not a silently-swallowed cancellation.
@@ -356,7 +356,7 @@ struct OperationHostTests {
         #expect(await center.state(id)?.total == 100)
 
         gate.open()
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
     }
 
     @Test("Reporting progress for an unknown operation is a harmless no-op")
@@ -591,7 +591,7 @@ struct OperationHostTests {
         progress.value = OperationProgress(completed: 100, total: 100)
 
         gate.open()
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
         _ = await relay.value
 
         #expect(await center.state(id)?.phase == .succeeded)

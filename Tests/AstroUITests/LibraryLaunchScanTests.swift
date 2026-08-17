@@ -31,7 +31,7 @@ struct LibraryLaunchScanTests {
 
         await store.openAndScan(fixture.root, through: host)
 
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
         #expect(store.phase.summary == snapshot)
         #expect(host.toasts.contains { $0.level == .success })
         #expect(host.recentOutcomes.contains { $0.kind == .scan(library: fixture.root.lastPathComponent) })
@@ -53,7 +53,7 @@ struct LibraryLaunchScanTests {
 
         await store.openAndScan(fixture.root, through: host)
 
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
         #expect(store.phase.accessProblemMessage != nil)
         #expect(host.toasts.contains { $0.level == .failure })
     }
@@ -78,7 +78,7 @@ struct LibraryLaunchScanTests {
         let didStart = await store.restoreSavedLibrary(through: host)
 
         #expect(didStart)
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
         #expect(store.phase.summary == snapshot)
         #expect(host.recentOutcomes.contains { $0.kind == .scan(library: fixture.root.lastPathComponent) })
     }
@@ -117,7 +117,7 @@ struct LibraryLaunchScanTests {
         let host = OperationHost(center: OperationCenter())
 
         _ = await store.restoreSavedLibrary(through: host)
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
 
         #expect(bookmark.load() == nil)
     }

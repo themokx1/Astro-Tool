@@ -45,7 +45,7 @@ struct LibraryRescanTests {
         let host = OperationHost(center: OperationCenter())
 
         await store.rescan(operationHost: host)
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
 
         #expect(store.phase.summary == secondSnapshot)
         #expect(store.selectedRoot == fixture.root.standardizedFileURL)
@@ -88,7 +88,7 @@ struct LibraryRescanTests {
         }
 
         await gate.open()
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
     }
 
     @Test("Cancelling a rescan leaves the last known-good snapshot and selected root untouched")
@@ -178,7 +178,7 @@ struct LibraryRescanTests {
         #expect(host.toasts.contains { $0.level == .info && $0.message.contains("already running") })
 
         await gate.open()
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
     }
 
     @Test("Rescanning with no library open is a no-op that notifies instead of crashing")

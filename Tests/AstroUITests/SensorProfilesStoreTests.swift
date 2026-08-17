@@ -142,7 +142,7 @@ struct SensorProfilesStoreTests {
         let host = OperationHost(center: OperationCenter())
 
         await store.measure(operationHost: host)
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
 
         #expect(store.snapshot?.profiles.count == 1)
         #expect(store.snapshot?.profiles.first?.camera == "CamA")
@@ -173,7 +173,7 @@ struct SensorProfilesStoreTests {
         await store.measure(operationHost: host)
 
         #expect(host.toasts.contains { $0.level == .info && $0.message.contains("already running") })
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
     }
 
     @Test("Measuring with no library loaded notifies instead of crashing")
@@ -206,7 +206,7 @@ struct SensorProfilesStoreTests {
         if let id = host.activeOperations.first?.id {
             _ = await host.cancel(id: id)
         }
-        try await waitUntil { host.activeOperations.isEmpty }
+        await host.settle()
 
         #expect(!host.toasts.contains { $0.level == .failure })
         #expect(!host.recentOutcomes.contains { $0.phase == .failed })
