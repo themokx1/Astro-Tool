@@ -85,54 +85,73 @@ public struct NightsView: View {
 
     private var nightsWorkspace: some View {
         WorkspaceTablePage(subtitle: "Review each observing night without losing its series boundaries.") {
+            // W4-2 (sibling): stays exactly as shipped -- unchanged position,
+            // unchanged style.
             Picker("View", selection: $mode) {
                 ForEach(Mode.allCases, id: \.self) { Text($0.displayLabel).tag($0) }
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("v2.nights.mode")
+            // W4-3b (owner's second Projects complaint, verbatim: "a
+            // projektek oldal fele még mindig felesleges infó" -- applies
+            // here too): this slot used to ALSO stack three `MetricCard`s
+            // (Observed nights / Frames / Morning triage -- the triage count
+            // duplicated the sidebar's own `.badge()`, the other two were
+            // inert numbers linking nowhere) and a permanent "Session model"
+            // explainer card with two documentation sentences, above a
+            // segmented month picker that already needed 10 buttons and
+            // grows every month. All four are gone: the sidebar badge still
+            // carries the review count, "Session model" moved into the ⓘ
+            // popover next to "Observed nights" below (`observedNightsTable`
+            // -- the one place it is actually relevant, not permanent page
+            // furniture), the month filter is now a compact menu `Picker`
+            // (macOS' own answer to an unbounded, ever-growing choice list,
+            // matching e.g. Mail's date-range filters), and a new triage
+            // filter (Mind / Áttekintésre vár / Kész) joins it in this one
+            // action row -- see `NightsStore.NightTriageFilter` and
+            // `uniformVisibleTriageState` for how the Triage column itself
+            // then collapses into one summary sentence once every visible
+            // row already agrees.
             HStack(spacing: AstroTokens.Spacing.standard) {
-                MetricCard(title: "Observed nights", value: snapshot.map { "\($0.nightCount)" } ?? "—", detail: "Detected date-based sessions", systemImage: "calendar")
-                MetricCard(title: "Frames", value: snapshot.map { "\($0.frameCount)" } ?? "—", detail: "Indexed read-only", systemImage: "photo.stack")
-                MetricCard(title: "Morning triage", value: "\(store.needsReviewCount)", detail: "Needs review", systemImage: "checklist")
-            }
-            .accessibilityIdentifier("v2.nights.triage")
-            // W3-10: the owner's own report -- "Projektet tudok hozzá adni,
-            // de új sessiont nem tudok, legalábbis nem találom a gombot."
-            // (I can add a project, but not a new session -- or at least I
-            // can't find the button.) V2 had no session-creation entry point
-            // anywhere; this is the unprefilled one -- the user picks an
-            // existing project or types a catalog/name.
-            HStack {
+                if mode == .history {
+                    if !store.availableMonths.isEmpty {
+                        Picker("Month", selection: Binding(
+                            get: { store.selectedMonth },
+                            set: { store.selectMonth($0) }
+                        )) {
+                            Text("All months").tag(String?.none)
+                            ForEach(store.availableMonths, id: \.self) { Text($0).tag(Optional($0)) }
+                        }
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                        .accessibilityIdentifier("v2.nights.calendar")
+                    }
+                    Picker("Triage", selection: Binding(
+                        get: { store.triageFilter },
+                        set: { store.setTriageFilter($0) }
+                    )) {
+                        ForEach(NightTriageFilter.allCases, id: \.self) { filter in
+                            Text(filter.displayLabel).tag(filter)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                    .accessibilityIdentifier("v2.nights.triage-filter")
+                }
                 Spacer()
+                // W3-10: the owner's own report -- "Projektet tudok hozzá
+                // adni, de új sessiont nem tudok, legalábbis nem találom a
+                // gombot." (I can add a project, but not a new session -- or
+                // at least I can't find the button.) V2 had no
+                // session-creation entry point anywhere; this is the
+                // unprefilled one -- the user picks an existing project or
+                // types a catalog/name.
                 Button(action: createSession) {
                     Label("New Session…", systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent)
                 .help("Create a new session — pick an existing project or a custom target")
                 .accessibilityIdentifier("v2.nights.new-session")
-            }
-            // Task 7 (2026-08-17, GroupBox removal): a heading plus spacing --
-            // this sits inside the toolbar slot, which already floats on its
-            // own glass bar (`WorkspaceTablePage.body`), so no additional
-            // surface belongs here.
-            if mode == .history {
-                VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
-                    Text("Session model").font(.headline)
-                    Label("A night can contain multiple OSC, narrowband, exposure, and filter series.", systemImage: "square.stack.3d.up")
-                    Label("Quality and reports stay comparable per series and roll up to the night.", systemImage: "chart.line.uptrend.xyaxis")
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if mode == .history, !store.availableMonths.isEmpty {
-                Picker("Month", selection: Binding(
-                    get: { store.selectedMonth },
-                    set: { store.selectMonth($0) }
-                )) {
-                    Text("All months").tag(String?.none)
-                    ForEach(store.availableMonths, id: \.self) { Text($0).tag(Optional($0)) }
-                }
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("v2.nights.calendar")
             }
         } table: {
             tableContent
@@ -174,6 +193,16 @@ public struct NightsView: View {
         }
     }
 
+    /// Backs the "Observed nights" header's ⓘ button -- the two documentation
+    /// sentences a permanent "Session model" card used to spend on every
+    /// visit (W4-3b; see `nightsWorkspace`'s own doc comment for the fuller
+    /// account). Same "explain it once, on demand" move the Projects page's
+    /// "Tiszta kezdés" card made into `NewProjectView`'s caption.
+    private static let sessionModelInfo: [MetricInfoButton.Metric] = [
+        .init(title: "Multiple series per night", explanation: "A night can contain multiple OSC, narrowband, exposure, and filter series."),
+        .init(title: "Comparable quality and reports", explanation: "Quality and reports stay comparable per series and roll up to the night."),
+    ]
+
     private var observedNightsTable: some View {
         // Task 7 (2026-08-17, GroupBox removal): heading + Divider + Table,
         // `ReviewWorkspace.frameReview`'s own shape -- `WorkspaceTablePage`
@@ -181,9 +210,28 @@ public struct NightsView: View {
         // `AstroTokens.Color.surface` background, so a `GroupBox` here was
         // a second, opaque box painted inside that surface.
         VStack(alignment: .leading, spacing: 0) {
-            Text("Observed nights").font(.headline)
-                .padding(.horizontal, AstroTokens.Spacing.standard)
-                .padding(.vertical, AstroTokens.Spacing.compact)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("Observed nights").font(.headline)
+                    MetricInfoButton(metrics: Self.sessionModelInfo)
+                }
+                // W4-3b: when every currently visible night already shares
+                // one `NightRow.TriageState` -- typically because the new
+                // triage filter above narrowed to exactly one, but also
+                // whenever the data itself just happens to agree --
+                // repeating the same badge once per row is pure noise; one
+                // sentence says it once instead. The Triage column itself is
+                // dropped below in this same case, so the state is never
+                // shown twice.
+                if let sharedState = store.uniformVisibleTriageState {
+                    triageSummaryText(for: sharedState, count: store.visibleNights.count)
+                        .font(.subheadline)
+                        .foregroundStyle(sharedState == .ready ? AstroTokens.Color.ok : AstroTokens.Color.attention)
+                        .accessibilityIdentifier("v2.nights.triage-summary")
+                }
+            }
+            .padding(.horizontal, AstroTokens.Spacing.standard)
+            .padding(.vertical, AstroTokens.Spacing.compact)
             Divider()
             Table(store.visibleNights, selection: Binding(
                 get: { store.selectedNightID },
@@ -201,11 +249,20 @@ public struct NightsView: View {
                     .width(min: 70, ideal: 85)
                 TableColumn("Integration", value: \NightRow.snapshot.integrationSeconds) { Text($0.integrationSummary).monospacedDigit() }
                     .width(min: 75, ideal: 90)
-                TableColumn("Triage", value: \NightRow.triageState.rawValue) { night in
-                    Label(night.triageState.displayLabel, systemImage: night.triageState == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                        .foregroundStyle(night.triageState == .ready ? AstroTokens.Color.ok : AstroTokens.Color.attention)
+                // W4-3b: redundant with `triageSummaryText` above once every
+                // visible row already shares one state -- see
+                // `NightsStore.uniformVisibleTriageState`'s own doc comment
+                // for why that is not the same thing as "only under Mind"
+                // (a specific filter guarantees this by construction, but
+                // "Mind" can land here too if the data just happens to
+                // agree).
+                if store.uniformVisibleTriageState == nil {
+                    TableColumn("Triage", value: \NightRow.triageState.rawValue) { night in
+                        Label(night.triageState.displayLabel, systemImage: night.triageState == .ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                            .foregroundStyle(night.triageState == .ready ? AstroTokens.Color.ok : AstroTokens.Color.attention)
+                    }
+                    .width(min: 110, ideal: 125)
                 }
-                .width(min: 110, ideal: 125)
                 // Task 4 (2026-08-17 owner-feedback wave 3) first gave this
                 // column a single visible "Rate Frames" icon button, since
                 // the owner could only reach any row action through the
@@ -289,6 +346,22 @@ public struct NightsView: View {
     private func cloudSummaryText(for date: String) -> String {
         guard let summary = store.nightWeather[date] else { return "—" }
         return "\(Int(summary.minPercent.rounded()))–\(Int(summary.maxPercent.rounded()))%"
+    }
+
+    /// Backs the Triage-column-to-one-line collapse (`observedNightsTable`,
+    /// `NightsStore.uniformVisibleTriageState`) -- the sentence follows the
+    /// shared state itself rather than a single fixed phrase, so it never
+    /// claims "needs review" for a row set that is actually all `.ready` or
+    /// all `.empty`.
+    private func triageSummaryText(for state: NightRow.TriageState, count: Int) -> Text {
+        switch state {
+        case .ready:
+            Text("\(count) night(s) need no further review")
+        case .needsReview:
+            Text("\(count) night(s) need review")
+        case .empty:
+            Text("\(count) night(s) have no usable frames")
+        }
     }
 
     /// `NightActionMenu`'s shared action set for one night row -- V1's

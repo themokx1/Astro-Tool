@@ -99,11 +99,24 @@ struct V2BetaWorkspaceSurfaceTests {
             .deletingLastPathComponent().deletingLastPathComponent()
         let nights = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsView.swift"), encoding: .utf8)
         let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Nights/NightsStore.swift"), encoding: .utf8)
-        #expect(nights.contains("Morning triage"))
-        #expect(nights.contains("Needs review"))
-        #expect(nights.contains("v2.nights.triage"))
+        // W4-3b: the standalone "Morning triage" `MetricCard` (a number
+        // duplicating the sidebar's own `.badge()` count) is gone -- morning
+        // triage is now an actual triage FILTER (Mind / Áttekintésre vár /
+        // Kész) plus a one-line summary once every visible night already
+        // agrees, not an inert stat. See `NightTriageFilter` and
+        // `NightsStore.uniformVisibleTriageState`.
+        // "Needs review" itself is now a `NightTriageFilter`/`TriageState`
+        // rawValue in the store (reused verbatim by both, per
+        // `NightTriageFilter`'s own doc comment), not a literal string in
+        // the view -- `NightsView` only ever renders it through
+        // `.displayLabel`.
+        #expect(nights.contains("v2.nights.triage-filter"))
+        #expect(nights.contains("store.uniformVisibleTriageState"))
+        #expect(store.contains("case needsReview = \"Needs review\""))
         #expect(store.contains("excludedFrames"))
         #expect(store.contains("triageState"))
+        #expect(store.contains("public enum NightTriageFilter"))
+        #expect(store.contains("public var uniformVisibleTriageState"))
     }
 
     @Test("Global search returns capture series and opens their project")

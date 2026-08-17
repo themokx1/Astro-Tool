@@ -63,6 +63,25 @@ public struct NightRow: Equatable, Sendable, Identifiable {
     }
 }
 
+/// W4-3b: the Nights page's triage filter -- deliberately just `.all` plus
+/// the same two states the row badge itself already collapses non-`.ready`
+/// nights into (`night.triageState == .ready` is the only distinction the
+/// existing badge color/icon ever drew). `.needsReview` here therefore
+/// matches `NightRow.TriageState.empty` too, the same way it already did
+/// inside `NightsStore.needsReviewCount`'s own `!= .ready` filter -- this
+/// never invents a third filterable bucket the row UI didn't already have.
+public enum NightTriageFilter: String, CaseIterable, Sendable {
+    case all = "All"
+    case needsReview = "Needs review"
+    case ready = "Ready"
+
+    /// Same `Mode.displayLabel` shape immediately above in `NightsView` --
+    /// `.needsReview`/`.ready` reuse `NightRow.TriageState`'s own rawValues
+    /// verbatim, so they inherit its existing `hu.lproj` translations;
+    /// only `.all`'s "All" is genuinely new vocabulary.
+    public var displayLabel: LocalizedStringKey { LocalizedStringKey(rawValue) }
+}
+
 public struct PlanningNightRow: Equatable, Sendable, Identifiable {
     public let summary: NightSummary
     public var id: String { summary.date }
@@ -116,6 +135,14 @@ public final class NightsStore {
     public private(set) var errorMessage: String?
     public private(set) var selectedMonth: String?
     public private(set) var selectedNightID: UUID?
+    /// W4-3b (owner's second Projects complaint, same disease on this page):
+    /// a per-row amber "Needs review" badge is only informative when the
+    /// table actually mixes states -- when every row already agrees, 16
+    /// repeats of the same badge are noise the sidebar's own `.badge()`
+    /// count already covers. This filter lets the user narrow to exactly
+    /// one state; `uniformVisibleTriageState` below is what decides whether
+    /// the Triage column collapses into one summary sentence.
+    public private(set) var triageFilter: NightTriageFilter = .all
     private let metadataFactory: MetadataFactory
     private let calendarProvider: CalendarProvider
     private let weatherProvider: WeatherProvider
@@ -163,14 +190,19 @@ public final class NightsStore {
         KeyPathComparator(\NightRow.date, order: .reverse)
     ]
     /// Cached, re-sorted/filtered on every input change (`nights`,
-    /// `selectedMonth`, `sortOrder`) -- never re-derived from `body`, which
-    /// is the render-path cost that froze this app repeatedly (see
-    /// `PlanningStore.filteredRecommendations`'s own doc comment for the
+    /// `selectedMonth`, `triageFilter`, `sortOrder`) -- never re-derived from
+    /// `body`, which is the render-path cost that froze this app repeatedly
+    /// (see `PlanningStore.filteredRecommendations`'s own doc comment for the
     /// same fix applied first).
     public private(set) var visibleNights: [NightRow] = []
 
     private func recomputeVisibleNights() {
         var rows = selectedMonth.map { month in nights.filter { $0.date.hasPrefix(month) } } ?? nights
+        switch triageFilter {
+        case .all: break
+        case .needsReview: rows = rows.filter { $0.triageState != .ready }
+        case .ready: rows = rows.filter { $0.triageState == .ready }
+        }
         if !sortOrder.isEmpty { rows.sort(using: sortOrder) }
         visibleNights = rows
     }
@@ -179,6 +211,30 @@ public final class NightsStore {
         guard newValue != sortOrder else { return }
         sortOrder = newValue
         recomputeVisibleNights()
+    }
+
+    /// W4-3b: mirrors `selectMonth`'s own "drop a selection the new view no
+    /// longer contains" rule immediately below.
+    public func setTriageFilter(_ newValue: NightTriageFilter) {
+        guard newValue != triageFilter else { return }
+        triageFilter = newValue
+        recomputeVisibleNights()
+        if let selectedNightID, !visibleNights.contains(where: { $0.id == selectedNightID }) {
+            self.selectedNightID = nil
+        }
+    }
+
+    /// W4-3b: `nil` when the currently visible nights mix triage states (the
+    /// per-row Triage column badge is still the only way to tell them
+    /// apart); the shared state when every visible night already agrees --
+    /// whether because the user picked a specific `triageFilter` (where this
+    /// is true by construction) or the underlying data just happens to,
+    /// which is exactly the "16 rows shout the same badge" case the owner
+    /// flagged. `NightsView` uses this to replace the Triage column with one
+    /// summary sentence instead of repeating the same badge on every row.
+    public var uniformVisibleTriageState: NightRow.TriageState? {
+        guard let first = visibleNights.first else { return nil }
+        return visibleNights.allSatisfy { $0.triageState == first.triageState } ? first.triageState : nil
     }
 
     public var selectedNight: NightRow? {

@@ -165,6 +165,74 @@ struct NightsStoreTests {
         #expect(store.nights[0].triageState == .empty)
     }
 
+    // MARK: - W4-3b (triage filter + Triage column collapse)
+
+    @Test("The triage filter narrows visibleNights to the matching states and drops a selection the new filter excludes")
+    func triageFilterNarrowsVisibleNights() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "M 31", displayName: "M 31", phase: .collecting)
+        let readyNight = NightRecord(id: UUID(), localDate: "2026-08-01", timeZoneID: "Europe/Budapest")
+        let reviewNight = NightRecord(id: UUID(), localDate: "2026-08-02", timeZoneID: "Europe/Budapest")
+        let readySeries = makeSeries(project: project.id, night: readyNight.id, exposure: 60)
+        let reviewSeries = makeSeries(project: project.id, night: reviewNight.id, exposure: 60)
+        try await metadata.save(MetadataWriteBatch(
+            projects: [project], nights: [readyNight, reviewNight], series: [readySeries, reviewSeries]
+        ))
+        try await metadata.save(MetadataWriteBatch(frameDecisions: [
+            FrameDecisionRecord(id: UUID(), seriesID: readySeries.id, relativePath: "a.fit", verdict: .accepted, logicallyExcluded: false),
+            FrameDecisionRecord(id: UUID(), seriesID: reviewSeries.id, relativePath: "b.fit", verdict: .undecided, logicallyExcluded: false),
+        ]))
+        let store = NightsStore(metadataFactory: { _ in metadata })
+        try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        // Default: no filter applied, both nights visible, no single shared
+        // state (one `.ready`, one `.needsReview`).
+        #expect(store.triageFilter == .all)
+        #expect(store.visibleNights.count == 2)
+        #expect(store.uniformVisibleTriageState == nil)
+
+        // Select the review night, then filter it out -- the selection must
+        // not silently point at a row the table no longer shows (same rule
+        // `selectMonth` already enforces).
+        store.selectNight(reviewNight.id)
+        store.setTriageFilter(.ready)
+        #expect(store.visibleNights.map(\.id) == [readyNight.id])
+        #expect(store.selectedNightID == nil)
+        #expect(store.uniformVisibleTriageState == .ready)
+
+        store.setTriageFilter(.needsReview)
+        #expect(store.visibleNights.map(\.id) == [reviewNight.id])
+        #expect(store.uniformVisibleTriageState == .needsReview)
+
+        store.setTriageFilter(.all)
+        #expect(store.visibleNights.count == 2)
+        #expect(store.uniformVisibleTriageState == nil)
+    }
+
+    @Test("The needs-review filter bucket also matches nights with zero usable frames, the same way needsReviewCount already does")
+    func triageFilterNeedsReviewIncludesEmptyNights() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "M 31", displayName: "M 31", phase: .collecting)
+        let emptyNight = NightRecord(id: UUID(), localDate: "2026-08-03", timeZoneID: "Europe/Budapest")
+        let series = makeSeries(project: project.id, night: emptyNight.id, exposure: 60)
+        try await metadata.save(MetadataWriteBatch(projects: [project], nights: [emptyNight], series: [series]))
+        try await metadata.save(MetadataWriteBatch(frameDecisions: [
+            FrameDecisionRecord(id: UUID(), seriesID: series.id, relativePath: "a.fit", verdict: .rejected, logicallyExcluded: true),
+        ]))
+        let store = NightsStore(metadataFactory: { _ in metadata })
+        try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        #expect(store.nights[0].triageState == .empty)
+
+        store.setTriageFilter(.needsReview)
+        #expect(store.visibleNights.map(\.id) == [emptyNight.id])
+        #expect(store.uniformVisibleTriageState == .empty)
+
+        store.setTriageFilter(.ready)
+        #expect(store.visibleNights.isEmpty)
+        #expect(store.uniformVisibleTriageState == nil)
+    }
+
     // MARK: - W4-2 (cloud forecast)
 
     @Test("Opening a library with weather enabled loads per-night cloud summaries")

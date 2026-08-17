@@ -1400,6 +1400,20 @@
 // az extraháló script nem lát, kézzel felvéve. A tulajdonos saját szava.
 "Only one measured session — more measurements are needed for a trend" = "1 mért session — a trendhez több mérés kell";
 
+/* W4-3b (Nights/Planning top-half cleanup, same disease the Projects page
+   was cured of in 238a32d): the triage filter's "All" option and the
+   Triage-column-to-one-line collapse sentences are reached through
+   `NightTriageFilter.displayLabel` (a computed `LocalizedStringKey`, same
+   extraction-invisible shape as `NightsView.Mode.displayLabel`'s own
+   "Observed"/"Next 30 nights" entries above) and `NightsView.triageSummaryText`
+   (a literal `Text("\(count) ...")` the extraction script DOES see, but
+   added here alongside its sibling for the same reason -- hand-verified,
+   not left to a second script run). */
+"All" = "Mind";
+"%lld night(s) need review" = "%lld éjszaka vár áttekintésre";
+"%lld night(s) need no further review" = "%lld éjszaka nem igényel további áttekintést";
+"%lld night(s) have no usable frames" = "%lld éjszakának nincs használható képkockája";
+
 /* W4-7 item 3 (owner review): `ArchiveTaskDetailView`'s folder grouping and
    its new footer action row. "Move to Quarantine…"/"Run Check" are literal
    `Button(...)` arguments the extraction script already sees; every other
