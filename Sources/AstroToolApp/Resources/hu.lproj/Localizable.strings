@@ -1434,3 +1434,56 @@
 "An unread or rewritten file cannot be fixed automatically. Run Check from the Archive page's toolbar to look again." = "Egy olvashatatlan vagy felülírt fájlt nem lehet automatikusan javítani. Futtasd az Ellenőrzést az Archívum oldal eszköztárából, hogy újra megnézd.";
 "There is no automatic fix for this. Use each row's Reveal in Finder button to inspect it and correct it by hand." = "Erre nincs automatikus javítás. Használd az egyes sorok Megjelenítés a Finderben gombját, hogy megvizsgáld és kézzel javítsd.";
 
+/* W4-1 (card-import wizard, CaptureImportView.swift/V2RootView.swift): the
+   owner's own words for the app's most important workflow -- "rádugom az
+   asi air-t és a canon r8-at ... létre tudjam hozni ... a mappákat a
+   capture-nek pár kattintással ... és ezt utána fel tudjam tölteni".
+   "%lld files · %@" already existed (shared with the Classify/Preview step
+   headers here, same convention as the Archive sweep's own reuse above);
+   "Light"/"Flat"/"Dark"/"Bias" are deliberately NOT given entries -- this
+   file's own glossary (top of file) already states these stay English, so
+   the Classify step's role labels fall back to the literal English text on
+   purpose, same as `LibraryHealthCategory.displayLabel`'s own entries
+   above. Most of the rest are literal `Text`/`Label`/`Button` arguments the
+   extraction script should already see; `stepSubtitle`/`roleLabel`/
+   `dateSourceLabel` in `CaptureImportView.swift` are `switch`-returned
+   `LocalizedStringKey`s it cannot, so every one of THOSE needed hand-adding
+   regardless -- included here together for one wizard, one block. */
+"Import from Card…" = "Behozatal a kártyáról…";
+"Import from Card" = "Behozatal a kártyáról";
+"Copy capture files from a card or the ASI Air's storage" = "Capture-fájlok másolása kártyáról vagy az ASI Air tárhelyéről";
+"Import from card" = "Behozatal kártyáról";
+"Classify" = "Osztályozás";
+"Copying" = "Másolás";
+"Receipt" = "Nyugta";
+"Copying capture files" = "Capture-fájlok másolása";
+"Choose the ASI Air storage, the camera's SD card, or any folder." = "Válaszd ki az ASI Air tárhelyét, a fényképezőgép SD-kártyáját, vagy bármely mappát.";
+"No external volumes are mounted right now." = "Jelenleg nincs csatlakoztatott külső kötet.";
+"Choose a Folder…" = "Mappa kiválasztása…";
+"Scanning…" = "Beolvasás…";
+"No .fit/.fits/.cr3 capture files were found there." = "Ott nem található .fit/.fits/.cr3 capture-fájl.";
+"AstroTool could not read that location." = "Az AstroTool nem tudta beolvasni ezt a helyet.";
+"%lld unclassified" = "%lld besorolatlan";
+"Set Role" = "Szerep beállítása";
+"Exclude" = "Kizárás";
+"Include" = "Visszavétel";
+"This session already exists — adding another capture." = "Ez a session már létezik — új capture-t adunk hozzá.";
+"Create Structure" = "Struktúra létrehozása";
+"AstroTool could not preview the copy." = "Az AstroTool nem tudta előnézetezni a másolást.";
+"Date suggested from the FITS DATE-OBS header." = "A dátum a FITS DATE-OBS fejlécéből származik.";
+"Date suggested from the photo's Exif date." = "A dátum a fénykép Exif-dátumából származik.";
+"Date suggested from the file's own modification date." = "A dátum a fájl saját módosítási dátumából származik.";
+"%lld already at destination" = "%lld már megvan a célnál";
+"Skip" = "Kihagyás";
+"The source card is left untouched — this only copies." = "A forrás a kártyán érintetlen marad — ez csak másol.";
+"Start Copy" = "Másolás indítása";
+"Copying files — the source card is not modified." = "Fájlok másolása — a forrás kártya nem módosul.";
+"%lld files copied · %@" = "%lld fájl másolva · %@";
+"%lld files already existed at the destination and were skipped." = "%lld fájl már létezett a célnál, ezek kimaradtak.";
+"%lld files failed to copy:" = "%lld fájl másolása sikertelen volt:";
+"Every copy was verified with a checksum against the source." = "Minden másolatot ellenőrző-összeggel igazoltunk a forráshoz képest.";
+"The source card is untouched." = "A forrás kártya érintetlen.";
+"This copy cannot be undone from here — the source is untouched on the card." = "A másolás nem visszavonható innen — a forrás a kártyán érintetlen.";
+"The session will appear once the next library scan runs." = "A session a következő könyvtár-beolvasás után fog megjelenni.";
+"Run Scan Now" = "Beolvasás indítása most";
+"AstroTool could not copy the files. The source card was not modified." = "Az AstroTool nem tudta lemásolni a fájlokat. A forrás kártya nem módosult.";

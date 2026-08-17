@@ -24,6 +24,19 @@ struct LocalizationCoverageTests {
         "AstroTool", // product name
         "FWHM", // Full Width at Half Maximum -- standard astronomy acronym
         "OK", // used as-is in Hungarian UI convention
+        // W4-1 (card-import wizard, CaptureImportView.swift's "Set Role"
+        // menu): this file's own glossary (top of file) already established
+        // that frame-role names stay English in Hungarian astrophotography
+        // usage -- `LibraryHealthCategory.displayLabel`'s own `Flat`/`Dark`/
+        // `Bias` cases (HealthView.swift) rely on the same convention, but
+        // as a `switch`-returned `LocalizedStringKey` the extraction script
+        // never sees those in the first place. These four are literal
+        // `Button(...)` arguments the script DOES see, so they need an
+        // explicit allowlist entry rather than silently passing already.
+        "Light",
+        "Flat",
+        "Dark",
+        "Bias",
     ]
 
     private func runExtractionScript(arguments: [String] = []) throws -> [String] {
