@@ -96,6 +96,11 @@ struct V2OnboardingTests {
             try await store.openAndScan(fixture.root)
         }
         #expect(store.phase.accessProblemMessage != nil)
+        // Task 5b (2026-08-17): `accessProblem` is the raw-case counterpart
+        // `V2RootView`'s `LibraryAccessProblemBanner` now reads instead of
+        // the plain-string `accessProblemMessage` above, so it can render a
+        // translatable `Text` via `LibraryWelcomeView.accessProblemText(for:)`.
+        #expect(store.phase.accessProblem != nil)
         #expect(store.selectedRoot == fixture.root.standardizedFileURL)
 
         store.returnToLibraryChoice()
