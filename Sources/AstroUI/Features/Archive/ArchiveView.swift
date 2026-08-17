@@ -223,8 +223,9 @@ public struct ArchiveView: View {
             // raised layer. The `List` below deliberately does NOT: it
             // hosts `ArchiveTaskCard`, which is `.glassEffect`, and putting
             // a fill behind glass is the exact layering mistake Task 7b
-            // was undoing. `List` already draws macOS's own list background
-            // for its rows.
+            // was undoing. Task 7d went further and took the list's OWN
+            // background away too -- see `.scrollContentBackground(.hidden)`
+            // below for why an unowned white slab was worse than no slab.
             ArchiveStripView(
                 slices: snapshot.slices,
                 reclaimableBytes: snapshot.reclaimableBytes,
@@ -256,6 +257,14 @@ public struct ArchiveView: View {
                             onRevealInFinder: { revealInFinder(row: row) },
                             onPreviewQuarantine: { openQuarantinePreview([]) }
                         )
+                        // Task 7d: same zero horizontal row inset the task
+                        // cards above already use, so every row in this list
+                        // starts and ends on the same vertical line as the
+                        // strip card above it. `.inset` list style otherwise
+                        // adds its own gutter to these rows only, which is
+                        // half of what made the two halves of this page look
+                        // like they were laid out by different people.
+                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                     }
                 }
                 if !store.uncovered.isEmpty {
@@ -263,6 +272,46 @@ public struct ArchiveView: View {
                 }
             }
             .listStyle(.inset)
+            // Task 7d (2026-08-17): the page's seam, and why it is closed by
+            // REMOVING a layer rather than adding one.
+            //
+            // The symptom: headline, then a rounded raised card, then a
+            // square-cornered opaque slab. The slab was `List`'s own
+            // background -- AppKit's `controlBackgroundColor`, which
+            // resolves to pure white in light appearance, exactly `surface`,
+            // but with no corner, no hairline, no shadow and no relationship
+            // to `AstroTokens` at all. So the page was painting a card and a
+            // not-quite-card, from two different vocabularies, one above the
+            // other. That is `GroupBox`'s defect (Task 7) wearing a
+            // different type name: an unowned system fill competing with the
+            // design system's own.
+            //
+            // Three fixes were possible and two are wrong:
+            //
+            // 1. Give the `List` `.astroRaisedSurface(.flush)`, like the
+            //    eight table pages have. Rejected: it hosts `ArchiveTaskCard`,
+            //    which is `.glassEffect`, and an opaque fill under glass is
+            //    precisely the layering mistake Task 7b spent a task undoing.
+            // 2. Move the glass from the cards to the container, so the
+            //    container can be the one styled thing. Rejected twice over:
+            //    `V2PolishSurfaceTests.noTableOrListHasAGlassParent` forbids
+            //    it outright, and for a good reason -- dense target rows over
+            //    a blurred, moving backdrop are unreadable.
+            // 3. Hide the list's background, which is what this line does.
+            //    The page then has exactly ONE continuous backdrop
+            //    (`ground`, painted once by `V2RootView`'s detail column) and
+            //    two things standing on it: the raised strip card and the
+            //    floating glass task cards. Nothing competes, because there
+            //    is no second container -- the seam was two containers, so
+            //    one container is the fix.
+            //
+            // What this costs: the target rows now sit directly on `ground`
+            // rather than on a white slab. That is the correct reading of
+            // what they are -- a scrolling list of the page's own contents,
+            // not a separate document -- and the glass cards finally have
+            // the opaque, known backdrop that glass needs to refract, which
+            // the list background had been standing in front of.
+            .scrollContentBackground(.hidden)
             // Task 6 (2026-08-17, Liquid Glass): a soft blend into the
             // verdict header/strip above rather than a hard scroll seam --
             // the list's own rows/cards stay solid regardless.
