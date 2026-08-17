@@ -296,6 +296,12 @@ InsightsView    6 GroupBox      PlanningView  3      NightsView  3
 ProjectsView    3               HomeView      2      ArchiveView 0 (de WorkspacePage-ben)
 ```
 
+**A fenti szám elavult, és a task ügynöke szúrta ki — nem én.** Ez a mérés 2026-08-16-i; azóta a 6. task (üveg) és a 3. hullám munkái több fájlt is érintettek. A valós állapot: **35 `GroupBox` 14 fájlban**. A fenti öt fájlon túl: `NightWorkspaceView` (2), `ProjectWorkspaceView` (3), `SeriesWorkspaceView` (1), `ArchiveTaskDetailView` (1), `CleanupPreviewView` (1), `ConversionWorkspace` (3), `HealthView` (3), `CalibrationView` (2), `ResultsView` (2).
+
+**Mind a 14 fájl a hatókör.** A tulajdonos panasza épp az egységtelenség volt („nem egységesek a padding-ek"), és az irányítása „mindenhol" szólt — ötöt megcsinálni és kilencet otthagyni nem kisebb javítás, hanem **rosszabb állapot**, mert az app képernyőnként lenne hol natív, hol szürke dobozos.
+
+**Ez a szám is elavulhat.** Aki ezt olvassa: futtasd a kaput, ne a táblázatot hidd el.
+
 És **sehol nincs saját `GroupBoxStyle`** — tehát minden `GroupBox` a macOS alapértelmezett, **átlátszatlan** szürke dobozát rajzolja.
 
 **A tulajdonos három panasza ugyanannak az egy oknak a három tünete:**
@@ -333,7 +339,15 @@ Futtasd a jelenlegi fán — **17 előfordulást** kell megneveznie hat fájlban
 
 - [ ] **Step 2: Fájlonként, a Review mintája szerint**
 
-Minden `GroupBox` helyére: fejléc (`AstroType.sectionTitle`) + `AstroTokens.Spacing` térköz, és ahol tényleg felület kell, ott `surface` + `ConcentricRectangle`, **nem** doboz a dobozban. Fájlonként fordíts és futtasd a suite-ot.
+**A tulajdonos irányítása 2026-08-17-én, menet közben:** *„mindenhol default macOS alapértelmezett nézetet szeretnék elsőre… esztétikai és alap szabályokat a macOS defaultból származtassunk."*
+
+Ezért **elsőként szabvány macOS konténer**: `Form` + `Section`, `List` szabvány stílussal, `VStack` rendszer-alapértelmezett térközzel. A padding, a sarok, az elválasztók és az anyag a **rendszertől** jöjjön. Saját felületet (`surface` + `ConcentricRectangle`) csak konkrét indokkal, és az indokot le kell írni.
+
+Az eredeti utasításom — „ahol felület kell, ott `surface` + `ConcentricRectangle`" — **rossz volt**: az is saját elrendezési nyelv kitalálása, csak más formában. Ez magyarázza, miért pont a `ReviewWorkspace` tetszett neki: annak az inspectora `Form`, és így natív macOS-képernyőnek látszik, nem egyedinek.
+
+**A tulajdonos saját kikötése is szabály:** *„nem úgy kell értelmezni, hogy ha egybe folynának a dolgok az rendben van."* A dobozok eltávolítása nem teheti a lapot tagolatlan fallá — a szerkezetnek látszania kell, csak fejlécből, `Section`-ből és rendszer-térközből.
+
+A színtokenek **változatlanok**: az irányítás a szerkezetről szól, nem a palettáról. Fájlonként fordíts és futtasd a suite-ot.
 
 - [ ] **Step 3: Az egységes méretek**
 
