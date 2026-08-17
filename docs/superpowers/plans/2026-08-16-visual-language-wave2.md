@@ -461,3 +461,68 @@ Mindegyiknél a **jelentés** dönt, nem a mai szín:
 ```bash
 git commit -m "fix: let the colour gate see every colour"
 ```
+
+---
+
+## Task 5b: A hibaosztály elkapása, nem a hetedik előfordulás javítása
+
+**Kiváltó ok:** az 5. task lezárása után az `ExportMenu` ugyanazzal a hibával maradt, amit épp javítottunk. Ez a **hetedik** előfordulása ennek ebben a projektben:
+
+1. `MetricCard.title` (korábbi hullám)
+2. `ArchiveClass.displayName` (7b)
+3. `ArchiveTargetRow.displayName` — motorrétegben (8)
+4. `ArchiveStripView.reclaimHelpText` (10)
+5. `LibraryWelcomeView.actionableMessage` (14)
+6. `WorkspaceAction/Menu/MenuItem.title` + `help` (5)
+7. `ExportMenu`/`ExportMenuItem.title`
+
+Hét azonos hiba után a javítandó nem a hetedik előfordulás, hanem az, hogy **semmi nem akadályozza meg a nyolcadikat.** A `String`-ként tipizált felületi szöveg lefordul, működik, tesztel átmegy — és soha nem fordul magyarra.
+
+**Mérés:** 24 `String`-ként tipizált, felületi nevű property az `AstroUI`-ban. **Nem mind hiba** — vannak köztük valódi adatok (keresési találat címe = célpontnév). Ezért ez a task nem tömeges csere.
+
+**Files:** `Tests/AstroUITests/V2PolishSurfaceTests.swift`, plus a valódi szivárgások fájljai
+
+- [ ] **Step 1: A kapu, ami az osztályt fogja**
+
+```swift
+@Test("No user-facing text in AstroUI is typed as String")
+func uiTextIsNeverAPlainString() throws {
+    // A String selects SwiftUI's verbatim overload and produces no
+    // extraction key, so it compiles, renders, passes every test -- and
+    // never translates. Seven separate instances of this shipped before
+    // this gate existed; it is the class, not any one of them, that needs
+    // holding. Anything on the allowlist is DATA (a target name, a file
+    // path, a catalog designation), not prose, and each entry says which.
+    let uiNames = ["title", "help", "label", "caption", "subtitle",
+                   "explanation", "actionTitle", "message", "placeholder"]
+    …
+}
+```
+
+Az allowlist **soronként indokolt** legyen, és az indoklás mondja meg, **miért adat** az a mező — nem azt, hogy „egyelőre így maradt". Egy indok nélküli felmentés fél év múlva állandó lyuk (lásd a 2b. task lejárt Planning-felmentését).
+
+**Igazold, hogy bukik**: futtasd a jelenlegi fán, és sorolja fel a 24-et.
+
+- [ ] **Step 2: Döntsd el mindegyikről, adat-e vagy szöveg**
+
+Az egyértelműen felhasználói szövegek, amiket javítani kell:
+
+- `WorkspaceComponents.swift:6,7,67,68` — a `WorkspacePage`/`WorkspaceTablePage` **oldalcíme és alcíme**. Ez minden munkatér fejléce.
+- `App/BreadcrumbBar.swift:11`
+- `App/V2RootView.swift:1484,1485,1487,1515` — az üres állapotok címe, üzenete és gombfelirata
+- `Features/Exports/ExportMenu.swift:79` (+ az `ExportMenuItem` saját `title`-je)
+- `Settings/SettingsStore.swift:10`, `App/V2RootView.swift:1553,1579`, `Features/Review/ReviewWorkspace.swift:617` — `String`-et visszaadó `switch`-ek
+
+Amikről **külön dönts, és indokold** (adat vagy szöveg?): `GlobalSearchStore.swift:19,20` (találat címe/alcíme — célpontnév?), `Help/GlossaryView.swift:22` (`name` — szakkifejezés?), `Help/MetricInfoButton.swift:14,15`, `Operations/OperationHost.swift:23,43,54` (művelet-nevek a toastokban).
+
+Ha egy mezőről nem tudod eldönteni, **ne találgass** — hagyd, tedd az allowlistre „eldöntetlen" indoklással, és jelentsd.
+
+- [ ] **Step 3: Fordítások**
+
+A `switch`-alapúak és a nem-első-argumentumú literálok a kinyerő script számára láthatatlanok — kézzel a `hu.lproj` végi csoportba, ahogy az eddigiek.
+
+- [ ] **Step 4: Suite + commit**
+
+```bash
+git commit -m "fix: gate the whole class of untranslatable UI text"
+```
