@@ -33,6 +33,22 @@ public struct GlossaryView: View {
         public let name: String
         public let definition: String
         public var id: String { name }
+
+        /// W6-D: `definition` is a runtime `String` property, not a literal
+        /// call-site argument, so `Text(definition)` resolves to `Text`'s
+        /// verbatim `StringProtocol` overload no matter what `hu.lproj`
+        /// says -- `scripts/extract-localizable-strings.swift` only sees
+        /// literal-first-argument call sites (see that script's own header
+        /// comment), and this one is a property access, not a literal. Same
+        /// fix shape as `NightRow.TriageState.localizedText`
+        /// (`NightsStore.swift`): an eager `NSLocalizedString(definition,
+        /// ...)` lookup, keyed on the English source text itself, resolved
+        /// once here and rendered as an already-translated plain `String` --
+        /// no `%` in any entry (checked by hand), so there is no
+        /// interpolation-escaping trap to worry about.
+        public var localizedDefinition: String {
+            NSLocalizedString(definition, bundle: .main, comment: "")
+        }
     }
 
     public static let terms: [Term] = [
@@ -78,7 +94,9 @@ public struct GlossaryView: View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return Self.terms }
         return Self.terms.filter {
-            $0.name.localizedStandardContains(query) || $0.definition.localizedStandardContains(query)
+            $0.name.localizedStandardContains(query)
+                || $0.definition.localizedStandardContains(query)
+                || $0.localizedDefinition.localizedStandardContains(query)
         }
     }
 
@@ -92,7 +110,7 @@ public struct GlossaryView: View {
                         List(filteredTerms) { term in
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(term.name).font(.subheadline.bold())
-                                Text(term.definition).font(.callout).foregroundStyle(.secondary)
+                                Text(term.localizedDefinition).font(.callout).foregroundStyle(.secondary)
                             }
                             .padding(.vertical, 3)
                             .id(term.name)

@@ -1761,3 +1761,9 @@
 "This is what the last check found — a newer scan may have changed it." = "Ezt találta a legutóbbi ellenőrzés — egy újabb szkennelés megváltoztathatta.";
 "The Archive page showed %lld here — a freshly re-checked count no longer finds anything of this kind." = "Az Archívum oldal %lld találatot mutatott itt — egy frissen lefuttatott ellenőrzés már nem talál ilyet.";
 "The Archive page showed %lld when you opened this — a freshly re-checked count now finds %lld." = "Az Archívum oldal %lld találatot mutatott, amikor ezt megnyitottad — egy frissen lefuttatott ellenőrzés most %lld találatot talál.";
+
+/* W6-E item 6: ExposureAdvisor's "no sensor profile" CLI-era suggestion
+   reworded for the in-app night report, paired with a real "Sensor
+   Profiles…" button (NightWorkspaceView.exposureAdviceReasonText). */
+"Measure one on the Sensor Profiles page." = "Mérj egyet a Szenzorprofilok oldalon.";
+"Sensor Profiles…" = "Szenzorprofilok…";
