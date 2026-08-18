@@ -8,6 +8,49 @@ történik.
 
 ## [Unreleased]
 
+## [2.0.0-rc.5] - 2026-08-18
+
+### Hozzáadva
+
+- **A jelentések az appban élnek** — az éjszaka riportja az éjszaka sorának
+  dupla kattintására nyíló lapon (szűrők, gyűjtések, minőség, magasság és
+  Hold, hardver, teendők), a teljes projekt-riport a projekt Áttekintés
+  tabján (célpont-adatok, sessionök, stackek, kalibráció, flat-higiénia,
+  mozaik-panelek). HTML-fájlt nem generálunk és nem mentünk; az éjszaka- és
+  célpont-riport export-gombjai megszűntek. A stack-lista (Sirilnek) és az
+  AstroBin CSV megmaradt.
+- **A behozatal csoportokban gondolkodik** — az egymás után, intervallumban
+  készült fájlok felvételi idő szerint kötegekbe állnak; egy csoport-sor
+  előnézeti képet (a flat láthatóan flat, a light láthatóan csillagos),
+  darabszámot, időtartamot és expozíció/ISO/blende összefoglalót mutat
+  (FITS-nél az EXPTIME fejlécből). A szerep csoportonként állítható.
+- Finom mozgás az egész felületen: guruló számok, üveg-morfolás, szekció-
+  átmenetek — egyetlen közös szótárból, a Csökkentett mozgás beállítást
+  tiszteletben tartva.
+
+### Javítva
+
+- Az éjszaka-riport táblázatai a vegyes-expozíció szétválasztás által
+  létrehozott testvér-sessionöket (pl. `2026-05-24-2`) is összesítik — a
+  fejléc és a táblázatok számai mostantól kiadják egymást, és a lap megnevezi
+  az összevont mappákat.
+- Az audit „kalibráció rossz mappában" szabálya a közös fejléc-értelmezőt
+  hívja — többjelentésű FITS-fejlécnél nem ad többé hamis riasztást.
+- A tervezés havi nézete ugyanazt az éjszaka-metszést használja, mint minden
+  más felület.
+- Hideg indításnál (lassan ébredő SSD) a Kezdőlap töltés-állapotot mutat a
+  „Nincs megnyitott könyvtár" helyett; a „Projekt megnyitása" gomb tényleg a
+  projektet nyitja meg.
+- Az Archívum jelmagyarázata sorba törik és magyarul beszél; az Elemzések
+  grafikonjainak tengelycímkéi olvashatók; a fordítás-kinyerő script
+  `%%`-kulcshibája javítva (több „lefordított" szöveg emiatt maradt angol).
+- A képkocka-összehasonlító háttere mindkét megjelenésben sötétít; a
+  diagnosztika a valódi felhő-beállítást jelenti.
+
+### Eltávolítva
+
+- A soha el nem érhető `.result` útvonal és maradványai.
+
 ## [2.0.0-rc.4] - 2026-08-18
 
 ### Hozzáadva
