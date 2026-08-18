@@ -73,6 +73,48 @@ struct W53NightReportFindingsSurfaceTests {
         return result
     }
 
+    // MARK: - Finding 3: the Triage hero card must not render text through
+    // the numeric `astroDataHero()` style.
+
+    /// `MetricCard.value`'s own doc comment (`WorkspaceComponents.swift`)
+    /// says it is "almost always a formatted number/duration, never a
+    /// phrase to translate" -- the Triage card's value
+    /// (`row.triageState.localizedText`, e.g. "Needs review") is exactly
+    /// that one exception, and rendering it through `MetricCard`'s 30pt
+    /// monospaced `astroDataHero()` style sprawled the text across the
+    /// card. Pins the fix (`TextMetricCard`, a file-local twin with a
+    /// text-appropriate value style) without touching the shared
+    /// `MetricCard` component every OTHER workspace's numeric hero cards
+    /// still use.
+    @Test("Night workspace's Triage hero card uses a text-appropriate value style, not MetricCard's numeric one")
+    func triageHeroCardUsesTextStyleNotNumericHero() throws {
+        let source = Self.removingLineComments(try contents("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift"))
+
+        #expect(
+            source.contains("TextMetricCard(title: \"Triage\""),
+            "Triage card must route through a text-appropriate value style, not MetricCard's astroDataHero()"
+        )
+        // A plain `.contains("MetricCard(title: \"Triage\"")` would also
+        // match INSIDE `TextMetricCard(title: "Triage"` (it ends with
+        // exactly that substring) -- anchor on a call site's leading
+        // whitespace/`(` so only a BARE `MetricCard(...)` counts, never the
+        // file-local `TextMetricCard(...)` twin.
+        #expect(
+            !source.contains(" MetricCard(title: \"Triage\"") && !source.contains("(MetricCard(title: \"Triage\""),
+            "Triage card must not go back to MetricCard's numeric astroDataHero() style"
+        )
+        // The two genuinely numeric/duration cards next to it must keep
+        // using the shared numeric component -- this fix must not regress
+        // them onto the file-local text twin instead.
+        #expect(source.contains(" MetricCard(title: \"Integration\""))
+        #expect(source.contains(" MetricCard(title: \"Series\""))
+        // `TextMetricCard` itself must not adopt the numeric hero style --
+        // that would silently undo the whole point of introducing it.
+        let twinRange = try #require(source.range(of: "private struct TextMetricCard"))
+        let twinBody = source[twinRange.lowerBound...]
+        #expect(!twinBody.contains(".astroDataHero()"))
+    }
+
     // MARK: - Finding 2: the Minőség/Quality section's exposure-advice
     // fallback must point at the in-app action, not a terminal command.
 

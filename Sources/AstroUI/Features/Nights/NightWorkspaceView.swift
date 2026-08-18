@@ -193,7 +193,7 @@ public struct NightWorkspaceView: View {
                 HStack(spacing: AstroTokens.Spacing.standard) {
                     MetricCard(title: "Integration", value: row.integrationSummary, detail: "Usable light frames", systemImage: "timer")
                     MetricCard(title: "Series", value: row.seriesCount.formatted(), detail: LocalizedStringKey(row.filterSummary), systemImage: "square.stack.3d.up")
-                    MetricCard(title: "Triage", value: row.triageState.localizedText, detail: "\(row.excludedFrames) excluded", systemImage: "checklist")
+                    TextMetricCard(title: "Triage", value: row.triageState.localizedText, detail: "\(row.excludedFrames) excluded", systemImage: "checklist")
                 }
                 // Task 7 (2026-08-17, GroupBox removal): `GroupBox`'s
                 // opaque grey panel gone for good; Task 7c gives the block
@@ -527,5 +527,54 @@ public struct NightWorkspaceView: View {
         }
         items.append(("Bias", "\(report.calibration.biases.count)"))
         return items
+    }
+}
+
+/// W5-3 (owner pixel review, 2026-08-24 IC 4604 night): the owner's own live
+/// review flagged the Triage hero card ("Áttekintésre vár") rendering
+/// through `MetricCard`'s `astroDataHero()` -- the huge, `@ScaledMetric`,
+/// tabular-monospace 30pt style `AstroType.swift` documents as being for "a
+/// card's headline numeric value" specifically. `MetricCard.value`'s own
+/// doc comment already says as much ("almost always a formatted number/
+/// duration, never a phrase to translate"), and `row.triageState
+/// .localizedText` is this workspace's one exception -- a whole word/phrase
+/// ("Needs review", "Complete"), not a number, and at 30pt monospaced it
+/// sprawls well past the width its two numeric siblings ("3h 20m", "6")
+/// occupy.
+///
+/// This is a narrow, file-local twin of `MetricCard`
+/// (`WorkspaceComponents.swift`, shared by every OTHER workspace's numeric
+/// hero cards and out of this fix's scope) rather than a change to that
+/// shared component: identical chrome -- label, glass card, detail line --
+/// so it sits flush with `MetricCard`'s own two cards in the same `HStack`,
+/// but the hero VALUE gets a text-appropriate style (`.title2.weight
+/// (.semibold)`, the same weight class `AstroType.sectionTitle` already
+/// uses for headings) instead of the numeric `astroDataHero()`.
+/// `W53NightReportFindingsSurfaceTests.triageHeroCardUsesTextStyleNotNumericHero`
+/// pins this: Triage never regresses back to `MetricCard`/`astroDataHero()`,
+/// and the two numeric cards next to it never lose it either.
+private struct TextMetricCard: View {
+    let title: LocalizedStringKey
+    let value: String
+    let detail: LocalizedStringKey
+    let systemImage: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.title2.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, minHeight: 96, alignment: .leading)
+        .padding(AstroTokens.Spacing.standard)
+        .glassEffect(.regular, in: ConcentricRectangle())
     }
 }
