@@ -389,7 +389,7 @@ extension ProjectNextActionKind {
 /// map the case, not a rendered/capitalized rawValue, to a
 /// `LocalizedStringKey`.
 extension ProjectWorkflowPhase {
-    var displayLabel: LocalizedStringKey {
+    fileprivate var titleText: String {
         switch self {
         case .planned: "Planned"
         case .collecting: "Collecting"
@@ -398,4 +398,15 @@ extension ProjectWorkflowPhase {
         case .archived: "Archived"
         }
     }
+
+    var displayLabel: LocalizedStringKey { LocalizedStringKey(titleText) }
+
+    /// W6-D fix: `GlobalSearchStore.search`'s project-result `detail` field
+    /// is a plain, eagerly-built `String` (interpolated once per search,
+    /// not re-rendered as a view), so it cannot hold `displayLabel` itself
+    /// -- it used to fall back to `phase.rawValue.capitalized` instead,
+    /// which stayed English ("Collecting") regardless of `hu.lproj`. Same
+    /// "resolve the same titleText eagerly, for Sendable/String-constrained
+    /// storage" shape as `ProjectNextActionKind.localizedTitle`.
+    var localizedText: String { NSLocalizedString(titleText, bundle: .main, comment: "") }
 }

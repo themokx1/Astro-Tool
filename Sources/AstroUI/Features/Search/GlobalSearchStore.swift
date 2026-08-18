@@ -105,7 +105,13 @@ public final class GlobalSearchStore {
         var found = projectMatches.map {
             GlobalSearchResult(
                 kind: .project, objectID: $0.id, title: $0.displayName,
-                detail: "\($0.catalogID) · \($0.phase.rawValue.capitalized)"
+                // W6-D fix: `.rawValue.capitalized` stayed English
+                // ("Collecting") no matter what `hu.lproj` said --
+                // `ProjectWorkflowPhase.localizedText` (`ProjectsStore
+                // .swift`) resolves the same case-mapped phrase
+                // `displayLabel` uses elsewhere, eagerly, for this
+                // plain-`String` field.
+                detail: "\($0.catalogID) · \($0.phase.localizedText)"
             )
         }
         let normalized = Self.normalized(trimmed)
