@@ -50,7 +50,15 @@ public struct HomeView: View {
                     context: store.snapshot.nightContext,
                     cloud: store.snapshot.nightCloud,
                     cloudError: store.snapshot.nightCloudError,
-                    isLoading: isLibraryLoading
+                    isLoading: isLibraryLoading,
+                    // Wave W6-A section C: the rail renders unconditionally,
+                    // above the `store.snapshot.libraryName == nil` branch
+                    // right below -- so its own "no site" copy needs the same
+                    // signal that branch already uses, to tell "no library at
+                    // all" (Settings ▸ Location is locked, nothing to point
+                    // at) apart from "library open, no site yet" (the
+                    // pointer is honest there).
+                    hasLibrary: store.snapshot.libraryName != nil
                 )
                 if store.snapshot.libraryName == nil {
                     if isLibraryLoading {
@@ -365,6 +373,16 @@ private struct NightContextRail: View {
     /// the owner "Site not set" during the very same cold start where the
     /// real site was only seconds away from resolving.
     let isLoading: Bool
+    /// Wave W6-A section C (onboarding honesty): this rail renders
+    /// unconditionally, whether or not a library is open at all -- without
+    /// this flag its "not configured" copy pointed at Settings ▸ Location
+    /// even with NO library open, though that panel is locked
+    /// (`LocationSettingsView`'s own "no library" branch) until one is.
+    let hasLibrary: Bool
+    /// Wave W6-A section C: the "library open, no site yet" state's own
+    /// escape hatch, same `@Environment(\.openSettings)` pattern used
+    /// everywhere else in this file a placeholder points at Settings.
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -377,9 +395,19 @@ private struct NightContextRail: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if !context.isConfigured {
-                    Text("Site not set — add it in Settings ▸ Location")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // Wave W6-A section C: Settings ▸ Location only exists
+                    // to point at once a library is open (see
+                    // `LocationSettingsView`'s own "no library" branch) --
+                    // naming it with none open would be a dead pointer.
+                    if hasLibrary {
+                        Text("Site not set — add it in Settings ▸ Location")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Open a library — the site will resolve automatically from the FITS files")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -428,8 +456,31 @@ private struct NightContextRail: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            } else if hasLibrary {
+                // Wave W6-A section C: this used to claim the site "derives
+                // automatically ... once indexed" in the SAME render where
+                // the caption above it points at a manual Settings field --
+                // two contradictory stories about how a site gets set,
+                // shown at once. One consistent story now: both paths are
+                // real (`SiteSettingsStore.effectiveSite` prefers a manually
+                // saved site but falls back to one derived from FITS
+                // headers), so this says both, and offers the one this rail
+                // can actually act on.
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("No observing site is resolved for this library yet, so tonight's dusk-to-dawn window can't be shown here. Set your coordinates in Settings ▸ Location, or scan FITS files that carry site coordinates.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Open Settings…") { openSettings() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
             } else {
-                Text("No observing site is resolved for this library yet, so tonight's dusk-to-dawn window can't be shown here. AstroTool derives it automatically from your FITS files' own site coordinates once they're indexed.")
+                // No library open at all -- Settings ▸ Location is locked
+                // (see the caption branch above), so this stays honest about
+                // the one thing that actually happens next: opening a
+                // library, after which the site resolves on its own.
+                Text("Open a library first. Once one is open, AstroTool resolves the observing site automatically from your FITS files' own site coordinates.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

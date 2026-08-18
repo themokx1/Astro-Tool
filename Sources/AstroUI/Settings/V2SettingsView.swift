@@ -134,7 +134,22 @@ private struct LocationSettingsView: View {
         Form {
             if !store.hasLibraryOpen {
                 Section {
-                    Label("Open a library to set an observing site.", systemImage: "externaldrive.badge.xmark")
+                    // Wave W6-A section C: this used to just NAME "a library"
+                    // with no way to open one FROM here. A "Choose Library…"
+                    // button here cannot cleanly reach one, though: this view
+                    // lives inside `AstroToolApp`'s own separate `Settings { }`
+                    // scene (see `AstroToolApp.swift`), never a child of the
+                    // `WindowGroup` that owns `V2RootView` -- the same
+                    // cross-scene boundary `ExtendedCatalogSettingsSection`'s
+                    // own doc comment documents for `OperationHost`. The real
+                    // "choose a library" action (`V2RootView.presentOnboarding`)
+                    // is local `@State` on that OTHER window (it presents
+                    // `LibraryWelcomeView` as a sheet there), with no
+                    // cross-scene trigger this scene could call. So this names
+                    // the button the user actually has -- Home's own
+                    // `emptyLibrary.chooseLibrary` button -- instead of
+                    // offering a second one that cannot exist here.
+                    Label("Open a library first, using Choose Image Library… on Home.", systemImage: "externaldrive.badge.xmark")
                         .foregroundStyle(.secondary)
                 }
                 .accessibilityIdentifier("v2.settings.site.no-library")

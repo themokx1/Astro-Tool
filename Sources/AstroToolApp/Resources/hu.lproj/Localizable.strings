@@ -1672,3 +1672,26 @@
    `openSettings()` button next to it -- one shared key for all three call
    sites. */
 "Open Settings…" = "Beállítások megnyitása…";
+
+/* Wave W6-A section C (onboarding honesty): Home's night-context rail
+   renders unconditionally, before the "is a library even open" branch --
+   its old "not configured" copy pointed at Settings ▸ Location even with
+   NO library open, though that panel is locked until one is
+   (`LocationSettingsView`'s own "no library" branch). State-dependent copy
+   now: no library open names the one thing that actually happens next
+   (open a library, the site resolves on its own); library open but no site
+   keeps the Settings pointer, reconciled with the paragraph below it
+   instead of contradicting it (the old paragraph claimed the site was
+   ALWAYS auto-derived, in the same render as a caption telling the reader
+   to set it by hand). */
+"Open a library — the site will resolve automatically from the FITS files" = "Nyiss meg egy könyvtárat — a helyszín a FITS-fájlokból magától feloldódik";
+"No observing site is resolved for this library yet, so tonight's dusk-to-dawn window can't be shown here. Set your coordinates in Settings ▸ Location, or scan FITS files that carry site coordinates." = "Ehhez a könyvtárhoz még nincs feloldott megfigyelési helyszín, így a ma esti szürkülettől hajnalig tartó ablak itt nem jeleníthető meg. Add meg a koordinátáidat a Beállítások ▸ Helyszín alatt, vagy dolgozz fel helyszín-koordinátákat tartalmazó FITS-fájlokat.";
+"Open a library first. Once one is open, AstroTool resolves the observing site automatically from your FITS files' own site coordinates." = "Előbb nyiss meg egy könyvtárat. Amint megnyílt, az AstroTool automatikusan feloldja a megfigyelési helyszínt a FITS-fájljaid saját helyszín-koordinátáiból.";
+
+/* Wave W6-A section C: `LocationSettingsView`'s own "no library" placeholder
+   lives inside `AstroToolApp`'s separate `Settings { }` scene, which cannot
+   cleanly reach `V2RootView`'s own "choose a library" sheet (local `@State`
+   on a different window/scene -- see `ExtendedCatalogSettingsSection`'s own
+   doc comment for the same cross-scene boundary). Names the button the
+   reader actually has instead of offering one that cannot exist here. */
+"Open a library first, using Choose Image Library… on Home." = "Előbb nyiss meg egy könyvtárat a Kezdőlap Képkönyvtár kiválasztása… gombjával.";
