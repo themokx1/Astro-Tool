@@ -43,7 +43,23 @@ public struct FirstScanSummaryView: View {
             GlassEffectContainer {
                 HStack(spacing: AstroTokens.Spacing.standard) {
                     countTile(snapshot.projectCount, label: "Projects", systemImage: "folder")
-                    countTile(snapshot.nightCount, label: "Nights", systemImage: "moon.stars")
+                    // W6-E item 3 (live pixel review, real library): this
+                    // tile used to say "Nights", the same word the Home
+                    // page/sidebar's own Éjszakák count uses for a DIFFERENT
+                    // number -- `LibrarySnapshot.nightCount` is
+                    // `COUNT(DISTINCT session_date)` raw folder-name
+                    // strings (`Database.libraryIndexCounts`), which counts
+                    // a run-suffix sibling folder (e.g. "2026-04-06" and
+                    // "2026-04-06-2") as two, unlike the deduplicated,
+                    // calendar-date `NightRecord` count the Home page shows.
+                    // Both numbers are real and neither is wrong for what
+                    // it measures; showing them under the same word is what
+                    // was wrong (20 vs. 16 on the real library that
+                    // prompted this fix). Naming what THIS number actually
+                    // counts -- session folders on disk -- removes the
+                    // apparent contradiction instead of forcing the two
+                    // counts to agree.
+                    countTile(snapshot.nightCount, label: "Session Folders", systemImage: "folder.badge.gearshape")
                     countTile(snapshot.frameCount, label: "Frames", systemImage: "photo.stack")
                 }
             }

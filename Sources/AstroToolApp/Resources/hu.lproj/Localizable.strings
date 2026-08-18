@@ -1747,3 +1747,9 @@
 "Best integration" = "Legjobb integráció";
 "Latest date" = "Legutóbbi dátum";
 "Open in Results" = "Megnyitás: Eredmények";
+
+/* W6-E item 3: `FirstScanSummaryView`'s onboarding tile used to say
+   "Nights" for a number that is not the same "nights" the Home page's
+   sidebar counts (see `LibrarySnapshot.nightCount`'s own doc comment) --
+   relabeled to name what it actually counts. */
+"Session Folders" = "Session-mappák";

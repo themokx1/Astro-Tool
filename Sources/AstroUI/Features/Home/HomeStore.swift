@@ -98,6 +98,18 @@ public struct HomeSnapshot: Equatable, Sendable {
     public let libraryName: String?
     public let nightContext: NightContext
     public let projectCount: Int
+    /// W6-E item 3: `V2RootView` configures this from `nightsStore.nights.count`
+    /// -- deduplicated `NightRecord` rows, one per canonical calendar date
+    /// (`SessionDateParser`-normalized, so a run-suffix sibling folder
+    /// collapses into the same night it belongs to), built only from
+    /// `role == "light"` files with a real target. This is the smallest of
+    /// this app's three "night-shaped" counts by design: `LibrarySnapshot
+    /// .nightCount` (onboarding's "Session Folders" tile) counts raw
+    /// session-date FOLDER strings with no dedup, and `InsightsQuery`'s own
+    /// "Nights"/"Felvételi sessionök" figure counts distinct
+    /// target+session-date PAIRS. All three are correct for what they
+    /// measure; only the shared word "Nights" used to make them look like a
+    /// contradiction.
     public let nightCount: Int
     public let nextProject: ProjectRecord?
     public let nextProjectIntegrationSeconds: Double

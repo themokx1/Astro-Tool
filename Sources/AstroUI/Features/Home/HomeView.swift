@@ -86,7 +86,13 @@ public struct HomeView: View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
             HStack(spacing: AstroTokens.Spacing.standard) {
                 MetricCard(title: "Projects", value: "\(store.snapshot.projectCount)", detail: "In \(store.snapshot.libraryName ?? "library")", systemImage: "scope")
-                MetricCard(title: "Nights", value: "\(store.snapshot.nightCount)", detail: "Indexed observing sessions", systemImage: "moon.stars")
+                // W6-E item 3: "Indexed observing sessions" read as though
+                // this counted the same thing Insights' own session count
+                // does -- it doesn't. This is the deduplicated, one-row-
+                // per-calendar-date count (`HomeStore.HomeSnapshot
+                // .nightCount`'s own doc comment), the smallest of this
+                // app's three "night-shaped" numbers by design.
+                MetricCard(title: "Nights", value: "\(store.snapshot.nightCount)", detail: "Deduplicated calendar nights", systemImage: "moon.stars")
             }
             // Task 7 (2026-08-17, GroupBox removal): a heading plus spacing,
             // not a box on a box -- `GroupBox` painted macOS's default
