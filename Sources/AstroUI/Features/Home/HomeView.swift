@@ -763,7 +763,13 @@ private struct NightContextRail: View {
                     Button {
                         openNightsCalendar()
                     } label: {
-                        Text("Nearest clear night: \(date) (\(Int(minPercent.rounded()))–\(Int(maxPercent.rounded()))% cloud)")
+                        // Int interpolation emits a %lld runtime key while the
+                        // extraction script normalizes every interpolation to
+                        // %@ -- the two can never match, so the range is
+                        // pre-formatted into ONE String argument (the same
+                        // convention "eddig %@" already uses).
+                        let range = "\(Int(minPercent.rounded()))–\(Int(maxPercent.rounded()))"
+                        Text("Nearest clear night: \(date) (\(range)% cloud)")
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(AstroTokens.Color.accent)

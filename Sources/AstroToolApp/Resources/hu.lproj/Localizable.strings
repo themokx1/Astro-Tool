@@ -1914,7 +1914,7 @@
    (HomeView.NightContextRail.nextClearNightRow), keyed off the same
    WeatherService.dailySummaries 7-day forecast the Nights calendar's own
    "Cloud" column already reads. */
-"Nearest clear night: %@ (%lld–%lld%% cloud)" = "Legközelebbi tiszta éjszaka: %@ (%lld–%lld%% felhő)";
+"Nearest clear night: %@ (%@%% cloud)" = "Legközelebbi tiszta éjszaka: %@ (%@%% felhő)";
 "The 7-day forecast has no clear night" = "A 7 napos előrejelzésben nincs tiszta éjszaka";
 
 /* W7-E workflow #3 (2026-08-18 owner audit, "cloudy night = darks night"):
