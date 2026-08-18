@@ -409,4 +409,31 @@ struct PlanningCulminationDisplayTests {
                 == .unknownDirection
         )
     }
+
+    // MARK: - W7-F item 1: meridian-flip annotation gate
+
+    @Test("A genuine, inside-window culmination suggests a meridian flip")
+    func genuineCulminationSuggestsMeridianFlip() {
+        #expect(PlanningCulminationDisplay.genuine(localTime: "01:14").suggestsMeridianFlip)
+    }
+
+    @Test("A culmination past the end of tonight's scanned window never suggests a flip -- the real transit lies outside what was looked at")
+    func afterWindowNeverSuggestsMeridianFlip() {
+        #expect(!PlanningCulminationDisplay.afterWindow.suggestsMeridianFlip)
+    }
+
+    @Test("A culmination already past its peak at the window's own start never suggests a flip")
+    func pastPeakAtWindowStartNeverSuggestsMeridianFlip() {
+        #expect(!PlanningCulminationDisplay.pastPeakAtWindowStart(windowEndLocal: "03:36").suggestsMeridianFlip)
+    }
+
+    @Test("An unresolved window-edge direction never suggests a flip -- an honest 'don't guess' extends to this too")
+    func unknownDirectionNeverSuggestsMeridianFlip() {
+        #expect(!PlanningCulminationDisplay.unknownDirection.suggestsMeridianFlip)
+    }
+
+    @Test("No culmination at all never suggests a flip")
+    func noneNeverSuggestsMeridianFlip() {
+        #expect(!PlanningCulminationDisplay.none.suggestsMeridianFlip)
+    }
 }

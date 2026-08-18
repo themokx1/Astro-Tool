@@ -475,7 +475,12 @@ public struct HomeView: View {
         case .none, .unknownDirection:
             return nil
         case let .genuine(localTime):
-            return Text("Culminates \(localTime)")
+            // W7-F item 1: a genuine (inside-window) culmination is exactly
+            // when `PlanningCulminationDisplay.suggestsMeridianFlip` is true
+            // (see that property's own doc) -- a GEM-class mount is likely
+            // to need a meridian flip mid-capture. Mount-agnostic honesty
+            // (no pier-side/mount-type data exists), not a scheduler.
+            return Text("Culminates \(localTime) — meridian flip likely")
         case .afterWindow:
             return Text("Culminates after tonight's window")
         case let .pastPeakAtWindowStart(windowEndLocal):

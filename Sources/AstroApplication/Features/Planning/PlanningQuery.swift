@@ -79,6 +79,23 @@ public enum PlanningCulminationDisplay: Equatable, Sendable {
         if culminationLocal == windowStart { return .pastPeakAtWindowStart(windowEndLocal: windowEnd) }
         return .unknownDirection
     }
+
+    /// W7-F item 1 (2026-08-18 expert audit, workflow #4): whether tonight's
+    /// visible window is worth flagging as "a GEM-class mount will likely
+    /// need a meridian flip mid-capture" -- true only for `.genuine`, i.e.
+    /// exactly when `NightSweep.sweep` captured a REAL transit inside
+    /// tonight's scanned window (see `NightSweepResult.isGenuineCulmination`'s
+    /// own doc). An edge sample (`.afterWindow`/`.pastPeakAtWindowStart`/
+    /// `.unknownDirection`) means the true transit lies outside what was
+    /// scanned at all, so there is nothing inside tonight's window to flip
+    /// around; `.none` has no culmination to reason about in the first
+    /// place. Deliberately mount-agnostic: this app has no pier-side or
+    /// mount-type data, so it can only ever say "a flip is likely for a GEM
+    /// mount", never predict one -- an honest heads-up, not a scheduler.
+    public var suggestsMeridianFlip: Bool {
+        if case .genuine = self { return true }
+        return false
+    }
 }
 
 public enum PlanningEstimateConfidence: String, Equatable, Sendable {

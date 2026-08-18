@@ -639,7 +639,12 @@ public struct PlanningView: View {
         case .none, .unknownDirection:
             return nil
         case let .genuine(localTime):
-            return Text("culm. \(localTime)")
+            // W7-F item 1: see `HomeView.culminationText`'s identical case --
+            // `PlanningCulminationDisplay.suggestsMeridianFlip`'s own doc
+            // explains why a genuine (inside-window) culmination always
+            // means a GEM-class mount is likely to need a meridian flip
+            // mid-capture.
+            return Text("culm. \(localTime) — meridian flip likely")
         case .afterWindow:
             return Text("culm. after tonight's window")
         case let .pastPeakAtWindowStart(windowEndLocal):
