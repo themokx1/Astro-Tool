@@ -78,6 +78,12 @@ struct WorkspaceTablePage<Toolbar: View, TableContent: View, Footer: View>: View
     @ViewBuilder let toolbar: Toolbar
     @ViewBuilder let table: TableContent
     @ViewBuilder let footer: Footer
+    /// Wave 2 Task 8 (motion pass): the toolbar's own glass-morph identity --
+    /// see the `GlassEffectContainer` below for why a stable id/namespace
+    /// pair lets the floating bar morph rather than pop across content
+    /// changes, gated by Reduce Motion through `AstroMotion`.
+    @Namespace private var glassNamespace
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         subtitle: LocalizedStringKey,
@@ -113,11 +119,19 @@ struct WorkspaceTablePage<Toolbar: View, TableContent: View, Footer: View>: View
             // plain `toolbar` line) -- every page built on this component
             // reverts at once, because this is the one place all eight of
             // them share.
+            //
+            // Wave 2 Task 8 (motion pass): `astroGlassMorph` gives this bar a
+            // stable identity in `glassNamespace` plus `AstroMotion`'s
+            // standard matched-geometry transition, so it morphs into
+            // whatever it becomes (a different toolbar's content swapped in,
+            // or removed and re-added) instead of popping -- `.identity`
+            // (no morph) under Reduce Motion.
             GlassEffectContainer {
                 toolbar
                     .padding(.horizontal, AstroTokens.Spacing.standard)
                     .padding(.vertical, AstroTokens.Spacing.compact)
                     .glassEffect(.regular, in: ConcentricRectangle())
+                    .astroGlassMorph(id: "workspace.toolbar", in: glassNamespace, reduceMotion: reduceMotion)
             }
 
             // Task 6: the dense content itself -- up to 3,231 rows in the
@@ -211,6 +225,13 @@ struct MetricCard: View {
     let value: String
     let detail: LocalizedStringKey
     let systemImage: String
+    /// Wave 2 Task 8 (motion pass): this card's own glass-morph identity --
+    /// `systemImage` (not `title`, which is a non-`Hashable`
+    /// `LocalizedStringKey`) is the de facto stable discriminator between
+    /// metric kinds at a caller's row (each metric a row shows has its own
+    /// icon), gated by Reduce Motion through `AstroMotion`.
+    @Namespace private var glassNamespace
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -234,5 +255,13 @@ struct MetricCard: View {
         // enclosing container's own corner rounding rather than a fixed
         // value baked in here.
         .glassEffect(.regular, in: ConcentricRectangle())
+        // Wave 2 Task 8 (motion pass): a caller that wraps several
+        // `MetricCard`s in a shared `GlassEffectContainer` (the "MetricCard
+        // rows" the motion pass targets) gets appear/disappear/reflow
+        // morphing between them once they share one `Namespace` -- this
+        // card's own morph identity is real and gated by Reduce Motion
+        // either way; wiring a shared namespace across a specific row is
+        // each row's own call, not this shared component's.
+        .astroGlassMorph(id: systemImage, in: glassNamespace, reduceMotion: reduceMotion)
     }
 }

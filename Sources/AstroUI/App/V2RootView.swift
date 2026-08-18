@@ -1279,6 +1279,7 @@ private struct DetailHost: View {
     let accessMode: LibraryAccessMode
     let presentQuarantineApply: (LibraryMutationPlan, URL, LibraryAccessMode) -> Void
     let libraryFindingsChanged: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Wave 4 Task 1: the detail column is a real `NavigationStack` bound to
     /// the active section's own push stack (`AppRouter.currentSectionPath`)
@@ -1292,7 +1293,19 @@ private struct DetailHost: View {
     /// route change with no history at all.
     var body: some View {
         NavigationStack(path: pathBinding) {
+            // Wave 2 Task 8 (motion pass): the section root swap (Home ->
+            // Projects -> Nights -> ... from the sidebar) used to replace
+            // its content with no motion at all -- pushed content already
+            // gets `NavigationStack`'s own native push/pop animation, but
+            // this top-level swap sits outside that stack's push mechanism
+            // entirely. `destination(for:)`'s `@ViewBuilder` switch already
+            // gives each section root a distinct structural identity (a
+            // different `case` branch), so `AstroMotion`'s shared
+            // transition/curve animate the swap as an insertion/removal --
+            // `.identity`/no animation under Reduce Motion.
             destination(for: router.primarySection.rootRoute)
+                .astroContentSwapTransition(reduceMotion)
+                .astroAnimation(reduceMotion, value: router.primarySection)
                 .navigationDestination(for: ContentRoute.self) { route in
                     // `.id(route)` resets any pushed workspace's own
                     // `@State` per route -- without it, SwiftUI reuses the

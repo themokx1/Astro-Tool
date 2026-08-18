@@ -56,6 +56,16 @@ private struct AstroDataHeroText: ViewModifier {
         content
             .font(.system(size: size, weight: .medium, design: .monospaced))
             .monospacedDigit()
+            // Wave 2 Task 8 (motion pass): a card's headline value (e.g.
+            // `MetricCard.value`) rolls its digits instead of flashing when
+            // it changes. Declarative and harmless on its own -- it only
+            // actually animates when the state change that updates the
+            // value is itself wrapped in an animation (e.g.
+            // `.astroAnimation(reduceMotion:value:)`), which is the only
+            // sanctioned way to animate a value in this app, so this
+            // transition inherits that gate rather than needing one of its
+            // own.
+            .contentTransition(.numericText())
     }
 }
 
