@@ -57,11 +57,21 @@ public struct FITSImageRenderer {
     /// layouts this renderer intentionally doesn't support: Rice-compressed
     /// `.fz` tables (detected exactly the way `NativeStats` does, via the
     /// shared `NativeStats.primaryHeaderInfo` scan, so the two never
-    /// disagree about what's compressed), `BITPIX` other than 8/16, or
+    /// disagree about what's compressed), `BITPIX` other than 8/16/-32, or
     /// `NAXIS != 2`. Genuine corruption (truncated header/pixel data,
     /// missing `NAXIS1`/`NAXIS2`) still throws `AstroError.corruptFITS`,
     /// same as `FITSReader`/`NativeStats` -- those are actually-broken
     /// files, not merely a layout this renderer chooses not to draw.
+    ///
+    /// W6-E item 4 (live pixel review, real library): `BITPIX=-32` (IEEE
+    /// 754 32-bit float) is the standard output depth for a finished/
+    /// calibrated stack from Siril, PixInsight, or DeepSkyStacker -- exactly
+    /// what `ResultsView`'s Preview column and detail pane thumbnail, so
+    /// rejecting it here meant essentially every real stack showed a
+    /// generic placeholder icon while the import wizard's raw 8/16-bit
+    /// captures rendered fine. `NAXIS != 2` (3-plane/RGB-cube FITS) stays
+    /// unsupported -- rare in this app's own output and a separate, riskier
+    /// change to the pixel-reading shape below.
     public static func render(data: Data, maxDimension: Int = 1024) throws -> CGImage? {
         let header = try FITSReader.parse(data: data)
         let (dataOffset, rawPrimaryNAXIS) = try NativeStats.primaryHeaderInfo(data: data)
@@ -78,7 +88,7 @@ public struct FITSImageRenderer {
             return nil
         }
 
-        guard let bitpix = header.int("BITPIX"), bitpix == 8 || bitpix == 16 else {
+        guard let bitpix = header.int("BITPIX"), bitpix == 8 || bitpix == 16 || bitpix == -32 else {
             return nil
         }
         // Must run before the NAXIS1/NAXIS2 presence check below: a NAXIS=1
@@ -93,14 +103,20 @@ public struct FITSImageRenderer {
             throw AstroError.corruptFITS(path: "<data>", reason: "missing or invalid NAXIS1/NAXIS2")
         }
 
-        let bytesPerPixel = bitpix == 16 ? 2 : 1
+        let isFloat32 = bitpix == -32
+        let bytesPerPixel = bitpix == 16 ? 2 : (isFloat32 ? 4 : 1)
         guard dataOffset + naxis1 * naxis2 * bytesPerPixel <= data.count else {
             throw AstroError.corruptFITS(path: "<data>", reason: "truncated pixel data")
         }
 
         let bzero = header.double("BZERO") ?? 0
         let isUnsigned16 = bitpix == 16 && bzero == 32768
-        let maxValue: Double = bitpix == 16 ? (isUnsigned16 ? 65535 : 32767) : 255
+        // Meaningless for `isFloat32` (float pixel values are read verbatim,
+        // never divided) -- `readMonoGrid`/`readBayerMosaic` skip the
+        // divide-and-clamp step entirely in that case (see `clampToUnit`
+        // below), so `1` here is a placeholder never actually used as a
+        // divisor.
+        let maxValue: Double = bitpix == 16 ? (isUnsigned16 ? 65535 : 32767) : (isFloat32 ? 1 : 255)
         let clampedMaxDimension = max(1, maxDimension)
 
         // `channels` holds either 1 grid (grayscale: no/unrecognized
@@ -108,7 +124,7 @@ public struct FITSImageRenderer {
         // width/height, normalized to 0...1 -- everything downstream
         // (stats + stretch) is written once against this shape rather than
         // branching mono/color throughout.
-        let channels: [[Double]]
+        var channels: [[Double]]
         let width: Int
         let height: Int
 
@@ -132,6 +148,18 @@ public struct FITSImageRenderer {
             height = grid.height
         }
         guard width > 0, height > 0 else { return nil }
+
+        // Float pixel values were read verbatim above (no fixed-maxValue
+        // divide -- an integer camera's ADU range is known up front, a
+        // float stack's is not: it could be background-subtracted
+        // (negative), normalized to 0...1, or left in raw ADU-scale
+        // thousands). A min/max rescale over the already-downsampled grid
+        // is cheap and puts the data in the same 0...1 shape the median/MAD
+        // auto-stretch below expects, exactly like the integer path's
+        // `raw / maxValue` already did for its own fixed range.
+        if isFloat32 {
+            channels = Self.normalizeFloatChannels(channels)
+        }
 
         let luminance = sampleLuminance(channels: channels, maxSamples: maxStatsSampleCount)
         let med = median(luminance)
@@ -170,6 +198,13 @@ public struct FITSImageRenderer {
     /// this deliberately mirrors (kept inline here rather than shared,
     /// since it's two lines of arithmetic and NativeStats already inlines
     /// it at two call sites of its own).
+    ///
+    /// `bitpix == -32` reads a big-endian IEEE 754 32-bit float verbatim
+    /// (FITS mandates big-endian for every depth). A non-finite value
+    /// (`NaN`/`Inf`, seen in some masked-pixel exports) is sanitized to `0`
+    /// here so it can never propagate into the min/max normalization or the
+    /// MTF stretch, both of which would otherwise poison the whole image
+    /// with `NaN`.
     private static func rawPixelValue(base: UnsafeRawPointer, pixelIndex: Int, bitpix: Int, isUnsigned16: Bool) -> Double {
         if bitpix == 16 {
             let byteOffset = pixelIndex * 2
@@ -178,7 +213,50 @@ public struct FITSImageRenderer {
             let rawValue = Int16(bitPattern: (UInt16(hi) << 8) | UInt16(lo))
             return isUnsigned16 ? Double(Int32(rawValue) + 32768) : Double(rawValue)
         }
+        if bitpix == -32 {
+            let byteOffset = pixelIndex * 4
+            let b0 = base.load(fromByteOffset: byteOffset, as: UInt8.self)
+            let b1 = base.load(fromByteOffset: byteOffset + 1, as: UInt8.self)
+            let b2 = base.load(fromByteOffset: byteOffset + 2, as: UInt8.self)
+            let b3 = base.load(fromByteOffset: byteOffset + 3, as: UInt8.self)
+            let bits = (UInt32(b0) << 24) | (UInt32(b1) << 16) | (UInt32(b2) << 8) | UInt32(b3)
+            let value = Double(Float(bitPattern: bits))
+            return value.isFinite ? value : 0
+        }
         return Double(base.load(fromByteOffset: pixelIndex, as: UInt8.self))
+    }
+
+    /// `true` for depths whose raw values must NOT be divided by a fixed
+    /// `maxValue`/clamped to 0...1 at read time -- a float stack's own
+    /// range is unknown up front (see `render(data:maxDimension:)`'s own
+    /// doc comment), so `readMonoGrid`/`readBayerMosaic` pass the value
+    /// through verbatim and `normalizeFloatChannels` rescales the whole
+    /// (already-downsampled) grid afterward instead.
+    private static func readsRawWithoutUnitClamp(bitpix: Int) -> Bool { bitpix == -32 }
+
+    /// Min/max-rescales every channel to 0...1 using ONE shared range taken
+    /// across all channels together (not per-channel), so a debayered
+    /// float frame's R/G/B stay in the same relative proportion they had on
+    /// disk -- per-channel independent rescaling would instead force every
+    /// channel to span the full range on its own and wash out real color
+    /// balance. A degenerate (constant, `hi <= lo`) frame maps to a flat
+    /// `0.5` -- not `0` or `NaN` -- so it reaches the SAME MAD==0 flat-gray
+    /// path `render` already has for a constant integer frame, rather than
+    /// inventing a second degenerate-frame behavior.
+    private static func normalizeFloatChannels(_ channels: [[Double]]) -> [[Double]] {
+        var lo = Double.greatestFiniteMagnitude
+        var hi = -Double.greatestFiniteMagnitude
+        for channel in channels {
+            for value in channel {
+                if value < lo { lo = value }
+                if value > hi { hi = value }
+            }
+        }
+        guard hi > lo else {
+            return channels.map { channel in channel.map { _ in 0.5 } }
+        }
+        let span = hi - lo
+        return channels.map { channel in channel.map { min(max(($0 - lo) / span, 0), 1) } }
     }
 
     /// Reads a grayscale (no Bayer phase to preserve) working grid,
@@ -194,6 +272,7 @@ public struct FITSImageRenderer {
         let rows = Array(Swift.stride(from: 0, to: naxis2, by: stride))
         let width = cols.count
         let height = rows.count
+        let skipUnitClamp = readsRawWithoutUnitClamp(bitpix: bitpix)
 
         var values = [Double](repeating: 0, count: width * height)
         data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
@@ -202,7 +281,7 @@ public struct FITSImageRenderer {
                 let rowBase = srcRow * naxis1
                 for (outCol, srcCol) in cols.enumerated() {
                     let raw = rawPixelValue(base: base, pixelIndex: rowBase + srcCol, bitpix: bitpix, isUnsigned16: isUnsigned16)
-                    values[outRow * width + outCol] = min(max(raw / maxValue, 0), 1)
+                    values[outRow * width + outCol] = skipUnitClamp ? raw : min(max(raw / maxValue, 0), 1)
                 }
             }
         }
@@ -240,6 +319,7 @@ public struct FITSImageRenderer {
         let width = cellCols.count * 2
         let height = cellRows.count * 2
         guard width > 0, height > 0 else { return ([], 0, 0) }
+        let skipUnitClamp = readsRawWithoutUnitClamp(bitpix: bitpix)
 
         var values = [Double](repeating: 0, count: width * height)
         data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
@@ -254,7 +334,7 @@ public struct FITSImageRenderer {
                         for dc in 0..<2 {
                             let raw = rawPixelValue(base: base, pixelIndex: rowBase + srcCol0 + dc, bitpix: bitpix, isUnsigned16: isUnsigned16)
                             let outCol = outCellCol * 2 + dc
-                            values[outRow * width + outCol] = min(max(raw / maxValue, 0), 1)
+                            values[outRow * width + outCol] = skipUnitClamp ? raw : min(max(raw / maxValue, 0), 1)
                         }
                     }
                 }

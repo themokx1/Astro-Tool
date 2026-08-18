@@ -728,6 +728,15 @@ public struct ResultsView: View {
         if let file = selectedFile {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    // W6-E item 4: the detail pane used to be pure text --
+                    // no image at all, even though the exact same
+                    // FrameThumbnailCell/FITSImageRenderer pipeline the
+                    // Preview column and the import wizard already use can
+                    // render this same file. Reused verbatim, just bigger,
+                    // rather than a second thumbnail implementation.
+                    FrameThumbnailCell(rootURL: rootURL, relativePath: file.relativePath, size: 180)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("v2.results.detail.preview")
                     Text(file.fileName)
                         .font(.title3.bold())
                         .textSelection(.enabled)
