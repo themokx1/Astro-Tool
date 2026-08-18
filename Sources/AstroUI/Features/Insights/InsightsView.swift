@@ -336,7 +336,11 @@ public struct InsightsView: View {
     private func metrics(_ insight: InsightsSnapshot) -> some View {
         HStack(spacing: AstroTokens.Spacing.standard) {
             MetricCard(title: "Integration", value: duration(insight.integrationSeconds), detail: "Deduplicated, verified exposure", systemImage: "timer")
-            MetricCard(title: "Nights", value: "\(insight.nightCount)", detail: "Capture sessions", systemImage: "moon.stars")
+            // W6-E item 3, applied by the coordinator (this file was another
+            // agent's during that wave): this count is target×date session
+            // pairs, NOT deduplicated calendar nights -- Home's 16 vs this 26
+            // confused the owner until each label said what it counts.
+            MetricCard(title: "Capture Sessions", value: "\(insight.nightCount)", detail: "One night with two targets counts twice", systemImage: "moon.stars")
             MetricCard(title: "Targets", value: "\(insight.targetCount)", detail: "Unique objects", systemImage: "scope")
             MetricCard(title: "Light frames", value: "\(insight.frameCount)", detail: "Indexed and present", systemImage: "photo.stack")
             MetricCard(title: "Average night", value: duration(insight.averageIntegrationPerNight), detail: averageNightDetail(insight), systemImage: "chart.bar.fill")

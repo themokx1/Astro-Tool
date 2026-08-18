@@ -1883,3 +1883,7 @@
    byte-identical sibling path(s), parsed from the finding's own stored
    message (ArchiveTaskQuery.parseDuplicateSiblingPaths) -- no new query. */
 "Byte-identical to: %@" = "Byte-azonos ezzel: %@";
+
+// W6-E item 3: az Elemzések session-számláló kártyája.
+"Capture Sessions" = "Felvételi sessionok";
+"One night with two targets counts twice" = "Egy éjszaka két célponttal kétszer számít";
