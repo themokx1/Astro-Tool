@@ -140,19 +140,32 @@ public struct ProjectsView: View {
                     }.width(80)
                     TableColumn("Latest", value: \ProjectWorkspaceRow.latestNightSortKey) { row in Text(row.latestNight ?? "—").monospacedDigit() }
                         .width(100)
-                    TableColumn("Goal", value: \ProjectWorkspaceRow.goalProgressSortKey) { row in
-                        if let progress = row.goalProgress {
-                            HStack(spacing: 6) {
-                                ProgressView(value: progress).frame(width: 44)
-                                Text(progress, format: .percent.precision(.fractionLength(0)))
-                                    .monospacedDigit().font(.caption)
+                    // W5-2 finding 4 (owner pixel review): the real
+                    // 13-project library has never set an integration goal
+                    // on any project, so this column rendered "—" top to
+                    // bottom for every row -- a whole column's width spent on
+                    // nothing. `store.hasAnyGoal` is computed once in the
+                    // store right after `workspaceRows` is (re)built (see
+                    // `ProjectsStore.updateHasAnyGoal`), never re-scanned
+                    // here in `body`, matching `NightsView`'s own
+                    // `store.uniformVisibleTriageState == nil` precedent for
+                    // a store-gated optional column just above it in this
+                    // file's sibling view.
+                    if store.hasAnyGoal {
+                        TableColumn("Goal", value: \ProjectWorkspaceRow.goalProgressSortKey) { row in
+                            if let progress = row.goalProgress {
+                                HStack(spacing: 6) {
+                                    ProgressView(value: progress).frame(width: 44)
+                                    Text(progress, format: .percent.precision(.fractionLength(0)))
+                                        .monospacedDigit().font(.caption)
+                                }
+                                .help("\(AstroFormat.duration(seconds: row.integrationSeconds)) of \((row.goalHours ?? 0).formatted(.number.precision(.fractionLength(0...1)))) h goal")
+                            } else {
+                                Text("—").foregroundStyle(.secondary)
+                                    .help("No integration goal set — add one on the project's Notes tab.")
                             }
-                            .help("\(AstroFormat.duration(seconds: row.integrationSeconds)) of \((row.goalHours ?? 0).formatted(.number.precision(.fractionLength(0...1)))) h goal")
-                        } else {
-                            Text("—").foregroundStyle(.secondary)
-                                .help("No integration goal set — add one on the project's Notes tab.")
-                        }
-                    }.width(96)
+                        }.width(96)
+                    }
                     TableColumn("Next") { row in
                         Text(row.nextAction).lineLimit(1).help(row.nextActionExplanation)
                     }

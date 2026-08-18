@@ -235,6 +235,62 @@ struct ProjectsStoreTests {
         #expect(store.selectedProject?.project == projectB)
     }
 
+    // MARK: - W5-2 finding 4 (owner pixel review): the "Goal" column rendered
+    // "—" on all 13 real rows, since none of them has ever had an
+    // integration goal set. `hasAnyGoal` drives whether `ProjectsView` shows
+    // the column at all -- computed once in the store right after
+    // `workspaceRows` is (re)built, never re-scanned from the view's `body`.
+
+    @Test("hasAnyGoal is false when no loaded project has an integration goal set")
+    func hasAnyGoalFalseWhenNoProjectHasAGoal() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .collecting)
+        try await metadata.save(project)
+        let store = ProjectsStore(metadataFactory: { _ in metadata })
+
+        try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        #expect(store.workspaceRows.count == 1)
+        #expect(store.hasAnyGoal == false)
+    }
+
+    @Test("hasAnyGoal is true once any loaded project has an integration goal set")
+    func hasAnyGoalTrueWhenAnyProjectHasAGoal() async throws {
+        let metadata = try MetadataStore.temporary()
+        let goaled = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .collecting)
+        let bare = ProjectRecord(id: UUID(), catalogID: "M 42", displayName: "Orion-köd", phase: .collecting)
+        try await metadata.save(MetadataWriteBatch(projects: [goaled, bare]))
+        try await metadata.save(ProjectAnnotationRecord(projectID: goaled.id, integrationGoalHours: 20, notes: "", updatedAt: .now))
+        let store = ProjectsStore(metadataFactory: { _ in metadata })
+
+        try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        #expect(store.workspaceRows.count == 2)
+        #expect(store.hasAnyGoal == true)
+    }
+
+    // `MetadataStore` itself rejects a persisted 0-hour goal outright
+    // (`.invalidField(record: "project_annotations", field:
+    // "integration_goal_hours")` -- the same validation
+    // `goalSetRejectsZeroOrMissingHours` in the CLI test suite already
+    // covers), so a 0-hour `ProjectWorkspaceRow.goalHours` can never actually
+    // reach `ProjectsStore` through a real save. This exercises the row's
+    // own defensive `goalProgress` guard directly instead -- a pure struct,
+    // no store/database involved -- to pin down that IF such a value ever
+    // arrived (a future relaxed validation, a migrated-in legacy record), it
+    // would still be treated as "no goal", never a divide-by-zero or a
+    // 0%-filled progress bar.
+    @Test("A goal of zero hours does not count as having a goal -- matches the column's own goalProgress condition")
+    func zeroHourGoalDoesNotCountAsHavingAGoal() {
+        let row = ProjectWorkspaceRow(
+            project: ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .collecting),
+            nightCount: 0, integrationSeconds: 0, usableFrames: 0, excludedFrames: 0,
+            latestNight: nil, nextAction: "", nextActionExplanation: "", seriesCount: 0,
+            goalHours: 0
+        )
+        #expect(row.goalProgress == nil, "a zero-hour goal must not produce a progress bar either")
+    }
+
     @Test("Project search matches catalog name, filter and setup metadata")
     func projectSearchUsesWorkflowMetadata() async throws {
         let metadata = try MetadataStore.temporary()

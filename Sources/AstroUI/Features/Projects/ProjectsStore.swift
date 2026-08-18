@@ -77,6 +77,15 @@ public final class ProjectsStore {
         KeyPathComparator(\ProjectWorkspaceRow.latestNightSortKey, order: .reverse)
     ]
     public private(set) var workspaceRows: [ProjectWorkspaceRow] = []
+    /// Whether any currently loaded project has an integration goal set --
+    /// drives whether the "Goal" column is worth showing at all. W5-2
+    /// finding 4 (owner pixel review): the real 13-project library has never
+    /// set a goal on any project, so the column rendered "—" top to bottom
+    /// for all 13 rows, spending a whole column's width on nothing. Set
+    /// alongside `workspaceRows` itself, right after it is (re)built -- never
+    /// a computed property re-scanning `workspaceRows` from `ProjectsView`'s
+    /// `body`, matching this codebase's "no work in getters/body" rule.
+    public private(set) var hasAnyGoal = false
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
     public private(set) var rootURL: URL?
@@ -128,6 +137,7 @@ public final class ProjectsStore {
             projects = try await metadata.projects()
             workspaceRows = try await Self.makeWorkspaceRows(projects: projects, metadata: metadata)
             sortWorkspaceRows()
+            updateHasAnyGoal()
             searchIndex = try await Self.makeSearchIndex(projects: projects, metadata: metadata)
             if let selectedProjectID, projects.contains(where: { $0.id == selectedProjectID }) {
                 selectedProject = try await ProjectsQuery(metadata: metadata).project(id: selectedProjectID)
@@ -152,6 +162,14 @@ public final class ProjectsStore {
     private func sortWorkspaceRows() {
         guard !sortOrder.isEmpty else { return }
         workspaceRows.sort(using: sortOrder)
+    }
+
+    /// Reuses `ProjectWorkspaceRow.goalProgress` verbatim -- the exact
+    /// condition the "Goal" column itself already uses to decide between a
+    /// progress bar and a bare "—" -- so `hasAnyGoal` can never drift from
+    /// what the column would actually show.
+    private func updateHasAnyGoal() {
+        hasAnyGoal = workspaceRows.contains { $0.goalProgress != nil }
     }
 
     public func search(_ term: String) async throws -> [ProjectRecord] {
@@ -248,6 +266,7 @@ public final class ProjectsStore {
             projects = try await metadata.projects()
             workspaceRows = try await Self.makeWorkspaceRows(projects: projects, metadata: metadata)
             sortWorkspaceRows()
+            updateHasAnyGoal()
             errorMessage = nil
             return project
         } catch {

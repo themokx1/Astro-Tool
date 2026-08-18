@@ -632,7 +632,16 @@
 "Role" = "Szerep";
 "Safety" = "Biztonság";
 "Saved projects" = "Mentett projektek";
-"Search projects, catalog, filter, setup, or status" = "Keresés projektek, katalógus, szűrő, összeállítás vagy állapot szerint";
+// W5-2 finding 4 (owner pixel review): the full 70-character translation
+// above never fit `ProjectsView.swift`'s `TextField(...).frame(maxWidth:
+// 360)` -- it rendered "…összeállítás vagy álla…", cut off in the middle
+// twice over. Shortened to 43 characters (~280pt at caption-adjacent size,
+// comfortably inside the field's ~336pt usable text width after its
+// `.roundedBorder` insets) by dropping "filter"/"setup" from the visible
+// prompt -- `ProjectsStore.search`'s own index still matches on filter and
+// setup text regardless of what the placeholder advertises, so this only
+// shortens the hint, not the actual search behavior.
+"Search projects, catalog, filter, setup, or status" = "Keresés név, katalógus vagy állapot szerint";
 "Session coverage" = "Session lefedettség";
 "Session model" = "Session modell";
 "Session notes" = "Session jegyzetek";

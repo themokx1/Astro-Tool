@@ -93,6 +93,47 @@ struct V2BetaWorkspaceSurfaceTests {
         #expect(shell.contains("projectsStore.selectProject(project.id)"))
     }
 
+    // MARK: - W5-2 finding 4 (owner pixel review, real 13-project library)
+
+    @Test("The Goal column is gated by the store's own precomputed hasAnyGoal, not re-scanned in body")
+    func goalColumnIsGatedByStoreComputedFlag() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let projects = try String(
+            contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectsView.swift"),
+            encoding: .utf8
+        )
+        let store = try String(
+            contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Projects/ProjectsStore.swift"),
+            encoding: .utf8
+        )
+        #expect(projects.contains("if store.hasAnyGoal {"), "the \"Goal\" TableColumn must be conditional on the store's own hasAnyGoal")
+        #expect(store.contains("public private(set) var hasAnyGoal"))
+        // Computed alongside `workspaceRows` at load time, not from a
+        // computed `var` re-scanning it on every access.
+        #expect(store.contains("private func updateHasAnyGoal()"))
+        #expect(!store.contains("var hasAnyGoal: Bool {"), "hasAnyGoal must be a stored value updated once, not a re-scanning computed property")
+    }
+
+    @Test("The projects search placeholder is short enough to fit the field without truncating")
+    func projectsSearchPlaceholderFitsTheField() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let strings = try String(
+            contentsOf: root.appendingPathComponent("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings"),
+            encoding: .utf8
+        )
+        let pattern = try NSRegularExpression(pattern: #""Search projects, catalog, filter, setup, or status"\s*=\s*"([^"]*)""#)
+        let nsRange = NSRange(strings.startIndex..<strings.endIndex, in: strings)
+        let match = try #require(pattern.firstMatch(in: strings, range: nsRange))
+        let range = try #require(Range(match.range(at: 1), in: strings))
+        let translation = String(strings[range])
+        // The pre-fix translation was 70 characters and visibly truncated
+        // ("…összeállítás vagy álla…") inside `TextField(...).frame(maxWidth:
+        // 360)`; the corrected prompt must stay well under that.
+        #expect(translation.count <= 46, "Hungarian search placeholder (\(translation.count) chars) is likely to truncate again in the 360pt-wide field: \"\(translation)\"")
+    }
+
     @Test("Nights groups morning triage into actionable states")
     func nightsExposeMorningTriage() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
