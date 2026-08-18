@@ -37,6 +37,15 @@ public struct ProjectReportQuery: Sendable {
         public let qualitySummaries: [SessionQualitySummary]
         public let advice: ExposureAdvice
         public let stacks: [StackFile]
+        /// W6-E item 5: the same variant-family grouping `ResultsQuery`
+        /// already computes for the standalone Results workspace
+        /// (`StackDiscovery.groupedStacks`, wrapped as `StackResultGroup`),
+        /// reused here rather than re-derived so the Overview tab's stack
+        /// summary and the Results tab's own table can never disagree about
+        /// what a "family" is. `stacks` above stays -- `targetFlats`/
+        /// `panelReport` and other sections still read individual files --
+        /// this is purely an addition for the Overview summary block.
+        public let stackGroups: [StackResultGroup]
         public let targetFlats: [FlatDiscipline]
         public let panelReport: PanelReport
         public let plan: TargetPlan?
@@ -86,6 +95,7 @@ public struct ProjectReportQuery: Sendable {
         let qualitySummaries = try SessionQuality.summaries(target: target, db: db, config: config)
         let advice = try ExposureAdvisor.advise(target: target, db: db, config: config)
         let stacks = try StackDiscovery.stacks(target: target, db: db, config: config)
+        let stackGroups = try StackDiscovery.groupedStacks(target: target, db: db, config: config).map(StackResultGroup.init)
         let projectState = try ProjectStatusQueries.projects(db: db, config: config).first { $0.target == target }
         let panelReport = try FieldGeometry.panels(target: target, db: db, config: config)
         let plan = try Planner.plan(db: db, config: config).first { $0.target == target }
@@ -116,6 +126,7 @@ public struct ProjectReportQuery: Sendable {
             qualitySummaries: qualitySummaries,
             advice: advice,
             stacks: stacks,
+            stackGroups: stackGroups,
             targetFlats: targetFlats,
             panelReport: panelReport,
             plan: plan,

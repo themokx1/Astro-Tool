@@ -623,20 +623,25 @@ public struct ProjectWorkspaceView: View {
                 }
             }
             ReportSection(title: "Stacks") {
-                if report.stacks.isEmpty {
+                // W6-E item 5: this used to repeat the Results tab's own
+                // full, up-to-50-row stack table verbatim -- the exact same
+                // rows, sortable columns and all, one tab-click away. A
+                // summary (family count, best family, latest date, total
+                // size) plus a way to jump to the real table tells the
+                // reader what is there without pretending Overview is a
+                // second Results page; the full table lives ONLY in Results.
+                if report.stackGroups.isEmpty {
                     ReportEmptyNote(text: "No discovered stack file for this target.")
                 } else {
-                    ReportGrid(headers: ["File", "Location", "Frames×Sub", "Total", "Size", "Date"]) {
-                        ForEach(report.stacks, id: \.path) { stack in
-                            GridRow {
-                                Text((stack.path as NSString).lastPathComponent).lineLimit(1)
-                                Text((stack.path as NSString).deletingLastPathComponent).lineLimit(1).foregroundStyle(.secondary)
-                                Text(framesSubText(stack))
-                                Text(stack.totalSecondsFromName.map(AstroFormat.duration(seconds:)) ?? "–")
-                                Text(AstroFormat.bytes(stack.sizeBytes))
-                                Text(stack.sessionDate ?? "–").monospacedDigit()
-                            }
+                    VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                        ReportStatGrid(items: stackSummaryItems(report))
+                        Button {
+                            router.projectTab = .results
+                        } label: {
+                            Label("Open in Results", systemImage: "arrow.forward.circle.fill")
                         }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("v2.project.report.open-results")
                     }
                 }
             }
@@ -745,9 +750,35 @@ public struct ProjectWorkspaceView: View {
         return "\(calibration.darks.count)"
     }
 
-    private func framesSubText(_ stack: StackFile) -> String {
-        guard let frames = stack.framesFromName, let sub = stack.subSecondsFromName else { return "n/a" }
-        return "\(frames)×\(AstroFormat.coefficient(sub))s"
+    /// W6-E item 5: the Overview tab's own summary block for `report.stacks`
+    /// -- family count, the best (first, per `StackResultGroup`'s own
+    /// best-integration-first order) family's exposure recipe and
+    /// integration, the latest session date across every stack file, and the
+    /// total size on disk. Deliberately built from already-loaded
+    /// `ProjectReportQuery.Result` fields, no new query.
+    private func stackSummaryItems(_ report: ProjectReportQuery.Result) -> [(LocalizedStringKey, String)] {
+        var items: [(LocalizedStringKey, String)] = [
+            ("Stack families", report.stackGroups.count.formatted()),
+        ]
+        if let best = report.stackGroups.first {
+            items.append(("Best family", stackFamilyText(best)))
+            if let totalSeconds = best.totalSecondsBest {
+                items.append(("Best integration", AstroFormat.duration(seconds: totalSeconds)))
+            }
+        }
+        if let latestDate = report.stacks.compactMap(\.sessionDate).max() {
+            items.append(("Latest date", latestDate))
+        }
+        let totalBytes = report.stacks.reduce(Int64(0)) { $0 + $1.sizeBytes }
+        items.append(("Total size", AstroFormat.bytes(totalBytes)))
+        return items
+    }
+
+    private func stackFamilyText(_ group: StackResultGroup) -> String {
+        guard let frames = group.framesBest, let sub = group.subSecondsBest else {
+            return "\(group.fileCount) file(s)"
+        }
+        return "\(frames)×\(AstroFormat.coefficient(sub))s · \(group.fileCount) file(s)"
     }
 
     private func formatDoubleList(_ values: [Double], suffix: String) -> String {

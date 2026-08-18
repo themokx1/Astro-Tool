@@ -100,6 +100,13 @@ struct ProjectReportQueryTests {
         let expectedStacks = try StackDiscovery.stacks(target: "T1", db: fixture.db, config: fixture.config)
         #expect(result.stacks == expectedStacks)
 
+        // W6-E item 5: the Overview tab's stack summary (family count, best
+        // family) reuses `ResultsQuery`'s own `StackResultGroup` grouping
+        // rather than re-deriving families, so the two tabs can never
+        // disagree about what a "family" is.
+        let expectedGroups = try StackDiscovery.groupedStacks(target: "T1", db: fixture.db, config: fixture.config).map(StackResultGroup.init)
+        #expect(result.stackGroups == expectedGroups)
+
         // Cross-checked against the artifact the old path actually produced.
         #expect(html.contains(String(result.stat.usableFrameCount)))
         #expect(result.target == "T1")

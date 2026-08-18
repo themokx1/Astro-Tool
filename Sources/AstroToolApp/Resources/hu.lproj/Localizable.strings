@@ -1737,3 +1737,13 @@
    way to clear a selection once made. */
 "No targets match the “%@” filter." = "Egyetlen célpont sem felel meg a(z) „%@” szűrőnek.";
 "Clear Filter" = "Szűrő törlése";
+
+/* W6-E item 5: the Overview tab's Stacks section used to repeat the Results
+   tab's own full, up-to-50-row stack table verbatim. Replaced with a
+   summary block (`ProjectWorkspaceView.stackSummaryItems`) plus a button
+   that switches to the real table. */
+"Stack families" = "Stack-családok";
+"Best family" = "Legjobb család";
+"Best integration" = "Legjobb integráció";
+"Latest date" = "Legutóbbi dátum";
+"Open in Results" = "Megnyitás: Eredmények";
