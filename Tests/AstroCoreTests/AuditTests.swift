@@ -295,6 +295,41 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
     #expect(hit.message == "A FITS IMAGETYP (\"Flat Field\") nem illik a fájl helyéhez (várt hely: flats/).")
 }
 
+/// W5-4 item 2: `CalibInWrongDirRule` used to carry its own private
+/// IMAGETYP->role copy (`impliedRole`) instead of delegating to
+/// `FrameRoleFromHeader` (the shared predicate `LibraryScanner` already
+/// uses). The two copies checked the same four substrings in a DIFFERENT
+/// order -- `FrameRoleFromHeader` tries `"light"` FIRST, the old
+/// `CalibInWrongDirRule` copy tried it LAST (flat, dark, bias, then light) --
+/// so for an (admittedly pathological, but real headers are free-text)
+/// IMAGETYP value containing more than one of those substrings at once, the
+/// two implementations disagreed about the implied role. A light frame whose
+/// IMAGETYP happens to also contain the word "dark" (e.g. an operator note
+/// like "Dark corrected Light") is exactly this case: the file's own path
+/// role (`.light`) agrees with what `FrameRoleFromHeader` derives (`.light`,
+/// since it checks "light" first) -- correctly finding NOTHING wrong -- but
+/// the OLD private copy derived `.dark` instead (it never reaches the
+/// "light" check once "dark" already matched) and would have wrongly flagged
+/// a correctly-placed light frame as misplaced, suggesting a bogus move into
+/// `darks/`. This test pins `FrameRoleFromHeader`'s order as the correct
+/// behavior -- the rule must delegate to it instead of its own copy.
+@Test func calibInWrongDirAgreesWithFrameRoleFromHeaderOnAmbiguousImagetyp() throws {
+    let file = FileRecord(
+        path: "sessions/M45_Pleiades/2026-01-10/lights/ambiguous.fit",
+        size: 0, mtime: 0, ext: "fit", kind: "fits",
+        area: .sessions, target: "M45_Pleiades", sessionDate: "2026-01-10", role: .light, scannedAt: 0
+    )
+    let imagetyp = "Dark corrected Light"
+
+    // `FrameRoleFromHeader` -- the shared, canonical predicate -- reads this
+    // as `.light`, matching the file's actual path role, so there is nothing
+    // to flag.
+    #expect(FrameRoleFromHeader.role(fromImagetyp: imagetyp) == .light)
+
+    let finding = CalibInWrongDirRule.misplacedFinding(file: file, imagetyp: imagetyp, id: "calib-in-wrong-dir")
+    #expect(finding == nil, "a light frame whose IMAGETYP also mentions \"dark\" must not be flagged once the rule delegates to FrameRoleFromHeader")
+}
+
 @Test func auditFindsInvalidDateDir() throws {
     let fixture = try AuditFixture.make()
     defer { fixture.cleanup() }

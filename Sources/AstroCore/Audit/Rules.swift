@@ -680,13 +680,15 @@ public struct CalibInWrongDirRule: AuditRule {
         )
     }
 
+    /// Delegates to `FrameRoleFromHeader` (W5-4 item 2) -- see that type's
+    /// own doc comment for why one shared predicate exists at all. This used
+    /// to be its own private copy of the same four-substring check, in a
+    /// DIFFERENT order (flat/dark/bias/light instead of light/flat/dark/
+    /// bias); the two disagreed on an IMAGETYP value naming more than one of
+    /// those substrings at once (see `AuditTests
+    /// .calibInWrongDirAgreesWithFrameRoleFromHeaderOnAmbiguousImagetyp`).
     private static func impliedRole(from imagetyp: String) -> FrameRole? {
-        let lower = imagetyp.lowercased()
-        if lower.contains("flat") { return .flat }
-        if lower.contains("dark") { return .dark }
-        if lower.contains("bias") { return .bias }
-        if lower.contains("light") { return .light }
-        return nil
+        FrameRoleFromHeader.role(fromImagetyp: imagetyp)
     }
 
     private static func dirName(for role: FrameRole) -> String? {
