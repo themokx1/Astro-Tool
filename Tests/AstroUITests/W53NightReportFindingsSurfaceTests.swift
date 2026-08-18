@@ -1,0 +1,101 @@
+import Foundation
+import Testing
+
+/// W5-3 (owner pixel review, 2026-08-24 IC 4604 night): literal source-text
+/// pins for the findings this ticket fixed inside `NightWorkspaceView.swift`/
+/// `FrameBlinkReview.swift` -- same "surface" convention
+/// `V2PolishSurfaceTests`/`HelpSurfaceTests` already establish (a wiring/
+/// vocabulary contract, not a rendered-layout one), kept in its own file
+/// rather than added to `V2PolishSurfaceTests.swift` since that file is
+/// shared across every concurrent V2 workstream and this ticket's scope is
+/// deliberately narrow (`NightWorkspaceView.swift`, `FrameBlinkReview.swift`,
+/// `NightReportQuery.swift` -- see the ticket's own file list).
+@Suite("W5-3 night-report pixel-review findings")
+struct W53NightReportFindingsSurfaceTests {
+    private var repositoryRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    private func contents(_ relativePath: String) throws -> String {
+        try String(contentsOf: repositoryRoot.appendingPathComponent(relativePath), encoding: .utf8)
+    }
+
+    /// Source with every `//` line comment stripped, so a doc comment that
+    /// NAMES the old code it replaced (e.g. this very file's own doc
+    /// comments, which quote `AstroTokens.Color.edge.opacity` to explain
+    /// what was removed) can never trip a "must not contain" scan below.
+    /// Copied from `V2PolishSurfaceTests.removingLineComments` (same
+    /// string/comment-aware algorithm) rather than shared, since that type
+    /// keeps it `private` and this suite is deliberately kept out of that
+    /// shared file -- see this suite's own doc comment for why.
+    private static func removingLineComments(_ source: String) -> String {
+        var result = ""
+        result.reserveCapacity(source.count)
+        var i = source.startIndex
+        var inLineComment = false
+        var inString = false
+        while i < source.endIndex {
+            let c = source[i]
+            let next = source.index(after: i)
+            if inLineComment {
+                if c == "\n" { inLineComment = false; result.append(c) }
+                i = next
+                continue
+            }
+            if inString {
+                result.append(c)
+                if c == "\\", next < source.endIndex {
+                    result.append(source[next])
+                    i = source.index(after: next)
+                    continue
+                }
+                if c == "\"" { inString = false }
+                i = next
+                continue
+            }
+            if c == "\"" {
+                inString = true
+                result.append(c)
+                i = next
+                continue
+            }
+            if c == "/", next < source.endIndex, source[next] == "/" {
+                inLineComment = true
+                i = source.index(after: next)
+                continue
+            }
+            result.append(c)
+            i = next
+        }
+        return result
+    }
+
+    // MARK: - Finding 4: FrameBlinkReview's stage backdrop must darken in
+    // both appearances, never invert in dark mode.
+
+    /// `AstroTokens.Color.edge` (`AstroTokens.swift`) is deliberately
+    /// LIGHTER than `ground`/`surface` in dark appearance (a hairline needs
+    /// to read against a near-black backdrop there) -- painting it as a
+    /// translucent film behind the review stage therefore BRIGHTENED the
+    /// stage in dark mode instead of dimming it, backwards from a photo
+    /// mat, in exactly the appearance that stage spends the most real
+    /// review time in. Pins the fix: an appearance-pinned true-black fill
+    /// (via the same `AstroTokens.Color.dynamic(dark:light:)` factory every
+    /// other structural token is built from) that can only ever darken.
+    @Test("FrameBlinkReview's preview stage backdrop darkens in both appearances, never AstroTokens.Color.edge")
+    func blinkReviewStageBackdropIsAppearanceHonest() throws {
+        let source = Self.removingLineComments(try contents("Sources/AstroUI/Features/Review/FrameBlinkReview.swift"))
+
+        #expect(
+            !source.contains("AstroTokens.Color.edge.opacity"),
+            "the stage backdrop must not paint the edge token -- it is lighter than the backdrop in dark appearance"
+        )
+        #expect(
+            source.contains("AstroTokens.Color.dynamic(dark: 0x000000, light: 0x000000)"),
+            "the stage backdrop must be pinned to true black in BOTH appearances, so it only ever darkens"
+        )
+    }
+}

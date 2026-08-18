@@ -216,7 +216,30 @@ public struct FrameBlinkReview: View {
 
     private var preview: some View {
         ZStack {
-            Rectangle().fill(AstroTokens.Color.edge.opacity(0.08))
+            // W5-3 (owner pixel review, 2026-08-18): this stage's backdrop
+            // must read as a darkened mat behind the image in BOTH
+            // appearances. The former fill, `AstroTokens.Color.edge.opacity
+            // (0.08)`, inverted that in dark mode -- `edge` is deliberately
+            // LIGHTER than `ground`/`surface` there (a hairline needs to
+            // read against a near-black backdrop), so the same 8% wash that
+            // dims the stage in light appearance BRIGHTENS it in dark,
+            // exactly backwards from a photo mat. `AstroTokens.Color.recess`
+            // is the token actually built to read darker in both
+            // appearances, but it is gated to only ever be painted by
+            // `astroRecessedSurface(_:)`
+            // (`V2PolishSurfaceTests.surfaceTokensAreOnlyPaintedByTheSharedTreatment`),
+            // and that modifier rounds its corners -- wrong for this
+            // full-bleed stage, which spans edge-to-edge between two
+            // `Divider`s (see `astroRecessedSurface`'s own "When NOT to use
+            // it" note, which names this exact view). A bare `Color.black`
+            // would need the same two-appearance honesty every other
+            // structural token here carries and is banned in `Features/`
+            // for exactly that reason (`noInlineColorsInFeatureViews`), so
+            // this reaches for the same appearance-aware factory
+            // (`AstroTokens.Color.dynamic`) every token in `AstroTokens.swift`
+            // is itself built from, pinned to true black in both appearances
+            // -- a fill that can only ever darken, never invert.
+            Rectangle().fill(AstroTokens.Color.dynamic(dark: 0x000000, light: 0x000000).opacity(0.08))
             if let image {
                 Image(nsImage: image)
                     .resizable()
