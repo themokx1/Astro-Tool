@@ -236,9 +236,40 @@ public final class ReviewStore {
     /// not the write landed). Now matches `setVerdict`/`open`'s own shape --
     /// `errorMessage` set on failure, then rethrown so the caller (now doing
     /// real error handling instead of `try?`) can react too.
+    ///
+    /// W6-F: kept as the "assign to whatever THIS store currently has
+    /// selected" shape for `ReviewWorkspace`, which really does mean that --
+    /// its own series list drives `selectedSeriesID` via `selectSeries(_:)`.
+    /// Anything inspecting a series it names explicitly (a different
+    /// concept -- see `assignFilter(_:toSeriesID:)` below) should call that
+    /// overload instead, not this one.
     public func assignFilter(_ filter: EquipmentFilter) async throws {
+        guard let selectedSeriesID else { throw ReviewStoreError.seriesNotSelected }
+        try await assignFilter(filter, toSeriesID: selectedSeriesID)
+    }
+
+    /// W6-F: the app-wide `InspectorView`'s series panel -- the "series
+    /// page" surface an owner repro (filter created via "Save and Use" but
+    /// never landing on the series) traced to -- inspects whichever series
+    /// `AppRouter.inspectorSelection` currently names, which has no relation
+    /// to this store's own `selectedSeriesID`: that field only ever moves
+    /// when `ReviewWorkspace`'s in-workspace list calls `selectSeries(_:)`,
+    /// which does not happen just from browsing to a series elsewhere (the
+    /// Projects/Library surfaces that host `InspectorView`). Before this
+    /// overload existed, `InspectorView` had no correct way to call
+    /// `assignFilter(_:)` at all: going through the ambient-selection
+    /// overload above could silently write the new filter onto whichever
+    /// series `ReviewWorkspace` last had selected (possibly a different one,
+    /// possibly none, in which case it threw `seriesNotSelected` with no
+    /// visible cause) rather than the series actually on screen. Call sites
+    /// that already know their target series -- because they were handed its
+    /// ID, not because they infer it from this store's ambient selection --
+    /// use this instead.
+    public func assignFilter(_ filter: EquipmentFilter, toSeriesID seriesID: UUID) async throws {
         guard let metadata, let projectID else { throw ReviewStoreError.reviewNotOpen }
-        guard let selected = selectedSeries?.series else { throw ReviewStoreError.seriesNotSelected }
+        guard let selected = snapshot?.series.first(where: { $0.id == seriesID })?.series else {
+            throw ReviewStoreError.seriesNotSelected
+        }
         let passband: SeriesPassband = switch filter.passband {
         case .broadband: .broadband
         case .dualBand: .dualBand

@@ -149,7 +149,21 @@ public struct InspectorView: View {
            let reviewSnapshot = reviewStore.snapshot?.series.first(where: { $0.id == id }) {
             // Richest case: this series' project is open for review, so the
             // full `SeriesInspector` (with filter assignment) applies as-is.
-            SeriesInspector(snapshot: reviewSnapshot)
+            //
+            // W6-F: this used to construct `SeriesInspector` with no
+            // `assignFilter` argument at all, which silently fell back to
+            // the type's own no-op default (`{ _ in }`) -- "Save and Use"
+            // would create the filter in the equipment library (so it showed
+            // up in the "Choose Filter…" menu afterward) and the form would
+            // clear as if the write had landed, but the series itself was
+            // never touched. `reviewStore.assignFilter(_:toSeriesID:)` names
+            // this exact series explicitly rather than relying on
+            // `reviewStore`'s own ambient `selectedSeriesID` (a different,
+            // `ReviewWorkspace`-owned concept this panel has no reason to
+            // match -- see that method's own doc comment).
+            SeriesInspector(snapshot: reviewSnapshot) { filter in
+                try await reviewStore.assignFilter(filter, toSeriesID: id)
+            }
         } else if let id = UUID(uuidString: rawID),
                   let projectSnapshot = projectsStore.selectedProject,
                   let item = projectSnapshot.nights.flatMap(\.series).first(where: { $0.id == id }) {
