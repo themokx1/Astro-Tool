@@ -45,6 +45,18 @@ public struct ArchiveTaskDetailView: View {
     /// guidance text pointing at that same toolbar action instead of a
     /// button with nothing wired behind it.
     let runCheck: (() -> Void)?
+    /// W6-E item 1 (live pixel review, real library): the triggering card's
+    /// OWN `ArchiveTask.affectedFileCount` at the moment it was tapped --
+    /// carried through `ContentRoute.archiveTaskDetail(String, Int)` from
+    /// `ArchiveTaskCard`'s own button action. This page's `store` always
+    /// re-queries live (unchanged), so a stale audit run's own count can
+    /// legitimately disagree with what a fresh query finds now -- the exact
+    /// gap the owner's screenshots showed ("33" on the card, "0" here, with
+    /// no explanation why). `nil` degrades to the plain, unexplained empty
+    /// state this page always had, for any caller that does not know the
+    /// originating count (there are none in production today; kept
+    /// optional so a future/test caller is never forced to fabricate one).
+    let cardCount: Int?
     @Bindable var store: ArchiveTaskDetailStore
     /// The page's own selection -- native `Table` row selection, unused
     /// until now. W4-7 item 3 (owner review): "there is nothing to DO on
@@ -67,6 +79,7 @@ public struct ArchiveTaskDetailView: View {
         openQuarantinePreview: @escaping (Set<String>) -> Void,
         runCheck: (() -> Void)? = nil,
         accessMode: LibraryAccessMode = .readOnly,
+        cardCount: Int? = nil,
         store: ArchiveTaskDetailStore = ArchiveTaskDetailStore()
     ) {
         self.rootURL = rootURL
@@ -74,6 +87,7 @@ public struct ArchiveTaskDetailView: View {
         self.openQuarantinePreview = openQuarantinePreview
         self.runCheck = runCheck
         self.accessMode = accessMode
+        self.cardCount = cardCount
         self.store = store
     }
 
@@ -99,8 +113,26 @@ public struct ArchiveTaskDetailView: View {
             }
             Text("\(store.findings.count.formatted()) finding(s) · \(Self.formatBytes(store.totalBytes))")
                 .foregroundStyle(.secondary)
+            if let mismatchExplanation {
+                Text(mismatchExplanation)
+                    .font(.caption)
+                    .foregroundStyle(AstroTokens.Color.attention)
+                    .accessibilityIdentifier("v2.archive.task-detail.mismatch")
+            }
             Spacer()
         }
+    }
+
+    /// W6-E item 1: `nil` while still loading (comparing against a
+    /// mid-flight `store.findings.count` would flash a false mismatch on
+    /// every visit), whenever no `cardCount` was ever supplied, or when the
+    /// live count and the card's own remembered count agree. Otherwise
+    /// names both numbers explicitly -- never just "this changed" -- so the
+    /// reader can see exactly what the Archive page told them versus what a
+    /// fresh query finds now.
+    private var mismatchExplanation: LocalizedStringKey? {
+        guard !store.isLoading, let cardCount, cardCount != store.findings.count else { return nil }
+        return "The Archive page showed \(cardCount) when you opened this — a freshly re-checked count now finds \(store.findings.count)."
     }
 
     @ViewBuilder
@@ -123,7 +155,18 @@ public struct ArchiveTaskDetailView: View {
             ContentUnavailableView {
                 Label("Nothing here anymore", systemImage: "checkmark.circle")
             } description: {
-                Text("A newer check no longer finds anything of this kind.")
+                // W6-E item 1: names the specific stale number the card
+                // showed instead of a generic "a newer check" sentence --
+                // "the page even knows the audit predates the latest scan
+                // yet still shows the stale numbers as fact" was the exact
+                // complaint; naming the number here is this page's half of
+                // the fix (the card's own staleness state is
+                // `ArchiveTaskCard.isStale`).
+                if let cardCount, cardCount > 0 {
+                    Text("The Archive page showed \(cardCount) here — a freshly re-checked count no longer finds anything of this kind.")
+                } else {
+                    Text("A newer check no longer finds anything of this kind.")
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {

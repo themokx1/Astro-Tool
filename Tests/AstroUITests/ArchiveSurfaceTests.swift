@@ -205,6 +205,35 @@ struct ArchiveVerdictTests {
         #expect(verdict.detail.worstTargetBytes == 0)
     }
 
+    // MARK: W6-E item 1 -- a stale audit's reclaim figure is a caveated
+    // fact, never a silently-implied current one, and never collapsed to a
+    // manufactured 0 either.
+
+    @Test("The reclaim detail is marked stale exactly when the headline is, never independently")
+    func reclaimDetailIsStaleWhenSnapshotIsAuditStale() {
+        let staleSnapshot = ArchiveMapSnapshot.stub(
+            reclaimableBytes: 500,
+            lastScanAt: Date(timeIntervalSince1970: 2000),
+            lastAuditAt: Date(timeIntervalSince1970: 1000)
+        )
+        let staleVerdict = ArchiveVerdict(tasks: [], snapshot: staleSnapshot)
+        #expect(staleVerdict.headline == .stale)
+        #expect(staleVerdict.detail.isStale)
+        // The real (if outdated) figure is kept, not zeroed -- see
+        // `ArchiveVerdictDetail.isStale`'s own doc comment for why a
+        // caveated real number beats a manufactured 0 in this codebase.
+        #expect(staleVerdict.detail.reclaimableBytes == 500)
+
+        let freshSnapshot = ArchiveMapSnapshot.stub(
+            reclaimableBytes: 500,
+            lastScanAt: Date(timeIntervalSince1970: 1000),
+            lastAuditAt: Date(timeIntervalSince1970: 2000)
+        )
+        let freshVerdict = ArchiveVerdict(tasks: [], snapshot: freshSnapshot)
+        #expect(freshVerdict.headline != .stale)
+        #expect(!freshVerdict.detail.isStale)
+    }
+
     @Test("The untargeted bucket can be the worst reclaim source, and carries no name to print")
     func untargetedBucketCanBeTheWorstTarget() {
         // `ArchiveTargetRow.displayName` is `nil` for the untargeted bucket
@@ -327,8 +356,22 @@ struct ArchiveViewSurfaceTests {
     func showFindingsForwardsToOpenTaskDetail() throws {
         let source = try archiveSource()
         #expect(source.contains("case .showFindings(let kind):"))
-        #expect(source.contains("openTaskDetail(kind)"))
-        #expect(source.contains("let openTaskDetail: (ArchiveTaskKind) -> Void"))
+        #expect(source.contains("openTaskDetail(kind, affectedFileCount)"))
+        #expect(source.contains("let openTaskDetail: (ArchiveTaskKind, Int) -> Void"))
+    }
+
+    // MARK: W6-E item 1 -- a stale audit's own card count is never asserted
+    // as unqualified current fact.
+
+    @Test("A stale card de-emphasizes its count, swaps to Run Check, and forwards its own count to the detail route")
+    func staleCardOverridesActionAndForwardsItsCount() throws {
+        let cardSource = try contents("Sources/AstroUI/Features/Archive/ArchiveTaskCard.swift")
+        #expect(cardSource.contains("let isStale: Bool"))
+        #expect(cardSource.contains("isStale ? .runAudit : task.action"))
+
+        let viewSource = try archiveSource()
+        #expect(viewSource.contains("isStale: snapshot.isAuditStale"))
+        #expect(viewSource.contains("onAction: { perform($0, affectedFileCount: task.affectedFileCount) }"))
     }
 }
 
@@ -407,6 +450,23 @@ struct ArchiveTaskDetailViewSurfaceTests {
         #expect(text.contains("revealInFinder(path: path)"))
         #expect(text.contains("candidate.path.hasPrefix(root.path)"), "must confirm the resolved path never escapes the library root")
         #expect(text.contains("FileManager.default.fileExists(atPath: candidate.path)"))
+    }
+
+    // MARK: W6-E item 1 -- the detail page says why a live re-query
+    // disagrees with the count the triggering card showed.
+
+    @Test("The page accepts the triggering card's own count and explains a live-vs-card disagreement")
+    func explainsDisagreementWithTheTriggeringCardsCount() throws {
+        let text = try source()
+        #expect(text.contains("let cardCount: Int?"))
+        #expect(text.contains("cardCount: Int? = nil"))
+        // The zero-findings empty state must name the specific stale
+        // number, not just say "a newer check" with no figure at all.
+        #expect(text.contains("if let cardCount, cardCount > 0 {"))
+        // A non-zero live count that still disagrees with the card gets its
+        // own banner naming both numbers.
+        #expect(text.contains("mismatchExplanation"))
+        #expect(text.contains("cardCount != store.findings.count"))
     }
 }
 

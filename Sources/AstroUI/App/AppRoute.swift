@@ -87,7 +87,16 @@ public enum ContentRoute: Hashable, Codable, Sendable {
     /// enum itself, mirroring `.project(String)`/`.night(String)`'s own
     /// raw-identifier shape -- this keeps `ArchiveTaskKind` free of a
     /// `Codable` conformance it would otherwise only need for this one route.
-    case archiveTaskDetail(String)
+    ///
+    /// W6-E item 1: also carries the triggering card's OWN
+    /// `ArchiveTask.affectedFileCount` at the moment it was tapped, so the
+    /// destination page can say why a freshly re-queried count disagrees
+    /// with what the card showed (a stale audit run's own count vs. a live
+    /// re-query -- see `ArchiveTaskDetailView.cardCount`'s own doc comment).
+    /// A window-restoration blob encoding the OLD one-`String` shape simply
+    /// fails to decode (`WindowRestorationStateCodec.decode` already treats
+    /// that as "start fresh", never a crash).
+    case archiveTaskDetail(String, Int)
 
     public var primarySection: PrimarySection {
         switch self {

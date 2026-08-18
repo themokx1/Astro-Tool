@@ -11,6 +11,20 @@ import SwiftUI
 /// action never reaches this view at all.
 struct ArchiveTaskCard: View {
     let task: ArchiveTask
+    /// W6-E item 1 (live pixel review, real library): `true` when
+    /// `ArchiveMapSnapshot.isAuditStale` -- a scan has run since the last
+    /// audit, so `task`'s own count is what the audit found THEN, not a
+    /// live fact about the library now. Before this, the verdict headline
+    /// alone said "stale" while every card below it kept asserting its
+    /// count as current, unqualified fact -- the exact gap that let
+    /// "Kalibráció rossz mappában — 33" sit next to a re-queried detail
+    /// page that found 0. De-emphasizes the count with an explicit "as of
+    /// the last check" caption and swaps the primary action to running a
+    /// fresh check (the same `runAudit(.full)` the toolbar's "Check
+    /// Library" already calls) -- there is no more useful thing a stale
+    /// card's own button can offer than confirming whether it is still
+    /// true.
+    let isStale: Bool
     let onAction: (ArchiveTaskAction) -> Void
     let onAcknowledge: () -> Void
 
@@ -21,9 +35,16 @@ struct ArchiveTaskCard: View {
                     Text(headlineValue)
                         .font(.system(size: 23, weight: .medium, design: .monospaced))
                         .monospacedDigit()
-                        .foregroundStyle(task.severity == .error
-                            ? AstroTokens.Color.critical : AstroTokens.Color.accent)
+                        .foregroundStyle(isStale ? AnyShapeStyle(.secondary) : AnyShapeStyle(
+                            task.severity == .error ? AstroTokens.Color.critical : AstroTokens.Color.accent
+                        ))
                     Text(title).astroSectionTitle()
+                }
+                if isStale, task.kind != .auditNeverRun {
+                    Text("As of the last check: \(headlineValue). A newer scan may have changed this.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .accessibilityIdentifier("v2.archive.task.\(task.kind.rawValue).stale")
                 }
                 Text(explanation)
                     .font(.callout)
@@ -39,7 +60,7 @@ struct ArchiveTaskCard: View {
                 }
             }
             Spacer(minLength: 0)
-            Button(actionTitle) { onAction(task.action) }
+            Button(actionTitle) { onAction(effectiveAction) }
                 .buttonStyle(.borderedProminent)
                 .tint(task.severity == .error
                     ? AstroTokens.Color.critical : AstroTokens.Color.accent)
@@ -128,7 +149,7 @@ struct ArchiveTaskCard: View {
     // currently has more than one finding says so in the count, a kind with
     // exactly one still says it opens Finder directly.
     private var actionTitle: LocalizedStringKey {
-        switch task.action {
+        switch effectiveAction {
         case .previewQuarantine: "Preview Quarantine…"
         case .revealInFinder: "Reveal in Finder"
         case .showFindings: "View \(task.affectedFileCount.formatted()) Files"
@@ -139,5 +160,17 @@ struct ArchiveTaskCard: View {
         // shown to anyone.
         case .unavailable: "No Action Available"
         }
+    }
+
+    /// W6-E item 1: a stale card's own primary button no longer performs
+    /// `task.action` -- Reveal-in-Finder/Preview-Quarantine/View-Files all
+    /// act on findings the audit engine has not confirmed still exist since
+    /// the newer scan. Running the check IS the useful next step for every
+    /// stale card, exactly the toolbar's own "Check Library" action.
+    /// `.auditNeverRun`'s own `task.action` is ALREADY `.runAudit` and
+    /// `isStale` is never `true` for it (see `ArchiveVerdict`'s own "never
+    /// checked outranks stale" ordering), so this never double-guards it.
+    private var effectiveAction: ArchiveTaskAction {
+        isStale ? .runAudit : task.action
     }
 }

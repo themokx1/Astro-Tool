@@ -26,7 +26,7 @@ struct InspectorVisibilityPolicyTests {
         .conversion,
         .cleanup,
         .sensorProfiles,
-        .archiveTaskDetail("duplicate-content"),
+        .archiveTaskDetail("duplicate-content", 33),
     ])
     func noSelectionRoutesHaveNoInspectorContent(route: ContentRoute) {
         #expect(route.hasInspectorContent == false)

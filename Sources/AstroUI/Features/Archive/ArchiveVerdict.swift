@@ -33,6 +33,24 @@ struct ArchiveVerdictDetail: Equatable {
     /// never re-derives it from `tasks` a second time.
     let corruptionFileCount: Int
     let reclaimableBytes: Int64
+    /// W6-E item 1 (live pixel review, real library): `snapshot.isAuditStale`,
+    /// copied here so `reclaimText` can qualify the reclaim figure below
+    /// instead of stating it as unqualified current fact. Before this, the
+    /// headline alone said "the last check is older than your most recent
+    /// scan" while the very next line kept asserting a specific byte count
+    /// with no such caveat -- the same "verdict says stale, detail asserts
+    /// fact" gap `ArchiveTaskCard.isStale` fixes for the cards below.
+    ///
+    /// Decision (the task's own "argue your choice"): keep showing the
+    /// stale sum with a caveat, rather than collapsing it to 0. This
+    /// codebase already treats a false 0 as the worse lie than an honestly
+    /// caveated old number -- see `ArchiveVerdictDetail.IntegrityState
+    /// .neverVerified`'s own doc comment, which exists for exactly the same
+    /// reason ("0 issues" over-claims something the app never checked). A
+    /// real reclaim figure from a real, recent-if-not-current audit is more
+    /// informative than manufacturing a 0 that implies nothing is
+    /// reclaimable at all.
+    let isStale: Bool
     /// The display name of the row holding the most reclaimable bytes, when
     /// any row does. `nil` both when nothing is reclaimable AND when the
     /// worst row is the untargeted bucket (which has no catalog name of its
@@ -100,6 +118,7 @@ struct ArchiveVerdict: Equatable {
             integrityState: integrityState,
             corruptionFileCount: corruptionTask?.affectedFileCount ?? 0,
             reclaimableBytes: snapshot.reclaimableBytes,
+            isStale: snapshot.isAuditStale,
             worstTargetName: worstName,
             worstTargetBytes: worstName != nil ? (worstRow?.reclaimableBytes ?? 0) : 0
         )
@@ -163,10 +182,17 @@ struct ArchiveVerdictHeader: View {
         // `%lld` for what is actually a pre-formatted `String` here and
         // produce a translation key that never matches at runtime.
         let reclaimAmountText = ByteCountFormatter.string(fromByteCount: verdict.detail.reclaimableBytes, countStyle: .file)
+        let sentence: Text
         if let name = verdict.detail.worstTargetName, verdict.detail.worstTargetBytes > 0 {
             let worstAmountText = ByteCountFormatter.string(fromByteCount: verdict.detail.worstTargetBytes, countStyle: .file)
-            return Text("\(reclaimAmountText) can be reclaimed — \(worstAmountText) of it in \(name).")
+            sentence = Text("\(reclaimAmountText) can be reclaimed — \(worstAmountText) of it in \(name).")
+        } else {
+            sentence = Text("\(reclaimAmountText) can be reclaimed.")
         }
-        return Text("\(reclaimAmountText) can be reclaimed.")
+        // W6-E item 1: see `ArchiveVerdictDetail.isStale`'s own doc comment
+        // for why this stays the real (if possibly outdated) figure with a
+        // caveat appended, rather than a manufactured 0.
+        guard verdict.detail.isStale else { return sentence }
+        return sentence + Text(verbatim: " ") + Text("This is what the last check found — a newer scan may have changed it.")
     }
 }

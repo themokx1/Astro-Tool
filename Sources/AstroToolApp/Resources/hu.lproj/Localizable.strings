@@ -1753,3 +1753,11 @@
    sidebar counts (see `LibrarySnapshot.nightCount`'s own doc comment) --
    relabeled to name what it actually counts. */
 "Session Folders" = "Session-mappák";
+
+/* W6-E item 1: the Archive page's stale-card handling -- a card's own count
+   is only as fresh as the last audit run, and its "view all" detail page
+   always re-queries live, so the two can legitimately disagree. */
+"As of the last check: %@. A newer scan may have changed this." = "Legutóbbi ellenőrzéskor: %@. Egy újabb szkennelés megváltoztathatta ezt.";
+"This is what the last check found — a newer scan may have changed it." = "Ezt találta a legutóbbi ellenőrzés — egy újabb szkennelés megváltoztathatta.";
+"The Archive page showed %lld here — a freshly re-checked count no longer finds anything of this kind." = "Az Archívum oldal %lld találatot mutatott itt — egy frissen lefuttatott ellenőrzés már nem talál ilyet.";
+"The Archive page showed %lld when you opened this — a freshly re-checked count now finds %lld." = "Az Archívum oldal %lld találatot mutatott, amikor ezt megnyitottad — egy frissen lefuttatott ellenőrzés most %lld találatot talál.";

@@ -51,7 +51,12 @@ public struct ArchiveView: View {
     /// count is greater than one, so its own primary button can no longer
     /// honestly hand back a single arbitrary path (see that action's own
     /// doc comment for the wave 1 bug this replaces).
-    let openTaskDetail: (ArchiveTaskKind) -> Void
+    ///
+    /// W6-E item 1: also carries the triggering card's OWN
+    /// `ArchiveTask.affectedFileCount`, so the detail page can say why a
+    /// freshly re-queried count disagrees with what the card showed --
+    /// see `ArchiveTaskDetailView.cardCount`'s own doc comment.
+    let openTaskDetail: (ArchiveTaskKind, Int) -> Void
     /// Runs the read-only audit. Never called directly by this view for
     /// "Run Check" task-card presses without going through this same
     /// closure -- there is exactly one audit entry point, matching the
@@ -75,7 +80,7 @@ public struct ArchiveView: View {
         rescan: @escaping () -> Void,
         convertSession: @escaping () -> Void,
         openQuarantinePreview: @escaping (Set<String>) -> Void,
-        openTaskDetail: @escaping (ArchiveTaskKind) -> Void,
+        openTaskDetail: @escaping (ArchiveTaskKind, Int) -> Void,
         runAudit: @escaping (AuditRunMode) -> Void,
         store: ArchiveStore = ArchiveStore()
     ) {
@@ -241,7 +246,17 @@ public struct ArchiveView: View {
                         ForEach(store.tasks) { task in
                             ArchiveTaskCard(
                                 task: task,
-                                onAction: { perform($0) },
+                                // W6-E item 1: the card's own count is
+                                // only as fresh as the last audit run --
+                                // `isAuditStale` (BOTH audit and verify
+                                // runs exist, and a rescan happened after
+                                // the newer of the two) means a scan has
+                                // seen the library change since. Passed to
+                                // every card, not gated to reclaim/error
+                                // severities -- every task's count comes
+                                // from the exact same possibly-stale run.
+                                isStale: snapshot.isAuditStale,
+                                onAction: { perform($0, affectedFileCount: task.affectedFileCount) },
                                 onAcknowledge: { acknowledgeRequest = task }
                             )
                             .listRowSeparator(.hidden)
@@ -380,14 +395,14 @@ public struct ArchiveView: View {
 
     // MARK: Task card actions
 
-    private func perform(_ action: ArchiveTaskAction) {
+    private func perform(_ action: ArchiveTaskAction, affectedFileCount: Int) {
         switch action {
         case .previewQuarantine(let categories):
             openQuarantinePreview(Set(categories))
         case .revealInFinder(let path):
             revealInFinder(relativePath: path)
         case .showFindings(let kind):
-            openTaskDetail(kind)
+            openTaskDetail(kind, affectedFileCount)
         case .runAudit:
             runAudit(.full)
         case .unavailable:
