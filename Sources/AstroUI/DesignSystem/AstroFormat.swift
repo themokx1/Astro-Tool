@@ -84,4 +84,14 @@ public enum AstroFormat {
     public static func coefficient(_ value: Double) -> String {
         String(format: "%g", value)
     }
+
+    /// Renders an Exif/FITS exposure length in seconds with its own unit,
+    /// e.g. `"300 s"` for a light or `"0.0002 s"` for a bias -- the
+    /// card-import wizard's Classify step group rows (W4-1b) read this
+    /// value directly to tell a bias/flat/dark/light apart by eye, so it
+    /// needs enough fractional precision to show a sub-millisecond bias
+    /// exposure as something other than `"0 s"`.
+    public static func exposureSeconds(_ value: Double) -> String {
+        "\(value.formatted(.number.precision(.fractionLength(0...4)))) s"
+    }
 }

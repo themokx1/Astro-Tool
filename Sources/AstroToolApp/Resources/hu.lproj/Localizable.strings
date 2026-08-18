@@ -1491,3 +1491,28 @@
 // W4-7: a sidebar-badge tooltipek -- interpolált LocalizedStringKey, kézzel felvéve.
 "%lld night(s) need review" = "%lld éjszaka vár áttekintésre";
 "%lld file(s) need attention -- the sum of the Archive page's cards" = "%lld fájl vár rád -- az Archívum lap kártyáinak összege";
+
+/* W4-1b (card-import wizard, burst grouping -- owner feedback with a
+   screenshot: "ebből az ablakból, honnan kéne nekem tudni, hogy valami
+   light vagy dark vagy flat? és csoportosítani is kell ezeket a képeket,
+   amik egymás utána készültek interval-ban"). The Classify step now shows
+   one row per shooting burst (`CaptureBurstGrouper`) instead of one row per
+   file. "%lld files · %@–%@"/"%lld files"/"%lld groups"/"suggested: %@"/
+   "Split Group" are literal `Text(...)`/`.help(...)` arguments the
+   extraction script already sees (confirmed via `swift
+   scripts/extract-localizable-strings.swift --missing`). "ISO" is passed
+   through `CaptureImportView.labeledValue`'s own `LocalizedStringKey`
+   parameter rather than directly into `Text(...)`, the same
+   extraction-invisible shape as this file's own `roleLabel`/
+   `dateSourceLabel` switches earlier in the W4-1 block above -- hand-added
+   here for the same reason. "Exposure" already had an entry (line 192,
+   `CalibrationView`'s own exposure-length label) and is reused verbatim
+   rather than duplicated. "Light"/"Flat"/"Dark"/"Bias" stay off this list
+   for the same reason the original W4-1 block gives: role names are
+   deliberately English by this file's own established convention. */
+"%lld files · %@–%@" = "%lld fájl · %@–%@";
+"%lld files" = "%lld fájl";
+"%lld groups" = "%lld csoport";
+"suggested: %@" = "javasolt: %@";
+"Split Group" = "Csoport szétbontása";
+"ISO" = "ISO";
