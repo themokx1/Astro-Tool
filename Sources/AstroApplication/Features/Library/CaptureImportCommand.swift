@@ -304,7 +304,26 @@ public enum CaptureImportCommand {
                     try? FileManager.default.removeItem(at: destinationURL)
                     failed.append(CaptureImportReceipt.FailedFile(
                         sourceURL: item.sourceURL,
-                        reason: "a másolat ellenőrző-összege nem egyezik a forrással -- a hibás másolat törölve"
+                        // W6-D fix (reverse leak): this used to be a
+                        // hardcoded Hungarian sentence reaching
+                        // `CaptureImportView`'s `Text(verbatim: "\(failure
+                        // .sourceURL.lastPathComponent): \(failure.reason)")`
+                        // directly -- an English-locale user would have seen
+                        // this one line in Hungarian no matter what.
+                        // `AstroApplication` cannot import `AstroUI`
+                        // (`OperationHost.localized`'s own module; the
+                        // dependency only runs the other way), but that
+                        // helper is itself just a thin
+                        // `NSLocalizedString(_:bundle: .main,comment:)`
+                        // wrapper, which needs no `AstroUI` import to call
+                        // directly -- `hu.lproj/Localizable.strings` still
+                        // ships inside the app's main bundle regardless of
+                        // which target the lookup runs from.
+                        reason: NSLocalizedString(
+                            "the copy's checksum does not match the source -- the bad copy was deleted",
+                            bundle: .main,
+                            comment: ""
+                        )
                     ))
                     progress?(index + 1, total)
                     continue

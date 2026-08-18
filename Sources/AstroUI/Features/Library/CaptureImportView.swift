@@ -665,7 +665,11 @@ public struct CaptureImportView: View {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
             }
             .buttonStyle(.plain)
-            .help("Split Group")
+            // W6-D fix: this chevron only calls `toggleExpanded(_:)` --
+            // it expands the group to list its individual files, it never
+            // splits anything. "Split Group" was simply the wrong label,
+            // in either language.
+            .help(isExpanded ? "Collapse Group" : "Expand Group")
             .accessibilityIdentifier("v2.capture-import.group.expand.\(group.id)")
         }
     }
