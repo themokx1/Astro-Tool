@@ -21,14 +21,17 @@ public struct RenderedExport: Sendable, Equatable {
     public let suggestedFilename: String
 }
 
-/// V2's single entry point for every export V1 exposes through `AppState`'s
-/// `exportAcquisition`/`exportTargetReport`/`exportNightReport`/
-/// `exportStackList`/`copyPlanToClipboard`/`exportPlanToCSV`/
-/// `copyCalibShoppingListToClipboard` -- every method here is a thin
-/// projection over an existing `AstroCore` engine (`AcquisitionExport`,
-/// `TargetReport`, `NightReport`, `StackList`, `PlanExport`,
+/// V2's entry point for every remaining file-shaped export V1 exposes
+/// through `AppState`'s `exportAcquisition`/`exportStackList`/
+/// `copyPlanToClipboard`/`exportPlanToCSV`/`copyCalibShoppingListToClipboard`
+/// -- every method here is a thin projection over an existing `AstroCore`
+/// engine (`AcquisitionExport`, `StackList`, `PlanExport`,
 /// `CalibShoppingList`); nothing here re-derives a number or re-implements a
-/// file format any of those doesn't already own.
+/// file format any of those doesn't already own. `AppState.exportTargetReport`/
+/// `exportNightReport`'s own V2 equivalents (W5-1) are `ProjectReportQuery`/
+/// `NightReportQuery` (`Features/Reports/`) instead -- those two produce
+/// structured `Sendable` data for a native SwiftUI page, not file content
+/// for an `NSSavePanel`, so they intentionally do not live here.
 ///
 /// Deliberately produces content only -- never touches the filesystem or the
 /// pasteboard itself. V1 wrote straight into `.astro_tool/exports`/`reports`/
@@ -110,23 +113,19 @@ public struct ExportService: Sendable {
         )
     }
 
-    // MARK: - Target report (R8-2)
-
-    /// The full "everything about one target" HTML report (`TargetReport.render`).
-    public func targetReport(target: String) throws -> RenderedExport {
-        let target = try resolvedTarget(target)
-        let html = try TargetReport.render(target: target, db: db, config: config)
-        return RenderedExport(content: html, suggestedFilename: "target-\(Sanitizer.sanitize(target)).html")
-    }
-
-    // MARK: - Night report (R7-B5)
-
-    /// One session's HTML night-report card (`NightReport.render`).
-    public func nightReport(target: String, date: String) throws -> RenderedExport {
-        let target = try resolvedTarget(target)
-        let html = try NightReport.render(target: target, date: date, db: db, config: config)
-        return RenderedExport(content: html, suggestedFilename: "\(Sanitizer.sanitize(target))-\(date).html")
-    }
+    // W5-1 (owner: "ne html oldalakat generáljunk és mentsünk"): the target
+    // report (R8-2) and night report (R7-B5) HTML exports that used to live
+    // here are gone -- `targetReport(target:)`/`nightReport(target:date:)`
+    // are replaced by `ProjectReportQuery`/`NightReportQuery`
+    // (`Features/Reports/`), which assemble the same underlying data as
+    // `Sendable` models for `ProjectWorkspaceView`'s Áttekintés tab and
+    // `NightWorkspaceView`'s Overview tab to render natively, rather than
+    // an `NSSavePanel`-written HTML file. `AstroCore`'s `TargetReport`/
+    // `NightReport` HTML generators themselves are NOT deleted -- they
+    // still back V1's `AppState.exportTargetReport`/`exportNightReport` and
+    // the `astrotool target-report`/`night-report` CLI commands, both
+    // outside this ticket's scope; only this V2-only wrapper and its V2 UI
+    // call sites are.
 
     // MARK: - Stack list
 

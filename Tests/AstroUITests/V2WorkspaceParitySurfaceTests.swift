@@ -333,8 +333,6 @@ struct V2WorkspaceParitySurfaceTests {
         let results = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Results/ResultsView.swift"), encoding: .utf8)
 
         #expect(service.contains("AcquisitionExport.render"))
-        #expect(service.contains("TargetReport.render"))
-        #expect(service.contains("NightReport.render"))
         #expect(service.contains("StackList.select"))
         #expect(service.contains("PlanExport.renderCSV"))
         #expect(service.contains("PlanExport.renderClipboardText"))
@@ -344,12 +342,23 @@ struct V2WorkspaceParitySurfaceTests {
 
         #expect(project.contains("ExportMenu("))
         #expect(project.contains("v2.project.export"))
-        #expect(night.contains("ExportMenu("))
-        #expect(night.contains("v2.nights.export"))
         #expect(home.contains("ExportMenu("))
         #expect(home.contains("v2.home.plan-export"))
         #expect(results.contains("ExportMenu("))
         #expect(results.contains("v2.results.export"))
+
+        // W5-1 (owner: "tünjenek el az exportálás file-ba gombok"): the
+        // night workspace's export menu is gone entirely (its one item,
+        // "Night Report…", is deleted along with `ExportService.nightReport`
+        // and its content is native now, `NightReportQuery` -- see
+        // `NightWorkspaceView.reportSections`), and the target/night HTML
+        // reports no longer back ANY V2 export menu.
+        #expect(!night.contains("ExportMenu("))
+        #expect(!service.contains("TargetReport.render"))
+        #expect(!service.contains("NightReport.render"))
+        #expect(!project.contains("Target Report…"))
+        #expect(!project.contains("Acquisition (CSV)…"))
+        #expect(!project.contains("Acquisition (Markdown)…"))
     }
 
     @Test("Stable V2 does not present knowingly inert controls")

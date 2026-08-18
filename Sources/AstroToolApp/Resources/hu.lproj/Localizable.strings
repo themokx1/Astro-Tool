@@ -1492,6 +1492,99 @@
 "%lld night(s) need review" = "%lld éjszaka vár áttekintésre";
 "%lld file(s) need attention -- the sum of the Archive page's cards" = "%lld fájl vár rád -- az Archívum lap kártyáinak összege";
 
+// W5-1 (NightWorkspaceView.swift/ProjectWorkspaceView.swift report sections):
+// the former "Éjszaka-riport"/"Célpont-riport" HTML exports moved in-app --
+// most of their labels (Filter, Frames, Integráció, Kalibráció, Jegyzetek,
+// Stackek, Szűrő, ...) already have entries above from the rest of the app;
+// these are the ones the extraction script found as genuinely new
+// interpolated `Text(_:)` literals (`swift scripts/
+// extract-localizable-strings.swift --missing`). Most of the report's OTHER
+// new labels (section titles, `ReportGrid` column headers, `ReportStatGrid`
+// tuple labels) sit inside array/tuple literals the script's construct list
+// doesn't pattern-match at all -- still real `LocalizedStringKey`s that
+// resolve against this file at runtime, just not ones the script's own
+// coverage gate can see, so they get their own block below instead.
+"%@ / %@" = "%@ / %@";
+"Exposure Advice" = "Expozíció-javaslat";
+"Exposure advice: n/a — %@" = "Expozíció-javaslat: n/a — %@";
+"Flat Hygiene" = "Flat-higiénia";
+"Goal: %@ — %@ remaining" = "Cél: %@ — még hiányzik %@";
+"Goal: %@ — reached" = "Cél: %@ — elérve";
+"Library dark mismatches: %@" = "Library dark eltérések: %@";
+"Setup: %@" = "Összeállítás: %@";
+"Unbalanced integration across panels." = "Kiegyenlítetlen integráció a panelek között.";
+"• %@" = "• %@";
+
+// W5-1 continued -- report section titles, `ReportGrid` column headers, and
+// `ReportStatGrid` label/value pair labels (`ReportComponents.swift`,
+// `NightWorkspaceView.reportSections`, `ProjectWorkspaceView.
+// reportSections`). Every one of these IS a `LocalizedStringKey` at its own
+// call site (`ReportSection(title:)`, `ReportGrid(headers:)`, tuple arrays
+// typed `[(LocalizedStringKey, String)]`) and resolves against this file at
+// runtime exactly like any other -- the extraction script simply has no
+// construct pattern for "string literal inside an array/tuple literal", so
+// none of these show up in its own `--missing` report; hand-added here
+// instead, matching the app's existing Hungarian astrophotography
+// vocabulary (Éjszaka, Sorozat, Expozíció, Integráció, Szűrő, Triázs, ...).
+"Altitude & Moon" = "Magasság és Hold";
+"Background" = "Háttér";
+"Below 30°" = "30° alatt";
+"Camera" = "Kamera";
+"Capture Groups" = "Gyűjtések";
+"Center (RA/Dec)" = "Közép (RA/Dec)";
+"Cooler" = "Hűtő";
+"Coordinate Source" = "Koordináta forrása";
+"Culmination" = "Kulmináció";
+"DSS Accepted" = "DSS elfogadva";
+"DSS Rejected" = "DSS elvetve";
+"File" = "Fájl";
+"Flags" = "Jelzők";
+"Focal Length" = "Gyújtótáv";
+"Focus" = "Fókusz";
+"Frames×Sub" = "Keretek×sub";
+"Gain" = "Gain";
+"Goal" = "Cél";
+"Group" = "Gyűjtés";
+"Hardware & Calibration" = "Hardver és kalibráció";
+"Location" = "Hely";
+"Max. Altitude" = "Max. magasság";
+"Median Altitude" = "Medián magasság";
+"Min. Altitude" = "Min. magasság";
+"Missing" = "Hiányzik";
+"Moon Illumination" = "Hold megvilágítás";
+"Moon Max. Altitude" = "Hold max. magasság";
+"Moon Separation" = "Hold-szeparáció";
+"Moon Separation (median)" = "Hold-szeparáció (medián)";
+"No coordinate or site data for the altitude calculation." = "Nincs koordináta vagy site adat a magasság-számításhoz.";
+"No discovered stack file for this target." = "Nincs felderített stack-fájl ehhez a célponthoz.";
+"No filter data for this session." = "Nincs szűrőadat ebben a sessionben.";
+"No plan data for this target." = "Nincs terv-adat ehhez a célponthoz.";
+"No plate-solve/header coordinate for this target." = "Nincs plate-solve/fejléc koordináta ehhez a célponthoz.";
+"No rated frames for this session." = "Nincs pontozott keret ehhez a session-höz.";
+"No rated frames for this target." = "Nincs pontozott keret ehhez a célponthoz.";
+"No recorded session for this target." = "Nincs rögzített session ehhez a célponthoz.";
+"No to-dos." = "Nincs teendő.";
+"No usable filter data for this target." = "Nincs használható szűrőadat ehhez a célponthoz.";
+"Outliers" = "Kiugrók";
+"Panel" = "Panel";
+"Panels" = "Panelek";
+"Planning" = "Tervezés";
+"Problems" = "Problémák";
+"Quality" = "Minőség";
+"Rank" = "Rang";
+"Rotation" = "Rotáció";
+"Sessions" = "Sessionök";
+"Size" = "Méret";
+"Stars" = "Csillagok";
+"Status" = "Státusz";
+"Target Details" = "Célpont adatok";
+"Temp" = "Hőm.";
+"To-dos" = "Teendők";
+"Total" = "Összidő";
+"Verdict" = "Verdikt";
+"Visible Window" = "Látható ablak";
+"Wide-field" = "Wide-field";
+
 /* W4-1b (card-import wizard, burst grouping -- owner feedback with a
    screenshot: "ebből az ablakból, honnan kéne nekem tudni, hogy valami
    light vagy dark vagy flat? és csoportosítani is kell ezeket a képeket,

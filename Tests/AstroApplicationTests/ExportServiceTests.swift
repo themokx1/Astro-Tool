@@ -142,48 +142,14 @@ struct ExportServiceTests {
         #expect(result.unmappedFilters == ["Ha"])
     }
 
-    // MARK: - Target / night report
-
-    @Test("Target report renders through TargetReport, unchanged")
-    func targetReportMatchesEngine() throws {
-        let fixture = try ExportServiceFixture.make()
-        defer { fixture.cleanup() }
-
-        try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/a.fit", exptime: 300)
-        try fixture.scan()
-
-        let expected = try TargetReport.render(target: "T1", db: fixture.db, config: fixture.config)
-        let result = try fixture.exportService().targetReport(target: "T1")
-
-        #expect(result.content == expected)
-        #expect(result.suggestedFilename == "target-T1.html")
-    }
-
-    @Test("Night report renders through NightReport, unchanged")
-    func nightReportMatchesEngine() throws {
-        let fixture = try ExportServiceFixture.make()
-        defer { fixture.cleanup() }
-
-        try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/a.fit", exptime: 300)
-        try fixture.scan()
-
-        let expected = try NightReport.render(target: "T1", date: "2026-01-10", db: fixture.db, config: fixture.config)
-        let result = try fixture.exportService().nightReport(target: "T1", date: "2026-01-10")
-
-        #expect(result.content == expected)
-        #expect(result.suggestedFilename == "T1-2026-01-10.html")
-    }
-
-    @Test("Night report throws for a session that was never scanned")
-    func nightReportThrowsForUnknownSession() throws {
-        let fixture = try ExportServiceFixture.make()
-        defer { fixture.cleanup() }
-        try fixture.scan()
-
-        #expect(throws: (any Error).self) {
-            _ = try fixture.exportService().nightReport(target: "Ghost", date: "2026-01-10")
-        }
-    }
+    // W5-1: `ExportService.targetReport`/`nightReport` (and their own
+    // "renders through TargetReport/NightReport, unchanged" +
+    // "throws for a session that was never scanned" + drifted-folder-name
+    // tests below) are deleted along with the methods themselves -- their
+    // coverage, including the folder-drift resolution, now lives with
+    // `ProjectReportQuery`/`NightReportQuery`
+    // (`Tests/AstroApplicationTests/ProjectReportQueryTests.swift`/
+    // `NightReportQueryTests.swift`), which own that resolution now.
 
     // MARK: - Stack list
 
@@ -233,14 +199,15 @@ struct ExportServiceTests {
     // every one of its 62 real stack files sits under
     // `NGC_7000_North_American_Nebula` -- one letter of drift between
     // "America" and "American". `ProjectWorkspaceView`'s export menu (and
-    // `ResultsView`'s, and `NightActionMenu.exportNightReport`) all hand
-    // `ExportService` the CATALOG-canonical name, not the on-disk one. Before
-    // this fix every method below matched `db`/`SessionStatsQueries` rows by
-    // exact string equality against that name and silently produced an empty
-    // (or throwing) export for the library's largest target. These four
-    // tests drive the exact drifted spelling through `ExportService` itself
-    // (not the underlying `AstroCore` engine directly) so they only pass once
-    // `ExportService` does its own resolution.
+    // `ResultsView`'s) hand `ExportService` the CATALOG-canonical name, not
+    // the on-disk one. Before this fix every method below matched
+    // `db`/`SessionStatsQueries` rows by exact string equality against that
+    // name and silently produced an empty (or throwing) export for the
+    // library's largest target. These tests drive the exact drifted
+    // spelling through `ExportService` itself (not the underlying
+    // `AstroCore` engine directly) so they only pass once `ExportService`
+    // does its own resolution. The equivalent `NightReportQuery`/
+    // `ProjectReportQuery` coverage lives in their own test files (W5-1).
 
     /// The catalog-canonical name `ProjectsQuery`/the UI's export menus
     /// actually hand `ExportService`, deliberately NOT the spelling the
@@ -270,38 +237,9 @@ struct ExportServiceTests {
         #expect(result.content.split(separator: "\n").count > 1, "expected a header plus at least one session row")
     }
 
-    @Test("Target report resolves a catalog-canonical target name that has drifted from the on-disk folder")
-    func targetReportResolvesDriftedFolderName() throws {
-        let fixture = try ExportServiceFixture.make()
-        defer { fixture.cleanup() }
-        let onDisk = Self.driftedOnDiskTarget
-        let canonical = Self.driftedCanonicalTarget
-
-        try fixture.writeFITSLight("sessions/\(onDisk)/2026-01-10/lights/a.fit", exptime: 300)
-        try fixture.scan()
-
-        let expected = try TargetReport.render(target: onDisk, db: fixture.db, config: fixture.config)
-        let result = try fixture.exportService().targetReport(target: canonical)
-
-        #expect(result.content == expected)
-        #expect(result.content.contains(onDisk))
-    }
-
-    @Test("Night report resolves a catalog-canonical target name that has drifted from the on-disk folder")
-    func nightReportResolvesDriftedFolderName() throws {
-        let fixture = try ExportServiceFixture.make()
-        defer { fixture.cleanup() }
-        let onDisk = Self.driftedOnDiskTarget
-        let canonical = Self.driftedCanonicalTarget
-
-        try fixture.writeFITSLight("sessions/\(onDisk)/2026-01-10/lights/a.fit", exptime: 300)
-        try fixture.scan()
-
-        let expected = try NightReport.render(target: onDisk, date: "2026-01-10", db: fixture.db, config: fixture.config)
-        let result = try fixture.exportService().nightReport(target: canonical, date: "2026-01-10")
-
-        #expect(result.content == expected)
-    }
+    // "Target report resolves ..."/"Night report resolves ..." moved to
+    // `ProjectReportQueryTests`/`NightReportQueryTests` -- see the MARK
+    // above.
 
     @Test("Stack list resolves a catalog-canonical target name that has drifted from the on-disk folder -- the flagship 'empty export' bug")
     func stackListResolvesDriftedFolderName() throws {
