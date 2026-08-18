@@ -48,18 +48,26 @@ private func goalSetup(
     #expect(abs(hours - 10) < 0.000_001)
 }
 
+// W7-B item 2: 0.3 mag fainter (not a full magnitude) so the result stays
+// inside `IntegrationReferenceRule`'s default 3x clamp under the corrected
+// 0.8 exponent -- a full magnitude fainter (the OLD 0.4-exponent fixture
+// used here) already saturates the clamp with the physically correct
+// exponent, which `integrationReferenceClampsTargetDifficultyToAchievableRange`
+// below covers on its own.
 @Test func integrationReferenceMakesFaintExtendedTargetsLonger() {
     let target = CatalogTarget(
         designation: "TEST 2", commonNameHU: nil,
         raDeg: 0, decDeg: 0, kind: .emissionNebula,
         sizeArcmin: 1, magnitude: nil,
-        surfaceBrightnessMagPerArcsec2: 23
+        surfaceBrightnessMagPerArcsec2: 22.3
     )
 
     let hours = IntegrationGoalCalculator.recommendedHours(
         rule: IntegrationReferenceRule(), setup: goalSetup(), target: target
     )
-    #expect(abs(hours - 25.118_864_315) < 0.000_001)
+    // 10 * 10^(0.8*0.3) -- see `IntegrationGoalCalculator.targetDifficultyFactor`'s
+    // own doc comment for why this is 0.8, not the old 0.4.
+    #expect(abs(hours - 17.378_008_287) < 0.000_001)
 }
 
 @Test func integrationReferenceClampsTargetDifficultyToAchievableRange() {
@@ -113,12 +121,21 @@ private func goalSetup(
     #expect(abs(hours - 6.4) < 0.000_001)
 }
 
-@Test func integrationReferenceScalesWithSensorAreaForEquivalentFraming() {
+// W7-B item 2: this used to assert that a bigger sensor (36x24 vs the
+// 23.5x15.6 reference) needed LESS integration time, on the theory of
+// "equivalent normalized framing". That conflated total field captured
+// (which does scale with sensor area) with per-pixel/per-arcsec2 SNR
+// (which does not: two sensors at the same f-ratio and efficiency
+// accumulate signal per pixel at the same rate regardless of how many
+// pixels the sensor has). Sensor area no longer factors into
+// `equipmentFactor` at all -- this now asserts the opposite of what it used
+// to: changing only the sensor size leaves the recommendation unchanged.
+@Test func integrationReferenceIsUnaffectedBySensorAreaAlone() {
     let hours = IntegrationGoalCalculator.recommendedHours(
         rule: IntegrationReferenceRule(), setup: goalSetup(width: 36, height: 24)
     )
 
-    #expect(abs(hours - 4.243_055_555_6) < 0.000_001)
+    #expect(abs(hours - 10) < 0.000_001)
 }
 
 @Test func integrationReferenceAccountsForRelativeSystemEfficiency() {
