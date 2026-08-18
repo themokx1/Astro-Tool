@@ -214,12 +214,12 @@ struct V2BetaWorkspaceSurfaceTests {
         #expect(view.contains("v2.nights.planning-calendar"))
     }
 
-    @Test("Insights exposes session quality setup and efficiency trends")
+    @Test("Insights exposes capture quality setup and efficiency trends")
     func insightsShowsQualityTrendSeries() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Insights/InsightsView.swift"), encoding: .utf8)
-        #expect(view.contains("Session quality trends"))
+        #expect(view.contains("Capture quality trends"))
         #expect(view.contains("fwhmValue"))
         #expect(view.contains("backgroundEPerSecPerArcsec2"))
         #expect(view.contains("efficiencyPercent"))

@@ -91,7 +91,7 @@ private struct InsightsQueryFixture {
         let config = self.config
         return InsightsQuery(
             indexDatabaseForTesting: indexURL,
-            trendPointsForTesting: { [] },
+            captureTrendPointsForTesting: { try InsightsQuery.captureTrendPoints(db: db, config: config) },
             libraryForTesting: {
                 let files = try db.allFiles(includeMissing: false)
                 let meta = try db.fitsMetaBatch(fileIDs: files.compactMap(\.id))
@@ -102,7 +102,7 @@ private struct InsightsQueryFixture {
 }
 
 struct InsightsQueryTests {
-    @Test("Insights carries session quality focus and efficiency trend points")
+    @Test("Insights carries per-capture quality/efficiency trend points, not per-session ones")
     func exposesQualityTrendSeries() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -113,18 +113,21 @@ struct InsightsQueryTests {
         CREATE TABLE files(id INTEGER PRIMARY KEY, area TEXT, target TEXT, session_date TEXT, role TEXT, missing INTEGER);
         CREATE TABLE fits_meta(file_id INTEGER PRIMARY KEY, exptime REAL);
         """)
-        let points = [TrendPoint(
+        let points = [CaptureTrendPoint(
             target: "IC1396", date: "2026-08-08", sessionStartDate: "2026-08-08",
+            displayName: "OSC 30 s", filterLabel: "SV220",
+            setupDescriptor: "ASI2600MC · 261 mm",
             medianFWHMArcsec: 2.4, backgroundEPerSecPerArcsec2: 0.003,
-            efficiencyPercent: 82, setupDescriptor: "ASI2600MC · 261 mm"
+            efficiencyPercent: 82, usableFrameCount: 40, integrationSeconds: 1200,
+            groupKey: "implicit"
         )]
 
         let result = try await InsightsQuery(
             indexDatabaseForTesting: index,
-            trendPointsForTesting: { points }
+            captureTrendPointsForTesting: { points }
         ).snapshot()
 
-        #expect(result.trendPoints == points)
+        #expect(result.captureTrendPoints == points)
         #expect(result.setupChoices == ["ASI2600MC · 261 mm"])
     }
 
@@ -240,5 +243,93 @@ struct InsightsQueryTests {
         let result = try await fixture.query().snapshot()
         #expect(result.integrationSeconds == result.grossIntegrationSeconds)
         #expect(!result.hasDuplicateExposure)
+    }
+
+    // MARK: - W6-B: per-capture trend rows, reconciled against NightReportQuery
+
+    /// The owner's own reported shape: one night, two capture groups, two
+    /// different rigs (a Canon EOS R8 widefield setup and a ZWO ASI2600MC
+    /// narrowband setup) -- the exact mix his screenshot showed folded into
+    /// one blended "Efficiency" trend line under the old per-SESSION
+    /// `TrendPoint`. Pins two things at once: (1) `InsightsQuery.
+    /// captureTrendPoints` never blends the two captures' FWHM/efficiency
+    /// together, and (2) its numbers for each capture are IDENTICAL to what
+    /// `NightReportQuery.run` (the night workspace's own "Capture Groups"
+    /// table engine) reports for the same capture, since both are built by
+    /// joining the exact same `SessionStatsQueries.sessions`/`SessionQuality.
+    /// summaries` calls -- never a second, independently re-derived
+    /// computation of the same fact.
+    @Test("A capture's FWHM/efficiency in the Insights trend reconciles with NightReportQuery's own Capture Groups numbers")
+    func reconcilesWithNightReportCaptureGroups() async throws {
+        let fixture = try InsightsQueryFixture.make()
+        defer { fixture.cleanup() }
+
+        try fixture.writeFITSLight(
+            "sessions/MIX/2026-03-01/captures/wide/lights/w1.fit",
+            exptime: 60, filter: "L", instrume: "Canon EOS R8", focallen: 16
+        )
+        try fixture.writeFITSLight(
+            "sessions/MIX/2026-03-01/captures/wide/lights/w2.fit",
+            exptime: 60, filter: "L", instrume: "Canon EOS R8", focallen: 16
+        )
+        try fixture.writeFITSLight(
+            "sessions/MIX/2026-03-01/captures/narrow/lights/n1.fit",
+            exptime: 300, filter: "SV220", instrume: "ASI2600MC", focallen: 261
+        )
+        try fixture.writeFITSLight(
+            "sessions/MIX/2026-03-01/captures/narrow/lights/n2.fit",
+            exptime: 300, filter: "SV220", instrume: "ASI2600MC", focallen: 261
+        )
+        try fixture.scan()
+
+        _ = try fixture.db.upsertCaptureGroup(CaptureGroupRecord(
+            target: "MIX", sessionDate: "2026-03-01", slug: "wide", displayName: "Widefield L"
+        ))
+        _ = try fixture.db.upsertCaptureGroup(CaptureGroupRecord(
+            target: "MIX", sessionDate: "2026-03-01", slug: "narrow", displayName: "Narrowband SV220"
+        ))
+
+        let allFiles = try fixture.db.allFiles(includeMissing: false)
+        func rate(_ suffix: String, fwhm: Double) throws {
+            let file = try #require(allFiles.first { $0.path.hasSuffix(suffix) })
+            try fixture.db.upsertRating(RatingRecord(
+                fileID: try #require(file.id), fwhm: fwhm, starCount: 100, background: 200,
+                score: 0, ratedAt: 1_700_000_000, inputSig: "sig-\(suffix)"
+            ))
+        }
+        try rate("w1.fit", fwhm: 3.0)
+        try rate("w2.fit", fwhm: 5.0)
+        try rate("n1.fit", fwhm: 2.0)
+        try rate("n2.fit", fwhm: 4.0)
+
+        let capturePoints = try InsightsQuery.captureTrendPoints(db: fixture.db, config: fixture.config)
+        let wide = try #require(capturePoints.first { $0.displayName == "Widefield L" })
+        let narrow = try #require(capturePoints.first { $0.displayName == "Narrowband SV220" })
+
+        // Never blended: each capture keeps its own median FWHM -- the old
+        // session-wide `TrendPoint` would have reported this whole night's
+        // FWHM as `nil` (`SessionQuality` suppresses the session-level
+        // aggregate outright once more than one capture group contributed
+        // rated frames).
+        #expect(wide.medianFWHMPixels == 4.0)
+        #expect(narrow.medianFWHMPixels == 3.0)
+        #expect(wide.setupDescriptor?.contains("Canon EOS R8") == true)
+        #expect(narrow.setupDescriptor?.contains("ASI2600MC") == true)
+        #expect(wide.filterLabel == "L")
+        #expect(narrow.filterLabel == "SV220")
+        // No rejects on either capture -- both fully usable.
+        #expect(wide.efficiencyPercent == 100)
+        #expect(narrow.efficiencyPercent == 100)
+
+        let report = try NightReportQuery(db: fixture.db, config: fixture.config).run(target: "MIX", date: "2026-03-01")
+        let reportWide = try #require(report.captureGroups.first { $0.group.displayName == "Widefield L" })
+        let reportNarrow = try #require(report.captureGroups.first { $0.group.displayName == "Narrowband SV220" })
+
+        #expect(wide.medianFWHMPixels == reportWide.quality?.medianFWHMPixels)
+        #expect(narrow.medianFWHMPixels == reportNarrow.quality?.medianFWHMPixels)
+        #expect(wide.usableFrameCount == reportWide.group.usableLightCount)
+        #expect(narrow.usableFrameCount == reportNarrow.group.usableLightCount)
+        #expect(wide.integrationSeconds == reportWide.group.integrationSeconds)
+        #expect(narrow.integrationSeconds == reportNarrow.group.integrationSeconds)
     }
 }

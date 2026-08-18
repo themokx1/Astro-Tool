@@ -78,7 +78,7 @@ struct InsightsStoreTests {
         let config = fixture.config
         return InsightsQuery(
             indexDatabaseForTesting: fixture.indexURL,
-            trendPointsForTesting: { [] },
+            captureTrendPointsForTesting: { [] },
             libraryForTesting: {
                 let files = try db.allFiles(includeMissing: false)
                 let meta = try db.fitsMetaBatch(fileIDs: files.compactMap(\.id))

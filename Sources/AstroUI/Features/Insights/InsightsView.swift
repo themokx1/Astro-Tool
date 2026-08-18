@@ -142,10 +142,20 @@ public struct InsightsView: View {
         // panel is gone from here for good. Task 7c gives the section back a
         // real presence in the one shared way -- see the `.astroRaisedSurface()`
         // at the bottom of this function.
+        //
+        // W6-B (owner screenshot review): this card used to plot one point
+        // per SESSION -- but a session (night) can hold more than one
+        // capture group, each its own optics/filter/exposure combination,
+        // and the owner's own table mixed a Canon EOS R8·16mm widefield row
+        // with a ZWO ASI2600MC narrowband row into one "Efficiency" trend
+        // line. FWHM/background/efficiency are properties of a CAPTURE, not
+        // a session -- `CaptureTrendPoint` (`InsightsQuery.swift`) is the
+        // reworked per-capture unit; the "Összeállítás" setup filter below
+        // now finally means something (one setup = one comparable series).
         VStack(alignment: .leading, spacing: 12) {
-            Text("Session quality trends").font(.headline)
+            Text("Capture quality trends").font(.headline)
             HStack {
-                Text("Compare measured sessions over time. Lower FWHM and background are better; higher efficiency is better.")
+                Text("Compare measured captures over time. Lower FWHM and background are better; higher efficiency is better.")
                     .font(.callout).foregroundStyle(.secondary)
                 Spacer()
                 Picker("Setup", selection: $selectedSetup) {
@@ -190,13 +200,13 @@ public struct InsightsView: View {
 
     private func trendData(
         _ insight: InsightsSnapshot,
-        value: (TrendPoint) -> Double?
+        value: (CaptureTrendPoint) -> Double?
     ) -> [InsightTrendDatum] {
-        insight.trendPoints.compactMap { point in
+        insight.captureTrendPoints.compactMap { point in
             guard selectedSetup == nil || point.setupDescriptor == selectedSetup,
                   let metric = value(point) else { return nil }
             return InsightTrendDatum(
-                id: "\(point.target)|\(point.date)",
+                id: point.id,
                 date: point.sessionStartDate ?? point.date,
                 target: point.target,
                 value: metric
@@ -268,22 +278,44 @@ public struct InsightsView: View {
     }
 
     private func recentTrendSessions(_ insight: InsightsSnapshot) -> some View {
-        let points = insight.trendPoints.filter {
+        // W6-B: "Legutóbbi session" -> "Legutóbbi capture-ök" -- one row per
+        // CAPTURE now, not per session, so a mixed-rig night contributes one
+        // row per rig instead of one blended row. `\.id` (stable: target +
+        // date + capture-group key) rather than `\.date`, which used to
+        // collide whenever more than one row shared a date -- exactly the
+        // case this rework introduces on purpose.
+        let points = insight.captureTrendPoints.filter {
             selectedSetup == nil || $0.setupDescriptor == selectedSetup
         }.suffix(8).reversed()
         return Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 7) {
             GridRow {
-                Text("Recent session").font(.caption.weight(.semibold))
+                Text("Recent captures").font(.caption.weight(.semibold))
+                Text("Filter").font(.caption.weight(.semibold))
                 Text("FWHM").font(.caption.weight(.semibold))
                 Text("Background").font(.caption.weight(.semibold))
                 Text("Efficiency").font(.caption.weight(.semibold))
                 Text("Setup").font(.caption.weight(.semibold))
             }
-            Divider().gridCellColumns(5)
-            ForEach(Array(points), id: \.date) { point in
+            Divider().gridCellColumns(6)
+            ForEach(Array(points), id: \.id) { point in
                 GridRow {
                     Text("\(point.date) · \(point.target)").lineLimit(1)
-                    Text(point.fwhmValue.map { $0.value.formatted(.number.precision(.fractionLength(2))) } ?? "—").monospacedDigit()
+                    // `filterLabel` is arbitrary filter-wheel data (or the
+                    // literal "—" placeholder), never UI copy -- verbatim,
+                    // same convention `NightWorkspaceView`'s own Capture
+                    // Groups table uses for `CaptureGroupSummary.filters`.
+                    Text(point.filterLabel).lineLimit(1)
+                    // W6-B item 7 (audit finding, InsightsView.swift:278):
+                    // this used to format the raw number with no unit at
+                    // all, silently hiding whether it was arcsec or the
+                    // px-fallback (`isPixelFallback`) -- `AstroFormat.
+                    // fwhmArcsec`/`fwhmPixels` are the ONE canonical
+                    // formatter per unit this codebase already establishes
+                    // (see that type's own doc comment), same "arcsec when
+                    // derivable, else pixels" branch `NightWorkspaceView.
+                    // fwhmText` already uses for the night workspace's own
+                    // Capture Groups table.
+                    Text(point.fwhmValue.map { $0.isPixelFallback ? AstroFormat.fwhmPixels($0.value) : AstroFormat.fwhmArcsec($0.value) } ?? "—").monospacedDigit()
                     Text(point.backgroundEPerSecPerArcsec2?.formatted(.number.precision(.significantDigits(2...3))) ?? "—").monospacedDigit()
                     Text(point.efficiencyPercent.map { "\($0.formatted(.number.precision(.fractionLength(0))))%" } ?? "—").monospacedDigit()
                     // `setupDescriptor` is arbitrary equipment data (never
@@ -472,14 +504,16 @@ enum InsightTrendChartState: Equatable {
         }
     }
 
-    /// The owner's own two phrasings ("1 mért session — a trendhez több
+    /// The owner's own two phrasings ("1 mért capture — a trendhez több
     /// mérés kell" / "Nincsenek mért értékek") -- hand-added at the
     /// `hu.lproj` tail since both keys reach `Text` through a ternary here,
     /// which the extraction script does not see. Never called for
-    /// `.trend`, which renders the chart itself instead.
+    /// `.trend`, which renders the chart itself instead. W6-B: the singular
+    /// key reads "capture", not "session", now that this chart's points are
+    /// per-capture (`CaptureTrendPoint`) rather than per-session.
     static func unavailableMessage(pointCount: Int) -> LocalizedStringKey {
         pointCount == 1
-            ? "Only one measured session — more measurements are needed for a trend"
+            ? "Only one measured capture — more measurements are needed for a trend"
             : "No measured values"
     }
 

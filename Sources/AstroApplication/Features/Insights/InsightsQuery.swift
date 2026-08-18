@@ -66,7 +66,7 @@ public struct InsightsSnapshot: Equatable, Sendable {
     public let filterUsage: [FilterUsage]
     public let setupUsage: [SetupUsage]
     public let rejectedFrameCount: Int
-    public let trendPoints: [TrendPoint]
+    public let captureTrendPoints: [CaptureTrendPoint]
     public let isReadOnly: Bool
     public var bestMonth: MonthlyCapture? { months.max { $0.integrationSeconds < $1.integrationSeconds } }
     public var averageIntegrationPerNight: Double {
@@ -80,11 +80,125 @@ public struct InsightsSnapshot: Equatable, Sendable {
     /// one -- the UI only bothers explaining the difference when there is
     /// one. 1 second of floating-point noise doesn't count.
     public var hasDuplicateExposure: Bool { grossIntegrationSeconds > integrationSeconds + 1 }
-    public var setupChoices: [String] { TrendQueries.distinctSetupDescriptors(trendPoints) }
+    /// W6-B: every distinct, non-nil `setupDescriptor` among `captureTrendPoints`
+    /// -- the "Összeállítás" filter's choices, now scoped to CAPTURES rather
+    /// than whole sessions (`CaptureTrendPoint`'s own doc comment explains
+    /// why a session-wide choice list let a mixed-rig night's setups blend
+    /// together).
+    public var setupChoices: [String] { Array(Set(captureTrendPoints.compactMap(\.setupDescriptor))).sorted() }
+}
+
+/// One capture group's measured quality/operational numbers for one session
+/// date -- the "Capture quality trends" card's unit of data (W6-B, owner
+/// screenshot review: "itt nem 'session' minőség trend kell, hanem capture
+/// trend kell"). A session (night) can hold more than one capture group,
+/// each its own optics/filter/exposure combination
+/// (`CaptureGroupSummary`'s own doc comment); FWHM/background/efficiency are
+/// properties of ONE capture, and blending them across capture groups within
+/// a session -- which the former per-SESSION `TrendPoint` did, since
+/// `TrendPoint.efficiencyPercent` came from the whole night's dark-window
+/// duty cycle -- made the trend physically meaningless whenever a night
+/// mixed setups. The owner's own example: a Canon EOS R8·16mm widefield rig
+/// and a ZWO ASI2600MC narrowband rig running the same night, folded into
+/// one "Efficiency" line.
+///
+/// Built by joining `SessionStatsQueries.sessions(...)`'s own
+/// `SessionDetail.captureGroups: [CaptureGroupSummary]` (operational: frame
+/// counts, integration, filters) with `SessionQuality.summaries(...)`'s own
+/// `SessionQualitySummary.captureGroups: [CaptureQualitySummary]` (quality:
+/// FWHM, background) by `id` -- the EXACT SAME join `NightReportQuery.
+/// captureGroupRows` performs for the night workspace's own "Capture Groups"
+/// table, so a capture's numbers here and there can never drift apart
+/// (`InsightsQueryTests`'s reconciliation test pins this against a shared
+/// fixture, replaying a real capture group both ways). Neither half's own
+/// math is re-derived here -- this type only zips two already-computed rows
+/// together.
+public struct CaptureTrendPoint: Equatable, Sendable, Identifiable {
+    public var target: String
+    /// Raw session date-dir name, verbatim -- same convention as
+    /// `TrendPoint.date`.
+    public var date: String
+    /// The session's canonical `YYYY-MM-DD` start date, or `nil` when the
+    /// date-dir name doesn't parse as one -- same convention as
+    /// `TrendPoint.sessionStartDate`.
+    public var sessionStartDate: String?
+    /// The capture group's own display name (`CaptureGroupSummary.
+    /// displayName`, e.g. `"OSC 30 s"`, or `"Nincs gyűjtéshez rendelve"` for
+    /// an ungrouped/implicit capture).
+    public var displayName: String
+    /// `CaptureGroupSummary.filters`, joined -- `"—"` when the group carries
+    /// none on record.
+    public var filterLabel: String
+    /// This capture group's own dominant equipment fingerprint
+    /// (`EquipmentProfile.fingerprint`'s descriptor, majority vote over the
+    /// group's own usable lights) -- narrower than a whole session's
+    /// `SessionDetail.setupDescriptor`, since a session can (the whole point
+    /// of this type existing) mix more than one. `nil` when no usable light
+    /// in the group carries derivable equipment metadata.
+    public var setupDescriptor: String?
+    public var medianFWHMArcsec: Double?
+    public var medianFWHMPixels: Double?
+    public var backgroundEPerSecPerArcsec2: Double?
+    /// This capture's own accept rate -- `usableLightCount / (usableLightCount
+    /// + rejectedCount) * 100` -- NOT the whole night's dark-window duty
+    /// cycle (`TrendPoint.efficiencyPercent`'s old meaning), which has no
+    /// per-capture breakdown at all and is exactly what let one night's
+    /// Efficiency line blend two different rigs together. `nil` when the
+    /// group has no usable-or-rejected light on record at all (e.g. only
+    /// calibration frames ever landed in it).
+    public var efficiencyPercent: Double?
+    public var usableFrameCount: Int
+    public var integrationSeconds: Double
+    /// `CaptureGroupSummary.id` (the `groupID` as text, or `"implicit"`) --
+    /// kept so `id` below stays stable even if two capture groups in
+    /// different sessions ever shared the same `displayName`.
+    public var groupKey: String
+
+    public var id: String { "\(target)|\(date)|\(groupKey)" }
+
+    public init(
+        target: String,
+        date: String,
+        sessionStartDate: String? = nil,
+        displayName: String,
+        filterLabel: String,
+        setupDescriptor: String? = nil,
+        medianFWHMArcsec: Double? = nil,
+        medianFWHMPixels: Double? = nil,
+        backgroundEPerSecPerArcsec2: Double? = nil,
+        efficiencyPercent: Double? = nil,
+        usableFrameCount: Int = 0,
+        integrationSeconds: Double = 0,
+        groupKey: String
+    ) {
+        self.target = target
+        self.date = date
+        self.sessionStartDate = sessionStartDate
+        self.displayName = displayName
+        self.filterLabel = filterLabel
+        self.setupDescriptor = setupDescriptor
+        self.medianFWHMArcsec = medianFWHMArcsec
+        self.medianFWHMPixels = medianFWHMPixels
+        self.backgroundEPerSecPerArcsec2 = backgroundEPerSecPerArcsec2
+        self.efficiencyPercent = efficiencyPercent
+        self.usableFrameCount = usableFrameCount
+        self.integrationSeconds = integrationSeconds
+        self.groupKey = groupKey
+    }
+
+    /// Same "arcsec when derivable, else raw pixels" convention `TrendPoint.
+    /// fwhmValue` already establishes -- kept as an identical tuple shape so
+    /// `InsightsView` didn't need a second formatting branch when this type
+    /// replaced `TrendPoint` as the trend charts' data source.
+    public var fwhmValue: (value: Double, isPixelFallback: Bool)? {
+        if let arcsec = medianFWHMArcsec { return (arcsec, false) }
+        if let pixels = medianFWHMPixels { return (pixels, true) }
+        return nil
+    }
 }
 
 public struct InsightsQuery: Sendable {
-    typealias TrendProvider = @Sendable () throws -> [TrendPoint]
+    typealias CaptureTrendProvider = @Sendable () throws -> [CaptureTrendPoint]
     /// The whole library's session-light `FileRecord`s (any target/date, not
     /// yet filtered to `.sessions`/`.light` -- `snapshot` does that), their
     /// FITS metadata, and the `AstroConfig` needed to run
@@ -96,16 +210,16 @@ public struct InsightsQuery: Sendable {
     typealias LibraryProvider = @Sendable () throws -> (files: [FileRecord], meta: [Int64: FITSMetaRecord], config: AstroConfig)
 
     private let indexDatabase: URL
-    private let trendProvider: TrendProvider?
+    private let captureTrendProvider: CaptureTrendProvider?
     private let libraryProvider: LibraryProvider
 
     init(
         indexDatabaseForTesting: URL,
-        trendPointsForTesting: TrendProvider? = nil,
+        captureTrendPointsForTesting: CaptureTrendProvider? = nil,
         libraryForTesting: LibraryProvider? = nil
     ) {
         self.indexDatabase = indexDatabaseForTesting
-        self.trendProvider = trendPointsForTesting
+        self.captureTrendProvider = captureTrendPointsForTesting
         // Tests that don't care about deduped totals at all (e.g. ones that
         // only exercise trend points against an intentionally tiny ad hoc
         // schema) get an empty library rather than being forced to build a
@@ -125,9 +239,9 @@ public struct InsightsQuery: Sendable {
         }()
         return Self(
             indexDatabaseForTesting: index,
-            trendPointsForTesting: {
+            captureTrendPointsForTesting: {
                 let database = try Database(path: index.path)
-                return try TrendQueries.points(db: database, config: config)
+                return try Self.captureTrendPoints(db: database, config: config)
             },
             libraryForTesting: {
                 let database = try Database(path: index.path)
@@ -226,14 +340,14 @@ public struct InsightsQuery: Sendable {
             }
             .map { SetupUsage(camera: $0.camera, focalLength: $0.focalLength, frameCount: setupFrames[$0] ?? 0, integrationSeconds: setupSeconds[$0] ?? 0) }
 
-        let trendPoints = try trendProvider?() ?? []
+        let capturePoints = try captureTrendProvider?() ?? []
         return InsightsSnapshot(
             nightCount: nightCount, targetCount: targetCount, frameCount: dedupedLights.count,
             integrationSeconds: dedupedLights.reduce(0) { $0 + exptime($1) },
             grossIntegrationSeconds: grossIntegrationSeconds,
             months: months, topTargets: targets,
             filterUsage: filterUsage, setupUsage: setupUsage,
-            rejectedFrameCount: rejectedFrameCount, trendPoints: trendPoints, isReadOnly: true
+            rejectedFrameCount: rejectedFrameCount, captureTrendPoints: capturePoints, isReadOnly: true
         )
     }
 
@@ -287,6 +401,135 @@ public struct InsightsQuery: Sendable {
             })
         }
         return (usable, meta)
+    }
+
+    /// Every capture group's measured trend row, across the whole library --
+    /// the "Capture quality trends" card's data (`CaptureTrendPoint`'s own
+    /// doc comment explains why per-capture, not per-session). Follows
+    /// `NightsQueries.allNights`'s own "one batched read per target, not one
+    /// per session" shape: `SessionStatsQueries.sessions`/`SessionQuality.
+    /// summaries` are each called once per target, and their own
+    /// `captureGroups` are joined by `id` exactly like `NightReportQuery.
+    /// captureGroupRows` does for a single night -- never re-derives either
+    /// side's FWHM/frame-count/integration math, only zips the two together.
+    static func captureTrendPoints(db: Database, config: AstroConfig) throws -> [CaptureTrendPoint] {
+        let targets = Set(try db.allSessionPairs().map { $0.target }).sorted()
+        let resolver = try CaptureResolver.load(db: db)
+
+        var rows: [CaptureTrendPoint] = []
+        for target in targets {
+            let sessions = try SessionStatsQueries.sessions(target: target, db: db, config: config)
+            guard !sessions.isEmpty else { continue }
+
+            let qualityByDate = Dictionary(
+                uniqueKeysWithValues: try SessionQuality.summaries(target: target, db: db, config: config)
+                    .map { ($0.date, $0) }
+            )
+
+            // One batched read of this target's own session lights (for the
+            // per-capture setup-fingerprint vote below), not one per session
+            // date -- same "one pass, not O(sessions x files)" discipline
+            // `NightsQueries.allNights` documents for its own per-target passes.
+            let targetLights = try db.allFiles(includeMissing: false).filter {
+                $0.target == target && $0.area == .sessions && $0.role == .light
+            }
+            let targetMeta = try db.fitsMetaBatch(fileIDs: targetLights.compactMap(\.id))
+
+            for session in sessions {
+                let date = session.dateRaw
+                guard !session.captureGroups.isEmpty else { continue }
+
+                let parsedStart = SessionDateParser.parse(date, patterns: config.intentional)?.start
+                let qualityByID = Dictionary(
+                    uniqueKeysWithValues: (qualityByDate[date]?.captureGroups ?? []).map { ($0.id, $0) }
+                )
+                let groupRecords = try db.captureGroups(target: target, date: date)
+                let setupDescriptors = Self.captureSetupDescriptors(
+                    date: date, lights: targetLights, meta: targetMeta,
+                    resolver: resolver, groups: groupRecords, config: config
+                )
+
+                for group in session.captureGroups where group.usableLightCount > 0 {
+                    let quality = qualityByID[group.id]
+                    // Same "deduped total minus rejected, over deduped
+                    // total" shape `InsightsSnapshot.captureEfficiency`
+                    // already uses at the whole-library level -- narrowed to
+                    // this ONE capture group's own frames, deliberately
+                    // excluding `rawLightCount`'s hardlinked-duplicate/
+                    // artifact noise from the denominator (see
+                    // `CaptureTrendPoint.efficiencyPercent`'s own doc
+                    // comment).
+                    let acceptedTotal = group.usableLightCount + group.rejectedCount
+                    rows.append(CaptureTrendPoint(
+                        target: target,
+                        date: date,
+                        sessionStartDate: parsedStart,
+                        displayName: group.displayName,
+                        filterLabel: group.filters.isEmpty ? "—" : group.filters.joined(separator: ", "),
+                        setupDescriptor: setupDescriptors[group.id],
+                        medianFWHMArcsec: quality?.medianFWHMArcsec,
+                        medianFWHMPixels: quality?.medianFWHMPixels,
+                        backgroundEPerSecPerArcsec2: quality?.backgroundEPerSecPerArcsec2,
+                        efficiencyPercent: acceptedTotal > 0
+                            ? Double(group.usableLightCount) / Double(acceptedTotal) * 100
+                            : nil,
+                        usableFrameCount: group.usableLightCount,
+                        integrationSeconds: group.integrationSeconds,
+                        groupKey: group.id
+                    ))
+                }
+            }
+        }
+
+        rows.sort { lhs, rhs in
+            let l = lhs.sessionStartDate ?? lhs.date
+            let r = rhs.sessionStartDate ?? rhs.date
+            if l != r { return l < r }
+            if lhs.target != rhs.target { return lhs.target < rhs.target }
+            if lhs.date != rhs.date { return lhs.date < rhs.date }
+            return lhs.groupKey < rhs.groupKey
+        }
+        return rows
+    }
+
+    /// This session's own capture groups' dominant equipment fingerprint
+    /// (`EquipmentProfile.fingerprint`'s descriptor, majority vote over each
+    /// group's own usable lights) -- keyed by `CaptureGroupSummary.id`.
+    /// Reuses `CaptureResolver`/`FrameSet.lightBuckets`/`EquipmentProfile.
+    /// fingerprint` exactly as `SessionStatsQueries`/`SessionQuality`
+    /// themselves do to bucket frames into capture groups; only the per-group
+    /// majority-vote reduction (a generic frequency count, not domain math)
+    /// is new here -- neither `EquipmentProfile`'s per-frame fingerprint
+    /// formula nor any of the reconciled FWHM/background/frame-count numbers
+    /// are re-derived.
+    private static func captureSetupDescriptors(
+        date: String,
+        lights: [FileRecord],
+        meta: [Int64: FITSMetaRecord],
+        resolver: CaptureResolver,
+        groups: [CaptureGroupRecord],
+        config: AstroConfig
+    ) -> [String: String] {
+        let groupsByID = Dictionary(uniqueKeysWithValues: groups.compactMap { group in group.id.map { ($0, group) } })
+        let dayLights = lights.filter { $0.sessionDate == date }
+        let buckets = FrameSet.lightBuckets(files: dayLights, meta: meta, config: config)
+
+        var counts: [String: [String: Int]] = [:]
+        for file in buckets.usable {
+            guard let id = file.id, let record = meta[id] else { continue }
+            let resolved = resolver.resolve(file: file, meta: record)
+            let key: String
+            if let groupID = resolved.groupID, groupsByID[groupID] != nil {
+                key = String(groupID)
+            } else {
+                key = "implicit"
+            }
+            guard let fingerprint = EquipmentProfile.fingerprint(meta: record, headerJSON: record.headerJSON) else { continue }
+            counts[key, default: [:]][fingerprint.descriptor, default: 0] += 1
+        }
+        return counts.compactMapValues { descriptorCounts in
+            descriptorCounts.max { a, b in a.value != b.value ? a.value < b.value : a.key > b.key }?.key
+        }
     }
 
     private static func tableExists(db: SQLiteDB, table: String) throws -> Bool {
