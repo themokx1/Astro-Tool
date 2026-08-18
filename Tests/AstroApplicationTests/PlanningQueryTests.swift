@@ -252,4 +252,161 @@ struct PlanningQueryTests {
         #expect(ngc7000.visibleHours == nil)
         #expect(ngc7000.integrationNightsAtTonightsPace == nil, "no dark window at all means no honest nights-needed figure, not a huge or negative one")
     }
+
+    // MARK: - W7-B item 3a: PlanningScore CALLER wiring (real aboveHorizonFraction)
+
+    @Test("Every row's own moonFactor/planningScore match an independent recompute using DiscoveryPlanner's own moonAboveHorizonFraction -- not the PlanningScore.composite default of 1 -- and at least one real target on this date is measurably less penalized because of it")
+    func moonAboveHorizonFractionReachesPlanningScore() throws {
+        // 2026-08-18, Budapest: independently verified via pyephem (W7-A
+        // audit, see `NightSweep.moonAboveHorizonFraction`'s own doc
+        // comment) -- the Moon sits at -28.8 deg at the dark-window
+        // midpoint, well below the horizon for most of the night.
+        let date = utc(2026, 8, 18)
+        let query = PlanningQuery.fixture(focalLength: 200, site: budapest, date: date)
+        let recs = query.recommendations()
+        #expect(!recs.isEmpty)
+
+        // Recompute the same sky facts independently, via the exact engine
+        // `PlanningQuery.recommendations()` itself calls, to get each
+        // target's own `moonAboveHorizonFraction` without hand-deriving the
+        // astronomy.
+        let skyRows = DiscoveryPlanner.discover(date: date, site: budapest, minAltitudeDeg: PlanningQuery.defaultMinAltitudeDeg, targets: TargetCatalog.all)
+        let skyByDesignation = Dictionary(uniqueKeysWithValues: skyRows.map { ($0.target.designation, $0) })
+        let night = PlanningQuery.nightConditions(site: budapest, date: date)
+
+        var foundAGenuineImprovement = false
+        for row in recs {
+            guard let sky = skyByDesignation[row.target.designation] else { continue }
+
+            let expectedMoonFactor = PlanningScore.moonFactor(
+                separationDeg: sky.moonSeparationDeg, illuminationPercent: night.moonIlluminationPercent,
+                aboveHorizonFraction: sky.moonAboveHorizonFraction
+            )
+            #expect(abs(row.moonFactor - expectedMoonFactor) < 0.000_001, "\(row.target.designation): moonFactor wiring mismatch")
+
+            let expectedPlanningScore = PlanningScore.composite(
+                frameCoverage: row.frameCoverage,
+                visibleHours: row.visibleHours,
+                darknessHours: night.darknessHours,
+                moonSeparationDeg: row.moonSeparationDeg,
+                moonIlluminationPercent: night.moonIlluminationPercent,
+                moonAboveHorizonFraction: sky.moonAboveHorizonFraction
+            )
+            #expect(abs(row.planningScore - expectedPlanningScore) < 0.000_001, "\(row.target.designation): planningScore wiring mismatch")
+
+            // A set Moon must never be penalized MORE than treating it as up
+            // the whole window would; a genuine improvement (strictly less
+            // penalized) is what proves the fix actually changes real
+            // output for at least one target on this real date, rather than
+            // being wired to a no-op default.
+            let treatedAsFullyUp = PlanningScore.moonFactor(
+                separationDeg: sky.moonSeparationDeg, illuminationPercent: night.moonIlluminationPercent,
+                aboveHorizonFraction: 1
+            )
+            #expect(row.moonFactor >= treatedAsFullyUp, "\(row.target.designation): a partially/fully set Moon must never be penalized MORE than treating it as up the whole time")
+            if row.moonFactor > treatedAsFullyUp { foundAGenuineImprovement = true }
+        }
+        #expect(foundAGenuineImprovement, "expected at least one target on 2026-08-18 at Budapest to be measurably less Moon-penalized once the real aboveHorizonFraction is wired in -- otherwise this test cannot tell the fix from a no-op")
+    }
+
+    // MARK: - W7-B item 1: the app's own measured sky as the integration estimate's SQM source
+
+    @Test("A measured sky background changes the estimate and is reported as the source, not silently ignored")
+    func integrationEstimateUsesMeasuredSkyWhenProvided() throws {
+        let target = CatalogTarget(
+            designation: "TEST Measured Sky Target", commonNameHU: nil,
+            raDeg: 0, decDeg: 0, kind: .emissionNebula, sizeArcmin: 12, magnitude: 7.0
+        )
+        let fallback = PlanningQuery.integrationEstimate(
+            target: target, focalRatio: 5, systemEfficiency: 1,
+            referenceHours: IntegrationTimeModel.referenceHours,
+            referenceFocalRatio: 5, referenceSurfaceBrightness: IntegrationTimeModel.referenceSurfaceBrightness
+        )
+        #expect(fallback.skySource == .assumedFallback)
+
+        // A brighter-than-assumed (more light-polluted) measured sky, μ=19
+        // vs. the μ=21 fallback -- more background means MORE integration
+        // time is needed for the same target, never less.
+        let measured = MeasuredSkySurfaceBrightness(magnitudePerArcsec2: 19, sessionCount: 5)
+        let withMeasuredSky = PlanningQuery.integrationEstimate(
+            target: target, focalRatio: 5, systemEfficiency: 1,
+            referenceHours: IntegrationTimeModel.referenceHours,
+            referenceFocalRatio: 5, referenceSurfaceBrightness: IntegrationTimeModel.referenceSurfaceBrightness,
+            measuredSky: measured
+        )
+        #expect(withMeasuredSky.skySource == .measured(magnitudePerArcsec2: 19, sessionCount: 5))
+        let fallbackHours = try #require(fallback.hours)
+        let measuredHours = try #require(withMeasuredSky.hours)
+        #expect(measuredHours > fallbackHours, "a brighter measured sky must require MORE integration time than the μ=21 fallback, not less")
+    }
+
+    @Test("Too little measured data (nil measuredSky, PlanningStore's own honest fallback) keeps using the assumed μ=21 sky")
+    func integrationEstimateFallsBackWhenNoMeasuredSkyIsSupplied() {
+        let target = CatalogTarget(
+            designation: "TEST No Measured Sky", commonNameHU: nil,
+            raDeg: 0, decDeg: 0, kind: .emissionNebula, sizeArcmin: 12, magnitude: 7.0
+        )
+        let estimate = PlanningQuery.integrationEstimate(
+            target: target, focalRatio: 5, systemEfficiency: 1,
+            referenceHours: IntegrationTimeModel.referenceHours,
+            referenceFocalRatio: 5, referenceSurfaceBrightness: IntegrationTimeModel.referenceSurfaceBrightness,
+            measuredSky: nil
+        )
+        #expect(estimate.skySource == .assumedFallback)
+    }
+}
+
+// MARK: - W7-B item 3b: honest culmination display (pure logic, no ephemeris needed)
+
+struct PlanningCulminationDisplayTests {
+    @Test func noCulminationAtAllIsNone() {
+        #expect(PlanningCulminationDisplay.derive(culminationLocal: nil, isGenuineCulmination: nil, visibleWindowLocal: nil) == .none)
+    }
+
+    @Test func genuineCulminationPassesThroughUnchanged() {
+        #expect(
+            PlanningCulminationDisplay.derive(culminationLocal: "01:14", isGenuineCulmination: true, visibleWindowLocal: "22:10–03:36")
+                == .genuine(localTime: "01:14")
+        )
+    }
+
+    @Test("A legacy/unset isGenuineCulmination (nil) is treated as genuine -- matches every existing call site's prior behavior")
+    func legacyNilGenuineFlagIsTreatedAsGenuine() {
+        #expect(
+            PlanningCulminationDisplay.derive(culminationLocal: "01:14", isGenuineCulmination: nil, visibleWindowLocal: nil)
+                == .genuine(localTime: "01:14")
+        )
+    }
+
+    @Test("Still climbing at the window's own end renders as after-window, never a fake transit time")
+    func windowEdgeStillRisingAtWindowEndIsAfterWindow() {
+        #expect(
+            PlanningCulminationDisplay.derive(culminationLocal: "03:36", isGenuineCulmination: false, visibleWindowLocal: "22:10–03:36")
+                == .afterWindow
+        )
+    }
+
+    @Test("Already past peak at the window's own start renders the window's own end, never a fake transit time")
+    func windowEdgePastPeakAtWindowStartIsWindowEnd() {
+        #expect(
+            PlanningCulminationDisplay.derive(culminationLocal: "22:10", isGenuineCulmination: false, visibleWindowLocal: "22:10–03:36")
+                == .pastPeakAtWindowStart(windowEndLocal: "03:36")
+        )
+    }
+
+    @Test("A window-edge sample matching neither bound honestly declines to guess a direction")
+    func windowEdgeMatchingNeitherBoundIsUnknownDirection() {
+        #expect(
+            PlanningCulminationDisplay.derive(culminationLocal: "23:59", isGenuineCulmination: false, visibleWindowLocal: "22:10–03:36")
+                == .unknownDirection
+        )
+    }
+
+    @Test("A window-edge sample with no window string at all honestly declines to guess a direction")
+    func windowEdgeWithNoWindowStringIsUnknownDirection() {
+        #expect(
+            PlanningCulminationDisplay.derive(culminationLocal: "22:10", isGenuineCulmination: false, visibleWindowLocal: nil)
+                == .unknownDirection
+        )
+    }
 }

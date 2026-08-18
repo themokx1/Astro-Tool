@@ -19,6 +19,68 @@ public enum PlanningFit: String, Equatable, Sendable {
     }
 }
 
+/// W7-B item 1: which sky background `PlanningQuery.integrationEstimate` fed
+/// `IntegrationTimeModel`, so the UI can say so instead of presenting either
+/// number as if it needed no assumption at all.
+public enum PlanningSkyBrightnessSource: Equatable, Sendable {
+    /// No measured sky background exists yet (no library open, or fewer than
+    /// `MeasuredSkyQuery.minimumSessionCount` measured sessions on record) --
+    /// `IntegrationTimeModel`'s own μ=21 constant was used instead.
+    case assumedFallback
+    /// This library's own `MeasuredSkyQuery` median, converted via
+    /// `MeasuredSkyQuery.magnitudePerArcsec2(fromEPerSecPerArcsec2:)`.
+    case measured(magnitudePerArcsec2: Double, sessionCount: Int)
+}
+
+/// W7-A leftover (item 3b): whether/how to present a target's culmination
+/// time -- `NightSweepResult.isGenuineCulmination`'s own doc explains why a
+/// window-edge sample must never be rendered as a bare "Culminates HH:mm".
+/// Shared by both V2 consumers that show a culmination time -- `PlanningView`
+/// (via `PlanningRecommendation.culminationDisplay` below) and `HomeStore`'s
+/// tonight rows (`AstroUI` already imports `AstroApplication`), so the two
+/// pages can never quietly disagree about what counts as "genuine".
+public enum PlanningCulminationDisplay: Equatable, Sendable {
+    /// No coordinate/site/night to evaluate at all.
+    case none
+    /// A genuine meridian transit was sampled inside tonight's window.
+    case genuine(localTime: String)
+    /// The target was still climbing at the very end of tonight's scanned
+    /// window -- its real transit lies past what this app looked at.
+    case afterWindow
+    /// The target was already declining from the very start of tonight's
+    /// scanned window -- its real transit already happened before the scan
+    /// began; `windowEndLocal` is the honest, actually-measured instant left
+    /// to act on.
+    case pastPeakAtWindowStart(windowEndLocal: String)
+    /// A window-edge sample (`isGenuineCulmination == false`) whose edge
+    /// doesn't line up with either bound of its own visible window closely
+    /// enough to say which direction it fell -- an honest "don't guess"
+    /// rather than asserting a possibly-wrong direction.
+    case unknownDirection
+
+    /// Derives the case from the three raw facts `DiscoveryRow` carries.
+    /// Comparing `culminationLocal` against `visibleWindowLocal`'s own start/
+    /// end substrings works because both are formatted by the SAME
+    /// `NightSweep.formatLocalTime` call within one sweep -- an exact string
+    /// match is possible, not just a numeric coincidence.
+    public static func derive(
+        culminationLocal: String?,
+        isGenuineCulmination: Bool?,
+        visibleWindowLocal: String?
+    ) -> PlanningCulminationDisplay {
+        guard let culminationLocal else { return .none }
+        guard isGenuineCulmination == false else { return .genuine(localTime: culminationLocal) }
+        guard let visibleWindowLocal, let dashRange = visibleWindowLocal.range(of: "–") else {
+            return .unknownDirection
+        }
+        let windowStart = String(visibleWindowLocal[..<dashRange.lowerBound])
+        let windowEnd = String(visibleWindowLocal[dashRange.upperBound...])
+        if culminationLocal == windowEnd { return .afterWindow }
+        if culminationLocal == windowStart { return .pastPeakAtWindowStart(windowEndLocal: windowEnd) }
+        return .unknownDirection
+    }
+}
+
 public enum PlanningEstimateConfidence: String, Equatable, Sendable {
     case curated
     case estimated
@@ -42,6 +104,10 @@ public struct PlanningRecommendation: Equatable, Sendable, Identifiable {
     public let integrationHours: Double?
     public let integrationSource: String
     public let integrationConfidence: PlanningEstimateConfidence
+    /// W7-B item 1: which sky background fed this row's `integrationHours`
+    /// -- lets the UI say "assumed μ=21" or "from your own sessions" instead
+    /// of presenting the number as if no assumption were involved.
+    public let skyBrightnessSource: PlanningSkyBrightnessSource
     /// `integrationHours` divided by tonight's own `visibleHours` (below) --
     /// how many nights *like tonight* it would take to accumulate the full
     /// estimate. `integrationHours` is a pure photometric total (see
@@ -68,6 +134,10 @@ public struct PlanningRecommendation: Equatable, Sendable, Identifiable {
     public let maxAltitudeDeg: Double?
     public let visibleHours: Double?
     public let culminationLocal: String?
+    /// W7-A leftover (item 3b): the honest rendering `PlanningView.skyDetail`
+    /// switches on instead of using `culminationLocal` alone -- see
+    /// `PlanningCulminationDisplay.derive(...)`.
+    public let culminationDisplay: PlanningCulminationDisplay
     public let moonSeparationDeg: Double?
     /// Structured parse (`SkyVerdict.parse`) of the same Hungarian verdict
     /// vocabulary `Planner.plan`/`DiscoveryPlanner` generate elsewhere in the
@@ -136,6 +206,14 @@ public struct PlanningQuery: Sendable {
     /// constant so the two can never drift apart from each other or from
     /// `DiscoveryPlanner.discover`'s own default.
     public static let defaultMinAltitudeDeg: Double = 30
+    /// W7-B item 1: this library's own measured sky background
+    /// (`MeasuredSkyQuery`), when there is enough of it on record -- `nil`
+    /// (the default, matching every existing call site's prior behavior
+    /// exactly) means "use the honest μ=21 fallback", the same as an open
+    /// library with too few measured sessions. `PlanningStore` resolves this
+    /// once per `refresh()` and threads it through, the same way it already
+    /// resolves `site`.
+    public let measuredSky: MeasuredSkySurfaceBrightness?
 
     public init(
         setup: ImagingSetupProfile,
@@ -146,7 +224,8 @@ public struct PlanningQuery: Sendable {
         referenceSurfaceBrightness: Double = IntegrationTimeModel.referenceSurfaceBrightness,
         site: SiteRule? = nil,
         date: Date = Date(),
-        minAltitudeDeg: Double = PlanningQuery.defaultMinAltitudeDeg
+        minAltitudeDeg: Double = PlanningQuery.defaultMinAltitudeDeg,
+        measuredSky: MeasuredSkySurfaceBrightness? = nil
     ) {
         self.setup = setup
         self.focalLength = focalLength ?? setup.defaultFocalLengthMM
@@ -157,6 +236,7 @@ public struct PlanningQuery: Sendable {
         self.site = site
         self.date = date
         self.minAltitudeDeg = minAltitudeDeg
+        self.measuredSky = measuredSky
     }
 
     public static func fixture(
@@ -214,10 +294,22 @@ public struct PlanningQuery: Sendable {
                 systemEfficiency: setup.relativeEfficiency,
                 referenceHours: referenceHours,
                 referenceFocalRatio: referenceFocalRatio,
-                referenceSurfaceBrightness: referenceSurfaceBrightness
+                referenceSurfaceBrightness: referenceSurfaceBrightness,
+                measuredSky: measuredSky
             )
             let sky = skyByDesignation[target.designation]
             let isLowAltitude = (sky?.maxAltitudeDeg).map { $0 < minAltitudeDeg } ?? true
+            // W7-A leftover (item 3a): the Moon's own above-horizon fraction
+            // across THIS target's visible window -- `1` (Moon treated as up
+            // the whole window) only when there is no sky row to ask at all,
+            // matching `PlanningScore.moonFactor`'s own conservative default.
+            let moonAboveHorizonFraction = sky?.moonAboveHorizonFraction ?? 1
+            // W7-A leftover (item 3b): the honest culmination label.
+            let culminationDisplay = PlanningCulminationDisplay.derive(
+                culminationLocal: sky?.culminationLocal,
+                isGenuineCulmination: sky?.isGenuineCulmination,
+                visibleWindowLocal: sky?.visibleWindowLocal
+            )
             // `sky?.visibleHours` is already the intersection of "target
             // above `minAltitudeDeg`" and "astronomical night"
             // (`DiscoveryPlanner.discover` -> `NightSweep.sweep`, bounded to
@@ -233,14 +325,16 @@ public struct PlanningQuery: Sendable {
             let frameFill = PlanningScore.frameFillFactor(frameCoverage: coverage)
             let moon = PlanningScore.moonFactor(
                 separationDeg: sky?.moonSeparationDeg,
-                illuminationPercent: night.moonIlluminationPercent
+                illuminationPercent: night.moonIlluminationPercent,
+                aboveHorizonFraction: moonAboveHorizonFraction
             )
             let planningScore = PlanningScore.composite(
                 frameCoverage: coverage,
                 visibleHours: sky?.visibleHours,
                 darknessHours: night.darknessHours,
                 moonSeparationDeg: sky?.moonSeparationDeg,
-                moonIlluminationPercent: night.moonIlluminationPercent
+                moonIlluminationPercent: night.moonIlluminationPercent,
+                moonAboveHorizonFraction: moonAboveHorizonFraction
             )
 
             return PlanningRecommendation(
@@ -251,10 +345,12 @@ public struct PlanningQuery: Sendable {
                 integrationHours: estimate.hours,
                 integrationSource: estimate.source,
                 integrationConfidence: estimate.confidence,
+                skyBrightnessSource: estimate.skySource,
                 integrationNightsAtTonightsPace: nightsNeeded,
                 maxAltitudeDeg: sky?.maxAltitudeDeg,
                 visibleHours: sky?.visibleHours,
                 culminationLocal: sky?.culminationLocal,
+                culminationDisplay: culminationDisplay,
                 moonSeparationDeg: sky?.moonSeparationDeg,
                 skyVerdict: SkyVerdict.parse(sky?.verdict ?? SkyVerdictText.noCoordinate),
                 skyScore: sky?.score ?? 0,
@@ -312,20 +408,39 @@ public struct PlanningQuery: Sendable {
         let hours: Double?
         let source: String
         let confidence: PlanningEstimateConfidence
+        /// W7-B item 1: which sky background was actually used.
+        let skySource: PlanningSkyBrightnessSource
     }
 
     /// Isolated from `recommendations()` so Task 2's honesty fix (four-digit
     /// hour counts for large, faint extended objects like the Pelican
     /// Nebula) is directly testable without needing a resolved site/sky
     /// pipeline at all.
+    ///
+    /// W7-B item 1: `measuredSky` defaults to `nil` (every existing call site,
+    /// including every test above, keeps using the honest μ=21 fallback
+    /// unchanged) -- when present and derived from enough sessions
+    /// (`MeasuredSkyQuery`), its `magnitudePerArcsec2` replaces the μ=21
+    /// constant here. Deliberately NOT a naive per-passband correction: the
+    /// audit that asked for this explicitly warned that dividing by a plain
+    /// duoband `passbandFactor` is wrong for emission-line targets (broadband
+    /// sky and narrowband target signal don't scale the same way under a
+    /// duoband filter) -- `passbandFactor` stays `1` here, and modeling that
+    /// properly is left as future work.
     static func integrationEstimate(
         target: CatalogTarget,
         focalRatio: Double,
         systemEfficiency: Double,
         referenceHours: Double,
         referenceFocalRatio: Double,
-        referenceSurfaceBrightness: Double
+        referenceSurfaceBrightness: Double,
+        measuredSky: MeasuredSkySurfaceBrightness? = nil
     ) -> IntegrationEstimate {
+        let skySurfaceBrightness = measuredSky?.magnitudePerArcsec2 ?? 21
+        let skySource: PlanningSkyBrightnessSource = measuredSky.map {
+            .measured(magnitudePerArcsec2: $0.magnitudePerArcsec2, sessionCount: $0.sessionCount)
+        } ?? .assumedFallback
+
         let directBrightness = target.surfaceBrightnessMagPerArcsec2
         let estimatedBrightness = TargetCatalog.estimatedSurfaceBrightness(for: target)
         // No photometry at all -- true for most LBN/vdB/Sh2 entries. Feeding
@@ -337,13 +452,14 @@ public struct PlanningQuery: Sendable {
             return IntegrationEstimate(
                 hours: nil,
                 source: "No estimate -- this catalog entry has no magnitude or size to derive surface brightness from",
-                confidence: .fallback
+                confidence: .fallback,
+                skySource: skySource
             )
         }
         let rawHours = IntegrationTimeModel.hours(
             IntegrationTimeInput(
                 targetSurfaceBrightness: brightness,
-                skySurfaceBrightness: 21,
+                skySurfaceBrightness: skySurfaceBrightness,
                 focalRatio: focalRatio,
                 systemEfficiency: systemEfficiency,
                 passbandFactor: 1,
@@ -358,7 +474,8 @@ public struct PlanningQuery: Sendable {
             return IntegrationEstimate(
                 hours: nil,
                 source: "Beyond this model's range at this setup -- catalog magnitude spread over a large area no longer gives a trustworthy figure",
-                confidence: .unknown
+                confidence: .unknown,
+                skySource: skySource
             )
         }
 
@@ -367,7 +484,7 @@ public struct PlanningQuery: Sendable {
         let source = directBrightness != nil
             ? "Curated surface brightness"
             : (estimatedBrightness != nil ? "Catalog magnitude and angular size estimate" : "Reference μ=22 fallback")
-        return IntegrationEstimate(hours: rawHours, source: source, confidence: confidence)
+        return IntegrationEstimate(hours: rawHours, source: source, confidence: confidence, skySource: skySource)
     }
 
     private static func composition(

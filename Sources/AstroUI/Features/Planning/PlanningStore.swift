@@ -44,6 +44,14 @@ public final class PlanningStore {
     /// Injectable so tests can supply a fixed site/date without a real
     /// FITS-backed library on disk.
     public typealias SkyContextProvider = @Sendable (URL?) async throws -> PlanningSkyContext?
+    /// W7-B item 1: this library's own measured sky background
+    /// (`MeasuredSkyQuery`) -- `nil` when no library is open, or the library
+    /// has fewer than `MeasuredSkyQuery.minimumSessionCount` measured
+    /// sessions on record, both of which `PlanningQuery.integrationEstimate`
+    /// treats as "use the honest μ=21 fallback". Injectable for the same
+    /// reason `skyContextProvider` is: tests supply a fixed result without a
+    /// real FITS-backed library and index DB.
+    public typealias MeasuredSkyProvider = @Sendable (URL?) async throws -> MeasuredSkySurfaceBrightness?
     /// W4-2: tonight's (or the planned night's) per-date cloud summaries for
     /// whichever library is open, keyed the same "yyyy-MM-dd, named by the
     /// night's start" way `DailyCloudSummary.date`/`NightSummary.date`
@@ -236,6 +244,7 @@ public final class PlanningStore {
     private let catalogProvider: CatalogProvider
     private let skyContextProvider: SkyContextProvider
     private let weatherProvider: WeatherProvider
+    private let measuredSkyProvider: MeasuredSkyProvider
     /// `nonisolated(unsafe)`: only ever mutated on the main actor (`init`),
     /// but `deinit` is always `nonisolated` (it may run on any thread), so
     /// it needs to read this without a MainActor-isolation check. Safe --
@@ -294,7 +303,10 @@ public final class PlanningStore {
         skyContextProvider: SkyContextProvider? = nil,
         /// Same `Optional`-not-async-default shape as `skyContextProvider`
         /// immediately above, for the identical reason.
-        weatherProvider: WeatherProvider? = nil
+        weatherProvider: WeatherProvider? = nil,
+        /// Same `Optional`-not-async-default shape as `skyContextProvider`
+        /// immediately above, for the identical reason.
+        measuredSkyProvider: MeasuredSkyProvider? = nil
     ) {
         let safeSetups = setups.isEmpty ? PlanningStore.defaultSetups : setups
         self.setups = safeSetups
@@ -302,6 +314,7 @@ public final class PlanningStore {
         self.computeRecommendations = computeRecommendations
         self.skyContextProvider = skyContextProvider ?? PlanningStore.productionSkyContext
         self.weatherProvider = weatherProvider ?? PlanningStore.productionWeather
+        self.measuredSkyProvider = measuredSkyProvider ?? PlanningStore.productionMeasuredSky
         self.catalogProvider = catalogProvider ?? { PlanningStore.productionCatalog() }
         // Search the SAME catalog the ranking uses, so a target that appears
         // in the table can always be found by name and vice versa.
@@ -441,11 +454,17 @@ public final class PlanningStore {
         let rootURL = rootURL
         let resolveSkyContext = skyContextProvider
         let resolveWeather = weatherProvider
+        let resolveMeasuredSky = measuredSkyProvider
         let compute = computeRecommendations
         let plannedDate = planningDate
         let targets = catalogProvider()
         let task = Task { [weak self] in
             let skyContext = try? await resolveSkyContext(rootURL)
+            // W7-B item 1: resolved alongside the sky context -- both are
+            // read-only lookups against the same open library, independent
+            // of each other (same accepted duplication `resolveCloudState`
+            // already has with `skyContextProvider` below).
+            let measuredSky = try? await resolveMeasuredSky(rootURL)
             let query = PlanningQuery(
                 setup: setup,
                 focalLength: focalLength,
@@ -457,7 +476,8 @@ public final class PlanningStore {
                 // The night the user is planning for. `skyContext.date` is
                 // only the fallback for a store that never had a date set
                 // (tests injecting a fixed context); the picker owns this.
-                date: plannedDate ?? skyContext?.date ?? Date()
+                date: plannedDate ?? skyContext?.date ?? Date(),
+                measuredSky: measuredSky
             )
             // W4-2: fetched concurrently with the ranking compute, not after
             // it -- the cloud indicator is on the same "one recompute" cadence
@@ -622,6 +642,17 @@ public final class PlanningStore {
             let site = try Planner.resolveSite(db: database, config: config)
             guard site.latitudeDeg != nil, site.longitudeDeg != nil else { return nil }
             return PlanningSkyContext(site: site, date: Date())
+        }.value
+    }
+
+    /// W7-B item 1: `nil` whenever no library is open, or that library has
+    /// fewer than `MeasuredSkyQuery.minimumSessionCount` measured sessions
+    /// on record -- both mean `PlanningQuery.integrationEstimate` falls back
+    /// to the honest μ=21 assumption instead.
+    public static func productionMeasuredSky(rootURL: URL?) async throws -> MeasuredSkySurfaceBrightness? {
+        guard let rootURL else { return nil }
+        return try await Task.detached(priority: .utility) {
+            try MeasuredSkyQuery.production(rootURL: rootURL)
         }.value
     }
 

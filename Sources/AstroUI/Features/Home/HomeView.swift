@@ -451,13 +451,35 @@ public struct HomeView: View {
     private func recommendationDetailText(_ recommendation: HomeTonightRecommendation) -> some View {
         let parts: [Text] = [
             recommendation.visibleWindow.map { Text("Visible \($0)") },
-            recommendation.culmination.map { Text("Culminates \($0)") },
+            culminationText(recommendation.culminationDisplay),
             recommendation.maxAltitude.map { Text("\($0.formatted(.number.precision(.fractionLength(0))))° max") },
         ].compactMap { $0 }
         if let first = parts.first {
             parts.dropFirst().reduce(first) { $0 + Text(verbatim: " · ") + $1 }
         } else {
             Text(verbatim: "")
+        }
+    }
+
+    /// W7-A leftover (item 3b): renders `HomeTonightRecommendation
+    /// .culminationDisplay` instead of `Text("Culminates \(culmination)")`
+    /// -- `PlanningCulminationDisplay.derive(...)`'s own doc explains why a
+    /// window-edge sample (`isGenuineCulmination == false`) must never be
+    /// presented as a real "Culminates HH:mm" transit time. `nil` omits the
+    /// fragment entirely, exactly like `recommendation.culmination.map {
+    /// ... }` used to for a target with no culmination at all -- this is the
+    /// same "omit rather than guess" contract for the two additional honest
+    /// cases (`.none`/`.unknownDirection`).
+    private func culminationText(_ display: PlanningCulminationDisplay) -> Text? {
+        switch display {
+        case .none, .unknownDirection:
+            return nil
+        case let .genuine(localTime):
+            return Text("Culminates \(localTime)")
+        case .afterWindow:
+            return Text("Culminates after tonight's window")
+        case let .pastPeakAtWindowStart(windowEndLocal):
+            return Text("Window ends \(windowEndLocal)")
         }
     }
 

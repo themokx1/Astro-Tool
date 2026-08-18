@@ -1917,3 +1917,20 @@
    menu item. */
 "Cloudy night, clear task" = "Felhős éjszaka, tiszta feladat";
 "Tonight looks cloudy — a good night to shoot the calibration frames this library is still missing." = "Ma éjjel felhősnek tűnik — jó alkalom lelőni a könyvtárból még hiányzó kalibrációs képkockákat.";
+
+/* W7-B item 1 (2026-08-18 expert audit): Planning's Integration column now
+   names the sky-background assumption its estimate actually used --
+   PlanningView.skyBrightnessCaption -- and the "Integration" ⓘ explanation
+   (setupMetricInfo) was extended to mention it too. */
+"The estimated total exposure time needed for a clean result at this setup's framing and sky conditions. Uses this library's own measured sky background when enough sessions are on record, otherwise an assumed μ=21 sky -- the caption under each estimate says which." = "A becsült teljes expozíciós idő, amely tiszta eredményhez szükséges ennél a felszerelésnél, a keretezés és az égi viszonyok mellett. A könyvtár saját mért égi hátterét használja, ha elég session áll rendelkezésre, egyébként egy feltételezett μ=21 égboltot -- a becslés alatti felirat megmondja, melyiket.";
+"assumed μ=21 sky" = "feltételezett μ=21 égbolt";
+"own sky: μ≈%@ (%lld sessions)" = "saját égbolt: μ≈%@ (%lld session)";
+
+/* W7-A leftover (item 3b, 2026-08-18 expert audit): a window-edge
+   culmination sample (NightSweepResult.isGenuineCulmination == false) must
+   never render as a real "Culminates/delelés HH:mm" transit time --
+   PlanningView.culminationText and HomeView.culminationText. */
+"culm. after tonight's window" = "delel. az ablak után";
+"window ends %@" = "ablak vége %@";
+"Culminates after tonight's window" = "Delelés a mai ablak után";
+"Window ends %@" = "Ablak vége: %@";

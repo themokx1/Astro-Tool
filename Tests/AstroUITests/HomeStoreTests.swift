@@ -52,6 +52,80 @@ struct HomeStoreTests {
         #expect(store.snapshot.tonightRecommendations[0].projectID == project.id)
         #expect(store.snapshot.tonightRecommendations[0].visibleWindow == "22:10–03:36")
         #expect(store.snapshot.tonightRecommendations[0].verdict == "ma jó")
+        // W7-A leftover (item 3b): `isGenuineCulmination` left unset (`nil`)
+        // on this fixture -- exactly what every payload from before this
+        // field existed decodes to -- must still read as genuine, not as a
+        // window-edge sample.
+        #expect(store.snapshot.tonightRecommendations[0].culminationDisplay == .genuine(localTime: "01:14"))
+    }
+
+    // MARK: - W7-A leftover (item 3b): honest culmination labeling
+
+    @Test("A genuine culmination (isGenuineCulmination == true) renders as itself")
+    func genuineCulminationRendersAsItself() async throws {
+        let projects = ProjectsStore(metadataFactory: { _ in try MetadataStore.temporary() })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(tonightProvider: { _ in
+            [TargetPlan(
+                target: "IC_1396", displayName: "Elefántormány-köd",
+                usableIntegrationSeconds: 7200,
+                culminationLocal: "01:14", isGenuineCulmination: true, maxAltitudeDeg: 79,
+                visibleWindowLocal: "22:10–03:36", visibleHours: 5.5,
+                verdict: SkyVerdict.good, score: 0.92
+            )]
+        })
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 1)
+
+        #expect(store.snapshot.tonightRecommendations.first?.culminationDisplay == .genuine(localTime: "01:14"))
+    }
+
+    @Test("A window-edge culmination still climbing at the window's own end never renders as a fake transit time")
+    func windowEdgeCulminationStillRisingAtWindowEndRendersAsAfterWindow() async throws {
+        let projects = ProjectsStore(metadataFactory: { _ in try MetadataStore.temporary() })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(tonightProvider: { _ in
+            [TargetPlan(
+                target: "IC_1396", displayName: "Elefántormány-köd",
+                usableIntegrationSeconds: 7200,
+                // The recorded "culmination" is exactly the window's own end
+                // -- the target was still climbing when the scan stopped
+                // looking, so its real transit lies past tonight's window.
+                culminationLocal: "03:36", isGenuineCulmination: false, maxAltitudeDeg: 79,
+                visibleWindowLocal: "22:10–03:36", visibleHours: 5.5,
+                verdict: SkyVerdict.good, score: 0.92
+            )]
+        })
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 1)
+
+        #expect(store.snapshot.tonightRecommendations.first?.culminationDisplay == .afterWindow)
+    }
+
+    @Test("A window-edge culmination already declining at the window's own start renders the window's own end, never a fake transit time")
+    func windowEdgeCulminationAlreadyPastPeakAtWindowStartRendersWindowEnd() async throws {
+        let projects = ProjectsStore(metadataFactory: { _ in try MetadataStore.temporary() })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(tonightProvider: { _ in
+            [TargetPlan(
+                target: "IC_1396", displayName: "Elefántormány-köd",
+                usableIntegrationSeconds: 7200,
+                // The recorded "culmination" is exactly the window's own
+                // start -- the target was already declining from the very
+                // first sample, so its real transit already happened before
+                // the scan began.
+                culminationLocal: "22:10", isGenuineCulmination: false, maxAltitudeDeg: 79,
+                visibleWindowLocal: "22:10–03:36", visibleHours: 5.5,
+                verdict: SkyVerdict.good, score: 0.92
+            )]
+        })
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 1)
+
+        #expect(store.snapshot.tonightRecommendations.first?.culminationDisplay == .pastPeakAtWindowStart(windowEndLocal: "03:36"))
     }
 
     @Test("Home prioritizes the least collected active project")

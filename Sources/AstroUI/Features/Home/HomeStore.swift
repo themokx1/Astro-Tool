@@ -10,6 +10,15 @@ public struct HomeTonightRecommendation: Equatable, Sendable, Identifiable {
     public let displayName: String
     public let visibleWindow: String?
     public let culmination: String?
+    /// W7-A leftover (item 3b): honest rendering of `culmination` --
+    /// `TargetPlan.isGenuineCulmination == false` means `culmination` (when
+    /// non-`nil`) is only the EDGE of tonight's scanned window, not a real
+    /// meridian transit (`NightSweepResult.isGenuineCulmination`'s own doc).
+    /// `culmination` itself is kept unchanged (raw `HH:mm` or `nil`) for any
+    /// other existing reader of this type; `HomeView` renders THIS field
+    /// instead of building a "Culminates HH:mm" label straight off
+    /// `culmination`.
+    public let culminationDisplay: PlanningCulminationDisplay
     public let maxAltitude: Double?
     public let moonSeparation: Double?
     public let verdict: String
@@ -468,6 +477,11 @@ public final class HomeStore {
                 displayName: plan.displayName,
                 visibleWindow: plan.visibleWindowLocal,
                 culmination: plan.culminationLocal,
+                culminationDisplay: PlanningCulminationDisplay.derive(
+                    culminationLocal: plan.culminationLocal,
+                    isGenuineCulmination: plan.isGenuineCulmination,
+                    visibleWindowLocal: plan.visibleWindowLocal
+                ),
                 maxAltitude: plan.maxAltitudeDeg,
                 moonSeparation: plan.moonSeparationDeg,
                 verdict: plan.verdict,

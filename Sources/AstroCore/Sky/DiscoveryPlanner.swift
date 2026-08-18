@@ -21,7 +21,29 @@ public struct DiscoveryRow: Sendable, Equatable {
     /// night at all).
     public let isGenuineCulmination: Bool?
     public let visibleHours: Double?
+    /// `"HH:mm–HH:mm"` (site-local time) window during which the target is
+    /// at or above the caller's `minAltitudeDeg`, same
+    /// `NightSweep.visibleWindowLocal(_:timeZone:)` formatting `Planner
+    /// .buildPlan`'s own `TargetPlan.visibleWindowLocal` uses -- `nil` under
+    /// the same conditions `visibleHours` is (no resolvable site/night, or
+    /// the target never clears the threshold). W7-B: `PlanningQuery` (an
+    /// `AstroApplication` consumer with no access to `NightSweep` itself,
+    /// which is internal to this module) needs this to render an honest
+    /// window-edge culmination label instead of `culminationLocal` alone.
+    public let visibleWindowLocal: String?
     public let moonSeparationDeg: Double?
+    /// The Moon's own above-horizon fraction across THIS target's visible
+    /// window (`NightSweep.moonAboveHorizonFraction`, sampled over
+    /// `sweep.visibleStart`...`sweep.visibleEnd`) -- the exact number this
+    /// row's own `score` already folds into `SkyScore.moonFactor` (W7-A).
+    /// Exposed here too because `PlanningQuery` (`AstroApplication`) computes
+    /// its OWN, differently-weighted composite score (`PlanningScore
+    /// .composite`) over the same sky facts, and has no access to
+    /// `NightSweep` (internal to this module) to derive this itself --
+    /// W7-B's "PlanningScore CALLER wiring" leftover. Defaults to `1` (Moon
+    /// treated as up the whole window) in `unresolvedRows`, matching
+    /// `PlanningScore.moonFactor`'s own conservative default for "unknown".
+    public let moonAboveHorizonFraction: Double
     /// Same Hungarian verdict vocabulary as `Planner.plan` (`SkyVerdict`) --
     /// see `discover`'s own doc comment for the priority order.
     public let verdict: String
@@ -54,7 +76,9 @@ public struct DiscoveryRow: Sendable, Equatable {
         culminationLocal: String? = nil,
         isGenuineCulmination: Bool? = nil,
         visibleHours: Double? = nil,
+        visibleWindowLocal: String? = nil,
         moonSeparationDeg: Double? = nil,
+        moonAboveHorizonFraction: Double = 1,
         verdict: String,
         score: Double,
         alreadyInLibrary: Bool,
@@ -67,7 +91,9 @@ public struct DiscoveryRow: Sendable, Equatable {
         self.culminationLocal = culminationLocal
         self.isGenuineCulmination = isGenuineCulmination
         self.visibleHours = visibleHours
+        self.visibleWindowLocal = visibleWindowLocal
         self.moonSeparationDeg = moonSeparationDeg
+        self.moonAboveHorizonFraction = moonAboveHorizonFraction
         self.verdict = verdict
         self.score = score
         self.alreadyInLibrary = alreadyInLibrary
@@ -157,6 +183,7 @@ public enum DiscoveryPlanner {
             )
             let visibleHours = sweep.visibleSeconds / 3600.0
             let culminationLocal = sweep.culminationUTC.map { NightSweep.formatLocalTime($0, timeZone: timeZone) }
+            let visibleWindowLocal = NightSweep.visibleWindowLocal(sweep, timeZone: timeZone)
 
             // W7-A audit fix -- same reasoning as `Planner.buildPlan`: the
             // Moon must actually be above the horizon for at least part of
@@ -199,7 +226,9 @@ public enum DiscoveryPlanner {
                 culminationLocal: culminationLocal,
                 isGenuineCulmination: sweep.isGenuineCulmination,
                 visibleHours: visibleHours,
+                visibleWindowLocal: visibleWindowLocal,
                 moonSeparationDeg: moonSeparation,
+                moonAboveHorizonFraction: moonAboveHorizonFraction,
                 verdict: verdict,
                 score: score,
                 alreadyInLibrary: existingDesignations.contains(catalogTarget.designation),

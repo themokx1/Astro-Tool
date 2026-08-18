@@ -104,7 +104,7 @@ public struct PlanningView: View {
     private static let setupMetricInfo: [MetricInfoButton.Metric] = [
         .init(title: "Field of view (FOV)", explanation: "The area of sky your sensor and optics cover, in degrees wide by degrees tall.", glossaryTerm: "Field of view (FOV) / framing fit"),
         .init(title: "Focal length", explanation: "The optical system's focal length in millimeters. A longer focal length gives a narrower, more magnified field of view."),
-        .init(title: "Integration", explanation: "The estimated total exposure time needed for a clean result at this setup's framing and sky conditions.", glossaryTerm: "Integration (gross vs. real)"),
+        .init(title: "Integration", explanation: "The estimated total exposure time needed for a clean result at this setup's framing and sky conditions. Uses this library's own measured sky background when enough sessions are on record, otherwise an assumed μ=21 sky -- the caption under each estimate says which.", glossaryTerm: "Integration (gross vs. real)"),
     ]
 
     private var setupBar: some View {
@@ -509,6 +509,12 @@ public struct PlanningView: View {
                                             .foregroundStyle(.secondary)
                                     }
                                     Text(row.integrationConfidence.displayLabel).font(.caption).foregroundStyle(.secondary)
+                                    // W7-B item 1: names the sky background
+                                    // this estimate actually assumed, so
+                                    // "≈ 27.9 h" never reads as if it needed
+                                    // no assumption at all.
+                                    skyBrightnessCaption(row.skyBrightnessSource)
+                                        .font(.caption2).foregroundStyle(.secondary)
                                 }
                             }
                             .width(min: 105, ideal: 135)
@@ -598,14 +604,47 @@ public struct PlanningView: View {
         if let visibleHours = row.visibleHours {
             parts.append(Text("\(visibleHours.formatted(.number.precision(.fractionLength(1))))h visible"))
         }
-        if let culmination = row.culminationLocal {
-            parts.append(Text("culm. \(culmination)"))
+        if let culminationText = culminationText(row.culminationDisplay) {
+            parts.append(culminationText)
         }
         if let moonSeparation = row.moonSeparationDeg {
             parts.append(Text("Moon \(moonSeparation.formatted(.number.precision(.fractionLength(0))))°"))
         }
         guard let first = parts.first else { return Text(row.skyVerdict.displayLabel) }
         return parts.dropFirst().reduce(first) { $0 + Text(verbatim: " · ") + $1 }
+    }
+
+    /// W7-A leftover (item 3b): `nil` when there is nothing honest to say
+    /// (`.none`) or when a window-edge sample's direction can't be inferred
+    /// (`.unknownDirection` -- see `PlanningCulminationDisplay.derive(...)`'s
+    /// own doc); the caller (`skyDetail`) simply omits the fragment rather
+    /// than guessing. Never renders a bare "culm. HH:mm" for a sample that
+    /// was only the edge of tonight's scanned window (the W7-A audit's own
+    /// "delelés 03:54" dishonesty).
+    /// W7-B item 1: states the sky-background assumption behind
+    /// `row.integrationHours` -- an assumed μ=21 broadband fallback, or this
+    /// library's own measured median (`PlanningSkyBrightnessSource
+    /// .measured`).
+    private func skyBrightnessCaption(_ source: PlanningSkyBrightnessSource) -> Text {
+        switch source {
+        case .assumedFallback:
+            return Text("assumed μ=21 sky")
+        case let .measured(magnitudePerArcsec2, sessionCount):
+            return Text("own sky: μ≈\(magnitudePerArcsec2.formatted(.number.precision(.fractionLength(1)))) (\(sessionCount) sessions)")
+        }
+    }
+
+    private func culminationText(_ display: PlanningCulminationDisplay) -> Text? {
+        switch display {
+        case .none, .unknownDirection:
+            return nil
+        case let .genuine(localTime):
+            return Text("culm. \(localTime)")
+        case .afterWindow:
+            return Text("culm. after tonight's window")
+        case let .pastPeakAtWindowStart(windowEndLocal):
+            return Text("window ends \(windowEndLocal)")
+        }
     }
 
     private func displayName(_ row: PlanningRecommendation) -> String {
