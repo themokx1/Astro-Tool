@@ -242,7 +242,7 @@ struct ArchiveStripView: View {
     }
 }
 
-private extension ArchiveClass {
+extension ArchiveClass {
     /// The strip's segment names and tooltip text. This is user-facing
     /// vocabulary ("Processed", "Unclassified", "Calibration" are ordinary
     /// words), not a catalog designation -- unlike
@@ -252,6 +252,12 @@ private extension ArchiveClass {
     /// switch is invisible to `scripts/extract-localizable-strings.swift` and
     /// to SwiftUI's own localization resolution, so it silently renders
     /// English forever -- the same defect `MetricCard.title` was fixed for.
+    ///
+    /// Wave W6-A section D: widened from `private` (file-private) to
+    /// internal so `ArchiveView`'s own empty-Targets-section message
+    /// (`store.selectedClass` filter cleared to zero rows) can name the
+    /// active filter with this exact vocabulary, instead of duplicating a
+    /// second switch over the same five cases.
     var displayName: LocalizedStringKey {
         switch self {
         case .light: "Light frames"

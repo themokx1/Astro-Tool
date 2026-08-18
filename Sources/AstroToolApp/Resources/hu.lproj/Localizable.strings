@@ -1695,3 +1695,25 @@
    doc comment for the same cross-scene boundary). Names the button the
    reader actually has instead of offering one that cannot exist here. */
 "Open a library first, using Choose Image Library… on Home." = "Előbb nyiss meg egy könyvtárat a Kezdőlap Képkönyvtár kiválasztása… gombjával.";
+
+/* Wave W6-A section D: two report sections used to render as a bare
+   header with nothing underneath them when their own data was empty --
+   `NightWorkspaceView`'s Capture Groups grid (mirrors the Filters section's
+   own `ReportEmptyNote`) and `ProjectWorkspaceView`'s Calibration grid
+   (mirrors the Sessions section's own guard, since both read
+   `report.sessions`). Both are `ReportEmptyNote(text:)` calls, which --
+   like every other `ReportEmptyNote` in this file -- `scripts/extract-
+   localizable-strings.swift` cannot see (custom type, not one of the
+   scanned constructs), so hand-added here alongside their siblings above. */
+"No capture groups for this session." = "Nincs gyűjtés-adat ebben a sessionben.";
+"No recorded session, so no calibration data for this target." = "Nincs rögzített session, így nincs kalibrációs adat ehhez a célponthoz.";
+
+/* Wave W6-A section D: `ArchiveView`'s Targets section used to render as a
+   bare header when the strip's own class filter (`store.selectedClass`)
+   matched zero rows -- indistinguishable from a library with no targets at
+   all. Names the active filter and offers a real way back: the strip's own
+   tap gesture (`ArchiveStripView.segmentView`) always calls
+   `onSelect(segment.archiveClass)`, never `nil`, so there was previously no
+   way to clear a selection once made. */
+"No targets match the “%@” filter." = "Egyetlen célpont sem felel meg a(z) „%@” szűrőnek.";
+"Clear Filter" = "Szűrő törlése";

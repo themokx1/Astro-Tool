@@ -642,14 +642,22 @@ public struct ProjectWorkspaceView: View {
             }
             ReportSection(title: "Calibration") {
                 VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
-                    ReportGrid(headers: ["Date", "Flat", "Dark", "Bias", "Problems"]) {
-                        ForEach(report.sessions.sorted(by: { $0.session.dateRaw < $1.session.dateRaw })) { row in
-                            GridRow {
-                                Text(row.session.dateRaw).monospacedDigit()
-                                Text(row.calibration.flats.count.formatted()).monospacedDigit()
-                                Text(darkText(row.calibration)).monospacedDigit()
-                                Text(row.calibration.biases.count.formatted()).monospacedDigit()
-                                Text(row.calibration.problems.isEmpty ? "–" : row.calibration.problems.map(\.message).joined(separator: "; "))
+                    // Wave W6-A section D: mirrors the Sessions section
+                    // above -- calibration is keyed off the same
+                    // `report.sessions` list, so an empty one used to render
+                    // this grid as a bare header with nothing underneath it.
+                    if report.sessions.isEmpty {
+                        ReportEmptyNote(text: "No recorded session, so no calibration data for this target.")
+                    } else {
+                        ReportGrid(headers: ["Date", "Flat", "Dark", "Bias", "Problems"]) {
+                            ForEach(report.sessions.sorted(by: { $0.session.dateRaw < $1.session.dateRaw })) { row in
+                                GridRow {
+                                    Text(row.session.dateRaw).monospacedDigit()
+                                    Text(row.calibration.flats.count.formatted()).monospacedDigit()
+                                    Text(darkText(row.calibration)).monospacedDigit()
+                                    Text(row.calibration.biases.count.formatted()).monospacedDigit()
+                                    Text(row.calibration.problems.isEmpty ? "–" : row.calibration.problems.map(\.message).joined(separator: "; "))
+                                }
                             }
                         }
                     }

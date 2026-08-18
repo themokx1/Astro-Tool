@@ -374,14 +374,24 @@ public struct NightWorkspaceView: View {
                 }
             }
             ReportSection(title: "Capture Groups") {
-                ReportGrid(headers: ["Group", "Filters", "Frames", "Integration", "FWHM"]) {
-                    ForEach(report.captureGroups) { row in
-                        GridRow {
-                            Text(row.group.displayName)
-                            Text(row.group.filters.isEmpty ? "—" : row.group.filters.joined(separator: ", "))
-                            Text(row.group.usableLightCount.formatted()).monospacedDigit()
-                            Text(AstroFormat.duration(seconds: row.group.integrationSeconds)).monospacedDigit()
-                            Text(fwhmText(row.quality))
+                // Wave W6-A section D: mirrors the Filters section right
+                // above -- an empty grid used to render as a bare header
+                // with nothing underneath it, the same silent-looking blank
+                // this codebase's own "every section explains why it has
+                // nothing to show" rule (`ReportEmptyNote`'s own doc
+                // comment) otherwise holds everywhere else on this tab.
+                if report.captureGroups.isEmpty {
+                    ReportEmptyNote(text: "No capture groups for this session.")
+                } else {
+                    ReportGrid(headers: ["Group", "Filters", "Frames", "Integration", "FWHM"]) {
+                        ForEach(report.captureGroups) { row in
+                            GridRow {
+                                Text(row.group.displayName)
+                                Text(row.group.filters.isEmpty ? "—" : row.group.filters.joined(separator: ", "))
+                                Text(row.group.usableLightCount.formatted()).monospacedDigit()
+                                Text(AstroFormat.duration(seconds: row.group.integrationSeconds)).monospacedDigit()
+                                Text(fwhmText(row.quality))
+                            }
                         }
                     }
                 }

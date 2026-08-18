@@ -250,21 +250,41 @@ public struct ArchiveView: View {
                     }
                 }
                 Section("Targets") {
-                    ForEach(store.visibleRows) { row in
-                        ArchiveTargetRowView(
-                            row: row,
-                            maxTargetBytes: maxTargetBytes,
-                            onRevealInFinder: { revealInFinder(row: row) },
-                            onPreviewQuarantine: { openQuarantinePreview([]) }
-                        )
-                        // Task 7d: same zero horizontal row inset the task
-                        // cards above already use, so every row in this list
-                        // starts and ends on the same vertical line as the
-                        // strip card above it. `.inset` list style otherwise
-                        // adds its own gutter to these rows only, which is
-                        // half of what made the two halves of this page look
-                        // like they were laid out by different people.
+                    // Wave W6-A section D: a strip-class filter that leaves
+                    // zero targets used to render this whole section as a
+                    // bare "Targets" header with nothing underneath it --
+                    // indistinguishable from a library that genuinely has no
+                    // targets at all. Names the active filter and offers a
+                    // real way back: `ArchiveStripView`'s own tap gesture
+                    // always calls `onSelect(segment.archiveClass)`, never
+                    // `nil`, so there was previously no way to clear a
+                    // selection back to "All" once made.
+                    if let selectedClass = store.selectedClass, store.visibleRows.isEmpty {
+                        HStack {
+                            Text("No targets match the “\(selectedClass.displayName)” filter.")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Clear Filter") { store.selectedClass = nil }
+                                .accessibilityIdentifier("v2.archive.targets.clear-filter")
+                        }
                         .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                    } else {
+                        ForEach(store.visibleRows) { row in
+                            ArchiveTargetRowView(
+                                row: row,
+                                maxTargetBytes: maxTargetBytes,
+                                onRevealInFinder: { revealInFinder(row: row) },
+                                onPreviewQuarantine: { openQuarantinePreview([]) }
+                            )
+                            // Task 7d: same zero horizontal row inset the task
+                            // cards above already use, so every row in this list
+                            // starts and ends on the same vertical line as the
+                            // strip card above it. `.inset` list style otherwise
+                            // adds its own gutter to these rows only, which is
+                            // half of what made the two halves of this page look
+                            // like they were laid out by different people.
+                            .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                        }
                     }
                 }
                 if !store.uncovered.isEmpty {
