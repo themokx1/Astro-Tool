@@ -195,6 +195,203 @@ struct ScanWorkflowMaterializerTests {
     }
 }
 
+// MARK: - W7-D: headerless OSC passband precedence
+//
+// The owner's real rig (ASI2600MC OSC through an SVBony SV220 duoband,
+// driven by ASI Air) never writes a FITS `FILTER` header at all -- ASI Air
+// simply doesn't know about a filter it never switches. Before this fix,
+// `ScannedFrame.passband` treated "headerless" as "no filter used" and
+// guessed `.broadband` for every one of those OSC frames, hiding the
+// dual-band nature of a real, already-tagged (`captures/sv220_dual-band/`)
+// session from FilterAdvisor and per-filter stats. These five tests pin the
+// exact precedence `ScanWorkflowMaterializer.materialize` documents on
+// `ScannedFrame.passband`: FITS header > capture group > capture slug >
+// default setup > unfiltered/broadband guess.
+@Suite("W7-D headerless OSC passband precedence")
+struct HeaderlessOSCPassbandPrecedenceTests {
+    private struct PrecedenceFixture {
+        let container: URL
+        let indexURL: URL
+        let db: Database
+    }
+
+    private static func makeFixture() throws -> PrecedenceFixture {
+        let container = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "AstroTool-W7D-Materializer-\(UUID().uuidString)", isDirectory: true
+        )
+        let cache = container.appendingPathComponent("cache", isDirectory: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let indexURL = cache.appendingPathComponent("index.sqlite")
+        let db = try Database(path: indexURL.path)
+        return PrecedenceFixture(container: container, indexURL: indexURL, db: db)
+    }
+
+    /// Inserts one headerless (`filter: nil`) OSC light frame, optionally
+    /// under a `captures/<slug>/` folder -- `slug: nil` reproduces a classic
+    /// non-capture-aware session path.
+    @discardableResult
+    private static func insertHeaderlessOSCFrame(
+        db: Database,
+        target: String = "IC_1396_Elephants_Trunk_Nebula",
+        sessionDate: String = "2026-08-08",
+        slug: String?,
+        index: Int = 1
+    ) throws -> Int64 {
+        let path = if let slug {
+            "sessions/\(target)/\(sessionDate)/captures/\(slug)/lights/frame_\(index).fit"
+        } else {
+            "sessions/\(target)/\(sessionDate)/lights/frame_\(index).fit"
+        }
+        let fileID = try db.upsertFile(FileRecord(
+            path: path, size: 1024, mtime: Double(index), ext: "fit", kind: "fits",
+            area: .sessions, target: target, sessionDate: sessionDate, role: .light, scannedAt: 1
+        ))
+        try db.upsertFITSMeta(FITSMetaRecord(
+            fileID: fileID, exptime: 300, gain: 100, offset: 50,
+            instrume: "ZWO ASI2600MC Pro", focallen: 261, filter: nil,
+            headerJSON: "{\"BAYERPAT\":\"RGGB\",\"XBINNING\":1}"
+        ))
+        return fileID
+    }
+
+    @Test("A headerless OSC frame in an sv220_dual-band capture folder inherits dual-band from its capture group")
+    func inheritsPassbandFromCaptureGroup() async throws {
+        let fixture = try Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        try Self.insertHeaderlessOSCFrame(
+            db: fixture.db, sessionDate: "2026-08-08", slug: "sv220_dual-band"
+        )
+        try fixture.db.upsertCaptureGroup(CaptureGroupRecord(
+            target: "IC_1396_Elephants_Trunk_Nebula", sessionDate: "2026-08-08",
+            slug: "sv220_dual-band", displayName: "SV220 dual-band",
+            sensorMode: .osc, signalMode: .dualBand,
+            filterManufacturer: "SVBONY", filterModel: "SV220"
+        ))
+        let metadata = try MetadataStore.temporary()
+
+        _ = try await ScanWorkflowMaterializer.materialize(indexDatabase: fixture.indexURL, metadata: metadata)
+
+        let project = try #require(try await metadata.projects().first)
+        let series = try #require(try await metadata.series(projectID: project.id).first)
+        #expect(series.passband == .dualBand)
+    }
+
+    @Test("A real FITS FILTER value always wins over the capture group's own signal mode")
+    func fitsHeaderOutranksCaptureGroup() async throws {
+        let fixture = try Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        let fileID = try Self.insertHeaderlessOSCFrame(
+            db: fixture.db, sessionDate: "2026-08-08", slug: "sv220_dual-band"
+        )
+        // Overwrite with an explicit, conflicting FITS filter -- the group
+        // says dual-band, the (unusual but possible) header says narrowband.
+        try fixture.db.upsertFITSMeta(FITSMetaRecord(
+            fileID: fileID, exptime: 300, gain: 100, offset: 50,
+            instrume: "ZWO ASI2600MC Pro", focallen: 261, filter: "Ha",
+            headerJSON: "{\"BAYERPAT\":\"RGGB\"}"
+        ))
+        try fixture.db.upsertCaptureGroup(CaptureGroupRecord(
+            target: "IC_1396_Elephants_Trunk_Nebula", sessionDate: "2026-08-08",
+            slug: "sv220_dual-band", displayName: "SV220 dual-band",
+            sensorMode: .osc, signalMode: .dualBand
+        ))
+        let metadata = try MetadataStore.temporary()
+
+        _ = try await ScanWorkflowMaterializer.materialize(indexDatabase: fixture.indexURL, metadata: metadata)
+
+        let project = try #require(try await metadata.projects().first)
+        let series = try #require(try await metadata.series(projectID: project.id).first)
+        #expect(series.passband == .narrowband)
+    }
+
+    @Test("A headerless frame in a captures/ folder with no matching capture group still reads dual-band from the slug name")
+    func inheritsPassbandFromCaptureSlugWhenNoGroupRowExists() async throws {
+        let fixture = try Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        // Deliberately no `upsertCaptureGroup` call: the folder was renamed
+        // by hand, or the group was never created in the app.
+        try Self.insertHeaderlessOSCFrame(
+            db: fixture.db, sessionDate: "2026-08-08", slug: "sv220_dual-band"
+        )
+        let metadata = try MetadataStore.temporary()
+
+        _ = try await ScanWorkflowMaterializer.materialize(indexDatabase: fixture.indexURL, metadata: metadata)
+
+        let project = try #require(try await metadata.projects().first)
+        let series = try #require(try await metadata.series(projectID: project.id).first)
+        #expect(series.passband == .dualBand)
+    }
+
+    @Test("A headerless OSC frame outside any captures/ folder falls back to the default setup's configured filter")
+    func fallsBackToDefaultSetupSignalMode() async throws {
+        let fixture = try Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        try Self.insertHeaderlessOSCFrame(db: fixture.db, sessionDate: "2026-08-08", slug: nil)
+        let metadata = try MetadataStore.temporary()
+        let setup = ImagingSetupProfile(
+            id: "asi2600mc", name: "ASI2600MC train", cameraName: "ZWO ASI2600MC Pro",
+            cameraKind: .dedicatedAstro, sensorWidthMM: 23.5, sensorHeightMM: 15.7,
+            focalLengthMinMM: 261, focalLengthMaxMM: 261, defaultFocalLengthMM: 261,
+            isDefault: true, defaultFilterSignalMode: .dualBand, defaultFilterName: "SV220"
+        )
+
+        _ = try await ScanWorkflowMaterializer.materialize(
+            indexDatabase: fixture.indexURL, metadata: metadata, imagingSetups: [setup]
+        )
+
+        let project = try #require(try await metadata.projects().first)
+        let series = try #require(try await metadata.series(projectID: project.id).first)
+        #expect(series.passband == .dualBand)
+    }
+
+    @Test("With no header, capture group, slug, or setup default, a headerless OSC frame still guesses broadband")
+    func absoluteFallbackStaysBroadbandForOSC() async throws {
+        let fixture = try Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        try Self.insertHeaderlessOSCFrame(db: fixture.db, sessionDate: "2026-08-08", slug: nil)
+        let metadata = try MetadataStore.temporary()
+
+        _ = try await ScanWorkflowMaterializer.materialize(indexDatabase: fixture.indexURL, metadata: metadata)
+
+        let project = try #require(try await metadata.projects().first)
+        let series = try #require(try await metadata.series(projectID: project.id).first)
+        #expect(series.passband == .broadband)
+    }
+
+    @Test("The default setup's filter fallback never applies to a mono frame")
+    func setupDefaultNeverAppliesToMono() async throws {
+        let fixture = try Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        let fileID = try fixture.db.upsertFile(FileRecord(
+            path: "sessions/IC_1396_Elephants_Trunk_Nebula/2026-08-08/lights/frame_1.fit",
+            size: 1024, mtime: 1, ext: "fit", kind: "fits",
+            area: .sessions, target: "IC_1396_Elephants_Trunk_Nebula",
+            sessionDate: "2026-08-08", role: .light, scannedAt: 1
+        ))
+        // No BAYERPAT in the header JSON at all -- a mono frame.
+        try fixture.db.upsertFITSMeta(FITSMetaRecord(
+            fileID: fileID, exptime: 300, gain: 100, offset: 50,
+            instrume: "ZWO ASI2600MM Pro", focallen: 261, filter: nil,
+            headerJSON: "{\"XBINNING\":1}"
+        ))
+        let metadata = try MetadataStore.temporary()
+        let setup = ImagingSetupProfile(
+            id: "asi2600mm", name: "ASI2600MM train", cameraName: "ZWO ASI2600MM Pro",
+            cameraKind: .monochrome, sensorWidthMM: 23.5, sensorHeightMM: 15.7,
+            focalLengthMinMM: 261, focalLengthMaxMM: 261, defaultFocalLengthMM: 261,
+            isDefault: true, defaultFilterSignalMode: .dualBand
+        )
+
+        _ = try await ScanWorkflowMaterializer.materialize(
+            indexDatabase: fixture.indexURL, metadata: metadata, imagingSetups: [setup]
+        )
+
+        let project = try #require(try await metadata.projects().first)
+        let series = try #require(try await metadata.series(projectID: project.id).first)
+        #expect(series.passband == .unfiltered)
+    }
+}
+
 private struct MaterializerFixture {
     let container: URL
     let root: URL

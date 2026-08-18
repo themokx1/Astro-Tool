@@ -14,10 +14,41 @@ public struct ScanWorkflowMaterializationSummary: Equatable, Sendable {
 public enum ScanWorkflowMaterializer {
     public static func materialize(
         indexDatabase: URL,
-        metadata: MetadataStore
+        metadata: MetadataStore,
+        imagingSetups: [ImagingSetupProfile] = []
     ) async throws -> ScanWorkflowMaterializationSummary {
         let database = try SQLiteDB(readOnlyPath: indexDatabase.standardizedFileURL.path)
         var frames: [ScannedFrame] = []
+        // W7-D: capture groups (V1's own equipment/filter metadata table,
+        // stored in this exact index database) are the second rung of the
+        // passband precedence chain -- a headerless OSC frame sitting under
+        // `captures/<slug>/` inherits its group's declared `signal_mode`
+        // rather than being guessed as broadband. Keyed like
+        // `CaptureResolver.scopeKey` (target/session_date/slug), using the
+        // RAW session-date string (not the civil night `SessionDateParser`
+        // resolves below) because that raw string is exactly what
+        // `capture_groups.session_date` was written with.
+        var captureGroupSignalModeByScope: [String: SignalMode] = [:]
+        try? database.query(
+            "SELECT target, session_date, slug, signal_mode FROM capture_groups;"
+        ) { row in
+            guard let target = row.string(0), let sessionDate = row.string(1),
+                  let slug = row.string(2),
+                  let signalMode = row.string(3).flatMap(SignalMode.init(rawValue:)),
+                  signalMode != .unknown
+            else { return }
+            captureGroupSignalModeByScope[captureGroupScopeKey(target: target, sessionDate: sessionDate, slug: slug)] = signalMode
+        }
+        // The fallback of last resort (precedence level 4): the default
+        // imaging setup's declared filter, if the user configured one --
+        // see `ImagingSetupProfile.defaultFilterSignalMode`'s own doc
+        // comment for why this only ever applies to OSC frames.
+        let setupDefaultSignalMode: SignalMode? = {
+            guard let mode = ImagingSetupProfile.defaultSetup(in: imagingSetups)?.defaultFilterSignalMode,
+                  mode != .unknown
+            else { return nil }
+            return mode
+        }()
         try database.query(
             """
             SELECT files.path, files.target, files.session_date, files.ext,
@@ -39,13 +70,20 @@ public enum ScanWorkflowMaterializer {
                   let sessionDate = SessionDateParser.parse(rawDate),
                   let exposure = row.double(4), exposure.isFinite, exposure > 0
             else { return }
+            let captureSlug = PathClassifier.classify(relativePath: path).captureSlug
+            let captureGroupSignalMode = captureSlug.flatMap {
+                captureGroupSignalModeByScope[captureGroupScopeKey(target: target, sessionDate: rawDate, slug: $0)]
+            }
             frames.append(ScannedFrame(
                 path: path, target: target, date: sessionDate.start,
                 fileExtension: row.string(3) ?? "",
                 exposure: exposure,
                 gain: row.double(5), offset: row.double(6),
                 instrument: nonBlank(row.string(7)), focalLength: row.double(8),
-                filter: nonBlank(row.string(9)), headerJSON: row.string(10)
+                filter: nonBlank(row.string(9)), headerJSON: row.string(10),
+                captureSlug: captureSlug,
+                captureGroupSignalMode: captureGroupSignalMode,
+                setupDefaultSignalMode: setupDefaultSignalMode
             ))
         }
 
@@ -125,10 +163,25 @@ public enum ScanWorkflowMaterializer {
     public static func materializeProductionLibrary(rootURL: URL) async throws -> ScanWorkflowMaterializationSummary {
         let identity = LibraryIdentity(rootURL: rootURL)
         let storage = try AppStoragePaths.production(libraryID: identity, libraryRoot: rootURL)
+        // Missing/unreadable config.json (no setups ever configured, the
+        // common case) falls back to an empty list -- same
+        // "best-effort, never throws" convention as
+        // `SiteSettingsStore.productionConfigLoader`.
+        let configURL = rootURL.appendingPathComponent(".astro_tool/config.json")
+        let imagingSetups = (try? AstroConfig.load(from: configURL))?.imagingSetups ?? []
         return try await materialize(
             indexDatabase: storage.indexDatabase,
-            metadata: MetadataStore(storagePaths: storage)
+            metadata: MetadataStore(storagePaths: storage),
+            imagingSetups: imagingSetups
         )
+    }
+
+    /// Same identity `CaptureResolver.scopeKey` uses for the equivalent V1
+    /// lookup -- kept file-private here since V2's series builder never
+    /// shares a `CaptureResolver` instance (it reads the scan index
+    /// directly, read-only, rather than loading a full `Database`).
+    private static func captureGroupScopeKey(target: String, sessionDate: String, slug: String) -> String {
+        "\(target)\u{1F}\(sessionDate)\u{1F}\(slug)"
     }
 
     private static func catalogIdentity(for rawTarget: String) -> (catalogID: String, displayName: String) {
@@ -173,6 +226,18 @@ private struct ScannedFrame {
     let focalLength: Double?
     let filter: String?
     let headerJSON: String?
+    /// Slug from `sessions/<target>/<date>/captures/<slug>/...`, or `nil`
+    /// for a classic non-capture-aware session path (W7-D precedence
+    /// level 3: the folder name itself is evidence when nothing else is).
+    let captureSlug: String?
+    /// This frame's capture group's own declared `signal_mode`, already
+    /// resolved by the caller (W7-D precedence level 2) -- `nil` when the
+    /// frame isn't in a captures/ folder, has no matching group row, or
+    /// that group never declared one (`.unknown`).
+    let captureGroupSignalMode: SignalMode?
+    /// The library's default imaging setup's configured fallback filter
+    /// (W7-D precedence level 4), resolved once per `materialize` call.
+    let setupDefaultSignalMode: SignalMode?
 
     var sensorMode: SeriesSensorMode {
         if ["cr3", "tif", "tiff"].contains(fileExtension.lowercased()) { return .dslr }
@@ -180,13 +245,40 @@ private struct ScannedFrame {
         return .mono
     }
 
+    /// W7-D: one derivation for the whole precedence chain -- FITS header
+    /// text > capture group's declared signal mode > the capture slug's own
+    /// name > the default setup's configured fallback > an unfiltered/
+    /// broadband guess. Each level is only ever consulted when every level
+    /// above it has nothing to say, so a real FITS `FILTER` value (however
+    /// it's spelled) always wins, and the ASI Air "no filter wheel, no
+    /// FILTER header" case for an OSC + duoband/narrowband train is the
+    /// ONLY case that ever reaches levels 2-4.
     var passband: SeriesPassband {
-        guard let filter else { return sensorMode == .mono ? .unfiltered : .broadband }
-        let normalized = filter.lowercased()
+        if let filter {
+            return Self.inferredPassband(fromText: filter) ?? .other
+        }
+        if let captureGroupSignalMode, let mapped = SeriesPassband(rawValue: captureGroupSignalMode.rawValue) {
+            return mapped
+        }
+        if let captureSlug, let inferred = Self.inferredPassband(fromText: captureSlug) {
+            return inferred
+        }
+        if sensorMode == .osc, let setupDefaultSignalMode,
+           let mapped = SeriesPassband(rawValue: setupDefaultSignalMode.rawValue) {
+            return mapped
+        }
+        return sensorMode == .mono ? .unfiltered : .broadband
+    }
+
+    /// The same marker vocabulary applied to both a FITS `FILTER` value and
+    /// a capture-slug/folder name -- "sv220_dual-band" and a filter literally
+    /// named "SV220" mean the same thing to this derivation.
+    private static func inferredPassband(fromText rawText: String) -> SeriesPassband? {
+        let normalized = rawText.lowercased()
         if normalized.contains("sv220") || normalized.contains("dual") || normalized.contains("duo") { return .dualBand }
         if ["ha", "halpha", "h-alpha", "oiii", "sii"].contains(where: normalized.contains) { return .narrowband }
         if ["l", "r", "g", "b"].contains(normalized) { return .lrgb }
-        return .other
+        return nil
     }
 
     var setupDescriptor: String {
