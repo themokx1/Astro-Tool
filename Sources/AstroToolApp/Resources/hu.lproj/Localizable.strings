@@ -1914,7 +1914,7 @@
    (HomeView.NightContextRail.nextClearNightRow), keyed off the same
    WeatherService.dailySummaries 7-day forecast the Nights calendar's own
    "Cloud" column already reads. */
-"Nearest clear night: %@ (%@–%@%% cloud)" = "Legközelebbi tiszta éjszaka: %@ (%@–%@%% felhő)";
+"Nearest clear night: %@ (%lld–%lld%% cloud)" = "Legközelebbi tiszta éjszaka: %@ (%lld–%lld%% felhő)";
 "The 7-day forecast has no clear night" = "A 7 napos előrejelzésben nincs tiszta éjszaka";
 
 /* W7-E workflow #3 (2026-08-18 owner audit, "cloudy night = darks night"):
@@ -1959,3 +1959,7 @@
 "Balance the panels: %@ panel +%@ h" = "Egyenlítsd ki a paneleket: %@ panel +%@ ó";
 "%@ panel has the biggest integration gap in this mosaic -- capture more of it next." = "A(z) %@ panelnek van a legnagyobb integrációs lemaradása ebben a mozaikban -- legközelebb abból gyűjts többet.";
 "%@ panel is %@ behind %@." = "A(z) %@ panel %@ lemaradásban van a(z) %@ panelhez képest.";
+
+// W7-E utójavítás: az Int-interpoláció %lld kulcsot termel, nem %@-ot;
+// plusz az Éjszakák kártya új részletsora.
+"Deduplicated calendar nights" = "Deduplikált naptári éjszakák";
