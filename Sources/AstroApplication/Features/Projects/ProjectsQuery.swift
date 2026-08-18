@@ -14,6 +14,18 @@ public struct ProjectNextAction: Equatable, Sendable {
     public let kind: ProjectNextActionKind
     public let title: String
     public let explanation: String
+
+    /// W7-F item 2 (2026-08-18 expert audit): an explicit public init --
+    /// this struct's own implicit memberwise one is only `internal` despite
+    /// every property being `public` (a well-known Swift gap), so plain
+    /// (non-`@testable`) callers outside `AstroApplication` -- `ProjectReportQuery
+    /// .Result.mosaicBalanceNextAction` and `ProjectNextActionResolutionTests`
+    /// (`AstroUI`) among them -- could not construct one at all before this.
+    public init(kind: ProjectNextActionKind, title: String, explanation: String) {
+        self.kind = kind
+        self.title = title
+        self.explanation = explanation
+    }
 }
 
 /// `ProjectNextAction.title`/`.explanation` are English sentences meant for
@@ -30,6 +42,17 @@ public enum ProjectNextActionKind: Equatable, Sendable {
     case keepProcessing
     case writeFinalReport
     case archived
+    /// W7-F item 2 (2026-08-18 expert audit, workflow #5): the project's own
+    /// mosaic panel ledger (`ProjectReportQuery.Result.mosaicBalanceNextAction`,
+    /// `AstroApplication`'s Reports feature) has a dominant gap -- one panel
+    /// trailing the project's best panel by more than
+    /// `MosaicBalance`'s own "worth acting on" bar. Never produced by this
+    /// file's own phase-based `nextAction(for:seriesCount:)`: it needs the
+    /// FITS-derived panel report `ProjectsQuery` (metadata-only) has no
+    /// access to, so `ProjectWorkspaceView` resolves the effective action by
+    /// overriding the phase-based one with this case once its own report
+    /// has loaded -- see `ProjectNextActionResolution.resolve(base:report:)`.
+    case balanceMosaicPanels(worstPanelLabel: String, deficitHours: Double)
 }
 
 public struct ProjectSeriesSnapshot: Equatable, Sendable, Identifiable {

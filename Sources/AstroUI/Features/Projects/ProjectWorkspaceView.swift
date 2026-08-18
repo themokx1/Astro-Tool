@@ -36,11 +36,45 @@ enum ProjectNextActionAffordance: Equatable {
 
     init(_ kind: ProjectNextActionKind) {
         switch kind {
-        case .planFirstNight, .startCollecting, .keepCollecting: self = .startSession
+        // W7-F item 2: the mosaic-balance case routes to the exact same
+        // "New Session, prefilled for this project" destination the other
+        // still-collecting cases already do -- that flow is where the
+        // owner actually captures the missing panel integration.
+        case .planFirstNight, .startCollecting, .keepCollecting, .balanceMosaicPanels: self = .startSession
         case .keepProcessing: self = .viewResults
         case .writeFinalReport: self = .viewReport
         case .archived: self = .none
         }
+    }
+}
+
+/// W7-F item 2 (2026-08-18 expert audit, workflow #5): resolves the
+/// EFFECTIVE "Következő lépés" (next action) `ProjectWorkspaceView`'s
+/// Overview tab shows -- the phase-based `ProjectSnapshot.nextAction` by
+/// default (`ProjectsQuery`, metadata-only, no FITS/panel access), overridden
+/// by `mosaicBalanceNextAction` once it is non-`nil` (the caller passes
+/// `reportStore.result?.mosaicBalanceNextAction` -- `nil` both before the
+/// report has loaded and once loaded with no dominant panel gap; see
+/// `ProjectReportQuery.Result.mosaicBalanceNextAction`'s own doc). Takes
+/// the already-derived `ProjectNextAction?` rather than the whole `Result`
+/// on purpose: this gate has nothing to do with the report's OTHER fields,
+/// and a narrow parameter keeps it testable with a plain value instead of a
+/// full report fixture.
+///
+/// Archived is deliberately exempt: an owner who explicitly archived a
+/// project already made their own "this is done" call, and this override
+/// must never re-litigate that with "go capture more" -- `.none` is the
+/// only affordance `.archived` ever maps to, so gating on it here (rather
+/// than a second, hand-maintained list of phases) reuses the SAME finite
+/// mapping `ProjectNextActionAffordance` already owns.
+///
+/// Pure/testable without rendering a view -- same "factor the logic out of
+/// `body`" shape `ProjectNextActionAffordance` itself already established
+/// (see this file's own doc comment on that type).
+enum ProjectNextActionResolution {
+    static func resolve(base: ProjectNextAction, mosaicBalanceNextAction: ProjectNextAction?) -> ProjectNextAction {
+        guard ProjectNextActionAffordance(base.kind) != .none, let override = mosaicBalanceNextAction else { return base }
+        return override
     }
 }
 
@@ -395,7 +429,7 @@ public struct ProjectWorkspaceView: View {
                 VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
                     Text("Next action").font(.headline)
                     nextActionAffordance
-                    Text(snapshot.nextAction.kind.explanationKey).foregroundStyle(.secondary)
+                    Text(effectiveNextAction.kind.explanationKey).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .astroRaisedSurface()
@@ -470,6 +504,20 @@ public struct ProjectWorkspaceView: View {
         }
     }
 
+    /// W7-F item 2: the phase-based `snapshot.nextAction`, overridden by the
+    /// project's own mosaic-balance case once `reportStore`'s report has
+    /// loaded and shows a dominant panel gap -- see `ProjectNextActionResolution
+    /// .resolve(base:report:)`'s own doc for the exact rule (and why
+    /// archived is exempt). Falls back to the phase-based action while the
+    /// report is still loading, exactly like every other report-derived
+    /// section on this tab already does before its own data arrives.
+    private var effectiveNextAction: ProjectNextAction {
+        ProjectNextActionResolution.resolve(
+            base: snapshot.nextAction,
+            mosaicBalanceNextAction: reportStore.result?.mosaicBalanceNextAction
+        )
+    }
+
     /// Task 3 (owner review wave 4-4): the "Next action" card's own control
     /// -- each `ProjectNextActionAffordance` case reuses one of this view's
     /// OWN existing closures (`createSession`/`results`, the same ones
@@ -479,16 +527,16 @@ public struct ProjectWorkspaceView: View {
     /// never promises an action it cannot perform.
     @ViewBuilder
     private var nextActionAffordance: some View {
-        switch ProjectNextActionAffordance(snapshot.nextAction.kind) {
+        switch ProjectNextActionAffordance(effectiveNextAction.kind) {
         case .startSession:
             Button(action: createSession) {
-                Label(snapshot.nextAction.kind.titleKey, systemImage: "arrow.forward.circle.fill")
+                Label(effectiveNextAction.kind.titleKey, systemImage: "arrow.forward.circle.fill")
             }
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("v2.project.next-action")
         case .viewResults:
             Button(action: results) {
-                Label(snapshot.nextAction.kind.titleKey, systemImage: "arrow.forward.circle.fill")
+                Label(effectiveNextAction.kind.titleKey, systemImage: "arrow.forward.circle.fill")
             }
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("v2.project.next-action")
@@ -499,12 +547,12 @@ public struct ProjectWorkspaceView: View {
             Button {
                 withAnimation { reportScrollProxy?.scrollTo(Self.reportSectionAnchorID, anchor: .top) }
             } label: {
-                Label(snapshot.nextAction.kind.titleKey, systemImage: "arrow.forward.circle.fill")
+                Label(effectiveNextAction.kind.titleKey, systemImage: "arrow.forward.circle.fill")
             }
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("v2.project.next-action")
         case .none:
-            Label(snapshot.nextAction.kind.titleKey, systemImage: "checkmark.circle")
+            Label(effectiveNextAction.kind.titleKey, systemImage: "checkmark.circle")
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("v2.project.next-action")
         }
@@ -682,19 +730,45 @@ public struct ProjectWorkspaceView: View {
             }
             if report.panelReport.isMosaic {
                 ReportSection(title: "Panels") {
-                    ReportGrid(headers: ["Panel", "Center (RA/Dec)", "Frames", "Integration", "Rotation"]) {
-                        ForEach(report.panelReport.panels, id: \.label) { panel in
+                    // W7-F item 2: `report.panelDeficits` is built by
+                    // `MosaicBalance.deficits(panels:)` as a 1:1 `.map` over
+                    // `report.panelReport.panels` (same-engine rule -- no
+                    // new panel detection), so iterating it here instead of
+                    // `panelReport.panels` directly adds the deficit column
+                    // without touching any of the other four.
+                    ReportGrid(headers: ["Panel", "Center (RA/Dec)", "Frames", "Integration", "Rotation", "Deficit"]) {
+                        ForEach(report.panelDeficits) { deficit in
+                            let panel = deficit.panel
                             GridRow {
                                 Text(panel.label)
                                 Text("\(AstroFormat.rightAscension(panel.centerRaDeg)) / \(AstroFormat.declination(panel.centerDecDeg))")
                                 Text(panel.frameCount.formatted()).monospacedDigit()
                                 Text(AstroFormat.duration(seconds: panel.integrationSeconds)).monospacedDigit()
                                 Text(panel.rotationDeg.map(AstroFormat.rotationDegrees) ?? "–")
+                                panelDeficitText(deficit.deficitSeconds)
                             }
                         }
                     }
                     if report.panelReport.isUnbalanced {
                         Text("Unbalanced integration across panels.").font(.callout).foregroundStyle(AstroTokens.Color.attention)
+                    }
+                    // W7-F item 2: the same dominant-gap gate the "Next
+                    // action" card's own override reads
+                    // (`MosaicBalance.dominantGap`), surfaced again right
+                    // next to the ledger it's about -- not every unbalanced
+                    // mosaic (the banner above) clears this stricter,
+                    // "worth interrupting the project for" bar. Names BOTH
+                    // panels (never just "the best panel") -- the label
+                    // `FieldGeometry.panels` assigns "A" to is whichever
+                    // panel has the most FRAMES, which is not always the
+                    // same one as the most INTEGRATION, so this reads the
+                    // real best-integration panel's own label rather than
+                    // assuming it is always "A".
+                    if let gap = MosaicBalance.dominantGap(panels: report.panelReport.panels),
+                       let bestPanel = report.panelReport.panels.max(by: { $0.integrationSeconds < $1.integrationSeconds })
+                    {
+                        Text("\(gap.panel.label) panel is \(AstroFormat.duration(seconds: gap.deficitSeconds)) behind \(bestPanel.label).")
+                            .font(.callout).foregroundStyle(AstroTokens.Color.attention)
                     }
                 }
             }
@@ -748,6 +822,15 @@ public struct ProjectWorkspaceView: View {
             return "library: \((libraryDark as NSString).lastPathComponent)"
         }
         return "\(calibration.darks.count)"
+    }
+
+    /// W7-F item 2: the "Panelek" grid's own Deficit column -- "–" for
+    /// whichever panel has the most integration (`PanelDeficit
+    /// .deficitSeconds == 0`, never a fabricated "+0:00 h"), "+H:MM h"
+    /// against the best panel for every other one.
+    private func panelDeficitText(_ deficitSeconds: Double) -> Text {
+        guard deficitSeconds > 0 else { return Text(verbatim: "–") }
+        return Text(verbatim: "+\(AstroFormat.duration(seconds: deficitSeconds))")
     }
 
     /// W6-E item 5: the Overview tab's own summary block for `report.stacks`

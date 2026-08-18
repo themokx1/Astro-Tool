@@ -1611,6 +1611,9 @@
 "No to-dos." = "Nincs teendő.";
 "No usable filter data for this target." = "Nincs használható szűrőadat ehhez a célponthoz.";
 "Outliers" = "Kiugrók";
+/* W7-F item 2 (2026-08-18 expert audit, workflow #5): the "Panelek" grid's
+   new Deficit column (ProjectWorkspaceView.swift, MosaicBalance ledger). */
+"Deficit" = "Lemaradás";
 "Panel" = "Panel";
 "Panels" = "Panelek";
 "Planning" = "Tervezés";
@@ -1946,3 +1949,13 @@
    window as one seamless block. */
 "Culminates %@ — meridian flip likely" = "Delelés: %@ — meridián-átfordulás várható";
 "culm. %@ — meridian flip likely" = "delel. %@ — meridián-átfordulás várható";
+
+/* W7-F item 2 (2026-08-18 expert audit, workflow #5): the mosaic panel
+   deficit ledger -- ProjectReportQuery.Result.panelDeficits/
+   .mosaicBalanceNextAction, ProjectsStore.swift's ProjectNextActionKind
+   .titleKey/.explanationKey/.localizedTitle/.localizedExplanation (the
+   .balanceMosaicPanels case), and ProjectWorkspaceView's own "Panelek"
+   ledger banner. */
+"Balance the panels: %@ panel +%@ h" = "Egyenlítsd ki a paneleket: %@ panel +%@ ó";
+"%@ panel has the biggest integration gap in this mosaic -- capture more of it next." = "A(z) %@ panelnek van a legnagyobb integrációs lemaradása ebben a mozaikban -- legközelebb abból gyűjts többet.";
+"%@ panel is %@ behind %@." = "A(z) %@ panel %@ lemaradásban van a(z) %@ panelhez képest.";

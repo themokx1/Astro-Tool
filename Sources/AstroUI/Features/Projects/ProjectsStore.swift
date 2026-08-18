@@ -348,7 +348,15 @@ public final class ProjectsStore {
 /// `LocalizedStringKey` here, at the view layer. No Hungarian text lives in
 /// `AstroApplication`.
 extension ProjectNextActionKind {
-    fileprivate var titleText: String {
+    /// The `NSLocalizedString`/`hu.lproj` LOOKUP KEY for `localizedTitle` --
+    /// deliberately the raw `%@`-templated sentence, never the already-
+    /// substituted one. `.balanceMosaicPanels` carries a runtime panel
+    /// label/deficit (W7-F item 2): baking those INTO the string before
+    /// using it as a lookup key would mint one impossible-to-pre-translate
+    /// key per numeric value instead of leaving them as substitution
+    /// placeholders -- the exact bug this split avoids. Every static case
+    /// still returns its own constant sentence unchanged.
+    fileprivate var titleTemplate: String {
         switch self {
         case .planFirstNight: "Plan the first night"
         case .startCollecting: "Start collecting"
@@ -356,31 +364,107 @@ extension ProjectNextActionKind {
         case .keepProcessing: "Keep processing"
         case .writeFinalReport: "Write the final report"
         case .archived: "Project archived"
+        case .balanceMosaicPanels: "Balance the panels: %@ panel +%@ h"
         }
     }
 
-    fileprivate var explanationText: String {
+    /// See `titleTemplate`'s own doc comment -- same split, for the
+    /// explanation sentence.
+    fileprivate var explanationTemplate: String {
         switch self {
         case .planFirstNight, .startCollecting: "Choose a setup, a filter and an exposure series."
         case .keepCollecting: "Add the missing series on the next good night."
         case .keepProcessing: "Check the stacks and the results' lineage."
         case .writeFinalReport: "The project is done; export the shareable summary."
         case .archived: "Nothing to do."
+        case .balanceMosaicPanels: "%@ panel has the biggest integration gap in this mosaic -- capture more of it next."
+        }
+    }
+
+    /// Substitution values for `titleTemplate`'s `%@` placeholders, in
+    /// order -- `[]` for every static-text case (`String(format:arguments:)`
+    /// with no placeholders and no arguments is just the template itself).
+    fileprivate var titleArguments: [String] {
+        switch self {
+        case let .balanceMosaicPanels(worstPanelLabel, deficitHours):
+            [worstPanelLabel, deficitHours.formatted(.number.precision(.fractionLength(1)))]
+        default:
+            []
+        }
+    }
+
+    fileprivate var explanationArguments: [String] {
+        switch self {
+        case let .balanceMosaicPanels(worstPanelLabel, _): [worstPanelLabel]
+        default: []
         }
     }
 
     /// For direct use in view bodies (`Text`/`Label`) -- resolved lazily by
     /// SwiftUI against `Bundle.main` at render time, like any other
-    /// `LocalizedStringKey` literal in this codebase.
-    var titleKey: LocalizedStringKey { LocalizedStringKey(titleText) }
-    var explanationKey: LocalizedStringKey { LocalizedStringKey(explanationText) }
+    /// `LocalizedStringKey` literal in this codebase. `.balanceMosaicPanels`
+    /// is built via Swift's own `LocalizedStringKey` string-interpolation
+    /// conformance directly (the SAME mechanism any `Text("... \(x) ...")`
+    /// literal uses) rather than wrapping `titleTemplate`, so the panel
+    /// label/deficit stay real interpolation placeholders instead of text
+    /// baked into the lookup key.
+    var titleKey: LocalizedStringKey {
+        switch self {
+        case .planFirstNight: "Plan the first night"
+        case .startCollecting: "Start collecting"
+        case .keepCollecting: "Keep collecting"
+        case .keepProcessing: "Keep processing"
+        case .writeFinalReport: "Write the final report"
+        case .archived: "Project archived"
+        case let .balanceMosaicPanels(worstPanelLabel, deficitHours):
+            "Balance the panels: \(worstPanelLabel) panel +\(deficitHours.formatted(.number.precision(.fractionLength(1)))) h"
+        }
+    }
+
+    var explanationKey: LocalizedStringKey {
+        switch self {
+        case .planFirstNight, .startCollecting: "Choose a setup, a filter and an exposure series."
+        case .keepCollecting: "Add the missing series on the next good night."
+        case .keepProcessing: "Check the stacks and the results' lineage."
+        case .writeFinalReport: "The project is done; export the shareable summary."
+        case .archived: "Nothing to do."
+        case let .balanceMosaicPanels(worstPanelLabel, _):
+            "\(worstPanelLabel) panel has the biggest integration gap in this mosaic -- capture more of it next."
+        }
+    }
+
+    /// Same `%@` substitution `String(format:arguments:)` would perform, by
+    /// hand -- `V2PolishSurfaceTests.noHandRolledFormatting` bans
+    /// `String(format:` anywhere under `Sources/AstroUI` (a second format
+    /// for a unit `AstroFormat` already owns is a second truth), and this
+    /// case's arguments are already fully-formatted `String`s (see
+    /// `titleArguments`/`explanationArguments`'s own docs), so a plain
+    /// sequential `%@` replace is exactly equivalent here -- there is no
+    /// numeric specifier to interpret.
+    private static func substituting(_ template: String, with arguments: [String]) -> String {
+        var result = template
+        for argument in arguments {
+            guard let range = result.range(of: "%@") else { break }
+            result.replaceSubrange(range, with: argument)
+        }
+        return result
+    }
 
     /// For `Sendable`-constrained storage (`ProjectWorkspaceRow`) that can't
     /// hold a `LocalizedStringKey` -- resolves eagerly against the same
     /// `Bundle.main`/`hu.lproj` table `titleKey`/`explanationKey` resolve
-    /// lazily, so both paths render identically.
-    var localizedTitle: String { NSLocalizedString(titleText, bundle: .main, comment: "") }
-    var localizedExplanation: String { NSLocalizedString(explanationText, bundle: .main, comment: "") }
+    /// lazily, so both paths render identically. Looks up `titleTemplate`
+    /// (the `%@`-templated key), then substitutes `titleArguments` -- a
+    /// no-op substitution for every static-text case.
+    var localizedTitle: String {
+        let format = NSLocalizedString(titleTemplate, bundle: .main, comment: "")
+        return Self.substituting(format, with: titleArguments)
+    }
+
+    var localizedExplanation: String {
+        let format = NSLocalizedString(explanationTemplate, bundle: .main, comment: "")
+        return Self.substituting(format, with: explanationArguments)
+    }
 }
 
 /// V2 UI/UX audit (2026-08-16): `project.phase.rawValue.capitalized`

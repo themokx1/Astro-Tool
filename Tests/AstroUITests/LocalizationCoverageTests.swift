@@ -296,6 +296,16 @@ struct LocalizationCoverageTests {
             "Check the stacks and the results' lineage.",
             "The project is done; export the shareable summary.",
             "Nothing to do.",
+            // W7-F item 2 (2026-08-18 expert audit): ProjectNextActionKind
+            // .balanceMosaicPanels' own templates (titleTemplate/
+            // explanationTemplate in ProjectsStore.swift), plus the
+            // "Panelek" ledger banner's own Text(...) literal
+            // (ProjectWorkspaceView.swift) and its new Deficit column
+            // header.
+            "Balance the panels: %@ panel +%@ h",
+            "%@ panel has the biggest integration gap in this mosaic -- capture more of it next.",
+            "%@ panel is %@ behind %@.",
+            "Deficit",
         ]
         for key in expected {
             #expect(translated.contains(key), "missing Hungarian translation for \"\(key)\"")
