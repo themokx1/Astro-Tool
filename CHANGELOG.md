@@ -8,6 +8,53 @@ történik.
 
 ## [Unreleased]
 
+## [2.0.0-rc.4] - 2026-08-18
+
+### Hozzáadva
+
+- **Behozatal-varázsló** — a hazaérkezés-workflow: csatlakoztatott kötet (ASI
+  Air, kamera-kártya) kiválasztása, a talált FIT/CR3 fájlok osztályozása a FITS
+  `IMAGETYP` fejlécből, cél-session és capture kiválasztása vagy létrehozása,
+  tételes forrás→cél előnézet, majd SHA-256-tal ellenőrzött másolás nyugtával
+  és azonnali beolvasással. A forrás a kártyán érintetlenül marad; a másolásnak
+  nincs visszavonása, és ezt a nyugta ki is mondja.
+- **Új session és capture létrehozása** — három helyről (projekt oldal,
+  projekt-sor, Éjszakák), a capture-ök `sessions/<célpont>/<dátum>/captures/`
+  alá kerülnek; egy éjszakához több capture is felvehető. A dátum-szintű
+  lights/flats/darks/biases mappák capture-rel már nem jönnek létre.
+- **Felhő-előrejelzés** (Open-Meteo, a V1 motorjával): a Kezdőlap
+  éjszaka-kártyáján, a Tervezésben az éjszaka mellett, és a Következő 30
+  éjszaka nézet Felhő oszlopában. A 7 napos horizonton túl őszintén nincs adat.
+- **Results-lap** — a könyvtár valódi stackjei családokba csoportosítva,
+  előnézettel, expozícióval, hellyel; a V1 kipróbált stack-felismerő motorjára
+  kötve.
+- Az Archívum sávja jelmagyarázatot kapott; a találat-lapok mappánként
+  csoportosítanak és karantén-műveletet kínálnak a meglévő
+  előnézet–megerősítés–nyugta–visszavonás folyamaton át.
+- Az integráció-becslés mellett látszik, hány éjszaka kell hozzá a ma esti
+  sötét órákkal számolva.
+
+### Javítva
+
+- A világos mód rétegzése: a lapok visszakapták a szürke alapot, a tartalom
+  egyetlen közös kiemelt-felület definíción ül (él + lágy árnyék világosban),
+  a süllyesztett mezők mindkét megjelenésben valóban süllyednek, a táblázatok
+  a kártyájuk lekerekítésén belül maradnak.
+- Egy betűnyi mappanév-eltérés miatt a legnagyobb célpont exportjai üresek
+  lettek volna — minden export-, Finder- és jegyzet-útvonal ugyanazt a
+  névfeloldót hívja.
+- A műveletek visszajelzése megvárja, hogy az ablak látható legyen; négy néma
+  hibaút hangot kapott; a teszt-alapvonal ismét determinisztikusan zöld.
+- A sidebar Könyvtár-badge mostantól az Archívum-lap kártyáinak összege.
+- A projektek/éjszakák/tervezés lapok felső fele egyetlen akciósorra tömörült;
+  a felügyelő-panel eltűnik, ahol nincs mit kijelölni; a maradék angol
+  szövegek magyarul jelennek meg.
+
+### Eltávolítva
+
+- A soha nem írt lineage-táblák (results/lineage_edges) és holt fogyasztóik;
+  a séma a v8-as migrációval droppolja őket.
+
 ## [2.0.0-rc.3] - 2026-08-17
 
 ### Hozzáadva
