@@ -75,14 +75,13 @@ struct V2NavigationSurfaceTests {
         #expect(route.contains("case cleanup"))
         #expect(route.contains("case sensorProfiles"))
 
-        // The two routes the old flat switch's `default:` silently dropped
-        // to an empty view now have their OWN named case in DetailHost's
-        // destination switch -- no bare `default:` swallowing them. `.result`
-        // dropped its `let rawID` binding when W4-6 (owner decision) removed
-        // the lineage lookup that used to read it (see `MetadataSchema.
-        // versionEightSQL`'s own note); the case itself is still its own,
-        // not folded into `default:`.
-        #expect(root.contains("case .result:"))
+        // The route the old flat switch's `default:` silently dropped to an
+        // empty view now has its OWN named case in DetailHost's destination
+        // switch -- no bare `default:` swallowing it. (`.result` was a
+        // second survivor here until the route-cleanup pass removed
+        // `ContentRoute.result` outright -- see `AppRoute.swift`'s own
+        // `case ("results", ...)` deep-link comment -- so there is no
+        // longer a `.result` case to assert against.)
         #expect(root.contains("case .reviewFrame:"))
 
         let destinationStart = try #require(root.range(of: "private func destination(for route: ContentRoute)"))

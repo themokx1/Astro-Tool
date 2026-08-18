@@ -39,7 +39,6 @@ struct AppRouterTests {
         (.night("night-1"), .night("night-1"), .nights),
         (.series("series-1"), .projectSeries("series-1"), .projects),
         (.frame(42), .reviewFrame(42), .nights),
-        (.result("result-1"), .result("result-1"), .projects),
     ])
     func selectionRouteRoundTrip(
         selection: LibrarySelection,
@@ -207,7 +206,7 @@ struct AppRouterTests {
     @Test("Clearing selection returns to the current section root without touching the inspector")
     func selectionClearing() {
         let router = AppRouter()
-        router.select(.result("stack-1"))
+        router.select(.series("stack-1"))
         #expect(router.isInspectorPresented)
 
         router.clearSelection()

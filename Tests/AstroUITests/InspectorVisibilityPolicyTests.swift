@@ -37,7 +37,6 @@ struct InspectorVisibilityPolicyTests {
         .projectSeries("22222222-2222-2222-2222-222222222222"),
         .night("33333333-3333-3333-3333-333333333333"),
         .reviewFrame(7),
-        .result("44444444-4444-4444-4444-444444444444"),
     ])
     func selectionRoutesHaveInspectorContent(route: ContentRoute) {
         #expect(route.hasInspectorContent)

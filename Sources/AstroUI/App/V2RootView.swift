@@ -1364,7 +1364,6 @@ private struct DetailHost: View {
         case .calibration: "Calibration"
         case .insights: "Insights"
         case .reviewFrame: "Frame Review"
-        case .result: "Result"
         case .review: "Review"
         case .resultsWorkspace: "Results"
         case .conversion: "Organize Session"
@@ -1652,23 +1651,6 @@ private struct DetailHost: View {
                 actionTitle: "Go to Projects",
                 action: { router.navigate(to: .projects) },
                 accessibilityIdentifier: "v2.detail.review-frame"
-            )
-        case .result:
-            // W4-6 (owner decision): this destination used to render
-            // `ResultInspectorPanel`, backed by the two lineage tables --
-            // no writer anywhere in the product ever populated them, and
-            // schema v8 drops them. Global search
-            // no longer produces a `.result` hit either, so this route is
-            // reachable only from a stale restored window state or an old
-            // deep link; an honest placeholder beats a panel that could
-            // never have shown anything real.
-            V2EmptyDetail(
-                title: "Result",
-                message: "Result provenance isn't tracked -- stacking and selection happen in Siril.",
-                systemImage: "square.stack.3d.up",
-                actionTitle: "Go to Projects",
-                action: { router.navigate(to: .projects) },
-                accessibilityIdentifier: "v2.detail.result"
             )
         case .review(let projectID):
             if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback {

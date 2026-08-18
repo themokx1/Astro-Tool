@@ -72,7 +72,7 @@ struct V2PolishSurfaceTests {
         #expect(!(hasStubTypeRow && hasStubIdentifierRow))
     }
 
-    @Test("InspectorView renders real, distinct content for project, night, series, and result selections")
+    @Test("InspectorView renders real, distinct content for project, night, and series selections")
     func inspectorHasContextualContentForEverySelectionKind() throws {
         let source = try contents("Sources/AstroUI/Inspector/InspectorView.swift")
 
@@ -90,15 +90,15 @@ struct V2PolishSurfaceTests {
         #expect(source.contains("case .series"))
         #expect(source.contains("SeriesInspector("))
 
-        // result: W4-6 (owner decision) removed the lineage-vocabulary
-        // provenance panel this used to render -- it read the `results`/
-        // `lineage_edges` tables, which no writer anywhere in the product
-        // ever populated and which schema v8 drops. `.result` now renders
-        // the same honest, named placeholder as every other selection this
-        // window cannot resolve, rather than a panel that could never have
-        // shown anything real.
-        #expect(source.contains("case .result"))
-        #expect(source.contains("\"Result\", systemImage:"))
+        // result: the route-cleanup pass removed `LibrarySelection.result`/
+        // `ContentRoute.result` outright (W4-6 (owner decision) had already
+        // reduced it to an honest, unreachable placeholder -- no writer
+        // anywhere in the product ever populated the two lineage tables its
+        // old panel read, schema v8 dropped them, and global search had
+        // already stopped producing `.result` hits, leaving nothing left
+        // that could construct the case), so there is no longer a `.result`
+        // branch here to assert against.
+        #expect(!source.contains("case .result"))
 
         // Nothing selected still gets a quiet, honest empty state.
         #expect(source.contains("ContentUnavailableView"))

@@ -1646,3 +1646,22 @@
    same reason. */
 "Opening the library…" = "Könyvtár megnyitása…";
 "Tonight's site will appear once the library finishes opening." = "A ma esti helyszín megjelenik, amint a könyvtár megnyílik.";
+
+/* Wave 2 Task 8 route cleanup: removing LibrarySelection.result/
+   ContentRoute.result (the dead lineage-schema route -- see
+   InspectorView.swift's own doc comment) dropped "result" from
+   InspectorView's "No Selection" empty-state sentence, which changes the
+   literal English key -- the old "...series, or result..." hu.lproj entry
+   above stays as a harmless orphan rather than being edited in place. */
+"Select a project, night, or series to inspect it here." = "Válassz ki egy projektet, éjszakát vagy sorozatot, hogy itt megtekinthesd.";
+
+/* W5-3 (owner pixel review, 2026-08-24 IC 4604 night). Both hand-added:
+   `NightWorkspaceView.exposureAdviceReasonText` and its own
+   "This night spans..." merged-session note build their `Text` through a
+   private helper/string interpolation rather than a literal passed
+   straight to `Text(...)`, the same "invisible to
+   `scripts/extract-localizable-strings.swift`" gap `NightsStore
+   .TriageState.localizedText`'s own doc comment documents (a switch/
+   helper-returned value, not a literal call-site argument). */
+"Rate the frames using the “Rate Frames” button above." = "értékeld a képkockákat a fenti „Képkockák értékelése” gombbal";
+"Filters and Capture Groups below combine every session folder for this calendar night: %@." = "A lenti Szűrők és Gyűjtések táblázatok ennek az éjszakának minden session-mappáját összesítik: %@.";

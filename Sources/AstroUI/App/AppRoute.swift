@@ -26,7 +26,6 @@ public enum LibrarySelection: Hashable, Codable, Sendable {
     case night(String)
     case series(String)
     case frame(Int64)
-    case result(String)
 
     public var contentRoute: ContentRoute {
         switch self {
@@ -34,13 +33,12 @@ public enum LibrarySelection: Hashable, Codable, Sendable {
         case .night(let id): .night(id)
         case .series(let id): .projectSeries(id)
         case .frame(let id): .reviewFrame(id)
-        case .result(let id): .result(id)
         }
     }
 
     public var primarySection: PrimarySection {
         switch self {
-        case .project, .series, .result: .projects
+        case .project, .series: .projects
         case .night, .frame: .nights
         }
     }
@@ -64,7 +62,6 @@ public enum ContentRoute: Hashable, Codable, Sendable {
     case calibration
     case insights
     case reviewFrame(Int64)
-    case result(String)
     /// Wave 4 Task 1: the frame-review workspace as a route (was a
     /// window-covering `.overlay` in `V2Shell` -- see the navigation rework
     /// plan). Carries the project whose capture series are being reviewed;
@@ -95,7 +92,7 @@ public enum ContentRoute: Hashable, Codable, Sendable {
     public var primarySection: PrimarySection {
         switch self {
         case .home: .home
-        case .projects, .project, .projectSeries, .result, .review, .resultsWorkspace: .projects
+        case .projects, .project, .projectSeries, .review, .resultsWorkspace: .projects
         case .nights, .night, .reviewFrame: .nights
         case .planning, .savedTargets: .planning
         case .library, .health, .calibration, .conversion, .cleanup, .sensorProfiles, .archiveTaskDetail: .library
@@ -109,7 +106,6 @@ public enum ContentRoute: Hashable, Codable, Sendable {
         case .projectSeries(let id): .series(id)
         case .night(let id): .night(id)
         case .reviewFrame(let id): .frame(id)
-        case .result(let id): .result(id)
         default: nil
         }
     }
@@ -198,8 +194,14 @@ public enum AppRoute: Hashable, Sendable {
         case ("frames", let parts) where parts.count == 1:
             guard let id = Int64(parts[0]) else { return nil }
             self = .selection(.frame(id))
-        case ("results", let parts) where parts.count == 1 && !parts[0].isEmpty:
-            self = .selection(.result(parts[0]))
+        // W4-6 (owner decision) dropped the `.result`/lineage-schema
+        // routing this used to map to -- no writer anywhere in the product
+        // ever populated the two lineage tables it pointed at, and global
+        // search stopped producing `.result` hits at the same time (see
+        // `LibrarySelection`'s own doc history). `astrotool://results/<id>`
+        // is not documented anywhere the way `astrotool://library/health`
+        // below is, so it simply falls through to `default: return nil`
+        // now, exactly like any other unrecognized host.
         case ("planning", []): self = .content(.planning)
         case ("planning", ["saved"]): self = .content(.savedTargets)
         case ("library", []): self = .content(.library)

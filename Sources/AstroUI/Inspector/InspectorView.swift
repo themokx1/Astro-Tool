@@ -6,18 +6,20 @@ import SwiftUI
 /// switches on the router's current selection and renders real content
 /// sourced from the stores already open in this window (`ProjectsStore`/
 /// `NightsStore`/`ReviewStore`), the same data their own detail views
-/// already show. W4-6 (owner decision) removed the `.result` case's own
-/// query: it read the two lineage tables, which no writer anywhere in the
-/// product ever populated and which schema v8 drops. `.result` now renders
-/// the same honest placeholder as `.frame`, a structurally-possible-but-
-/// unreachable selection.
+/// already show. W4-6 (owner decision) first removed the (by-then honest-
+/// placeholder-only) `.result` case's own lineage query, then the route
+/// cleanup pass removed `LibrarySelection.result`/`ContentRoute.result`
+/// entirely: no writer anywhere in the product ever populated the two
+/// lineage tables the old query read, schema v8 dropped them, and global
+/// search had already stopped producing `.result` hits, leaving nothing
+/// left that could ever construct the case.
 ///
 /// Every branch that cannot find real data for its selection (the
-/// project/night/series/result string doesn't resolve against what's
-/// currently loaded, or a `.frame` selection -- which nothing in
-/// production actually constructs today, see `LibrarySelection.frame`'s
-/// own doc comment) renders an honest, quiet placeholder rather than
-/// pretending to show something -- never a silent no-op.
+/// project/night/series string doesn't resolve against what's currently
+/// loaded, or a `.frame` selection -- which nothing in production actually
+/// constructs today, see `LibrarySelection.frame`'s own doc comment)
+/// renders an honest, quiet placeholder rather than pretending to show
+/// something -- never a silent no-op.
 ///
 /// W3-9 (Defect 3): an owner screenshot showed the project detail page open
 /// (real project metadata visible in the detail column) while this
@@ -27,7 +29,7 @@ import SwiftUI
 /// (`AppRouter.inspectorSelection`), which is a narrower concept than "what
 /// route is currently open" -- it is `nil` on plenty of ticks where a
 /// project legitimately IS open in the detail column but nothing MORE
-/// specific (a night/series/frame/result) is selected inside it. The old
+/// specific (a night/series/frame) is selected inside it. The old
 /// body treated that exactly like "nothing is open at all". Finder's own
 /// inspector doesn't do this: with no specific item selected it shows the
 /// CURRENT FOLDER, not a blank panel -- the folder is the fallback, not the
@@ -86,7 +88,7 @@ public struct InspectorView: View {
                 ContentUnavailableView {
                     Label("No Selection", systemImage: "sidebar.right")
                 } description: {
-                    Text("Select a project, night, series, or result to inspect it here.")
+                    Text("Select a project, night, or series to inspect it here.")
                 } actions: {
                     Button("Hide Inspector", action: hideInspector)
                 }
@@ -108,8 +110,6 @@ public struct InspectorView: View {
             seriesPanel(rawID)
         case .frame:
             framePanel()
-        case .result:
-            resultPanel()
         }
     }
 
@@ -179,23 +179,6 @@ public struct InspectorView: View {
         unavailable(
             "Frame", systemImage: "photo",
             message: "Frame details are shown while reviewing frames in the Review workspace."
-        )
-    }
-
-    @ViewBuilder
-    private func resultPanel() -> some View {
-        // W4-6 (owner decision): the two lineage tables this panel used to
-        // read (via `ResultInspectorPanel`/`ResultsQuery.
-        // snapshot(projectID:)`) had no writer anywhere in the product and
-        // were dropped in schema v8 -- the owner stacks in Siril and selects
-        // there by hand; this app's job is triage and archiving, not
-        // lineage. `.result` selections are otherwise unreachable today
-        // (global search no longer produces them either), but the case
-        // itself stays on `LibrarySelection` for now, so this renders an
-        // honest placeholder rather than a removed panel type.
-        unavailable(
-            "Result", systemImage: "square.stack.3d.up",
-            message: "Result provenance isn't tracked -- stacking and selection happen in Siril."
         )
     }
 
