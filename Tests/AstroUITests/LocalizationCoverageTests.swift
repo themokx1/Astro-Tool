@@ -39,6 +39,19 @@ struct LocalizationCoverageTests {
         "Bias",
     ]
 
+    /// W5-2 fix (discovered running this task's own new `--verbose` test):
+    /// `waitUntilExit()` used to run BEFORE draining `stdout`'s pipe. A
+    /// child process blocks once it fills the OS pipe buffer (64KB) if
+    /// nobody is reading the other end -- `--missing`/no-args output is
+    /// small enough to never hit that, but `--verbose` prints one
+    /// `file:line: key` per extraction (700+ lines), comfortably over 64KB,
+    /// so the very first test to pass `--verbose` deadlocked the whole
+    /// suite: parent blocked in `waitUntilExit()`, child blocked writing to
+    /// a full, undrained pipe, neither ever proceeding. Reading the pipe to
+    /// EOF FIRST (which itself only returns once the child closes stdout,
+    /// i.e. at or before exit) and waiting on the process afterward drains
+    /// concurrently with the child's writes, so no output size can ever
+    /// deadlock this again.
     private func runExtractionScript(arguments: [String] = []) throws -> [String] {
         let scriptURL = repositoryRoot.appendingPathComponent("scripts/extract-localizable-strings.swift")
         let process = Process()
@@ -49,8 +62,8 @@ struct LocalizationCoverageTests {
         process.standardOutput = stdout
         process.standardError = Pipe() // discard diagnostics; keep the test's own output clean
         try process.run()
-        process.waitUntilExit()
         let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         let output = String(data: data, encoding: .utf8) ?? ""
         return output.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
     }
@@ -368,5 +381,51 @@ struct LocalizationCoverageTests {
             violations.isEmpty,
             "Store-composed display string(s) bypassing localization -- route these through NSLocalizedString/String(format:)/LocalizedStringKey instead: \(violations.joined(separator: " | "))"
         )
+    }
+
+    // MARK: - W5-2 findings 1 & 3 regression (owner pixel review, real library)
+    //
+    // A literal `%` inside an INTERPOLATED `LocalizedStringKey` (one that
+    // contains at least one `\(...)`) is escaped to `%%` by the real Swift
+    // compiler -- verified empirically with `dump()` on the actual SwiftUI
+    // type: `"\(x)% of edge"` builds key `"%@%% of edge"`, not `"%@% of
+    // edge"`. Before `assembleKey` in `extract-localizable-strings.swift`
+    // accounted for this, three call sites (`ArchiveStripView.reclaimHelpText`,
+    // and `PlanningView`'s two "of edge"/"of short edge" cells) were hand-added
+    // to `hu.lproj` under the WRONG (single-`%`) key, so the Hungarian
+    // translation could never be found at runtime and all three silently
+    // rendered in English -- exactly what the owner's screenshot showed.
+
+    @Test("The extraction script doubles a literal % inside an interpolated LocalizedStringKey, matching the real compiler")
+    func extractionScriptDoublesPercentInInterpolatedKeys() throws {
+        // Matched by file + exact trailing key text, not by line number --
+        // an unrelated doc-comment edit anywhere earlier in either file
+        // shifts every subsequent line number without changing which key
+        // the call site actually produces, so pinning an exact line here
+        // would make this test fragile for reasons that have nothing to do
+        // with what it is actually checking.
+        let extractions = try runExtractionScript(arguments: ["--verbose"])
+        func hasExtraction(inFile file: String, key: String) -> Bool {
+            extractions.contains { $0.hasPrefix(file + ":") && $0.hasSuffix(": " + key) }
+        }
+        #expect(hasExtraction(inFile: "Sources/AstroUI/Features/Archive/ArchiveStripView.swift", key: "%@ reclaimable, %@%% of the archive"))
+        #expect(hasExtraction(inFile: "Sources/AstroUI/Features/Planning/PlanningView.swift", key: "%@%% of edge"))
+        #expect(hasExtraction(inFile: "Sources/AstroUI/Features/Planning/PlanningView.swift", key: "%@%% of short edge"))
+    }
+
+    @Test("hu.lproj carries the correctly double-%-escaped keys for the reclaim sentence and the two coverage-percent cells")
+    func percentEscapedKeysAreTranslated() throws {
+        let translated = try parseStringsFile(
+            repositoryRoot.appendingPathComponent("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
+        )
+        #expect(translated.contains("%@ reclaimable, %@%% of the archive"))
+        #expect(translated.contains("%@%% of edge"))
+        #expect(translated.contains("%@%% of short edge"))
+        // The old, never-matchable single-`%` keys must be gone, not just
+        // supplemented -- a stale wrong entry sitting next to the correct
+        // one is exactly the kind of thing that gets copy-pasted forward.
+        #expect(!translated.contains("%@ reclaimable, %@% of the archive"))
+        #expect(!translated.contains("%@% of edge"))
+        #expect(!translated.contains("%@% of short edge"))
     }
 }

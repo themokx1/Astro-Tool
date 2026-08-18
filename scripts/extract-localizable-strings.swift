@@ -349,6 +349,38 @@ struct ScannedLiteral {
     let endIndex: String.Index
 }
 
+/// A literal `%` in a source string becomes `%%` in the `LocalizedStringKey`
+/// the real Swift compiler builds, but ONLY when the overall literal contains
+/// at least one interpolation -- verified empirically with `dump()` on the
+/// actual SwiftUI type: `"\(x)% of edge"` produces key `"%@%% of edge"`,
+/// while a literal with no interpolation at all, e.g. `"Sample only (10%)"`,
+/// keeps its single `%` (`LocalizedStringKey.init(stringLiteral:)` never
+/// escapes it; only the interpolation-building path does, and it escapes
+/// every literal segment of the string, not just the one next to an
+/// interpolation). Before this was accounted for,
+/// `ArchiveStripView.reclaimHelpText`'s `"\(bytesText) reclaimable,
+/// \(percentText)% of the archive"` extracted as `"%@ reclaimable, %@% of
+/// the archive"` (single `%`) while the real runtime lookup key was `"%@
+/// reclaimable, %@%% of the archive"` (double `%%`) -- an `hu.lproj` entry
+/// hand-added against the script's wrong guess could never match at runtime,
+/// so the sentence silently rendered in English forever despite looking
+/// "translated" in the `.strings` file. This function assembles literal and
+/// placeholder segments separately so doubling can apply only to the
+/// literal segments (a placeholder like `%@`/`%lld`/`%lf` must never be
+/// doubled itself).
+func assembleKey(literalSegments: [String], hasInterpolation: Bool) -> String {
+    guard hasInterpolation else { return literalSegments.joined() }
+    var result = ""
+    for (index, segment) in literalSegments.enumerated() {
+        if index % 2 == 0 {
+            result += segment.replacingOccurrences(of: "%", with: "%%")
+        } else {
+            result += segment
+        }
+    }
+    return result
+}
+
 /// `start` must point at the opening `"`. Returns nil if `start` isn't a
 /// quote, or the literal never closes (malformed/truncated input).
 func scanStringLiteral(
@@ -359,7 +391,12 @@ func scanStringLiteral(
 ) -> ScannedLiteral? {
     guard start < source.endIndex, source[start] == "\"" else { return nil }
     var i = source.index(after: start)
-    var result = ""
+    // Alternates literal, placeholder, literal, placeholder, ... always
+    // starting and ending on a literal segment (possibly empty) -- see
+    // `assembleKey` for why literal and placeholder segments must stay
+    // distinguishable this far.
+    var literalSegments: [String] = [""]
+    var hasInterpolation = false
     while i < source.endIndex {
         let c = source[i]
         if c == "\\" {
@@ -367,6 +404,7 @@ func scanStringLiteral(
             guard next < source.endIndex else { return nil }
             let nc = source[next]
             if nc == "(" {
+                hasInterpolation = true
                 var depth = 1
                 let exprStart = source.index(after: next)
                 var j = exprStart
@@ -380,19 +418,21 @@ func scanStringLiteral(
                 }
                 guard j < source.endIndex else { return nil }
                 let expr = String(source[exprStart..<j])
-                result += inferPlaceholder(for: expr, typeIndex: typeIndex, functionReturnTypeIndex: functionReturnTypeIndex)
+                literalSegments.append(inferPlaceholder(for: expr, typeIndex: typeIndex, functionReturnTypeIndex: functionReturnTypeIndex))
+                literalSegments.append("")
                 i = source.index(after: j)
                 continue
             } else {
-                result.append(c)
-                result.append(nc)
+                literalSegments[literalSegments.count - 1].append(c)
+                literalSegments[literalSegments.count - 1].append(nc)
                 i = source.index(after: next)
                 continue
             }
         } else if c == "\"" {
-            return ScannedLiteral(displayKey: result, endIndex: source.index(after: i))
+            let displayKey = assembleKey(literalSegments: literalSegments, hasInterpolation: hasInterpolation)
+            return ScannedLiteral(displayKey: displayKey, endIndex: source.index(after: i))
         } else {
-            result.append(c)
+            literalSegments[literalSegments.count - 1].append(c)
             i = source.index(after: i)
         }
     }

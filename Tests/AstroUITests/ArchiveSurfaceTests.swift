@@ -91,6 +91,30 @@ struct ArchiveStripLegendSurfaceTests {
         #expect(text.contains("v2.archive.strip.legend.reclaimable"))
         #expect(text.contains("v2.archive.strip.legend.\\(identifier)"))
     }
+
+    /// W5-2 finding 1 (owner pixel review): the legend's reclaim entry and
+    /// its first chip both rendered with a mid-sentence "…" -- `.lineLimit(1)`
+    /// forces a single line no matter how wide the entry's own text actually
+    /// is. A legend must never lose information to truncation; entries that
+    /// don't fit one line must wrap onto a second line inside their own grid
+    /// cell instead.
+    @Test("No legend entry caps itself at one line -- truncation in a legend is never acceptable")
+    func legendEntriesNeverTruncate() throws {
+        let text = try source()
+        let legendRange = try #require(text.range(of: "private var legend:"))
+        let legendSection = text[legendRange.lowerBound...]
+        #expect(!legendSection.contains(".lineLimit(1)"), "a legend entry must wrap, not truncate with an ellipsis")
+    }
+
+    @Test("The legend's adaptive column is wide enough for a real entry to fit one line at the page's normal width")
+    func legendColumnIsWideEnoughForRealText() throws {
+        let text = try source()
+        // 168pt was proven too narrow by the owner's own screenshot
+        // ("Light frame-ek · 237,74 GB · 4 255 fájl" truncated even before
+        // wrapping kicked in); 220pt is the corrected minimum.
+        #expect(!text.contains(".adaptive(minimum: 168)"), "168pt was too narrow for real Hungarian entry text")
+        #expect(text.contains(".adaptive(minimum: 220)"))
+    }
 }
 
 /// `ArchiveVerdict` is the one sentence at the top of the Archive page --

@@ -123,9 +123,21 @@ struct ArchiveStripView: View {
     /// physical line at every window width this page supports; it still
     /// reads as "one compact row" at the page's normal width and wraps
     /// gracefully rather than truncating or overflowing when it does not.
+    ///
+    /// W5-2 finding 1 (owner pixel review): 168pt was narrower than real
+    /// Hungarian entry text ("Light frame-ek · 237,74 GB · 4 255 fájl" is
+    /// well past 168pt at caption size), so even though the grid already
+    /// wrapped extra chips onto a second row, individual chips were still
+    /// truncating mid-sentence with an ellipsis. Widened to 220pt so a
+    /// typical entry fits one line at the page's normal width, and each
+    /// entry's own `Text` no longer caps itself at one line (see
+    /// `legendEntry`/`reclaimLegendEntry` below) -- so a legend entry that
+    /// still doesn't fit wraps onto its own second line inside its cell
+    /// instead of ever truncating with "…". A legend is not the place for
+    /// lossy text.
     private var legend: some View {
         LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 168), spacing: AstroTokens.Spacing.standard)],
+            columns: [GridItem(.adaptive(minimum: 220), spacing: AstroTokens.Spacing.standard)],
             alignment: .leading, spacing: 4
         ) {
             ForEach(Array(layout.segments.enumerated()), id: \.offset) { _, segment in
@@ -136,20 +148,23 @@ struct ArchiveStripView: View {
         .accessibilityIdentifier("v2.archive.strip.legend")
     }
 
-    /// Chip + class name + size, one line -- reuses `detailText(for:)`
-    /// verbatim (the same "bytes · files" text already shown in this
-    /// segment's own tooltip above), so the legend's numbers are always the
-    /// strip's own numbers, never a re-derived copy.
+    /// Chip + class name + size -- reuses `detailText(for:)` verbatim (the
+    /// same "bytes · files" text already shown in this segment's own
+    /// tooltip above), so the legend's numbers are always the strip's own
+    /// numbers, never a re-derived copy. No `.lineLimit` -- see `legend`'s
+    /// own doc comment on why a legend entry must wrap rather than
+    /// truncate.
     private func legendEntry(for segment: ArchiveStripLayout.Segment) -> some View {
         let identifier = segment.archiveClass?.rawValue ?? "residual"
-        return HStack(spacing: 6) {
+        return HStack(alignment: .top, spacing: 6) {
             Circle()
                 .fill(segment.archiveClass.map(AstroTokens.Color.forArchiveClass) ?? AstroTokens.Color.edge)
                 .frame(width: 8, height: 8)
+                .padding(.top, 3)
             (Text(segment.archiveClass?.displayName ?? "Other") + Text(verbatim: " · ") + detailText(for: segment))
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("v2.archive.strip.legend.\(identifier)")
@@ -160,16 +175,18 @@ struct ArchiveStripView: View {
     /// duplicate-content total `ArchiveMapQuery.reclaimableCategories`
     /// computes and the strip's own rail already renders. Reuses
     /// `reclaimHelpText` verbatim rather than composing a second sentence
-    /// that says the same thing in different words.
+    /// that says the same thing in different words. No `.lineLimit` -- see
+    /// `legend`'s own doc comment.
     private var reclaimLegendEntry: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .top, spacing: 6) {
             Capsule()
                 .fill(AstroTokens.Color.critical)
                 .frame(width: 14, height: 5)
+                .padding(.top, 5)
             reclaimHelpText
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("v2.archive.strip.legend.reclaimable")

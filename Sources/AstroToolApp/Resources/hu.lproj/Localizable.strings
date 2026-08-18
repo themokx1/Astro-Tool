@@ -53,8 +53,17 @@
 "%@ · %@ files" = "%@ · %@ fájl";
 "%@ · %lld nights" = "%@ · %lld éjszaka";
 "%@ · stacks, variants, and provenance" = "%@ · stackek, változatok és eredet";
-"%@% of edge" = "%@% a szélből";
-"%@% of short edge" = "%@% a rövid szélből";
+// W5-2 finding 3 (owner pixel review): these two were keyed with a single
+// `%`, but `PlanningView.swift`'s `Text("\(pct, format: ...)% of edge")` /
+// "...% of short edge" both contain an INTERPOLATION, and a
+// `LocalizedStringKey` doubles every literal `%` in a string that has any
+// interpolation at all (verified with `dump()` on the actual SwiftUI type --
+// see `scripts/extract-localizable-strings.swift`'s `assembleKey`), so the
+// real runtime lookup key is `%@%% of edge`/`%@%% of short edge`, not
+// `%@% of edge`/`%@% of short edge`. The old single-`%` entries never
+// matched at runtime, so both columns silently stayed in English.
+"%@%% of edge" = "az él %@%%-a";
+"%@%% of short edge" = "a rövid él %@%%-a";
 "%@: %@" = "%@: %@";
 "%@° away" = "%@° távolságra";
 "%@° max alt" = "%@° max. magasság";
@@ -809,7 +818,14 @@
 // be `String`-typed (invisible to the extraction script, never localizes);
 // hand-added here now that it is `Text`, same reasoning as every other
 // hand-added group above.
-"%@ reclaimable, %@% of the archive" = "%@ felszabadítható, az archívum %@%-a";
+// W5-2 finding 1 (owner pixel review): same double-`%` escaping trap as the
+// "of edge"/"of short edge" entries above -- `ArchiveStripView.swift`'s
+// `reclaimHelpText` interpolates two values into a literal containing a `%`,
+// so the real runtime key doubles it (`%@ reclaimable, %@%% of the
+// archive`), not the single-`%` key this used to be keyed under. Wording
+// matches the card's own "%@ can be reclaimed" vocabulary ("nyerhető
+// vissza" / "visszanyerhető").
+"%@ reclaimable, %@%% of the archive" = "%@ visszanyerhető — az archívum %@%%-a";
 
 // ArchiveView.swift (Task 12) -- `ProgressView("Reading the archive…")`'s
 // literal IS correctly `LocalizedStringKey`-typed (it resolves at runtime
