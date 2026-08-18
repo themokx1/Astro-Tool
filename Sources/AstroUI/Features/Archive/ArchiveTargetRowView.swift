@@ -54,15 +54,37 @@ struct ArchiveTargetRowView: View {
                 .frame(maxWidth: .infinity)
             valueBlock
                 .frame(width: 92, alignment: .trailing)
+            // W6-E item 7 (live pixel review): "Preview Quarantine for This
+            // Target…" used to be reachable ONLY through the right-click
+            // context menu, with no visible affordance on the row itself.
+            // Same row-actions convention as `ProjectWorkspaceView`'s
+            // `nightActionMenu`/`seriesActionMenu` ("one set, not two"): the
+            // same `rowActions` builder backs both this menu and the
+            // context menu below.
+            Menu {
+                rowActions
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("More actions")
+            .accessibilityIdentifier("v2.archive.target.\(row.id).actions")
         }
         .padding(.vertical, AstroTokens.Spacing.compact / 2)
         .contentShape(Rectangle())
         .onTapGesture(count: 2, perform: onRevealInFinder)
-        .contextMenu {
-            Button("Reveal in Finder", action: onRevealInFinder)
-            Button("Preview Quarantine for This Target…", action: onPreviewQuarantine)
-        }
+        .contextMenu { rowActions }
         .accessibilityIdentifier("v2.archive.target.\(row.id)")
+    }
+
+    /// The ONE place this row's action set is declared -- both the visible
+    /// ellipsis menu and the right-click context menu build from this same
+    /// function.
+    @ViewBuilder
+    private var rowActions: some View {
+        Button("Reveal in Finder", action: onRevealInFinder)
+        Button("Preview Quarantine for This Target…", action: onPreviewQuarantine)
     }
 
     @ViewBuilder

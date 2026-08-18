@@ -224,11 +224,29 @@ public struct ArchiveTaskDetailView: View {
                     .foregroundStyle(.secondary)
             }
         case .finding(let finding):
-            Text(finding.path)
-                .font(.callout.monospaced())
-                .lineLimit(1)
-                .truncationMode(.head)
-                .textSelection(.enabled)
+            // W6-E item 8 (live pixel review): a byte-identical duplicate
+            // group's own finding already knows every path that shares its
+            // content (`ArchiveFinding.siblingPaths`, parsed from the
+            // finding's own stored message -- no new query). Showing only
+            // THIS row's path, with no hint that the "duplicate" claim has
+            // a specific other file backing it, was the owner's own
+            // complaint. Empty for every kind except `.duplicateContent`,
+            // so every other row renders exactly as before.
+            VStack(alignment: .leading, spacing: 2) {
+                Text(finding.path)
+                    .font(.callout.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .textSelection(.enabled)
+                if !finding.siblingPaths.isEmpty {
+                    Text("Byte-identical to: \(finding.siblingPaths.joined(separator: ", "))")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .textSelection(.enabled)
+                }
+            }
         }
     }
 

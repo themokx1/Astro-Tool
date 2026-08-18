@@ -1878,3 +1878,8 @@
    --missing` was reporting "Sensor Profiles…" as genuinely untranslated.) */
 "Measure one on the Sensor Profiles page." = "Mérj egyet a Szenzorprofilok oldalon.";
 "Sensor Profiles…" = "Szenzorprofilok…";
+
+/* W6-E item 8: the duplicate-content finding row now shows its own
+   byte-identical sibling path(s), parsed from the finding's own stored
+   message (ArchiveTaskQuery.parseDuplicateSiblingPaths) -- no new query. */
+"Byte-identical to: %@" = "Byte-azonos ezzel: %@";

@@ -327,6 +327,52 @@ struct ArchiveTaskQueryTests {
         #expect(a.bytes == 1000)
     }
 
+    // MARK: - W6-E item 8: a duplicate-content finding shows its own siblings
+
+    @Test("findings(for: .duplicateContent) parses sibling paths from the finding's own stored message, excluding itself")
+    func duplicateContentFindingsCarryTheirOwnSiblingPaths() async throws {
+        let index = try Self.makeIndexDatabase()
+        let db = try SQLiteDB(path: index.path)
+        // The exact message shape `DuplicateFinder.finding(for:)` (AstroCore)
+        // writes for a real byte-identical group -- `path` is only the
+        // group's first (sorted) member, the message lists every member.
+        try db.exec("""
+            INSERT INTO findings VALUES(
+                20, 2, 'suspicious', 'duplicate-content', 'a.fit',
+                'azonos tartalom 3 fájlban (méret: 1024 bájt/fájl, pazarolt hely: 2048 bájt): a.fit, b.fit, c.fit'
+            );
+            """)
+
+        let findings = try await ArchiveTaskQuery(indexDatabaseForTesting: index).findings(for: .duplicateContent)
+        let group = try #require(findings.first { $0.path == "a.fit" })
+        #expect(group.siblingPaths == ["b.fit", "c.fit"], "must list every OTHER member, never itself")
+    }
+
+    @Test("A duplicate-content finding with no parseable message (older row shape) reports no siblings, never crashes")
+    func duplicateContentFindingsWithUnparseableMessageReportNoSiblings() async throws {
+        let index = try Self.makeIndexDatabase()
+        // The shared fixture's own 'dupe.fit' finding (row 3) has message
+        // 'copy' -- no "): " marker at all, the pre-this-fix shape.
+        let findings = try await ArchiveTaskQuery(indexDatabaseForTesting: index).findings(for: .duplicateContent)
+        let dupe = try #require(findings.first { $0.path == "dupe.fit" })
+        #expect(dupe.siblingPaths.isEmpty)
+    }
+
+    @Test("Every non-duplicateContent kind never attempts to parse sibling paths from its own message")
+    func nonDuplicateKindsNeverCarrySiblingPaths() async throws {
+        let index = try Self.makeIndexDatabase()
+        let findings = try await ArchiveTaskQuery(indexDatabaseForTesting: index).findings(for: .intermediateFiles)
+        #expect(findings.allSatisfy { $0.siblingPaths.isEmpty })
+    }
+
+    @Test("parseDuplicateSiblingPaths splits on the message's own '): ' marker and trims whitespace")
+    func parseDuplicateSiblingPathsUnitBehavior() {
+        let message = "azonos tartalom 3 fájlban (méret: 1024 bájt/fájl, pazarolt hely: 2048 bájt): a.fit, b.fit, c.fit"
+        #expect(ArchiveTaskQuery.parseDuplicateSiblingPaths(message: message, excluding: "b.fit") == ["a.fit", "c.fit"])
+        #expect(ArchiveTaskQuery.parseDuplicateSiblingPaths(message: "no marker here", excluding: "a.fit").isEmpty)
+        #expect(ArchiveTaskQuery.parseDuplicateSiblingPaths(message: "", excluding: "a.fit").isEmpty)
+    }
+
     @Test("findings(for:) pools every category a kind maps to")
     func findingsPoolEveryCategoryForAKind() async throws {
         let index = try Self.makeIndexDatabase()

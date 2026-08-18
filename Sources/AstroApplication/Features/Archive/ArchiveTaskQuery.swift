@@ -190,11 +190,25 @@ public struct ArchiveFinding: Equatable, Sendable, Identifiable {
     public let id: Int64
     public let path: String
     public let bytes: Int64
+    /// W6-E item 8 (live pixel review): every OTHER path in this finding's
+    /// own byte-identical group. `DuplicateFinder.findDuplicates` (AstroCore)
+    /// emits exactly ONE `Finding` per duplicate GROUP, not one per file --
+    /// `path` above is only the group's first (sorted) member -- but its own
+    /// `message` already lists every member, comma-separated
+    /// (`DuplicateFinder.finding(for:)`'s own `"...): \(sortedPaths.joined(
+    /// separator: ", "))"`). Parsed here, from that already-stored message,
+    /// rather than a new query -- see `ArchiveTaskQuery.parseDuplicateSibling
+    /// Paths(message:excluding:)`. Empty for every category except
+    /// `.duplicateContent`; `.duplicateContent` findings with an old, pre-
+    /// this-fix `message` shape (or no message at all) also parse to empty
+    /// rather than crash or show garbage.
+    public let siblingPaths: [String]
 
-    public init(id: Int64, path: String, bytes: Int64) {
+    public init(id: Int64, path: String, bytes: Int64, siblingPaths: [String] = []) {
         self.id = id
         self.path = path
         self.bytes = bytes
+        self.siblingPaths = siblingPaths
     }
 }
 
@@ -344,6 +358,25 @@ public struct ArchiveTaskQuery: Sendable {
         (path as NSString).lastPathComponent == ".DS_Store"
     }
 
+    /// W6-E item 8: `DuplicateFinder.finding(for:)` (AstroCore) writes one
+    /// `message` per byte-identical GROUP, always ending in the exact shape
+    /// `"...): path1, path2, path3"` -- the parenthetical byte-count clause
+    /// right before it (`"(méret: N bájt/fájl, pazarolt hely: N bájt)"`) is
+    /// the only place `"): "` can appear in the whole message, so splitting
+    /// on its FIRST occurrence reliably isolates the comma-separated path
+    /// list without needing to parse the Hungarian prose around it. Returns
+    /// `[]` (never crashes) for any message that doesn't contain that
+    /// marker at all -- an older finding row written before this message
+    /// shape existed, or a `.duplicateContent` finding from a future engine
+    /// change this parser was never updated for.
+    static func parseDuplicateSiblingPaths(message: String, excluding ownPath: String) -> [String] {
+        guard let markerRange = message.range(of: "): ") else { return [] }
+        return message[markerRange.upperBound...]
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && $0 != ownPath }
+    }
+
     private static func severity(for kind: ArchiveTaskKind) -> ArchiveTaskSeverity {
         switch kind {
         case .misplacedCalibration, .brokenNames, .corruption: .error
@@ -390,7 +423,7 @@ public struct ArchiveTaskQuery: Sendable {
         var results: [ArchiveFinding] = []
         try db.query(
             """
-            SELECT d.id, d.path, COALESCE(f.size, 0)
+            SELECT d.id, d.path, COALESCE(f.size, 0), d.message
             FROM findings d LEFT JOIN files f ON f.path = d.path
             WHERE d.category IN (\(placeholders))
               AND d.run_id IN (
@@ -403,10 +436,18 @@ public struct ArchiveTaskQuery: Sendable {
         ) { row in
             let path = row.string(1) ?? ""
             guard !path.isEmpty else { return }
+            // W6-E item 8: only `.duplicateContent` findings ever carry
+            // sibling paths in their own `message` -- parsing every OTHER
+            // category's message would just waste cycles on text that was
+            // never written in the shape this parser expects.
+            let siblingPaths = kind == .duplicateContent
+                ? Self.parseDuplicateSiblingPaths(message: row.string(3) ?? "", excluding: path)
+                : []
             results.append(ArchiveFinding(
                 id: row.int64(0) ?? 0,
                 path: path,
-                bytes: row.int64(2) ?? 0
+                bytes: row.int64(2) ?? 0,
+                siblingPaths: siblingPaths
             ))
         }
         // W3-13 (owner screenshot): `.intermediateFiles` and `.osMetadata`

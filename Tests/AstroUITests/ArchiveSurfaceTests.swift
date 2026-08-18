@@ -363,6 +363,16 @@ struct ArchiveViewSurfaceTests {
     // MARK: W6-E item 1 -- a stale audit's own card count is never asserted
     // as unqualified current fact.
 
+    @Test("ArchiveTargetRowView's 'Preview Quarantine for This Target…' is reachable from a visible ellipsis menu, not only the context menu")
+    func targetRowPreviewQuarantineHasAVisibleAffordance() throws {
+        let text = try contents("Sources/AstroUI/Features/Archive/ArchiveTargetRowView.swift")
+        #expect(text.contains("private var rowActions: some View"))
+        #expect(text.contains("Button(\"Preview Quarantine for This Target…\", action: onPreviewQuarantine)"))
+        #expect(text.contains("Button(\"Reveal in Finder\", action: onRevealInFinder)"))
+        #expect(text.contains("Menu {\n                rowActions\n            }"), "the visible ellipsis menu must reuse rowActions")
+        #expect(text.contains(".contextMenu { rowActions }"), "the context menu must reuse the same rowActions, never a second copy")
+    }
+
     @Test("A stale card de-emphasizes its count, swaps to Run Check, and forwards its own count to the detail route")
     func staleCardOverridesActionAndForwardsItsCount() throws {
         let cardSource = try contents("Sources/AstroUI/Features/Archive/ArchiveTaskCard.swift")
@@ -454,6 +464,33 @@ struct ArchiveTaskDetailViewSurfaceTests {
 
     // MARK: W6-E item 1 -- the detail page says why a live re-query
     // disagrees with the count the triggering card showed.
+
+    // MARK: W6-E item 7 -- context-menu-only actions get a visible affordance.
+
+    @Test("ArchiveTaskCard's 'Mark as Acknowledged…' is reachable from a visible ellipsis menu, not only the context menu")
+    func acknowledgeHasAVisibleAffordance() throws {
+        let text = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Features/Archive/ArchiveTaskCard.swift"),
+            encoding: .utf8
+        )
+        #expect(text.contains("private var cardActions: some View"))
+        #expect(text.contains("Button(\"Mark as Acknowledged…\", action: onAcknowledge)"))
+        #expect(text.contains("Menu {\n                cardActions\n            }"), "the visible ellipsis menu must reuse cardActions")
+        #expect(text.contains(".contextMenu { cardActions }"), "the context menu must reuse the same cardActions, never a second copy")
+    }
+
+    // MARK: W6-E item 8 -- a duplicate-content finding row shows its own
+    // byte-identical sibling(s), parsed from the finding's own message.
+
+    @Test("A finding row renders its own siblingPaths when present, reusing ArchiveFinding.siblingPaths -- no new query")
+    func findingRowShowsItsOwnSiblingPaths() throws {
+        let text = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Features/Archive/ArchiveTaskDetailView.swift"),
+            encoding: .utf8
+        )
+        #expect(text.contains("finding.siblingPaths"))
+        #expect(text.contains("Byte-identical to: \\(finding.siblingPaths.joined(separator: \", \"))"))
+    }
 
     @Test("The page accepts the triggering card's own count and explains a live-vs-card disagreement")
     func explainsDisagreementWithTheTriggeringCardsCount() throws {

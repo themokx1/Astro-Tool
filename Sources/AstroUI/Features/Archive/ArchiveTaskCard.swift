@@ -65,6 +65,23 @@ struct ArchiveTaskCard: View {
                 .tint(task.severity == .error
                     ? AstroTokens.Color.critical : AstroTokens.Color.accent)
                 .accessibilityIdentifier("v2.archive.task.\(task.kind.rawValue).action")
+            // W6-E item 7 (live pixel review): "Mark as Acknowledged…" used
+            // to be reachable ONLY through the right-click context menu --
+            // no visible affordance told the reader it existed at all. The
+            // row-actions convention this codebase already uses elsewhere
+            // (`ProjectWorkspaceView.nightActionMenu`/`seriesActionMenu`:
+            // "one set, not two") applies here too: the same `cardActions`
+            // builder backs both this visible ellipsis menu and the context
+            // menu below, so they can never drift apart.
+            Menu {
+                cardActions
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("More actions")
+            .accessibilityIdentifier("v2.archive.task.\(task.kind.rawValue).actions")
         }
         .padding(AstroTokens.Spacing.standard)
         // Task 6 (2026-08-17, Liquid Glass): the literal "kártya" (card) the
@@ -75,8 +92,16 @@ struct ArchiveTaskCard: View {
         // An error card keeps its distinct identity through a red glass
         // tint rather than the former stroked-red border.
         .glassEffect(cardGlass, in: ConcentricRectangle())
-        .contextMenu { Button("Mark as Acknowledged…", action: onAcknowledge) }
+        .contextMenu { cardActions }
         .accessibilityIdentifier("v2.archive.task.\(task.kind.rawValue)")
+    }
+
+    /// The ONE place this card's "extra" action set is declared -- both the
+    /// visible ellipsis menu and the right-click context menu build from
+    /// this same function.
+    @ViewBuilder
+    private var cardActions: some View {
+        Button("Mark as Acknowledged…", action: onAcknowledge)
     }
 
     private var cardGlass: Glass {
