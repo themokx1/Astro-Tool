@@ -48,9 +48,25 @@ public enum EquipmentProfile {
     /// (e.g. `"2x2"`) -- it has no dedicated field on `SetupFingerprint`,
     /// since `descriptor` (part of the `Hashable` conformance) already
     /// carries any difference it makes.
-    public static func fingerprint(meta: FITSMetaRecord, headerJSON: String?) -> SetupFingerprint? {
+    ///
+    /// `focalLengthBuckets` (W7-C) is the per-camera
+    /// `FocalLengthBucketing.clusters(_:)` lookup -- when it has an entry
+    /// for this frame's camera, `focalLengthMM` snaps to that cluster's
+    /// canonical value instead of a plain per-frame rounding, so ASI-Air
+    /// plate-solve jitter (255/256/261/262 mm from one physical rig) always
+    /// collapses to the SAME fingerprint. Defaults to `[:]`, which preserves
+    /// the original "round to the nearest mm" behavior exactly -- existing
+    /// callers that never pass a table see no change at all.
+    public static func fingerprint(
+        meta: FITSMetaRecord,
+        headerJSON: String?,
+        focalLengthBuckets: [String: [Double: Double]] = [:]
+    ) -> SetupFingerprint? {
         let camera = meta.instrume
-        let focalLengthMM = meta.focallen.map { $0.rounded() }
+        let focalLengthMM: Double? = meta.focallen.map { raw in
+            guard let camera, let buckets = focalLengthBuckets[camera] else { return raw.rounded() }
+            return FocalLengthBucketing.canonicalize(raw, buckets: buckets)
+        }
         let pixelSizeUM = meta.xpixsz.map { ($0 * 100).rounded() / 100 }
 
         guard camera != nil || focalLengthMM != nil || pixelSizeUM != nil else { return nil }
@@ -72,7 +88,10 @@ public enum EquipmentProfile {
 
         var parts: [String] = []
         if let camera { parts.append(camera) }
-        if let focalLengthMM { parts.append("\(Int(focalLengthMM))mm") }
+        // `Int(_:)` truncates -- rounded first since a merged bucket's
+        // canonical value can land on a half mm (the median of an
+        // even-sized cluster, e.g. 257.5 for the 255/260 mm buckets).
+        if let focalLengthMM { parts.append("\(Int(focalLengthMM.rounded()))mm") }
         if let pixelSizeUM { parts.append("\(String(format: "%.2f", pixelSizeUM))µm") }
         if let binningText { parts.append(binningText) }
         if let bayerPattern { parts.append(bayerPattern) }
@@ -93,16 +112,41 @@ public enum EquipmentProfile {
     /// audit rules (which only ever see an `AuditContext`) can share it.
     /// Frames with no derivable fingerprint (see `fingerprint`'s doc) are
     /// silently skipped -- they neither create a new bucket nor count
-    /// against an existing one.
-    static func fingerprintCounts(usableLights: [FileRecord], meta: [Int64: FITSMetaRecord]) -> [SetupFingerprint: Int] {
+    /// against an existing one. `focalLengthBuckets` defaults to `[:]`
+    /// (no jitter canonicalization, matching every caller that predates
+    /// W7-C); pass `EquipmentProfile.focalLengthBuckets(_:)`'s result to
+    /// fold ASI-Air plate-solve jitter into one setup per physical rig.
+    static func fingerprintCounts(
+        usableLights: [FileRecord],
+        meta: [Int64: FITSMetaRecord],
+        focalLengthBuckets: [String: [Double: Double]] = [:]
+    ) -> [SetupFingerprint: Int] {
         var counts: [SetupFingerprint: Int] = [:]
         for file in usableLights {
             guard let id = file.id, let record = meta[id],
-                  let fp = fingerprint(meta: record, headerJSON: record.headerJSON)
+                  let fp = fingerprint(meta: record, headerJSON: record.headerJSON, focalLengthBuckets: focalLengthBuckets)
             else { continue }
             counts[fp, default: 0] += 1
         }
         return counts
+    }
+
+    /// Builds the per-camera `FocalLengthBucketing.clusters(_:)` lookup from
+    /// every `(camera, focalLength)` pair in `metas` -- one pass over
+    /// whatever frame population a caller already has in hand (a session's
+    /// lights, a target's lights, ...). Pass the result to `fingerprint`/
+    /// `fingerprintCounts` so two frames of the same physical rig collapse
+    /// to one setup even when their raw `FOCALLEN` differs by the few
+    /// percent ASI-Air's plate-solve refinement jitters it by (W7-C). Frames
+    /// missing a camera or a focal length are skipped, same convention as
+    /// `fingerprint` itself.
+    public static func focalLengthBuckets(_ metas: some Sequence<FITSMetaRecord>) -> [String: [Double: Double]] {
+        var rawByCamera: [String: [Double]] = [:]
+        for meta in metas {
+            guard let camera = meta.instrume, let focalLength = meta.focallen else { continue }
+            rawByCamera[camera, default: []].append(focalLength)
+        }
+        return rawByCamera.mapValues { FocalLengthBucketing.clusters($0) }
     }
 
     /// The most common fingerprint in `counts` -- "this session's setup" for

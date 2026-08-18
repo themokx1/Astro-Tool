@@ -85,6 +85,59 @@ private func insertLight(
     #expect(fp?.pixelSizeUM == 3.76)
 }
 
+// MARK: - W7-C: focalLengthBuckets (ASI Air plate-solve FOCALLEN jitter)
+
+@Test func fingerprintCollapsesJitteredFocalLengthsToOneFingerprintWhenBucketsSupplied() {
+    let metas = [255.0, 256.0, 261.0, 262.0].enumerated().map { index, focallen in
+        FITSMetaRecord(fileID: Int64(index), instrume: "ZWO ASI2600MC Pro", focallen: focallen, xpixsz: 3.76)
+    }
+    let buckets = EquipmentProfile.focalLengthBuckets(metas)
+
+    let fingerprints = Set(metas.map { EquipmentProfile.fingerprint(meta: $0, headerJSON: nil, focalLengthBuckets: buckets) })
+    #expect(fingerprints.count == 1, "255/256/261/262 mm are one physical rig -- should collapse to a single fingerprint")
+}
+
+@Test func fingerprintWithoutBucketsKeepsEachJitteredFocalLengthDistinct() {
+    // Baseline/regression guard: with the default empty table (no caller
+    // opted into bucketing), behavior is unchanged -- every distinct raw
+    // value is still its own fingerprint.
+    let metas = [255.0, 256.0, 261.0, 262.0].enumerated().map { index, focallen in
+        FITSMetaRecord(fileID: Int64(index), instrume: "ZWO ASI2600MC Pro", focallen: focallen, xpixsz: 3.76)
+    }
+    let fingerprints = Set(metas.map { EquipmentProfile.fingerprint(meta: $0, headerJSON: nil) })
+    #expect(fingerprints.count == 4)
+}
+
+@Test func focalLengthBucketsKeepsGenuinelyDifferentOpticsAsSeparateFingerprints() {
+    let metas = [102.0, 133.0, 134.0, 135.0].enumerated().map { index, focallen in
+        FITSMetaRecord(fileID: Int64(index), instrume: "ZWO ASI2600MC Pro", focallen: focallen, xpixsz: 3.76)
+    }
+    let buckets = EquipmentProfile.focalLengthBuckets(metas)
+
+    let fingerprints = metas.map { EquipmentProfile.fingerprint(meta: $0, headerJSON: nil, focalLengthBuckets: buckets) }
+    let wideField = try! #require(fingerprints[0])
+    let telephoto = try! #require(fingerprints[1])
+    #expect(wideField != telephoto, "a 100 mm lens and a 135 mm lens must never merge into one setup")
+}
+
+@Test func focalLengthBucketsScopesClustersPerCamera() {
+    // Two different cameras each jittering around their OWN rig -- one
+    // camera's bucket table must never bleed into the other's.
+    let metas = [
+        FITSMetaRecord(fileID: 1, instrume: "ZWO ASI2600MC Pro", focallen: 261),
+        FITSMetaRecord(fileID: 2, instrume: "ZWO ASI2600MC Pro", focallen: 262),
+        FITSMetaRecord(fileID: 3, instrume: "Canon EOS R8", focallen: 261),
+        FITSMetaRecord(fileID: 4, instrume: "Canon EOS R8", focallen: 50),
+    ]
+    let buckets = EquipmentProfile.focalLengthBuckets(metas)
+
+    let asiFP = EquipmentProfile.fingerprint(meta: metas[0], headerJSON: nil, focalLengthBuckets: buckets)
+    let canonAt261 = EquipmentProfile.fingerprint(meta: metas[2], headerJSON: nil, focalLengthBuckets: buckets)
+    let canonAt50 = EquipmentProfile.fingerprint(meta: metas[3], headerJSON: nil, focalLengthBuckets: buckets)
+    #expect(asiFP?.camera != canonAt261?.camera)
+    #expect(canonAt261?.focalLengthMM != canonAt50?.focalLengthMM)
+}
+
 // MARK: - sessionFingerprints / dominant
 
 @Test func sessionFingerprintsCountsDistinctSetupsAmongUsableLights() throws {
