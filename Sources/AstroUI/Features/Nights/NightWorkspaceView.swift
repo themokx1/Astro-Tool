@@ -344,6 +344,20 @@ public struct NightWorkspaceView: View {
         } else if let message = reportStore.errorMessage {
             ReportEmptyNote(text: LocalizedStringKey(message))
         } else if let report = reportStore.result {
+            // W5-3 (owner pixel review, 2026-08-24 IC 4604 night): when this
+            // night's captures span more than one session date-dir (see
+            // `NightReportQuery.run`'s own doc comment for why -- a
+            // mixed-exposure run split by `SessionConversionPlanner` into a
+            // "-2"-suffixed sibling folder), `filterRows`/`captureGroups`
+            // below already SUM every one of them (`NightReportQuery`
+            // merges them in), so the numbers here now agree with the
+            // header's own usable-frame count. This note is the only trace
+            // of that merge left visible -- without it, two rows both named
+            // e.g. "Untitled" in the Capture Groups table below would look
+            // like an unexplained duplicate rather than two real sessions.
+            if !report.mergedSessionDates.isEmpty {
+                ReportEmptyNote(text: "Filters and Capture Groups below combine every session folder for this calendar night: \(([report.date] + report.mergedSessionDates).joined(separator: ", ")).")
+            }
             ReportSection(title: "Filters") {
                 if report.filterRows.isEmpty {
                     ReportEmptyNote(text: "No filter data for this session.")

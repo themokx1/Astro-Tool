@@ -113,6 +113,72 @@ struct NightReportQueryTests {
         #expect(result.target == "T1")
     }
 
+    // MARK: - W5-3: mixed-exposure run-suffix reconciliation
+    //
+    // Reproduces the exact 221-vs-151 mismatch the owner flagged live
+    // against the real 2026-05-24 IC 4604 Rho Ophiuchi night: a single
+    // target/calendar-night whose captures were split across two session
+    // date-dirs by `SessionConversionPlanner`'s mixed-exposure fix
+    // (`1e20c25`) -- `2026-05-24` (the primary session) and `2026-05-24-2`
+    // (the run-suffix sibling `SessionDateParser` parses to the SAME
+    // canonical `start`). Before this fix, `NightReportQuery.run(date:
+    // "2026-05-24")` only ever saw the primary session's own frames; the
+    // hero card (`NightsQuery`, built from the V2 metadata layer's own
+    // `night_id`-keyed roll-up, which has no notion of this suffix at all)
+    // summed both. This fixture is the shape of that mismatch in miniature:
+    // 2 frames in the primary session, 1 in the run-suffix sibling.
+
+    @Test("Night report query folds a mixed-exposure run-suffix sibling session into the same night's tables")
+    func mergesRunSuffixSiblingSession() throws {
+        let fixture = try NightReportQueryFixture.make()
+        defer { fixture.cleanup() }
+
+        try fixture.writeFITSLight("sessions/T1/2026-05-24/lights/a.fit", exptime: 15)
+        try fixture.writeFITSLight("sessions/T1/2026-05-24/lights/b.fit", exptime: 15)
+        try fixture.writeFITSLight("sessions/T1/2026-05-24-2/lights/c.fit", exptime: 30)
+        try fixture.scan()
+
+        // Ground truth: what a night-level (calendar-date, not exact
+        // session_date string) roll-up would show, computed independently
+        // from the same `SessionStatsQueries.sessions` list the query
+        // itself reads -- never from the query's own output, so a wiring
+        // mistake here would show up as a mismatch rather than a tautology.
+        let allSessions = try SessionStatsQueries.sessions(target: "T1", db: fixture.db, config: fixture.config)
+        let primary = try #require(allSessions.first { $0.dateRaw == "2026-05-24" })
+        let sibling = try #require(allSessions.first { $0.dateRaw == "2026-05-24-2" })
+        #expect(primary.usableLightCount == 2)
+        #expect(sibling.usableLightCount == 1)
+        let nightTotalUsableFrames = primary.usableLightCount + sibling.usableLightCount
+        #expect(nightTotalUsableFrames == 3)
+
+        let result = try NightReportQuery(db: fixture.db, config: fixture.config).run(target: "T1", date: "2026-05-24")
+
+        // The mismatch this ticket exists to close: the tables' own total
+        // now equals the night's real total, not just the primary
+        // session's 2-frame slice.
+        #expect(result.mergedSessionDates == ["2026-05-24-2"])
+        #expect(result.filterRows.reduce(0) { $0 + $1.usableFrameCount } == nightTotalUsableFrames)
+        #expect(result.captureGroups.reduce(0) { $0 + $1.group.usableLightCount } == nightTotalUsableFrames)
+
+        // Each session's own implicit capture group (no explicit
+        // `capture_groups` row exists in this fixture, so `CaptureQueries
+        // .summarize` buckets every frame into one `isImplicit` group per
+        // session -- see that type's own doc comment) shares the literal
+        // `CaptureGroupSummary.id` "implicit" regardless of which session
+        // it came from. Without `NightCaptureGroupRow.sessionDate`
+        // namespacing its own `id`, merging two sessions' rows would
+        // collide two distinct rows onto one SwiftUI identity.
+        #expect(result.captureGroups.count == 2)
+        #expect(Set(result.captureGroups.map(\.id)).count == 2)
+        #expect(Set(result.captureGroups.map(\.sessionDate)) == ["2026-05-24", "2026-05-24-2"])
+
+        // The exact bug shape, spelled out: had the merge never happened,
+        // the tables would have shown only the primary session's 2 frames
+        // against the night's real 3 -- the same unexplained-remainder
+        // pattern as the live 221-vs-151 report.
+        #expect(result.filterRows.reduce(0) { $0 + $1.usableFrameCount } != primary.usableLightCount)
+    }
+
     @Test("Night report query throws for a session that was never scanned")
     func throwsForUnknownSession() throws {
         let fixture = try NightReportQueryFixture.make()
