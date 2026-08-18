@@ -392,6 +392,84 @@ struct HeaderlessOSCPassbandPrecedenceTests {
     }
 }
 
+// MARK: - W7-C: ASI Air plate-solve FOCALLEN jitter must not fragment one rig
+//
+// The owner's real ASI2600MC Pro rig has ASI Air rewriting FOCALLEN by a few
+// percent across nights as its plate-solve refines it (255/256/261/262 mm
+// verified as one physical rig). Before this fix, the V2 series builder's
+// `setupDescriptor` embedded the raw, un-bucketed focal length, so this one
+// rig split into a distinct "series-setup" per jittered night -- exactly the
+// "133mm; 134mm; 135mm" project-header symptom the W7-C audit found.
+@Suite("W7-C focal-length jitter unification")
+struct FocalLengthJitterMaterializerTests {
+    private static func insertJitteredLight(
+        db: Database, target: String, sessionDate: String, name: String, focallen: Double
+    ) throws {
+        let path = "sessions/\(target)/\(sessionDate)/lights/\(name).fit"
+        let fileID = try db.upsertFile(FileRecord(
+            path: path, size: 1024, mtime: 1, ext: "fit", kind: "fits",
+            area: .sessions, target: target, sessionDate: sessionDate, role: .light, scannedAt: 1
+        ))
+        try db.upsertFITSMeta(FITSMetaRecord(
+            fileID: fileID, exptime: 300, gain: 100, offset: 50,
+            instrume: "ZWO ASI2600MC Pro", focallen: focallen, filter: "SV220",
+            headerJSON: "{\"BAYERPAT\":\"RGGB\",\"XBINNING\":1}"
+        ))
+    }
+
+    @Test("Four nights of ASI-Air plate-solve jitter (255/256/261/262 mm) become ONE series, not four")
+    func jitteredFocalLengthsAcrossNightsCollapseToOneSeries() async throws {
+        let container = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "AstroTool-W7C-Materializer-\(UUID().uuidString)", isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: container) }
+        let cache = container.appendingPathComponent("cache", isDirectory: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let indexURL = cache.appendingPathComponent("index.sqlite")
+        let db = try Database(path: indexURL.path)
+
+        let target = "IC_1396_Elephants_Trunk_Nebula"
+        for (date, focallen) in [
+            ("2026-08-01", 255.0), ("2026-08-02", 256.0), ("2026-08-03", 261.0), ("2026-08-04", 262.0),
+        ] {
+            try Self.insertJitteredLight(db: db, target: target, sessionDate: date, name: "a", focallen: focallen)
+        }
+        let metadata = try MetadataStore.temporary()
+
+        let summary = try await ScanWorkflowMaterializer.materialize(indexDatabase: indexURL, metadata: metadata)
+
+        #expect(summary.frames == 4)
+        #expect(summary.nights == 4)
+        let project = try #require(try await metadata.projects().first)
+        let series = try await metadata.series(projectID: project.id)
+        #expect(series.count == 4, "one series per night is still expected -- the fix is about the SETUP, not the night grouping")
+        #expect(Set(series.map(\.setupDescriptor)).count == 1, "255/256/261/262 mm are one physical rig -- must be ONE setup descriptor across all four nights")
+    }
+
+    @Test("A genuinely different optical train (135 mm vs 261 mm) still gets its own series-setup")
+    func genuinelyDifferentFocalLengthStaysItsOwnSetup() async throws {
+        let container = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "AstroTool-W7C-Materializer-\(UUID().uuidString)", isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: container) }
+        let cache = container.appendingPathComponent("cache", isDirectory: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let indexURL = cache.appendingPathComponent("index.sqlite")
+        let db = try Database(path: indexURL.path)
+
+        let target = "IC_1396_Elephants_Trunk_Nebula"
+        try Self.insertJitteredLight(db: db, target: target, sessionDate: "2026-08-01", name: "a", focallen: 261)
+        try Self.insertJitteredLight(db: db, target: target, sessionDate: "2026-08-02", name: "a", focallen: 135)
+        let metadata = try MetadataStore.temporary()
+
+        _ = try await ScanWorkflowMaterializer.materialize(indexDatabase: indexURL, metadata: metadata)
+
+        let project = try #require(try await metadata.projects().first)
+        let series = try await metadata.series(projectID: project.id)
+        #expect(Set(series.map(\.setupDescriptor)).count == 2, "a 261 mm night and a 135 mm night are different optics -- must stay two setups")
+    }
+}
+
 private struct MaterializerFixture {
     let container: URL
     let root: URL

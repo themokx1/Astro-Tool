@@ -87,6 +87,20 @@ public enum ScanWorkflowMaterializer {
             ))
         }
 
+        // W7-C: canonicalize plate-solve FOCALLEN jitter (255/256/261/262 mm
+        // from ASI Air, all one physical rig) BEFORE grouping into series --
+        // otherwise one rig imaged across several nights fragments into a
+        // "series-setup" per jittered value, which is exactly what made a
+        // project header read "133mm; 134mm; 135mm" for a single telescope.
+        // Built once, over every collected frame, using the same engine
+        // `EquipmentProfile.fingerprint` uses for the same purpose.
+        var rawFocalLengthsByCamera: [String: [Double]] = [:]
+        for frame in frames {
+            guard let instrument = frame.instrument, let focalLength = frame.focalLength else { continue }
+            rawFocalLengthsByCamera[instrument, default: []].append(focalLength)
+        }
+        let focalLengthBuckets = rawFocalLengthsByCamera.mapValues { FocalLengthBucketing.clusters($0) }
+
         let existingProjects = try await metadata.projects()
         var projectByCatalog = Dictionary(uniqueKeysWithValues: existingProjects.map { ($0.catalogID, $0) })
         let existingNights = try await metadata.nights()
@@ -116,7 +130,10 @@ public enum ScanWorkflowMaterializer {
                 nightByDate[frame.date] = night
                 nights.append(night)
             }
-            grouped[SeriesKey(projectID: project.id, nightID: night.id, frame: frame), default: []].append(frame)
+            grouped[
+                SeriesKey(projectID: project.id, nightID: night.id, frame: frame, focalLengthBuckets: focalLengthBuckets),
+                default: []
+            ].append(frame)
         }
 
         var seriesRecords: [SeriesRecord] = []
@@ -281,8 +298,19 @@ private struct ScannedFrame {
         return nil
     }
 
-    var setupDescriptor: String {
-        [instrument ?? "Unknown camera", focalLength.map { "\($0.formatted(.number.precision(.fractionLength(0...1)))) mm" }]
+    /// `focalLengthBuckets` (W7-C) is the per-camera
+    /// `FocalLengthBucketing.clusters(_:)` lookup built once over every
+    /// frame this materialize call collected -- see the call site in
+    /// `ScanWorkflowMaterializer.materialize` for why grouping needs the
+    /// CANONICAL focal length rather than this frame's own raw, possibly
+    /// plate-solve-jittered value. The raw value itself is untouched here;
+    /// it stays available to callers that read `fits_meta` directly.
+    func setupDescriptor(focalLengthBuckets: [String: [Double: Double]]) -> String {
+        let canonicalFocalLength: Double? = focalLength.map { raw in
+            guard let instrument, let buckets = focalLengthBuckets[instrument] else { return raw }
+            return FocalLengthBucketing.canonicalize(raw, buckets: buckets)
+        }
+        return [instrument ?? "Unknown camera", canonicalFocalLength.map { "\($0.formatted(.number.precision(.fractionLength(0...1)))) mm" }]
             .compactMap { $0 }.joined(separator: " · ")
     }
 
@@ -308,10 +336,10 @@ private struct SeriesKey: Hashable {
     let offset: Double?
     let binning: String
 
-    init(projectID: UUID, nightID: UUID, frame: ScannedFrame) {
+    init(projectID: UUID, nightID: UUID, frame: ScannedFrame, focalLengthBuckets: [String: [Double: Double]]) {
         self.projectID = projectID
         self.nightID = nightID
-        self.setupDescriptor = frame.setupDescriptor
+        self.setupDescriptor = frame.setupDescriptor(focalLengthBuckets: focalLengthBuckets)
         self.sensorMode = frame.sensorMode
         self.passband = frame.passband
         self.exposure = frame.exposure
