@@ -19,6 +19,13 @@ public struct NightWorkspaceView: View {
     let reviewProject: (ProjectRecord) -> Void
     let openCalibration: () -> Void
     let openInsights: (String?) -> Void
+    /// W6-E item 6 (live pixel review): backs the Quality section's
+    /// exposure-advice "no sensor profile" reason -- see
+    /// `exposureAdviceReasonText(_:)`'s own doc comment. `nil` (its
+    /// default) degrades to plain text naming the CLI command, for any
+    /// caller not yet updated to pass a real route -- never a button with
+    /// nothing wired behind it.
+    let openSensorProfiles: (() -> Void)?
     /// Wave 4 Task 3: router-owned for the same reason as
     /// `ProjectWorkspaceView.router` -- see that view's own doc comment.
     @Bindable var router: AppRouter
@@ -55,7 +62,8 @@ public struct NightWorkspaceView: View {
         openProject: @escaping (ProjectRecord) -> Void,
         reviewProject: @escaping (ProjectRecord) -> Void,
         openCalibration: @escaping () -> Void = {},
-        openInsights: @escaping (String?) -> Void = { _ in }
+        openInsights: @escaping (String?) -> Void = { _ in },
+        openSensorProfiles: (() -> Void)? = nil
     ) {
         self.row = row
         self.rootURL = rootURL
@@ -65,6 +73,7 @@ public struct NightWorkspaceView: View {
         self.reviewProject = reviewProject
         self.openCalibration = openCalibration
         self.openInsights = openInsights
+        self.openSensorProfiles = openSensorProfiles
     }
 
     public var body: some View {
@@ -404,7 +413,19 @@ public struct NightWorkspaceView: View {
                         ReportEmptyNote(text: "No rated frames for this session.")
                     }
                     if let reason = report.advice.notAvailableReason {
-                        Text("Exposure advice: n/a — \(exposureAdviceReasonText(reason))").font(.callout).foregroundStyle(.secondary)
+                        if exposureAdviceNeedsSensorProfile(reason) {
+                            HStack(spacing: 6) {
+                                Text("Exposure advice: n/a — \(exposureAdviceReasonText(reason))")
+                                    .font(.callout).foregroundStyle(.secondary)
+                                if let openSensorProfiles {
+                                    Button("Sensor Profiles…", action: openSensorProfiles)
+                                        .font(.callout)
+                                        .accessibilityIdentifier("v2.night.page.open-sensor-profiles")
+                                }
+                            }
+                        } else {
+                            Text("Exposure advice: n/a — \(exposureAdviceReasonText(reason))").font(.callout).foregroundStyle(.secondary)
+                        }
                     } else if !report.advice.advice.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Exposure Advice").font(.subheadline.weight(.medium))
@@ -471,15 +492,43 @@ public struct NightWorkspaceView: View {
     /// information this substitution was never told about.
     private static let exposureAdviceCLISuffix = " — futtasd újra: astrotool rate"
 
+    /// W6-E item 6 (live pixel review): the SAME class of defect
+    /// `exposureAdviceCLISuffix` above already fixes for `astrotool rate`,
+    /// for `ExposureAdvisor`'s OTHER CLI branch -- `naReply(...)`'s "no
+    /// sensor profile" reason (`AstroCore/Stats/ExposureAdvisor.swift`,
+    /// `reason: "nincs szenzor-profil — futtasd: astrotool sensor
+    /// --measure"`). Sensor Profiles is a real in-app page/route
+    /// (`SensorProfilesView`, reachable via `ContentRoute.sensorProfiles`)
+    /// unlike the "Rate Frames" case above (that one has no destination of
+    /// its own to link to, only a button already on this same page) -- so
+    /// this branch adds an actual navigable button next to the reworded
+    /// text, not only a rephrased sentence.
+    private static let exposureAdviceSensorCLISuffix = " — futtasd: astrotool sensor --measure"
+
+    private func exposureAdviceNeedsSensorProfile(_ reason: String) -> Bool {
+        reason.hasSuffix(Self.exposureAdviceSensorCLISuffix)
+    }
+
     private func exposureAdviceReasonText(_ reason: String) -> String {
-        guard reason.hasSuffix(Self.exposureAdviceCLISuffix) else { return reason }
-        let honestPart = reason.dropLast(Self.exposureAdviceCLISuffix.count)
-        let inAppSuggestion = NSLocalizedString(
-            "Rate the frames using the “Rate Frames” button above.",
-            bundle: .main,
-            comment: "Replaces ExposureAdvisor's CLI-era \" — futtasd újra: astrotool rate\" suggestion in the in-app night report; this app has no terminal."
-        )
-        return honestPart + " — " + inAppSuggestion
+        if reason.hasSuffix(Self.exposureAdviceCLISuffix) {
+            let honestPart = reason.dropLast(Self.exposureAdviceCLISuffix.count)
+            let inAppSuggestion = NSLocalizedString(
+                "Rate the frames using the “Rate Frames” button above.",
+                bundle: .main,
+                comment: "Replaces ExposureAdvisor's CLI-era \" — futtasd újra: astrotool rate\" suggestion in the in-app night report; this app has no terminal."
+            )
+            return honestPart + " — " + inAppSuggestion
+        }
+        if reason.hasSuffix(Self.exposureAdviceSensorCLISuffix) {
+            let honestPart = reason.dropLast(Self.exposureAdviceSensorCLISuffix.count)
+            let inAppSuggestion = NSLocalizedString(
+                "Measure one on the Sensor Profiles page.",
+                bundle: .main,
+                comment: "Replaces ExposureAdvisor's CLI-era \" — futtasd: astrotool sensor --measure\" suggestion in the in-app night report; this app has no terminal. Paired with an actual \"Sensor Profiles…\" button next to this text."
+            )
+            return honestPart + " — " + inAppSuggestion
+        }
+        return reason
     }
 
     private func fwhmText(_ quality: CaptureQualitySummary?) -> String {

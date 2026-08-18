@@ -144,6 +144,28 @@ struct W53NightReportFindingsSurfaceTests {
         #expect(source.contains("\" — futtasd újra: astrotool rate\""))
     }
 
+    /// W6-E item 6 (live pixel review): `ExposureAdvisor`'s OTHER CLI
+    /// branch -- "nincs szenzor-profil — futtasd: astrotool sensor
+    /// --measure" -- got the exact same substitution treatment as the
+    /// `astrotool rate` case above, PLUS a real navigable "Sensor
+    /// Profiles…" button (unlike "Rate Frames", Sensor Profiles has no
+    /// button already on this page to point at in prose alone).
+    @Test("Night workspace's sensor-profile exposure-advice fallback points at the Sensor Profiles page, with a real button")
+    func exposureAdviceSensorProfileFallbackHasARealButton() throws {
+        let source = Self.removingLineComments(try contents("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift"))
+
+        #expect(source.contains("exposureAdviceSensorCLISuffix"))
+        #expect(source.contains("Sensor Profiles"), "the substitute text/button must name the real in-app page")
+        #expect(source.contains("openSensorProfiles"), "must accept a real navigation closure, not just rephrase the text")
+        #expect(source.contains("Button(\"Sensor Profiles…\", action: openSensorProfiles)"))
+
+        // The CLI suffix this substitution targets must stay byte-for-byte
+        // in sync with ExposureAdvisor.swift's own literal.
+        let exposureAdvisorSource = try contents("Sources/AstroCore/Stats/ExposureAdvisor.swift")
+        #expect(exposureAdvisorSource.contains("nincs szenzor-profil — futtasd: astrotool sensor --measure"))
+        #expect(source.contains("\" — futtasd: astrotool sensor --measure\""))
+    }
+
     // MARK: - Finding 4: FrameBlinkReview's stage backdrop must darken in
     // both appearances, never invert in dark mode.
 

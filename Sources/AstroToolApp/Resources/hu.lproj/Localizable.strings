@@ -1748,28 +1748,133 @@
 "Latest date" = "Legutóbbi dátum";
 "Open in Results" = "Megnyitás: Eredmények";
 
+/* Wave W6-D item 1: the Help > Glossary content source
+   (GlossaryView.Term.definition, Sources/AstroUI/Help/GlossaryView.swift)
+   was 100% English -- the one help surface a non-English-fluent reader
+   opens specifically because they don't recognize a term the app's own
+   numbers/labels assume they know. `definition` is a runtime `String`
+   property (not a literal call-site argument), so it is invisible to
+   `scripts/extract-localizable-strings.swift` and stays out of the
+   coverage gate's key set -- keyed here on the exact English source text,
+   looked up eagerly via `Term.localizedDefinition`'s own
+   `NSLocalizedString(definition, ...)` call, same shape as `NightRow
+   .TriageState.localizedText`. `Term.name` (the term itself: "FWHM",
+   "Airmass", ...) intentionally stays English per that struct's own doc
+   comment -- it is the vocabulary being looked up, and `anchor`-based
+   scroll-to-term links match on this exact string. Where the English name
+   itself has a well-known Hungarian equivalent, the translated body leads
+   with it ("a légtömeg (airmass)", "a kerekség (roundness)", ...) so the
+   reader gets both forms. */
+"\"Full Width at Half Maximum\" -- the half-maximum width of a star's light profile. The standard measure of focus sharpness: a smaller FWHM means a sharper image. Measured in pixels, or in arcseconds once pixel size and focal length are known." = "„Full Width at Half Maximum” (félértékszélesség) -- egy csillag fényprofiljának félértékszélessége. A fókusz élességének standard mérőszáma: kisebb FWHM = élesebb kép. Pixelben, vagy pixelméret és fókusztávolság ismeretében ívmásodpercben mérhető.";
+"How far a star's shape deviates from a perfect circle (0 = perfect circle). A high value can indicate coma, star trailing (poor polar alignment or a guiding error), or a mirror/lens defect." = "A kerekség (roundness) azt mutatja, mennyire tér el egy csillag alakja a tökéletes körtől (0 = tökéletes kör). Magas érték kómát, csillagnyúlást (rossz polárbeállás vagy vezetési hiba), illetve tükör-/lencsehibát jelezhet.";
+"How many standard deviations a measurement sits from the mean. Rating uses this to flag \"outlier\" frames -- the `rating.outlierZScore` setting (Settings ▸ Rating & Exposure) sets the threshold." = "Egy mérés hány szórásnyira van az átlagtól. Az értékelés ezzel jelöli ki a „kiugró” (outlier) képkockákat -- a `rating.outlierZScore` beállítás (Beállítások ▸ Értékelés és expozíció) szabja meg a küszöböt.";
+"Your own accept/reject decision on a frame (Review workspace, or a frame row's own context menu). This takes PRIORITY over the score when stacking: a rejected frame is left out of the stack list even if it scores best." = "A saját döntés (manual verdict) a felhasználó saját elfogadás/elutasítás döntése egy képkockáról (az Áttekintés munkaterületen, vagy egy képkockasor saját helyi menüjében). Ez ELSŐBBSÉGET élvez a pontszámmal szemben stackeléskor: egy elutasított képkocka a legjobb pontszám mellett is kimarad a stacklistából.";
+"Electrons per second per square arcsecond -- the sky background's true brightness, in a unit independent of sensor and setup. Only computable with a measured sensor profile (Sensor Profiles page); without one you only see raw ADU, which is not comparable across setups." = "Elektron/másodperc/ívmásodperc² -- az égi háttér valódi fényessége, szenzor- és összeállítás-független mértékegységben. Csak mért szenzorprofillal (Szenzorprofilok oldal) számítható; enélkül csak nyers ADU-t látsz, ami setupok között nem összehasonlítható.";
+"The optical thickness of the atmosphere the light passes through to reach the target, relative to the horizon (1 at the zenith, much larger low over the horizon). Image quality degrades at low altitude because of atmospheric scattering and extinction." = "A légtömeg (airmass) a légkör optikai vastagsága, amin a fény a célponthoz érkezéséig áthalad, a horizonthoz viszonyítva (a zenitben 1, alacsonyan a horizont fölött ennél jóval nagyobb). Alacsony magasságban a légköri szórás és fényelnyelés miatt romlik a képminőség.";
+"A session's actual integration time (the summed exposure time of its light frames) against the full window between the start and end of capture, as a percentage -- a Nights page column. A low value can indicate a lot of downtime (cloud, meridian flip, dithering, hardware fault)." = "A kihasználtsági arány (duty cycle) egy session tényleges integrációs ideje (a light képkockák összesített expozíciós ideje) a felvétel kezdete és vége közti teljes időablakhoz viszonyítva, százalékban -- az Éjszakák oldal egyik oszlopa. Alacsony érték sok állásidőt (felhő, meridiánátfordulás, dithering, hardverhiba) jelezhet.";
+"Opt-in cloud-cover forecast from the open Open-Meteo service (Settings ▸ Location). Shown on the \"Tonight\" tile and the Calendar's \"Cloud\" column: how cloudy the sky is expected to be from dusk to dawn -- only for the next 7 days, and only your configured coordinate is sent, nothing from your library." = "Opcionálisan bekapcsolható felhőzet-előrejelzés a nyílt Open-Meteo szolgáltatásból (Beállítások ▸ Helyszín). A „Ma este” csempén és a Naptár „Felhő” oszlopában jelenik meg: mennyire várható felhős az égbolt alkonytól hajnalig -- csak a következő 7 napra, és csak a beállított koordinátádat küldi el, semmit a könyvtáradból.";
+"The area of sky your sensor and optics cover, in degrees. Discover also shows a target's fill ratio against the sensor's short edge and factors it into ranking order: anything that would only fit as a tiny dot ranks lower; a good fill is favored; a target too large signals a mosaic is needed." = "A látómező (field of view, FOV) a szenzorod és optikád által lefedett égterület mérete, fokban. A Felfedezés a célpont szenzor rövid éléhez viszonyított kitöltési arányát is megmutatja, és beleszámítja a rangsorolásba: ami csak apró pontként férne bele, hátrébb kerül; a jó kitöltés előnyt élvez; egy túl nagy célpont mozaikfelvétel szükségességét jelzi.";
+"The Audit page's \"cleanable\" script's destination folder: candidate excess/duplicate files are MOVED here (never deleted). You empty the quarantine folder yourself, by your own decision." = "A karantén az Audit oldal „takarítható” szkriptjének célmappája: a jelölt felesleges/duplikált fájlokat ide MOZGATJA (soha nem törli). A karantént te magad üríted ki, saját döntésed alapján.";
+"Two file names pointing at the same data stored once on disk (not a copy) -- taking up the same space as one copy, not two. This app uses this for calibration linking and stack export: it links the shared calibration_library file into the session folder instead of copying it." = "Két fájlnév, amely ugyanarra, a lemezen egyszer tárolt adatra mutat (nem másolat) -- ugyanannyi helyet foglal, mint egy példány, nem kettőt. Ez az app ezt használja a kalibrációlinkeléshez és a stackexporthoz: a session mappájába belinkeli a megosztott calibration_library fájlt, ahelyett hogy lemásolná.";
+"A calibration frame that records the sensor's readout noise and offset level: a 0-second (or minimal) exposure with the optics covered. One input to dark and flat calibration." = "Kalibrációs képkocka, amely a szenzor kiolvasási zaját és alapszintjét (offset) rögzíti: 0 másodperces (vagy minimális) expozíció, letakart optikával. A dark- és flat-kalibráció egyik bemenete.";
+"A calibration frame that records the sensor's thermal (dark current) noise: the same exposure time and temperature as the light frames, with the optics covered. Used to subtract pixel-level thermal noise." = "Kalibrációs képkocka, amely a szenzor hőzaját (dark current) rögzíti: ugyanolyan expozíciós idővel és hőmérsékleten készül, mint a light képkockák, letakart optikával. A pixelszintű hőzaj kivonására szolgál.";
+"A calibration frame that records the sensor/optics' uneven illumination sensitivity (vignetting, dust): an image of an evenly lit surface, taken with the same setup as the light frames." = "Kalibrációs képkocka, amely a szenzor/optika egyenetlen megvilágítás-érzékenységét (vignettálás, por) rögzíti: egy egyenletesen megvilágított felület felvétele, ugyanazzal az összeállítással készítve, mint a light képkockák.";
+"A 1-9 scale for sky background light pollution: 1 is a perfectly dark rural sky, 9 is an inner-city sky where only the brightest stars are visible. A night note's \"Bortle\" field expects this number -- lower is darker (better)." = "1-9-es skála az égi háttér fényszennyezettségére: 1 a tökéletesen sötét vidéki ég, 9 a belvárosi ég, ahol már csak a legfényesebb csillagok látszanak. Egy éjszakai jegyzet „Bortle” mezője ezt a számot várja -- minél alacsonyabb, annál sötétebb (jobb) az ég.";
+"\"Sky Quality Meter\" -- sky background brightness in magnitudes per square arcsecond, measured with a handheld instrument. Typical range is roughly 17 (bright urban sky) to 22 (excellent, dark rural sky); a larger number means a darker (better) sky." = "„Sky Quality Meter” -- az égi háttér fényessége magnitúdó/ívmásodperc² egységben, kézi műszerrel mérve. A jellemző tartomány kb. 17-től (világos városi ég) 22-ig (kiváló, sötét vidéki ég) terjed; a nagyobb szám sötétebb (jobb) eget jelent.";
+"The atmosphere's momentary steadiness/turbulence -- this sets how sharp a point stars can be focused to, independent of equipment quality. Night notes often record it on a 1-5 scale (1 = unsteady/poor, 5 = crystal-clear/excellent), though plain-language labels (\"excellent/good/fair/poor\") are common too." = "A légkör pillanatnyi nyugalma/turbulenciája (seeing) -- ez szabja meg, milyen élesre fókuszálhatók a csillagok, függetlenül a felszerelés minőségétől. Az éjszakai jegyzetek gyakran 1-5-ös skálán rögzítik (1 = nyugtalan/gyenge, 5 = kristálytiszta/kiváló), de a szöveges „kiváló/jó/közepes/gyenge” jelölés is elterjedt.";
+"The sky's light-transmitting ability -- haze, smoke, or high cloud degrade it even when the night still looks starry. Independent of seeing: a night can be steady (good seeing) yet hazy (poor transparency), or the reverse. Also commonly recorded on a 1-5 scale." = "Az átláthatóság (transparency) az égbolt fényáteresztő képessége -- pára, füst vagy magas felhőzet rontja, még ha az éjszaka csillagosnak is látszik. Független a seeingtől: egy éjszaka lehet nyugodt (jó seeing), mégis párás (rossz átláthatóság), vagy fordítva. Szintén gyakran 1-5-ös skálán rögzítik.";
+"Automatically matching a frame's star pattern against catalogs so the app can determine the exact RA/Dec of the frame's center, even with no header data. This app calls Siril's command-line tool to do this -- it does not work without Siril." = "Egy képkocka csillagmintázatának automatikus összevetése katalógusokkal, hogy az app fejlécadat nélkül is meg tudja határozni a kép közepének pontos RA/Dec koordinátáját. Ehhez az app a Siril parancssori eszközét hívja -- Siril nélkül nem működik.";
+"Many individual calibration frames (e.g. 50 darks) combined into a single, noise-reduced average/median image (\"master dark\", \"master flat\", \"master bias\"). Actual calibration (cleaning light frames) is done by this combined master, not the individual raw frames." = "Sok egyedi kalibrációs képkocka (pl. 50 dark) egyetlen, zajcsökkentett átlag- vagy mediánképpé kombinálva („master dark”, „master flat”, „master bias”). A tényleges kalibrációt (a light képkockák tisztítását) ez a kombinált master végzi, nem az egyedi nyers képkockák.";
+"The gain and offset (baseline shift) set on the camera's controller -- these can differ per setup/session even for the same camera. The sensor profile, calibration matching, and background e⁻/s/″² calculation all require an exact (camera, gain, offset) match, never an approximate guess." = "A kamera vezérlőjén beállított erősítés (gain) és alapszint-eltolás (offset) -- ugyanannál a kameránál is eltérhet összeállításonként/sessiononként. A szenzorprofil, a kalibráció-illesztés és a háttér e⁻/s/″² számítása mind pontos (kamera, gain, offset) hármas egyezést vár, sosem közelítő becslést.";
+"\"Analog-to-Digital Unit\" -- the sensor's raw, uncalibrated output unit (a pixel's \"brightness\" at the header/measurement level, before conversion to e⁻ or true brightness). Background measured in ADU is not comparable across setups -- that needs the measured sensor profile's e⁻/s/″² conversion." = "„Analog-to-Digital Unit” -- a szenzor nyers, kalibrálatlan kimeneti egysége (egy pixel „fényessége” a fejléc/mérés szintjén, még e⁻-be vagy valódi fényességbe való átváltás előtt). Az ADU-ban mért háttér nem összehasonlítható különböző összeállítások között -- ehhez a mért szenzorprofil e⁻/s/″²-es átváltása szükséges.";
+"The sensor's e⁻/ADU conversion factor at a given gain setting (how many electrons one ADU corresponds to) -- from the FITS header's `EGAIN` key, or from a measured sensor profile. This is what lets a raw ADU background reading convert to a true, setup-independent e⁻/s/″² value." = "A szenzor e⁻/ADU átváltási tényezője egy adott gain-beállításnál (hány elektronnak felel meg egyetlen ADU) -- a FITS-fejléc `EGAIN` kulcsából, vagy egy mért szenzorprofilból származik. Ez teszi lehetővé, hogy egy nyers ADU-ban mért háttérérték valódi, összeállítás-független e⁻/s/″² értékké alakuljon.";
+"The moment of a target's greatest altitude during the night -- when it crosses the meridian. Around culmination the light path through the atmosphere is shortest, so image quality is typically best then (provided a meridian flip doesn't interrupt the capture)." = "A kulmináció a célpont legnagyobb magasságának pillanata az éjszaka során -- amikor áthalad a délkörön (meridiánon). Kulmináció körül a legrövidebb a fény útja a légkörben, ezért a képminőség jellemzően ekkor a legjobb (feltéve, hogy egy meridiánátfordulás nem szakítja meg a felvételt).";
+"The exposure length of a single raw light frame (e.g. \"300s subs\") -- the final stack is built from many of these. Sub length is a trade-off: a longer sub accumulates less read noise, but each individual frame risks more from a satellite trail, cloud, or tracking error." = "Egyetlen nyers light képkocka expozíciós hossza (pl. „300 másodperces sub-ok”) -- a végső stack ezekből épül fel. A sub hossza kompromisszum: a hosszabb sub kevesebb leolvasási zajt halmoz fel, de az egyes képkockáknál nagyobb a kockázata egy műholdnyomnak, felhőnek vagy vezetési hibának.";
+"Gross integration is the raw sum of every session light frame's exposure time; real (usable) integration only counts the session's non-duplicate, non-rejected, non-excluded frames -- this is what actually goes into the final stack. This app always headlines the real number everywhere, showing the gross figure only as a comparison." = "A bruttó integráció minden session light képkocka expozíciós idejének nyers összege; a valós (felhasználható) integráció csak a session nem duplikált, nem elutasított és nem kizárt képkockáit számolja -- ez utóbbi kerül ténylegesen a végső stackbe. Ez az app mindenhol a valós számot emeli ki, a bruttó értéket csak összehasonlításként mutatja.";
+"Deliberately, slightly (a few pixels) shifting the imaging system between subs -- this randomizes which pixel a given sky point lands on, so stacking can average out fixed-pattern noise (hot pixels, sensor defects) instead of it staying in the same place in every frame." = "A felvevőrendszer szándékos, apró (néhány pixeles) elmozdítása subok között -- ez véletlenszerűvé teszi, hogy egy adott égi pont melyik pixelre esik, így a stackelés ki tudja átlagolni a fix mintázatú zajt (hot pixel, szenzorhiba), ahelyett hogy minden képkockán ugyanott maradna.";
+"NB (\"narrowband\", e.g. Ha, OIII, SII) passes only a narrow wavelength range -- less sensitive to moonlight/light pollution, so usable under moonlit or city skies. BB (\"broadband\", e.g. L, R, G, B, or unfiltered OSC) passes most of the visible spectrum -- gives true color/brightness under a dark, moonless sky." = "Az NB („narrowband”, keskenysávú, pl. Ha, OIII, SII) csak egy szűk hullámhossz-tartományt enged át -- kevésbé érzékeny a holdfényre/fényszennyezésre, ezért holdfényes vagy városi égen is használható. A BB („broadband”, szélessávú, pl. L, R, G, B, vagy szűretlen OSC) a látható spektrum nagy részét átengedi -- sötét, holdmentes égen ad valós színt/fényességet.";
+"A session's camera+optics+reducer/Barlow combination \"fingerprint\", automatically recognized from FITS headers (focal length, pixel size, camera name). This is what distinguishes whether two sessions used the same equipment -- without it, field-of-view matching and trends would not be comparable." = "Egy session kamera+optika+reduktor/Barlow kombinációjának „ujjlenyomata”, automatikusan felismerve a FITS-fejlécekből (fókusztávolság, pixelméret, kamera neve). Ez különbözteti meg, hogy két session ugyanazt a felszerelést használta-e -- enélkül a látómező-illesztés és a trendek nem lennének összehasonlíthatók.";
+"The wind speed measured or estimated during a session (typically km/h or m/s) -- strong wind can shake the tube/mount, causing star trailing or blur even under excellent seeing." = "A szél sebessége, mérve vagy becsülve egy session alatt (jellemzően km/h vagy m/s) -- az erős szél megrezegtetheti a csövet/állványt, ami csillagnyúlást vagy elmosódást okozhat, még kiváló seeing esetén is.";
+"Dew or frost forming on the optics or sensor during a session -- causes stars to gradually blur, then disappear, in later frames. A night note's field records whether this happened (e.g. \"none\", \"mild\", \"heavy -- a dew heater would have helped\")." = "Harmat vagy dér lecsapódása az optikán vagy a szenzoron egy session alatt -- a csillagok fokozatosan elmosódnak, majd eltűnnek a későbbi képkockákon. Egy éjszakai jegyzet mezője rögzíti, hogy ez történt-e (pl. „nincs”, „enyhe”, „erős -- egy harmatpára-fűtés segített volna”).";
+
+/* Wave W6-D item 2 (Commands.swift Actions menu + Help menu): audit-listed missing keys, plus the fast-audit/rate-in-review menu items and the Source Code Help entry. */
+"New Night…" = "Új éjszaka…";
+"Run Audit (Fast, Skip Duplicate Scan)" = "Audit futtatása (gyors, duplikátum-keresés nélkül)";
+"Rate Frames in Review" = "Képkockák értékelése az Áttekintésben";
+"Show Inspector" = "Felügyelő megjelenítése";
+"Find" = "Keresés";
+"Source Code" = "Forráskód";
+
+/* Wave W6-D item 3 (CalibrationView): "Missing"/"Writable"/"Read only" now actually localize, and the subtitle no longer names the internal WriteGuard codename. */
+"Master-dark inventory and per-session linking, applied only through protected, verified writes." = "Master-dark leltár és session-enkénti linkelés, kizárólag védett, ellenőrzött írással alkalmazva.";
+"Read only" = "Csak olvasható";
+
+/* Wave W6-D item 4 (LibraryWelcomeView onboarding sheet): the 3 safetyRow feature bullets (title+detail each) were 100% English -- safetyRow's own LocalizedStringKey parameters were already correct, these entries were simply never added. */
+"Files stay where they are" = "A fájlok ott maradnak, ahol vannak";
+"The first scan does not move, rename, or delete images." = "Az első beolvasás nem mozgatja, nem nevezi át, és nem törli a képeket.";
+"Your library remains read-only" = "A könyvtárad csak olvasható marad";
+"Only the folder you choose is inspected." = "Csak a kiválasztott mappa kerül vizsgálatra.";
+"The index stays outside your library" = "Az index a könyvtáradon kívül marad";
+"Derived data is stored in AstroTool’s Application Support and cache folders." = "A származtatott adatok az AstroTool Application Support és cache mappáiban tárolódnak.";
+
+/* Wave W6-D item 5 (V2SettingsView): the two ternary-of-two-literals toggle captions, plus the LabeledContent(value:) "Diagnostics" caption now routed through a content closure. */
+"AstroTool restores and re-indexes your last library automatically at launch." = "Az AstroTool indításkor automatikusan visszaállítja és újraindexeli az utoljára használt könyvtáradat.";
+"AstroTool waits for you to choose a library at launch; it will not reopen the last one automatically." = "Az AstroTool indításkor megvárja, amíg kiválasztasz egy könyvtárat; nem nyitja meg automatikusan az utolsót.";
+"Approved operations (quarantine apply, calibration linking) may now write to your library." = "A jóváhagyott műveletek (karantén alkalmazása, kalibráció-linkelés) mostantól írhatnak a könyvtáradba.";
+"Image folders are read-only unless you explicitly approve a physical operation." = "A képmappák csak olvashatók, hacsak kifejezetten jóvá nem hagysz egy fizikai műveletet.";
+"Privacy-safe and local" = "Adatvédelmi szempontból biztonságos és helyi";
+
+/* Wave W6-D item 6 (NewSessionView): the Sensor/Signal pickers' fileprivate localizedDisplayName wrapper needs these SensorMode/SignalMode .displayName cases translated (ConversionWorkspace's own English-only picker is untouched and does not use this wrapper). */
+"Mono" = "Monokróm";
+"Unknown sensor" = "Ismeretlen szenzor";
+"No filter" = "Szűrő nélkül";
+"Other passband" = "Egyéb fénysáv";
+"Unknown passband" = "Ismeretlen fénysáv";
+
+/* Wave W6-D item 8 (InsightsView): the Capture activity chart's Y-axis label -- .chartYAxisLabel(_:) is a real LocalizedStringKey call site already, it simply had no hu.lproj entry. */
+"Integration hours" = "Integrációs órák";
+
+/* Wave W6-D item 9 (SeriesInspector): the "Add a new filter" DisclosureGroup title -- DisclosureGroup is outside scripts/extract-localizable-strings.swift's construct list, so this literal-first-argument call site needs its translation hand-added the same way other extraction-invisible constructs in this file do. */
+"Add a new filter" = "Új szűrő hozzáadása";
+
+/* Wave W6-D item 11 (OperationStatusView): the "Recent activity" .help(...) fallback, now routed through OperationHost.localized(_:). */
+"Recent activity" = "Friss tevékenység";
+
+/* Wave W6-D item 12 (ConversionWorkspace): the Apply Conversion button's ternary-of-two-literals tooltip, now wrapped in LocalizedStringKey(...). */
+"Requires write access" = "Írási hozzáférést igényel";
+"Apply this conversion" = "Alkalmazd ezt az átalakítást";
+
+/* Wave W6-D item 13 (CaptureImportView/CaptureImportCommand): the group-expand chevron's corrected tooltip text, and the checksum-failure sentence moved out of AstroApplication's hardcoded Hungarian into NSLocalizedString (its Hungarian value is the same sentence that used to be hardcoded). */
+"Collapse Group" = "Csoport összecsukása";
+"Expand Group" = "Csoport kibontása";
+"the copy's checksum does not match the source -- the bad copy was deleted" = "a másolat ellenőrző-összege nem egyezik a forrással -- a hibás másolat törölve";
+
+/* Wave W6-D item 14 (NightNoteSheet): the per-field ⓘ info button's new .help/.accessibilityLabel, interpolating the field name. */
+"Explain %@" = "%@ magyarázata";
+
+/* Wave W6-D housekeeping: three Archive-page literals (a concurrently
+   developed feature in this same session) had no Hungarian entry yet,
+   which failed this suite's own coverage gate for every test run
+   regardless of author -- translated here as plain data, no Archive
+   source file touched. */
+"As of the last check: %@. A newer scan may have changed this." = "A legutóbbi ellenőrzés szerint: %@. Egy újabb beolvasás megváltoztathatta ezt.";
+"The Archive page showed %lld here — a freshly re-checked count no longer finds anything of this kind." = "Az Archívum oldal %lld találatot mutatott itt — egy frissen újraellenőrzött szám már nem talál ilyen jellegűt.";
+"This is what the last check found — a newer scan may have changed it." = "Ez az, amit a legutóbbi ellenőrzés talált — egy újabb beolvasás megváltoztathatta.";
+
 /* W6-E item 3: `FirstScanSummaryView`'s onboarding tile used to say
    "Nights" for a number that is not the same "nights" the Home page's
    sidebar counts (see `LibrarySnapshot.nightCount`'s own doc comment) --
-   relabeled to name what it actually counts. */
+   relabeled to name what it actually counts.
+   (Restored here after a concurrent-edit race in this shared worktree
+   dropped it from the working tree while it was still committed/staged --
+   `FirstScanSummaryView.swift` still reads this exact key.) */
 "Session Folders" = "Session-mappák";
 
-/* W6-E item 1: the Archive page's stale-card handling -- a card's own count
-   is only as fresh as the last audit run, and its "view all" detail page
-   always re-queries live, so the two can legitimately disagree. */
-"As of the last check: %@. A newer scan may have changed this." = "Legutóbbi ellenőrzéskor: %@. Egy újabb szkennelés megváltoztathatta ezt.";
-"This is what the last check found — a newer scan may have changed it." = "Ezt találta a legutóbbi ellenőrzés — egy újabb szkennelés megváltoztathatta.";
-"The Archive page showed %lld here — a freshly re-checked count no longer finds anything of this kind." = "Az Archívum oldal %lld találatot mutatott itt — egy frissen lefuttatott ellenőrzés már nem talál ilyet.";
-"The Archive page showed %lld when you opened this — a freshly re-checked count now finds %lld." = "Az Archívum oldal %lld találatot mutatott, amikor ezt megnyitottad — egy frissen lefuttatott ellenőrzés most %lld találatot talál.";
-
 /* W6-E item 6: ExposureAdvisor's "no sensor profile" CLI-era suggestion
    reworded for the in-app night report, paired with a real "Sensor
-   Profiles…" button (NightWorkspaceView.exposureAdviceReasonText). */
-"Measure one on the Sensor Profiles page." = "Mérj egyet a Szenzorprofilok oldalon.";
-"Sensor Profiles…" = "Szenzorprofilok…";
-
-/* W6-E item 6: ExposureAdvisor's "no sensor profile" CLI-era suggestion
-   reworded for the in-app night report, paired with a real "Sensor
-   Profiles…" button (NightWorkspaceView.exposureAdviceReasonText). */
+   Profiles…" button (NightWorkspaceView.exposureAdviceReasonText).
+   (Restored here after the same concurrent-edit race -- `NightWorkspaceView
+   .swift` still reads both keys; `scripts/extract-localizable-strings.swift
+   --missing` was reporting "Sensor Profiles…" as genuinely untranslated.) */
 "Measure one on the Sensor Profiles page." = "Mérj egyet a Szenzorprofilok oldalon.";
 "Sensor Profiles…" = "Szenzorprofilok…";

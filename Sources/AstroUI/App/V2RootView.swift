@@ -1529,7 +1529,8 @@ private struct DetailHost: View {
                     },
                     reviewProject: { project in router.push(.review(projectID: project.id)) },
                     openCalibration: { router.push(.calibration) },
-                    openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) }
+                    openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) },
+                    openSensorProfiles: { router.push(.sensorProfiles) }
                 )
             } else {
                 // V2 UI/UX audit, section 5 ("Végtelen töltő"): this branch

@@ -466,21 +466,57 @@ public struct ReviewWorkspace: View {
         return value.formatted(.number.precision(.fractionLength(fractionDigits)))
     }
 
+    /// W6-E item 6 (live pixel review, 1100pt): at the app's own minimum
+    /// window width, this bar sat squeezed between the "Frames" heading and
+    /// the Table's own trailing edge, and three plain-text buttons ("Elfogadás"/
+    /// "Visszaállítás"/"Elvetés" in Hungarian -- longer than their English
+    /// source) truncated to "Elfo…" with no way to read the rest. `ViewThatFits`
+    /// picks the first candidate that actually fits the proposed width --
+    /// icon+label first (every button keeps a real accessible label via its
+    /// own `Label`/`.help`), falling back to icon-only once there isn't room,
+    /// rather than truncating the same text mid-word.
     private func reviewActions(_ selected: ReviewSeriesSnapshot) -> some View {
+        ViewThatFits(in: .horizontal) {
+            reviewActionButtons(selected).labelStyle(.titleAndIcon)
+            reviewActionButtons(selected).labelStyle(.iconOnly)
+        }
+    }
+
+    private func reviewActionButtons(_ selected: ReviewSeriesSnapshot) -> some View {
         HStack(spacing: 8) {
-            Button("Accept") { apply(.accepted, decisionIDs: selectedDecisionIDs, in: selected) }
-                .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
-                .keyboardShortcut("a", modifiers: [.command, .shift])
-                .accessibilityIdentifier("v2.review.accept")
-            Button("Reset") { apply(.undecided, decisionIDs: selectedDecisionIDs, in: selected) }
-                .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
-                .accessibilityIdentifier("v2.review.reset")
-            Button("Reject") { apply(.rejected, decisionIDs: selectedDecisionIDs, in: selected) }
-                .buttonStyle(.borderedProminent)
-                .tint(AstroTokens.Color.critical)
-                .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
-                .keyboardShortcut("r", modifiers: [.command, .shift])
-                .accessibilityIdentifier("v2.review.reject")
+            Button {
+                apply(.accepted, decisionIDs: selectedDecisionIDs, in: selected)
+            } label: {
+                Label("Accept", systemImage: "checkmark.circle")
+            }
+            .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
+            .keyboardShortcut("a", modifiers: [.command, .shift])
+            .help("Accept")
+            .accessibilityIdentifier("v2.review.accept")
+            Button {
+                apply(.undecided, decisionIDs: selectedDecisionIDs, in: selected)
+            } label: {
+                Label("Reset", systemImage: "arrow.uturn.backward.circle")
+            }
+            .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
+            // W6-E item 6: siblings already use ⌘⇧A (Accept)/⌘⇧R (Reject) --
+            // Reset had no shortcut at all. ⌘⇧U ("undecided", the verdict
+            // this button actually applies) fills the gap without colliding
+            // with either.
+            .keyboardShortcut("u", modifiers: [.command, .shift])
+            .help("Reset Decision")
+            .accessibilityIdentifier("v2.review.reset")
+            Button {
+                apply(.rejected, decisionIDs: selectedDecisionIDs, in: selected)
+            } label: {
+                Label("Reject", systemImage: "xmark.circle")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AstroTokens.Color.critical)
+            .disabled(selectedDecisionIDs.isEmpty || store.isApplyingDecision)
+            .keyboardShortcut("r", modifiers: [.command, .shift])
+            .help("Reject")
+            .accessibilityIdentifier("v2.review.reject")
         }
     }
 
