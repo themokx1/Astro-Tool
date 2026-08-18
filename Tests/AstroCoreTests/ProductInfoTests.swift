@@ -14,11 +14,11 @@ import Testing
     @Test func publicIdentityIsStableAndReleaseReady() {
         #expect(ProductInfo.name == "AstroTool")
         #expect(ProductInfo.version == "2.0.0")
-        #expect(ProductInfo.releaseChannel == "Release Candidate 5")
+        #expect(ProductInfo.releaseChannel == "Release Candidate 6")
         #expect(ProductInfo.bundleIdentifier == "io.github.themokx1.AstroTool")
         #expect(ProductInfo.legacyBundleIdentifier == "com.zoltanpalotai.astrotool")
         #expect(Int(ProductInfo.build) != nil)
-        #expect(ProductInfo.displayVersion == "2.0.0 Release Candidate 5 (20032)")
+        #expect(ProductInfo.displayVersion == "2.0.0 Release Candidate 6 (20033)")
     }
 
     @Test func releaseConsumersUseTheSharedProductInfo() throws {

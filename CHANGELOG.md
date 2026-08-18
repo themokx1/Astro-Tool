@@ -8,6 +8,45 @@ történik.
 
 ## [Unreleased]
 
+## [2.0.0-rc.6] - 2026-08-18
+
+### Hozzáadva
+
+- **A Szójegyzék magyarul beszél** — mind a 31 szócikk lefordítva; pont az a
+  funkció, amit akkor nyitsz meg, ha nem értesz egy szakszót.
+- A menüsor „Új projekt…" és „Új éjszaka…" pontjai működnek (eddig örökre
+  le voltak tiltva); minden hibaállapot „Újra" gombot kapott; a „állítsd be
+  a Beállításokban" üzenetek mellett ott a gomb, ami odavisz.
+- Az Elemzések minőségi trendjei **capture-szintűek**: egy éjszaka különböző
+  összeállításai nem keverednek egy vonalba, és minden capture a saját
+  elfogadási arányát mutatja; a FWHM egységgel (arcsec/pixel) jelenik meg.
+- A duplikátum-találatok megmutatják, hol él a másolat párja; az Archívum
+  rejtett műveletei látható gombot kaptak.
+
+### Javítva
+
+- **A szűrő-hozzárendelés a sorozat-lapon tényleg mentődik** — a panel egy
+  néma, üres művelethez volt kötve: a szűrő létrejött, de sosem kapcsolódott
+  a sorozathoz. Most a nézett sorozathoz köt, és újraindítás után is megvan.
+- **Az Archívum nem állít elavult számot tényként**: ha az ellenőrzés régebbi
+  a beolvasásnál, a kártyák „a legutóbbi ellenőrzés szerint" felirattal és
+  „Ellenőrzés futtatása" gombbal jelennek meg, a részletlap pedig megmondja,
+  miért térhet el a két szám.
+- A lebegőpontos (float) FITS-ek előnézete megjelenik a képkocka-táblákban
+  és az Eredmények részletpanelén — eddig ezek szürke ikonok voltak.
+- A Gyűjtések „Szűrők" oszlopa nem mutat többé stack-termék neveket
+  (StarMask, Starless) szűrőként — csak valódi képkockák adnak címkét.
+- Egy éjszaka-, session- és mappaszám mind megmondja, mit számol — a 16/20/26
+  nem mond többé ellent egymásnak.
+- Az Áttekintés tab a stackek összefoglalóját mutatja gombbal az Eredmények
+  felé, a teljes táblázat helyett; első indításkor a tanácsok nem mutatnak
+  zárt panelre; a bias-expozíció sehol nem jelenik meg „0 s"-ként; az árva
+  (éjszakához nem köthető) sorozatok látszanak és beleszámítanak a projekt
+  összesítőibe.
+- Vegyes magyar/angol feliratok javítva az Actions-menüben, a Kalibráció
+  lapon, az onboardingon, a Beállításokban és a keresésben; egy fordított
+  szivárgás is (magyar hibaszöveg angol felületen).
+
 ## [2.0.0-rc.5] - 2026-08-18
 
 ### Hozzáadva
