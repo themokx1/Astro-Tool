@@ -35,6 +35,23 @@ private final class ProjectRatingProgressBox: @unchecked Sendable {
 
 @MainActor
 enum ProjectRatingRunner {
+    /// The `OperationHost` key one `run(scope:...)` call registers under --
+    /// factored out so a caller that only needs to know whether a scope's
+    /// run is CURRENTLY ACTIVE (W7-E: the Home dashboard's rating-gate card,
+    /// checking `operationHost.activeOperations` to show progress instead of
+    /// its own "Rate" button) can compute the same key without duplicating
+    /// this switch, or launching a second `.rate` operation for the same
+    /// scope by constructing a slightly different string by hand.
+    static func kind(for scope: ProjectRatingScope) -> OperationKind {
+        switch scope {
+        case .project(let id, _):
+            return .rate(series: "project-\(id.uuidString)")
+        case .allProjects(let libraryName):
+            return .rate(series: "all-projects-\(libraryName)")
+        }
+    }
+
+
     /// Groups `seriesList`'s frame paths by night, using `decisionsBySeriesID`
     /// (already-fetched `FrameDecisionRecord.relativePath`s, keyed by series
     /// id) -- a pure, synchronous step split out from `run(scope:...)` below
@@ -77,14 +94,12 @@ enum ProjectRatingRunner {
         metadataFactory: @escaping ProjectsStore.MetadataFactory,
         operationHost: OperationHost
     ) async {
-        let kind: OperationKind
+        let kind = Self.kind(for: scope)
         let title: String
         switch scope {
-        case .project(let id, let displayName):
-            kind = .rate(series: "project-\(id.uuidString)")
+        case .project(_, let displayName):
             title = "\(OperationHost.localized("Rating Frames")) — \(displayName)"
-        case .allProjects(let libraryName):
-            kind = .rate(series: "all-projects-\(libraryName)")
+        case .allProjects:
             title = "\(OperationHost.localized("Rating Frames")) — \(OperationHost.localized("All Projects"))"
         }
         guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
