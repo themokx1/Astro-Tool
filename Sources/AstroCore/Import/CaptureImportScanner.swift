@@ -80,7 +80,7 @@ public enum CaptureImportScanner {
             }
 
             let sizeBytes = Int64(values.fileSize ?? 0)
-            let (role, date, dateSource) = classify(fileURL: entryURL, ext: ext, kind: kind)
+            let classified = classify(fileURL: entryURL, ext: ext, kind: kind)
 
             results.append(DiscoveredCaptureFile(
                 sourceURL: entryURL,
@@ -89,11 +89,31 @@ public enum CaptureImportScanner {
                 ext: ext,
                 kind: kind,
                 sizeBytes: sizeBytes,
-                proposedRole: role,
-                captureDate: date,
-                captureDateSource: dateSource
+                proposedRole: classified.role,
+                captureDate: classified.date,
+                captureDateSource: classified.source,
+                captureInstant: classified.instant,
+                exposureSeconds: classified.exposureSeconds,
+                iso: classified.iso,
+                apertureFNumber: classified.apertureFNumber
             ))
         }
+    }
+
+    /// One file's full classification result: the proposed role (FITS
+    /// `IMAGETYP` only), its display date and where that came from, the
+    /// same instant at full precision (`CaptureFileGroup`/
+    /// `CaptureBurstGrouper`'s sort key), and -- for a raw (CR3) file -- the
+    /// Exif fields a photographer actually reads to tell a bias frame from a
+    /// dark from a light: exposure time, ISO, aperture.
+    private struct Classification {
+        var role: FrameRole?
+        var date: String?
+        var source: CaptureDateSource?
+        var instant: Date
+        var exposureSeconds: Double?
+        var iso: Int?
+        var apertureFNumber: Double?
     }
 
     /// Content-based classification for one file, using the SAME predicate
@@ -103,39 +123,45 @@ public enum CaptureImportScanner {
     /// no such header anywhere in this codebase (Canon doesn't write one),
     /// so they always come back `nil` here -- explicitly unclassified,
     /// exactly as the owner's brief requires ("never silently guessed").
-    private static func classify(
-        fileURL: URL, ext: String, kind: String
-    ) -> (role: FrameRole?, date: String?, source: CaptureDateSource?) {
+    private static func classify(fileURL: URL, ext: String, kind: String) -> Classification {
         if kind == "fits" {
             if let header = try? FITSReader.readHeader(url: fileURL) {
                 let role = header.string("IMAGETYP").flatMap(FrameRoleFromHeader.role(fromImagetyp:))
                 if let rawDateObs = header.string("DATE-OBS"),
                    let parsed = SessionTimeline.parseDateObs(rawDateObs)
                 {
-                    return (role, Self.yyyyMMdd(parsed), .fitsDateObs)
+                    return Classification(role: role, date: Self.yyyyMMdd(parsed), source: .fitsDateObs, instant: parsed)
                 }
-                return (role, fileModificationDate(fileURL), .fileModificationDate)
+                let mtime = fileModificationInstant(fileURL)
+                return Classification(role: role, date: mtime.map(yyyyMMdd), source: .fileModificationDate, instant: mtime ?? .distantPast)
             }
-            return (nil, fileModificationDate(fileURL), .fileModificationDate)
+            let mtime = fileModificationInstant(fileURL)
+            return Classification(role: nil, date: mtime.map(yyyyMMdd), source: .fileModificationDate, instant: mtime ?? .distantPast)
         }
 
         // `.cr3` (or any other `rawExtensions` member): no IMAGETYP
         // equivalent exists, so the role is always unclassified. The date
-        // still comes from Exif when available.
-        if let meta = ImageMetaReader.read(url: fileURL),
-           let rawDateTaken = meta.dateTaken,
-           let parsed = SessionTimeline.parseDateObs(rawDateTaken)
-        {
-            return (nil, Self.yyyyMMdd(parsed), .exifDateTaken)
+        // still comes from Exif when available, and so do the exposure/ISO/
+        // aperture values the Classify step's group rows surface.
+        let meta = ImageMetaReader.read(url: fileURL)
+        if let rawDateTaken = meta?.dateTaken, let parsed = SessionTimeline.parseDateObs(rawDateTaken) {
+            return Classification(
+                role: nil, date: Self.yyyyMMdd(parsed), source: .exifDateTaken, instant: parsed,
+                exposureSeconds: meta?.exposureSeconds, iso: meta?.iso, apertureFNumber: meta?.apertureFNumber
+            )
         }
-        return (nil, fileModificationDate(fileURL), .fileModificationDate)
+        let mtime = fileModificationInstant(fileURL)
+        return Classification(
+            role: nil, date: mtime.map(yyyyMMdd), source: .fileModificationDate, instant: mtime ?? .distantPast,
+            exposureSeconds: meta?.exposureSeconds, iso: meta?.iso, apertureFNumber: meta?.apertureFNumber
+        )
     }
 
-    private static func fileModificationDate(_ url: URL) -> String? {
+    private static func fileModificationInstant(_ url: URL) -> Date? {
         guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
               let date = values.contentModificationDate
         else { return nil }
-        return yyyyMMdd(date)
+        return date
     }
 
     private static let dateFormatter: DateFormatter = {

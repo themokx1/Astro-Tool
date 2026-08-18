@@ -95,23 +95,45 @@ public enum NightReport {
 
     // MARK: - Sky sections (altitude track + achieved Moon geometry)
 
-    struct AltitudeTrack {
-        var minAltitudeDeg: Double
-        var medianAltitudeDeg: Double
-        var maxAltitudeDeg: Double
-        var belowThresholdPercent: Double
-        var frameCount: Int
+    /// Public since `NightReportQuery` (`AstroApplication`) assembles the
+    /// exact same "Magasság & Hold" facts for the in-app night workspace --
+    /// see `computeSkySections`'s own doc comment for why this stays the
+    /// ONE place that computation lives rather than a second copy across
+    /// the module boundary.
+    public struct AltitudeTrack: Sendable, Equatable {
+        public var minAltitudeDeg: Double
+        public var medianAltitudeDeg: Double
+        public var maxAltitudeDeg: Double
+        public var belowThresholdPercent: Double
+        public var frameCount: Int
+
+        public init(minAltitudeDeg: Double, medianAltitudeDeg: Double, maxAltitudeDeg: Double, belowThresholdPercent: Double, frameCount: Int) {
+            self.minAltitudeDeg = minAltitudeDeg
+            self.medianAltitudeDeg = medianAltitudeDeg
+            self.maxAltitudeDeg = maxAltitudeDeg
+            self.belowThresholdPercent = belowThresholdPercent
+            self.frameCount = frameCount
+        }
     }
 
-    struct MoonGeometry {
-        var illuminationPercent: Double
-        var medianSeparationDeg: Double
-        var maxAltitudeDeg: Double
+    public struct MoonGeometry: Sendable, Equatable {
+        public var illuminationPercent: Double
+        public var medianSeparationDeg: Double
+        public var maxAltitudeDeg: Double
+
+        public init(illuminationPercent: Double, medianSeparationDeg: Double, maxAltitudeDeg: Double) {
+            self.illuminationPercent = illuminationPercent
+            self.medianSeparationDeg = medianSeparationDeg
+            self.maxAltitudeDeg = maxAltitudeDeg
+        }
     }
 
-    private struct SkySections {
-        var altitude: AltitudeTrack?
-        var moon: MoonGeometry?
+    /// Public for the same reason `AltitudeTrack`/`MoonGeometry` are --
+    /// `NightReportQuery.run` calls `computeSkySections` directly rather
+    /// than re-deriving altitude/airmass or Moon geometry itself.
+    public struct SkySections: Sendable, Equatable {
+        public var altitude: AltitudeTrack?
+        public var moon: MoonGeometry?
     }
 
     /// The altitude threshold "Magasság & Hold" reports the below-fraction
@@ -124,7 +146,7 @@ public enum NightReport {
     /// lights' `DATE-OBS` -- `nil`/`nil` when there's no resolvable target
     /// coordinate, no resolvable site, or no usable light has a parseable
     /// `DATE-OBS` at all.
-    private static func computeSkySections(
+    public static func computeSkySections(
         target: String,
         date: String,
         timeline: SessionTimeline,

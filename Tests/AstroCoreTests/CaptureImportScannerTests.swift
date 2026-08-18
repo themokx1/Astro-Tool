@@ -109,6 +109,36 @@ private func makeSourceDir() throws -> URL {
     #expect(file.captureDate != nil)
 }
 
+@Test func scanReadsExposureIsoAndApertureFromARawFilesExif() throws {
+    // ImageIO reads by content, not extension -- a real CR3 can't be
+    // synthesized in a test (see `ImageMetaReader`'s own doc comment), but a
+    // valid TIFF named `.cr3` exercises the EXACT same ImageIO/Exif
+    // dictionary codepath a real CR3 would hit through `ImageMetaReader
+    // .read`, which is the honest limit of what this test can prove.
+    let root = try makeSourceDir()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let url = root.appendingPathComponent("IMG_0003.cr3")
+    try writeTestTIFF(to: url, dateTimeOriginal: "2026:08:16 21:34:05", exposureSeconds: 0.0002, iso: 100, apertureFNumber: 2.0)
+
+    let found = try CaptureImportScanner.scan(sourceRoot: root)
+    let file = try #require(found.first)
+
+    #expect(file.exposureSeconds == 0.0002)
+    #expect(file.iso == 100)
+    #expect(file.apertureFNumber == 2.0)
+    #expect(file.captureDate == "2026-08-16")
+    // The display date is a truncated day string; captureInstant keeps the
+    // seconds `CaptureBurstGrouper` needs to tell adjacent shots apart.
+    let calendar = Calendar(identifier: .gregorian)
+    var utcCalendar = calendar
+    utcCalendar.timeZone = TimeZone(identifier: "UTC")!
+    let components = utcCalendar.dateComponents([.hour, .minute, .second], from: file.captureInstant)
+    #expect(components.hour == 21)
+    #expect(components.minute == 34)
+    #expect(components.second == 5)
+}
+
 @Test func scanIsCaseInsensitiveOnExtensionAndSortsByRelativePath() throws {
     let root = try makeSourceDir()
     defer { try? FileManager.default.removeItem(at: root) }

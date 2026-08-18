@@ -98,17 +98,28 @@ public enum TargetReport {
 
     // MARK: - Coordinate resolution + source label
 
-    struct CoordinateInfo {
-        var raDeg: Double
-        var decDeg: Double
-        var sourceLabel: String
+    /// Public since `ProjectReportQuery` (`AstroApplication`) assembles the
+    /// exact same coordinate fact for the in-app project workspace -- see
+    /// `resolveCoordinateInfo`'s own doc comment for why this stays the ONE
+    /// place that resolution lives rather than a second copy across the
+    /// module boundary.
+    public struct CoordinateInfo: Sendable, Equatable {
+        public var raDeg: Double
+        public var decDeg: Double
+        public var sourceLabel: String
+
+        public init(raDeg: Double, decDeg: Double, sourceLabel: String) {
+            self.raDeg = raDeg
+            self.decDeg = decDeg
+            self.sourceLabel = sourceLabel
+        }
     }
 
     /// Median coordinate across the target's usable session lights (header
     /// WCS/RA-DEC or plate-solved fallback, via `TargetCoordinates`), plus a
     /// Hungarian label for WHICH of those sources actually contributed --
     /// `nil` when not a single light resolves a coordinate at all.
-    private static func resolveCoordinateInfo(target: String, db: Database) throws -> CoordinateInfo? {
+    public static func resolveCoordinateInfo(target: String, db: Database) throws -> CoordinateInfo? {
         let allFiles = try db.allFiles(includeMissing: false)
         let targetLights = allFiles.filter { $0.target == target && $0.area == .sessions && $0.role == .light }
 
