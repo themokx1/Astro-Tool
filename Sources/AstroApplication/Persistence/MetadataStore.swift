@@ -30,6 +30,18 @@ public struct MetadataWriteBatch: Sendable {
     public var frameDecisions: [FrameDecisionRecord]
     public var reviewStates: [ReviewStateRecord]
     public var mutationJournal: [MutationJournalRecord]
+    /// W7-G: series rows a rescan's relink pass has determined are fully
+    /// emptied orphans -- every frame decision and review state that used
+    /// to point at them has already been relinked (elsewhere in this same
+    /// batch) onto the series id that now actually contains their frames.
+    /// Processed LAST, after every upsert above, so the relinking upserts
+    /// have already moved any children off these ids by the time the
+    /// deletes run -- `series.id`'s `ON DELETE RESTRICT` referents
+    /// (`frame_decisions.series_id`, `review_states.series_id`) are the
+    /// safety net if that precondition is ever violated: the delete fails
+    /// and the whole batch (including the new series/relinks) rolls back
+    /// together, rather than leaving a half-migrated store.
+    public var deletedSeriesIDs: [UUID]
 
     public init(
         projects: [ProjectRecord] = [],
@@ -37,7 +49,8 @@ public struct MetadataWriteBatch: Sendable {
         series: [SeriesRecord] = [],
         frameDecisions: [FrameDecisionRecord] = [],
         reviewStates: [ReviewStateRecord] = [],
-        mutationJournal: [MutationJournalRecord] = []
+        mutationJournal: [MutationJournalRecord] = [],
+        deletedSeriesIDs: [UUID] = []
     ) {
         self.projects = projects
         self.nights = nights
@@ -45,6 +58,7 @@ public struct MetadataWriteBatch: Sendable {
         self.frameDecisions = frameDecisions
         self.reviewStates = reviewStates
         self.mutationJournal = mutationJournal
+        self.deletedSeriesIDs = deletedSeriesIDs
     }
 }
 
@@ -135,7 +149,21 @@ public actor MetadataStore {
             for record in batch.frameDecisions { try upsert(record) }
             for record in batch.reviewStates { try upsert(record) }
             for record in batch.mutationJournal { try upsert(record) }
+            for id in batch.deletedSeriesIDs { try deleteOrphanSeries(id) }
         }
+    }
+
+    /// Deletes one series row that W7-G's relink pass has determined is a
+    /// fully emptied orphan (see `MetadataWriteBatch.deletedSeriesIDs`).
+    /// Deletes the child table first, the parent second -- the same
+    /// RESTRICT-then-drop ordering `MetadataSchema.versionEightSQL`'s doc
+    /// comment explains for its own two dropped tables -- so a still-
+    /// attached row (the relink determination was wrong) fails this delete
+    /// loudly via `ON DELETE RESTRICT` instead of silently leaving a
+    /// dangling reference.
+    private func deleteOrphanSeries(_ id: UUID) throws {
+        try database.run("DELETE FROM review_states WHERE series_id = ?;", bind: [.text(id.databaseText)])
+        try database.run("DELETE FROM series WHERE id = ?;", bind: [.text(id.databaseText)])
     }
 
     /// Inserts a lossless V1 staging batch atomically. Existing source keys
@@ -294,6 +322,48 @@ public actor MetadataStore {
             """,
             bind: [.text(projectID.databaseText)]
         ) { row in records.append(try Self.series(from: row)) }
+        return records
+    }
+
+    /// Every series row currently on record, across every project/night --
+    /// W7-G's rescan relink pass (`ScanWorkflowMaterializer.materialize`)
+    /// needs the FULL prior universe of series ids (not scoped to one
+    /// project or night) to tell which ones this run's fresh grouping no
+    /// longer produces, i.e. which ones a descriptor/passband derivation
+    /// change just orphaned.
+    public func allSeries() throws -> [SeriesRecord] {
+        var records: [SeriesRecord] = []
+        try database.query(
+            """
+            SELECT id, project_id, night_id, setup_id, setup_descriptor, sensor_mode,
+                   passband, exposure_seconds, filter_name, filter_id, gain, offset, binning
+            FROM series ORDER BY id;
+            """
+        ) { row in records.append(try Self.series(from: row)) }
+        return records
+    }
+
+    /// Every frame decision on record, across every series -- W7-G's relink
+    /// pass needs this keyed by `relativePath` (globally `UNIQUE`, see the
+    /// `frame_decisions` schema) rather than scoped to one series id, since
+    /// the whole point is finding a decision that is currently attached to a
+    /// series id THIS run's fresh grouping no longer produces.
+    public func allFrameDecisions() throws -> [FrameDecisionRecord] {
+        var records: [FrameDecisionRecord] = []
+        try database.query(
+            "SELECT id, series_id, relative_path, verdict, logically_excluded FROM frame_decisions ORDER BY relative_path;"
+        ) { row in records.append(try Self.frameDecision(from: row)) }
+        return records
+    }
+
+    /// Every review state on record, across every series -- same rationale
+    /// as `allFrameDecisions()`: W7-G's relink pass needs the full prior set
+    /// to find rows still attached to a series id that just got orphaned.
+    public func allReviewStates() throws -> [ReviewStateRecord] {
+        var records: [ReviewStateRecord] = []
+        try database.query(
+            "SELECT id, series_id, status, updated_at FROM review_states ORDER BY series_id;"
+        ) { row in records.append(try Self.reviewState(from: row)) }
         return records
     }
 
