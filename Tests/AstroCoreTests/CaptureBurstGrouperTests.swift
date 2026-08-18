@@ -222,6 +222,25 @@ struct CaptureGroupExposureSummaryTests {
         #expect(summary.medianExposureSeconds == 300)
     }
 
+    /// W5-4 item 4: a pure-FITS group (no ISO/aperture at all, since those
+    /// are Exif-only concepts) must still get an exposure summary once its
+    /// files carry `exposureSeconds` from the FITS `EXPTIME` header -- the
+    /// group row renders the same way a CR3 group's does, not "no exposure
+    /// line" just because the file kind differs.
+    @Test("a pure-FITS group with only EXPTIME-derived exposureSeconds still gets a summary")
+    func fitsOnlyGroupGetsExposureSummaryFromExptimeAlone() throws {
+        let files = [
+            makeFile(name: "light_0.fits", instant: epoch, exposureSeconds: 300),
+            makeFile(name: "light_1.fits", instant: epoch.addingTimeInterval(305), exposureSeconds: 300),
+            makeFile(name: "light_2.fits", instant: epoch.addingTimeInterval(610), exposureSeconds: 300),
+        ]
+        let group = CaptureFileGroup(files: files)
+        let summary = try #require(group.exposureSummary)
+        #expect(summary.medianExposureSeconds == 300)
+        #expect(summary.mostCommonISO == nil, "FITS carries no ISO -- must stay nil, not a guessed value")
+        #expect(summary.mostCommonApertureFNumber == nil)
+    }
+
     @Test("mostCommonISO picks the most frequent value")
     func mostCommonISOPicksTheMode() throws {
         let files = [

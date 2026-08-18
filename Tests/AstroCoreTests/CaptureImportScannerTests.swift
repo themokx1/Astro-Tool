@@ -139,6 +139,62 @@ private func makeSourceDir() throws -> URL {
     #expect(components.second == 5)
 }
 
+/// W5-4 item 4: the import wizard's FITS groups used to show no exposure
+/// summary at all -- CR3 groups get exposure/ISO/aperture from Exif
+/// (`CaptureGroupExposureSummary`), but a FITS light's own `EXPTIME` header
+/// was never read by this scanner, so `DiscoveredCaptureFile.exposureSeconds`
+/// stayed `nil` for every FITS file and the Classify step's group row
+/// rendered no exposure line for a real Light group. `classify(fileURL:)`
+/// already opens the FITS header once for `IMAGETYP`/`DATE-OBS` -- this only
+/// adds one more key read from that SAME already-open header, no second file
+/// open.
+@Test func scanReadsExptimeFromFitsHeaderIntoExposureSeconds() throws {
+    let root = try makeSourceDir()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    0",
+        "IMAGETYP= 'Light Frame'",
+        "DATE-OBS= '2026-08-16T21:34:00'",
+        "EXPTIME =                300.0",
+        "END",
+    ])
+    let url = root.appendingPathComponent("light_0001.fits")
+    try headerData.write(to: url)
+
+    let found = try CaptureImportScanner.scan(sourceRoot: root)
+    let file = try #require(found.first)
+
+    #expect(file.proposedRole == .light)
+    #expect(file.exposureSeconds == 300.0)
+}
+
+/// A FITS file with no `EXPTIME` card at all (or an unreadable header) must
+/// report `nil`, never a guessed or stale value -- same "no exposure line at
+/// all" honesty the Classify step already relies on for a group with no Exif
+/// data.
+@Test func scanReportsNilExposureSecondsWhenFitsHeaderHasNoExptime() throws {
+    let root = try makeSourceDir()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    0",
+        "IMAGETYP= 'Dark Frame'",
+        "END",
+    ])
+    let url = root.appendingPathComponent("dark_0001.fits")
+    try headerData.write(to: url)
+
+    let found = try CaptureImportScanner.scan(sourceRoot: root)
+    let file = try #require(found.first)
+
+    #expect(file.exposureSeconds == nil)
+}
+
 @Test func scanIsCaseInsensitiveOnExtensionAndSortsByRelativePath() throws {
     let root = try makeSourceDir()
     defer { try? FileManager.default.removeItem(at: root) }

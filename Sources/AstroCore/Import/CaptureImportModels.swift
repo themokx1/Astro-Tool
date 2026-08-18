@@ -54,15 +54,18 @@ public struct DiscoveredCaptureFile: Equatable, Sendable, Identifiable {
     /// modification date fallback never fails to produce SOME `Date`), so
     /// every discovered file has a place in the sort order grouping needs.
     public let captureInstant: Date
-    /// Exif `ExposureTime` in seconds -- `nil` for FITS (which has its own
-    /// `EXPTIME` header, read separately by whatever consumes the FITS
-    /// header directly; this field exists for the wizard's Classify step,
-    /// which needs it uniformly across CR3 groups). See `CaptureFileGroup`
-    /// for how a group's files' values are summarized.
+    /// Exif `ExposureTime` in seconds for a raw file, or the FITS header's
+    /// own `EXPTIME` for a FITS file (W5-4 item 4: read from the same header
+    /// `CaptureImportScanner.classify` already opens for `IMAGETYP`/
+    /// `DATE-OBS`, no second file open) -- `nil` only when neither source had
+    /// a value. Uniform across both file kinds so the wizard's Classify step
+    /// can summarize it identically for a FITS group and a CR3 group. See
+    /// `CaptureFileGroup` for how a group's files' values are summarized.
     public let exposureSeconds: Double?
-    /// Exif `ISOSpeedRatings`, first value.
+    /// Exif `ISOSpeedRatings`, first value -- `nil` for FITS (no equivalent
+    /// header).
     public let iso: Int?
-    /// Exif `FNumber` -- the aperture.
+    /// Exif `FNumber` -- the aperture. `nil` for FITS (no equivalent header).
     public let apertureFNumber: Double?
 
     public init(

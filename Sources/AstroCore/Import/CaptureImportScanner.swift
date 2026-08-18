@@ -127,13 +127,26 @@ public enum CaptureImportScanner {
         if kind == "fits" {
             if let header = try? FITSReader.readHeader(url: fileURL) {
                 let role = header.string("IMAGETYP").flatMap(FrameRoleFromHeader.role(fromImagetyp:))
+                // W5-4 item 4: same already-open header this branch already
+                // reads `IMAGETYP`/`DATE-OBS` from -- one more key, no second
+                // file open -- so a FITS group's exposure line renders the
+                // same way a CR3 group's Exif-derived one does (see
+                // `CaptureGroupExposureSummary`, which reads this field for
+                // both file kinds uniformly).
+                let exposureSeconds = header.double("EXPTIME")
                 if let rawDateObs = header.string("DATE-OBS"),
                    let parsed = SessionTimeline.parseDateObs(rawDateObs)
                 {
-                    return Classification(role: role, date: Self.yyyyMMdd(parsed), source: .fitsDateObs, instant: parsed)
+                    return Classification(
+                        role: role, date: Self.yyyyMMdd(parsed), source: .fitsDateObs, instant: parsed,
+                        exposureSeconds: exposureSeconds
+                    )
                 }
                 let mtime = fileModificationInstant(fileURL)
-                return Classification(role: role, date: mtime.map(yyyyMMdd), source: .fileModificationDate, instant: mtime ?? .distantPast)
+                return Classification(
+                    role: role, date: mtime.map(yyyyMMdd), source: .fileModificationDate, instant: mtime ?? .distantPast,
+                    exposureSeconds: exposureSeconds
+                )
             }
             let mtime = fileModificationInstant(fileURL)
             return Classification(role: nil, date: mtime.map(yyyyMMdd), source: .fileModificationDate, instant: mtime ?? .distantPast)
