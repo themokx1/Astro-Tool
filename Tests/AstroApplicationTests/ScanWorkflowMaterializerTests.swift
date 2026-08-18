@@ -470,6 +470,208 @@ struct FocalLengthJitterMaterializerTests {
     }
 }
 
+// MARK: - W7-G: a rescan that changes a series' derived identity must not
+// orphan the owner's triage decisions
+//
+// W7-D (filter inheritance) and W7-C (focal-length bucketing) both
+// deliberately change what `setupDescriptor`/`passband` derive to for most
+// existing series. `ScanWorkflowMaterializer` upserts series by a stable ID
+// derived from `SeriesKey.identity`, which embeds those derived fields -- so
+// the very next Beolvasás after either fix ships mints a NEW series id for
+// the same physical frames, while `FrameDecisionRecord` stays keyed to the
+// OLD series id. Before the relink fix below, this either orphans the
+// decision (unreachable from the new series) or, worse, crashes the whole
+// scan outright: `frame_decisions.relative_path` is globally `UNIQUE`, so
+// inserting a fresh placeholder decision for a path that already has one
+// under the old, now-abandoned series id violates that constraint and rolls
+// back the entire materialize transaction -- losing every project, night,
+// series and decision the scan would otherwise have written, not just the
+// one row.
+@Suite("W7-G rescan identity change relinks triage decisions")
+struct RescanIdentityChangeRelinkTests {
+    private static func makeFixture() throws -> (container: URL, indexURL: URL, db: Database) {
+        let container = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "AstroTool-W7G-Materializer-\(UUID().uuidString)", isDirectory: true
+        )
+        let cache = container.appendingPathComponent("cache", isDirectory: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let indexURL = cache.appendingPathComponent("index.sqlite")
+        let db = try Database(path: indexURL.path)
+        return (container, indexURL, db)
+    }
+
+    private static let path = "sessions/IC_1396_Elephants_Trunk_Nebula/2026-08-08/lights/frame_1.fit"
+
+    @discardableResult
+    private static func upsertFrame(db: Database, filter: String?) throws -> Int64 {
+        let fileID = try db.upsertFile(FileRecord(
+            path: path, size: 1024, mtime: 1, ext: "fit", kind: "fits",
+            area: .sessions, target: "IC_1396_Elephants_Trunk_Nebula",
+            sessionDate: "2026-08-08", role: .light, scannedAt: 1
+        ))
+        try db.upsertFITSMeta(FITSMetaRecord(
+            fileID: fileID, exptime: 300, gain: 100, offset: 50,
+            instrume: "ZWO ASI2600MC Pro", focallen: 261, filter: filter,
+            headerJSON: "{\"BAYERPAT\":\"RGGB\",\"XBINNING\":1}"
+        ))
+        return fileID
+    }
+
+    @Test("A rescan that changes the derived setup/passband relinks the owner's existing accept decision onto the new series, instead of orphaning it or crashing the scan")
+    func rescanRelinksDecisionAfterDerivationChange() async throws {
+        let fixture = try Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        // First scan: headerless -- guessed broadband (OSC, no captures/ slug,
+        // no setup default).
+        try Self.upsertFrame(db: fixture.db, filter: nil)
+        let metadata = try MetadataStore.temporary()
+        _ = try await ScanWorkflowMaterializer.materialize(indexDatabase: fixture.indexURL, metadata: metadata)
+
+        let project = try #require(try await metadata.projects().first)
+        let firstSeries = try #require(try await metadata.series(projectID: project.id).first)
+        let firstDecision = try #require(try await metadata.frameDecisions(seriesID: firstSeries.id).first)
+        #expect(firstDecision.relativePath == Self.path)
+        // The owner triages the frame BEFORE the next rescan.
+        try await metadata.save(FrameDecisionRecord(
+            id: firstDecision.id, seriesID: firstSeries.id, relativePath: firstDecision.relativePath,
+            verdict: .accepted, logicallyExcluded: false
+        ))
+
+        // A FILTER value now resolves for the same physical frame (the real
+        // W7-D/W7-C trigger is a derivation-input change, not a header edit,
+        // but any change that shifts `SeriesKey.identity` reproduces the
+        // exact same hazard) -- passband/`setupDescriptor` inputs shift, so
+        // the series this frame belongs to gets a brand-new stable id.
+        try Self.upsertFrame(db: fixture.db, filter: "Ha")
+
+        let summary = try await ScanWorkflowMaterializer.materialize(indexDatabase: fixture.indexURL, metadata: metadata)
+
+        #expect(summary.frames == 1)
+        let newSeries = try #require(try await metadata.series(projectID: project.id).first { $0.passband == .narrowband })
+        #expect(newSeries.id != firstSeries.id, "the derivation change must actually mint a new series id, or this test isn't exercising the hazard")
+        let relinked = try #require(try await metadata.frameDecisions(seriesID: newSeries.id).first { $0.relativePath == Self.path })
+        #expect(relinked.id == firstDecision.id, "the SAME decision row must move, not a fresh placeholder alongside it")
+        #expect(relinked.verdict == .accepted, "the owner's accept must survive the rescan")
+        #expect(relinked.logicallyExcluded == false)
+        #expect(
+            try await metadata.series(id: firstSeries.id) == nil,
+            "the old series is now fully empty (its one frame relinked away) -- it must be garbage-collected, not left as a dangling husk"
+        )
+    }
+
+    @Test("A partial split -- only SOME of a series' frames get a new descriptor -- relinks each decision to ITS OWN new series and keeps the old series alive for what's left behind")
+    func partialSplitFollowsEachFileToItsOwnSeries() async throws {
+        let fixture = try Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        let movingPath = Self.path
+        let stayingPath = "sessions/IC_1396_Elephants_Trunk_Nebula/2026-08-08/lights/frame_2.fit"
+        try Self.upsertFrame(db: fixture.db, filter: nil)
+        try fixture.db.upsertFITSMeta(FITSMetaRecord(
+            fileID: try fixture.db.upsertFile(FileRecord(
+                path: stayingPath, size: 1024, mtime: 2, ext: "fit", kind: "fits",
+                area: .sessions, target: "IC_1396_Elephants_Trunk_Nebula",
+                sessionDate: "2026-08-08", role: .light, scannedAt: 1
+            )),
+            exptime: 300, gain: 100, offset: 50,
+            instrume: "ZWO ASI2600MC Pro", focallen: 261, filter: nil,
+            headerJSON: "{\"BAYERPAT\":\"RGGB\",\"XBINNING\":1}"
+        ))
+        let metadata = try MetadataStore.temporary()
+        _ = try await ScanWorkflowMaterializer.materialize(indexDatabase: fixture.indexURL, metadata: metadata)
+
+        let project = try #require(try await metadata.projects().first)
+        let originalSeries = try #require(try await metadata.series(projectID: project.id).first)
+        let movingDecision = try #require(
+            try await metadata.frameDecisions(seriesID: originalSeries.id).first { $0.relativePath == movingPath }
+        )
+        let stayingDecision = try #require(
+            try await metadata.frameDecisions(seriesID: originalSeries.id).first { $0.relativePath == stayingPath }
+        )
+        try await metadata.save(FrameDecisionRecord(
+            id: movingDecision.id, seriesID: originalSeries.id, relativePath: movingPath,
+            verdict: .accepted, logicallyExcluded: false
+        ))
+        try await metadata.save(FrameDecisionRecord(
+            id: stayingDecision.id, seriesID: originalSeries.id, relativePath: stayingPath,
+            verdict: .rejected, logicallyExcluded: true
+        ))
+
+        // Only the first frame's derivation changes -- the second keeps its
+        // original (headerless, broadband-guessed) identity untouched, so
+        // the original series survives this rescan with exactly one frame
+        // still legitimately in it.
+        try Self.upsertFrame(db: fixture.db, filter: "Ha")
+
+        _ = try await ScanWorkflowMaterializer.materialize(indexDatabase: fixture.indexURL, metadata: metadata)
+
+        let survivingOriginal = try #require(try await metadata.series(id: originalSeries.id))
+        let survivingDecisions = try await metadata.frameDecisions(seriesID: survivingOriginal.id)
+        #expect(survivingDecisions.map(\.relativePath) == [stayingPath])
+        #expect(survivingDecisions.first?.verdict == .rejected, "the frame that never moved keeps its own decision, untouched")
+
+        let newSeries = try #require(try await metadata.series(projectID: project.id).first { $0.id != originalSeries.id })
+        let movedDecision = try #require(
+            try await metadata.frameDecisions(seriesID: newSeries.id).first { $0.relativePath == movingPath }
+        )
+        #expect(movedDecision.id == movingDecision.id)
+        #expect(movedDecision.verdict == .accepted, "the frame that moved keeps ITS OWN decision, following it to the new series")
+    }
+
+    @Test("Rescanning twice in a row with no further change is a true no-op")
+    func secondConsecutiveRescanIsANoOp() async throws {
+        let fixture = try Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        try Self.upsertFrame(db: fixture.db, filter: nil)
+        let metadata = try MetadataStore.temporary()
+        _ = try await ScanWorkflowMaterializer.materialize(indexDatabase: fixture.indexURL, metadata: metadata)
+        let project = try #require(try await metadata.projects().first)
+        let firstSeries = try #require(try await metadata.series(projectID: project.id).first)
+        let firstDecision = try #require(try await metadata.frameDecisions(seriesID: firstSeries.id).first)
+        try await metadata.save(FrameDecisionRecord(
+            id: firstDecision.id, seriesID: firstSeries.id, relativePath: firstDecision.relativePath,
+            verdict: .accepted, logicallyExcluded: false
+        ))
+        try Self.upsertFrame(db: fixture.db, filter: "Ha")
+        _ = try await ScanWorkflowMaterializer.materialize(indexDatabase: fixture.indexURL, metadata: metadata)
+        let afterFirstRescan = try await metadata.series(projectID: project.id)
+        let afterFirstDecisions = try await metadata.allFrameDecisions()
+
+        // A THIRD materialize call, with nothing changed on disk or in the
+        // index since the second -- must leave everything exactly as it is:
+        // no new series minted, the already-relinked decision untouched, and
+        // the already-deleted orphan does not somehow reappear.
+        let summary = try await ScanWorkflowMaterializer.materialize(indexDatabase: fixture.indexURL, metadata: metadata)
+
+        #expect(summary.frames == 1)
+        #expect(try await metadata.series(projectID: project.id) == afterFirstRescan)
+        #expect(try await metadata.allFrameDecisions() == afterFirstDecisions)
+        #expect(try await metadata.series(id: firstSeries.id) == nil, "the orphan stays deleted -- it must not be resurrected by a later no-op rescan")
+    }
+
+    @Test("A decision's relative_path never ends up duplicated across repeated derivation-changing rescans")
+    func relativePathNeverDuplicatesAcrossRepeatedRescans() async throws {
+        let fixture = try Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        let metadata = try MetadataStore.temporary()
+        // `frame_decisions.relative_path` is globally UNIQUE in the schema,
+        // so there is exactly one legitimate row per path at any moment --
+        // the "collision" the relink pass must avoid is ever trying to
+        // INSERT a second row for a path that already has one (which is
+        // exactly what crashed the whole scan before this fix). The rule
+        // this pass follows is: always UPDATE that one row's `seriesID` in
+        // place rather than mint a new id, so a duplicate is structurally
+        // impossible rather than merely avoided by luck. Cycling the same
+        // frame's derivation back and forth across several rescans is the
+        // stress case that would surface a regression here.
+        for filter in [nil, "Ha", "OIII", nil, "Ha"] {
+            try Self.upsertFrame(db: fixture.db, filter: filter)
+            _ = try await ScanWorkflowMaterializer.materialize(indexDatabase: fixture.indexURL, metadata: metadata)
+            let decisionsForPath = try await metadata.allFrameDecisions().filter { $0.relativePath == Self.path }
+            #expect(decisionsForPath.count == 1, "exactly one decision row must exist for \(Self.path) after filter=\(filter ?? "nil")")
+        }
+    }
+}
+
 private struct MaterializerFixture {
     let container: URL
     let root: URL

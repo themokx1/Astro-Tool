@@ -105,6 +105,21 @@ public enum ScanWorkflowMaterializer {
         var projectByCatalog = Dictionary(uniqueKeysWithValues: existingProjects.map { ($0.catalogID, $0) })
         let existingNights = try await metadata.nights()
         var nightByDate = Dictionary(uniqueKeysWithValues: existingNights.map { ($0.localDate, $0) })
+        // W7-G: the prior universe of series/decisions/review-states, read
+        // ONCE up front -- a rescan whose derivation (W7-C focal bucketing,
+        // W7-D filter inheritance, or any future change to `SeriesKey.
+        // identity`) now resolves differently for the same physical frames
+        // mints a NEW stable series id for them, orphaning whatever used to
+        // be keyed to the OLD id. `existingDecisionByPath` is keyed by
+        // `relativePath` rather than series id on purpose: `relativePath` is
+        // the one thing that stays stable across a descriptor change, and
+        // `frame_decisions.relative_path` is globally `UNIQUE` in the schema
+        // anyway, so this dictionary can never drop a row to a key collision.
+        let priorSeriesIDs = Set(try await metadata.allSeries().map(\.id))
+        let existingDecisionByPath = Dictionary(
+            uniqueKeysWithValues: try await metadata.allFrameDecisions().map { ($0.relativePath, $0) }
+        )
+        let existingReviewStates = try await metadata.allReviewStates()
         var projects: [ProjectRecord] = []
         var nights: [NightRecord] = []
         var grouped: [SeriesKey: [ScannedFrame]] = [:]
@@ -138,30 +153,103 @@ public enum ScanWorkflowMaterializer {
 
         var seriesRecords: [SeriesRecord] = []
         var decisionRecords: [FrameDecisionRecord] = []
+        // W7-G: which series id THIS run's fresh grouping actually assigns
+        // to each scanned path -- the relink pass below needs this both to
+        // decide whether an existing decision must move, and (after the
+        // loop) to work out which prior series ids no longer have ANY frame
+        // landing in them at all.
+        var newSeriesIDByPath: [String: UUID] = [:]
         for key in grouped.keys.sorted(by: SeriesKey.sort) {
             guard let members = grouped[key] else { continue }
             let seriesID = stableID("series|\(key.identity)")
             let series = key.record(id: seriesID)
             seriesRecords.append(series)
-            let existing = Dictionary(
-                uniqueKeysWithValues: try await metadata.frameDecisions(seriesID: seriesID)
-                    .map { ($0.relativePath, $0) }
-            )
-            for frame in members where existing[frame.path] == nil {
-                decisionRecords.append(FrameDecisionRecord(
-                    id: stableID("frame|\(seriesID.uuidString)|\(frame.path)"),
-                    seriesID: seriesID,
-                    relativePath: frame.path,
-                    verdict: .undecided,
-                    logicallyExcluded: false
-                ))
+            for frame in members {
+                newSeriesIDByPath[frame.path] = seriesID
+                if let existing = existingDecisionByPath[frame.path] {
+                    // Already correctly linked (the common case on a
+                    // no-op rescan) -- leave the row untouched so a human
+                    // verdict is never rewritten. Otherwise the SAME row
+                    // (same id, same verdict) just moves its `seriesID`
+                    // FK onto the series this run actually produced for
+                    // its path: this IS the relink, folded into the exact
+                    // spot the pre-W7-G code created a brand-new
+                    // `.undecided` placeholder and crashed on `relative_
+                    // path`'s UNIQUE constraint instead.
+                    if existing.seriesID != seriesID {
+                        decisionRecords.append(FrameDecisionRecord(
+                            id: existing.id,
+                            seriesID: seriesID,
+                            relativePath: existing.relativePath,
+                            verdict: existing.verdict,
+                            logicallyExcluded: existing.logicallyExcluded
+                        ))
+                    }
+                } else {
+                    decisionRecords.append(FrameDecisionRecord(
+                        id: stableID("frame|\(seriesID.uuidString)|\(frame.path)"),
+                        seriesID: seriesID,
+                        relativePath: frame.path,
+                        verdict: .undecided,
+                        logicallyExcluded: false
+                    ))
+                }
             }
         }
+
+        // W7-G continued: relink `review_states` the same way -- but only
+        // when an orphaned series' membership maps onto exactly ONE
+        // successor series this run (an unambiguous "this whole series
+        // became that series"). A split (its frames now land in more than
+        // one new series) has no single rightful successor for a
+        // series-level status, so it's deliberately left attached to the
+        // old, now-orphaned id -- which in turn keeps that orphan
+        // ineligible for deletion below, the conservative "don't guess"
+        // choice over silently picking a winner.
+        let currentSeriesIDs = Set(seriesRecords.map(\.id))
+        var decisionsByPriorSeriesID: [UUID: [FrameDecisionRecord]] = [:]
+        for decision in existingDecisionByPath.values {
+            decisionsByPriorSeriesID[decision.seriesID, default: []].append(decision)
+        }
+        var reviewStateRecords: [ReviewStateRecord] = []
+        var relinkedReviewStateSeriesIDs: Set<UUID> = []
+        for reviewState in existingReviewStates where !currentSeriesIDs.contains(reviewState.seriesID) {
+            let successors = Set(
+                (decisionsByPriorSeriesID[reviewState.seriesID] ?? [])
+                    .compactMap { newSeriesIDByPath[$0.relativePath] }
+            )
+            guard let successor = successors.first, successors.count == 1 else { continue }
+            reviewStateRecords.append(ReviewStateRecord(
+                id: reviewState.id, seriesID: successor,
+                status: reviewState.status, updatedAt: reviewState.updatedAt
+            ))
+            relinkedReviewStateSeriesIDs.insert(reviewState.seriesID)
+        }
+
+        // W7-G continued: an orphan (a prior series id this run's grouping
+        // no longer produces) is only safe to delete once EVERY decision
+        // and review state that used to point at it has actually moved
+        // elsewhere above -- i.e. none of its paths were simply absent from
+        // this scan (a temporarily missing/moved file keeps its old series
+        // alive on purpose, since that decision has nowhere else to go yet).
+        let orphanIDs = priorSeriesIDs.subtracting(currentSeriesIDs)
+        let deletedSeriesIDs = orphanIDs.filter { orphanID in
+            let remainingDecisions = decisionsByPriorSeriesID[orphanID]?.contains {
+                newSeriesIDByPath[$0.relativePath] == nil
+            } ?? false
+            let remainingReviewState = existingReviewStates.contains {
+                $0.seriesID == orphanID && !relinkedReviewStateSeriesIDs.contains(orphanID)
+            }
+            return !remainingDecisions && !remainingReviewState
+        }
+
         try await metadata.save(MetadataWriteBatch(
             projects: projects,
             nights: nights,
             series: seriesRecords,
-            frameDecisions: decisionRecords
+            frameDecisions: decisionRecords,
+            reviewStates: reviewStateRecords,
+            deletedSeriesIDs: Array(deletedSeriesIDs)
         ))
         // Only reached once every read/write above has succeeded -- this is
         // the actual "V2 looked at the library" moment `ArchiveMapQuery`'s
