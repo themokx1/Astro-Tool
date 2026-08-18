@@ -136,3 +136,34 @@ private let apscZoom = ImagingSetupProfile(
     setup.relativeEfficiency = 0
     #expect(throws: ImagingSetupValidationError.invalidRelativeEfficiency) { try setup.validate() }
 }
+
+// MARK: - W7-D: per-setup default filter
+
+@Test func defaultFilterSignalModeDefaultsToUnknown() {
+    #expect(apscZoom.defaultFilterSignalMode == .unknown)
+    #expect(apscZoom.defaultFilterName == nil)
+}
+
+@Test func decodingLegacySetupJSONWithoutDefaultFilterKeepsItUnconfigured() throws {
+    let legacyJSON = """
+    {"id":"apsc","name":"APS-C","cameraName":"Cam","cameraKind":"dedicatedAstro",
+     "sensorWidthMM":23.5,"sensorHeightMM":15.7,"focalLengthMinMM":100,
+     "focalLengthMaxMM":400,"defaultFocalLengthMM":200}
+    """
+    let decoded = try JSONDecoder().decode(ImagingSetupProfile.self, from: Data(legacyJSON.utf8))
+    #expect(decoded.defaultFilterSignalMode == .unknown)
+    #expect(decoded.defaultFilterName == nil)
+}
+
+@Test func defaultFilterSignalModeRoundTripsThroughJSON() throws {
+    var setup = apscZoom
+    setup.defaultFilterSignalMode = .dualBand
+    setup.defaultFilterName = "SV220"
+
+    let data = try JSONEncoder().encode(setup)
+    let decoded = try JSONDecoder().decode(ImagingSetupProfile.self, from: data)
+
+    #expect(decoded == setup)
+    #expect(decoded.defaultFilterSignalMode == .dualBand)
+    #expect(decoded.defaultFilterName == "SV220")
+}

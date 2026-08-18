@@ -62,6 +62,20 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
     /// values below one require proportionally more integration.
     public var relativeEfficiency: Double
     public var isDefault: Bool
+    /// W7-D: fallback passband the V2 series builder applies to a headerless
+    /// frame from this setup's camera when neither the FITS header, the
+    /// file's capture group, nor its capture-slug name it either -- the case
+    /// an ASI Air writes on an OSC + duoband/narrowband filter train with no
+    /// filter wheel (it never writes a `FILTER` header at all). `.unknown`
+    /// (the default) means "no fallback configured", leaving the pre-W7-D
+    /// broadband/unfiltered guess untouched. Only ever consulted for the
+    /// `defaultSetup(in:)` profile, and only for OSC frames -- see
+    /// `ScanWorkflowMaterializer`'s own derivation for the full precedence
+    /// chain (FITS header > capture group > capture slug > this > guess).
+    public var defaultFilterSignalMode: SignalMode
+    /// Free-text label shown next to `defaultFilterSignalMode` in Settings
+    /// (e.g. "SV220") -- display only, never parsed by the derivation.
+    public var defaultFilterName: String?
 
     public init(
         id: String,
@@ -75,7 +89,9 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
         defaultFocalLengthMM: Double,
         fNumber: Double = 5,
         relativeEfficiency: Double = 1,
-        isDefault: Bool = false
+        isDefault: Bool = false,
+        defaultFilterSignalMode: SignalMode = .unknown,
+        defaultFilterName: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -89,12 +105,15 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
         self.fNumber = fNumber
         self.relativeEfficiency = relativeEfficiency
         self.isDefault = isDefault
+        self.defaultFilterSignalMode = defaultFilterSignalMode
+        self.defaultFilterName = defaultFilterName
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, cameraName, cameraKind, sensorWidthMM, sensorHeightMM
         case focalLengthMinMM, focalLengthMaxMM, defaultFocalLengthMM
         case fNumber, relativeEfficiency, isDefault
+        case defaultFilterSignalMode, defaultFilterName
     }
 
     public init(from decoder: any Decoder) throws {
@@ -111,6 +130,8 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
         fNumber = try container.decodeIfPresent(Double.self, forKey: .fNumber) ?? 5
         relativeEfficiency = try container.decodeIfPresent(Double.self, forKey: .relativeEfficiency) ?? 1
         isDefault = try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+        defaultFilterSignalMode = try container.decodeIfPresent(SignalMode.self, forKey: .defaultFilterSignalMode) ?? .unknown
+        defaultFilterName = try container.decodeIfPresent(String.self, forKey: .defaultFilterName)
     }
 
     public var isZoom: Bool {
