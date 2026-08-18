@@ -211,6 +211,71 @@ private func populatedCaptureSummaryDatabase() throws -> Database {
     #expect(session.exposureBreakdown == ["60.0": 2])
 }
 
+/// W6-E item 2 (live pixel review, real library): the night report's
+/// Gyűjtések (capture groups) table showed "Szűrők: StarMask, Starless" for
+/// the "Nincs gyűjtéshez rendelve" (unassigned) bucket on a library with
+/// ZERO registered filters. Root cause: `Scanner.captureMeta` records
+/// whatever a `.fit`/`.fits` file's own `FILTER` header card says regardless
+/// of `FrameRole`, and `summarize` (above) folded EVERY resolved file's
+/// filter label into the bucket's filter set -- including `.stack`/
+/// `.processed` derivative files sitting in a stacking tool's own
+/// `StarMask`/`Starless` output subfolder, whose `FILTER` card (if the tool
+/// writes one at all) has nothing to do with a physical filter. The filters
+/// column must only ever reflect real capture (light/flat/dark/bias) filter
+/// metadata.
+@Test func captureSummaryFiltersExcludeStackAndProcessedDerivativeFiles() throws {
+    let db = try Database(path: ":memory:")
+    let target = "M42"
+    let date = "2026-05-24"
+    try addSummaryFile(
+        "sessions/\(target)/\(date)/lights/light1.fit",
+        db: db, inode: 1, exptime: 120
+    )
+    // Stack/processed output sitting in the stacking tool's own
+    // product-type subfolder -- neither file belongs to any registered
+    // capture group, so both fall into the SAME implicit ("unassigned")
+    // bucket as the light frame above.
+    try addSummaryFile(
+        "stacks/\(target)/\(date)/StarMask/mask.fit",
+        db: db, inode: 2, filter: "StarMask"
+    )
+    try addSummaryFile(
+        "processed/\(target)/\(date)/Starless/starless.fit",
+        db: db, inode: 3, filter: "Starless"
+    )
+
+    let summaries = try CaptureQueries.summaries(target: target, date: date, db: db, config: AstroConfig())
+    let unassigned = try #require(summaries.first { $0.isImplicit })
+
+    #expect(unassigned.filters.isEmpty)
+    // The derivative files still count toward their own honest totals --
+    // this fix only narrows what feeds the FILTER set, nothing else.
+    #expect(unassigned.stackCount == 1)
+    #expect(unassigned.processedCount == 1)
+}
+
+/// A flat frame's own filter IS real capture metadata (flats are shot
+/// per-filter), so the same gate that drops `.stack`/`.processed` above must
+/// not also drop `.flat`.
+@Test func captureSummaryFiltersStillIncludeFlatFrames() throws {
+    let db = try Database(path: ":memory:")
+    let target = "M42"
+    let date = "2026-05-24"
+    try addSummaryFile(
+        "sessions/\(target)/\(date)/lights/light1.fit",
+        db: db, inode: 1, exptime: 120, filter: "Ha"
+    )
+    try addSummaryFile(
+        "sessions/\(target)/\(date)/flats/flat1.fit",
+        db: db, inode: 2, filter: "Ha"
+    )
+
+    let summaries = try CaptureQueries.summaries(target: target, date: date, db: db, config: AstroConfig())
+    let unassigned = try #require(summaries.first { $0.isImplicit })
+
+    #expect(unassigned.filters == ["Ha"])
+}
+
 @Test func olderSessionDetailJSONDecodesWithoutCaptureGroups() throws {
     let original = SessionDetail(
         target: "M31",

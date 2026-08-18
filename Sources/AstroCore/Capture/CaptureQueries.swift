@@ -162,7 +162,20 @@ public enum CaptureQueries {
             var builder = builders[bucketKey]!
             if resolved.sensorMode != .unknown { builder.sensorModes.insert(resolved.sensorMode) }
             if resolved.signalMode != .unknown { builder.signalModes.insert(resolved.signalMode) }
-            if let label = resolved.filterLabel { builder.filters.insert(label) }
+            // W6-E item 2 (live pixel review, real library): a `.stack`/
+            // `.processed` derivative file's own `FITS` header is captured
+            // by the scanner exactly like a light frame's (`Scanner
+            // .captureMeta` is role-agnostic), but its `FILTER` card -- if
+            // the stacking tool writes one at all -- describes the OUTPUT
+            // product (e.g. a `StarMask`/`Starless` subfolder), never a
+            // physical filter a frame was captured through. Folding it into
+            // this bucket's filter set produced "Szűrők: StarMask, Starless"
+            // on a library with zero registered filters. Only a real
+            // capture role (light/flat/dark/bias) can contribute a filter.
+            if file.role == .light || file.role == .flat || file.role == .dark || file.role == .bias,
+               let label = resolved.filterLabel {
+                builder.filters.insert(label)
+            }
             builder.summary.metadataConflictCount += resolved.conflicts.count
 
             switch file.role {
