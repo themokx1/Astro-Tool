@@ -249,7 +249,7 @@ public struct InsightsView: View {
                         AxisGridLine()
                         AxisTick()
                         if let date = value.as(String.self) {
-                            AxisValueLabel(date)
+                            AxisValueLabel(InsightTrendChartState.shortAxisLabel(for: date))
                         }
                     }
                 }
@@ -490,5 +490,32 @@ enum InsightTrendChartState: Equatable {
         return dates.enumerated().compactMap { index, date in
             index.isMultiple(of: stride) ? date : nil
         }
+    }
+
+    /// W5-2 finding 2 (owner pixel review): capping ticks at `maxTicks`
+    /// (above) was not enough on its own -- every surviving label still
+    /// rendered as a bare "…" on the real screen. `qualityTrends` lays the
+    /// three charts (FWHM/Background/Efficiency) out as equal thirds of one
+    /// row (`HStack(spacing: 12)`, each `.frame(maxWidth: .infinity)`); at a
+    /// typical ~900pt workspace width that is roughly 292pt per chart, and
+    /// with 6 ticks that is ~49pt of budget PER TICK including its grid
+    /// line's own spacing. A full `YYYY-MM-DD` label ("2026-08-14", 10
+    /// characters) is ~65-75pt at caption size -- wider than the whole
+    /// per-tick budget, so Swift Charts collapsed it to its own ellipsis
+    /// exactly as the owner saw. `MM-dd` ("08-14", 5 characters, ~33-38pt)
+    /// fits inside that budget with room for tick spacing; the year is
+    /// implicit and never ambiguous within one chart's date range. Called
+    /// from the ONE shared `trendChart` function's `AxisValueLabel`, so the
+    /// FWHM/Background/Efficiency charts can never drift apart on this. A
+    /// date that doesn't parse as `YYYY-MM-DD` (e.g. a raw, non-date
+    /// session-dir name -- `TrendPoint.date`'s documented possibility)
+    /// renders verbatim rather than being mangled by a false-positive split.
+    static func shortAxisLabel(for date: String) -> String {
+        let parts = date.split(separator: "-", omittingEmptySubsequences: false)
+        guard parts.count == 3,
+              parts[0].count == 4, parts[1].count == 2, parts[2].count == 2,
+              parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) })
+        else { return date }
+        return "\(parts[1])-\(parts[2])"
     }
 }
