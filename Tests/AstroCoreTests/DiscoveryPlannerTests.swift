@@ -147,7 +147,11 @@ private let budapest = SiteRule(latitudeDeg: 47.5, longitudeDeg: 19.0)
     #expect(m74.verdict.hasPrefix("Hold zavar"), "unexpected verdict: \(m74.verdict)")
     #expect((m74.moonSeparationDeg ?? 999) < 40)
     #expect((m74.visibleHours ?? 0) > 0.5, "must clear the visibility gate for the Moon verdict to even be reachable")
-    #expect(m74.score < 0.5, "the 0.2x moon penalty should have suppressed the score well below a clean, unpenalized row")
+    // W7-A: `SkyScore.moonFactor` replaced the old binary 0.2x penalty with
+    // a continuous illum x proximity x above-horizon-fraction reduction --
+    // ~0.9deg/63% and the Moon up for the target's own window still land
+    // well under half of a clean, unpenalized row's score.
+    #expect(m74.score < 0.5, "the continuous moon penalty should have suppressed the score well below a clean, unpenalized row")
 }
 
 // MARK: - No resolvable site / no dark window -- same fallback shape as Planner

@@ -71,6 +71,30 @@ struct PlanningScoreTests {
         #expect(unknown >= 0 && unknown <= 1)
     }
 
+    @Test("W7-A: a Moon below the horizon for the whole visible window is no problem, however full or however close")
+    func moonFactorIsNeutralWhenTheMoonNeverRisesDuringTheWindow() {
+        // Full Moon, sitting right on top of the target -- the worst
+        // possible illumination/separation -- but it never rose during the
+        // target's own visible window.
+        let factor = PlanningScore.moonFactor(separationDeg: 0, illuminationPercent: 100, aboveHorizonFraction: 0)
+        #expect(factor == 1)
+    }
+
+    @Test("W7-A: aboveHorizonFraction defaults to 1 -- existing call sites keep their prior behavior unchanged")
+    func moonFactorDefaultsToTreatingTheMoonAsUpForTheWholeWindow() {
+        let withDefault = PlanningScore.moonFactor(separationDeg: 20, illuminationPercent: 60)
+        let explicitFullExposure = PlanningScore.moonFactor(separationDeg: 20, illuminationPercent: 60, aboveHorizonFraction: 1)
+        #expect(withDefault == explicitFullExposure)
+    }
+
+    @Test("W7-A: the penalty scales continuously with how much of the window the Moon is actually up for")
+    func moonFactorPenaltyScalesWithAboveHorizonFraction() {
+        let fullExposure = PlanningScore.moonFactor(separationDeg: 0, illuminationPercent: 100, aboveHorizonFraction: 1)
+        let halfExposure = PlanningScore.moonFactor(separationDeg: 0, illuminationPercent: 100, aboveHorizonFraction: 0.5)
+        #expect(abs(fullExposure - 0) < 0.000_001)
+        #expect(abs(halfExposure - 0.5) < 0.000_001)
+    }
+
     @Test("The composite score ranks a well-placed target above a poorly placed one")
     func compositeRanksSensibly() {
         // NGC 7000 on the reported night: high, up all night, Moon far away.

@@ -55,13 +55,25 @@ public enum PlanningScore {
     }
 
     /// 1 means the Moon is no problem. The penalty is the product of how close
-    /// the Moon is and how bright it is, so a thin crescent nearby costs
-    /// almost nothing while a full Moon nearby costs a lot.
-    public static func moonFactor(separationDeg: Double?, illuminationPercent: Double) -> Double {
+    /// the Moon is, how bright it is, and (W7-A audit fix) the fraction of
+    /// the target's own visible window during which the Moon is actually
+    /// above the horizon -- a thin crescent nearby costs almost nothing, a
+    /// full Moon nearby costs a lot, and a Moon that has already SET for the
+    /// whole window costs nothing at all, no matter how full or how close.
+    ///
+    /// `aboveHorizonFraction` defaults to `1` (Moon treated as up for the
+    /// entire window) so every call site that hasn't yet been wired to pass
+    /// the real, sampled fraction (`AstroCore`'s
+    /// `NightSweep.moonAboveHorizonFraction`, evaluated across the target's
+    /// own visible window -- see `Planner.buildPlan`'s identical fix) keeps
+    /// its previous behavior unchanged. Passing the real fraction is the
+    /// caller's responsibility; this function has no sky access of its own.
+    public static func moonFactor(separationDeg: Double?, illuminationPercent: Double, aboveHorizonFraction: Double = 1) -> Double {
         guard let separationDeg, separationDeg.isFinite, separationDeg >= 0 else { return 1 }
         let illumination = clamp(illuminationPercent / 100)
         let proximity = clamp(1 - separationDeg / moonIrrelevantSeparationDeg)
-        return clamp(1 - illumination * proximity)
+        let fraction = clamp(aboveHorizonFraction)
+        return clamp(1 - illumination * proximity * fraction)
     }
 
     /// The single 0...1 number the Planning table sorts by.
@@ -70,11 +82,15 @@ public enum PlanningScore {
         visibleHours: Double?,
         darknessHours: Double,
         moonSeparationDeg: Double?,
-        moonIlluminationPercent: Double
+        moonIlluminationPercent: Double,
+        moonAboveHorizonFraction: Double = 1
     ) -> Double {
         let photographable = photographableFactor(visibleHours: visibleHours, darknessHours: darknessHours)
         let frameFill = frameFillFactor(frameCoverage: frameCoverage)
-        let moon = moonFactor(separationDeg: moonSeparationDeg, illuminationPercent: moonIlluminationPercent)
+        let moon = moonFactor(
+            separationDeg: moonSeparationDeg, illuminationPercent: moonIlluminationPercent,
+            aboveHorizonFraction: moonAboveHorizonFraction
+        )
         let total = photographable * photographableWeight
             + frameFill * frameFillWeight
             + moon * moonWeight

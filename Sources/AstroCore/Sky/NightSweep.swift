@@ -10,6 +10,16 @@ struct NightSweepResult: Sendable, Equatable {
     var visibleSeconds: Double
     var visibleStart: Date?
     var visibleEnd: Date?
+    /// `false` when `culminationUTC` is only the EDGE of the sampled
+    /// dusk...dawn window (the target was still climbing at dawn, or was
+    /// already past its peak at dusk) rather than a genuine meridian
+    /// transit captured inside the window -- W7-A audit finding: a target
+    /// still rising at dawn gets a "culminationUTC" that is really just
+    /// "when we stopped looking", and labeling that "delelés HH:mm"
+    /// (culmination) is dishonest. `false` (never `true`) when there was no
+    /// sample at all. See `sweep`'s own doc comment for exactly how this is
+    /// derived.
+    var isGenuineCulmination: Bool
 }
 
 /// Brute-force night-window altitude sweep, plus the local-time formatting
@@ -25,6 +35,13 @@ enum NightSweep {
     /// the transit time in closed form -- simpler to get right, and this
     /// tool only ever needs night-window granularity, not observatory
     /// pointing precision.
+    ///
+    /// `isGenuineCulmination` is derived from the SAME scan: when the
+    /// tracked maximum sits at either the first or the last sample, the
+    /// target was still rising (or already falling) at the very edge of
+    /// `[duskUTC, dawnUTC]` -- the real transit lies outside the window
+    /// entirely, and what got recorded as `culminationUTC` is merely "the
+    /// last instant we looked", not a genuine meridian passage.
     static func sweep(
         raDeg: Double,
         decDeg: Double,
@@ -40,6 +57,8 @@ enum NightSweep {
         var visibleSampleCount = 0
         var visibleStart: Date?
         var visibleEnd: Date?
+        var firstSampleDate: Date?
+        var lastSampleDate: Date?
 
         let stepSeconds = stepMinutes * 60
         var t = duskUTC
@@ -47,6 +66,9 @@ enum NightSweep {
             let jd = JulianDate.julianDay(t)
             let lst = SiderealTime.lstHours(julianDay: jd, longitudeDeg: lonDeg)
             let (alt, _) = AltAz.position(raDeg: raDeg, decDeg: decDeg, lstHours: lst, latDeg: latDeg)
+
+            if firstSampleDate == nil { firstSampleDate = t }
+            lastSampleDate = t
 
             if alt > maxAlt {
                 maxAlt = alt
@@ -62,12 +84,20 @@ enum NightSweep {
             t = t.addingTimeInterval(stepSeconds)
         }
 
+        let isGenuineCulmination: Bool
+        if let maxAltDate, let firstSampleDate, let lastSampleDate {
+            isGenuineCulmination = maxAltDate != firstSampleDate && maxAltDate != lastSampleDate
+        } else {
+            isGenuineCulmination = false
+        }
+
         return NightSweepResult(
             maxAltitudeDeg: maxAlt.isFinite ? maxAlt : -90,
             culminationUTC: maxAltDate,
             visibleSeconds: Double(visibleSampleCount) * stepSeconds,
             visibleStart: visibleStart,
-            visibleEnd: visibleEnd
+            visibleEnd: visibleEnd,
+            isGenuineCulmination: isGenuineCulmination
         )
     }
 
@@ -110,6 +140,54 @@ enum NightSweep {
         let moon = SunMoon.moonPosition(julianDay: midJD)
         let illuminationPercent = SunMoon.moonIlluminationPercent(julianDay: midJD)
         return MidnightMoon(illuminationPercent: illuminationPercent, raDeg: moon.raDeg, decDeg: moon.decDeg)
+    }
+
+    /// The Moon's own altitude, sampled every `stepMinutes` across
+    /// `[startUTC, endUTC]` -- the ONE "walk the Moon across time" engine.
+    /// `Planner.moonEventLabel` (rise/set wording for the "Hold" tile) and
+    /// `moonAboveHorizonFraction` (the Moon-penalty altitude weighting
+    /// `Planner.buildPlan`/`Planner.month`/`DiscoveryPlanner.discover` all
+    /// share -- W7-A audit finding) both walk this exact loop rather than
+    /// each keeping a private copy that could silently drift from the
+    /// other. `[]` when `startUTC > endUTC` (nothing to sample).
+    static func moonAltitudeSamples(
+        latDeg: Double, lonDeg: Double, startUTC: Date, endUTC: Date, stepMinutes: Double = 5
+    ) -> [(date: Date, altitudeDeg: Double)] {
+        guard startUTC <= endUTC else { return [] }
+        var samples: [(date: Date, altitudeDeg: Double)] = []
+        let stepSeconds = stepMinutes * 60
+        var t = startUTC
+        while t <= endUTC {
+            let jd = JulianDate.julianDay(t)
+            let moon = SunMoon.moonPosition(julianDay: jd)
+            let lst = SiderealTime.lstHours(julianDay: jd, longitudeDeg: lonDeg)
+            let altitudeDeg = AltAz.position(raDeg: moon.raDeg, decDeg: moon.decDeg, lstHours: lst, latDeg: latDeg).altitudeDeg
+            samples.append((t, altitudeDeg))
+            t = t.addingTimeInterval(stepSeconds)
+        }
+        return samples
+    }
+
+    /// Fraction (0...1) of `[startUTC, endUTC]`'s samples during which the
+    /// Moon is above the horizon -- `nil` when the window is empty/
+    /// degenerate (no samples at all, e.g. the target is never visible so
+    /// there is no visible window to weight against).
+    ///
+    /// `Planner.buildPlan`/`Planner.month`/`DiscoveryPlanner.discover` all
+    /// weight `SkyScore.moonFactor` by this: a Moon that has already set
+    /// (or not yet risen) for the target's entire visible window cannot be
+    /// brightening the sky during it, no matter how full it is or how
+    /// close it sits to the target's coordinate -- the W7-A audit's central
+    /// finding (verified against pyephem: on 2026-08-18 the Moon sits at
+    /// −28.8° at the dark-window midpoint, yet the OLD illum×separation-only
+    /// penalty applied in full).
+    static func moonAboveHorizonFraction(
+        latDeg: Double, lonDeg: Double, startUTC: Date, endUTC: Date, stepMinutes: Double = 5
+    ) -> Double? {
+        let samples = moonAltitudeSamples(latDeg: latDeg, lonDeg: lonDeg, startUTC: startUTC, endUTC: endUTC, stepMinutes: stepMinutes)
+        guard !samples.isEmpty else { return nil }
+        let aboveCount = samples.filter { $0.altitudeDeg >= 0 }.count
+        return Double(aboveCount) / Double(samples.count)
     }
 }
 
@@ -231,12 +309,12 @@ public enum SkyVerdictKind: Equatable, Sendable {
     }
 }
 
-/// `visibilityFactor` / `moonPenalty` -- the two score components
-/// `Planner.score` and `DiscoveryPlanner`'s own scoring both multiply
-/// against their own goal-related (`Planner`) or absent (`DiscoveryPlanner`,
-/// "no goal component" per its own doc) leading factor. Shared so the two
-/// features can never silently disagree about what "good visibility" or
-/// "the Moon is ruining this" numerically means.
+/// `visibilityFactor` / `moonFactor` -- the two score components
+/// `Planner.score`, `Planner.month`, and `DiscoveryPlanner`'s own scoring
+/// all multiply against their own goal-related (`Planner`) or absent
+/// (`DiscoveryPlanner`, "no goal component" per its own doc) leading
+/// factor. Shared so these features can never silently disagree about what
+/// "good visibility" or "the Moon is ruining this" numerically means.
 enum SkyScore {
     /// `1` once `visibleHours` reaches 4, scaling linearly below that,
     /// floored at `0` (never negative).
@@ -244,9 +322,46 @@ enum SkyScore {
         min(max(visibleHours, 0) / 4.0, 1.0)
     }
 
-    /// `0.2` when the Moon verdict fired (see `SkyVerdict.moonInterferes`'s
-    /// call site in both `Planner` and `DiscoveryPlanner`), else `1`.
-    static func moonPenalty(moonInterferes: Bool) -> Double {
-        moonInterferes ? 0.2 : 1.0
+    /// Beyond this much separation the Moon is treated as out of the way
+    /// even when full. Deliberately the same number
+    /// `PlanningScore.moonIrrelevantSeparationDeg` uses in the
+    /// `AstroApplication` module -- two independent implementations of the
+    /// same design language (this module cannot import `AstroApplication`),
+    /// kept numerically identical on purpose.
+    static let moonIrrelevantSeparationDeg = 90.0
+
+    /// Continuous Moon-interference factor, `0...1`, where `1` means "the
+    /// Moon is no problem". Same "illumination × proximity" shape
+    /// `PlanningScore.moonFactor` uses in `AstroApplication`, additionally
+    /// weighted by `aboveHorizonFraction` -- the fraction of the TARGET's
+    /// own visible window during which the Moon itself is above the
+    /// horizon (`NightSweep.moonAboveHorizonFraction`).
+    ///
+    /// W7-A audit finding: the OLD binary form (`moonInterferes ? 0.2 : 1`,
+    /// and `Planner.month`'s `separation >= 40 || illum < 60` OR-gated
+    /// veto) both ignored Moon altitude entirely AND cliffed sharply at
+    /// their thresholds (59% @ 41° kept full hours, 61% @ 39° zeroed them).
+    /// This single continuous function replaces both call sites --
+    /// `Planner.score`'s per-target ranking penalty and `Planner.month`'s
+    /// usable-hours scaling -- so score and veto can never again diverge.
+    ///
+    /// `aboveHorizonFraction == 0` (Moon below the horizon for the target's
+    /// entire visible window) always returns exactly `1`: a set Moon cannot
+    /// brighten a sky it isn't lighting, regardless of illumination or
+    /// separation -- "no penalty, no veto". The factor reaches exactly `0`
+    /// (the documented "hours go to zero" limit) only for a 100%-illuminated
+    /// Moon at 0° separation, above the horizon for the target's ENTIRE
+    /// visible window; every other combination is a continuous reduction,
+    /// never a step.
+    static func moonFactor(
+        separationDeg: Double,
+        illuminationPercent: Double,
+        aboveHorizonFraction: Double
+    ) -> Double {
+        let illumination = min(max(illuminationPercent / 100, 0), 1)
+        let proximity = min(max(1 - separationDeg / moonIrrelevantSeparationDeg, 0), 1)
+        let fraction = min(max(aboveHorizonFraction, 0), 1)
+        let penalty = illumination * proximity * fraction
+        return min(max(1 - penalty, 0), 1)
     }
 }
