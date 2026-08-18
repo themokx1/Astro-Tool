@@ -26,9 +26,9 @@ struct ProjectNextActionAffordanceTests {
         #expect(ProjectNextActionAffordance(.keepProcessing) == .viewResults)
     }
 
-    @Test("Write-final-report offers the export menu, not a dead push")
-    func writeFinalReportOffersExport() {
-        #expect(ProjectNextActionAffordance(.writeFinalReport) == .exportSummary)
+    @Test("Write-final-report scrolls to the in-app report, not a dead push (W5-1: the export menu it used to open is gone)")
+    func writeFinalReportOffersReport() {
+        #expect(ProjectNextActionAffordance(.writeFinalReport) == .viewReport)
     }
 
     @Test("Archived has no sensible destination -- plain text, no button")
@@ -44,7 +44,7 @@ struct ProjectNextActionAffordanceTests {
         let affordances = allKinds.map(ProjectNextActionAffordance.init)
         #expect(affordances.filter { $0 == .startSession }.count == 3)
         #expect(affordances.filter { $0 == .viewResults }.count == 1)
-        #expect(affordances.filter { $0 == .exportSummary }.count == 1)
+        #expect(affordances.filter { $0 == .viewReport }.count == 1)
         #expect(affordances.filter { $0 == .none }.count == 1)
     }
 }

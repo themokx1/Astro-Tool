@@ -1,4 +1,5 @@
 import AstroApplication
+import AstroCore
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -20,12 +21,14 @@ enum ProjectNextActionAffordance: Equatable {
     /// ("Check the stacks and the results' lineage") names this
     /// destination directly.
     case viewResults
-    /// There is no single destination page for "the project is done;
-    /// export the shareable summary" -- it is a choice of file format, not
-    /// a place to go -- so this renders the SAME `ExportMenu` the page's
-    /// own export action already offers, a real affordance rather than a
-    /// push to somewhere that does not exist.
-    case exportSummary
+    /// W5-1: "the project is done; look at the final summary" no longer
+    /// means "pick a file format and export" -- the target report is now
+    /// native content on THIS SAME Overview tab (`ProjectWorkspaceView.
+    /// reportSections`, below "Következő lépés" itself), so this scrolls
+    /// there instead of opening the (now deleted) export menu. Replaces the
+    /// former `.exportSummary` case, which pointed at the target-report
+    /// export menu item -- that item no longer exists.
+    case viewReport
     /// No sensible single destination -- `.archived`'s own explanation is
     /// "Nothing to do." This renders as plain text with no button chrome,
     /// never a fake affordance.
@@ -35,7 +38,7 @@ enum ProjectNextActionAffordance: Equatable {
         switch kind {
         case .planFirstNight, .startCollecting, .keepCollecting: self = .startSession
         case .keepProcessing: self = .viewResults
-        case .writeFinalReport: self = .exportSummary
+        case .writeFinalReport: self = .viewReport
         case .archived: self = .none
         }
     }
@@ -81,6 +84,15 @@ public struct ProjectWorkspaceView: View {
     /// while an in-place re-render (the SAME project, new `snapshot`
     /// content) keeps the same token/owner.
     @State private var actionOwner = UUID().uuidString
+    /// W5-1: the former "Célpont-riport" HTML export's data, now rendered
+    /// natively in the Áttekintés (Overview) tab (`reportSections` below)
+    /// instead of generated/saved as a file -- the owner's own words: "a
+    /// teljes projekt áttekintése ... az áttekintő oldalra".
+    @State private var reportStore = ProjectReportStore()
+    /// Lets `.viewReport` (`ProjectNextActionAffordance`) scroll the
+    /// Overview tab down to `reportSections` instead of opening a (now
+    /// deleted) export menu -- see that affordance case's own doc comment.
+    @State private var reportScrollProxy: ScrollViewProxy?
 
     public init(
         snapshot: ProjectSnapshot,
@@ -145,8 +157,11 @@ public struct ProjectWorkspaceView: View {
                     .astroRaisedSurface(.flush)
                     .padding(AstroTokens.Spacing.spacious)
             } else {
-                ScrollView {
-                    content.padding(AstroTokens.Spacing.spacious)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        content.padding(AstroTokens.Spacing.spacious)
+                    }
+                    .onAppear { reportScrollProxy = proxy }
                 }
             }
         }
@@ -188,6 +203,7 @@ public struct ProjectWorkspaceView: View {
         .onChange(of: rootURL) { _, _ in publishWorkspaceActions() }
         .onChange(of: snapshot) { _, _ in publishWorkspaceActions() }
         .onDisappear { workspaceActionCenter.clear(owner: actionOwner) }
+        .task(id: snapshot) { await reportStore.load(rootURL: rootURL, target: snapshot.canonicalFolderName) }
     }
 
     private func publishWorkspaceActions() {
@@ -288,11 +304,19 @@ public struct ProjectWorkspaceView: View {
         ])
     }
 
-    /// Acquisition (all three V1 formats), the target report, and the latest
-    /// night's stack list -- every project-scoped export V1's per-target
-    /// context menu offered (`AppState.exportAcquisition`/`exportTargetReport`/
-    /// `exportStackList`), all through `ExportService`. `[]` when no library
-    /// is open at all (`rootURL == nil`, never true once a project workspace
+    /// W5-1 (owner: "tünjenek el az exportálás file-ba gombok"): the
+    /// generic per-session CSV/Markdown acquisition formats and the target
+    /// report menu item are gone -- all three were human-readable
+    /// SUMMARIES (the CSV's own doc comment: "a richer, generic per-session
+    /// CSV"; the Markdown's: "a human-readable Markdown session log"), the
+    /// same report-shaped content this ticket moves in-app (`reportSections`
+    /// below already shows every session's frames/camera/gain/temp/focal
+    /// length/filters/quality that CSV/Markdown carried). The AstroBin
+    /// bulk-import CSV format stays -- it is not a report a person reads,
+    /// it is a bulk-import file format for a SPECIFIC external tool
+    /// (AstroBin), the same "hands off to other software" role `stackList`
+    /// has for Siril, explicitly kept in scope. `[]` when no library is
+    /// open at all (`rootURL == nil`, never true once a project workspace
     /// is actually reachable, but `ExportMenu` degrades to disabled rather
     /// than assume).
     private var projectExportItems: [ExportMenuItem] {
@@ -303,19 +327,6 @@ public struct ProjectWorkspaceView: View {
             .file(title: "Acquisition (AstroBin CSV)…", systemImage: "tablecells", contentType: .commaSeparatedText) {
                 let export = try ExportService.production(rootURL: rootURL).acquisitionExport(target: target, format: .astrobin)
                 return (export.content, export.suggestedFilename, export.unmappedFilters)
-            },
-            .file(title: "Acquisition (CSV)…", systemImage: "tablecells", contentType: .commaSeparatedText) {
-                let export = try ExportService.production(rootURL: rootURL).acquisitionExport(target: target, format: .csv)
-                return (export.content, export.suggestedFilename, export.unmappedFilters)
-            },
-            .file(title: "Acquisition (Markdown)…", systemImage: "doc.text", contentType: .init(filenameExtension: "md") ?? .plainText) {
-                let export = try ExportService.production(rootURL: rootURL).acquisitionExport(target: target, format: .md)
-                return (export.content, export.suggestedFilename, export.unmappedFilters)
-            },
-            .divider,
-            .file(title: "Target Report…", systemImage: "doc.richtext", contentType: .html) {
-                let export = try ExportService.production(rootURL: rootURL).targetReport(target: target)
-                return (export.content, export.suggestedFilename, [])
             },
         ]
         if let latestNightDate {
@@ -388,6 +399,8 @@ public struct ProjectWorkspaceView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .astroRaisedSurface()
+                reportSections
+                    .id(Self.reportSectionAnchorID)
             }
         case .nights, .series:
             // `body` above renders `tableTabContent` directly for these tabs
@@ -479,17 +492,286 @@ public struct ProjectWorkspaceView: View {
             }
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("v2.project.next-action")
-        case .exportSummary:
-            ExportMenu(
-                title: snapshot.nextAction.kind.titleKey,
-                systemImage: "arrow.forward.circle.fill",
-                items: projectExportItems,
-                accessibilityID: "v2.project.next-action"
-            )
+        case .viewReport:
+            // W5-1: scrolls down to `reportSections` (this same Overview
+            // tab, below this very card) instead of opening the deleted
+            // target-report export menu item.
+            Button {
+                withAnimation { reportScrollProxy?.scrollTo(Self.reportSectionAnchorID, anchor: .top) }
+            } label: {
+                Label(snapshot.nextAction.kind.titleKey, systemImage: "arrow.forward.circle.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("v2.project.next-action")
         case .none:
             Label(snapshot.nextAction.kind.titleKey, systemImage: "checkmark.circle")
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("v2.project.next-action")
+        }
+    }
+
+    // MARK: - Report sections (W5-1)
+    //
+    // The former "Célpont-riport" HTML export's own sections, now rendered
+    // natively here instead of generated/saved as a file -- assembled by
+    // `ProjectReportQuery` (`AstroApplication`), the exact same `AstroCore`
+    // queries `TargetReport.render`'s HTML path itself calls. The per-night
+    // table here is genuinely new -- the Nights tab's own `Table` has no
+    // room for exposure/camera/gain/temp/flags columns without breaking the
+    // "no Table/List in a ScrollView" rule, so this uses `Grid` instead
+    // (small row counts, no virtualization needed -- see `ReportGrid`'s own
+    // doc comment).
+
+    static let reportSectionAnchorID = "v2.project.report-section"
+
+    @ViewBuilder private var reportSections: some View {
+        if reportStore.isLoading, reportStore.result == nil {
+            ProgressView().frame(maxWidth: .infinity, alignment: .center)
+        } else if let message = reportStore.errorMessage {
+            ReportEmptyNote(text: LocalizedStringKey(message))
+        } else if let report = reportStore.result {
+            ReportSection(title: "Target Details") {
+                VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                    if let coordinateInfo = report.coordinateInfo {
+                        ReportStatGrid(items: [
+                            ("RA", AstroFormat.rightAscension(coordinateInfo.raDeg)),
+                            ("Dec", AstroFormat.declination(coordinateInfo.decDeg)),
+                            ("Coordinate Source", coordinateInfo.sourceLabel),
+                        ])
+                    } else {
+                        ReportEmptyNote(text: "No plate-solve/header coordinate for this target.")
+                    }
+                    if !report.setupDescriptors.isEmpty {
+                        Text("Setup: \(report.setupDescriptors.joined(separator: "; "))").font(.callout)
+                    }
+                    if report.stat.isWideField || !report.stat.tags.isEmpty {
+                        HStack(spacing: 6) {
+                            if report.stat.isWideField { reportBadge("Wide-field", ok: true) }
+                            ForEach(report.stat.tags, id: \.self) { tag in
+                                reportBadge(LocalizedStringKey(tag), ok: !tag.lowercased().hasPrefix("goal:"))
+                            }
+                        }
+                    }
+                }
+            }
+            ReportSection(title: "Filters") {
+                if report.filterRows.isEmpty {
+                    ReportEmptyNote(text: "No usable filter data for this target.")
+                } else {
+                    ReportGrid(headers: ["Filter", "Frames", "Integration", "Goal", "Missing"]) {
+                        ForEach(report.filterRows.sorted(by: { $0.filter.localizedCaseInsensitiveCompare($1.filter) == .orderedAscending }), id: \.filter) { row in
+                            GridRow {
+                                Text(LocalizedStringKey(row.filter))
+                                Text(row.usableFrameCount.formatted()).monospacedDigit()
+                                Text(AstroFormat.duration(seconds: row.integrationSeconds)).monospacedDigit()
+                                Text(row.goalSeconds.map(AstroFormat.duration(seconds:)) ?? "n/a").monospacedDigit()
+                                Text(row.missingSeconds.map(AstroFormat.duration(seconds:)) ?? "n/a").monospacedDigit()
+                            }
+                        }
+                    }
+                }
+            }
+            ReportSection(title: "Sessions") {
+                if report.sessions.isEmpty {
+                    ReportEmptyNote(text: "No recorded session for this target.")
+                } else {
+                    ReportGrid(headers: ["Date", "Frames", "Integration", "Camera", "Focal Length", "Gain", "Temp", "Filter", "Flags"]) {
+                        ForEach(report.sessions.sorted(by: { $0.session.dateRaw < $1.session.dateRaw })) { row in
+                            GridRow {
+                                Text(row.session.dateRaw).monospacedDigit()
+                                Text(row.session.usableLightCount.formatted()).monospacedDigit()
+                                Text(AstroFormat.duration(seconds: row.session.integrationSeconds)).monospacedDigit()
+                                Text(row.session.cameras.joined(separator: "/"))
+                                Text(formatDoubleList(row.session.focalLengthsMM, suffix: "mm"))
+                                Text(formatDoubleList(row.session.gains, suffix: ""))
+                                Text(formatDoubleList(row.session.sensorTempsC, suffix: "°C"))
+                                Text(row.session.filters.joined(separator: "/"))
+                                Text(sessionFlags(row.session))
+                            }
+                        }
+                    }
+                }
+            }
+            ReportSection(title: "Quality") {
+                VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                    let rated = report.qualitySummaries.filter { $0.frameCount > 0 }
+                    if rated.isEmpty {
+                        ReportEmptyNote(text: "No rated frames for this target.")
+                    } else {
+                        ReportGrid(headers: ["Date", "FWHM", "Background", "Stars", "Outliers", "Rank"]) {
+                            ForEach(rated.sorted(by: { $0.date < $1.date }), id: \.date) { summary in
+                                GridRow {
+                                    Text(summary.date).monospacedDigit()
+                                    Text(fwhmText(summary))
+                                    Text(summary.backgroundEPerSecPerArcsec2.map(AstroFormat.backgroundEPerSecArcsec2) ?? "n/a")
+                                    Text(summary.medianStarCount.map { "\($0)" } ?? "–")
+                                    Text(summary.outlierFraction.map { AstroFormat.percent($0 * 100) } ?? "–")
+                                    Text(rankText(summary))
+                                }
+                            }
+                        }
+                    }
+                    if let reason = report.advice.notAvailableReason {
+                        Text("Exposure advice: n/a — \(reason)").font(.callout).foregroundStyle(.secondary)
+                    } else if !report.advice.advice.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(report.advice.advice, id: \.self) { line in
+                                Text("• \(line)").font(.callout)
+                            }
+                        }
+                    }
+                }
+            }
+            ReportSection(title: "Stacks") {
+                if report.stacks.isEmpty {
+                    ReportEmptyNote(text: "No discovered stack file for this target.")
+                } else {
+                    ReportGrid(headers: ["File", "Location", "Frames×Sub", "Total", "Size", "Date"]) {
+                        ForEach(report.stacks, id: \.path) { stack in
+                            GridRow {
+                                Text((stack.path as NSString).lastPathComponent).lineLimit(1)
+                                Text((stack.path as NSString).deletingLastPathComponent).lineLimit(1).foregroundStyle(.secondary)
+                                Text(framesSubText(stack))
+                                Text(stack.totalSecondsFromName.map(AstroFormat.duration(seconds:)) ?? "–")
+                                Text(AstroFormat.bytes(stack.sizeBytes))
+                                Text(stack.sessionDate ?? "–").monospacedDigit()
+                            }
+                        }
+                    }
+                }
+            }
+            ReportSection(title: "Calibration") {
+                VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                    ReportGrid(headers: ["Date", "Flat", "Dark", "Bias", "Problems"]) {
+                        ForEach(report.sessions.sorted(by: { $0.session.dateRaw < $1.session.dateRaw })) { row in
+                            GridRow {
+                                Text(row.session.dateRaw).monospacedDigit()
+                                Text(row.calibration.flats.count.formatted()).monospacedDigit()
+                                Text(darkText(row.calibration)).monospacedDigit()
+                                Text(row.calibration.biases.count.formatted()).monospacedDigit()
+                                Text(row.calibration.problems.isEmpty ? "–" : row.calibration.problems.map(\.message).joined(separator: "; "))
+                            }
+                        }
+                    }
+                    if !report.targetFlats.isEmpty {
+                        Text("Flat Hygiene").font(.subheadline.weight(.medium))
+                        ReportGrid(headers: ["Date", "Status", "Notes"]) {
+                            ForEach(report.targetFlats.sorted(by: { $0.date < $1.date }), id: \.date) { flat in
+                                GridRow {
+                                    Text(flat.date).monospacedDigit()
+                                    Text(flat.status)
+                                    Text(flat.reasons.joined(separator: "; "))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if report.panelReport.isMosaic {
+                ReportSection(title: "Panels") {
+                    ReportGrid(headers: ["Panel", "Center (RA/Dec)", "Frames", "Integration", "Rotation"]) {
+                        ForEach(report.panelReport.panels, id: \.label) { panel in
+                            GridRow {
+                                Text(panel.label)
+                                Text("\(AstroFormat.rightAscension(panel.centerRaDeg)) / \(AstroFormat.declination(panel.centerDecDeg))")
+                                Text(panel.frameCount.formatted()).monospacedDigit()
+                                Text(AstroFormat.duration(seconds: panel.integrationSeconds)).monospacedDigit()
+                                Text(panel.rotationDeg.map(AstroFormat.rotationDegrees) ?? "–")
+                            }
+                        }
+                    }
+                    if report.panelReport.isUnbalanced {
+                        Text("Unbalanced integration across panels.").font(.callout).foregroundStyle(AstroTokens.Color.attention)
+                    }
+                }
+            }
+            ReportSection(title: "Planning") {
+                VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                    if let plan = report.plan {
+                        ReportStatGrid(items: planningStatItems(plan))
+                    } else {
+                        ReportEmptyNote(text: "No plan data for this target.")
+                    }
+                    if let goalSeconds = report.projectState?.goalSeconds {
+                        goalProgressText(report: report, goalSeconds: goalSeconds)
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func reportBadge(_ text: LocalizedStringKey, ok: Bool) -> some View {
+        Text(text)
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background((ok ? AstroTokens.Color.ok : AstroTokens.Color.attention).opacity(0.18), in: Capsule())
+            .foregroundStyle(ok ? AstroTokens.Color.ok : AstroTokens.Color.attention)
+    }
+
+    private func sessionFlags(_ session: SessionDetail) -> String {
+        var flags: [String] = []
+        if session.hasReadme { flags.append("README") }
+        if let accepted = session.dssAcceptedCount, let rejected = session.dssRejectedCount {
+            flags.append("DSS \(accepted)/\(rejected)")
+        }
+        if session.isExcludedFromTotals { flags.append("EXCLUDED") }
+        return flags.isEmpty ? "–" : flags.joined(separator: ", ")
+    }
+
+    private func fwhmText(_ summary: SessionQualitySummary) -> String {
+        if let arcsec = summary.medianFWHMArcsec { return AstroFormat.fwhmArcsec(arcsec) }
+        if let px = summary.medianFWHMPixels { return AstroFormat.fwhmPixels(px) }
+        return "n/a"
+    }
+
+    private func rankText(_ summary: SessionQualitySummary) -> String {
+        guard let rank = summary.rankAmongSessions, let total = summary.sessionCountForTarget else { return "–" }
+        return "\(rank) / \(total)"
+    }
+
+    private func darkText(_ calibration: SessionCalibration) -> String {
+        if calibration.darks.isEmpty, let libraryDark = calibration.libraryDark {
+            return "library: \((libraryDark as NSString).lastPathComponent)"
+        }
+        return "\(calibration.darks.count)"
+    }
+
+    private func framesSubText(_ stack: StackFile) -> String {
+        guard let frames = stack.framesFromName, let sub = stack.subSecondsFromName else { return "n/a" }
+        return "\(frames)×\(AstroFormat.coefficient(sub))s"
+    }
+
+    private func formatDoubleList(_ values: [Double], suffix: String) -> String {
+        guard !values.isEmpty else { return "–" }
+        return values.map { AstroFormat.coefficient($0) + suffix }.joined(separator: "/")
+    }
+
+    private func planningStatItems(_ plan: TargetPlan) -> [(LocalizedStringKey, String)] {
+        var items: [(LocalizedStringKey, String)] = [("Verdict", plan.verdict)]
+        if let window = plan.visibleWindowLocal { items.append(("Visible Window", window)) }
+        if let maxAlt = plan.maxAltitudeDeg { items.append(("Max. Altitude", AstroFormat.wholeDegrees(maxAlt))) }
+        if let culmination = plan.culminationLocal { items.append(("Culmination", culmination)) }
+        if let illum = plan.moonIlluminationPercent { items.append(("Moon Illumination", AstroFormat.percent(illum))) }
+        if let sep = plan.moonSeparationDeg { items.append(("Moon Separation", AstroFormat.wholeDegrees(sep))) }
+        return items
+    }
+
+    /// A `Text`, not a `String`-returning helper: the sentence's own words
+    /// ("Goal"/"remaining"/"reached") need translation, and only a string
+    /// INTERPOLATION LITERAL written directly at a `Text(_:)` call site
+    /// resolves to the `LocalizedStringKey` overload -- building the
+    /// sentence as a `String` first and handing it to `Text(_:)` would
+    /// route through the verbatim overload instead, the exact "seven
+    /// separate, individually-fixed instances" defect class this app's own
+    /// gates exist to catch (see `V2PolishSurfaceTests`'s doc comment).
+    @ViewBuilder
+    private func goalProgressText(report: ProjectReportQuery.Result, goalSeconds: Double) -> some View {
+        let goalText = AstroFormat.duration(seconds: goalSeconds)
+        if let missing = report.projectState?.missingSeconds, missing > 0 {
+            Text("Goal: \(goalText) — \(AstroFormat.duration(seconds: missing)) remaining")
+        } else {
+            Text("Goal: \(goalText) — reached")
         }
     }
 }
