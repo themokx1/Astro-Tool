@@ -24,7 +24,7 @@ public struct SeriesInspector: View {
         Form {
             Section("Capture") {
                 LabeledContent("Exposure", value: exposure)
-                LabeledContent("Sensor", value: snapshot.series.sensorMode.rawValue.uppercased())
+                LabeledContent("Sensor", value: snapshot.series.sensorMode.localizedText)
                 LabeledContent("Passband", value: passband)
                 // V2 localization sweep (W3-13): `LabeledContent(_:value:)`
                 // always renders its `value` as plain verbatim text, by
@@ -101,10 +101,16 @@ public struct SeriesInspector: View {
         AstroFormat.exposureSeconds(snapshot.series.exposureSeconds)
     }
 
+    // W6-D fix: this used to derive a display string from the raw case name
+    // (`rawValue.replacingOccurrences(of: "_", with: " ").capitalized`) --
+    // exactly the pre-fix shape `NightsStore.swift`'s own `SeriesPassband
+    // .displayLabel`/`.localizedText` doc comment describes ("dual_band" ->
+    // "Dual band", never translated). `.localizedText` already exists on
+    // this same `SeriesPassband` type for the identical `LabeledContent
+    // (_:value:)` call shape (`InspectorView.swift`'s `SeriesSummaryPanel`)
+    // -- it just never got propagated here.
     private var passband: String {
-        snapshot.series.passband.rawValue
-            .replacingOccurrences(of: "_", with: " ")
-            .capitalized
+        snapshot.series.passband.localizedText
     }
 
     private func filterTitle(_ filter: EquipmentFilter) -> String {

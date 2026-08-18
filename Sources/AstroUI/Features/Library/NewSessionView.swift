@@ -543,11 +543,11 @@ public struct NewSessionView: View {
                     .accessibilityIdentifier("v2.new-session.capture-name")
                 HStack {
                     Picker("Sensor", selection: $store.captureSensorMode) {
-                        ForEach(SensorMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                        ForEach(SensorMode.allCases, id: \.self) { Text($0.localizedDisplayName).tag($0) }
                     }
                     .onChange(of: store.captureSensorMode) { _, _ in store.refreshPreview() }
                     Picker("Signal", selection: $store.captureSignalMode) {
-                        ForEach(SignalMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                        ForEach(SignalMode.allCases, id: \.self) { Text($0.localizedDisplayName).tag($0) }
                     }
                     .onChange(of: store.captureSignalMode) { _, _ in store.refreshPreview() }
                 }
@@ -654,5 +654,33 @@ public struct NewSessionView: View {
             }
             .accessibilityIdentifier("v2.new-session.receipt")
         }
+    }
+}
+
+// W6-D fix: this sheet's own "Sensor"/"Signal" pickers used to render
+// `SensorMode`/`SignalMode`'s `.displayName` directly -- the deliberately
+// ENGLISH-only sibling built for `ConversionWorkspace`'s own picker (see
+// that property's own doc comment, `CaptureModels.swift`: "V2's... otherwise
+// -English UI must never show..."). Reusing it here made this
+// session-creation sheet show "Jel: No filter" even in Hungarian ("Signal"
+// itself already translates to "Jel"; the selected value did not) -- unlike
+// `ConversionWorkspace`, this sheet is meant to follow the app's own
+// language. `fileprivate` rather than changing `.displayName` itself, so
+// `ConversionWorkspace`'s intentionally-English picker stays untouched.
+// `captureDisplayName`/`captureSensorMode`/`captureSignalMode` themselves
+// (the STORED values `CaptureGroupDraft` actually persists) are unaffected
+// -- only this picker's rendered text changes. Same "resolve the phrase
+// eagerly through NSLocalizedString" shape as
+// `SeriesSensorMode.localizedText`/`SeriesPassband.localizedText`
+// (`InspectorView.swift`).
+fileprivate extension SensorMode {
+    var localizedDisplayName: String {
+        NSLocalizedString(displayName, bundle: .main, comment: "")
+    }
+}
+
+fileprivate extension SignalMode {
+    var localizedDisplayName: String {
+        NSLocalizedString(displayName, bundle: .main, comment: "")
     }
 }

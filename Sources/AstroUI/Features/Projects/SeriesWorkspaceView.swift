@@ -115,9 +115,33 @@ public struct SeriesWorkspaceView: View {
                 // rather than a `GroupBox` wrapping a hand-rolled `Grid`.
                 Form {
                     Section("Capture settings") {
-                        LabeledContent("Sensor mode", value: item.series.sensorMode.rawValue.uppercased())
-                        LabeledContent("Passband", value: item.series.passband.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                        LabeledContent("Filter", value: item.series.filterName ?? "Unfiltered")
+                        // W6-D fix: both of these used to derive a display
+                        // string from the raw case name directly
+                        // (`.rawValue.uppercased()`/
+                        // `.rawValue.replacingOccurrences(...).capitalized`)
+                        // -- the same never-translates-no-matter-what
+                        // -hu.lproj-says defect `SeriesInspector.swift`'s own
+                        // "Sensor"/"Passband" rows had, fixed there the same
+                        // way: route through the `SeriesSensorMode`/
+                        // `SeriesPassband` `.localizedText` extensions
+                        // already established in `InspectorView.swift`/
+                        // `NightsStore.swift`.
+                        LabeledContent("Sensor mode", value: item.series.sensorMode.localizedText)
+                        LabeledContent("Passband", value: item.series.passband.localizedText)
+                        // `LabeledContent(_:value:)` always renders `value:`
+                        // verbatim -- the content-closure initializer lets
+                        // the real filter name (data) stay verbatim while
+                        // the "Unfiltered" fallback goes through `Text`'s
+                        // own `LocalizedStringKey` initializer, same fix
+                        // shape as this file's sibling `SeriesInspector
+                        // .swift`'s own "Filter" row.
+                        LabeledContent("Filter") {
+                            if let filterName = item.series.filterName {
+                                Text(verbatim: filterName)
+                            } else {
+                                Text("Unfiltered")
+                            }
+                        }
                         LabeledContent("Setup", value: item.series.setupDescriptor)
                         LabeledContent("Gain / offset", value: gainOffset)
                         LabeledContent("Binning", value: item.series.binning)
