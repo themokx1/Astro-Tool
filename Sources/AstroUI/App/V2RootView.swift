@@ -1224,6 +1224,25 @@ private struct V2Sidebar: View {
     }
 }
 
+/// W5-2 finding 5 (owner pixel review): the pure "is a configured library
+/// still opening" predicate behind `DetailHost.isLibraryLoading` -- factored
+/// out so it can be exercised directly, without standing up a real
+/// `OnboardingStore`/`HomeStore` pair (both are `@MainActor @Observable`
+/// classes whose production initializers touch the filesystem/security-scoped
+/// bookmarks). `internal`, not `private`, so `HomeLibraryLoadingTests` can
+/// reach it through `@testable import AstroUI`.
+enum HomeLibraryLoading {
+    /// `true` exactly during the window Home must show a loading state
+    /// rather than either its ordinary library overview or its "no library
+    /// configured" empty state: a root is already selected (assigned
+    /// synchronously at the very start of `OnboardingStore.openAndScan`,
+    /// before any slow disk I/O) but `HomeStore.configure(...)` has not
+    /// landed yet, and nothing has already failed for that root.
+    static func isLoading(selectedRoot: URL?, homeLibraryName: String?, hasAccessProblem: Bool) -> Bool {
+        selectedRoot != nil && homeLibraryName == nil && !hasAccessProblem
+    }
+}
+
 @MainActor
 private struct DetailHost: View {
     @Bindable var router: AppRouter
@@ -1366,6 +1385,32 @@ private struct DetailHost: View {
         return [item.series.filterName, exposure].compactMap { $0 }.joined(separator: " · ")
     }
 
+    /// W5-2 finding 5 (owner pixel review): cold start on a spun-down SSD
+    /// spent ~10-20s with Home showing "No library open"/"Site not set"
+    /// while the sidebar's own badges were already populated -- the empty
+    /// state lied about the library still being in flight.
+    /// `onboardingStore.selectedRoot` is assigned synchronously at the very
+    /// top of `openAndScan`/`restoreSavedLibrary`, before any slow disk I/O
+    /// (`LibraryWelcomeView.swift`'s `OnboardingStore.openAndScan`), so it
+    /// flips to non-`nil` almost immediately once a configured (bookmarked
+    /// or user-chosen) library starts opening -- well before
+    /// `homeStore.snapshot.libraryName` stops being `nil`, which only
+    /// happens at the very end of `prepareLibrary` below (after the scan,
+    /// `ScanWorkflowMaterializer.materializeProductionLibrary`, and both
+    /// `projectsStore`/`nightsStore` opening). Excludes an access problem
+    /// deliberately: once opening this root has already failed, nothing is
+    /// still in flight, and Home falls back to its ordinary no-library
+    /// state (the failure itself already surfaces elsewhere, via
+    /// `libraryPreparationError`/the access-problem banner) rather than
+    /// showing a permanent spinner.
+    private var isLibraryLoading: Bool {
+        HomeLibraryLoading.isLoading(
+            selectedRoot: onboardingStore.selectedRoot,
+            homeLibraryName: homeStore.snapshot.libraryName,
+            hasAccessProblem: onboardingStore.phase.accessProblem != nil
+        )
+    }
+
     @ViewBuilder
     private func destination(for route: ContentRoute) -> some View {
         switch route {
@@ -1373,12 +1418,24 @@ private struct DetailHost: View {
             HomeView(
                 store: homeStore,
                 rootURL: onboardingStore.selectedRoot,
+                isLibraryLoading: isLibraryLoading,
                 chooseLibrary: chooseLibrary,
+                // W5-2 finding 6 (owner click-through): "Open Project" on the
+                // "Continue where it matters" card used to `router.navigate(to:
+                // .projects)` plus a bare `selectProject` -- landing on the
+                // PROJECTS LIST with the row merely selected, not the project
+                // workspace a button labeled "Open Project" promises. Now
+                // pushes `.project(id)` directly, the exact same navigation
+                // `openProjectID` just below (the "Best targets tonight" row's
+                // own "Open" button) and `ProjectsView`'s own `openProject`
+                // (its row's "More -> Open Project" menu item) already use --
+                // one convention, not a third bespoke path. The pushed
+                // `.project` destination's own `RoutePendingLoadView` recovery
+                // task loads it if `projectsStore.selectedProject` isn't
+                // already this project, so no proactive `selectProject` call
+                // is needed here either.
                 openProject: { project in
-                    router.navigate(to: .projects)
-                    Task {
-                        try? await projectsStore.selectProject(project.id)
-                    }
+                    router.push(.project(project.id.uuidString))
                 },
                 openProjectID: { projectID in
                     // Wave 4 navigation-rework code-review fix: no proactive

@@ -6,6 +6,16 @@ import UniformTypeIdentifiers
 public struct HomeView: View {
     @Bindable private var store: HomeStore
     private let rootURL: URL?
+    /// W5-2 finding 5 (owner pixel review): true while a configured library
+    /// (one `V2RootView`'s `onboardingStore` already knows the root of) is
+    /// still being opened/scanned/materialized -- the ~10-20s window a cold
+    /// start on a spun-down SSD spent, in the owner's own report, before
+    /// `store.snapshot` ever stops being `.unconfigured`. See
+    /// `V2RootView.DetailHost.isLibraryLoading`'s own doc comment for
+    /// exactly how this is derived. Distinguishes "a library IS configured,
+    /// just not open yet" from the genuine "nothing configured at all" case
+    /// `emptyLibrary` below still owns.
+    private let isLibraryLoading: Bool
     private let chooseLibrary: () -> Void
     private let openProject: (ProjectRecord) -> Void
     private let openProjectID: (UUID) -> Void
@@ -14,12 +24,14 @@ public struct HomeView: View {
     public init(
         store: HomeStore,
         rootURL: URL? = nil,
+        isLibraryLoading: Bool = false,
         chooseLibrary: @escaping () -> Void,
         openProject: @escaping (ProjectRecord) -> Void,
         openProjectID: @escaping (UUID) -> Void = { _ in }
     ) {
         _store = Bindable(store)
         self.rootURL = rootURL
+        self.isLibraryLoading = isLibraryLoading
         self.chooseLibrary = chooseLibrary
         self.openProject = openProject
         self.openProjectID = openProjectID
@@ -32,10 +44,15 @@ public struct HomeView: View {
                 NightContextRail(
                     context: store.snapshot.nightContext,
                     cloud: store.snapshot.nightCloud,
-                    cloudError: store.snapshot.nightCloudError
+                    cloudError: store.snapshot.nightCloudError,
+                    isLoading: isLibraryLoading
                 )
                 if store.snapshot.libraryName == nil {
-                    emptyLibrary
+                    if isLibraryLoading {
+                        openingLibrary
+                    } else {
+                        emptyLibrary
+                    }
                 } else {
                     libraryOverview
                 }
@@ -296,6 +313,17 @@ public struct HomeView: View {
         }
         .frame(maxWidth: .infinity, minHeight: 250)
     }
+
+    /// W5-2 finding 5 (owner pixel review): a configured library is still
+    /// opening -- same `ProgressView(title)` shape `InsightsView`/
+    /// `ArchiveView`/every other loading state in this app already uses,
+    /// never `emptyLibrary`'s "choose a library" prompt, which would tell
+    /// the owner to pick a library the app is already opening.
+    private var openingLibrary: some View {
+        ProgressView("Opening the library…")
+            .frame(maxWidth: .infinity, minHeight: 250)
+            .accessibilityIdentifier("v2.home.opening-library")
+    }
 }
 
 /// V2 UI/UX audit (2026-08-14) section 4: this used to draw a dusk/
@@ -316,6 +344,13 @@ private struct NightContextRail: View {
     /// The one case something IS shown despite `cloud` being `nil`: a fetch
     /// that failed outright with no cached forecast to fall back on.
     let cloudError: WeatherError?
+    /// W5-2 finding 5 (owner pixel review): while a configured library is
+    /// still opening, `context` is still its neutral `.unconfigured`
+    /// default -- indistinguishable, on its own, from a library that
+    /// genuinely has no site configured. Without this flag the rail told
+    /// the owner "Site not set" during the very same cold start where the
+    /// real site was only seconds away from resolving.
+    let isLoading: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -323,7 +358,11 @@ private struct NightContextRail: View {
                 Label("Night context", systemImage: "moon.stars")
                     .font(.headline)
                 Spacer()
-                if !context.isConfigured {
+                if isLoading {
+                    Text("Opening the library…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if !context.isConfigured {
                     Text("Site not set — add it in Settings ▸ Location")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -368,6 +407,13 @@ private struct NightContextRail: View {
                 .foregroundStyle(.secondary)
 
                 cloudRow
+            } else if isLoading {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Tonight's site will appear once the library finishes opening.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 Text("No observing site is resolved for this library yet, so tonight's dusk-to-dawn window can't be shown here. AstroTool derives it automatically from your FITS files' own site coordinates once they're indexed.")
                     .font(.caption)
@@ -384,9 +430,11 @@ private struct NightContextRail: View {
         .astroRaisedSurface()
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            context.isConfigured
-                ? "Night context: \(context.leadingLabel), \(context.centerLabel), \(context.trailingLabel)."
-                : "Night context: no site configured for this library yet."
+            isLoading
+                ? "Night context: the library is still opening."
+                : context.isConfigured
+                    ? "Night context: \(context.leadingLabel), \(context.centerLabel), \(context.trailingLabel)."
+                    : "Night context: no site configured for this library yet."
         )
         .accessibilityIdentifier("v2.home.night-context")
     }

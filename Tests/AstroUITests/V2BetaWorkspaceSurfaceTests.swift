@@ -226,4 +226,91 @@ struct V2BetaWorkspaceSurfaceTests {
         #expect(view.contains("selectedSetup"))
         #expect(view.contains("v2.insights.recent-quality-table"))
     }
+
+    // MARK: - W5-2 finding 5 (owner pixel review): cold-start Home honesty
+
+    @Test("Home distinguishes a loading library from a genuinely unconfigured one")
+    func homeShowsALoadingStateNotTheEmptyStateWhileOpening() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Home/HomeView.swift"), encoding: .utf8)
+        #expect(view.contains("let isLibraryLoading: Bool"))
+        #expect(view.contains("if isLibraryLoading {\n                        openingLibrary\n                    } else {\n                        emptyLibrary\n                    }"),
+                "the no-library branch must choose between openingLibrary and emptyLibrary based on isLibraryLoading")
+        #expect(view.contains("private var openingLibrary: some View"))
+        #expect(view.contains("ProgressView(\"Opening the library…\")"))
+        #expect(view.contains("v2.home.opening-library"))
+        // NightContextRail must receive the same signal, not decide on its
+        // own -- one source of truth for "is the library still opening".
+        #expect(view.contains("isLoading: isLibraryLoading"))
+        #expect(view.contains("let isLoading: Bool"))
+    }
+
+    @Test("The night-context card shows a quiet loading line, not \"Site not set\", while the library is opening")
+    func nightContextRailShowsAQuietLoadingLine() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Home/HomeView.swift"), encoding: .utf8)
+        // The rail's header trailing text and its main body both branch on
+        // `isLoading` BEFORE falling through to the genuine "no site" copy.
+        #expect(view.contains("if isLoading {\n                    Text(\"Opening the library…\")"))
+        #expect(view.contains("} else if isLoading {\n                HStack(spacing: 6) {\n                    ProgressView().controlSize(.small)"))
+        #expect(view.contains("Tonight's site will appear once the library finishes opening."))
+    }
+
+    @Test("Home's loading signal is a pure, independently-testable predicate, not inline body logic")
+    func homeLibraryLoadingIsAPurePredicate() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
+        #expect(shell.contains("enum HomeLibraryLoading {"))
+        #expect(shell.contains("static func isLoading(selectedRoot: URL?, homeLibraryName: String?, hasAccessProblem: Bool) -> Bool"))
+        #expect(shell.contains("HomeLibraryLoading.isLoading("), "DetailHost.isLibraryLoading must delegate to the pure predicate")
+        #expect(shell.contains("isLibraryLoading: isLibraryLoading"), "the .home destination must pass the computed signal into HomeView")
+    }
+
+    // MARK: - W5-2 finding 6 (owner click-through): Home's "Open Project"
+    // button on the "Continue where it matters" card used to navigate to the
+    // PROJECTS LIST with the row selected instead of opening the project
+    // workspace itself -- a button labeled "open project" must open the
+    // project page, the same navigation the row's own "More -> Open Project"
+    // menu performs.
+
+    @Test("Home's \"Open Project\" button pushes the project workspace directly, not the Projects list")
+    func homeOpenProjectPushesTheProjectWorkspace() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
+        // `case .home:` also appears in `breadcrumbLabel`'s unrelated switch
+        // earlier in the file -- anchor on `destination(for:)` itself first,
+        // then find `.home` only within that function's body.
+        guard let destinationFuncRange = shell.range(of: "private func destination(for route: ContentRoute) -> some View {"),
+              let homeCaseRange = shell.range(of: "case .home:", range: destinationFuncRange.upperBound..<shell.endIndex),
+              let projectsCaseRange = shell.range(of: "case .projects:", range: homeCaseRange.upperBound..<shell.endIndex)
+        else {
+            Issue.record("Could not find the .home destination's own source block to inspect")
+            return
+        }
+        let homeDestinationSource = shell[homeCaseRange.upperBound..<projectsCaseRange.lowerBound]
+        #expect(
+            homeDestinationSource.contains("openProject: { project in\n                    router.push(.project(project.id.uuidString))\n                }"),
+            "HomeView's openProject callback must push .project(id) directly, matching openProjectID and ProjectsView's own openProject"
+        )
+        #expect(
+            !homeDestinationSource.contains("router.navigate(to: .projects)"),
+            "the .home destination must never route \"Open Project\" to the Projects list"
+        )
+    }
+
+    @Test("Two hu.lproj entries back the new cold-start loading copy")
+    func coldStartLoadingCopyIsTranslated() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let strings = try String(
+            contentsOf: root.appendingPathComponent("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings"),
+            encoding: .utf8
+        )
+        #expect(strings.contains("\"Opening the library…\" = \"Könyvtár megnyitása…\";"))
+        #expect(strings.contains("\"Tonight's site will appear once the library finishes opening.\""))
+    }
 }

@@ -342,3 +342,37 @@ struct HomeStoreTests {
             offset: nil, binning: "1x1")
     }
 }
+
+/// W5-2 finding 5 (owner pixel review): cold start on a spun-down SSD spent
+/// ~10-20s with Home showing "No library open"/"Site not set" while the
+/// library was already known and opening -- the empty state lied during
+/// loading. `HomeLibraryLoading.isLoading` (`V2RootView.swift`) is the pure
+/// predicate `DetailHost.isLibraryLoading` delegates to; tested directly
+/// here (fixture booleans/URLs) rather than through a real
+/// `OnboardingStore`/`HomeStore` pair, matching this codebase's usual
+/// "extract the pure decision, test it directly" shape
+/// (`ArchiveStripLayout`, `InsightTrendChartState`).
+@MainActor
+struct HomeLibraryLoadingTests {
+    private let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+
+    @Test("A configured-but-unopened library (root selected, Home not yet configured) is loading")
+    func configuredButLoadingIsTrue() {
+        #expect(HomeLibraryLoading.isLoading(selectedRoot: root, homeLibraryName: nil, hasAccessProblem: false))
+    }
+
+    @Test("No selected root at all -- genuinely unconfigured -- is never loading")
+    func unconfiguredIsNeverLoading() {
+        #expect(!HomeLibraryLoading.isLoading(selectedRoot: nil, homeLibraryName: nil, hasAccessProblem: false))
+    }
+
+    @Test("Once Home has been configured for the open library, it is no longer loading")
+    func configuredHomeIsNotLoading() {
+        #expect(!HomeLibraryLoading.isLoading(selectedRoot: root, homeLibraryName: "Astro", hasAccessProblem: false))
+    }
+
+    @Test("An access problem for the selected root means nothing is still in flight -- never a permanent spinner")
+    func accessProblemIsNotLoading() {
+        #expect(!HomeLibraryLoading.isLoading(selectedRoot: root, homeLibraryName: nil, hasAccessProblem: true))
+    }
+}

@@ -1634,3 +1634,15 @@
 "suggested: %@" = "javasolt: %@";
 "Split Group" = "Csoport szétbontása";
 "ISO" = "ISO";
+
+/* W5-2 finding 5 (owner pixel review): cold start on a spun-down SSD spent
+   ~10-20s with Home showing "Nincs megnyitott könyvtár"/"Nincs beállított
+   helyszín" while the library was already known and opening -- the empty
+   state lied during loading. `HomeView.openingLibrary`/`NightContextRail`
+   (HomeView.swift) now show these two lines instead, for exactly that
+   window; `ProgressView(_:)` is not covered by
+   `scripts/extract-localizable-strings.swift` (same gap `ArchiveView.swift`'s
+   own "Reading the archive…" entry documents), hand-added here for the
+   same reason. */
+"Opening the library…" = "Könyvtár megnyitása…";
+"Tonight's site will appear once the library finishes opening." = "A ma esti helyszín megjelenik, amint a könyvtár megnyílik.";
