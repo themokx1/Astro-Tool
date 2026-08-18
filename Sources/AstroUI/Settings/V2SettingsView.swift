@@ -69,11 +69,18 @@ private struct LibrariesSettingsView: View {
             Section("Library behavior") {
                 Toggle("Refresh the external index when opening a library", isOn: $scanOnOpen)
                 Label("Metadata and indexes live outside the image library.", systemImage: "internaldrive")
-                Text(
+                // W6-D fix: a ternary of two string literals infers as
+                // plain `String`, not `LocalizedStringKey` -- `Text(_:)`
+                // then resolves to its verbatim `StringProtocol` overload no
+                // matter what `hu.lproj` says, same defect class
+                // `LocalizationCoverageTests
+                // .saveTargetLocalizesDespiteTernary` already pins down for
+                // `PlanningView`'s Save/Saved button.
+                Text(LocalizedStringKey(
                     scanOnOpen
                         ? "AstroTool restores and re-indexes your last library automatically at launch."
                         : "AstroTool waits for you to choose a library at launch; it will not reopen the last one automatically."
-                )
+                ))
                 .font(.caption).foregroundStyle(.secondary)
             }
             Section("Recent Libraries") {
@@ -102,10 +109,16 @@ private struct LibrariesSettingsView: View {
             Section("Safety") {
                 Toggle("Enable write operations", isOn: $enableWriteOperations)
                     .accessibilityIdentifier("v2.settings.enable-write-operations")
+                // W6-D fix: same ternary-of-two-literals trap as the
+                // `Text(...)` above -- `Label`'s title picked its own
+                // verbatim `StringProtocol` overload for the identical
+                // reason.
                 Label(
-                    enableWriteOperations
-                        ? "Approved operations (quarantine apply, calibration linking) may now write to your library."
-                        : "Image folders are read-only unless you explicitly approve a physical operation.",
+                    LocalizedStringKey(
+                        enableWriteOperations
+                            ? "Approved operations (quarantine apply, calibration linking) may now write to your library."
+                            : "Image folders are read-only unless you explicitly approve a physical operation."
+                    ),
                     systemImage: "lock.shield"
                 )
                 Text("Every write still requires its own separate confirmation — this only unlocks the option.")
@@ -632,7 +645,11 @@ private struct IntegrationsSupportSettingsView: View {
             }
             Section("Support") {
                 LabeledContent("Release channel", value: ProductInfo.releaseChannel)
-                LabeledContent("Diagnostics", value: "Privacy-safe and local")
+                // W6-D fix: `LabeledContent(_:value:)`'s `value:` parameter
+                // is plain `String`-typed -- the content-closure initializer
+                // instead gives the value a real `Text("...")`, which
+                // resolves through the `LocalizedStringKey` overload.
+                LabeledContent("Diagnostics") { Text("Privacy-safe and local") }
                 Text("Diagnostics contain only a version, system data, anonymous counts, and operation categories. No path, file name, target, coordinate, note, FITS header, or error message is included.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
