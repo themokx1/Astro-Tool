@@ -442,4 +442,137 @@ struct LocalizationCoverageTests {
         #expect(!translated.contains("%@% of edge"))
         #expect(!translated.contains("%@% of short edge"))
     }
+
+    // MARK: - W6-D gate: rawValue reaching a display construct
+
+    /// Extracts the balanced-parenthesis argument list that immediately
+    /// follows the `(` at `openIndex` in `line`, stopping at ITS matching
+    /// close paren (or end of line if the call is not balanced within this
+    /// one line). Every real violation this gate exists to catch --
+    /// `Text(item.category.rawValue.capitalized)`,
+    /// `LabeledContent("Sensor", value: mode.rawValue.uppercased())`,
+    /// `.help(mode.rawValue)`, `Label(state.rawValue, systemImage: ...)` --
+    /// is written on one line in this codebase's own style (the same
+    /// single-line-call assumption `storeFilesNeverDirectlyAssignDisplayStringLiterals`
+    /// above already relies on), so a full multi-line Swift parser would be
+    /// solving a problem this codebase doesn't actually have.
+    private static func balancedArguments(openParenAt openIndex: String.Index, in line: String) -> Substring {
+        var depth = 0
+        var index = openIndex
+        let argsStart = line.index(after: openIndex)
+        while index < line.endIndex {
+            let character = line[index]
+            if character == "(" {
+                depth += 1
+            } else if character == ")" {
+                depth -= 1
+                if depth == 0 { return line[argsStart..<index] }
+            }
+            index = line.index(after: index)
+        }
+        return line[argsStart...]
+    }
+
+    /// Flags `.rawValue` reaching `Text(...)`, `Label(...)`, `.help(...)`,
+    /// or `LabeledContent(_:value:)`'s own `value:` argument on one line --
+    /// the exact defect class this task's own W6-D sweep fixed repeatedly
+    /// (`HealthView.swift`'s `Text(item.category.rawValue.capitalized)`,
+    /// `SeriesInspector.swift`/`SeriesWorkspaceView.swift`'s
+    /// `LabeledContent("Sensor", value: sensorMode.rawValue.uppercased())`):
+    /// a raw case name reaching the screen untranslated, in whichever
+    /// language the enum's Swift source happens to spell its cases in.
+    ///
+    /// Deliberately narrow, matching this file's own `storeFilesNeverDirectlyAssignDisplayStringLiterals`
+    /// precedent: a full-line comment (trimmed prefix `//`, covers this
+    /// codebase's own `///` doc-comment convention, including the several
+    /// doc comments elsewhere in `Features/` that literally quote this bad
+    /// pattern as a fixed-away example) is skipped entirely, and any line
+    /// -- code or comment -- naming the `rawValue-display-safe` marker is
+    /// allowlisted BY THAT LINE'S OWN JUSTIFICATION, not by which file it
+    /// lives in, for a genuinely non-display use this gate's heuristic
+    /// cannot tell apart from a real one (none exist in this codebase today
+    /// -- `TableColumn(_:value:)` sort keypaths are a DIFFERENT `value:`
+    /// parameter, on a construct this gate does not scan at all, so they
+    /// need no marker).
+    private static func rawValueDisplayViolations(inLine rawLine: String) -> [String] {
+        let line = rawLine
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.hasPrefix("//") else { return [] }
+        guard !line.contains("rawValue-display-safe") else { return [] }
+
+        var findings: [String] = []
+        for keyword in ["Text(", "Label(", ".help("] {
+            var searchRange = line.startIndex..<line.endIndex
+            while let keywordRange = line.range(of: keyword, range: searchRange) {
+                let openParen = line.index(before: keywordRange.upperBound)
+                let arguments = balancedArguments(openParenAt: openParen, in: line)
+                if arguments.contains(".rawValue") {
+                    findings.append("\(keyword) argument contains .rawValue: \(trimmed)")
+                }
+                searchRange = keywordRange.upperBound..<line.endIndex
+            }
+        }
+        // `LabeledContent(_:)` alone, or with a trailing content closure, is
+        // fine -- only its OWN `value:` parameter renders verbatim
+        // (`LabeledContent(_:value:)`), so both must be present in the same
+        // balanced argument list before this counts as a hit.
+        var searchRange = line.startIndex..<line.endIndex
+        while let keywordRange = line.range(of: "LabeledContent(", range: searchRange) {
+            let openParen = line.index(before: keywordRange.upperBound)
+            let arguments = balancedArguments(openParenAt: openParen, in: line)
+            if arguments.contains("value:"), arguments.contains(".rawValue") {
+                findings.append("LabeledContent(value:) argument contains .rawValue: \(trimmed)")
+            }
+            searchRange = keywordRange.upperBound..<line.endIndex
+        }
+        return findings
+    }
+
+    @Test("The rawValue-display detector actually catches the pre-fix shapes it exists to prevent")
+    func rawValueDisplayDetectorCatchesKnownPreFixShapes() {
+        // Real pre-fix lines from this task's own git history (`HealthView
+        // .swift`, `SeriesInspector.swift`, `SeriesWorkspaceView.swift`,
+        // `NightsStore.swift`'s own doc comment) -- proves this detector is
+        // actually red against the shape it exists to catch, not just
+        // vacuously green.
+        let preFixSamples = [
+            #"Text(item.category.rawValue.capitalized)"#,
+            #"LabeledContent("Sensor", value: snapshot.series.sensorMode.rawValue.uppercased())"#,
+            #".help(mode.rawValue)"#,
+            #"Label(night.triageState.rawValue, systemImage: "checklist")"#,
+        ]
+        for sample in preFixSamples {
+            #expect(!Self.rawValueDisplayViolations(inLine: sample).isEmpty, "detector failed to flag a known pre-fix shape: \(sample)")
+        }
+
+        // Three shapes that must NOT be flagged: a `TableColumn(_:value:)`
+        // sort keypath (a different `value:` parameter than `LabeledContent`'s,
+        // on a construct this gate does not scan), a `///` doc comment
+        // quoting the bad pattern for documentation (several exist for real
+        // in `Features/` today), and a line carrying the explicit
+        // `rawValue-display-safe` justification marker.
+        let safeSamples = [
+            #"TableColumn("Category", value: \LibraryHealthItem.category.rawValue) { item in"#,
+            #"/// (`Label(night.triageState.rawValue, ...)`) -- a `String`, so"#,
+            #"Text(value.rawValue) // rawValue-display-safe: synthetic example for this test only"#,
+        ]
+        for sample in safeSamples {
+            #expect(Self.rawValueDisplayViolations(inLine: sample).isEmpty, "detector false-positived on a safe shape: \(sample)")
+        }
+    }
+
+    @Test("No rawValue-derived text reaches Text/Label/.help/LabeledContent(value:) in Features/, unjustified")
+    func rawValueNeverReachesDisplayConstructsInFeaturesUnjustified() throws {
+        let featuresRoot = repositoryRoot.appendingPathComponent("Sources/AstroUI/Features")
+        var violations: [String] = []
+        for file in try swiftFiles(under: featuresRoot) {
+            guard let source = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            for line in source.split(separator: "\n", omittingEmptySubsequences: false) {
+                for finding in Self.rawValueDisplayViolations(inLine: String(line)) {
+                    violations.append("\(file.lastPathComponent): \(finding)")
+                }
+            }
+        }
+        #expect(violations.isEmpty, "rawValue reaching a display construct, unjustified: \(violations.prefix(10).joined(separator: " | "))")
+    }
 }
