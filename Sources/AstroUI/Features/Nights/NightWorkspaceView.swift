@@ -1,4 +1,5 @@
 import AstroApplication
+import AstroCore
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -40,6 +41,11 @@ public struct NightWorkspaceView: View {
         KeyPathComparator(\SeriesRow.filterSortKey, order: .forward)
     ]
     @State private var sortedSeries: [SeriesRow] = []
+    /// W5-1: the former "Éjszaka-riport" HTML export's data, now rendered
+    /// natively in the Overview tab (`reportSections` below) instead of
+    /// generated/saved as a file -- the owner's own words: "ne html
+    /// oldalakat generáljunk és mentsünk".
+    @State private var reportStore = NightReportStore()
 
     public init(
         row: NightRow,
@@ -158,6 +164,13 @@ public struct NightWorkspaceView: View {
         .onChange(of: rootURL) { _, _ in publishWorkspaceActions() }
         .onChange(of: row) { _, _ in publishWorkspaceActions() }
         .onDisappear { workspaceActionCenter.clear(owner: actionOwner) }
+        .task(id: row) {
+            await reportStore.load(
+                rootURL: rootURL,
+                target: row.snapshot.projects.first.map(ProjectsQuery.canonicalFolderName(for:)),
+                date: row.date
+            )
+        }
     }
 
     private func publishWorkspaceActions() {
@@ -198,6 +211,7 @@ public struct NightWorkspaceView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .astroRaisedSurface()
+                reportSections
             }
         case .series:
             // `body` above renders `seriesTable` directly for this tab (a
@@ -279,27 +293,12 @@ public struct NightWorkspaceView: View {
         sortedSeries = rows
     }
 
-    /// This night's report (`AppState.exportNightReport`'s V2 equivalent) --
-    /// `[]` when no library is open, or this night has no project at all to
-    /// resolve a library/folder key from.
-    private var nightExportItems: [ExportMenuItem] {
-        guard let rootURL, let project = row.snapshot.projects.first else { return [] }
-        let target = ProjectsQuery.canonicalFolderName(for: project)
-        let date = row.date
-        return [
-            .file(title: "Night Report…", systemImage: "doc.richtext", contentType: .html) {
-                let export = try ExportService.production(rootURL: rootURL).nightReport(target: target, date: date)
-                return (export.content, export.suggestedFilename, [])
-            },
-        ]
-    }
-
+    /// W5-1: the night report's export menu is gone -- "tünjenek el az
+    /// exportálás file-ba gombok" (the owner's own words). Its content lives
+    /// natively in `reportSections` (Overview tab) instead of an
+    /// `NSSavePanel`-written HTML file.
     private var workspaceActions: WorkspaceActions {
-        var items: [WorkspaceActionItem] = [
-            .exportMenu(WorkspaceActionExportMenu(
-                id: "v2.nights.export", items: nightExportItems, accessibilityID: "v2.nights.export"
-            )),
-        ]
+        var items: [WorkspaceActionItem] = []
         if let project = row.snapshot.projects.first {
             items.append(.nightActionsMenu(WorkspaceActionNightMenu(
                 id: "v2.night.workspace.actions",
@@ -326,5 +325,167 @@ public struct NightWorkspaceView: View {
             )))
         }
         return WorkspaceActions(items)
+    }
+
+    // MARK: - Report sections (W5-1)
+    //
+    // The former "Éjszaka-riport" HTML export's own sections, now rendered
+    // natively here instead of generated/saved as a file -- assembled by
+    // `NightReportQuery` (`AstroApplication`), the exact same `AstroCore`
+    // queries `NightReport.render`'s HTML path itself calls. Filters/Series
+    // duplicate nothing the Series tab already shows (that table has no
+    // quality/goal data); Notes below folds the report's own key/value
+    // README notes into the Notes tab's existing "Session notes" card
+    // rather than a second copy here.
+
+    @ViewBuilder private var reportSections: some View {
+        if reportStore.isLoading, reportStore.result == nil {
+            ProgressView().frame(maxWidth: .infinity, alignment: .center)
+        } else if let message = reportStore.errorMessage {
+            ReportEmptyNote(text: LocalizedStringKey(message))
+        } else if let report = reportStore.result {
+            ReportSection(title: "Filters") {
+                if report.filterRows.isEmpty {
+                    ReportEmptyNote(text: "No filter data for this session.")
+                } else {
+                    ReportGrid(headers: ["Filter", "Frames", "Integration"]) {
+                        ForEach(report.filterRows.sorted(by: { $0.filter.localizedCaseInsensitiveCompare($1.filter) == .orderedAscending }), id: \.filter) { row in
+                            GridRow {
+                                Text(LocalizedStringKey(row.filter))
+                                Text(row.usableFrameCount.formatted()).monospacedDigit()
+                                Text(AstroFormat.duration(seconds: row.integrationSeconds)).monospacedDigit()
+                            }
+                        }
+                    }
+                }
+            }
+            ReportSection(title: "Capture Groups") {
+                ReportGrid(headers: ["Group", "Filters", "Frames", "Integration", "FWHM"]) {
+                    ForEach(report.captureGroups) { row in
+                        GridRow {
+                            Text(row.group.displayName)
+                            Text(row.group.filters.isEmpty ? "—" : row.group.filters.joined(separator: ", "))
+                            Text(row.group.usableLightCount.formatted()).monospacedDigit()
+                            Text(AstroFormat.duration(seconds: row.group.integrationSeconds)).monospacedDigit()
+                            Text(fwhmText(row.quality))
+                        }
+                    }
+                }
+            }
+            ReportSection(title: "Quality") {
+                VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                    if let quality = report.quality, quality.frameCount > 0 {
+                        ReportStatGrid(items: qualityStatItems(quality))
+                    } else {
+                        ReportEmptyNote(text: "No rated frames for this session.")
+                    }
+                    if let reason = report.advice.notAvailableReason {
+                        Text("Exposure advice: n/a — \(reason)").font(.callout).foregroundStyle(.secondary)
+                    } else if !report.advice.advice.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Exposure Advice").font(.subheadline.weight(.medium))
+                            ForEach(report.advice.advice, id: \.self) { line in
+                                Text("• \(line)").font(.callout)
+                            }
+                        }
+                    }
+                }
+            }
+            ReportSection(title: "Altitude & Moon") {
+                VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                    if report.altitude == nil, report.moon == nil {
+                        ReportEmptyNote(text: "No coordinate or site data for the altitude calculation.")
+                    } else {
+                        ReportStatGrid(items: altitudeMoonStatItems(report))
+                    }
+                }
+            }
+            ReportSection(title: "Hardware & Calibration") {
+                VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                    ReportStatGrid(items: hardwareCalibrationStatItems(report))
+                    if !report.calibration.libraryDarkMismatchReasons.isEmpty {
+                        Text("Library dark mismatches: \(report.calibration.libraryDarkMismatchReasons.joined(separator: ", "))")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    ForEach(report.calibration.problems, id: \.message) { problem in
+                        Text("• \(problem.message)").font(.callout).foregroundStyle(AstroTokens.Color.attention)
+                    }
+                    if let accepted = report.session.dssAcceptedCount, let rejected = report.session.dssRejectedCount {
+                        ReportStatGrid(items: [
+                            ("DSS Accepted", "\(accepted)"),
+                            ("DSS Rejected", "\(rejected)"),
+                        ])
+                    }
+                }
+            }
+            ReportSection(title: "To-dos") {
+                if report.projectTodos.isEmpty {
+                    ReportEmptyNote(text: "No to-dos.")
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(report.projectTodos, id: \.self) { todo in
+                            Text("• \(todo)").font(.callout)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func fwhmText(_ quality: CaptureQualitySummary?) -> String {
+        guard let quality else { return "–" }
+        if let arcsec = quality.medianFWHMArcsec { return AstroFormat.fwhmArcsec(arcsec) }
+        if let px = quality.medianFWHMPixels { return AstroFormat.fwhmPixels(px) }
+        return "–"
+    }
+
+    private func qualityStatItems(_ quality: SessionQualitySummary) -> [(LocalizedStringKey, String)] {
+        var items: [(LocalizedStringKey, String)] = []
+        if let arcsec = quality.medianFWHMArcsec {
+            items.append(("FWHM", AstroFormat.fwhmArcsec(arcsec)))
+        } else if let px = quality.medianFWHMPixels {
+            items.append(("FWHM", AstroFormat.fwhmPixels(px)))
+        }
+        if let background = quality.backgroundEPerSecPerArcsec2 {
+            items.append(("Background", AstroFormat.backgroundEPerSecArcsec2(background)))
+        }
+        if let rank = quality.rankAmongSessions, let total = quality.sessionCountForTarget {
+            items.append(("Rank", "\(rank) / \(total)"))
+        }
+        if let outlier = quality.outlierFraction {
+            items.append(("Outliers", AstroFormat.percent(outlier * 100)))
+        }
+        return items
+    }
+
+    private func altitudeMoonStatItems(_ report: NightReportQuery.Result) -> [(LocalizedStringKey, String)] {
+        var items: [(LocalizedStringKey, String)] = []
+        if let altitude = report.altitude {
+            items.append(("Min. Altitude", AstroFormat.wholeDegrees(altitude.minAltitudeDeg)))
+            items.append(("Median Altitude", AstroFormat.wholeDegrees(altitude.medianAltitudeDeg)))
+            items.append(("Max. Altitude", AstroFormat.wholeDegrees(altitude.maxAltitudeDeg)))
+            items.append(("Below 30°", AstroFormat.percent(altitude.belowThresholdPercent)))
+        }
+        if let moon = report.moon {
+            items.append(("Moon Illumination", AstroFormat.percent(moon.illuminationPercent)))
+            items.append(("Moon Separation (median)", AstroFormat.wholeDegrees(moon.medianSeparationDeg)))
+            items.append(("Moon Max. Altitude", AstroFormat.wholeDegrees(moon.maxAltitudeDeg)))
+        }
+        return items
+    }
+
+    private func hardwareCalibrationStatItems(_ report: NightReportQuery.Result) -> [(LocalizedStringKey, String)] {
+        var items: [(LocalizedStringKey, String)] = [
+            ("Cooler", report.health.cooler.verdict),
+            ("Focus", report.health.focus.verdict),
+            ("Flats", "\(report.calibration.flats.count)"),
+        ]
+        if report.calibration.darks.isEmpty, let libraryDark = report.calibration.libraryDark {
+            items.append(("Dark", "library: \((libraryDark as NSString).lastPathComponent)"))
+        } else {
+            items.append(("Dark", "\(report.calibration.darks.count)"))
+        }
+        items.append(("Bias", "\(report.calibration.biases.count)"))
+        return items
     }
 }

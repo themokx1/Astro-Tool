@@ -1,7 +1,6 @@
 import AppKit
 import AstroApplication
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Shared context-menu content for one night/session row -- the V2
 /// equivalent of V1's `SessionActionMenu`
@@ -71,8 +70,6 @@ public struct NightActionMenu: View {
             Button("Reveal in Finder", systemImage: "folder", action: revealInFinder)
                 .disabled(nightDirectoryURL == nil)
             Divider()
-            Button("Night Report…", systemImage: "doc.richtext", action: exportNightReport)
-                .disabled(rootURL == nil)
             Button("Edit Night Notes…", systemImage: "note.text", action: editNotes)
                 .disabled(rootURL == nil)
             Divider()
@@ -107,28 +104,6 @@ public struct NightActionMenu: View {
     private func revealInFinder() {
         guard let url = nightDirectoryURL else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
-    /// This night's report -- the same engine call `NightsView`/
-    /// `NightWorkspaceView`'s own `ExportMenu` items already make
-    /// (`ExportService.nightReport`), inlined here so every night row gets
-    /// it from ONE place rather than each view re-deriving the panel/toast
-    /// dance.
-    private func exportNightReport() {
-        guard let rootURL else { return }
-        do {
-            let export = try ExportService.production(rootURL: rootURL).nightReport(target: target, date: date)
-            let panel = NSSavePanel()
-            panel.title = "Night Report…"
-            panel.nameFieldStringValue = export.suggestedFilename
-            panel.allowedContentTypes = [.html]
-            panel.canCreateDirectories = true
-            guard panel.runModal() == .OK, let url = panel.url else { return }
-            try ExportFileWriter.write(content: export.content, to: url)
-            operationHost.notify(.success, message: "\(OperationHost.localized("Exported")) \(url.lastPathComponent)")
-        } catch {
-            operationHost.notify(.failure, message: "\(OperationHost.localized("Night Report failed:")) \(error.localizedDescription)")
-        }
     }
 
     /// Rates every frame across every series of THIS night -- a thin wrapper

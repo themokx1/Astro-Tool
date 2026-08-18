@@ -23,14 +23,17 @@ struct NightActionMenuTests {
         #expect(menu.contains("public struct NightActionMenu"))
         #expect(menu.contains("Button(\"Open Night\""))
         #expect(menu.contains("Button(\"Reveal in Finder\", systemImage: \"folder\", action: revealInFinder)"))
-        #expect(menu.contains("Button(\"Night Report…\", systemImage: \"doc.richtext\", action: exportNightReport)"))
         #expect(menu.contains("Button(\"Edit Night Notes…\", systemImage: \"note.text\", action: editNotes)"))
         #expect(menu.contains("Button(\"Open Calibration…\", systemImage: \"camera.filters\", action: openCalibration)"))
         #expect(menu.contains("Button(\"Rate Frames\", systemImage: \"star.leadinghalf.filled\", action: rateFrames)"))
         #expect(menu.contains("Button(\"Open in Insights\""))
         #expect(menu.contains("openInsights(setupDescriptor)"))
         #expect(menu.contains("NSWorkspace.shared.activateFileViewerSelecting"))
-        #expect(menu.contains("ExportService.production(rootURL: rootURL).nightReport"))
+        // W5-1: "Night Report…" is gone -- the owner's own words, "tünjenek
+        // el az exportálás file-ba gombok". Its content lives natively in
+        // `NightWorkspaceView`'s Overview tab now (`NightReportQuery`).
+        #expect(!menu.contains("Night Report"))
+        #expect(!menu.contains("exportNightReport"))
         #expect(menu.contains("FrameRatingCommand.production(rootURL: rootURL)"))
         #expect(menu.contains("command.run("))
         #expect(menu.contains("v2.nights.action-menu"))

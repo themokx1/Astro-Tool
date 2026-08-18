@@ -94,4 +94,76 @@ public enum AstroFormat {
     public static func exposureSeconds(_ value: Double) -> String {
         "\(value.formatted(.number.precision(.fractionLength(0...4)))) s"
     }
+
+    // MARK: - W5-1 (report sections)
+    //
+    // The in-app night/project report sections (`NightWorkspaceView`/
+    // `ProjectWorkspaceView`) reuse the exact numbers the former HTML
+    // reports (`NightReport`/`TargetReport`, `AstroCore`) computed, but
+    // those two types format for an HTML string, not a SwiftUI `Text` --
+    // each unit below gets its own home here instead, same "one canonical
+    // formatter per unit" rule this file's own doc comment states.
+
+    /// Renders a whole-number angle in degrees, e.g. `"34°"` -- altitude/
+    /// separation readings, where sub-degree precision isn't meaningful
+    /// (unlike `degrees(_:)`'s four-decimal SITE-COORDINATE precision).
+    public static func wholeDegrees(_ value: Double) -> String {
+        "\(Int(value.rounded()))°"
+    }
+
+    /// Renders a rotation/position angle to one decimal degree, e.g. `"12.3°"`.
+    public static func rotationDegrees(_ value: Double) -> String {
+        "\(value.formatted(.number.precision(.fractionLength(1))))°"
+    }
+
+    /// Renders a fraction expressed on a 0...100 scale as a whole-number
+    /// percentage, e.g. `"42%"`.
+    public static func percent(_ value: Double) -> String {
+        "\(Int(value.rounded()))%"
+    }
+
+    /// Renders a median FWHM in arcseconds, e.g. `"2.34\""`.
+    public static func fwhmArcsec(_ value: Double) -> String {
+        "\(value.formatted(.number.precision(.fractionLength(2))))\""
+    }
+
+    /// Renders a median FWHM in pixels, e.g. `"3.10 px"` -- for a session
+    /// with no resolvable pixel scale to convert to arcseconds.
+    public static func fwhmPixels(_ value: Double) -> String {
+        "\(value.formatted(.number.precision(.fractionLength(2)))) px"
+    }
+
+    /// Renders a measured sky-background rate, e.g. `"0.0023 e⁻/s/arcsec²"`.
+    public static func backgroundEPerSecArcsec2(_ value: Double) -> String {
+        "\(value.formatted(.number.precision(.fractionLength(4)))) e⁻/s/arcsec²"
+    }
+
+    /// Renders right ascension in sexagesimal hours/minutes/seconds, e.g.
+    /// `"05h 34m 32.0s"` -- normalizes to `[0, 360)` degrees before the /15
+    /// hour conversion. Locale-invariant on purpose: a coordinate string
+    /// like this is copied/read, never typed into a locale-sensitive text
+    /// field (contrast `degrees(_:)`'s own doc comment for the field that
+    /// IS locale-sensitive and stays that way).
+    public static func rightAscension(_ deg: Double) -> String {
+        var normalized = deg.truncatingRemainder(dividingBy: 360)
+        if normalized < 0 { normalized += 360 }
+        let hours = normalized / 15.0
+        let h = Int(hours)
+        let minutesFull = (hours - Double(h)) * 60
+        let m = Int(minutesFull)
+        let s = (minutesFull - Double(m)) * 60
+        return String(format: "%02dh %02dm %04.1fs", h, m, s)
+    }
+
+    /// Renders declination in signed sexagesimal degrees/arcminutes/
+    /// arcseconds, e.g. `"+22° 00' 52.0\""`.
+    public static func declination(_ deg: Double) -> String {
+        let sign = deg < 0 ? "-" : "+"
+        let absDeg = abs(deg)
+        let d = Int(absDeg)
+        let minutesFull = (absDeg - Double(d)) * 60
+        let m = Int(minutesFull)
+        let s = (minutesFull - Double(m)) * 60
+        return "\(sign)\(String(format: "%02d° %02d' %04.1f\"", d, m, s))"
+    }
 }
