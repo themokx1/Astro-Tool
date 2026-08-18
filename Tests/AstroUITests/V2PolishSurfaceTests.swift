@@ -714,6 +714,60 @@ struct V2PolishSurfaceTests {
     ///   formatter can't drift the way a hand-rolled `%d:%02d` can, but
     ///   routing them through `AstroFormat.bytes` for a single call site
     ///   is a reasonable follow-up, not covered by this gate).
+    /// W6-C: the substring check below used to run `source.contains("String
+    /// (format:")` directly against the comment-stripped file -- correct for
+    /// a single-line call, but `HomeStore.swift`'s dawn-countdown label wrote
+    /// the exact same call wrapped onto a second line (`String(\n    format:
+    /// NSLocalizedString(...), ...)`), and the literal substring
+    /// `"String(format:"` simply never occurs in that file at all, wrapped
+    /// or not -- three call sites (`leadingLabel`/`trailingLabel`/
+    /// `centerLabel`) sat invisible to this gate for as long as the file had
+    /// that shape. Stripping every whitespace character (spaces, tabs,
+    /// newlines) before the substring check closes that hole: the tokens
+    /// `String(` and `format:` end up adjacent regardless of how the source
+    /// wrapped them, while the check remains exactly as specific as before
+    /// (still the literal token sequence `String(format:`, nothing broader).
+    /// `noHandRolledFormattingCatchesAMultilineCall`/
+    /// `noHandRolledFormattingAllowsAstroFormatCalls` below prove this red
+    /// (on the pre-fix multi-line shape) then green (on both a normal
+    /// single-line call and a plain `AstroFormat` call), the same red/green-
+    /// proof-before-trusting-the-real-scan shape `GlassTableGate`'s own two
+    /// synthetic tests use above.
+    private static func containsHandRolledFormatCall(_ source: String) -> Bool {
+        let collapsed = source.filter { !$0.isWhitespace }
+        return collapsed.contains("String(format:")
+    }
+
+    @Test("The hand-rolled-formatting detector catches a String(format:) call wrapped across lines")
+    func noHandRolledFormattingCatchesAMultilineCall() {
+        let wrappedAcrossLines = """
+            let centerLabel = String(
+                format: NSLocalizedString("%ldh %ldm to dawn", bundle: .main, comment: ""),
+                remainingMinutes / 60, remainingMinutes % 60
+            )
+            """
+        #expect(Self.containsHandRolledFormatCall(wrappedAcrossLines))
+
+        // The ORIGINAL (pre-tightening) check would have missed this --
+        // proving the naive substring scan is red here is what makes the
+        // tightened version's green result below meaningful.
+        let naiveCheck = Self.removingLineComments(wrappedAcrossLines).contains("String(format:")
+        #expect(!naiveCheck, "if this ever starts passing, the multi-line call shape stopped evading the untightened scan and this whole test needs re-deriving")
+    }
+
+    @Test("The hand-rolled-formatting detector still allows a single-line call and a plain AstroFormat call")
+    func noHandRolledFormattingAllowsAstroFormatCalls() {
+        let singleLineCall = #"latitudeText = String(format: "%.4f", def.latitudeDeg)"#
+        #expect(Self.containsHandRolledFormatCall(singleLineCall))
+
+        let astroFormatCall = """
+            let countdown = AstroFormat.compactCountdown(
+                seconds: dawnUTC.timeIntervalSince(now)
+            )
+            """
+        #expect(!Self.containsHandRolledFormatCall(astroFormatCall))
+    }
+
     @Test("No file under Sources/AstroUI (outside DesignSystem/ and PreviewSupport/) formats a value by hand")
     func noHandRolledFormatting() throws {
         var offenders: [String] = []
@@ -722,7 +776,7 @@ struct V2PolishSurfaceTests {
             let filename = (file as NSString).lastPathComponent
             if Self.handRolledFormattingExemptFiles.contains(filename) { continue }
             let source = Self.removingLineComments(try contents(file))
-            if source.contains("String(format:") { offenders.append(file) }
+            if Self.containsHandRolledFormatCall(source) { offenders.append(file) }
         }
         #expect(offenders.isEmpty, "use AstroFormat instead -- a second format for the same unit is a second truth: \(offenders.joined(separator: ", "))")
     }

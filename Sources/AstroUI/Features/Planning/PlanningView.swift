@@ -151,7 +151,14 @@ public struct PlanningView: View {
         HStack(spacing: AstroTokens.Spacing.standard) {
             MetricCard(
                 title: "Reference",
-                value: "\(store.referenceHours.formatted(.number.precision(.fractionLength(0...1)))) h",
+                // W6-C: was a hand-rolled decimal ("8.5 h") that read as a
+                // second truth next to every other duration in the app's
+                // own "H:MM h" style (`AstroFormat.duration`) -- this is a
+                // pure display of `IntegrationTimeModel.referenceHours`, not
+                // an editable draft field, so there is no round-trip-parsing
+                // reason (unlike `SiteSettingsStore`'s own exemption) to keep
+                // it decimal.
+                value: AstroFormat.duration(seconds: store.referenceHours * 3600),
                 detail: "f/\(store.referenceFocalRatio.formatted(.number.precision(.fractionLength(0...1)))) · μ \(store.referenceSurfaceBrightness.formatted(.number.precision(.fractionLength(0...1))))",
                 systemImage: "timer"
             )

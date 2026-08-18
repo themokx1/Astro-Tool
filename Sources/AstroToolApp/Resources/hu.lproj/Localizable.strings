@@ -163,7 +163,7 @@
 "Click to dismiss" = "Kattints az elvetéshez";
 "Close" = "Bezárás";
 "Combo" = "Kombináció";
-"Compare measured sessions over time. Lower FWHM and background are better; higher efficiency is better." = "Hasonlítsd össze a mért sessionöket az idő múlásával. Az alacsonyabb FWHM és háttér jobb; a magasabb hatékonyság jobb.";
+"Compare measured captures over time. Lower FWHM and background are better; higher efficiency is better." = "Hasonlítsd össze a mért capture-öket az idő múlásával. Az alacsonyabb FWHM és háttér jobb; a magasabb hatékonyság jobb.";
 "Confirm Quarantine" = "Karantén megerősítése";
 "Continue" = "Folytatás";
 "Continue to Library" = "Tovább a könyvtárhoz";
@@ -381,7 +381,7 @@
 "Reads this library's tracked BIAS/DARK frames per camera/gain/offset combo, and derives bias level, read noise, dark current, and EGAIN." = "Beolvassa ennek a könyvtárnak a nyomon követett BIAS/DARK képkockáit kamera/gain/offset kombinációnként, és levezeti a bias szintet, az olvasási zajt, a dark áramot és az EGAIN-t.";
 "Receipt: %@ · %lld file move(s)" = "Nyugta: %@ · %lld fájláthelyezés";
 "Recent" = "Legutóbbi";
-"Recent session" = "Legutóbbi session";
+"Recent captures" = "Legutóbbi capture-ök";
 "Reclaimable space" = "Felszabadítható hely";
 "Record Decision" = "Döntés rögzítése";
 "Refresh the external index when opening a library" = "A külső index frissítése könyvtár megnyitásakor";
@@ -645,7 +645,7 @@
 "Session coverage" = "Session lefedettség";
 "Session model" = "Session modell";
 "Session notes" = "Session jegyzetek";
-"Session quality trends" = "Session minőségi trendek";
+"Capture quality trends" = "Capture minőségi trendek";
 "Sky path tonight" = "Ma esti égi pálya";
 "Source" = "Forrás";
 "Source path" = "Forrás elérési út";
@@ -827,14 +827,19 @@
 // be `String`-typed (invisible to the extraction script, never localizes);
 // hand-added here now that it is `Text`, same reasoning as every other
 // hand-added group above.
-// W5-2 finding 1 (owner pixel review): same double-`%` escaping trap as the
-// "of edge"/"of short edge" entries above -- `ArchiveStripView.swift`'s
-// `reclaimHelpText` interpolates two values into a literal containing a `%`,
-// so the real runtime key doubles it (`%@ reclaimable, %@%% of the
-// archive`), not the single-`%` key this used to be keyed under. Wording
-// matches the card's own "%@ can be reclaimed" vocabulary ("nyerhető
-// vissza" / "visszanyerhető").
-"%@ reclaimable, %@%% of the archive" = "%@ visszanyerhető — az archívum %@%%-a";
+// W6-C: `reclaimHelpText` used to build its own literal `%` next to the
+// interpolated percent value (`"...%@% of the archive"`), doubling to
+// `%@%% of the archive` at the real runtime key -- same trap as the "of
+// edge"/"of short edge" entries above. Routing the number through
+// `AstroFormat.percentOneDecimal(_:)` (W6-C, one canonical formatter for
+// this app's one deliberately-decimal percentage -- see that function's own
+// doc comment for why this specific metric keeps one decimal place instead
+// of `AstroFormat.percent(_:)`'s whole-number rounding) moved the `%` INSIDE
+// the interpolation, so the source no longer has a literal `%` at all and
+// the real runtime key is the plain, undoubled `%@ reclaimable, %@ of the
+// archive`. Wording matches the card's own "%@ can be reclaimed" vocabulary
+// ("nyerhető vissza" / "visszanyerhető").
+"%@ reclaimable, %@ of the archive" = "%@ visszanyerhető — az archívum %@-a";
 
 // ArchiveView.swift (Task 12) -- `ProgressView("Reading the archive…")`'s
 // literal IS correctly `LocalizedStringKey`-typed (it resolves at runtime
@@ -1183,13 +1188,11 @@
 // these are a literal first argument to a covered construct):
 "Dusk" = "Szürkület";
 "Dawn" = "Hajnal";
-"Dusk %@" = "Szürkület %@";
-"Dawn %@" = "Hajnal %@";
 "Site not configured" = "Nincs beállított megfigyelőhely";
 "No astronomical night tonight at this latitude" = "Ezen a szélességen ma nincs csillagászati éjszaka";
 "Before tonight's dusk" = "A ma esti szürkület előtt";
 "After tonight's dawn" = "A ma esti hajnal után";
-"%ldh %ldm to dawn" = "%ld ó %ld p a hajnalig";
+"to dawn" = "a hajnalig";
 "good tonight" = "ma éjjel jó";
 "no coordinates" = "nincs koordináta";
 "not visible tonight" = "nem látszik ma éjjel";
@@ -1420,10 +1423,13 @@
 "~%@ nights at tonight's pace" = "~%@ éjszaka a mai tempóval";
 
 // W4-4 item 6 (owner review): az Insights trend-diagramok "kevesebb mint 2
-// mért session" esete -- `InsightTrendChartState.unavailableMessage(pointCount:)`
+// mért capture" esete -- `InsightTrendChartState.unavailableMessage(pointCount:)`
 // egy ternáris kifejezésen keresztül ad vissza `LocalizedStringKey`-t, amit
 // az extraháló script nem lát, kézzel felvéve. A tulajdonos saját szava.
-"Only one measured session — more measurements are needed for a trend" = "1 mért session — a trendhez több mérés kell";
+// W6-B: a kulcs "session"-ről "capture"-re frissült, mert a trend-kártya
+// mostantól capture-önként (nem session-önként) számol mért pontokat --
+// lásd `InsightsQuery.swift`'s `CaptureTrendPoint` saját doksiját.
+"Only one measured capture — more measurements are needed for a trend" = "1 mért capture — a trendhez több mérés kell";
 
 /* W4-3b (Nights/Planning top-half cleanup, same disease the Projects page
    was cured of in 238a32d): the triage filter's "All" option and the
@@ -1535,6 +1541,12 @@
 "Flat Hygiene" = "Flat-higiénia";
 "Goal: %@ — %@ remaining" = "Cél: %@ — még hiányzik %@";
 "Goal: %@ — reached" = "Cél: %@ — elérve";
+// W6-C: `ProjectsView.swift`'s "Goal" table column `.help(...)` tooltip --
+// was a mixed-style string (`AstroFormat.duration` for the elapsed side,
+// a hand-rolled decimal for the goal side, "12:40 h of 20.0 h goal");
+// both sides now go through `AstroFormat.duration`, so the tooltip reads
+// e.g. "12:40 h of 20:00 h goal".
+"%@ of %@ goal" = "%@ / %@ cél";
 "Library dark mismatches: %@" = "Library dark eltérések: %@";
 "Setup: %@" = "Összeállítás: %@";
 "Unbalanced integration across panels." = "Kiegyenlítetlen integráció a panelek között.";

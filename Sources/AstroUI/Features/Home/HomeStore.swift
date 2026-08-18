@@ -477,18 +477,19 @@ public final class HomeStore {
             formatter.dateStyle = .none
             formatter.timeStyle = .short
             formatter.timeZone = timeZone
-            // Eagerly localized `String(format:)` over an `NSLocalizedString`
-            // format string -- same fix as `.unconfigured` above, needed
-            // here too because these labels are still plain `String`
-            // properties handed straight to `Text(...)`.
-            let leadingLabel = String(
-                format: NSLocalizedString("Dusk %@", bundle: .main, comment: ""),
-                formatter.string(from: duskUTC)
-            )
-            let trailingLabel = String(
-                format: NSLocalizedString("Dawn %@", bundle: .main, comment: ""),
-                formatter.string(from: dawnUTC)
-            )
+            // Eagerly localized: the static "Dusk"/"Dawn" word resolves via
+            // `NSLocalizedString` (the same key `.unconfigured` above already
+            // uses), and the formatted clock time is plain data interpolated
+            // AROUND it -- never through a `String(format:)` template, which
+            // is this codebase's own eager-localization convention (see
+            // `OperationHost.localized(_:)`'s doc comment) and keeps this
+            // file free of the `noHandRolledFormatting` gate's banned
+            // construct outright, rather than merely reformatted to dodge
+            // its substring scan.
+            let duskWord = NSLocalizedString("Dusk", bundle: .main, comment: "")
+            let dawnWord = NSLocalizedString("Dawn", bundle: .main, comment: "")
+            let leadingLabel = duskWord + " " + formatter.string(from: duskUTC)
+            let trailingLabel = dawnWord + " " + formatter.string(from: dawnUTC)
             let windowSeconds = dawnUTC.timeIntervalSince(duskUTC)
             let nowFraction: Double? = windowSeconds > 0
                 ? min(max(now.timeIntervalSince(duskUTC) / windowSeconds, 0), 1)
@@ -500,15 +501,16 @@ public final class HomeStore {
             } else if now > dawnUTC {
                 centerLabel = NSLocalizedString("After tonight's dawn", bundle: .main, comment: "")
             } else {
-                let remainingMinutes = Int(dawnUTC.timeIntervalSince(now) / 60)
-                // `%ld`, not `%d`: `String(format:)` follows C `printf`
-                // conventions, where `%d` expects a 32-bit `Int32` -- `Int`
-                // is 64-bit (`long`) on every Apple platform this app ships
-                // on, which is exactly what `%ld` expects.
-                centerLabel = String(
-                    format: NSLocalizedString("%ldh %ldm to dawn", bundle: .main, comment: ""),
-                    remainingMinutes / 60, remainingMinutes % 60
-                )
+                // `AstroFormat.compactCountdown` owns the hours/minutes split
+                // -- the exact duplicate-formatting shape this file used to
+                // hand-roll via `String(format: "%ldh %ldm to dawn", ...)`,
+                // invisible to the gate only because the call wrapped onto a
+                // second line (see `V2PolishSurfaceTests
+                // .noHandRolledFormattingCatchesAMultilineCall`, which pins
+                // the tightened gate down against exactly this shape).
+                let countdown = AstroFormat.compactCountdown(seconds: dawnUTC.timeIntervalSince(now))
+                let toDawnWord = NSLocalizedString("to dawn", bundle: .main, comment: "")
+                centerLabel = countdown + " " + toDawnWord
             }
 
             return HomeSnapshot.NightContext(

@@ -122,6 +122,26 @@ public enum AstroFormat {
         "\(Int(value.rounded()))%"
     }
 
+    /// Renders a fraction expressed on a 0...100 scale to one decimal place,
+    /// e.g. `"8.7%"` -- deliberately more precise than `percent(_:)`'s
+    /// whole-number rounding for the one place this app shows a
+    /// small-but-nonzero percentage where rounding down to `"0%"` would
+    /// misreport "nothing here" (the archive's own reclaimable-space
+    /// callout, `ArchiveStripView.reclaimHelpText`): a library with 0.4%
+    /// reclaimable space genuinely has some to reclaim, and `percent(_:)`
+    /// would silently round that to "0%" -- the exact same "hide a real,
+    /// small, nonzero value behind a coarser unit" concern
+    /// `exposureSeconds(_:)`'s own doc comment states for a sub-second bias
+    /// exposure. Every OTHER percentage in the app (moon illumination,
+    /// frame-fill/photographable-factor scores, archive-category shares)
+    /// stays whole-number: those are comparative scores, not a "is there
+    /// anything actionable here" threshold, so whole-number precision reads
+    /// better and rounding to `0%` there is an honest zero, not a hidden
+    /// nonzero.
+    public static func percentOneDecimal(_ value: Double) -> String {
+        "\(value.formatted(.number.precision(.fractionLength(0...1))))%"
+    }
+
     /// Renders a median FWHM in arcseconds, e.g. `"2.34\""`.
     public static func fwhmArcsec(_ value: Double) -> String {
         "\(value.formatted(.number.precision(.fractionLength(2))))\""
@@ -153,6 +173,26 @@ public enum AstroFormat {
         let m = Int(minutesFull)
         let s = (minutesFull - Double(m)) * 60
         return String(format: "%02dh %02dm %04.1fs", h, m, s)
+    }
+
+    // MARK: - W6-C (compact countdowns)
+
+    /// Renders a short countdown as `"2h 15m"` -- Home's own dawn-countdown
+    /// sentence fragment (`"2h 15m to dawn"`), NOT a standalone value like
+    /// `duration(seconds:)`'s `"h:mm h"` table cell: minutes are not
+    /// zero-padded and there is no trailing unit letter to disambiguate the
+    /// bare number from, because this string is always read as part of a
+    /// surrounding sentence, never alone. Matches the sole former
+    /// hand-rolled call site (`HomeStore.productionNightContext`'s
+    /// `centerLabel`) exactly -- seconds truncate to whole minutes first
+    /// (`Int(seconds / 60)`, matching the former `%ld`/`%ld` split, no
+    /// rounding), then split into hours/minutes the same way
+    /// `duration(seconds:)` does.
+    public static func compactCountdown(seconds: Double) -> String {
+        let totalMinutes = Int(seconds / 60)
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        return "\(hours)h \(minutes)m"
     }
 
     /// Renders declination in signed sexagesimal degrees/arcminutes/

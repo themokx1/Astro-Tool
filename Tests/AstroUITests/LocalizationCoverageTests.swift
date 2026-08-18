@@ -395,6 +395,14 @@ struct LocalizationCoverageTests {
     // to `hu.lproj` under the WRONG (single-`%`) key, so the Hungarian
     // translation could never be found at runtime and all three silently
     // rendered in English -- exactly what the owner's screenshot showed.
+    //
+    // `ArchiveStripView.reclaimHelpText`'s own call site no longer has this
+    // shape as of W6-C: routing its percent number through
+    // `AstroFormat.percentOneDecimal(_:)` moved the literal `%` INSIDE the
+    // interpolation, so its real runtime key is the plain, undoubled `%@
+    // reclaimable, %@ of the archive` -- see that call site's own hu.lproj
+    // comment. The doubling behavior itself is still exercised for real by
+    // `PlanningView`'s two untouched "of edge"/"of short edge" cells below.
 
     @Test("The extraction script doubles a literal % inside an interpolated LocalizedStringKey, matching the real compiler")
     func extractionScriptDoublesPercentInInterpolatedKeys() throws {
@@ -408,22 +416,28 @@ struct LocalizationCoverageTests {
         func hasExtraction(inFile file: String, key: String) -> Bool {
             extractions.contains { $0.hasPrefix(file + ":") && $0.hasSuffix(": " + key) }
         }
-        #expect(hasExtraction(inFile: "Sources/AstroUI/Features/Archive/ArchiveStripView.swift", key: "%@ reclaimable, %@%% of the archive"))
+        #expect(hasExtraction(inFile: "Sources/AstroUI/Features/Archive/ArchiveStripView.swift", key: "%@ reclaimable, %@ of the archive"))
         #expect(hasExtraction(inFile: "Sources/AstroUI/Features/Planning/PlanningView.swift", key: "%@%% of edge"))
         #expect(hasExtraction(inFile: "Sources/AstroUI/Features/Planning/PlanningView.swift", key: "%@%% of short edge"))
     }
 
-    @Test("hu.lproj carries the correctly double-%-escaped keys for the reclaim sentence and the two coverage-percent cells")
+    @Test("hu.lproj carries the correctly double-%-escaped keys for the two coverage-percent cells, and the plain undoubled key for the reclaim sentence")
     func percentEscapedKeysAreTranslated() throws {
         let translated = try parseStringsFile(
             repositoryRoot.appendingPathComponent("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
         )
-        #expect(translated.contains("%@ reclaimable, %@%% of the archive"))
+        #expect(translated.contains("%@ reclaimable, %@ of the archive"))
         #expect(translated.contains("%@%% of edge"))
         #expect(translated.contains("%@%% of short edge"))
         // The old, never-matchable single-`%` keys must be gone, not just
         // supplemented -- a stale wrong entry sitting next to the correct
         // one is exactly the kind of thing that gets copy-pasted forward.
+        // (The reclaim sentence's OLD doubled key, `%@ reclaimable, %@%% of
+        // the archive`, is also stale now that W6-C moved the `%` inside the
+        // interpolation -- it is checked as absent by
+        // `everyExtractedKeyIsTranslatedOrAllowlisted`/`missingFlagReportsNothingOutstanding`
+        // simply no longer asking for it, not by a separate negative
+        // assertion here.)
         #expect(!translated.contains("%@ reclaimable, %@% of the archive"))
         #expect(!translated.contains("%@% of edge"))
         #expect(!translated.contains("%@% of short edge"))

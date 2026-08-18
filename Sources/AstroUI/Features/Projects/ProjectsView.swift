@@ -159,7 +159,7 @@ public struct ProjectsView: View {
                                     Text(progress, format: .percent.precision(.fractionLength(0)))
                                         .monospacedDigit().font(.caption)
                                 }
-                                .help("\(AstroFormat.duration(seconds: row.integrationSeconds)) of \((row.goalHours ?? 0).formatted(.number.precision(.fractionLength(0...1)))) h goal")
+                                .help("\(AstroFormat.duration(seconds: row.integrationSeconds)) of \(AstroFormat.duration(seconds: (row.goalHours ?? 0) * 3600)) goal")
                             } else {
                                 Text("—").foregroundStyle(.secondary)
                                     .help("No integration goal set — add one on the project's Notes tab.")

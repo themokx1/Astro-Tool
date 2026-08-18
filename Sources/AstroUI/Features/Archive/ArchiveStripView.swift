@@ -211,9 +211,9 @@ struct ArchiveStripView: View {
         // type annotation to register a conflicting entry) would have been
         // misclassified as `%lld`/`%lf` instead of the `%@` these two
         // already-formatted strings actually need.
-        let percentText = (reclaimFraction * 100).formatted(.number.precision(.fractionLength(0...1)))
+        let percentText = AstroFormat.percentOneDecimal(reclaimFraction * 100)
         let bytesText = ByteCountFormatter.string(fromByteCount: reclaimableBytes, countStyle: .file)
-        return Text("\(bytesText) reclaimable, \(percentText)% of the archive")
+        return Text("\(bytesText) reclaimable, \(percentText) of the archive")
     }
 
     @ViewBuilder

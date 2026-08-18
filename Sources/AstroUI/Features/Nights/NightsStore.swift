@@ -98,7 +98,7 @@ public struct PlanningNightRow: Equatable, Sendable, Identifiable {
     /// itself). Only the English fallback below, for the rarer case where
     /// even `note` is `nil`, needed its own `hu.lproj` entry.
     public var darkHours: String {
-        summary.astroDarkHours.map { "\($0.formatted(.number.precision(.fractionLength(1)))) h" }
+        summary.astroDarkHours.map { AstroFormat.duration(seconds: $0 * 3600) }
             ?? (summary.note ?? NSLocalizedString("No astronomical darkness", bundle: .main, comment: ""))
     }
     public var moon: String {
@@ -106,7 +106,7 @@ public struct PlanningNightRow: Equatable, Sendable, Identifiable {
     }
     public var bestTargets: String {
         summary.bestTargets.map {
-            "\($0.target) (\($0.usableHours.formatted(.number.precision(.fractionLength(1)))) h)"
+            "\($0.target) (\(AstroFormat.duration(seconds: $0.usableHours * 3600)))"
         }.joined(separator: ", ")
     }
 }
