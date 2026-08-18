@@ -175,14 +175,24 @@ public enum ExposureAdvisor {
             return naReply(target: target, reason: "nincs használható light-keret ehhez a célponthoz", totalUsableSeconds: 0)
         }
 
-        let counts = EquipmentProfile.fingerprintCounts(usableLights: buckets.usable, meta: metaByFileID)
+        // W7-C: ASI Air rewrites FOCALLEN by a few percent across nights as
+        // its plate-solve refines it (255/256/261/262 mm for one physical
+        // rig, verified against the owner's real library) -- without this
+        // table, `fingerprintCounts` and the per-frame check just below
+        // would treat each jittered value as its own setup, fragmenting one
+        // rig's integration across several "dominant" fingerprints and
+        // undercounting `totalUsableSeconds`. Built once, from exactly the
+        // same frame population `counts`/`dominantFrames` are drawn from, so
+        // the two stay consistent with each other.
+        let focalLengthBuckets = EquipmentProfile.focalLengthBuckets(metaByFileID.values)
+        let counts = EquipmentProfile.fingerprintCounts(usableLights: buckets.usable, meta: metaByFileID, focalLengthBuckets: focalLengthBuckets)
         guard let dominant = EquipmentProfile.dominant(counts) else {
             return naReply(target: target, reason: "nincs elég fejléc-adat a setup meghatározásához", totalUsableSeconds: 0)
         }
 
         let dominantFrames = buckets.usable.filter { file in
             guard let id = file.id, let meta = metaByFileID[id] else { return false }
-            return EquipmentProfile.fingerprint(meta: meta, headerJSON: meta.headerJSON) == dominant
+            return EquipmentProfile.fingerprint(meta: meta, headerJSON: meta.headerJSON, focalLengthBuckets: focalLengthBuckets) == dominant
         }
 
         var totalUsableSeconds: Double = 0
