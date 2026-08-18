@@ -119,6 +119,55 @@ struct V2SettingsTests {
         #expect(try String(contentsOf: url, encoding: .utf8) == diagnostics.plainText)
     }
 
+    // MARK: - Support diagnostics reflect the real weather toggle (W5-4 item 3)
+
+    /// `IntegrationsSupportSettingsView.generateDiagnostics()` used to
+    /// hardcode `weatherEnabled: false` even though `config.weather.enabled`
+    /// is live product behavior everywhere else in V2
+    /// (`HomeStore.productionWeather`, `NightsStore`, `PlanningStore` all
+    /// gate their own weather fetch on the exact same `.astro_tool/
+    /// config.json` value) -- so a user who turned weather ON would still
+    /// see a diagnostics export claiming it was off. This pins the extracted
+    /// `SupportDiagnosticsWeatherState.weatherEnabled(libraryRootURL:)`
+    /// helper the view now calls instead of the literal `false`.
+    @Test("No library open reports weather disabled, same as AstroConfig()'s own default")
+    func weatherStateReportsDisabledWithoutALibrary() {
+        #expect(SupportDiagnosticsWeatherState.weatherEnabled(libraryRootURL: nil) == false)
+    }
+
+    @Test("A library whose config.json enables weather is reflected honestly, not hardcoded false")
+    func weatherStateReadsTheRealConfigValue() throws {
+        let fileManager = FileManager.default
+        let libraryRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let configDir = libraryRoot.appendingPathComponent(".astro_tool", isDirectory: true)
+        try fileManager.createDirectory(at: configDir, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: libraryRoot) }
+
+        var config = AstroConfig()
+        config.weather = WeatherRule(enabled: true)
+        let data = try JSONEncoder().encode(config)
+        try data.write(to: configDir.appendingPathComponent("config.json"))
+
+        #expect(SupportDiagnosticsWeatherState.weatherEnabled(libraryRootURL: libraryRoot) == true)
+    }
+
+    @Test("A library with no config.json at all (or one that fails to parse) reports weather disabled, never crashing")
+    func weatherStateFallsBackToDisabledWithoutAConfigFile() throws {
+        let fileManager = FileManager.default
+        let libraryRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: libraryRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: libraryRoot) }
+
+        #expect(SupportDiagnosticsWeatherState.weatherEnabled(libraryRootURL: libraryRoot) == false)
+    }
+
+    @Test("generateDiagnostics reads the real weather config instead of a hardcoded false")
+    func generateDiagnosticsUsesTheRealWeatherState() throws {
+        let source = try contents("Sources/AstroUI/Settings/V2SettingsView.swift")
+        #expect(!source.contains("weatherEnabled: false"), "diagnostics must read the real config.weather.enabled, not a hardcoded literal")
+        #expect(source.contains("SupportDiagnosticsWeatherState.weatherEnabled(libraryRootURL:"))
+    }
+
     @Test("The Planning tab's baseline preferences are wired to PlanningStore, not disclosed as a no-op")
     func planningPreferencesAreWiredNotDisclosedAsANoOp() throws {
         let settingsSource = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"), encoding: .utf8)

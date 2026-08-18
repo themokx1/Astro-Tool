@@ -578,6 +578,26 @@ enum SupportDiagnosticsFileWriter {
     }
 }
 
+/// W5-4 item 3: `IntegrationsSupportSettingsView.generateDiagnostics()` used
+/// to hardcode the `weatherEnabled` snapshot field to `false` regardless of
+/// whether the user had actually turned Open-Meteo weather on -- even though
+/// `config.weather.enabled` is live product behavior everywhere else in V2
+/// (`HomeStore.productionWeather`, `NightsStore`, `PlanningStore` all gate
+/// their own weather fetch on this exact same value). Reads the SAME
+/// `<library-root>/.astro_tool/config.json` those call sites read, so a
+/// toggle flipped from either V1's or V2's Settings is reflected here too.
+/// `nil` root (no library open) or a config that fails to load/parse both
+/// report `false`, same honest default `AstroConfig()`'s own `WeatherRule()`
+/// already uses -- never a crash, never a guess.
+enum SupportDiagnosticsWeatherState {
+    static func weatherEnabled(libraryRootURL: URL?) -> Bool {
+        guard let libraryRootURL else { return false }
+        let configURL = libraryRootURL.appendingPathComponent(".astro_tool/config.json")
+        let config = (try? AstroConfig.load(from: configURL)) ?? AstroConfig()
+        return config.weather.enabled
+    }
+}
+
 private struct IntegrationsSupportSettingsView: View {
     let appModel: AppModel
     let store: SettingsStore
@@ -662,7 +682,7 @@ private struct IntegrationsSupportSettingsView: View {
                 sessionCount: librarySnapshot?.nightCount ?? 0,
                 filterProfileCount: filterProfileCount,
                 sensorProfileCount: librarySnapshot?.sensorProfileCount ?? 0,
-                weatherEnabled: false,
+                weatherEnabled: SupportDiagnosticsWeatherState.weatherEnabled(libraryRootURL: rootURL),
                 recentOperations: []
             )
         }
