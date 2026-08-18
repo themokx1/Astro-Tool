@@ -309,7 +309,16 @@ public struct ConversionWorkspace: View {
         if store.isLoading {
             ProgressView("Reading AstroTool's index…").frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let error = store.errorMessage {
-            ContentUnavailableView("Preview unavailable", systemImage: "exclamationmark.triangle", description: Text(error))
+            ContentUnavailableView {
+                Label("Preview unavailable", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(error)
+            } actions: {
+                // Wave W6-A: see `RetryButton`'s own doc comment.
+                RetryButton(identifier: "v2.conversion.try-again") {
+                    Task { await store.load(rootURL: rootURL, accessMode: accessMode) }
+                }
+            }
         } else if store.sessions.isEmpty {
             ContentUnavailableView("No sessions found", systemImage: "moon.zzz", description: Text("Scan a library containing light frames first."))
         } else {

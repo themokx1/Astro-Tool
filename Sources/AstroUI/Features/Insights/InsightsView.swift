@@ -110,8 +110,9 @@ public struct InsightsView: View {
                     Button("Open Library…", action: chooseLibrary).buttonStyle(.borderedProminent)
                 }
             } else {
-                ContentUnavailableView(
-                    "Insights unavailable", systemImage: "exclamationmark.triangle",
+                ContentUnavailableView {
+                    Label("Insights unavailable", systemImage: "exclamationmark.triangle")
+                } description: {
                     // V2 localization sweep (W3-13): `store.errorMessage` is
                     // `String?` -- `?? "..."` used to resolve the whole
                     // expression to `String`, so `Text(String)` picked the
@@ -119,8 +120,15 @@ public struct InsightsView: View {
                     // localized. Two real `Text` values keep the dynamic
                     // message verbatim while the fallback goes through
                     // `Text`'s own `LocalizedStringKey` initializer.
-                    description: store.errorMessage.map(Text.init) ?? Text("The external index does not contain reportable sessions yet.")
-                )
+                    store.errorMessage.map(Text.init) ?? Text("The external index does not contain reportable sessions yet.")
+                } actions: {
+                    // Wave W6-A: this placeholder used to have no way back
+                    // short of leaving the page -- see `RetryButton`'s own
+                    // doc comment.
+                    RetryButton(identifier: "v2.insights.try-again") {
+                        Task { await store.load(rootURL: rootURL, year: selectedYear) }
+                    }
+                }
             }
         }
         .navigationTitle("Insights")

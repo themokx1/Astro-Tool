@@ -125,7 +125,18 @@ public struct CleanupPreviewView: View {
             Group {
                 if store.isLoading { ProgressView("Reading cleanup candidates…") }
                 else if let snapshot = store.snapshot { preview(snapshot) }
-                else { ContentUnavailableView("Preview unavailable", systemImage: "exclamationmark.triangle", description: Text(store.errorMessage ?? "No cleanup index is available.")) }
+                else {
+                    ContentUnavailableView {
+                        Label("Preview unavailable", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(store.errorMessage ?? "No cleanup index is available.")
+                    } actions: {
+                        // Wave W6-A: see `RetryButton`'s own doc comment.
+                        RetryButton(identifier: "v2.cleanup.try-again") {
+                            Task { await store.load(rootURL: rootURL, accessMode: accessMode) }
+                        }
+                    }
+                }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()
             HStack {

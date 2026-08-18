@@ -273,7 +273,16 @@ public struct ResultsView: View {
             if store.isLoading {
                 ProgressView("Looking for finished stacks…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = store.errorMessage {
-                ContentUnavailableView("Results unavailable", systemImage: "exclamationmark.triangle", description: Text(error))
+                ContentUnavailableView {
+                    Label("Results unavailable", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(error)
+                } actions: {
+                    // Wave W6-A: see `RetryButton`'s own doc comment.
+                    RetryButton(identifier: "v2.results.try-again") {
+                        Task { await store.load(rootURL: rootURL, projectID: project.id) }
+                    }
+                }
             } else if !store.rows.isEmpty {
                 // V2 UI/UX audit (2026-08-14) systemic pattern S10: this
                 // split's own minimums (440 + 430 = 870) used to be an even

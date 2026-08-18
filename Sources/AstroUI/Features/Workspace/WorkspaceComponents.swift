@@ -265,3 +265,24 @@ struct MetricCard: View {
         .astroGlassMorph(id: systemImage, in: glassNamespace, reduceMotion: reduceMotion)
     }
 }
+
+/// The one "Try Again" action for a failed-load `ContentUnavailableView` --
+/// wave W6-A (static audit, rc.5) found seven load-failure placeholders
+/// across the app that showed the reader an error message and nothing else,
+/// with no way back in short of leaving the page. `ArchiveView.errorState`
+/// already had the right idea (a bordered-prominent "Try Again" that
+/// re-invokes the view's own load); this is that same button, factored out
+/// so every other error state reuses it verbatim instead of re-typing seven
+/// slightly different copies. `identifier` follows each call site's own
+/// `v2.<feature>.…` convention rather than a shared literal, since
+/// `ContentUnavailableView` never repeats within one page.
+struct RetryButton: View {
+    let identifier: String
+    let action: () -> Void
+
+    var body: some View {
+        Button("Try Again", action: action)
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier(identifier)
+    }
+}

@@ -112,6 +112,11 @@ public struct ArchiveTaskDetailView: View {
                 Label("Could not read findings", systemImage: "exclamationmark.triangle")
             } description: {
                 Text(message)
+            } actions: {
+                // Wave W6-A: see `RetryButton`'s own doc comment.
+                RetryButton(identifier: "v2.archive.task-detail.try-again") {
+                    Task { await store.load(rootURL: rootURL, kind: kind) }
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if store.findings.isEmpty {

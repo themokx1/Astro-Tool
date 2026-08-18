@@ -66,7 +66,16 @@ public struct SensorProfilesView: View {
                         }
                     }
                 } else {
-                    ContentUnavailableView("Profiles unavailable", systemImage: "exclamationmark.triangle", description: Text(store.errorMessage ?? "The index could not be read."))
+                    ContentUnavailableView {
+                        Label("Profiles unavailable", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(store.errorMessage ?? "The index could not be read.")
+                    } actions: {
+                        // Wave W6-A: see `RetryButton`'s own doc comment.
+                        RetryButton(identifier: "v2.sensor-profiles.try-again") {
+                            Task { await store.load(rootURL: rootURL) }
+                        }
+                    }
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()

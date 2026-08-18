@@ -38,9 +38,9 @@ public struct ReviewWorkspace: View {
                 } else if let snapshot = store.snapshot {
                     reviewContent(snapshot)
                 } else {
-                    ContentUnavailableView(
-                        "Review unavailable",
-                        systemImage: "exclamationmark.triangle",
+                    ContentUnavailableView {
+                        Label("Review unavailable", systemImage: "exclamationmark.triangle")
+                    } description: {
                         // V2 localization sweep (W3-13): `store.errorMessage`
                         // is `String?` -- `?? "This project could not be
                         // opened."` used to resolve the whole expression to
@@ -52,8 +52,13 @@ public struct ReviewWorkspace: View {
                         // never translatable system/domain text) while the
                         // fallback phrase goes through `Text`'s own
                         // `LocalizedStringKey` initializer.
-                        description: store.errorMessage.map(Text.init) ?? Text("This project could not be opened.")
-                    )
+                        store.errorMessage.map(Text.init) ?? Text("This project could not be opened.")
+                    } actions: {
+                        // Wave W6-A: see `RetryButton`'s own doc comment.
+                        RetryButton(identifier: "v2.review.try-again") {
+                            Task { try? await store.open(rootURL: rootURL, projectID: projectID) }
+                        }
+                    }
                 }
             }
         }
