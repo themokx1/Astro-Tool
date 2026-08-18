@@ -575,7 +575,13 @@ public struct ConversionWorkspace: View {
             Button("Apply Conversion…") { confirmingApply = true }
                 .buttonStyle(.borderedProminent)
                 .disabled(store.accessMode != .mutationEnabled || !plan.canApply)
-                .help(store.accessMode != .mutationEnabled ? "Requires write access" : "Apply this conversion")
+                // W6-D fix: a ternary of two string literals infers as
+                // plain `String`, not `LocalizedStringKey` -- `.help(_:)`
+                // then renders it verbatim no matter what `hu.lproj` says,
+                // same defect class `LocalizationCoverageTests
+                // .saveTargetLocalizesDespiteTernary` already pins down for
+                // `PlanningView`'s Save/Saved button.
+                .help(LocalizedStringKey(store.accessMode != .mutationEnabled ? "Requires write access" : "Apply this conversion"))
                 .accessibilityIdentifier("v2.conversion.apply")
         }
         .confirmationDialog(

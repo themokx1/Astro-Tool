@@ -32,7 +32,18 @@ public struct OperationStatusView: View {
             }
         }
         .buttonStyle(.plain)
-        .help(operationHost.activeOperations.first?.title ?? "Recent activity")
+        // W6-D fix: `activeOperations.first?.title` is already an eagerly
+        // resolved, translated `String` (every `run(kind:title:...)` call
+        // site resolves its title through `OperationHost.localized(_:)`
+        // before this ever reads it -- see that method's own doc comment),
+        // but the "Recent activity" fallback used to be a raw English
+        // literal bound straight to a `String ?? String` -- `.help(_:)`
+        // then renders the whole expression verbatim regardless. Routing
+        // the fallback through the same `OperationHost.localized(_:)` every
+        // other title in this file already uses keeps both sides of the
+        // `??` actually translated.
+        .help(operationHost.activeOperations.first?.title ?? OperationHost.localized("Recent activity"))
+        .accessibilityIdentifier("v2.toolbar.operations.status")
         .popover(isPresented: $showsPopover, arrowEdge: .bottom) {
             OperationStatusPopover(operationHost: operationHost)
         }

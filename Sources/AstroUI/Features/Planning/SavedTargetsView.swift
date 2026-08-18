@@ -247,6 +247,11 @@ public struct SavedTargetsView: View {
                     Button(role: .destructive) { pendingRemoval = record } label: {
                         Image(systemName: "trash")
                     }
+                    // W6-D fix: an icon-only button with an
+                    // `.accessibilityLabel` but no `.help` -- VoiceOver users
+                    // could tell what this does, but a sighted mouse user
+                    // hovering it got no tooltip at all.
+                    .help("Remove \(record.designation)")
                     .accessibilityLabel("Remove \(record.designation)")
                 }
                 .padding(.vertical, 6)

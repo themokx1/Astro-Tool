@@ -231,6 +231,16 @@ private struct NightNoteFieldInfoButton: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
+        // W6-D fix: this ⓘ button had neither a `.help` tooltip nor an
+        // `.accessibilityLabel` -- unlike its sibling `MetricInfoButton`
+        // (`Sources/AstroUI/Help/MetricInfoButton.swift`), which mirrors
+        // this exact "borderless info.circle button opening a popover"
+        // shape and carries both. Interpolates `fieldKey` (e.g. "Bortle",
+        // "Seeing") since, unlike `MetricInfoButton`'s one button for a
+        // whole metrics list, this sheet has one of these per field --  a
+        // generic label would leave VoiceOver unable to tell them apart.
+        .help("Explain \(fieldKey)")
+        .accessibilityLabel("Explain \(fieldKey)")
         .popover(isPresented: $showPopover) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(fieldKey).font(.subheadline).bold()
