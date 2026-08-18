@@ -369,7 +369,7 @@ private struct SeriesSummaryPanel: View {
     }
 
     private var exposure: String {
-        "\(item.series.exposureSeconds.formatted(.number.precision(.fractionLength(0...2)))) s"
+        AstroFormat.exposureSeconds(item.series.exposureSeconds)
     }
 
     private var passband: String {

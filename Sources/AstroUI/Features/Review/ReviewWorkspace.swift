@@ -513,7 +513,7 @@ public struct ReviewWorkspace: View {
 
     private func seriesSubtitle(_ series: SeriesRecord) -> String {
         [
-            "\(series.exposureSeconds.formatted(.number.precision(.fractionLength(0...2)))) s",
+            AstroFormat.exposureSeconds(series.exposureSeconds),
             series.filterName,
             series.sensorMode.rawValue.uppercased()
         ].compactMap { $0 }.joined(separator: " · ")
@@ -645,7 +645,7 @@ private struct SeriesRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
-                Text("\(snapshot.series.exposureSeconds.formatted(.number.precision(.fractionLength(0...2)))) s")
+                Text(AstroFormat.exposureSeconds(snapshot.series.exposureSeconds))
                     .font(.headline)
                 Spacer()
                 if let filter = snapshot.series.filterName {

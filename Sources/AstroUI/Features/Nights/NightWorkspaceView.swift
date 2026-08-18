@@ -269,7 +269,7 @@ public struct NightWorkspaceView: View {
             // text), same trick `NightsView`'s `darkHours`/`bestTargets`
             // columns use above.
             TableColumn("Filter", value: \SeriesRow.filterSortKey) { Text(LocalizedStringKey($0.series.filterName ?? "Unfiltered")) }
-            TableColumn("Exposure", value: \SeriesRow.series.exposureSeconds) { Text("\($0.series.exposureSeconds.formatted()) s").monospacedDigit() }
+            TableColumn("Exposure", value: \SeriesRow.series.exposureSeconds) { Text(AstroFormat.exposureSeconds($0.series.exposureSeconds)).monospacedDigit() }
             TableColumn("Setup", value: \SeriesRow.series.setupDescriptor) { Text($0.series.setupDescriptor).lineLimit(1) }
             TableColumn("Mode", value: \SeriesRow.series.passband.rawValue) { Text($0.series.passband.displayLabel) }
         }

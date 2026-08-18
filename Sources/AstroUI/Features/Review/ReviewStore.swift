@@ -137,7 +137,7 @@ public final class ReviewStore {
             operationHost.notify(.info, message: OperationHost.localized("Select a capture series before rating its frames."))
             return
         }
-        let label = "\(snapshot?.project.displayName ?? "Project") · \(selected.series.exposureSeconds.formatted(.number.precision(.fractionLength(0...2))))s"
+        let label = "\(snapshot?.project.displayName ?? "Project") · \(AstroFormat.exposureSeconds(selected.series.exposureSeconds))"
         let kind = OperationKind.rate(series: selected.series.id.uuidString)
         guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
             operationHost.notify(.info, message: OperationHost.localized("Frame rating is already running for this series."))

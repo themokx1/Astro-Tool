@@ -127,14 +127,14 @@ public final class GlobalSearchStore {
                 let haystack = Self.normalized([
                     project?.displayName, project?.catalogID, series.filterName,
                     series.setupDescriptor,
-                    "\(series.exposureSeconds.formatted(.number.precision(.fractionLength(0...1)))) seconds"
+                    "\(AstroFormat.exposureSeconds(series.exposureSeconds)) seconds"
                 ].compactMap { $0 }.joined(separator: " "))
                 guard haystack.contains(normalized) else { continue }
                 found.append(GlobalSearchResult(
                     kind: .series,
                     objectID: series.id,
                     title: project?.displayName ?? "Capture series",
-                    detail: "\([series.filterName, "\(series.exposureSeconds.formatted(.number.precision(.fractionLength(0...1)))) s", series.setupDescriptor].compactMap { $0 }.joined(separator: " · "))"
+                    detail: "\([series.filterName, AstroFormat.exposureSeconds(series.exposureSeconds), series.setupDescriptor].compactMap { $0 }.joined(separator: " · "))"
                 ))
             }
         }

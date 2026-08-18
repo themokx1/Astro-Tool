@@ -1393,7 +1393,7 @@ private struct DetailHost: View {
               let night = projectSnapshot.nights.first(where: { $0.series.contains { $0.id == id } }),
               let item = night.series.first(where: { $0.id == id })
         else { return nil }
-        let exposure = "\(item.series.exposureSeconds.formatted(.number.precision(.fractionLength(0...1))))s"
+        let exposure = AstroFormat.exposureSeconds(item.series.exposureSeconds)
         return [item.series.filterName, exposure].compactMap { $0 }.joined(separator: " · ")
     }
 

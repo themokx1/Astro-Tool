@@ -151,7 +151,7 @@ public struct SeriesWorkspaceView: View {
         ])
     }
 
-    private var exposure: String { "\(item.series.exposureSeconds.formatted(.number.precision(.fractionLength(0...1)))) s" }
+    private var exposure: String { AstroFormat.exposureSeconds(item.series.exposureSeconds) }
     private var seriesTitle: String { [item.series.filterName, exposure].compactMap { $0 }.joined(separator: " · ") }
     private var gainOffset: String {
         let values = [item.series.gain.map { String($0) }, item.series.offset.map { String($0) }].compactMap { $0 }

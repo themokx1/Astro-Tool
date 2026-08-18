@@ -403,7 +403,7 @@ private struct ProjectNightSection: View {
     }
 
     private func exposure(_ seconds: Double) -> String {
-        "\(seconds.formatted(.number.precision(.fractionLength(0...1)))) s"
+        AstroFormat.exposureSeconds(seconds)
     }
 
     private func passbandIcon(_ passband: SeriesPassband) -> String {

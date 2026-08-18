@@ -945,7 +945,7 @@ private struct ProjectSeriesSummary: View {
             // arbitrary FITS/user data, so only the "Unfiltered" fallback
             // needs (and gets) a `hu.lproj` entry.
             TableColumn("Filter", value: \ProjectSeriesRow.series.filterSortKey) { Text(LocalizedStringKey($0.series.filterName ?? "Unfiltered")) }
-            TableColumn("Exposure", value: \ProjectSeriesRow.series.series.exposureSeconds) { Text("\($0.series.series.exposureSeconds.formatted()) s").monospacedDigit() }
+            TableColumn("Exposure", value: \ProjectSeriesRow.series.series.exposureSeconds) { Text(AstroFormat.exposureSeconds($0.series.series.exposureSeconds)).monospacedDigit() }
             TableColumn("Setup", value: \ProjectSeriesRow.series.series.setupDescriptor) { Text($0.series.series.setupDescriptor).lineLimit(1) }
             TableColumn("Frames", value: \ProjectSeriesRow.series.usableFrames) { Text("\($0.series.usableFrames) / \($0.series.excludedFrames)").monospacedDigit() }
             // Task 5: a visible row action, not only the right-click menu --

@@ -98,7 +98,7 @@ public struct SeriesInspector: View {
     }
 
     private var exposure: String {
-        "\(snapshot.series.exposureSeconds.formatted(.number.precision(.fractionLength(0...2)))) s"
+        AstroFormat.exposureSeconds(snapshot.series.exposureSeconds)
     }
 
     private var passband: String {
