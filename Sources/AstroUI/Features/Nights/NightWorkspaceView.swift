@@ -394,7 +394,7 @@ public struct NightWorkspaceView: View {
                         ReportEmptyNote(text: "No rated frames for this session.")
                     }
                     if let reason = report.advice.notAvailableReason {
-                        Text("Exposure advice: n/a — \(reason)").font(.callout).foregroundStyle(.secondary)
+                        Text("Exposure advice: n/a — \(exposureAdviceReasonText(reason))").font(.callout).foregroundStyle(.secondary)
                     } else if !report.advice.advice.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Exposure Advice").font(.subheadline.weight(.medium))
@@ -444,6 +444,32 @@ public struct NightWorkspaceView: View {
                 }
             }
         }
+    }
+
+    /// `ExposureAdvisor.notAvailableReason` (`AstroCore/Stats/ExposureAdvisor.swift`)
+    /// ends with a CLI-era suggestion, verbatim " — futtasd újra: astrotool
+    /// rate" -- honest advice for the `astrotool rate` command line (which
+    /// still says exactly this), but this app has no terminal: the actual
+    /// fix is the header's own "Rate Frames" button
+    /// (`v2.night.page.rate`, above). `ExposureAdvisor.swift` itself stays
+    /// untouched -- it backs several other callers (the CLI, `TargetReport`/
+    /// `NightReport`'s own HTML export, `ProjectWorkspaceView`'s report tab)
+    /// that either ARE the CLI or are out of this fix's scope -- this is a
+    /// narrow, display-only substitution local to this view. A reason that
+    /// does NOT end in the CLI suggestion (e.g. the missing-per-Bayer-data
+    /// case) passes through unchanged rather than risk dropping real
+    /// information this substitution was never told about.
+    private static let exposureAdviceCLISuffix = " — futtasd újra: astrotool rate"
+
+    private func exposureAdviceReasonText(_ reason: String) -> String {
+        guard reason.hasSuffix(Self.exposureAdviceCLISuffix) else { return reason }
+        let honestPart = reason.dropLast(Self.exposureAdviceCLISuffix.count)
+        let inAppSuggestion = NSLocalizedString(
+            "Rate the frames using the “Rate Frames” button above.",
+            bundle: .main,
+            comment: "Replaces ExposureAdvisor's CLI-era \" — futtasd újra: astrotool rate\" suggestion in the in-app night report; this app has no terminal."
+        )
+        return honestPart + " — " + inAppSuggestion
     }
 
     private func fwhmText(_ quality: CaptureQualitySummary?) -> String {

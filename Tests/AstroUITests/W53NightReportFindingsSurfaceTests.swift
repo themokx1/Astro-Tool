@@ -73,6 +73,35 @@ struct W53NightReportFindingsSurfaceTests {
         return result
     }
 
+    // MARK: - Finding 2: the Minőség/Quality section's exposure-advice
+    // fallback must point at the in-app action, not a terminal command.
+
+    /// `ExposureAdvisor.notAvailableReason` (`AstroCore/Stats/
+    /// ExposureAdvisor.swift`) ends with a CLI-era suggestion this app has
+    /// no terminal for. Pins that `NightWorkspaceView` no longer
+    /// interpolates that raw reason straight into the rendered `Text` (the
+    /// old-HTML-report vocabulary bug) and instead routes it through a
+    /// substitution that swaps the CLI suggestion for the header's own
+    /// "Rate Frames" action.
+    @Test("Night workspace's exposure-advice fallback does not surface astrotool's raw CLI suggestion verbatim")
+    func exposureAdviceDoesNotQuoteCLICommand() throws {
+        let source = Self.removingLineComments(try contents("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift"))
+
+        #expect(
+            !source.contains("\\(reason)"),
+            "the raw AstroCore reason string must be rewritten before display, not interpolated as-is"
+        )
+        #expect(source.contains("exposureAdviceReasonText(reason)"))
+        #expect(source.contains("Rate Frames"), "the substitute text must point at the in-app action's own label")
+        // The CLI suffix this substitution targets must stay byte-for-byte
+        // in sync with `ExposureAdvisor.swift`'s own literal -- if that
+        // source string ever changes, this substitution silently stops
+        // firing and the raw CLI text reappears on screen.
+        let exposureAdvisorSource = try contents("Sources/AstroCore/Stats/ExposureAdvisor.swift")
+        #expect(exposureAdvisorSource.contains(" — futtasd újra: astrotool rate"))
+        #expect(source.contains("\" — futtasd újra: astrotool rate\""))
+    }
+
     // MARK: - Finding 4: FrameBlinkReview's stage backdrop must darken in
     // both appearances, never invert in dark mode.
 
