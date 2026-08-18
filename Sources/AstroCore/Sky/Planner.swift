@@ -509,10 +509,10 @@ public enum Planner {
                 let moonOK = separation >= 40 || moonIllum < 60
                 guard moonOK else { continue }
 
-                let usableSeconds = overlapSeconds(
+                let usableSeconds = NightSweep.sweep(
                     raDeg: entry.raDeg, decDeg: entry.decDeg, latDeg: lat, lonDeg: lon,
-                    duskUTC: duskUTC, dawnUTC: dawnUTC, minAltitudeDeg: minAltitudeDeg
-                )
+                    duskUTC: duskUTC, dawnUTC: dawnUTC, minAltitudeDeg: minAltitudeDeg, stepMinutes: 10
+                ).visibleSeconds
                 guard usableSeconds > 0 else { continue }
                 windows.append(NightSummary.BestWindow(target: entry.target, usableHours: usableSeconds / 3600.0))
             }
@@ -536,35 +536,6 @@ public enum Planner {
         let startOfDay = calendar.startOfDay(for: day)
         let midnight = calendar.date(byAdding: .day, value: 1, to: startOfDay) ?? startOfDay
         return SunMoon.moonIlluminationPercent(julianDay: JulianDate.julianDay(midnight))
-    }
-
-    /// Seconds, within `[duskUTC, dawnUTC]`, that the target's altitude is
-    /// `>= minAltitudeDeg` -- a coarser (`stepMinutes`, default 10) sibling
-    /// of `sweepNight`'s per-plan altitude scan, used only by `month`'s
-    /// per-night x per-target overlap scoring.
-    private static func overlapSeconds(
-        raDeg: Double,
-        decDeg: Double,
-        latDeg: Double,
-        lonDeg: Double,
-        duskUTC: Date,
-        dawnUTC: Date,
-        minAltitudeDeg: Double,
-        stepMinutes: Double = 10
-    ) -> Double {
-        var visibleSampleCount = 0
-        let stepSeconds = stepMinutes * 60
-        var t = duskUTC
-        while t <= dawnUTC {
-            let jd = JulianDate.julianDay(t)
-            let lst = SiderealTime.lstHours(julianDay: jd, longitudeDeg: lonDeg)
-            let position = AltAz.position(raDeg: raDeg, decDeg: decDeg, lstHours: lst, latDeg: latDeg)
-            if position.altitudeDeg >= minAltitudeDeg {
-                visibleSampleCount += 1
-            }
-            t = t.addingTimeInterval(stepSeconds)
-        }
-        return Double(visibleSampleCount) * stepSeconds
     }
 
     /// Builds tonight's plan for every target on record, sorted by `score`
