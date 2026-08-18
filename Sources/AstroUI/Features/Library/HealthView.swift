@@ -225,7 +225,12 @@ public struct HealthView: View {
                     }
                     .width(min: 145, ideal: 190)
                     TableColumn("Category", value: \LibraryHealthItem.category.rawValue) { item in
-                        Text(item.category.rawValue.capitalized)
+                        // W6-D fix: same `rawValue.capitalized` defect this
+                        // file's own category picker had (see this file's
+                        // `LibraryHealthCategory.displayLabel` doc comment
+                        // two screens down) -- just never propagated to this
+                        // table column when that picker was fixed.
+                        Text(item.category.displayLabel)
                     }
                     .width(min: 90, ideal: 110)
                     TableColumn("Next step") { item in

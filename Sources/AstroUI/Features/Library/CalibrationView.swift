@@ -75,7 +75,13 @@ public struct CalibrationView: View {
 
     public var body: some View {
         WorkspaceTablePage(
-            subtitle: "Master-dark inventory and per-session linking, applied only through WriteGuard."
+            // W6-D fix: this used to name the internal `WriteGuard` codename
+            // in user-facing prose -- in BOTH languages, since the old
+            // Hungarian entry was itself a direct transliteration
+            // ("...kizárólag a WriteGuardon keresztül alkalmazva.") rather
+            // than a real translation. Reworded to describe what the guard
+            // actually does instead of what it's called internally.
+            subtitle: "Master-dark inventory and per-session linking, applied only through protected, verified writes."
         ) {
             toolbarContent
         } table: {
@@ -110,7 +116,19 @@ public struct CalibrationView: View {
                     detail: "Inventoried directories", systemImage: "archivebox"
                 )
                 MetricCard(
-                    title: "Access", value: store.accessMode == .mutationEnabled ? "Writable" : "Read only",
+                    title: "Access",
+                    // W6-D fix: `MetricCard.value` is deliberately plain
+                    // `String` (it is almost always a formatted number, see
+                    // that struct's own doc comment), which routes `Text`
+                    // through its verbatim overload -- a bare ternary of two
+                    // literals here silently stayed English forever no
+                    // matter what `hu.lproj` said. Same "resolve the phrase
+                    // eagerly" shape as `NightRow.TriageState.localizedText`.
+                    value: NSLocalizedString(
+                        store.accessMode == .mutationEnabled ? "Writable" : "Read only",
+                        bundle: .main,
+                        comment: ""
+                    ),
                     detail: "Images protected", systemImage: "lock.shield"
                 )
             }
@@ -165,7 +183,16 @@ public struct CalibrationView: View {
                 TableColumn("Lights", value: \CalibrationCoverageRow.need.lightCount) { row in Text("\(row.need.lightCount)") }
                     .width(min: 60, ideal: 70)
                 TableColumn("Master", value: \CalibrationCoverageRow.masterSortKey) { row in
-                    Text(row.need.matchedMasterPath ?? "Missing")
+                    // W6-D fix: `matchedMasterPath ?? "Missing"` is a
+                    // `String ?? String literal` -- infers as plain `String`,
+                    // so `Text(_:)` picked its verbatim overload and
+                    // "Missing" stayed English even with a "Missing" ->
+                    // "Hiányzik" entry already sitting unused in hu.lproj.
+                    // Branching into two real `Text` values keeps the actual
+                    // path verbatim (it's a filesystem path, never
+                    // translated) while letting the literal "Missing" reach
+                    // `Text`'s `LocalizedStringKey` overload.
+                    (row.need.matchedMasterPath.map { Text(verbatim: $0) } ?? Text("Missing"))
                         .foregroundStyle(row.need.matchedMasterPath == nil ? AstroTokens.Color.accent : .primary)
                 }
                 TableColumn("Sessions") { row in

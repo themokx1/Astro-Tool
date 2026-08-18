@@ -1767,3 +1767,9 @@
    Profiles…" button (NightWorkspaceView.exposureAdviceReasonText). */
 "Measure one on the Sensor Profiles page." = "Mérj egyet a Szenzorprofilok oldalon.";
 "Sensor Profiles…" = "Szenzorprofilok…";
+
+/* W6-E item 6: ExposureAdvisor's "no sensor profile" CLI-era suggestion
+   reworded for the in-app night report, paired with a real "Sensor
+   Profiles…" button (NightWorkspaceView.exposureAdviceReasonText). */
+"Measure one on the Sensor Profiles page." = "Mérj egyet a Szenzorprofilok oldalon.";
+"Sensor Profiles…" = "Szenzorprofilok…";
