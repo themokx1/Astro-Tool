@@ -62,8 +62,24 @@ public final class CaptureImportStore {
     // MARK: Step 2 -- Classify
 
     public private(set) var discovered: [DiscoveredCaptureFile] = []
+    /// `discovered` split into shooting bursts by `CaptureBurstGrouper` --
+    /// the Classify step's own unit of decision (owner feedback W4-1b: "azok
+    /// egyértelműen majd egy kategóriába fognak tartozni", they'll clearly
+    /// belong to one category). Recomputed once per scan; exclude/include
+    /// and role overrides never reshuffle group membership, only which of a
+    /// group's files count as "active" for it.
+    public private(set) var groups: [CaptureFileGroup] = []
     public var roleOverrides: [String: FrameRole] = [:]
     public var excludedIDs: Set<String> = []
+    /// Which groups the Classify list currently shows expanded to their
+    /// individual files -- the brief's "individual files expandable for
+    /// override/exclude".
+    public var expandedGroupIDs: Set<String> = []
+    /// Selected List rows, each either `"group:<groupID>"` or
+    /// `"file:<fileID>"` -- a single selection set over BOTH row kinds
+    /// (`ClassifyRow` in `CaptureImportView`) so one "Set Role"/"Exclude"/
+    /// "Include" toolbar resolves either a whole group or one expanded
+    /// file the same way, via `fileIDs(forSelectedRows:)` below.
     public var selectedIDs: Set<String> = []
 
     // MARK: Step 3 -- Destination (reuses `NewSessionStore` verbatim)
@@ -134,8 +150,10 @@ public final class CaptureImportStore {
 
     private func recordScan(_ files: [DiscoveredCaptureFile]) {
         discovered = files
+        groups = CaptureBurstGrouper.group(files)
         roleOverrides = [:]
         excludedIDs = []
+        expandedGroupIDs = []
         selectedIDs = []
         isScanning = false
         if files.isEmpty {
@@ -199,9 +217,121 @@ public final class CaptureImportStore {
     }
 
     /// The exact items `CaptureImportCommand.preview`/`.copy` will use --
-    /// every active file paired with its resolved role.
+    /// every active file paired with its resolved role. Unaffected by
+    /// grouping: `CaptureImportCommand` never sees a group, only the
+    /// per-file `roleOverrides` groups expand into (see
+    /// `fileIDs(forSelectedRows:)`/`assignRole(_:toGroups:)` below).
     public var resolvedItems: [CaptureImportItem] {
         CaptureImportItem.resolved(from: activeFiles, overrides: roleOverrides)
+    }
+
+    // MARK: - Step 2 (Classify) group-level derived state and actions
+
+    /// Files in `group` not excluded -- the group's own `activeFiles`.
+    public func activeFiles(in group: CaptureFileGroup) -> [DiscoveredCaptureFile] {
+        group.files.filter { !excludedIDs.contains($0.id) }
+    }
+
+    /// The role every ACTIVE file in `group` currently resolves to (override
+    /// or proposal), when they all agree -- `nil` when the group is fully
+    /// excluded, has no active files, or its active files currently resolve
+    /// to different roles ("mixed", shown as unresolved rather than picking
+    /// one to hide the disagreement). A FITS group whose files all proposed
+    /// the same `IMAGETYP` role resolves here automatically, with no
+    /// override needed, via the same per-file `resolvedRole(for:)` fallback
+    /// every file already uses -- grouping surfaces that agreement, it
+    /// doesn't compute a new one.
+    public func resolvedRole(for group: CaptureFileGroup) -> FrameRole? {
+        let active = activeFiles(in: group)
+        guard !active.isEmpty else { return nil }
+        let roles = Set(active.map { resolvedRole(for: $0) })
+        guard roles.count == 1, let only = roles.first else { return nil }
+        return only
+    }
+
+    /// `true` once EVERY file in `group` -- not just the active ones -- has
+    /// been excluded by hand. Distinguished from "no active files" only in
+    /// how the row reads to the user ("Excluded" vs "Unclassified"); both
+    /// states leave the group's row with nothing left to resolve.
+    public func isGroupFullyExcluded(_ group: CaptureFileGroup) -> Bool {
+        !group.files.isEmpty && group.files.allSatisfy { excludedIDs.contains($0.id) }
+    }
+
+    /// Active files in `group` still needing a role -- mirrors
+    /// `unresolvedCount`'s per-file definition, scoped to one group, so a
+    /// row can show "3 unclassified" instead of forcing an expand to find
+    /// out.
+    public func unresolvedCount(in group: CaptureFileGroup) -> Int {
+        activeFiles(in: group).filter { resolvedRole(for: $0) == nil }.count
+    }
+
+    /// A hint the Classify row may show next to "Unclassified" -- never
+    /// applied on its own (the brief: "always displayed as a suggestion the
+    /// user confirms, never silently applied"). `nil` once the group already
+    /// has a resolved role (nothing left to suggest), otherwise the FITS
+    /// agreement (`agreedProposedRole`, already surfaced by
+    /// `resolvedRole(for:)` above and so `nil` here since a resolved role
+    /// means this method is never asked for one) or the CR3 exposure-based
+    /// hint from `CaptureExposureRoleHint`.
+    public func suggestedRole(for group: CaptureFileGroup) -> FrameRole? {
+        guard resolvedRole(for: group) == nil else { return nil }
+        return CaptureExposureRoleHint.suggest(medianExposureSeconds: group.exposureSummary?.medianExposureSeconds)
+    }
+
+    /// Applies `role` to every file in every named group -- the "tap the
+    /// suggested role" shortcut on a group row. Still an explicit user
+    /// action (a tap), still routed through the same per-file
+    /// `assignRole(_:to:)` every OTHER role assignment uses; never called
+    /// automatically from `suggestedRole(for:)` itself.
+    public func assignRole(_ role: FrameRole, toGroups groupIDs: Set<String>) {
+        let ids = groups.filter { groupIDs.contains($0.id) }.reduce(into: Set<String>()) { $0.formUnion($1.fileIDs) }
+        assignRole(role, to: ids)
+    }
+
+    public func toggleExpanded(_ groupID: String) {
+        if expandedGroupIDs.contains(groupID) {
+            expandedGroupIDs.remove(groupID)
+        } else {
+            expandedGroupIDs.insert(groupID)
+        }
+    }
+
+    /// Resolves the Classify list's own row-selection ids
+    /// (`"group:<id>"`/`"file:<id>"`, see `selectedIDs`'s own doc comment)
+    /// into the underlying FILE ids the existing per-file
+    /// `assignRole(_:to:)`/`exclude(_:)`/`include(_:)` already operate on --
+    /// the one seam between "the UI selects rows" and "the engine only ever
+    /// sees files", so a selected group expands to every one of its files
+    /// and a selected individual (expanded) file contributes just itself.
+    /// Pure and independently testable: this is what proves a group-level
+    /// role assignment reaches `CaptureImportItem.resolved`'s per-file input
+    /// correctly, without needing to drive the SwiftUI list at all.
+    public func fileIDs(forSelectedRows rowIDs: Set<String>) -> Set<String> {
+        var result: Set<String> = []
+        for rowID in rowIDs {
+            if let groupID = Self.groupID(fromRowID: rowID) {
+                if let group = groups.first(where: { $0.id == groupID }) {
+                    result.formUnion(group.fileIDs)
+                }
+            } else if let fileID = Self.fileID(fromRowID: rowID) {
+                result.insert(fileID)
+            }
+        }
+        return result
+    }
+
+    // `nonisolated`: pure string formatting/parsing with no actor state --
+    // `ClassifyRow.id` (`CaptureImportView.swift`) calls these from a
+    // non-`@MainActor` context (an `Identifiable` conformance on a plain
+    // `enum`), which cannot synchronously call an isolated member of this
+    // `@MainActor` class otherwise.
+    public nonisolated static func groupRowID(_ groupID: String) -> String { "group:\(groupID)" }
+    public nonisolated static func fileRowID(_ fileID: String) -> String { "file:\(fileID)" }
+    private static func groupID(fromRowID rowID: String) -> String? {
+        rowID.hasPrefix("group:") ? String(rowID.dropFirst("group:".count)) : nil
+    }
+    private static func fileID(fromRowID rowID: String) -> String? {
+        rowID.hasPrefix("file:") ? String(rowID.dropFirst("file:".count)) : nil
     }
 
     // MARK: - Step 3 -> 4
@@ -379,11 +509,47 @@ public struct CaptureImportView: View {
 
     // MARK: - Step 2: Classify
 
+    /// One row the Classify `List` renders -- either a group header or,
+    /// when that group is expanded (`store.expandedGroupIDs`), one of its
+    /// individual files indented underneath it. A flat list of these (built
+    /// by `classifyRows` below) rather than a nested `List`/`DisclosureGroup`
+    /// tree keeps this a single, flat `List` -- the shape the rest of this
+    /// app's own outline-style lists already use, and the one this file's
+    /// own design gates assume (no `List` nested inside another `List`).
+    private enum ClassifyRow: Identifiable {
+        case group(CaptureFileGroup)
+        case file(DiscoveredCaptureFile)
+
+        var id: String {
+            switch self {
+            case .group(let group): CaptureImportStore.groupRowID(group.id)
+            case .file(let file): CaptureImportStore.fileRowID(file.id)
+            }
+        }
+    }
+
+    /// `store.groups`, each followed by its own files when expanded --
+    /// recomputed on every body evaluation from already-in-memory arrays
+    /// (no sort, no I/O), so this never re-sorts a `List`/`Table` from
+    /// inside `body` in the way the design gates forbid.
+    private var classifyRows: [ClassifyRow] {
+        store.groups.flatMap { group -> [ClassifyRow] in
+            var rows: [ClassifyRow] = [.group(group)]
+            if store.expandedGroupIDs.contains(group.id) {
+                rows += group.files.map { .file($0) }
+            }
+            return rows
+        }
+    }
+
     private var classifyStep: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
             HStack {
                 Text("\(store.activeFiles.count) files · \(AstroFormat.bytes(store.activeFiles.reduce(0) { $0 + $1.sizeBytes }))")
                     .font(.subheadline.weight(.semibold))
+                Text("\(store.groups.count) groups")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 Spacer()
                 if store.unresolvedCount > 0 {
                     Label("\(store.unresolvedCount) unclassified", systemImage: "questionmark.circle")
@@ -391,27 +557,30 @@ public struct CaptureImportView: View {
                         .foregroundStyle(AstroTokens.Color.dataUnclassified)
                 }
             }
-            List(store.discovered, selection: Binding(
+            List(classifyRows, selection: Binding(
                 get: { store.selectedIDs },
                 set: { store.selectedIDs = $0 }
-            )) { file in
-                classifyRow(file)
+            )) { row in
+                switch row {
+                case .group(let group): groupRow(group)
+                case .file(let file): classifyRow(file, indented: true)
+                }
             }
-            .accessibilityIdentifier("v2.capture-import.files")
+            .accessibilityIdentifier("v2.capture-import.groups")
 
             HStack {
                 Menu("Set Role") {
-                    Button("Light") { store.assignRole(.light, to: store.selectedIDs) }
-                    Button("Flat") { store.assignRole(.flat, to: store.selectedIDs) }
-                    Button("Dark") { store.assignRole(.dark, to: store.selectedIDs) }
-                    Button("Bias") { store.assignRole(.bias, to: store.selectedIDs) }
+                    Button("Light") { store.assignRole(.light, to: store.fileIDs(forSelectedRows: store.selectedIDs)) }
+                    Button("Flat") { store.assignRole(.flat, to: store.fileIDs(forSelectedRows: store.selectedIDs)) }
+                    Button("Dark") { store.assignRole(.dark, to: store.fileIDs(forSelectedRows: store.selectedIDs)) }
+                    Button("Bias") { store.assignRole(.bias, to: store.fileIDs(forSelectedRows: store.selectedIDs)) }
                 }
                 .disabled(store.selectedIDs.isEmpty)
                 .accessibilityIdentifier("v2.capture-import.set-role")
 
-                Button("Exclude") { store.exclude(store.selectedIDs) }
+                Button("Exclude") { store.exclude(store.fileIDs(forSelectedRows: store.selectedIDs)) }
                     .disabled(store.selectedIDs.isEmpty)
-                Button("Include") { store.include(store.selectedIDs) }
+                Button("Include") { store.include(store.fileIDs(forSelectedRows: store.selectedIDs)) }
                     .disabled(store.selectedIDs.isEmpty)
                 Spacer()
                 Button("Continue") { store.step = .destination }
@@ -422,10 +591,133 @@ public struct CaptureImportView: View {
         }
     }
 
-    private func classifyRow(_ file: DiscoveredCaptureFile) -> some View {
+    /// One group's own row: a representative thumbnail, its file
+    /// count/time span/total size, its CR3 Exif summary (or FITS role
+    /// agreement) when it has one, and a disclosure control to expand it
+    /// into individual files. This is the row the owner's screenshot
+    /// couldn't show him at all -- "honnan kéne nekem tudni, hogy valami
+    /// light vagy dark vagy flat?" answered by a thumbnail plus exposure/
+    /// ISO instead of a bare filename.
+    private func groupRow(_ group: CaptureFileGroup) -> some View {
+        let role = store.resolvedRole(for: group)
+        let suggestion = store.suggestedRole(for: group)
+        let isExcluded = store.isGroupFullyExcluded(group)
+        let isExpanded = store.expandedGroupIDs.contains(group.id)
+        let unresolvedFileCount = store.unresolvedCount(in: group)
+
+        return HStack(alignment: .center, spacing: AstroTokens.Spacing.compact) {
+            if let representative = group.representativeFile {
+                CaptureImportGroupThumbnail(sourceURL: representative.sourceURL)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Self.timeSpanText(group)
+                    .font(.callout)
+                    .strikethrough(isExcluded)
+                Text(verbatim: "\(AstroFormat.bytes(group.totalBytes)) · \(group.commonExtension?.uppercased() ?? "?")")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let summary = group.exposureSummary {
+                    HStack(spacing: 8) {
+                        if let median = summary.medianExposureSeconds {
+                            labeledValue("Exposure", AstroFormat.exposureSeconds(median))
+                        }
+                        if let iso = summary.mostCommonISO {
+                            labeledValue("ISO", "\(iso)")
+                        }
+                        if let aperture = summary.mostCommonApertureFNumber {
+                            Text(verbatim: "f/\(aperture.formatted(.number.precision(.fractionLength(1))))")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if unresolvedFileCount > 0, !isExcluded {
+                    Text("\(unresolvedFileCount) unclassified")
+                        .font(.caption2).foregroundStyle(AstroTokens.Color.dataUnclassified)
+                }
+            }
+
+            Spacer()
+
+            if isExcluded {
+                Text("Excluded").font(.caption).foregroundStyle(.secondary)
+            } else if let role {
+                Text(Self.roleLabel(role))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(role == .light ? AstroTokens.Color.dataLight : AstroTokens.Color.dataCalibration)
+            } else if let suggestion {
+                Button {
+                    store.assignRole(suggestion, toGroups: [group.id])
+                } label: {
+                    Text("suggested: \(Self.roleEnglishName(suggestion))")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(AstroTokens.Color.dataUnclassified)
+            } else {
+                Text("Unclassified")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AstroTokens.Color.dataUnclassified)
+            }
+
+            Button {
+                store.toggleExpanded(group.id)
+            } label: {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+            }
+            .buttonStyle(.plain)
+            .help("Split Group")
+            .accessibilityIdentifier("v2.capture-import.group.expand.\(group.id)")
+        }
+    }
+
+    private func labeledValue(_ label: LocalizedStringKey, _ value: String) -> some View {
+        HStack(spacing: 3) {
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+            Text(verbatim: value).font(.caption2.monospacedDigit())
+        }
+    }
+
+    /// `"N files · HH:mm–HH:mm"`, as a real `Text` (not a verbatim string)
+    /// so "files" itself translates via the `"%lld files · %@–%@"` hu.lproj
+    /// entry -- the group's own file count and capture span, in the
+    /// camera's own clock (see `timeOfDayFormatter`'s own doc comment for
+    /// why this is UTC-labeled rather than the device's local timezone).
+    private static func timeSpanText(_ group: CaptureFileGroup) -> Text {
+        guard let first = group.firstCaptureInstant, let last = group.lastCaptureInstant else {
+            return Text("\(group.fileCount) files")
+        }
+        let start = timeOfDayFormatter.string(from: first)
+        if first == last {
+            return Text("\(group.fileCount) files · \(start)")
+        }
+        let end = timeOfDayFormatter.string(from: last)
+        return Text("\(group.fileCount) files · \(start)–\(end)")
+    }
+
+    /// `DATE-OBS`/Exif `DateTimeOriginal` carry no timezone at all -- every
+    /// other consumer in this codebase (`CaptureImportScanner`,
+    /// `SessionTimeline.parseDateObs`) already treats that raw clock
+    /// reading as if it were UTC purely to get consistent `Date` arithmetic,
+    /// never converting it to the device's own timezone. Formatting with
+    /// `timeZone = UTC` here undoes that label and shows the exact clock
+    /// reading the camera/mount wrote, rather than shifting it to wherever
+    /// this Mac happens to be configured -- the number a photographer
+    /// checking their own capture log actually expects to see.
+    private static let timeOfDayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    private func classifyRow(_ file: DiscoveredCaptureFile, indented: Bool = false) -> some View {
         let role = store.resolvedRole(for: file)
         let isExcluded = store.excludedIDs.contains(file.id)
         return HStack {
+            if indented {
+                Spacer().frame(width: AstroTokens.Spacing.section)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: file.relativeSourcePath).font(.callout)
                     .strikethrough(isExcluded)
@@ -448,6 +740,23 @@ public struct CaptureImportView: View {
     }
 
     private static func roleLabel(_ role: FrameRole) -> LocalizedStringKey {
+        switch role {
+        case .light: "Light"
+        case .flat: "Flat"
+        case .dark: "Dark"
+        case .bias: "Bias"
+        default: "Unclassified"
+        }
+    }
+
+    /// Same four names as `roleLabel` above, as plain `String` -- for
+    /// interpolating into a `LocalizedStringKey` format string (`"suggested:
+    /// %@"`) as its `%@` argument. Role names stay English by this file's
+    /// own established convention (`LocalizationCoverageTests.allowlist`'s
+    /// own doc comment); this is a SECOND spelling of that same convention
+    /// only because a `LocalizedStringKey` cannot itself be interpolated
+    /// into another `LocalizedStringKey` the way a `String` can.
+    private static func roleEnglishName(_ role: FrameRole) -> String {
         switch role {
         case .light: "Light"
         case .flat: "Flat"

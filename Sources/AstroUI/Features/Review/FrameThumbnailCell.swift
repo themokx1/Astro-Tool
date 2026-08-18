@@ -120,7 +120,15 @@ public struct FrameThumbnailCell: View {
         return candidate
     }
 
-    private static func generateQuickLookThumbnail(url: URL, size: CGFloat) async -> NSImage? {
+    /// `internal`, not `private`: `CaptureImportGroupThumbnail`
+    /// (`Features/Library/CaptureImportThumbnail.swift`) reuses this SAME
+    /// QuickLook/FITS-fallback pipeline for the card-import wizard's
+    /// Classify step (W4-1b), which thumbnails absolute source-card URLs
+    /// that were never resolved through `rootURL`/`relativePath` (a card is
+    /// not a library, so there is no containment check to apply) -- reusing
+    /// this generator/cache/renderer trio is the point; only the URL
+    /// resolution step differs, so only that step is duplicated.
+    static func generateQuickLookThumbnail(url: URL, size: CGFloat) async -> NSImage? {
         let cgImage = await FrameThumbnailBridge.cgImage(url: url, size: size)
         guard let cgImage else { return nil }
         return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
@@ -131,7 +139,7 @@ public struct FrameThumbnailCell: View {
     /// Sendable `CGImage`; AppKit object creation stays on the main actor.
     /// `nil` for anything it declines to render (`.fz`, unsupported
     /// `BITPIX`/`NAXIS`) or a genuinely corrupt file.
-    private static func renderFITSThumbnail(url: URL, maxDimension: Int) async -> NSImage? {
+    static func renderFITSThumbnail(url: URL, maxDimension: Int) async -> NSImage? {
         let cgImage = await Task.detached(priority: .utility) {
             try? FITSImageRenderer.render(url: url, maxDimension: maxDimension)
         }.value
@@ -143,7 +151,7 @@ public struct FrameThumbnailCell: View {
     /// stack export) gets a fresh thumbnail rather than showing a stale
     /// cached one indefinitely. Falls back to the bare path when the
     /// modification date can't be read.
-    private static func cacheKey(for url: URL) -> String {
+    static func cacheKey(for url: URL) -> String {
         let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
             .contentModificationDate?.timeIntervalSince1970
         guard let mtime else { return url.path }
