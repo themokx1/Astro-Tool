@@ -20,6 +20,11 @@ public struct HomeView: View {
     private let openProject: (ProjectRecord) -> Void
     private let openProjectID: (UUID) -> Void
     @AppStorage("v2.general.showGuidance") private var showGuidance = true
+    /// Wave W6-A section B: the "nothing to shoot tonight, no site
+    /// configured" placeholder's own escape hatch -- the same
+    /// `@Environment(\.openSettings)` pattern `V2RootView`'s own calls use
+    /// everywhere else a placeholder points at Settings.
+    @Environment(\.openSettings) private var openSettings
 
     public init(
         store: HomeStore,
@@ -209,6 +214,15 @@ public struct HomeView: View {
                     Text("Every target in this library is one the app already knows it cannot point at right now -- a comet with a stale coordinate, a missing coordinate, or an altitude too low tonight.")
                 } else {
                     Text("Add a site or scan FITS coordinates to enable tonight planning.")
+                }
+            } actions: {
+                // Wave W6-A section B: `libraryOverview` (this panel's own
+                // parent) only renders once a library is open, so Settings ▸
+                // Location is never locked here -- see this view's own
+                // `body` switch above. Only offered for the "no site" branch;
+                // a comet/altitude verdict has no Settings panel that fixes it.
+                if !store.snapshot.nightContext.isConfigured {
+                    Button("Open Settings…") { openSettings() }.buttonStyle(.borderedProminent)
                 }
             }
             .frame(minHeight: 160)

@@ -25,15 +25,28 @@ public struct PlanningView: View {
     let rootURL: URL?
     let createProject: (String) -> Void
     let openSavedTargets: () -> Void
+    /// Wave W6-A section B: the no-library placeholder below used to be a
+    /// dead end -- no button at all -- unlike `ArchiveView`/`HealthView`'s
+    /// own "no library" states, which both already thread a `chooseLibrary`
+    /// closure down from `V2RootView`. Defaults to a no-op so existing
+    /// previews/tests that never reach that branch don't need to supply one.
+    let chooseLibrary: () -> Void
+    /// Wave W6-A section B: the no-site placeholder's own escape hatch --
+    /// `V2RootView`'s own `openSettings` calls use the identical
+    /// `@Environment(\.openSettings)` pattern everywhere else a placeholder
+    /// points at Settings.
+    @Environment(\.openSettings) private var openSettings
 
     public init(
         rootURL: URL?,
         createProject: @escaping (String) -> Void,
-        openSavedTargets: @escaping () -> Void = {}
+        openSavedTargets: @escaping () -> Void = {},
+        chooseLibrary: @escaping () -> Void = {}
     ) {
         self.rootURL = rootURL
         self.createProject = createProject
         self.openSavedTargets = openSavedTargets
+        self.chooseLibrary = chooseLibrary
     }
 
     public var body: some View {
@@ -355,18 +368,26 @@ public struct PlanningView: View {
                     // (`Planner.resolveSite`); no library is open at all, so
                     // there is nothing to rank against and no ranking is
                     // invented -- see `PlanningQuery.site`'s own doc.
-                    ContentUnavailableView(
-                        "Open a Library to Get Tonight's Ranking",
-                        systemImage: "location.slash",
-                        description: Text("Planning ranks targets by where they actually are in the sky tonight. Open a library first.")
-                    )
+                    ContentUnavailableView {
+                        Label("Open a Library to Get Tonight's Ranking", systemImage: "location.slash")
+                    } description: {
+                        Text("Planning ranks targets by where they actually are in the sky tonight. Open a library first.")
+                    } actions: {
+                        // Wave W6-A section B: mirrors `ArchiveView`/
+                        // `HealthView`'s own "no library" actions.
+                        Button("Choose Image Library…", action: chooseLibrary).buttonStyle(.borderedProminent)
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .noSite:
-                    ContentUnavailableView(
-                        "Set Your Site to Get Tonight's Ranking",
-                        systemImage: "location.slash",
-                        description: Text("This library has no observing site configured and none could be derived from its FITS headers. Set your coordinates in Settings ▸ Location to rank targets by tonight's sky.")
-                    )
+                    ContentUnavailableView {
+                        Label("Set Your Site to Get Tonight's Ranking", systemImage: "location.slash")
+                    } description: {
+                        Text("This library has no observing site configured and none could be derived from its FITS headers. Set your coordinates in Settings ▸ Location to rank targets by tonight's sky.")
+                    } actions: {
+                        // Wave W6-A section B: a real path to the panel this
+                        // text names.
+                        Button("Open Settings…") { openSettings() }.buttonStyle(.borderedProminent)
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 default:
                     if store.filteredRecommendations.isEmpty {

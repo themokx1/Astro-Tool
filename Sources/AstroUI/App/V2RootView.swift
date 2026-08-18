@@ -1605,7 +1605,8 @@ private struct DetailHost: View {
             PlanningView(
                 rootURL: onboardingStore.selectedRoot,
                 createProject: createPlannedProject,
-                openSavedTargets: { router.push(.savedTargets) }
+                openSavedTargets: { router.push(.savedTargets) },
+                chooseLibrary: chooseLibrary
             )
         case .savedTargets:
             SavedTargetsView(rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary)

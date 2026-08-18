@@ -43,6 +43,11 @@ public struct NightsView: View {
     @State private var planningSortOrder: [KeyPathComparator<PlanningNightRow>] = [
         KeyPathComparator(\PlanningNightRow.summary.date, order: .forward)
     ]
+    /// Wave W6-A section B: the calendar tab's "no site" placeholder used to
+    /// just NAME the Settings ▸ Location panel with no way to reach it --
+    /// this is the same escape hatch `V2RootView`'s own `openSettings` calls
+    /// already use everywhere else a placeholder points at Settings.
+    @Environment(\.openSettings) private var openSettings
 
     public init(
         snapshot: LibrarySnapshot?,
@@ -181,11 +186,15 @@ public struct NightsView: View {
             observedNightsTable
         } else if mode == .calendar {
             if store.planningRows.isEmpty {
-                ContentUnavailableView(
-                    "Planning calendar unavailable",
-                    systemImage: "calendar.badge.exclamationmark",
-                    description: Text("Set your coordinates in Settings ▸ Location, or scan FITS files that carry site coordinates, to calculate the next 30 nights.")
-                )
+                ContentUnavailableView {
+                    Label("Planning calendar unavailable", systemImage: "calendar.badge.exclamationmark")
+                } description: {
+                    Text("Set your coordinates in Settings ▸ Location, or scan FITS files that carry site coordinates, to calculate the next 30 nights.")
+                } actions: {
+                    // Wave W6-A section B: a real path to the panel this
+                    // text names, not just the name of one.
+                    Button("Open Settings…") { openSettings() }.buttonStyle(.borderedProminent)
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 calendarTable

@@ -1665,3 +1665,10 @@
    helper-returned value, not a literal call-site argument). */
 "Rate the frames using the “Rate Frames” button above." = "értékeld a képkockákat a fenti „Képkockák értékelése” gombbal";
 "Filters and Capture Groups below combine every session folder for this calendar night: %@." = "A lenti Szűrők és Gyűjtések táblázatok ennek az éjszakának minden session-mappáját összesítik: %@.";
+
+/* Wave W6-A section B: every "configure it in Settings" placeholder that
+   used to just NAME the Settings panel (Nights' calendar, Planning's
+   no-site state, Home's "nothing to shoot tonight") now offers a real
+   `openSettings()` button next to it -- one shared key for all three call
+   sites. */
+"Open Settings…" = "Beállítások megnyitása…";
