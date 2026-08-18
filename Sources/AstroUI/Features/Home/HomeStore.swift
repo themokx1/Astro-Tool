@@ -87,12 +87,58 @@ public struct HomeSnapshot: Equatable, Sendable {
         public let duskPercent: Double?
         public let dawnPercent: Double?
         public let fetchedAt: Date
+        /// W7-E workflow #3 (2026-08-18 owner audit, "cloudy tonight, name
+        /// the next clear night"): `true` when tonight's own dark-hours mean
+        /// cloud (`WeatherService.dailySummaries`, NOT the dusk/dawn POINT
+        /// samples above -- a genuinely different reading) crosses
+        /// `HomeStore.cloudyThresholdPercent`. Computed once here, in
+        /// `productionWeather`, so the "name the next clear night" line and
+        /// the "cloudy night = darks night" card gate on the exact same
+        /// signal instead of each re-deriving (and risking disagreeing with)
+        /// it from a raw `Double?`. Defaults to `false` for fixtures/tests
+        /// that only care about the dusk/dawn point values.
+        public let isCloudyTonight: Bool
+        /// `nil` whenever `isCloudyTonight` is `false` -- a clear night has
+        /// nothing to add. Set only when tonight is cloudy: `.found` names
+        /// the first night within Open-Meteo's 7-day horizon whose own mean
+        /// cloud drops back under the threshold; `.unavailable` is the
+        /// honest case where none of the remaining forecast nights do.
+        public let nextClearNight: NextClearNight?
 
-        public init(duskPercent: Double?, dawnPercent: Double?, fetchedAt: Date) {
+        public init(
+            duskPercent: Double?,
+            dawnPercent: Double?,
+            fetchedAt: Date,
+            isCloudyTonight: Bool = false,
+            nextClearNight: NextClearNight? = nil
+        ) {
             self.duskPercent = duskPercent
             self.dawnPercent = dawnPercent
             self.fetchedAt = fetchedAt
+            self.isCloudyTonight = isCloudyTonight
+            self.nextClearNight = nextClearNight
         }
+    }
+
+    /// W7-E workflow #3: the outcome of searching `WeatherService
+    /// .dailySummaries`'s 7-day forecast for the first night whose own mean
+    /// cloud reads back under `HomeStore.cloudyThresholdPercent`, once
+    /// tonight itself has already crossed it. A plain `nil` on `NightCloud`
+    /// means "tonight isn't cloudy, this search never ran" -- once it DOES
+    /// run, its own two outcomes are both worth telling the user, so neither
+    /// collapses to `nil`.
+    public enum NextClearNight: Equatable, Sendable {
+        /// `date` is the raw `yyyy-MM-dd` key `WeatherService.dailySummaries`
+        /// itself uses (matches `DailyCloudSummary.date`) -- shown verbatim,
+        /// the same "raw ISO date, no locale-specific month name" convention
+        /// `NightRow.date`/`CaptureTrendPoint.date` already use elsewhere in
+        /// this app, rather than inventing a new formatted-date convention
+        /// for one line.
+        case found(date: String, minPercent: Double, maxPercent: Double)
+        /// Every night left in the 7-day Open-Meteo horizon stays at or
+        /// above the threshold too -- an honest "nothing to name" rather
+        /// than silence or a guess beyond the forecast's own horizon.
+        case unavailable
     }
 
     public let libraryName: String?
@@ -134,6 +180,34 @@ public struct HomeSnapshot: Equatable, Sendable {
     /// case).
     public let nightCloud: NightCloud?
     public let nightCloudError: WeatherError?
+    /// W7-E workflow #1 (2026-08-18 owner audit, "rating is the gate on half
+    /// the app, and nothing drives you through it"): the numbers behind the
+    /// Home dashboard's rating-gate callout -- read from `RatingCoverageQuery`
+    /// (unrated nights) and `SensorProfilesQuery` (measured or not), never
+    /// counted here or in a view body. `.clear` (zero unrated, sensor
+    /// measured) is the honest default for every snapshot that never asked --
+    /// the callout only ever shows once a real query says there is something
+    /// to drive through.
+    public let ratingGate: RatingGate
+
+    /// One `(target, sessionDate)` session anchors `FrameRatingCommand`'s own
+    /// scope (`firstKnownFrame`), so `unratedNightCount` here counts exactly
+    /// the sessions one "Rate Everything" run would still need to touch --
+    /// see `RatingCoverageQuery`'s own doc comment for the precise rule.
+    public struct RatingGate: Equatable, Sendable {
+        public let unratedNightCount: Int
+        public let sensorProfileMeasured: Bool
+
+        public init(unratedNightCount: Int, sensorProfileMeasured: Bool) {
+            self.unratedNightCount = unratedNightCount
+            self.sensorProfileMeasured = sensorProfileMeasured
+        }
+
+        /// Nothing left to rate, and a sensor profile is on record -- the
+        /// honest "no gate to show" state, same role `.unconfigured` plays
+        /// for `NightContext`.
+        public static let clear = RatingGate(unratedNightCount: 0, sensorProfileMeasured: true)
+    }
 
     public init(
         libraryName: String?,
@@ -145,7 +219,8 @@ public struct HomeSnapshot: Equatable, Sendable {
         tonightRecommendations: [HomeTonightRecommendation] = [],
         hasActiveProjectsExcludedTonight: Bool = false,
         nightCloud: NightCloud? = nil,
-        nightCloudError: WeatherError? = nil
+        nightCloudError: WeatherError? = nil,
+        ratingGate: RatingGate = .clear
     ) {
         self.libraryName = libraryName
         self.nightContext = nightContext
@@ -157,6 +232,7 @@ public struct HomeSnapshot: Equatable, Sendable {
         self.hasActiveProjectsExcludedTonight = hasActiveProjectsExcludedTonight
         self.nightCloud = nightCloud
         self.nightCloudError = nightCloudError
+        self.ratingGate = ratingGate
     }
 
     /// Neutral preview content: it conveys the shape of the workspace without
@@ -186,6 +262,12 @@ public final class HomeStore {
     /// every other provider here is: tests supply a fixed result without a
     /// real network call.
     public typealias WeatherProvider = @Sendable (URL) async throws -> HomeSnapshot.NightCloud?
+    /// W7-E workflow #1: resolves the rating-gate numbers for an open
+    /// library -- `RatingCoverageQuery`'s unrated-night count plus
+    /// `SensorProfilesQuery`'s "has anything been measured" flag. Injectable
+    /// for the same reason every other provider here is: tests supply a
+    /// fixed result without a real FITS-backed library or index DB.
+    public typealias RatingGateProvider = @Sendable (URL) async throws -> HomeSnapshot.RatingGate
     public private(set) var snapshot: HomeSnapshot
     /// The full plan `tonightRecommendations` was sliced from (`prefix(8)`,
     /// display-only) -- kept around so the "Export Plan" menu
@@ -202,6 +284,7 @@ public final class HomeStore {
     private let calibCoverageProvider: CalibCoverageProvider
     private let nightContextProvider: NightContextProvider
     private let weatherProvider: WeatherProvider
+    private let ratingGateProvider: RatingGateProvider
     /// Bumped at the start of every `loadWeather(rootURL:)` call and captured
     /// into that call's own local `generation` -- the weather fetch runs as
     /// its own fire-and-forget `Task` (never awaited by `configure`, so a
@@ -234,13 +317,15 @@ public final class HomeStore {
         tonightProvider: TonightProvider? = nil,
         calibCoverageProvider: CalibCoverageProvider? = nil,
         nightContextProvider: NightContextProvider? = nil,
-        weatherProvider: WeatherProvider? = nil
+        weatherProvider: WeatherProvider? = nil,
+        ratingGateProvider: RatingGateProvider? = nil
     ) {
         self.snapshot = snapshot
         self.tonightProvider = tonightProvider ?? HomeStore.productionTonight
         self.calibCoverageProvider = calibCoverageProvider ?? HomeStore.productionCalibCoverage
         self.nightContextProvider = nightContextProvider ?? HomeStore.productionNightContext
         self.weatherProvider = weatherProvider ?? HomeStore.productionWeather
+        self.ratingGateProvider = ratingGateProvider ?? HomeStore.productionRatingGate
     }
 
     public func replaceSnapshot(_ snapshot: HomeSnapshot) {
@@ -294,7 +379,8 @@ public final class HomeStore {
             tonightRecommendations: snapshot.tonightRecommendations,
             hasActiveProjectsExcludedTonight: snapshot.hasActiveProjectsExcludedTonight,
             nightCloud: nightCloud,
-            nightCloudError: nightCloudError
+            nightCloudError: nightCloudError,
+            ratingGate: snapshot.ratingGate
         )
     }
 
@@ -398,6 +484,15 @@ public final class HomeStore {
         } else {
             .unconfigured
         }
+        // W7-E workflow #1: same "await it inline, honest default on failure"
+        // shape as `nightContext`/`coverage` above -- a fast, synchronous
+        // index-DB read (`RatingCoverageQuery`), never worth the fire-and-
+        // forget dance `loadWeather` needs for an actual network call.
+        let ratingGate: HomeSnapshot.RatingGate = if let rootURL {
+            (try? await ratingGateProvider(rootURL)) ?? .clear
+        } else {
+            .clear
+        }
         snapshot = HomeSnapshot(
             libraryName: libraryName,
             nightContext: nightContext,
@@ -406,7 +501,8 @@ public final class HomeStore {
             nextProject: next?.0,
             nextProjectIntegrationSeconds: next?.1 ?? 0,
             tonightRecommendations: Array(recommendations),
-            hasActiveProjectsExcludedTonight: hasActiveProjectsExcludedTonight
+            hasActiveProjectsExcludedTonight: hasActiveProjectsExcludedTonight,
+            ratingGate: ratingGate
         )
         // Fire-and-forget, same reasoning as V1's `AppState.loadWeather`
         // (called right after its own site-scoped load lands): weather is
@@ -565,12 +661,73 @@ public final class HomeStore {
         let twilight = SunMoon.astronomicalTwilight(
             nightOf: now, latDeg: resolved.latitudeDeg, lonDeg: resolved.longitudeDeg, timeZone: timeZone
         )
-        let (forecast, _) = try await WeatherService.shared.fetch(
+        let (forecast, dailySummaries) = try await WeatherService.shared.fetch(
             latitude: resolved.latitudeDeg, longitude: resolved.longitudeDeg
         )
         let duskPercent = twilight.duskUTC.flatMap { forecast.cloudPercent(nearestTo: $0) }
         let dawnPercent = twilight.dawnUTC.flatMap { forecast.cloudPercent(nearestTo: $0) }
-        return HomeSnapshot.NightCloud(duskPercent: duskPercent, dawnPercent: dawnPercent, fetchedAt: forecast.fetchedAt)
+        // W7-E workflow #2/#3: "tonight" is keyed the same way
+        // `WeatherService.dailySummaries` itself buckets a night -- by the
+        // LOCAL calendar day `now` falls on, via the same `isoDateFormatter`
+        // `NightsStore`/`PlanningStore` already share for this exact lookup.
+        let tonightKey = WeatherService.isoDateFormatter.string(from: now)
+        let outlook = Self.cloudOutlook(tonightKey: tonightKey, dailySummaries: dailySummaries)
+        return HomeSnapshot.NightCloud(
+            duskPercent: duskPercent, dawnPercent: dawnPercent, fetchedAt: forecast.fetchedAt,
+            isCloudyTonight: outlook.isCloudyTonight, nextClearNight: outlook.nextClearNight
+        )
+    }
+
+    /// W7-E workflow #2/#3: tonight's mean cloud crosses this to count as
+    /// "cloudy" -- the one threshold both the "name the next clear night"
+    /// line and the "cloudy night = darks night" card gate on, per the
+    /// owner audit's own "~60%" figure.
+    static let cloudyThresholdPercent: Double = 60
+
+    /// The pure decision behind `productionWeather`'s cloud-outlook fields,
+    /// extracted so `HomeStoreTests` can exercise the actual threshold/search
+    /// rule against a plain `dailySummaries` fixture instead of a real
+    /// Open-Meteo fetch -- same "extract the pure decision, test it
+    /// directly" shape as `isShootableTonight(verdict:)`/`HomeLibraryLoading
+    /// .isLoading` elsewhere in this app. `tonightKey` not being present in
+    /// `dailySummaries` at all (beyond the horizon, or no dark-hours sample
+    /// landed) is treated the same as a clear night: there is nothing honest
+    /// to say about a night with no reading.
+    static func cloudOutlook(
+        tonightKey: String,
+        dailySummaries: [String: DailyCloudSummary]
+    ) -> (isCloudyTonight: Bool, nextClearNight: HomeSnapshot.NextClearNight?) {
+        guard let tonight = dailySummaries[tonightKey], tonight.meanPercent > cloudyThresholdPercent else {
+            return (false, nil)
+        }
+        let laterClearNight = dailySummaries.values
+            .filter { $0.date > tonightKey }
+            .sorted { $0.date < $1.date }
+            .first { $0.meanPercent < cloudyThresholdPercent }
+        guard let laterClearNight else {
+            return (true, .unavailable)
+        }
+        return (true, .found(date: laterClearNight.date, minPercent: laterClearNight.minPercent, maxPercent: laterClearNight.maxPercent))
+    }
+
+    /// W7-E workflow #1: the Home dashboard's rating-gate numbers --
+    /// `RatingCoverageQuery`'s unrated-night count (a fast, synchronous
+    /// index-DB read) plus `SensorProfilesQuery`'s "has anything been
+    /// measured" flag (its own async read, same as `SensorProfilesStore`
+    /// itself uses). Resolves both independently of every other
+    /// `production…` method here -- the same accepted duplication
+    /// `productionWeather`/`productionNightContext` already have between
+    /// each other -- rather than threading either's own `Database`/site
+    /// resolution through.
+    public static func productionRatingGate(rootURL: URL) async throws -> HomeSnapshot.RatingGate {
+        let coverage = try await Task.detached(priority: .utility) {
+            try RatingCoverageQuery.production(rootURL: rootURL).snapshot()
+        }.value
+        let sensorProfiles = try await SensorProfilesQuery.production(rootURL: rootURL).snapshot()
+        return HomeSnapshot.RatingGate(
+            unratedNightCount: coverage.unratedNightCount,
+            sensorProfileMeasured: !sensorProfiles.profiles.isEmpty
+        )
     }
 
     /// Darks + flats concatenated into one list -- same "one merged coverage

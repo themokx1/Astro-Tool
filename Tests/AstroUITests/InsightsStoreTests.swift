@@ -121,4 +121,50 @@ struct InsightsStoreTests {
         #expect(store.snapshot == nil)
         #expect(store.errorMessage != nil)
     }
+
+    // MARK: - W7-E workflow #1 (rating gate, matching Insights hint)
+
+    @Test("Loading a library also surfaces the same unrated-nights count Home's own rating-gate card reads")
+    func loadingSurfacesTheRatingGapCount() async throws {
+        let fixture = try Self.makeFixture()
+        let store = InsightsStore(
+            queryFactory: { _ in Self.query(fixture) },
+            ratingGapProvider: { _ in 4 }
+        )
+
+        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        #expect(store.unratedNightCount == 4)
+    }
+
+    @Test("A nil root clears the rating-gap count along with the snapshot")
+    func nilRootClearsRatingGapCount() async throws {
+        let fixture = try Self.makeFixture()
+        let store = InsightsStore(
+            queryFactory: { _ in Self.query(fixture) },
+            ratingGapProvider: { _ in 4 }
+        )
+        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+        #expect(store.unratedNightCount == 4)
+
+        await store.load(rootURL: nil)
+
+        #expect(store.unratedNightCount == 0)
+    }
+
+    @Test("A rating-gap read failure reports an honest zero, never blocking the trends themselves")
+    func ratingGapFailureFallsBackToZero() async throws {
+        struct BoomError: Error {}
+        let fixture = try Self.makeFixture()
+        let store = InsightsStore(
+            queryFactory: { _ in Self.query(fixture) },
+            ratingGapProvider: { _ in throw BoomError() }
+        )
+
+        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        #expect(store.unratedNightCount == 0)
+        #expect(store.snapshot != nil)
+        #expect(store.errorMessage == nil)
+    }
 }

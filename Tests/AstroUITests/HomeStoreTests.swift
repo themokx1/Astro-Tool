@@ -335,6 +335,168 @@ struct HomeStoreTests {
         #expect(store.snapshot.nightCloud?.dawnPercent == nil)
     }
 
+    // MARK: - W7-E workflow #1 (rating gate)
+
+    @Test("An unrated-nights fixture surfaces the rating gate with the query's own numbers")
+    func configureSurfacesRatingGateWhenSomethingIsUnrated() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in [] },
+            ratingGateProvider: { _ in HomeSnapshot.RatingGate(unratedNightCount: 3, sensorProfileMeasured: false) }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+
+        #expect(store.snapshot.ratingGate.unratedNightCount == 3)
+        #expect(store.snapshot.ratingGate.sensorProfileMeasured == false)
+    }
+
+    @Test("A fully rated library reports the honest clear rating gate -- the card has nothing to show")
+    func configureReportsClearRatingGateWhenNothingIsUnrated() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in [] },
+            ratingGateProvider: { _ in .clear }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+
+        #expect(store.snapshot.ratingGate.unratedNightCount == 0)
+        #expect(store.snapshot.ratingGate == .clear)
+    }
+
+    @Test("No open library means no rating gate to compute, not a stale one carried forward")
+    func configureFallsBackToClearRatingGateWithNoRoot() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let store = HomeStore()
+
+        await store.configure(libraryName: "Astro", projectsStore: projects, nightCount: 0)
+
+        #expect(store.snapshot.ratingGate == .clear)
+    }
+
+    // MARK: - W7-E workflow #2 (name the next clear night) -- pure decision
+
+    @Test("A clear tonight names nothing -- there's no gate to drive through")
+    func cloudOutlookIsQuietWhenTonightIsClear() throws {
+        let outlook = HomeStore.cloudOutlook(
+            tonightKey: "2026-08-18",
+            dailySummaries: [
+                "2026-08-18": DailyCloudSummary(date: "2026-08-18", minPercent: 10, maxPercent: 30, meanPercent: 20),
+                "2026-08-19": DailyCloudSummary(date: "2026-08-19", minPercent: 80, maxPercent: 95, meanPercent: 90),
+            ]
+        )
+
+        #expect(outlook.isCloudyTonight == false)
+        #expect(outlook.nextClearNight == nil)
+    }
+
+    @Test("A cloudy tonight names the first later night whose own mean drops back under the threshold")
+    func cloudOutlookNamesTheFirstQualifyingLaterNight() throws {
+        let outlook = HomeStore.cloudOutlook(
+            tonightKey: "2026-08-18",
+            dailySummaries: [
+                "2026-08-18": DailyCloudSummary(date: "2026-08-18", minPercent: 93, maxPercent: 100, meanPercent: 97),
+                "2026-08-19": DailyCloudSummary(date: "2026-08-19", minPercent: 70, maxPercent: 85, meanPercent: 78),
+                "2026-08-20": DailyCloudSummary(date: "2026-08-20", minPercent: 0, maxPercent: 73, meanPercent: 40),
+                "2026-08-21": DailyCloudSummary(date: "2026-08-21", minPercent: 0, maxPercent: 10, meanPercent: 5),
+            ]
+        )
+
+        #expect(outlook.isCloudyTonight == true)
+        #expect(outlook.nextClearNight == .found(date: "2026-08-20", minPercent: 0, maxPercent: 73))
+    }
+
+    @Test("A cloudy tonight with no qualifying night in the whole 7-day horizon is honestly unavailable")
+    func cloudOutlookIsHonestWhenNoLaterNightQualifies() throws {
+        let outlook = HomeStore.cloudOutlook(
+            tonightKey: "2026-08-18",
+            dailySummaries: [
+                "2026-08-18": DailyCloudSummary(date: "2026-08-18", minPercent: 93, maxPercent: 100, meanPercent: 97),
+                "2026-08-19": DailyCloudSummary(date: "2026-08-19", minPercent: 70, maxPercent: 85, meanPercent: 78),
+            ]
+        )
+
+        #expect(outlook.isCloudyTonight == true)
+        #expect(outlook.nextClearNight == .unavailable)
+    }
+
+    @Test("Tonight missing from the daily summaries entirely reads as clear, never a guess")
+    func cloudOutlookTreatsAMissingTonightAsClear() throws {
+        let outlook = HomeStore.cloudOutlook(tonightKey: "2026-08-18", dailySummaries: [:])
+
+        #expect(outlook.isCloudyTonight == false)
+        #expect(outlook.nextClearNight == nil)
+    }
+
+    // MARK: - W7-E workflow #3 (cloudy night = darks night)
+
+    @Test("A cloudy tonight with a non-empty shopping list is exactly what the darks card needs")
+    func configureSurfacesCloudyNightWithMissingDarks() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in
+                [TargetPlan(target: "M31", displayName: "M31", usableIntegrationSeconds: 0, verdict: SkyVerdict.good, score: 0.5)]
+            },
+            calibCoverageProvider: { _ in
+                [CalibNeed(
+                    kind: .dark, exposureSeconds: 300, tempC: -10, lightCount: 68,
+                    targets: ["M31"], matchedMasterPath: nil, masterAgeDays: nil, isStale: false,
+                    todo: "Készíts 300 s / -10 °C darkot (68 light frame-hez)"
+                )]
+            },
+            weatherProvider: { _ in
+                HomeSnapshot.NightCloud(duskPercent: 95, dawnPercent: 98, fetchedAt: Date(), isCloudyTonight: true)
+            }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.pendingWeatherLoad?.value
+
+        #expect(store.snapshot.nightCloud?.isCloudyTonight == true)
+        #expect(!store.calibShoppingItems.isEmpty)
+        #expect(store.calibShoppingItems.first?.targets == ["M31"])
+    }
+
+    @Test("A clear tonight never triggers the darks card, even with a non-empty shopping list")
+    func configureNeverSurfacesDarksCardOnAClearNight() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in
+                [TargetPlan(target: "M31", displayName: "M31", usableIntegrationSeconds: 0, verdict: SkyVerdict.good, score: 0.5)]
+            },
+            calibCoverageProvider: { _ in
+                [CalibNeed(
+                    kind: .dark, exposureSeconds: 300, tempC: -10, lightCount: 68,
+                    targets: ["M31"], matchedMasterPath: nil, masterAgeDays: nil, isStale: false,
+                    todo: "Készíts 300 s / -10 °C darkot (68 light frame-hez)"
+                )]
+            },
+            weatherProvider: { _ in
+                HomeSnapshot.NightCloud(duskPercent: 10, dawnPercent: 15, fetchedAt: Date(), isCloudyTonight: false)
+            }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.pendingWeatherLoad?.value
+
+        #expect(store.snapshot.nightCloud?.isCloudyTonight == false)
+        #expect(!store.calibShoppingItems.isEmpty)
+    }
+
     private func makeSeries(project: UUID, night: UUID, exposure: Double) -> SeriesRecord {
         SeriesRecord(id: UUID(), projectID: project, nightID: night, setupID: nil,
             setupDescriptor: "Test", sensorMode: .osc, passband: .broadband,

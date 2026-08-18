@@ -1457,7 +1457,20 @@ private struct DetailHost: View {
                     // against that task's (the "triple concurrent
                     // selectProject per project open" finding) is gone.
                     router.push(.project(projectID.uuidString))
-                }
+                },
+                // W7-E workflow #1: the rating-gate card's "Measure Sensor
+                // Profile…" link -- same `.sensorProfiles` push
+                // `NightWorkspaceView`'s own `openSensorProfiles` closure
+                // already uses.
+                openSensorProfiles: { router.push(.sensorProfiles) },
+                // W7-E workflow #3: the "cloudy night = darks night" card's
+                // link -- same `.calibration` push every other feature
+                // view's own `openCalibration` closure already uses.
+                openCalibration: { router.push(.calibration) },
+                // W7-E workflow #2: the "name the next clear night" line's
+                // link -- the Nights calendar section, where `NightsView`'s
+                // own "Cloud" column renders this exact forecast per date.
+                openNightsCalendar: { router.navigate(to: .nights) }
             )
         case .projects:
             ProjectsView(

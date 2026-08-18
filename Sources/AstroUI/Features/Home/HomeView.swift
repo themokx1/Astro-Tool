@@ -19,12 +19,37 @@ public struct HomeView: View {
     private let chooseLibrary: () -> Void
     private let openProject: (ProjectRecord) -> Void
     private let openProjectID: (UUID) -> Void
+    /// W7-E workflow #1: the rating-gate card's secondary action -- pushes
+    /// the Sensor Profiles screen so the owner can close the "szenzorprofil
+    /// nincs mérve" half of the gate the "Rate Everything" button itself
+    /// can't (that button only ever invokes `FrameRatingCommand`, never
+    /// `SensorMeasurementCommand` -- two different measurements, two
+    /// different entry points, same as `ProjectsView`/`NightActionMenu`
+    /// already keep them).
+    private let openSensorProfiles: () -> Void
+    /// W7-E workflow #3: the "cloudy night = darks night" card's action --
+    /// pushes the Calibration screen where the missing/stale masters
+    /// `CalibShoppingList` already lists can actually be worked.
+    private let openCalibration: () -> Void
+    /// W7-E workflow #2: the "name the next clear night" line's link --
+    /// pushes the Nights calendar, the same screen `NightsView`'s own
+    /// per-date "Cloud" column already renders this exact min-max forecast
+    /// against.
+    private let openNightsCalendar: () -> Void
     @AppStorage("v2.general.showGuidance") private var showGuidance = true
     /// Wave W6-A section B: the "nothing to shoot tonight, no site
     /// configured" placeholder's own escape hatch -- the same
     /// `@Environment(\.openSettings)` pattern `V2RootView`'s own calls use
     /// everywhere else a placeholder points at Settings.
     @Environment(\.openSettings) private var openSettings
+    /// W7-E workflow #1: backs the rating-gate card's "Rate Everything"
+    /// button -- reuses `ProjectRatingRunner`, the exact same batching layer
+    /// over `FrameRatingCommand` that `ProjectsView`'s own "Rate All
+    /// Projects" button uses, so there is exactly one rating pipeline, not a
+    /// second one reinvented for Home. Also lets the card watch
+    /// `activeOperations` for that same operation's progress instead of
+    /// keeping its own separate "is it running" state.
+    @Environment(OperationHost.self) private var operationHost
 
     public init(
         store: HomeStore,
@@ -32,7 +57,10 @@ public struct HomeView: View {
         isLibraryLoading: Bool = false,
         chooseLibrary: @escaping () -> Void,
         openProject: @escaping (ProjectRecord) -> Void,
-        openProjectID: @escaping (UUID) -> Void = { _ in }
+        openProjectID: @escaping (UUID) -> Void = { _ in },
+        openSensorProfiles: @escaping () -> Void = {},
+        openCalibration: @escaping () -> Void = {},
+        openNightsCalendar: @escaping () -> Void = {}
     ) {
         _store = Bindable(store)
         self.rootURL = rootURL
@@ -40,6 +68,9 @@ public struct HomeView: View {
         self.chooseLibrary = chooseLibrary
         self.openProject = openProject
         self.openProjectID = openProjectID
+        self.openSensorProfiles = openSensorProfiles
+        self.openCalibration = openCalibration
+        self.openNightsCalendar = openNightsCalendar
     }
 
     public var body: some View {
@@ -58,7 +89,8 @@ public struct HomeView: View {
                     // all" (Settings ▸ Location is locked, nothing to point
                     // at) apart from "library open, no site yet" (the
                     // pointer is honest there).
-                    hasLibrary: store.snapshot.libraryName != nil
+                    hasLibrary: store.snapshot.libraryName != nil,
+                    openNightsCalendar: openNightsCalendar
                 )
                 if store.snapshot.libraryName == nil {
                     if isLibraryLoading {
@@ -156,9 +188,133 @@ public struct HomeView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .astroRaisedSurface()
+            ratingGateCard
             tonightRecommendations
+            cloudyDarksCard
         }
         .accessibilityIdentifier("v2.home.library-overview")
+    }
+
+    /// W7-E workflow #1 (2026-08-18 owner audit, "rating is the gate on half
+    /// the app, and nothing drives you through it"): the drive-through card
+    /// -- states `HomeSnapshot.RatingGate`'s own numbers (never counted
+    /// here), offers ONE button that runs the exact same
+    /// `ProjectRatingRunner` batching layer `ProjectsView`'s "Rate All
+    /// Projects" button already uses, and disappears once nothing is
+    /// unrated. `FrameRatingCommand`/`ProjectRatingRunner` are never invoked
+    /// a second, Home-specific way -- this only adds the invocation, not a
+    /// new rating path.
+    @ViewBuilder
+    private var ratingGateCard: some View {
+        let gate = store.snapshot.ratingGate
+        if gate.unratedNightCount > 0 {
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+                Text("Frame rating").font(.headline)
+                ratingGateMessage(gate)
+                    .font(.callout).foregroundStyle(.secondary)
+                if let ratingOperation {
+                    HStack(spacing: 8) {
+                        ProgressView(
+                            value: ratingOperation.total.map { Double(ratingOperation.completed) / Double(max($0, 1)) }
+                        )
+                        if let total = ratingOperation.total {
+                            Text(verbatim: "\(ratingOperation.completed) / \(total)")
+                                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityIdentifier("v2.home.rating-gate-progress")
+                } else {
+                    HStack(spacing: AstroTokens.Spacing.standard) {
+                        Button("Rate Everything") { runRatingGate() }
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("v2.home.rating-gate-run")
+                        if !gate.sensorProfileMeasured {
+                            Button("Measure Sensor Profile…", action: openSensorProfiles)
+                                .buttonStyle(.bordered)
+                                .accessibilityIdentifier("v2.home.rating-gate-sensor")
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .astroRaisedSurface()
+            .accessibilityIdentifier("v2.home.rating-gate")
+        }
+    }
+
+    /// "N nights still have unrated frames", plus " · No sensor profile has
+    /// been measured yet" when true -- two distinct `Text` values combined
+    /// with `+`, not a ternary of two literals (the same trap this file's
+    /// own `libraryOverview` comment above already documents), so the
+    /// sensor clause's own presence/absence can never silently break
+    /// localization.
+    @ViewBuilder
+    private func ratingGateMessage(_ gate: HomeSnapshot.RatingGate) -> some View {
+        let nightsPart = Text("\(gate.unratedNightCount) nights still have unrated frames")
+        if gate.sensorProfileMeasured {
+            nightsPart
+        } else {
+            nightsPart + Text(verbatim: " · ") + Text("No sensor profile has been measured yet")
+        }
+    }
+
+    /// The `ProjectRatingRunner` operation this card's own "Rate Everything"
+    /// button would start (or already did) -- looked up by
+    /// `ProjectRatingRunner.kind(for:)` so this can never drift from the
+    /// exact key that function registers under, including when the SAME
+    /// operation was started from `ProjectsView`'s "Rate All Projects"
+    /// button instead: either entry point coalesces into one tracked run.
+    private var ratingOperation: OperationHost.ActiveOperation? {
+        guard let rootURL else { return nil }
+        let kind = ProjectRatingRunner.kind(for: .allProjects(libraryName: rootURL.lastPathComponent))
+        return operationHost.activeOperations.first { $0.kind == kind }
+    }
+
+    private func runRatingGate() {
+        guard let rootURL else { return }
+        Task {
+            await ProjectRatingRunner.run(
+                scope: .allProjects(libraryName: rootURL.lastPathComponent),
+                rootURL: rootURL,
+                metadataFactory: ProjectsStore.productionMetadata,
+                operationHost: operationHost
+            )
+        }
+    }
+
+    /// W7-E workflow #3 (2026-08-18 owner audit, "cloudy night = darks
+    /// night"): tonight being cloudy is exactly the night to shoot the
+    /// calibration frames `CalibShoppingList` already knows this library is
+    /// missing -- data `HomeStore.configure` already computed for the
+    /// export menu's "Copy Calibration Shopping List" item; this only adds
+    /// the visible push, never a second shopping-list computation.
+    @ViewBuilder
+    private var cloudyDarksCard: some View {
+        if store.snapshot.nightCloud?.isCloudyTonight == true, !store.calibShoppingItems.isEmpty {
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+                Text("Cloudy night, clear task").font(.headline)
+                Text("Tonight looks cloudy — a good night to shoot the calibration frames this library is still missing.")
+                    .font(.callout).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(store.calibShoppingItems.prefix(3).enumerated()), id: \.offset) { _, item in
+                        // `item.summary` is domain data (already a composed
+                        // Hungarian sentence with real target names, e.g.
+                        // "Készíts 300 s / -10 °C darkot (68 light
+                        // frame-hez) — M31, M42 használná") -- verbatim, same
+                        // convention `NightRow.filterSummary`/`point
+                        // .filterLabel` already use for arbitrary equipment/
+                        // calibration text that isn't UI vocabulary.
+                        Text(item.summary).font(.caption)
+                    }
+                }
+                Button("Open Calibration…", action: openCalibration)
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("v2.home.cloudy-darks-open")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .astroRaisedSurface()
+            .accessibilityIdentifier("v2.home.cloudy-darks")
+        }
     }
 
     private var tonightRecommendations: some View {
@@ -385,6 +541,10 @@ private struct NightContextRail: View {
     /// even with NO library open, though that panel is locked
     /// (`LocationSettingsView`'s own "no library" branch) until one is.
     let hasLibrary: Bool
+    /// W7-E workflow #2: the "name the next clear night" line's link target
+    /// -- pushes the Nights calendar, where `NightsView`'s own "Cloud"
+    /// column renders this exact min-max forecast per date.
+    let openNightsCalendar: () -> Void
     /// Wave W6-A section C: the "library open, no site yet" state's own
     /// escape hatch, same `@Environment(\.openSettings)` pattern used
     /// everywhere else in this file a placeholder points at Settings.
@@ -455,6 +615,7 @@ private struct NightContextRail: View {
                 .foregroundStyle(.secondary)
 
                 cloudRow
+                nextClearNightRow
             } else if isLoading {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
@@ -558,6 +719,36 @@ private struct NightContextRail: View {
         formatter.dateFormat = "HH:mm"
         return formatter
     }()
+
+    /// W7-E workflow #2 (2026-08-18 owner audit, "cloudy tonight, name the
+    /// next clear night"): one more line on this same card -- Home already
+    /// knows tonight is cloudy and used to only ever talk about tonight.
+    /// `nil` `nextClearNight` (a clear night, or `cloud` itself absent) means
+    /// nothing to add, per `HomeSnapshot.NightCloud.nextClearNight`'s own
+    /// contract.
+    @ViewBuilder
+    private var nextClearNightRow: some View {
+        if let nextClearNight = cloud?.nextClearNight {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles").foregroundStyle(.secondary)
+                switch nextClearNight {
+                case .found(let date, let minPercent, let maxPercent):
+                    Button {
+                        openNightsCalendar()
+                    } label: {
+                        Text("Nearest clear night: \(date) (\(Int(minPercent.rounded()))–\(Int(maxPercent.rounded()))% cloud)")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(AstroTokens.Color.accent)
+                case .unavailable:
+                    Text("The 7-day forecast has no clear night")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.caption)
+            .accessibilityIdentifier("v2.home.next-clear-night")
+        }
+    }
 }
 
 /// W4-2: `WeatherError.message` is a raw Hungarian `String` (V1's own

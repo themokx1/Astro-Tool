@@ -13,20 +13,38 @@ import SwiftUI
 @Observable
 public final class InsightsStore {
     public typealias QueryFactory = @Sendable (URL) throws -> InsightsQuery
+    /// W7-E workflow #1 (2026-08-18 owner audit, "rating is the gate on half
+    /// the app, and nothing drives you through it"): the matching empty-trend
+    /// hint's own number -- `RatingCoverageQuery`'s unrated-night count, the
+    /// exact same query (and vocabulary) Home's own rating-gate card reads,
+    /// never a second one invented for Insights. Sync `throws`, not `async`,
+    /// so this default can stay a plain function-default (like `queryFactory`
+    /// above) rather than the `Optional`+resolve-in-init shape `HomeStore`'s
+    /// own `async` providers need -- see `AsyncContextSizeGateTests`'s doc
+    /// comment for why that distinction matters.
+    public typealias RatingGapProvider = @Sendable (URL) throws -> Int
 
     public private(set) var snapshot: InsightsSnapshot?
     public private(set) var availableYears: [Int] = []
     public private(set) var errorMessage: String?
     public private(set) var isLoading = false
+    public private(set) var unratedNightCount = 0
 
     private let queryFactory: QueryFactory
+    private let ratingGapProvider: RatingGapProvider
 
-    public init(queryFactory: @escaping QueryFactory = { rootURL in try InsightsQuery.production(rootURL: rootURL) }) {
+    public init(
+        queryFactory: @escaping QueryFactory = { rootURL in try InsightsQuery.production(rootURL: rootURL) },
+        ratingGapProvider: @escaping RatingGapProvider = { rootURL in
+            try RatingCoverageQuery.production(rootURL: rootURL).snapshot().unratedNightCount
+        }
+    ) {
         self.queryFactory = queryFactory
+        self.ratingGapProvider = ratingGapProvider
     }
 
     public func load(rootURL: URL?, year: Int? = nil) async {
-        guard let rootURL else { snapshot = nil; return }
+        guard let rootURL else { snapshot = nil; unratedNightCount = 0; return }
         isLoading = true
         defer { isLoading = false }
         do {
@@ -34,6 +52,12 @@ public final class InsightsStore {
             if year == nil, let snapshot {
                 availableYears = Array(Set(snapshot.months.compactMap { Int($0.month.prefix(4)) })).sorted(by: >)
             }
+            // Best-effort, same "honest zero on failure, never a thrown
+            // error over a secondary hint" posture `HomeStore.configure`
+            // already applies to its own `(try? await ...) ?? .clear`
+            // provider calls -- a rating-coverage read failing must never
+            // block the trends this screen exists to show.
+            unratedNightCount = (try? ratingGapProvider(rootURL)) ?? 0
         }
         catch { errorMessage = error.localizedDescription }
     }
@@ -154,6 +178,19 @@ public struct InsightsView: View {
         // now finally means something (one setup = one comparable series).
         VStack(alignment: .leading, spacing: 12) {
             Text("Capture quality trends").font(.headline)
+            // W7-E workflow #1 (2026-08-18 owner audit): the matching
+            // Insights half of Home's rating-gate card -- these three trend
+            // charts have nothing to plot only because nothing has been
+            // measured yet (`captureTrendPoints` only ever contains rated
+            // captures), so say that plainly instead of leaving the owner to
+            // infer it from three separate "No measured values" charts. A
+            // grouping WITHIN this card (Task 7c's own rule, see this
+            // function's header comment), never a second `.astroRaisedSurface()`.
+            if insight.captureTrendPoints.isEmpty, store.unratedNightCount > 0 {
+                Label("\(store.unratedNightCount) nights still have unrated frames — rate them from Home to fill in these trends.", systemImage: "star.leadinghalf.filled")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("v2.insights.rating-gap-hint")
+            }
             HStack {
                 Text("Compare measured captures over time. Lower FWHM and background are better; higher efficiency is better.")
                     .font(.callout).foregroundStyle(.secondary)

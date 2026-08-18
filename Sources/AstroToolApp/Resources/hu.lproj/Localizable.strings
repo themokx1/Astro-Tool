@@ -1887,3 +1887,33 @@
 // W6-E item 3: az Elemzések session-számláló kártyája.
 "Capture Sessions" = "Felvételi sessionok";
 "One night with two targets counts twice" = "Egy éjszaka két célponttal kétszer számít";
+
+/* W7-E workflow #1 (2026-08-18 owner audit, "rating is the gate on half the
+   app, and nothing drives you through it"): the Home rating-gate card
+   (HomeView.ratingGateCard) plus the matching Insights empty-trend hint
+   (InsightsView.qualityTrends) -- both read RatingCoverageQuery's own
+   unrated-night count, never a second query. "Rate Everything" runs the same
+   ProjectRatingRunner.run(scope: .allProjects(...)) "Rate All Projects"
+   already uses, so it gets the same Hungarian phrase. */
+"Frame rating" = "Képkocka-értékelés";
+"%lld nights still have unrated frames" = "%lld éjszaka képkockái még értékeletlenek";
+"No sensor profile has been measured yet" = "Szenzorprofil még nincs mérve";
+"Rate Everything" = "Minden projekt értékelése";
+"Measure Sensor Profile…" = "Szenzorprofilok mérése…";
+"%lld nights still have unrated frames — rate them from Home to fill in these trends." = "%lld éjszaka képkockái még értékeletlenek — értékeld őket a Kezdőlapon, hogy megjelenjenek ezek a trendek.";
+
+/* W7-E workflow #2 (2026-08-18 owner audit, "cloudy tonight, name the next
+   clear night"): one more line on Home's own night-context card
+   (HomeView.NightContextRail.nextClearNightRow), keyed off the same
+   WeatherService.dailySummaries 7-day forecast the Nights calendar's own
+   "Cloud" column already reads. */
+"Nearest clear night: %@ (%@–%@%% cloud)" = "Legközelebbi tiszta éjszaka: %@ (%@–%@%% felhő)";
+"The 7-day forecast has no clear night" = "A 7 napos előrejelzésben nincs tiszta éjszaka";
+
+/* W7-E workflow #3 (2026-08-18 owner audit, "cloudy night = darks night"):
+   Home's own cloudy-night card (HomeView.cloudyDarksCard), pushing the
+   already-computed CalibShoppingList straight at the owner instead of only
+   ever surfacing it through the "Copy Calibration Shopping List" export
+   menu item. */
+"Cloudy night, clear task" = "Felhős éjszaka, tiszta feladat";
+"Tonight looks cloudy — a good night to shoot the calibration frames this library is still missing." = "Ma éjjel felhősnek tűnik — jó alkalom lelőni a könyvtárból még hiányzó kalibrációs képkockákat.";
