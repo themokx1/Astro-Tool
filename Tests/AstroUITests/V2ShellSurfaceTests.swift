@@ -134,10 +134,21 @@ struct V2ShellSurfaceTests {
         #expect(home.contains("Choose Image Library…"))
         #expect(home.contains("read-only index"))
         #expect(!home.contains("Open Library"))
+        // W6-D: "New Project…"/"New Night…" used to be the one permanently
+        // `.disabled(true)` menu pair, with a "not built yet" tooltip --
+        // `V2RootView` has carried real `.newProject`/`.newNight` router
+        // presentations since Wave 4 (this same file's own toolbar "New
+        // Project" button, `NewProjectView`/`NewSessionView`), so these two
+        // are wired to `router?.present(...)` now instead of shipping a
+        // permanently-dead menu entry. "Unavailable actions are honest"
+        // now means neither of these fake-disables itself -- both either
+        // work or don't exist.
         #expect(!root.contains("Available after library workflows arrive"))
-        #expect(commands.contains("Available after library workflows arrive"))
+        #expect(!commands.contains("Available after library workflows arrive"))
         #expect(!root.contains(".disabled(true)"))
-        #expect(commands.contains(".disabled(true)"))
+        #expect(!commands.contains(".disabled(true)"))
+        #expect(commands.contains("router?.present(.newProject)"))
+        #expect(commands.contains("router?.present(.newNight)"))
     }
 
     @Test("Every stable section is represented once by the shared route model")

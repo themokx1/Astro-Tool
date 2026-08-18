@@ -274,13 +274,29 @@ struct V2AstroToolCommands: Commands {
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
-            Button("New Project…", action: {})
-            .disabled(true)
-            .help("Available after library workflows arrive")
+            // W6-D: these two used to be permanently hard-disabled (a fixed
+            // `true` argument) with a "not built yet" tooltip, but
+            // `V2RootView` has carried real
+            // `.newProject`/`.newNight` router presentations since Wave 4
+            // (the toolbar's own "New Project"/"Import from Card…" buttons,
+            // `NewProjectView`/`NewSessionView`) -- the exact same
+            // `router?.present(...)` shape this file already uses two lines
+            // down for "Rescan", and further below for "Glossary"/"Folder
+            // Structure"/"First Steps". `newProjectInitialQuery`/
+            // `newSessionPrefill` are `V2RootView`-local `@State`, not
+            // reachable from here, but both already default to an empty/nil
+            // "no seed" value and are reset back to it on the sheet's own
+            // dismiss, so presenting with neither set behaves exactly like a
+            // plain, context-free "start one from scratch" entry point.
+            Button("New Project…") {
+                router?.present(.newProject)
+            }
+            .disabled(router == nil)
 
-            Button("New Night…", action: {})
-            .disabled(true)
-            .help("Available after library workflows arrive")
+            Button("New Night…") {
+                router?.present(.newNight)
+            }
+            .disabled(router == nil)
 
             Divider()
 
