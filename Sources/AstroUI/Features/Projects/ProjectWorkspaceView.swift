@@ -807,6 +807,30 @@ private struct ProjectNightsSummary: View {
     @State private var sortedNights: [ProjectNightSnapshot] = []
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // W6-C (one count, one truth): a series whose `nightID` doesn't
+            // resolve to a real night (`ProjectsQuery.project(id:)`'s own
+            // `orphanedSeries` doc comment) used to just vanish from this
+            // tab -- no row, no mention, nothing telling the reader the
+            // page's own header count ("N series") didn't match what this
+            // table showed. `ProjectNightSnapshot` requires a real
+            // `NightRecord` (rows here are clickable straight into
+            // `openNight`), so an orphan cannot become a fabricated row the
+            // way `ProjectSeriesSummary`'s own table below handles this --
+            // a plain, honest banner instead of a silently smaller number.
+            if !snapshot.orphanedSeries.isEmpty {
+                Label(
+                    "\(snapshot.orphanedSeries.count) capture series not linked to a night",
+                    systemImage: "questionmark.circle"
+                )
+                .font(.callout)
+                .foregroundStyle(AstroTokens.Color.attention)
+            }
+            nightsTable
+        }
+    }
+
+    private var nightsTable: some View {
         Table(sortedNights, selection: $selection, sortOrder: $sortOrder) {
             TableColumn("Night", value: \ProjectNightSnapshot.night.localDate) { Text($0.night.localDate).monospacedDigit() }
             TableColumn("Series", value: \ProjectNightSnapshot.series.count) { Text($0.series.count.formatted()).monospacedDigit() }
@@ -993,6 +1017,23 @@ private struct ProjectSeriesSummary: View {
     private func recomputeSortedSeries() {
         var rows = snapshot.nights.flatMap { night in
             night.series.map { ProjectSeriesRow(nightDate: night.night.localDate, series: $0) }
+        }
+        // W6-C (one count, one truth): `snapshot.orphanedSeries` used to
+        // have no row here at all -- a series whose `nightID` doesn't
+        // resolve was invisible in this table even though the page's own
+        // header/MetricCard counted it in `snapshot.series.count`. The
+        // placeholder night label is resolved eagerly (this codebase's own
+        // `NSLocalizedString` convention for a `Sendable`/data-flowing
+        // field, matching `OperationHost.localized(_:)`'s own doc comment)
+        // rather than wrapped in `LocalizedStringKey` at the call site the
+        // way `filterName`'s "Unfiltered" fallback is, since a REAL night
+        // date sits in this exact same column/property and must never be
+        // treated as a translation key.
+        rows += snapshot.orphanedSeries.map {
+            ProjectSeriesRow(
+                nightDate: NSLocalizedString("Not linked to a night", bundle: .main, comment: ""),
+                series: $0
+            )
         }
         if !sortOrder.isEmpty { rows.sort(using: sortOrder) }
         sortedSeries = rows

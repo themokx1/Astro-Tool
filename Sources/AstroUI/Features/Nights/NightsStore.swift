@@ -67,9 +67,20 @@ public struct NightRow: Equatable, Sendable, Identifiable {
 /// the same two states the row badge itself already collapses non-`.ready`
 /// nights into (`night.triageState == .ready` is the only distinction the
 /// existing badge color/icon ever drew). `.needsReview` here therefore
-/// matches `NightRow.TriageState.empty` too, the same way it already did
-/// inside `NightsStore.needsReviewCount`'s own `!= .ready` filter -- this
-/// never invents a third filterable bucket the row UI didn't already have.
+/// matches `NightRow.TriageState.empty` too, the same way
+/// `SidebarBadgeStore.nightsNeedingAttention`'s own `!= .ready` filter
+/// already did -- this never invents a third filterable bucket the row UI
+/// didn't already have.
+///
+/// W6-C: this file used to ALSO carry its own `needsReviewCount` (`visibleNights
+/// .filter { $0.triageState != .ready }.count`) -- a second, MONTH-SCOPED
+/// copy of the exact same predicate `SidebarBadgeStore.nightsNeedingAttention`
+/// already computes GLOBALLY (across every night, not just the selected
+/// month). Nothing read it (no view, no other store) -- a latent two-truths
+/// bug waiting for a first consumer to wire it into a badge and disagree
+/// with the sidebar's own count for no reason a reader could see. Deleted
+/// rather than fixed, since a dead duplicate has no correct scope to fix it
+/// to.
 public enum NightTriageFilter: String, CaseIterable, Sendable {
     case all = "All"
     case needsReview = "Needs review"
@@ -260,10 +271,6 @@ public final class NightsStore {
         guard newValue != planningSortOrder else { return }
         planningSortOrder = newValue
         recomputePlanningRows()
-    }
-
-    public var needsReviewCount: Int {
-        visibleNights.filter { $0.triageState != .ready }.count
     }
 
     public func selectMonth(_ month: String?) {

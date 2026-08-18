@@ -317,7 +317,17 @@ public final class ProjectsStore {
                 latestNight: snapshot.nights.map(\.night.localDate).max(),
                 nextAction: snapshot.nextAction.kind.localizedTitle,
                 nextActionExplanation: snapshot.nextAction.kind.localizedExplanation,
-                seriesCount: snapshot.nights.reduce(0) { $0 + $1.series.count },
+                // W6-C (one count, one truth): was `snapshot.nights.reduce(0)
+                // { $0 + $1.series.count }` -- the night-grouped sum, which
+                // silently drops any series whose `nightID` doesn't resolve
+                // to a real night (`ProjectsQuery.project(id:)`'s own
+                // `orphanedSeries` doc comment). `snapshot.series.count` is
+                // the flat, always-complete truth this same view's "Nights"
+                // MetricCard detail (`ProjectsView.swift`'s "%@ capture
+                // series") and `ProjectWorkspaceView`'s own header already
+                // used -- routing the list's "Series" column through it too
+                // means both can no longer disagree about the same project.
+                seriesCount: snapshot.series.count,
                 goalHours: try? await metadata.projectAnnotation(projectID: project.id)?.integrationGoalHours
             ))
         }

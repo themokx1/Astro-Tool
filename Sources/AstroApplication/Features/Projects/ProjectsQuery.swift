@@ -73,11 +73,40 @@ public struct ProjectSnapshot: Equatable, Sendable, Identifiable {
     public let canonicalFolderName: String
     public let series: [SeriesRecord]
     public let nights: [ProjectNightSnapshot]
+    /// W6-C (one count, one truth): series whose `nightID` does not resolve
+    /// against `metadata.nights()` -- a night record can be deleted (or a
+    /// series re-pointed) independently of the series that references it.
+    /// `project(id:)` used to silently drop these when building `nights`
+    /// (the `compactMap`'s `guard let night = nightByID[nightID] else {
+    /// return nil }` discarded the whole group, series included), so the
+    /// night-grouped view undercounted `series.count` with nothing telling
+    /// the reader why -- the Projects list's "Series" column (fed by the
+    /// night-grouped sum) could disagree with this same project's own
+    /// header/MetricCard (fed by `series.count` directly). Kept here
+    /// separately, not merged back into a fabricated `nights` entry, so
+    /// `nights.count` still means "real observed nights" -- the UI layer
+    /// (`ProjectWorkspaceView`) surfaces this bucket honestly instead of
+    /// inventing a night that never happened.
+    public let orphanedSeries: [ProjectSeriesSnapshot]
     public let nextAction: ProjectNextAction
     public var id: UUID { project.id }
-    public var totalFrames: Int { nights.reduce(0) { $0 + $1.totalFrames } }
-    public var usableFrames: Int { nights.reduce(0) { $0 + $1.usableFrames } }
-    public var integrationSeconds: Double { nights.reduce(0) { $0 + $1.integrationSeconds } }
+    /// Includes `orphanedSeries` -- see its own doc comment. Before W6-C
+    /// this was `nights.reduce(...)` alone, which silently dropped an
+    /// orphaned series' frames from the project's own frame count, not just
+    /// its series count.
+    public var totalFrames: Int {
+        nights.reduce(0) { $0 + $1.totalFrames } + orphanedSeries.reduce(0) { $0 + $1.totalFrames }
+    }
+    /// See `totalFrames`'s own doc comment.
+    public var usableFrames: Int {
+        nights.reduce(0) { $0 + $1.usableFrames } + orphanedSeries.reduce(0) { $0 + $1.usableFrames }
+    }
+    /// See `totalFrames`'s own doc comment -- an orphaned series' usable
+    /// integration time used to vanish from the project's own total, not
+    /// just its series count.
+    public var integrationSeconds: Double {
+        nights.reduce(0) { $0 + $1.integrationSeconds } + orphanedSeries.reduce(0) { $0 + $1.integrationSeconds }
+    }
 }
 
 public struct ProjectsQuery: Sendable {
@@ -163,18 +192,29 @@ public struct ProjectsQuery: Sendable {
         let series = try await metadata.series(projectID: id)
         let nightByID = Dictionary(uniqueKeysWithValues: try await metadata.nights().map { ($0.id, $0) })
         var seriesByNight: [UUID: [ProjectSeriesSnapshot]] = [:]
+        // W6-C: series are partitioned into a resolvable-night bucket or
+        // `orphanedSeries` HERE, at the only place that actually knows which
+        // of the two applies -- `nightByID[record.nightID]` -- rather than
+        // discarding the unresolvable ones inside the `compactMap` below and
+        // reconstructing "what got dropped" afterward from a diff.
+        var orphanedSeries: [ProjectSeriesSnapshot] = []
         for record in series {
             let decisions = try await metadata.frameDecisions(seriesID: record.id)
             let usable = decisions.filter { !$0.logicallyExcluded && $0.verdict != .rejected }.count
             let undecided = decisions.filter { $0.verdict == .undecided }.count
-            seriesByNight[record.nightID, default: []].append(ProjectSeriesSnapshot(
+            let snapshot = ProjectSeriesSnapshot(
                 series: record,
                 totalFrames: decisions.count,
                 usableFrames: usable,
                 excludedFrames: decisions.count - usable,
                 undecidedFrames: undecided,
                 integrationSeconds: Double(usable) * record.exposureSeconds
-            ))
+            )
+            if nightByID[record.nightID] != nil {
+                seriesByNight[record.nightID, default: []].append(snapshot)
+            } else {
+                orphanedSeries.append(snapshot)
+            }
         }
         let nights = seriesByNight.compactMap { nightID, values -> ProjectNightSnapshot? in
             guard let night = nightByID[nightID] else { return nil }
@@ -193,6 +233,7 @@ public struct ProjectsQuery: Sendable {
             canonicalFolderName: Self.canonicalFolderName(for: project),
             series: series,
             nights: nights,
+            orphanedSeries: orphanedSeries,
             nextAction: nextAction(for: project.phase, seriesCount: series.count)
         )
     }

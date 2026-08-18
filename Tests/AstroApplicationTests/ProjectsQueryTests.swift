@@ -1,3 +1,4 @@
+import AstroCore
 @testable import AstroApplication
 import Foundation
 import Testing
@@ -83,6 +84,77 @@ struct ProjectsQueryTests {
         #expect(snapshot.integrationSeconds == 630)
         #expect(snapshot.nights.first?.series.first?.filterName == "SV220")
         #expect(snapshot.nights.last?.series.first?.excludedFrames == 1)
+    }
+
+    // MARK: - W6-C (one count, one truth): orphaned series
+
+    /// Reproduces the exact defect the 2026-08-18 static audit found: a
+    /// series whose `nightID` no longer resolves against `metadata.nights()`
+    /// (e.g. the night record was deleted independently of the series that
+    /// references it) used to be silently dropped from `nights` -- and,
+    /// because `totalFrames`/`usableFrames`/`integrationSeconds` were each
+    /// `nights.reduce(...)` alone, from the project's own aggregate totals
+    /// too, not merely from `nights.count`. `snapshot.series` (the flat
+    /// list) was always the complete truth; this test pins down that every
+    /// OTHER aggregate on `ProjectSnapshot` now agrees with it, and that the
+    /// orphan is named explicitly (`orphanedSeries`) rather than merely not
+    /// missing.
+    ///
+    /// The schema's own `series.night_id ... REFERENCES nights(id) ON DELETE
+    /// RESTRICT` (`MetadataSchema.swift`) means this app's own write path
+    /// cannot produce a dangling `nightID` -- deleting a night while a
+    /// series still references it is rejected outright (proven the hard way:
+    /// an earlier draft of this test tried `MetadataWriteBatch(series:
+    /// [...])` with a `nightID` matching no saved night and got a `FOREIGN
+    /// KEY constraint failed` error, not a saved row). A real orphan can
+    /// still exist -- an interrupted V1 import, a partially-restored backup,
+    /// a database opened read-only from another tool entirely -- so this
+    /// test reproduces the STATE directly with a second raw connection to
+    /// the same file with `foreign_keys` off for that connection, the same
+    /// way a foreign, uncontrolled writer could leave it. `ProjectsQuery`
+    /// itself never disables the constraint; only the fixture setup does.
+    @Test("An orphaned series (nightID with no matching night) still counts toward the project's totals, not just the flat series list")
+    func orphanedSeriesStillCountsTowardProjectTotals() async throws {
+        let store = try MetadataStore.temporary()
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .collecting
+        )
+        let realNight = NightRecord(id: UUID(), localDate: "2026-08-08", timeZoneID: "Europe/Budapest")
+        let doomedNight = NightRecord(id: UUID(), localDate: "2026-08-09", timeZoneID: "Europe/Budapest")
+        try await store.save(MetadataWriteBatch(projects: [project], nights: [realNight, doomedNight]))
+        let realSeries = series(projectID: project.id, nightID: realNight.id, exposure: 300)
+        let orphaned = series(projectID: project.id, nightID: doomedNight.id, exposure: 60)
+        try await store.save(MetadataWriteBatch(series: [realSeries, orphaned]))
+        try await store.save(MetadataWriteBatch(frameDecisions: [
+            decision(seriesID: realSeries.id, path: "real.fit", verdict: .accepted),
+            decision(seriesID: orphaned.id, path: "orphan.fit", verdict: .accepted),
+        ]))
+
+        // Orphan `orphaned` on purpose: delete its night out from under it
+        // via a second connection with `foreign_keys` off, bypassing the
+        // `ON DELETE RESTRICT` this app's own write path always honors.
+        let raw = try SQLiteDB(path: store.databaseURL.path)
+        try raw.exec("PRAGMA foreign_keys = OFF;")
+        // `MetadataStore` stores UUIDs lowercased (its own private
+        // `UUID.databaseText`); `uuidString` is uppercase, so this must
+        // match the on-disk casing exactly for the `DELETE` to find the row.
+        try raw.run("DELETE FROM nights WHERE id = ?;", bind: [.text(doomedNight.id.uuidString.lowercased())])
+
+        let snapshot = try #require(try await ProjectsQuery(metadata: store).project(id: project.id))
+
+        // The flat list was always the complete truth -- this is the "one
+        // truth" every count elsewhere should agree with.
+        #expect(snapshot.series.count == 2)
+        // Only the real night groups into `nights`; the orphan is named,
+        // not merely absent.
+        #expect(snapshot.nights.count == 1)
+        #expect(snapshot.orphanedSeries.map(\.id) == [orphaned.id])
+        // Before W6-C these three undercounted by exactly the orphan's own
+        // contribution (1 frame, 60s) because each was `nights.reduce(...)`
+        // alone.
+        #expect(snapshot.totalFrames == 2)
+        #expect(snapshot.usableFrames == 2)
+        #expect(snapshot.integrationSeconds == 360)
     }
 
     // MARK: - resolvedFolderName (W3-11, one-letter-drift fix, 2026-08-17)

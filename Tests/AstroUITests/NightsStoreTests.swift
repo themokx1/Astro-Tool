@@ -145,7 +145,6 @@ struct NightsStoreTests {
         try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
 
         #expect(store.nights[0].triageState == .ready)
-        #expect(store.needsReviewCount == 0)
     }
 
     @Test("A night with zero usable frames is empty, not needing review, even fully decided")
@@ -209,7 +208,7 @@ struct NightsStoreTests {
         #expect(store.uniformVisibleTriageState == nil)
     }
 
-    @Test("The needs-review filter bucket also matches nights with zero usable frames, the same way needsReviewCount already does")
+    @Test("The needs-review filter bucket also matches nights with zero usable frames, the same way SidebarBadgeStore.nightsNeedingAttention already does")
     func triageFilterNeedsReviewIncludesEmptyNights() async throws {
         let metadata = try MetadataStore.temporary()
         let project = ProjectRecord(id: UUID(), catalogID: "M 31", displayName: "M 31", phase: .collecting)

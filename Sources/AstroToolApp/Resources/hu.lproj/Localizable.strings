@@ -1233,6 +1233,14 @@
 "No filter metadata" = "Nincs szűrő-metaadat";
 "No usable target window" = "Nincs használható célpont-ablak";
 "Unfiltered" = "Szűretlen";
+// W6-C (one count, one truth): `ProjectWorkspaceView`'s two tables' own
+// honest handling of a series whose `nightID` doesn't resolve to a real
+// night (`ProjectsQuery.project(id:)`'s `orphanedSeries`) -- a placeholder
+// "night" label for the Series tab's row, and a banner above the Nights
+// tab's table naming how many such series exist instead of silently
+// showing fewer than the page's own header count.
+"Not linked to a night" = "Éjszakához nem köthető";
+"%lld capture series not linked to a night" = "%lld sorozat nincs éjszakához kötve";
 "Overview" = "Áttekintés";
 "Observed" = "Megfigyelt";
 "Next 30 nights" = "Következő 30 éjszaka";
