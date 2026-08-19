@@ -60,7 +60,7 @@ public struct ConversionUseCase: Sendable {
         let series = exposures.map { exposure, count in
             ProposedConversionSeries(
                 id: "capture-\(Int(exposure))s", exposureSeconds: exposure,
-                title: exposure < 120 ? "OSC \(Int(exposure)) s" : "OSC · Dual-band · SV220 · \(Int(exposure)) s",
+                title: exposure < 120 ? "OSC \(Int(exposure)) s" : "OSC · Dual-band · \(Int(exposure)) s",
                 frameCount: count
             )
         }

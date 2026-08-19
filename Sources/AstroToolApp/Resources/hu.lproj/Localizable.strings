@@ -598,12 +598,12 @@
 "Longitude" = "Hosszúság";
 "Longitude (°)" = "Hosszúság (°)";
 "Manufacturer" = "Gyártó";
-"Manufacturer, e.g. SVBONY" = "Gyártó, pl. SVBONY";
+"Manufacturer, e.g. Optolong" = "Gyártó, pl. Optolong";
 "Master darks" = "Master dark képkockák";
 "Measured profiles" = "Mért profilok";
 "Missing measurements" = "Hiányzó mérések";
 "Model" = "Modell";
-"Model, e.g. SV220" = "Modell, pl. SV220";
+"Model, e.g. L-eXtreme" = "Modell, pl. L-eXtreme";
 "Morning triage" = "Reggeli triázs";
 "Most photographed" = "Legtöbbet fotózott";
 "Name" = "Név";
@@ -2222,7 +2222,7 @@
    is the pure decision behind it). The card heading is deliberately an
    English key whose OWN Hungarian translation is the feature's own name;
    the row key's two `%@` placeholders are the resolved setup name and the
-   target's display name ("2600MC+SV220 → IC 1396") -- no further wording
+   target's display name ("camera+filter → target") -- no further wording
    to translate around the arrow, so the Hungarian entry keeps the same
    placeholders verbatim. "not decidable" is the honest per-target fallback
    when neither a resolvable catalog size nor an unambiguous shooting
@@ -2377,7 +2377,7 @@
 "Relative system efficiency" = "Relatív rendszerhatékonyság";
 "Used for Planning's integration-time estimate; 1.0 = reference." = "A Tervezés integrációs idő becsléséhez használva; 1,0 = referencia.";
 "Default filter (optional)" = "Alapértelmezett szűrő (opcionális)";
-"Filter name, e.g. SV220" = "Szűrő neve, pl. SV220";
+"Filter name, e.g. L-eXtreme" = "Szűrő neve, pl. L-eXtreme";
 "Used when a frame from this setup's camera has no FITS FILTER header, capture group, or capture-slug name to fall back on." = "Akkor kerül elő, ha ennek a setupnak a kamerájából származó képen nincs FITS FILTER fejléc, capture csoport vagy capture-szlug név, amire támaszkodni lehetne.";
 /* `ImagingSetupEditorView`'s numeric fields: `TextField(_, value:, format:
    .number)` placeholders/units, plus `focalLengthText`'s zoom-range

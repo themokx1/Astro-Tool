@@ -603,8 +603,8 @@ private struct EquipmentEvaluationSettingsView: View {
                 Text("This removes the saved equipment filter from your inventory. This cannot be undone.")
             }
             Section("Add filter") {
-                TextField("Manufacturer, e.g. SVBONY", text: $manufacturer)
-                TextField("Model, e.g. SV220", text: $model)
+                TextField("Manufacturer, e.g. Optolong", text: $manufacturer)
+                TextField("Model, e.g. L-eXtreme", text: $model)
                 Picker("Passband", selection: $passband) {
                     ForEach(EquipmentFilterPassband.allCases, id: \.self) { Text(LocalizedStringKey($0.title)).tag($0) }
                 }
@@ -819,7 +819,7 @@ private struct ImagingSetupEditorView: View {
                             Text(LocalizedStringKey(mode.settingsLabel)).tag(mode)
                         }
                     }
-                    TextField("Filter name, e.g. SV220", text: $draft.defaultFilterName)
+                    TextField("Filter name, e.g. L-eXtreme", text: $draft.defaultFilterName)
                     Text("Used when a frame from this setup's camera has no FITS FILTER header, capture group, or capture-slug name to fall back on.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
