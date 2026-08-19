@@ -59,12 +59,31 @@ public struct TriageDigestQuery: Sendable {
     public let causes: [TriageDigestCause]
     private let frameIDsByCause: [OutlierBreakdown.Metric: [UUID]]
 
-    /// `true` when `frames` contains no flagged outlier at all -- the
-    /// spec's own empty state: a caller checks this before ever rendering
-    /// the digest card, rather than rendering a zero-count card.
-    public var isEmpty: Bool { causes.isEmpty }
+    /// Frames this session hedges as "possible satellite trail -- check"
+    /// (expert ideation #8, `SatelliteStreakHeuristic`) -- deliberately a
+    /// SEPARATE line from `causes` above, never merged into them: this is
+    /// never a verdict, just a suggestion to look closer, and it can catch
+    /// frames `causes` never would (a streak's inflated `starCount` can
+    /// push a frame's overall `score` UP, so it may never even trip the
+    /// ordinary `isOutlier` flag that `causes` requires -- see the
+    /// heuristic's own doc comment). Runs over every frame handed to this
+    /// query, not just the outlier subset, for exactly that reason.
+    private let possibleStreakFrameIDs: [UUID]
+
+    /// `true` when `frames` contains no flagged outlier AND no possible
+    /// streak -- the spec's own empty state: a caller checks this before
+    /// ever rendering the digest card, rather than rendering an
+    /// all-zero card.
+    public var isEmpty: Bool { causes.isEmpty && possibleStreakFrameIDs.isEmpty }
 
     public var totalOutlierCount: Int { causes.reduce(0) { $0 + $1.count } }
+
+    /// `true` exactly when the hedged "possible satellite trail" line has
+    /// something to show -- a caller checks this before rendering that
+    /// line, matching the "absent entirely at zero hits" spec.
+    public var hasPossibleStreak: Bool { !possibleStreakFrameIDs.isEmpty }
+
+    public var possibleStreakCount: Int { possibleStreakFrameIDs.count }
 
     public init(frames: [TriageDigestFrame]) {
         var scoreByID: [UUID: FrameScore] = [:]
@@ -100,11 +119,24 @@ public struct TriageDigestQuery: Sendable {
         self.causes = OutlierBreakdown.Metric.allCases
             .compactMap { metric in idsByCause[metric].map { TriageDigestCause(metric: metric, count: $0.count) } }
             .sorted { $0.count > $1.count }
+
+        let streakPaths = SatelliteStreakHeuristic.flaggedPaths(for: Array(scoreByID.values))
+        self.possibleStreakFrameIDs = scoreByID
+            .filter { streakPaths.contains($0.value.path) }
+            .map(\.key)
     }
 
     /// Every outlier frame in this session whose dominant metric is
     /// `metric` -- the digest card's "Select frames" button per cause row.
     public func selectFrames(forCause metric: OutlierBreakdown.Metric) -> [UUID] {
         frameIDsByCause[metric] ?? []
+    }
+
+    /// Every frame this session hedges as a possible satellite trail --
+    /// the digest card's own separately-styled "select" button. Selection
+    /// only, exactly like `selectFrames(forCause:)`: never a verdict, never
+    /// an auto-reject.
+    public func selectPossibleStreakFrames() -> [UUID] {
+        possibleStreakFrameIDs
     }
 }

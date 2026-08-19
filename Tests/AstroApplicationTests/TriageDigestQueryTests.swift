@@ -106,5 +106,82 @@ struct TriageDigestQueryTests {
         #expect(digest.totalOutlierCount == 0)
         #expect(digest.causes.isEmpty)
         #expect(digest.selectFrames(forCause: .fwhm).isEmpty)
+        #expect(!digest.hasPossibleStreak)
+        #expect(digest.possibleStreakCount == 0)
+        #expect(digest.selectPossibleStreakFrames().isEmpty)
+    }
+
+    // MARK: - "Esetleg műholdcsík -- ellenőrizd" (expert ideation #8)
+
+    /// Eight near-identical baseline frames (slight jitter, never exact
+    /// repeats -- see `SatelliteStreakHeuristicTests`'s own doc comment on
+    /// why floating-point noise on a truly-zero variance can otherwise
+    /// forge a spurious z-score) plus one frame whose `starCount` spikes
+    /// far above the group while its `fwhm` also moves well outside the
+    /// group's own tight spread -- deliberately NOT flagged `isOutlier`
+    /// (its inflated `starCount` alone would push a plain weighted score
+    /// UP), so this fixture also proves the hedge runs independently of
+    /// `causes`.
+    private static func possibleStreakFixture() -> (frames: [TriageDigestFrame], streakID: UUID) {
+        let streakID = UUID()
+        var frames: [TriageDigestFrame] = (0..<8).map { i in
+            TriageDigestFrame(
+                id: UUID(),
+                relativePath: "baseline-\(i)",
+                quality: FrameQualityMetrics(
+                    relativePath: "baseline-\(i)",
+                    fwhm: 3.0 + Double((i % 3) - 1) * 0.05,
+                    roundness: nil,
+                    starCount: 50,
+                    background: 100,
+                    saturatedFraction: nil,
+                    score: 0.9,
+                    isOutlier: false,
+                    libraryPercentile: nil
+                )
+            )
+        }
+        frames.append(TriageDigestFrame(
+            id: streakID,
+            relativePath: "streak",
+            quality: FrameQualityMetrics(
+                relativePath: "streak", fwhm: 9.0, roundness: nil, starCount: 1000, background: 100,
+                saturatedFraction: nil, score: 0.95, isOutlier: false, libraryPercentile: nil
+            )
+        ))
+        return (frames, streakID)
+    }
+
+    @Test("A frame whose starCount spikes while fwhm also moves gets hedged as a possible streak, selectable on its own")
+    func possibleStreakIsFlaggedAndSelectable() throws {
+        let fixture = Self.possibleStreakFixture()
+        let digest = TriageDigestQuery(frames: fixture.frames)
+
+        #expect(!digest.isEmpty)
+        #expect(digest.hasPossibleStreak)
+        #expect(digest.possibleStreakCount == 1)
+        #expect(digest.selectPossibleStreakFrames() == [fixture.streakID])
+    }
+
+    @Test("The possible-streak frame is never folded into causes (never auto-rejected, never a confident verdict)")
+    func possibleStreakFrameNeverBecomesACause() {
+        let fixture = Self.possibleStreakFixture()
+        let digest = TriageDigestQuery(frames: fixture.frames)
+
+        // The streak frame was never marked `isOutlier`, so it must not
+        // show up under any `causes` line at all.
+        for cause in digest.causes {
+            #expect(!digest.selectFrames(forCause: cause.metric).contains(fixture.streakID))
+        }
+    }
+
+    @Test("A session with no possible streak has an absent hedge line")
+    func noPossibleStreakIsAbsent() {
+        let fixture = Self.fourFrameFixture()
+        let digest = TriageDigestQuery(frames: fixture.frames)
+
+        #expect(!digest.hasPossibleStreak)
+        #expect(digest.possibleStreakCount == 0)
+        #expect(digest.selectPossibleStreakFrames().isEmpty)
     }
 }
