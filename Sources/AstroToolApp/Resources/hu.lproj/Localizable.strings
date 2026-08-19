@@ -1964,6 +1964,15 @@
 // plusz az Éjszakák kártya új részletsora.
 "Deduplicated calendar nights" = "Deduplikált naptári éjszakák";
 
+/* Expert ideation spec #2 ("még ~3 tiszta éjszaka a célig"): the Overview
+   tab's completion-forecast stat row, right under the existing goal
+   progress line -- ProjectWorkspaceView.completionForecastText,
+   CompletionForecast.nightsNeeded (AstroApplication). paceHoursText/
+   nightsText are pre-formatted Strings (never raw Int/Double
+   interpolation), so both keys carry %@ placeholders, not %lld/%lf. */
+"At your current pace (~%@ h/night) about ~%@ more clear nights are needed to reach the goal." = "A mostani tempóddal (~%@ óra/éjszaka) még ~%@ tiszta éjszaka kell a célhoz.";
+"Not enough data yet to estimate the pace." = "Még nincs elég adat a tempó becsléséhez.";
+
 /* Morning Triage Digest (expert ideation spec #1, "the owner triages ~2800
    lights"): ReviewWorkspace.swift's TriageDigestBanner card + the
    OutlierBreakdown.Metric.triageCauseLabel/triageSelectButtonLabel switches
@@ -1973,3 +1982,26 @@
 "guiding error" = "vezetési hiba";
 "cloud or haze" = "felhő/pára";
 "Select focus-slip frames" = "Kijelölés: fókusz-hibás keretek";
+
+/* Moon x sky-brightness correlation (expert ideation spec #3,
+   2026-08-19): InsightsView.swift's moonSkyCorrelationCard +
+   moonPhaseBandLabel. The four band-label strings are returned from a
+   `switch` inside a function typed `-> LocalizedStringKey`
+   (`moonPhaseBandLabel`) -- same blind spot the extraction script's own
+   header comment documents for `HealthView`'s frame-role labels, so they
+   never show up in `scripts/extract-localizable-strings.swift`'s output,
+   translated by hand instead (matching `averageNightDetail`'s own
+   "Best month: %@" precedent, also switch/function-returned and also
+   translated by hand). "Too few sessions" is this card's own "kevés adat"
+   -- a low-confidence bucket must never show a solid median number. */
+"Sky brightness vs. Moon phase" = "Égi fényesség a holdfázis függvényében";
+"Sky brightness" = "Égi fényesség";
+"Moon phase" = "Holdfázis";
+"Dark Moon (<25%)" = "Sötét Hold (<25%)";
+"25–50% Moon" = "25–50% Hold";
+"50–75% Moon" = "50–75% Hold";
+"Bright Moon (≥75%)" = "Fényes Hold (≥75%)";
+"Too few sessions" = "Kevés adat";
+"Your sky background reads about %@× brighter under a bright Moon (≥75%% illuminated) than under a dark one (<25%%)." = "A saját égi háttered kb. %@×-szer fényesebb fényes Holdnál (≥75%% megvilágítottság), mint sötét Holdnál (<25%%).";
+"Not enough measured sessions across different Moon phases yet to show this — rate a few more nights under different Moon conditions to build up your own sky-brightness history." = "Még nincs elég mért session a Hold-hatás méréséhez különböző holdfázisok alatt — értékelj még néhány éjszakát eltérő holdfázisok mellett, hogy felépülhessen a saját égi fényesség-történeted.";
+"%lld nights still have unrated frames — rate them from Home to start measuring the Moon's effect on your sky." = "%lld éjszaka képkockái még értékeletlenek — értékeld őket a Kezdőlapon, hogy elkezdődhessen a Hold égre gyakorolt hatásának mérése.";

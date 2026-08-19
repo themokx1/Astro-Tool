@@ -229,4 +229,49 @@ struct ProjectReportQueryTests {
         #expect(result.panelDeficits.allSatisfy { $0.deficitSeconds == 0 })
         #expect(result.mosaicBalanceNextAction == nil)
     }
+
+    // MARK: - Completion forecast (expert ideation spec #2)
+    //
+    // `CompletionForecastTests` pins the pure division/rounding rule against
+    // bare arrays -- these two prove the PLUMBING: a real scanned library's
+    // per-session integration actually reaches `result
+    // .recentSessionIntegrationSeconds`, oldest-to-newest, capped at 5,
+    // through `ProjectReportQuery.run`, not just through hand-built floats.
+
+    @Test("recentSessionIntegrationSeconds carries this target's own sessions, oldest-to-newest, from a real scan")
+    func recentSessionIntegrationSecondsWiredFromRealScan() throws {
+        let fixture = try ProjectReportQueryFixture.make()
+        defer { fixture.cleanup() }
+
+        try fixture.writeFITSLight("sessions/PACE/2026-01-10/lights/a.fit", exptime: 1800) // 0.5h
+        try fixture.writeFITSLight("sessions/PACE/2026-01-11/lights/b.fit", exptime: 3600) // 1h
+        try fixture.writeFITSLight("sessions/PACE/2026-01-12/lights/c.fit", exptime: 5400) // 1.5h
+        // A different target's own session must never leak into PACE's pace.
+        try fixture.writeFITSLight("sessions/OTHER/2026-01-13/lights/d.fit", exptime: 9999)
+        try fixture.scan()
+
+        let result = try ProjectReportQuery(db: fixture.db, config: fixture.config).run(target: "PACE")
+
+        #expect(result.recentSessionIntegrationSeconds == [1800, 3600, 5400])
+    }
+
+    @Test("recentSessionIntegrationSeconds keeps only the most recent 5 sessions")
+    func recentSessionIntegrationSecondsCappedAtFive() throws {
+        let fixture = try ProjectReportQueryFixture.make()
+        defer { fixture.cleanup() }
+
+        for day in 10...16 { // 7 sessions, one per day, ascending exptime
+            try fixture.writeFITSLight(
+                "sessions/MANYNIGHTS/2026-01-\(day)/lights/a.fit", exptime: Double(day) * 60
+            )
+        }
+        try fixture.scan()
+
+        let result = try ProjectReportQuery(db: fixture.db, config: fixture.config).run(target: "MANYNIGHTS")
+
+        #expect(result.recentSessionIntegrationSeconds.count == 5)
+        // The two oldest (day 10 and 11, exptime 600/660) are dropped --
+        // only the most recent 5 (day 12...16) remain, oldest-first.
+        #expect(result.recentSessionIntegrationSeconds == [12, 13, 14, 15, 16].map { Double($0) * 60 })
+    }
 }

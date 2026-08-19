@@ -782,6 +782,8 @@ public struct ProjectWorkspaceView: View {
                     if let goalSeconds = report.projectState?.goalSeconds {
                         goalProgressText(report: report, goalSeconds: goalSeconds)
                             .font(.callout).foregroundStyle(.secondary)
+                        completionForecastText(report: report)
+                            .font(.callout).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -894,6 +896,51 @@ public struct ProjectWorkspaceView: View {
             Text("Goal: \(goalText) — \(AstroFormat.duration(seconds: missing)) remaining")
         } else {
             Text("Goal: \(goalText) — reached")
+        }
+    }
+
+    /// Expert ideation spec #2 ("még ~3 tiszta éjszaka a célig"): the stat
+    /// row right under `goalProgressText` that turns "X remaining" into
+    /// "about N more clear nights at your own real pace" -- the question
+    /// the raw remaining-hours number never actually answers by itself.
+    ///
+    /// Renders nothing at all (not even an empty placeholder) once the goal
+    /// is already met -- `goalProgressText`'s own "reached" branch already
+    /// covers that state, and `CompletionForecast.nightsNeeded` returning
+    /// `nil` for `remaining <= 0` is exactly the signal this reads to skip
+    /// the row. The other `nil` case that function has (fewer than 2 recent
+    /// sessions) is NOT silently skipped, though -- honesty rail: a reader
+    /// with a goal and no forecast yet must be told why, not left wondering
+    /// whether the row was forgotten. `report.projectState?.missingSeconds`
+    /// being absent entirely (an older decoded payload with no goal
+    /// resolved at all) renders nothing either, same "don't invent a goal"
+    /// rule the surrounding `if let goalSeconds = ...` at the call site
+    /// already applies to `goalProgressText`.
+    ///
+    /// Same `Text(_:)`-interpolation-literal requirement as
+    /// `goalProgressText`'s own doc comment explains -- `paceHoursText`/
+    /// `nightsText` are pre-formatted `String`s (never raw `Int`/`Double`
+    /// interpolation) so the extraction script records a `%@` key here, the
+    /// one `LocalizedStringKey` placeholder type a Hungarian `hu.lproj`
+    /// entry can actually be written against -- a raw `Int`/`Double`
+    /// interpolation instead emits a `%lld`/`%lf` key (see
+    /// `scripts/extract-localizable-strings.swift`'s own header comment).
+    @ViewBuilder
+    private func completionForecastText(report: ProjectReportQuery.Result) -> some View {
+        if let remaining = report.projectState?.missingSeconds, remaining > 0 {
+            if let estimate = CompletionForecast.nightsNeeded(
+                remainingSeconds: remaining,
+                recentSessionSeconds: report.recentSessionIntegrationSeconds
+            ) {
+                let paceHoursText = (estimate.paceSecondsPerNight / 3600)
+                    .formatted(.number.precision(.fractionLength(1)))
+                let nightsText = estimate.isCapped
+                    ? "\(AstroFormat.count(estimate.nightsNeeded))+"
+                    : AstroFormat.count(estimate.nightsNeeded)
+                Text("At your current pace (~\(paceHoursText) h/night) about ~\(nightsText) more clear nights are needed to reach the goal.")
+            } else if report.recentSessionIntegrationSeconds.count < 2 {
+                Text("Not enough data yet to estimate the pace.")
+            }
         }
     }
 }

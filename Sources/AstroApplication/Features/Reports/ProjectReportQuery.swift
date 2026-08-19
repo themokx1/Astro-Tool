@@ -136,6 +136,20 @@ public struct ProjectReportQuery: Sendable {
         public let plan: TargetPlan?
         public let projectState: ProjectState?
         public let filterRows: [FilterIntegration]
+        /// This target's own `TrendPoint.integrationSeconds`, oldest-to-
+        /// newest, truncated to the most recent 5 -- the completion-forecast
+        /// stat row's pace input (expert ideation spec #2, "még ~3 tiszta
+        /// éjszaka a célig"). Deliberately `TrendQueries.points` filtered by
+        /// target rather than `sessions`/`qualitySummaries` above: those two
+        /// already exist for other sections, but `TrendQueries` is the one
+        /// engine that already resolves "one entry per session, oldest
+        /// first, this target's usable integration" -- exactly what a pace
+        /// average needs -- so this reuses it rather than re-deriving the
+        /// same per-session roll-up a third way. See
+        /// `CompletionForecast.nightsNeeded` for how this list turns into a
+        /// night estimate, and `ProjectWorkspaceView.completionForecastText`
+        /// for why fewer than 2 entries here must not be silently averaged.
+        public let recentSessionIntegrationSeconds: [Double]
     }
 
     private let db: Database
@@ -200,6 +214,10 @@ public struct ProjectReportQuery: Sendable {
         let coordinateInfo = try TargetReport.resolveCoordinateInfo(target: target, db: db)
         let resolved = TargetNameResolver.resolve(folderName: target)
         let setupDescriptors = Array(Set(sessions.compactMap(\.setupDescriptor))).sorted()
+        let recentSessionIntegrationSeconds = try TrendQueries.points(db: db, config: config)
+            .filter { $0.target == target }
+            .suffix(5)
+            .map(\.integrationSeconds)
 
         return Result(
             target: target,
@@ -217,7 +235,8 @@ public struct ProjectReportQuery: Sendable {
             panelDeficits: MosaicBalance.deficits(panels: panelReport.panels),
             plan: plan,
             projectState: projectState,
-            filterRows: filterRows
+            filterRows: filterRows,
+            recentSessionIntegrationSeconds: recentSessionIntegrationSeconds
         )
     }
 }
