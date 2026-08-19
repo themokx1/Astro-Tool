@@ -64,6 +64,18 @@ private struct LibrariesSettingsView: View {
     @AppStorage("v2.library.scanOnOpen") private var scanOnOpen = true
     @AppStorage("v2.library.enableWriteOperations") private var enableWriteOperations = false
     let appModel: AppModel
+    /// V2 UI/UX audit -- same cross-scene rebuild pattern
+    /// `ImagingSetupsSettingsView`/`LocationSettingsView` already use:
+    /// `SessionResiduePatternsStore` reads `AppModel.currentLibraryRootURL`
+    /// only at construction, so this view rebuilds it on `.onChange` rather
+    /// than relying on a live binding across the two separate scenes.
+    @State private var patternsStore: SessionResiduePatternsStore
+    @State private var newSessionResiduePattern = ""
+
+    init(appModel: AppModel) {
+        self.appModel = appModel
+        _patternsStore = State(initialValue: SessionResiduePatternsStore(rootURL: appModel.currentLibraryRootURL))
+    }
 
     var body: some View {
         Form {
@@ -125,7 +137,61 @@ private struct LibrariesSettingsView: View {
                 Text("Every write still requires its own separate confirmation — this only unlocks the option.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Library rules") {
+                if !patternsStore.hasLibraryOpen {
+                    Label("Open a library first, using Choose Image Library… on Home.", systemImage: "externaldrive.badge.xmark")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(patternsStore.patterns.enumerated()), id: \.offset) { index, pattern in
+                        HStack {
+                            Text(pattern)
+                            Spacer()
+                            Button {
+                                patternsStore.remove(at: index)
+                            } label: {
+                                Image(systemName: "minus.circle")
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    HStack {
+                        TextField("Pattern, e.g. starless*", text: $newSessionResiduePattern)
+                            .onSubmit(addSessionResiduePattern)
+                            .accessibilityIdentifier("v2.settings.library-rules.new-pattern")
+                        Button(action: addSessionResiduePattern) {
+                            Image(systemName: "plus.circle")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("v2.settings.library-rules.add")
+                    }
+                    if let lastError = patternsStore.lastError {
+                        Text(lastError.errorDescription ?? "").foregroundStyle(AstroTokens.Color.critical)
+                    }
+                    HStack {
+                        Button("Restore Defaults") { patternsStore.restoreDefaults() }
+                            .accessibilityIdentifier("v2.settings.library-rules.restore-defaults")
+                        Spacer()
+                        if let saveMessage = patternsStore.saveMessage {
+                            Text(saveMessage).foregroundStyle(AstroTokens.Color.ok)
+                        }
+                    }
+                    Text("These patterns only count as processing residue inside the sessions area -- the same names (e.g. starless, result_...) are kept stack variants under stacks/processed.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityIdentifier("v2.settings.library-rules")
         }.formStyle(.grouped)
+        .onChange(of: appModel.currentLibraryRootURL) { _, newRootURL in
+            // Settings is a separate scene (see `LocationSettingsView`'s own
+            // doc comment): rebuilding the store is the only way this tab
+            // notices a library opening or switching afterward.
+            patternsStore = SessionResiduePatternsStore(rootURL: newRootURL)
+        }
+    }
+
+    private func addSessionResiduePattern() {
+        guard patternsStore.add(newSessionResiduePattern) else { return }
+        newSessionResiduePattern = ""
     }
 }
 

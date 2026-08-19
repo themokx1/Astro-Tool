@@ -2416,3 +2416,16 @@
 "Unmodified color" = "Nem modifikált színes";
 "Astro-modified color" = "Asztromodifikált színes";
 "Monochrome" = "Monokróm";
+/* `LibrariesSettingsView`'s new "Library rules" section (V2 UI/UX audit,
+   last task before v2.0.0): the session-residue pattern-list editor for
+   `AstroConfig.sessionResiduePatterns` (added by 3b8aeb0), ported over from
+   V1's `LibraryRulesSettingsView` -- unreachable from the default V2 shell
+   -- into the one settings surface V2 owners actually use. The "Open a
+   library first, using Choose Image Library… on Home." Label it falls back
+   to when no library is open already has an entry above
+   (`ImagingSetupsSettingsView`'s own identical fallback), so it needs no
+   new one here. */
+"Library rules" = "Könyvtárszabályok";
+"Pattern, e.g. starless*" = "Minta, pl. starless*";
+"Restore Defaults" = "Alaphelyzetbe állítás";
+"These patterns only count as processing residue inside the sessions area -- the same names (e.g. starless, result_...) are kept stack variants under stacks/processed." = "Ezek a minták csak a sessions területen számítanak feldolgozási maradéknak -- ugyanezek a nevek (pl. starless, result_...) a stacks/processed alatt megtartott stack-változatok.";
