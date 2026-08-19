@@ -172,7 +172,6 @@ struct SessionCardTests {
 
     @Test("A never-resolving loader times out to nil rather than hanging the export")
     func neverResolvingLoaderTimesOutToNil() async {
-        let start = ContinuousClock.now
         let result = await SessionCardThumbnailLoader.load(timeout: .milliseconds(50)) {
             // Sleeps far longer than the 50ms timeout below -- simulates a
             // wedged QuickLook daemon or a pathological FITS render that
@@ -185,12 +184,13 @@ struct SessionCardTests {
             try? await Task.sleep(for: .seconds(999))
             return nil
         }
-        let elapsed = start.duration(to: .now)
+        // The "did not hang" property is proven by this await RETURNING at
+        // all: without the timeout race the load would sleep ~999s and the
+        // whole test run would blow past its limit. Any wall-clock bound
+        // here -- even a "generous" multi-second one -- can starve under
+        // full-suite parallelism (observed 6.4s for a 50ms timeout on a
+        // loaded machine), so the result is the only thing asserted.
         #expect(result == nil)
-        // Generous upper bound (well above the 50ms timeout) -- the point is
-        // "did not hang", not a tight latency assertion that could flake
-        // under CI scheduling jitter.
-        #expect(elapsed < .seconds(5))
     }
 
     @Test("A loader that itself returns nil (load failure) also resolves to nil, same as a timeout")

@@ -8,6 +8,63 @@ történik.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-19
+
+A végleges 2.0.0: a béta lezárása. Tíz új funkció, a mérési út őszintesége,
+a feldolgozási maradékok teljes rendbetétele és az utolsó hiányzó
+beállítási felület, teljes átkattintásos ellenőrzés után.
+
+### Hozzáadva
+
+- **Indulás előtti lista** a Kezdőlapon: kalibráció, égbolt, Hold és a ma esti
+  fő célpont láthatósága egy ✓/✗ listában; ha minden rendben, egy sorrá csukódik.
+- **Éjszaka-idővonal** az éjszaka-munkatérben: szürkület-, célpont- és
+  felvételi sávok, a felvételi lyukak jelölésével.
+- **Éjszakák ranglistája** az Elemzésekben: mért capture-ök átlátható
+  rangsora FWHM, elfogadási arány és háttér szerint — csak a nyers számok
+  látszanak, rejtett pontszám nincs.
+- **„Ez a hónap tavalyhoz képest"** kártya és **év-összefoglaló** az
+  Elemzésekben; **Hold×égi háttér** összefüggés-kártya (mérésekből).
+- **Alacsony horizont-figyelmeztetés** a reggeli triázsban: ha a leggyengébb
+  keretek mind 35° alatt készültek, a digest kimondja.
+- **Műhold-csík gyanú** a triázsban: fedezeti jelzés, sosem automatikus elvetés.
+- **Felszerelés-összevetés** a Tervezésben: „Összevetés" választóval bármelyik
+  másik mentett összeállítás képkivágása ugyanarra a célpontra.
+- **Két rig, egy éjszaka**: a Kezdőlap javaslata, melyik géped melyik ma esti
+  célpontra való — katalógusméretből vagy a saját előzményeidből.
+- **Célpont-történet** a projektoldalon: első fény, gyűjtések és elkészült
+  stackek idővonala.
+- **Ismétlődő tanulságok**: ha az utolsó éjszakáid többségén fókuszcsúszás
+  vagy hűtési gond volt, a Kezdőlap megnevezi.
+- **Session-kártya export**: 1200×675 megosztható PNG egy éjszakáról,
+  reprezentatív képkockával.
+- **Mérés indítása** gomb az Elemzésekben: valódi csillagmérés (FWHM) a gyors
+  triázs-értékeléstől függetlenül.
+- **Felszerelés-szerkesztő** a Beállításokban: összeállítások felvétele,
+  szerkesztése, törlése a V2 felületen; a Tervezés mostantól a configból
+  olvassa a felszereléseket.
+- **Session-residue minták**: területfüggő maradék-felismerés (a `stacks/`
+  és `processed/` alatt a starless/starmask változat érték, a session-fában
+  maradék), szerkeszthető mintalistával a Beállításokban.
+- **Weboldal**: letisztult bemutatkozó oldal a projekthez (`website/`).
+
+### Javítva
+
+- A **stack-termékek nem minősülnek többé light frame-nek**: az IMAGETYP-öröklés
+  miatt tévesen előléptetett fájlokat a beolvasás magától visszasorolja, a
+  szűrő-statisztikából eltűntek a hamis „Starless/StarMask" sorok, és az
+  integrációs összegek a valódi expozíciót mutatják.
+- Az **értékelés-gomb őszintesége**: a RAW (CR3) képkockák nem mérhetők — a
+  felület ezt kimondja és nem ígéri őket „értékeletlenként".
+- A **tabsor nem ugrál** az éjszaka- és projekt-munkatérben tabváltáskor.
+- Az oldalsáv **Liquid Glass** hatása a Finderéhez igazodik.
+- A rig-összevetés mondata nem tör mondat közben nagybetűre; a szűk oszlopban
+  nem csonkul.
+- A támogatási diagnosztika a valódi időjárás-kapcsolót jelenti.
+- A blink-review szegélyfilmje sötét módban is sötétít, nem világosít.
+- Belső egységesítés: a fingerprint-számítás, az éjszaka-metszet és az
+  IMAGETYP-szerepfeloldás egy-egy kanonikus motorra konvergál.
+
 ## [2.0.0-rc.7] - 2026-08-19
 
 A szakértő kiadás: egy szenior-asztrofotós szemlélettel végzett audit, amely a
