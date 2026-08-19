@@ -8,7 +8,10 @@ import Testing
     #expect(config.rootPath.isEmpty)
     #expect(config.excludedDirNames == ["tools"])
     #expect(config.excludedPaths == [])
-    #expect(config.residuePatterns == ["*.seq", "*.lst", "*_conv*", "*_bkg*", "*_pp_*", "r_*", "bkg_*", ".DS_Store"])
+    #expect(config.residuePatterns == [
+        "*.seq", "*.lst", "*_conv*", "*_bkg*", "*_pp_*", "r_*", "bkg_*", ".DS_Store",
+        "veralux_*", "*stack_work*", "*_synt*", "fixstars*", "*star recomposition result*",
+    ])
     #expect(config.residueDirNames == ["process"])
     #expect(config.toolOutputDirNames == ["Stack", "Review", "Reject", "light_frame_rating_report_assets", "masters"])
     #expect(config.intentional == IntentionalPatterns())

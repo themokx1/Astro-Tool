@@ -603,7 +603,33 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         rootPath: String = "",
         excludedDirNames: [String] = ["tools"],
         excludedPaths: [String] = [],
-        residuePatterns: [String] = ["*.seq", "*.lst", "*_conv*", "*_bkg*", "*_pp_*", "r_*", "bkg_*", ".DS_Store"],
+        residuePatterns: [String] = [
+            "*.seq", "*.lst", "*_conv*", "*_bkg*", "*_pp_*", "r_*", "bkg_*", ".DS_Store",
+            // Stack-PRODUCT names (not intermediate files) confirmed against
+            // a real library as loose session-area residue that inherits
+            // IMAGETYP='Light Frame' and gets wrongly promoted by
+            // `LibraryScanner`'s IMAGETYP-based loose-frame refinement (see
+            // `ResidueMatcherRealLibraryTests`). Deliberately EXCLUDES
+            // `starless`/`starmask`/`graxpert_result` tokens despite those
+            // accounting for most of the confirmed pollution: this same
+            // vocabulary is first-class, WANTED `StackVariantKind`
+            // (`.starless`/`.starmask`/`.edited`) output in the `stacks/`/
+            // `processed/` areas (`Stats/StackDiscovery.swift`), which
+            // hardcodes this exact default list to decide what to skip as
+            // junk before variant-kind classification runs. Adding those
+            // tokens here made `StackDiscovery` reject real stack variants
+            // (6 test failures: `StackDiscoveryTests`, `ResultsQueryTests`,
+            // `ResultsStoreTests`, `CLISmokeTests`) -- residue-ness for that
+            // vocabulary is area-dependent (junk loose in `sessions/`, a
+            // keeper in `stacks/`/`processed/`), which a single flat global
+            // pattern list can't express. Catches 10 of 48 confirmed
+            // wrongly-promoted files with zero matches among ~4200 other
+            // session light frames; the remaining 38 (35 starless/starmask +
+            // the 3 bare `Ha.fit`/`Oiii.fit`/`RGB.fit` filter-name-only
+            // basenames) need an area-scoped fix in `Scanner`/
+            // `ResidueMatcher` to catch safely, tracked separately.
+            "veralux_*", "*stack_work*", "*_synt*", "fixstars*", "*star recomposition result*",
+        ],
         residueDirNames: [String] = ["process"],
         toolOutputDirNames: [String] = ["Stack", "Review", "Reject", "light_frame_rating_report_assets", "masters"],
         intentional: IntentionalPatterns = IntentionalPatterns(),
