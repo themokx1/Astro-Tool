@@ -577,6 +577,64 @@ struct HomeStoreTests {
             exposureSeconds: exposure, filterName: nil, filterID: nil, gain: nil,
             offset: nil, binning: "1x1")
     }
+
+    // MARK: - Expert ideation spec #5 (First-Light Anniversaries + honest
+    // milestones): `composeHighlights`'s own priority/cap rule.
+
+    @Test("Anniversaries and milestones both fit when there is room under the cap")
+    func composeHighlightsKeepsBothWhenUnderCap() {
+        let anniversary = AnniversaryHit(
+            projectID: UUID(), catalogID: "IC 1805", displayName: "IC 1805", yearsAgo: 3, firstLightDate: "2023-08-19"
+        )
+        let milestone = MilestoneHit(
+            projectID: UUID(), catalogID: "NGC 7000", displayName: "NGC 7000", thresholdHours: 100
+        )
+
+        let highlights = HomeStore.composeHighlights(anniversaries: [anniversary], milestones: [milestone])
+
+        #expect(highlights.count == 2)
+        #expect(highlights[0].kind == .anniversary(yearsAgo: 3))
+        #expect(highlights[1].kind == .milestone(hours: 100))
+    }
+
+    @Test("Anniversaries outrank milestones outright -- a milestone is dropped once two anniversaries fill the card")
+    func composeHighlightsPrioritizesAnniversariesOverMilestones() {
+        let bigAnniversary = AnniversaryHit(
+            projectID: UUID(), catalogID: "M 31", displayName: "M 31", yearsAgo: 5, firstLightDate: "2021-08-19"
+        )
+        let smallAnniversary = AnniversaryHit(
+            projectID: UUID(), catalogID: "IC 1805", displayName: "IC 1805", yearsAgo: 1, firstLightDate: "2025-08-19"
+        )
+        let milestone = MilestoneHit(
+            projectID: UUID(), catalogID: "NGC 7000", displayName: "NGC 7000", thresholdHours: 250
+        )
+
+        let highlights = HomeStore.composeHighlights(
+            anniversaries: [bigAnniversary, smallAnniversary], milestones: [milestone]
+        )
+
+        #expect(highlights.count == 2)
+        #expect(highlights.allSatisfy { if case .anniversary = $0.kind { true } else { false } })
+    }
+
+    @Test("Three anniversaries firing the same day show only the two largest")
+    func composeHighlightsCapsAtTwo() {
+        let anniversaries = [
+            AnniversaryHit(projectID: UUID(), catalogID: "M 31", displayName: "M 31", yearsAgo: 5, firstLightDate: "2021-08-19"),
+            AnniversaryHit(projectID: UUID(), catalogID: "IC 1805", displayName: "IC 1805", yearsAgo: 3, firstLightDate: "2023-08-19"),
+            AnniversaryHit(projectID: UUID(), catalogID: "M 42", displayName: "M 42", yearsAgo: 1, firstLightDate: "2025-08-19"),
+        ]
+
+        let highlights = HomeStore.composeHighlights(anniversaries: anniversaries, milestones: [])
+
+        #expect(highlights.count == 2)
+        #expect(highlights.map(\.catalogID) == ["M 31", "IC 1805"])
+    }
+
+    @Test("An ordinary day with neither anniversaries nor milestones shows nothing")
+    func composeHighlightsIsEmptyOnAnOrdinaryDay() {
+        #expect(HomeStore.composeHighlights(anniversaries: [], milestones: []).isEmpty)
+    }
 }
 
 /// W5-2 finding 5 (owner pixel review): cold start on a spun-down SSD spent

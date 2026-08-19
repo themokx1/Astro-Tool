@@ -126,6 +126,7 @@ public struct HomeView: View {
                 // app's three "night-shaped" numbers by design.
                 MetricCard(title: "Nights", value: "\(store.snapshot.nightCount)", detail: "Deduplicated calendar nights", systemImage: "moon.stars")
             }
+            highlightsCard
             // Task 7 (2026-08-17, GroupBox removal): a heading plus spacing,
             // not a box on a box -- `GroupBox` painted macOS's default
             // opaque grey panel here, which is exactly the "strange grey
@@ -193,6 +194,61 @@ public struct HomeView: View {
             cloudyDarksCard
         }
         .accessibilityIdentifier("v2.home.library-overview")
+    }
+
+    /// Expert ideation spec #5 ("First-Light Anniversaries + honest
+    /// milestones"): the card the owner screenshots -- real dates, real
+    /// integration-hour thresholds, zero invented scoring. Renders nothing
+    /// on an ordinary day (`store.snapshot.highlights.isEmpty`), the same
+    /// only-when-there's-something-real pattern `ratingGateCard`/
+    /// `cloudyDarksCard` already follow. `HomeStore.composeHighlights`
+    /// already capped/prioritized this list -- this view only ever renders
+    /// what it was handed, never counts or re-sorts anything itself.
+    @ViewBuilder
+    private var highlightsCard: some View {
+        let highlights = store.snapshot.highlights
+        if !highlights.isEmpty {
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+                Text("Worth celebrating").font(.headline)
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(highlights) { highlight in
+                        HStack(spacing: 8) {
+                            Image(systemName: highlightSystemImage(highlight.kind))
+                                .foregroundStyle(AstroTokens.Color.accent)
+                            highlightText(highlight)
+                        }
+                        .font(.callout)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .astroRaisedSurface()
+            .accessibilityIdentifier("v2.home.highlights")
+        }
+    }
+
+    private func highlightSystemImage(_ kind: HomeSnapshot.Highlight.Kind) -> String {
+        switch kind {
+        case .anniversary: "birthday.cake.fill"
+        case .milestone: "trophy.fill"
+        }
+    }
+
+    /// Both branches interpolate ONLY pre-formatted `String`s
+    /// (`String(yearsAgo)`/`String(hours)`, `highlight.displayName` is
+    /// already one) -- an `Int` interpolated straight into a
+    /// `LocalizedStringKey` emits a `%lld` runtime key while this
+    /// codebase's own extraction script normalizes every interpolation to
+    /// `%@` (see `NightContextRail`'s "Nearest clear night" comment for the
+    /// same rule applied there); pre-formatting keeps the hand-added
+    /// `hu.lproj` key matching what actually renders at runtime.
+    private func highlightText(_ highlight: HomeSnapshot.Highlight) -> Text {
+        switch highlight.kind {
+        case .anniversary(let yearsAgo):
+            Text("\(String(yearsAgo)) years ago today: first light on \(highlight.displayName)")
+        case .milestone(let hours):
+            Text("Reached the \(String(hours))-hour milestone on \(highlight.displayName)")
+        }
     }
 
     /// W7-E workflow #1 (2026-08-18 owner audit, "rating is the gate on half

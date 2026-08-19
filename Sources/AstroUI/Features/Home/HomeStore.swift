@@ -198,6 +198,16 @@ public struct HomeSnapshot: Equatable, Sendable {
     /// the callout only ever shows once a real query says there is something
     /// to drive through.
     public let ratingGate: RatingGate
+    /// Expert ideation spec #5 ("First-Light Anniversaries + honest
+    /// milestones"): today's own real, screenshot-worthy facts about this
+    /// library -- a project whose first light lands on today's exact date N
+    /// years ago, or one that just crossed a real integration-hour
+    /// threshold. `[]` on every ordinary day, the same "nothing real, so
+    /// nothing shown" contract `RatingGate.clear`/`NightContext.unconfigured`
+    /// already keep -- `HomeStore.composeHighlights` is the one place that
+    /// builds this list (from `AnniversaryQuery`/`MilestoneQuery`, capped and
+    /// prioritized), never counted or judged again here or in the view body.
+    public let highlights: [Highlight]
 
     /// One `(target, sessionDate)` session anchors `FrameRatingCommand`'s own
     /// scope (`firstKnownFrame`), so `unratedNightCount` here counts exactly
@@ -218,6 +228,35 @@ public struct HomeSnapshot: Equatable, Sendable {
         public static let clear = RatingGate(unratedNightCount: 0, sensorProfileMeasured: true)
     }
 
+    /// One anniversary or milestone card-line, expert ideation spec #5.
+    /// `HomeView` maps `kind` to an SF Symbol and a `LocalizedStringKey` at
+    /// the view layer (the same `ProjectNextActionKind.localizedTitle`
+    /// pattern `ProjectsStore.swift` already establishes) -- this domain
+    /// model carries no display string of its own, only the real numbers
+    /// (`yearsAgo`/`hours`) and the project identity behind them.
+    public struct Highlight: Equatable, Sendable, Identifiable {
+        public enum Kind: Equatable, Sendable {
+            case anniversary(yearsAgo: Int)
+            case milestone(hours: Int)
+        }
+        public let kind: Kind
+        public let catalogID: String
+        public let displayName: String
+
+        public init(kind: Kind, catalogID: String, displayName: String) {
+            self.kind = kind
+            self.catalogID = catalogID
+            self.displayName = displayName
+        }
+
+        public var id: String {
+            switch kind {
+            case .anniversary(let yearsAgo): "anniversary|\(catalogID)|\(yearsAgo)"
+            case .milestone(let hours): "milestone|\(catalogID)|\(hours)"
+            }
+        }
+    }
+
     public init(
         libraryName: String?,
         nightContext: NightContext,
@@ -229,7 +268,8 @@ public struct HomeSnapshot: Equatable, Sendable {
         hasActiveProjectsExcludedTonight: Bool = false,
         nightCloud: NightCloud? = nil,
         nightCloudError: WeatherError? = nil,
-        ratingGate: RatingGate = .clear
+        ratingGate: RatingGate = .clear,
+        highlights: [Highlight] = []
     ) {
         self.libraryName = libraryName
         self.nightContext = nightContext
@@ -242,6 +282,7 @@ public struct HomeSnapshot: Equatable, Sendable {
         self.nightCloud = nightCloud
         self.nightCloudError = nightCloudError
         self.ratingGate = ratingGate
+        self.highlights = highlights
     }
 
     /// Neutral preview content: it conveys the shape of the workspace without
@@ -277,6 +318,11 @@ public final class HomeStore {
     /// for the same reason every other provider here is: tests supply a
     /// fixed result without a real FITS-backed library or index DB.
     public typealias RatingGateProvider = @Sendable (URL) async throws -> HomeSnapshot.RatingGate
+    /// Expert ideation spec #5: resolves today's anniversary/milestone
+    /// highlights for an open library. Injectable for the same reason every
+    /// other provider here is: tests supply a fixed result without a real
+    /// FITS-backed library, index DB, or milestone ledger file on disk.
+    public typealias HighlightsProvider = @Sendable (URL) async throws -> [HomeSnapshot.Highlight]
     public private(set) var snapshot: HomeSnapshot
     /// The full plan `tonightRecommendations` was sliced from (`prefix(8)`,
     /// display-only) -- kept around so the "Export Plan" menu
@@ -294,6 +340,7 @@ public final class HomeStore {
     private let nightContextProvider: NightContextProvider
     private let weatherProvider: WeatherProvider
     private let ratingGateProvider: RatingGateProvider
+    private let highlightsProvider: HighlightsProvider
     /// Bumped at the start of every `loadWeather(rootURL:)` call and captured
     /// into that call's own local `generation` -- the weather fetch runs as
     /// its own fire-and-forget `Task` (never awaited by `configure`, so a
@@ -327,7 +374,8 @@ public final class HomeStore {
         calibCoverageProvider: CalibCoverageProvider? = nil,
         nightContextProvider: NightContextProvider? = nil,
         weatherProvider: WeatherProvider? = nil,
-        ratingGateProvider: RatingGateProvider? = nil
+        ratingGateProvider: RatingGateProvider? = nil,
+        highlightsProvider: HighlightsProvider? = nil
     ) {
         self.snapshot = snapshot
         self.tonightProvider = tonightProvider ?? HomeStore.productionTonight
@@ -335,6 +383,7 @@ public final class HomeStore {
         self.nightContextProvider = nightContextProvider ?? HomeStore.productionNightContext
         self.weatherProvider = weatherProvider ?? HomeStore.productionWeather
         self.ratingGateProvider = ratingGateProvider ?? HomeStore.productionRatingGate
+        self.highlightsProvider = highlightsProvider ?? HomeStore.productionHighlights
     }
 
     public func replaceSnapshot(_ snapshot: HomeSnapshot) {
@@ -389,7 +438,8 @@ public final class HomeStore {
             hasActiveProjectsExcludedTonight: snapshot.hasActiveProjectsExcludedTonight,
             nightCloud: nightCloud,
             nightCloudError: nightCloudError,
-            ratingGate: snapshot.ratingGate
+            ratingGate: snapshot.ratingGate,
+            highlights: snapshot.highlights
         )
     }
 
@@ -507,6 +557,15 @@ public final class HomeStore {
         } else {
             .clear
         }
+        // Expert ideation spec #5: same "await it inline, honest empty
+        // default on failure" shape as `ratingGate` above -- a fast,
+        // synchronous read (project snapshots plus one small JSON ledger),
+        // never worth `loadWeather`'s fire-and-forget dance.
+        let highlights: [HomeSnapshot.Highlight] = if let rootURL {
+            (try? await highlightsProvider(rootURL)) ?? []
+        } else {
+            []
+        }
         snapshot = HomeSnapshot(
             libraryName: libraryName,
             nightContext: nightContext,
@@ -516,7 +575,8 @@ public final class HomeStore {
             nextProjectIntegrationSeconds: next?.1 ?? 0,
             tonightRecommendations: Array(recommendations),
             hasActiveProjectsExcludedTonight: hasActiveProjectsExcludedTonight,
-            ratingGate: ratingGate
+            ratingGate: ratingGate,
+            highlights: highlights
         )
         // Fire-and-forget, same reasoning as V1's `AppState.loadWeather`
         // (called right after its own site-scoped load lands): weather is
@@ -742,6 +802,66 @@ public final class HomeStore {
             unratedNightCount: coverage.unratedNightCount,
             sensorProfileMeasured: !sensorProfiles.profiles.isEmpty
         )
+    }
+
+    /// Expert ideation spec #5: the COMBINED anniversary + milestone list,
+    /// capped and prioritized -- extracted as its own pure function (the
+    /// same "extract the pure decision, test it directly" shape
+    /// `cloudOutlook`/`isShootableTonight` above already use) so
+    /// `HomeStoreTests` can exercise the priority/cap rule directly against
+    /// plain `AnniversaryHit`/`MilestoneHit` fixtures rather than a real
+    /// library.
+    ///
+    /// Anniversaries sort ahead of milestones outright (a first-light
+    /// anniversary is the rarer, more personal fact of the two), each group
+    /// already sorted with its own largest hit first
+    /// (`AnniversaryQuery.anniversaries`/`MilestoneQuery.evaluate`'s own
+    /// sort) -- "prioritize larger anniversaries" from the spec. The
+    /// combined list is then capped to `AnniversaryQuery.maximumHits` (2):
+    /// three anniversaries firing the same day show only the two largest,
+    /// and a milestone is dropped entirely once two anniversaries already
+    /// fill the card.
+    static func composeHighlights(
+        anniversaries: [AnniversaryHit],
+        milestones: [MilestoneHit]
+    ) -> [HomeSnapshot.Highlight] {
+        let anniversaryHighlights = anniversaries.map {
+            HomeSnapshot.Highlight(kind: .anniversary(yearsAgo: $0.yearsAgo), catalogID: $0.catalogID, displayName: $0.displayName)
+        }
+        let milestoneHighlights = milestones.map {
+            HomeSnapshot.Highlight(kind: .milestone(hours: $0.thresholdHours), catalogID: $0.catalogID, displayName: $0.displayName)
+        }
+        return Array((anniversaryHighlights + milestoneHighlights).prefix(AnniversaryQuery.maximumHits))
+    }
+
+    /// Expert ideation spec #5: resolves every project's own snapshot for
+    /// `rootURL` (the same per-project `ProjectsQuery.project(id:)` loop
+    /// `ProjectsStore.makeWorkspaceRows` already uses to build its own
+    /// workspace rows), feeds them to `AnniversaryQuery`/`MilestoneQuery`,
+    /// and persists the milestone ledger's updated totals -- the ONE place
+    /// in this feature that touches the metadata store or the small JSON
+    /// ledger file. A ledger write failure is swallowed (`try?`): a
+    /// milestone that fails to persist just risks re-firing next time,
+    /// which is a far more honest failure mode than losing today's card or
+    /// throwing the whole dashboard load.
+    public static func productionHighlights(rootURL: URL) async throws -> [HomeSnapshot.Highlight] {
+        let metadata = try ProjectsStore.productionMetadata(rootURL: rootURL)
+        let query = ProjectsQuery(metadata: metadata)
+        var snapshots: [ProjectSnapshot] = []
+        for project in try await metadata.projects() {
+            if let snapshot = try await query.project(id: project.id) {
+                snapshots.append(snapshot)
+            }
+        }
+
+        let anniversaries = AnniversaryQuery.anniversaries(projects: snapshots)
+
+        let ledger = try MilestoneLedger.production(rootURL: rootURL)
+        let previousTotals = ledger.load()
+        let (milestones, updatedTotals) = MilestoneQuery.evaluate(projects: snapshots, previousTotals: previousTotals)
+        try? ledger.save(updatedTotals)
+
+        return composeHighlights(anniversaries: anniversaries, milestones: milestones)
     }
 
     /// Darks + flats concatenated into one list -- same "one merged coverage
