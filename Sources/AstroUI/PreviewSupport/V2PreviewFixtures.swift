@@ -476,6 +476,18 @@ public func refuseRealLibrary(
     fileManager: FileManager = .default
 ) throws {
     let candidate = V2PreviewFixtures.canonicalPath(url)
+    // `canonicalPath` resolves symlinks component-by-component via
+    // `resolvingSymlinksInPath()`, which silently leaves a DANGLING link
+    // unresolved -- its target does not exist (yet), which is exactly the
+    // state a soon-to-be-created home library is in. A fixture tree never
+    // legitimately contains symlinks, so any link component still present
+    // in the canonical path is refused outright instead of trusting the
+    // partially resolved result. (Caught on CI: the escape test's ~/Astro
+    // target exists on no GitHub runner, the link stayed unresolved, and
+    // the guard waved the escape through.)
+    if containsSymlinkComponent(candidate, fileManager: fileManager) {
+        throw V2UITestFixtureError.nonTemporaryLibrary(candidate.path)
+    }
     let mountedLibrary = URL(fileURLWithPath: "/Volumes/images", isDirectory: true)
     let home = V2PreviewFixtures.canonicalPath(fileManager.homeDirectoryForCurrentUser)
     let homeAstroFolders = [
@@ -492,6 +504,30 @@ public func refuseRealLibrary(
     else {
         throw V2UITestFixtureError.nonTemporaryLibrary(candidate.path)
     }
+}
+
+/// Whether any component of `url` is itself a symbolic link.
+/// `attributesOfItem` does not follow links, so a dangling link (the case
+/// `canonicalPath` cannot resolve) still reports `.typeSymbolicLink`;
+/// components that do not exist at all simply report nothing and pass.
+private func containsSymlinkComponent(_ url: URL, fileManager: FileManager) -> Bool {
+    // `/tmp`, `/var` and `/etc` are the OS's own aliases into `/private`;
+    // `resolvingSymlinksInPath()` deliberately never resolves them (it
+    // REMOVES a `/private` prefix instead), so a canonical path may keep
+    // them as its first component. They are not escape vectors --
+    // `isControlledUITestTemporaryPath` already treats the two hierarchies
+    // as one -- so only links deeper in the path count.
+    let rootAliases: Set<String> = ["tmp", "var", "etc"]
+    var prefix = URL(fileURLWithPath: "/", isDirectory: true)
+    for (index, component) in url.pathComponents.dropFirst().enumerated() {
+        prefix.appendPathComponent(component)
+        if index == 0, rootAliases.contains(component) { continue }
+        if let type = (try? fileManager.attributesOfItem(atPath: prefix.path))?[.type] as? FileAttributeType,
+           type == .typeSymbolicLink {
+            return true
+        }
+    }
+    return false
 }
 
 private func isControlledUITestTemporaryPath(_ url: URL, home: URL) -> Bool {

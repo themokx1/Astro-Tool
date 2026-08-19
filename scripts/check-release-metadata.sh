@@ -14,11 +14,11 @@ if [ ! -s "$NOTES" ]; then
     echo "ERROR: required release notes are missing: $NOTES" >&2
     exit 1
 fi
-if ! rg --fixed-strings "# AstroTool $VERSION" "$NOTES" >/dev/null; then
+if ! grep -F "# AstroTool $VERSION" "$NOTES" >/dev/null; then
     echo "ERROR: $NOTES does not identify AstroTool $VERSION." >&2
     exit 1
 fi
-if ! rg --fixed-strings "## [$VERSION]" CHANGELOG.md >/dev/null; then
+if ! grep -F "## [$VERSION]" CHANGELOG.md >/dev/null; then
     echo "ERROR: CHANGELOG.md has no $VERSION section." >&2
     exit 1
 fi

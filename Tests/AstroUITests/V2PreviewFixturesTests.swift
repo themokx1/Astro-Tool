@@ -242,6 +242,31 @@ struct V2PreviewFixturesTests {
         }
     }
 
+    @Test("A DANGLING symlink (target does not exist) is refused too, on every machine")
+    func rejectsDanglingSymlinkEscape() throws {
+        // On a machine where ~/Astro exists the test above exercises the
+        // resolved-link path; on one where it doesn't (every CI runner) the
+        // link dangles and `resolvingSymlinksInPath()` cannot resolve it.
+        // This case pins the dangling variant deterministically by pointing
+        // at a target that exists nowhere.
+        let container = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "AstroTool-V2-UI-Fixture-Dangling-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let link = container.appendingPathComponent("Escape", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: container) }
+        try FileManager.default.createDirectory(at: container, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(
+            at: link,
+            withDestinationURL: FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Astro-Nonexistent-\(UUID().uuidString)", isDirectory: true)
+        )
+
+        #expect(throws: V2UITestFixtureError.self) {
+            try refuseRealLibrary(link.appendingPathComponent("DemoLibrary", isDirectory: true))
+        }
+    }
+
     private func allRelativePaths(
         in root: URL,
         fileManager: FileManager = .default

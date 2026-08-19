@@ -20,18 +20,18 @@ forbidden=(
 
 failed=0
 for needle in "${forbidden[@]}"; do
-    if rg --fixed-strings --line-number "$needle" "${targets[@]}"; then
+    if grep -rFn "$needle" "${targets[@]}"; then
         echo "ERROR: public/production placeholder found: $needle" >&2
         failed=1
     fi
 done
 
-if ! rg --fixed-strings 'public static let version = "2.0.0"' Sources/AstroCore/Product/ProductInfo.swift >/dev/null; then
+if ! grep -F 'public static let version = "2.0.0"' Sources/AstroCore/Product/ProductInfo.swift >/dev/null; then
     echo "ERROR: ProductInfo is not version 2.0.0" >&2
     failed=1
 fi
 
-if rg --fixed-strings 'INSTALL_DIR=' build.sh >/dev/null; then
+if grep -F 'INSTALL_DIR=' build.sh >/dev/null; then
     echo "ERROR: build.sh must not install as a side effect" >&2
     failed=1
 fi
