@@ -77,6 +77,16 @@ public struct InsightsSnapshot: Equatable, Sendable {
     /// background rather than only ones already resolved to a capture
     /// group.
     public let moonSkyCorrelation: MoonSkyCorrelationSummary
+    /// Expert ideation reserve #9 ("Év-összegző Wrapped"): the year-card's
+    /// data, built from the exact same `trendPointsProvider` the Moon-sky
+    /// card above reads (never a second, year-scoped query) -- `AstroCore`'s
+    /// `YearWrapped.summarize` itself does the year-filtering, since it also
+    /// needs every OTHER year's points to tell "first light this year" apart
+    /// from "merely continued this year" (see that function's own doc
+    /// comment). `nil` whenever `year` (this snapshot's own scope) is `nil`
+    /// -- "Minden év" has no single year to summarize -- or when the
+    /// selected year holds no session at all.
+    public let yearWrapped: YearWrapped?
     public let isReadOnly: Bool
     public var bestMonth: MonthlyCapture? { months.max { $0.integrationSeconds < $1.integrationSeconds } }
     public var averageIntegrationPerNight: Double {
@@ -436,6 +446,7 @@ public struct InsightsQuery: Sendable {
             filterUsage: filterUsage, setupUsage: setupUsage,
             rejectedFrameCount: rejectedFrameCount, captureTrendPoints: capturePoints,
             moonSkyCorrelation: Self.moonSkyCorrelationSummary(points: trendPoints),
+            yearWrapped: year.flatMap { YearWrapped.summarize(points: trendPoints, year: $0) },
             isReadOnly: true
         )
     }

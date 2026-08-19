@@ -409,4 +409,70 @@ struct InsightsQueryTests {
             #expect(bucket.medianMagnitudePerArcsec2 == nil)
         }
     }
+
+    // MARK: - Year Wrapped (expert ideation reserve #9)
+
+    /// No `year` given ("Minden év") means no single year to summarize --
+    /// `yearWrapped` stays `nil` regardless of how much history is on
+    /// record, matching `InsightsView`'s own "only on a selected year"
+    /// visibility rule.
+    @Test("Year Wrapped stays nil when no year is selected")
+    func yearWrappedNilWithoutYearSelection() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let index = directory.appendingPathComponent("index.sqlite")
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("""
+        CREATE TABLE files(id INTEGER PRIMARY KEY, area TEXT, target TEXT, session_date TEXT, role TEXT, missing INTEGER);
+        CREATE TABLE fits_meta(file_id INTEGER PRIMARY KEY, exptime REAL);
+        """)
+
+        let points = [
+            TrendPoint(target: "M42", date: "2026-01-10", sessionStartDate: "2026-01-10", integrationSeconds: 600, usableFrameCount: 5),
+        ]
+
+        let result = try await InsightsQuery(
+            indexDatabaseForTesting: index,
+            trendPointsForTesting: { points }
+        ).snapshot()
+
+        #expect(result.yearWrapped == nil)
+    }
+
+    /// Selecting a year with real sessions on record builds the year card
+    /// from the SAME `trendPointsForTesting` provider the Moon-sky card
+    /// reads -- never a second, independently-queried trend list -- and
+    /// `AstroCore`'s own `YearWrapped.summarize` does the year isolation.
+    @Test("Year Wrapped summarizes the selected year from the same trend points the Moon-sky card reads")
+    func yearWrappedSummarizesSelectedYear() async throws {
+        func point(_ target: String, _ date: String, seconds: Double = 600) -> TrendPoint {
+            TrendPoint(target: target, date: date, sessionStartDate: date, integrationSeconds: seconds, usableFrameCount: 5)
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let index = directory.appendingPathComponent("index.sqlite")
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("""
+        CREATE TABLE files(id INTEGER PRIMARY KEY, area TEXT, target TEXT, session_date TEXT, role TEXT, missing INTEGER);
+        CREATE TABLE fits_meta(file_id INTEGER PRIMARY KEY, exptime REAL);
+        """)
+
+        let points = [
+            point("NGC 2237", "2026-02-01", seconds: 3600),
+            point("M45", "2025-12-01", seconds: 1200),
+        ]
+
+        let result = try await InsightsQuery(
+            indexDatabaseForTesting: index,
+            trendPointsForTesting: { points }
+        ).snapshot(year: 2026)
+
+        let wrapped = try #require(result.yearWrapped)
+        #expect(wrapped.year == 2026)
+        #expect(wrapped.sessionCount == 1)
+        #expect(wrapped.mostShotTarget?.target == "NGC 2237")
+        #expect(wrapped.firstLights == ["NGC 2237"])
+    }
 }
