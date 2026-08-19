@@ -119,6 +119,28 @@ public struct InsightsView: View {
                 if selectedYear != nil, let wrapped = insight.yearWrapped {
                     yearWrappedCard(wrapped)
                 }
+                // Ideation #3 ("Ez a hónap tavalyhoz képest", "This month vs
+                // last year"): a small, always-fresh companion to the Year
+                // Wrapped card above -- visible year-round (unlike Year
+                // Wrapped, which only makes sense once a specific PAST year
+                // is chosen) since "this month" always means the real
+                // current calendar month, never whatever the Period picker
+                // happens to be scoped to. Judgment call on visibility:
+                // shown on "Minden év" (`selectedYear == nil`) AND when the
+                // picker is on THIS calendar year (`selectedYear ==
+                // insight.currentYear`) -- browsing an older year (say 2024)
+                // would show a "this month" comparison unrelated to what's
+                // on screen, so it drops there even though
+                // `InsightsQuery.snapshot` always computes the underlying
+                // data regardless of scope (`InsightsSnapshot.
+                // yearOverYearComparison`'s own doc comment). Unlike the
+                // guard above, this one does not gate on the comparison
+                // itself being non-nil: the card still renders (with an
+                // honest empty state) when there is no prior-year data yet
+                // -- see `monthOverYearCard`'s own doc comment.
+                if selectedYear == nil || selectedYear == insight.currentYear {
+                    monthOverYearCard(insight.yearOverYearComparison, currentMonth: insight.currentMonth)
+                }
                 if insight.hasDuplicateExposure {
                     Text("Duplicate frames in the index were counted once — raw index total before dedup: \(duration(insight.grossIntegrationSeconds))")
                         .font(.caption).foregroundStyle(.secondary)
@@ -577,6 +599,143 @@ public struct InsightsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .astroRecessedSurface()
+    }
+
+    // Ideation #3 ("Ez a hónap tavalyhoz képest", "This month vs last
+    // year"): unlike `yearWrappedCard` above, this card takes its data as
+    // an OPTIONAL and still renders (with an honest empty state) when
+    // `comparison` is `nil` -- a fresh library's very first August, say,
+    // has genuinely nothing to compare against yet, and the whole point of
+    // this card (checking in every single month, not once a year) means it
+    // should say so rather than silently vanish the way `yearWrappedCard`
+    // does for an empty year. Reuses `yearWrappedTile` verbatim for its own
+    // stat tiles -- same raised/recessed surface vocabulary, no second
+    // near-duplicate tile helper.
+    private func monthOverYearCard(_ comparison: YearOverYearComparison?, currentMonth: Int) -> some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+            Text("This month vs last year").font(.headline)
+            if let comparison {
+                monthOverYearHeadline(comparison)
+                    .astroDisplay()
+                    .accessibilityIdentifier("v2.insights.month-over-year-headline")
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 160), spacing: AstroTokens.Spacing.compact)],
+                    spacing: AstroTokens.Spacing.compact
+                ) {
+                    yearWrappedTile(
+                        title: "Integration",
+                        value: signedDuration(comparison.integrationSecondsDelta),
+                        detail: monthOverYearIntegrationDetail(comparison),
+                        systemImage: "timer"
+                    )
+                    yearWrappedTile(
+                        title: "Sessions",
+                        value: signedCount(comparison.sessionCountDelta),
+                        detail: monthOverYearSessionDetail(comparison),
+                        systemImage: "moon.stars"
+                    )
+                    // Sparse-data honesty, same posture `yearWrappedCard`'s
+                    // own best-FWHM tile already takes: this tile drops
+                    // entirely (not a placeholder) unless BOTH months carry
+                    // a measured session in the SAME unit -- see
+                    // `YearOverYearComparison.bestFWHM(thisPoints:lastPoints:)`'s
+                    // own doc comment for why a unit mismatch also drops it.
+                    if let fwhm = comparison.bestFWHM {
+                        yearWrappedTile(
+                            title: "Best FWHM",
+                            value: signedFWHM(fwhm),
+                            detail: monthOverYearFWHMDetail(fwhm),
+                            systemImage: "star.circle.fill"
+                        )
+                    }
+                }
+            } else {
+                Text(monthOverYearEmptyStateText(month: currentMonth))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("v2.insights.month-over-year-empty")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .astroRaisedSurface()
+        .accessibilityIdentifier("v2.insights.month-over-year")
+    }
+
+    /// Same "interpolate ONLY pre-formatted Strings" rule
+    /// `yearWrappedHeadline`'s own doc comment states -- `hoursText`/
+    /// `nightsText`/`deltaText` are all already-formatted `String`s, never a
+    /// raw `Int`/`Double` handed straight to `Text`.
+    private func monthOverYearHeadline(_ comparison: YearOverYearComparison) -> Text {
+        let hoursText = duration(comparison.thisYearIntegrationSeconds)
+        let nightsText = String(comparison.thisYearSessionCount)
+        let deltaText = signedDuration(comparison.integrationSecondsDelta)
+        return Text("This month you've collected \(hoursText) across \(nightsText) nights — \(deltaText) vs last year.")
+    }
+
+    private func monthOverYearIntegrationDetail(_ comparison: YearOverYearComparison) -> Text {
+        let thisText = duration(comparison.thisYearIntegrationSeconds)
+        let lastText = duration(comparison.lastYearIntegrationSeconds)
+        return Text("\(thisText) this month vs \(lastText) last year")
+    }
+
+    private func monthOverYearSessionDetail(_ comparison: YearOverYearComparison) -> Text {
+        let thisText = String(comparison.thisYearSessionCount)
+        let lastText = String(comparison.lastYearSessionCount)
+        return Text("\(thisText) this month vs \(lastText) last year")
+    }
+
+    private func monthOverYearFWHMDetail(_ fwhm: YearOverYearComparison.FWHMComparison) -> Text {
+        let thisText = fwhm.isPixelFallback ? AstroFormat.fwhmPixels(fwhm.thisYearValue) : AstroFormat.fwhmArcsec(fwhm.thisYearValue)
+        let lastText = fwhm.isPixelFallback ? AstroFormat.fwhmPixels(fwhm.lastYearValue) : AstroFormat.fwhmArcsec(fwhm.lastYearValue)
+        return Text("\(thisText) this month vs \(lastText) last year")
+    }
+
+    /// This year's total minus last year's, rendered with an explicit
+    /// `+`/`-` sign and `AstroFormat`'s own duration unit -- never a bare
+    /// unsigned number a reader could mistake for an absolute total rather
+    /// than a delta. `duration(_:)` itself only ever accepts a
+    /// non-negative value (see its own doc comment on floor/round
+    /// behavior), so the magnitude always goes through `abs(_:)` first and
+    /// the sign is prepended afterward.
+    private func signedDuration(_ secondsDelta: Double) -> String {
+        let magnitude = duration(abs(secondsDelta))
+        return secondsDelta < 0 ? "-\(magnitude)" : "+\(magnitude)"
+    }
+
+    private func signedCount(_ delta: Int) -> String {
+        delta < 0 ? "-\(abs(delta))" : "+\(delta)"
+    }
+
+    private func signedFWHM(_ fwhm: YearOverYearComparison.FWHMComparison) -> String {
+        let magnitude = fwhm.isPixelFallback
+            ? AstroFormat.fwhmPixels(abs(fwhm.delta))
+            : AstroFormat.fwhmArcsec(abs(fwhm.delta))
+        return fwhm.delta < 0 ? "-\(magnitude)" : "+\(magnitude)"
+    }
+
+    /// One literal sentence per calendar month rather than a single
+    /// %@-templated one -- judgment call: Hungarian month names take
+    /// different, vowel-harmony-dependent grammatical suffixes ("augusztusban"
+    /// vs "szeptemberben"), so no single template with an interpolated
+    /// English month name could ever translate correctly for every month.
+    /// Same per-case-literal posture `moonPhaseBandLabel`'s own switch
+    /// already takes for band-specific text, just switched over `Int`
+    /// instead of an enum.
+    private func monthOverYearEmptyStateText(month: Int) -> LocalizedStringKey {
+        switch month {
+        case 1: return "No prior-year data yet for January — next year you'll have something to compare."
+        case 2: return "No prior-year data yet for February — next year you'll have something to compare."
+        case 3: return "No prior-year data yet for March — next year you'll have something to compare."
+        case 4: return "No prior-year data yet for April — next year you'll have something to compare."
+        case 5: return "No prior-year data yet for May — next year you'll have something to compare."
+        case 6: return "No prior-year data yet for June — next year you'll have something to compare."
+        case 7: return "No prior-year data yet for July — next year you'll have something to compare."
+        case 8: return "No prior-year data yet for August — next year you'll have something to compare."
+        case 9: return "No prior-year data yet for September — next year you'll have something to compare."
+        case 10: return "No prior-year data yet for October — next year you'll have something to compare."
+        case 11: return "No prior-year data yet for November — next year you'll have something to compare."
+        default: return "No prior-year data yet for December — next year you'll have something to compare."
+        }
     }
 
     private func metrics(_ insight: InsightsSnapshot) -> some View {

@@ -2102,3 +2102,86 @@
 "Of the next %@ days, %@ look clear — if this rate holds, about %@ more weeks to the goal." = "A következő %@ napból %@ tűnik tisztának — ha ez a ráta tartja magát, még kb. %@ hét a cél.";
 "Of the next %@ days, %@ look clear." = "A következő %@ napból %@ tűnik tisztának.";
 "~%@ clear nights to the goal · %@ chances this week" = "~%@ tiszta éjszaka a célig · a héten %@ esély";
+
+/* Pre-flight Checklist (ideation #1, "Indulás előtti lista", usefulness
+   5/5): HomeView.swift's preflightChecklistCard/preflightItemRow/
+   preflightItemText, built from PreflightChecklist.build (AstroApplication)
+   -- a pure composition of four facts HomeStore already loaded (no CalibShoppingList
+   items left, tonight's own NightCloud.isCloudyTonight, the top tonight
+   recommendation's own SkyVerdictKind, and that same row's own already-
+   rendered visibleWindow start time), never a new query. "%lld calibration
+   items still need attention" interpolates a raw Int (same %lld shape
+   ratingGateCard's own "nights still have unrated frames" line already
+   uses); "Moon interferes tonight (%@)" pre-formats BOTH Moon numbers into
+   one String before interpolating (same "%@, never %lld/%lf for a
+   multi-number fragment" rule the "Nearest clear night" key above already
+   follows); "%@ clears 30° at %@" interpolates the target's own display
+   name and the exact HH:mm already rendered in its visibleWindow row --
+   the literal example from this feature's own spec ("IC 1396 30° fölé ér
+   21:48-kor"). 30° is this app's one fixed imaging-altitude threshold
+   (Planner.plan's own minAltitudeDeg default), the same fixed number
+   NightWorkspaceView's own "Below 30°" tile already hardcodes. */
+"Ready to head out tonight ✓" = "Indulásra kész ma estére ✓";
+"Pre-flight checklist" = "Indulás előtti lista";
+"Darks and flats are current" = "Darkok és flatek naprakészek";
+"%lld calibration items still need attention" = "%lld kalibrációs tétel még figyelmet igényel";
+"Sky looks clear tonight" = "Ma este tiszta az ég";
+"Sky looks cloudy tonight" = "Ma este felhős az ég";
+"No sky forecast available" = "Nincs elérhető égbolt-előrejelzés";
+"Moon interferes tonight (%@)" = "A Hold ma este zavar (%@)";
+"Moon won't interfere tonight" = "A Hold ma este nem zavar";
+"No tonight recommendation yet" = "Még nincs ma esti ajánlás";
+"%@ clears 30° at %@" = "A(z) %@ 30° fölé ér ekkor: %@";
+
+/* This month vs last year (ideation #3, "Ez a hónap tavalyhoz képest"):
+   InsightsView.swift's monthOverYearCard/monthOverYearHeadline/
+   monthOverYearIntegrationDetail/monthOverYearSessionDetail/
+   monthOverYearFWHMDetail/monthOverYearEmptyStateText, built from
+   AstroCore's YearOverYearComparison.summarize(points:today:calendar:).
+   Visible on "Minden év" AND when the Period picker is on the current
+   calendar year (never on an older selected year) -- unlike Year Wrapped,
+   this card still renders (with the honest per-month empty-state sentence
+   below) when there is no prior-year session in the same month yet, rather
+   than dropping entirely. The headline and every tile-detail sentence
+   interpolate ONLY pre-formatted Strings (already-signed duration/count/
+   FWHM text), same "%@, never %lld/%lf" rule "Year in review"'s own
+   comment above states. "Integration"/"Sessions" reuse this file's
+   existing keys verbatim (MetricCard's own tile titles) rather than a
+   near-duplicate second entry; "Best FWHM" is its own new key, distinct
+   from Year Wrapped's "Best FWHM night". Twelve separate per-month
+   empty-state sentences (not one %@-templated sentence with an
+   interpolated month name) because Hungarian month names take different,
+   vowel-harmony-dependent suffixes ("augusztusra" vs "szeptemberre") that
+   no single template could get right for every month. */
+"This month vs last year" = "Ez a hónap tavalyhoz képest";
+"This month you've collected %@ across %@ nights — %@ vs last year." = "Ebben a hónapban %@ fényt gyűjtöttél %@ éjszaka alatt — %@ tavalyhoz képest.";
+"%@ this month vs %@ last year" = "%@ ebben a hónapban, %@ tavaly ilyenkor";
+"Best FWHM" = "Legjobb FWHM";
+"No prior-year data yet for January — next year you'll have something to compare." = "Nincs még tavalyi adatod januárra — jövőre lesz mihez hasonlítani.";
+"No prior-year data yet for February — next year you'll have something to compare." = "Nincs még tavalyi adatod februárra — jövőre lesz mihez hasonlítani.";
+"No prior-year data yet for March — next year you'll have something to compare." = "Nincs még tavalyi adatod márciusra — jövőre lesz mihez hasonlítani.";
+"No prior-year data yet for April — next year you'll have something to compare." = "Nincs még tavalyi adatod áprilisra — jövőre lesz mihez hasonlítani.";
+"No prior-year data yet for May — next year you'll have something to compare." = "Nincs még tavalyi adatod májusra — jövőre lesz mihez hasonlítani.";
+"No prior-year data yet for June — next year you'll have something to compare." = "Nincs még tavalyi adatod júniusra — jövőre lesz mihez hasonlítani.";
+"No prior-year data yet for July — next year you'll have something to compare." = "Nincs még tavalyi adatod júliusra — jövőre lesz mihez hasonlítani.";
+"No prior-year data yet for August — next year you'll have something to compare." = "Nincs még tavalyi adatod augusztusra — jövőre lesz mihez hasonlítani.";
+"No prior-year data yet for September — next year you'll have something to compare." = "Nincs még tavalyi adatod szeptemberre — jövőre lesz mihez hasonlítani.";
+"No prior-year data yet for October — next year you'll have something to compare." = "Nincs még tavalyi adatod októberre — jövőre lesz mihez hasonlítani.";
+"No prior-year data yet for November — next year you'll have something to compare." = "Nincs még tavalyi adatod novemberre — jövőre lesz mihez hasonlítani.";
+"No prior-year data yet for December — next year you'll have something to compare." = "Nincs még tavalyi adatod decemberre — jövőre lesz mihez hasonlítani.";
+
+/* Ideation #6 ("Éjszaka idővonala"): the night ribbon's own section title,
+   its one new sky-band track label ("Moon"/"Target"/"Capture" already have
+   entries elsewhere in this file and are reused verbatim), and the
+   capture/gap caption line (`NightRibbonView.swift`). The caption's own
+   "szünet" wording for a gap matches `NightReport`'s existing HTML
+   Idővonal section ("Nem volt jelentős szünet." / gap list), so the
+   ribbon and the report never disagree on vocabulary for the same
+   concept. */
+"Night Ribbon" = "Éjszaka idővonala";
+"Twilight" = "Szürkület";
+"No timestamped events for this night." = "Nincs időbélyeges esemény ehhez az éjszakához.";
+"Frame timestamps unavailable." = "Keret-időbélyegek nem elérhetők.";
+"Capture %@–%@" = "Felvétel %@–%@";
+"Capture %@–%@, %@-minute gap at %@" = "Felvétel %@–%@, %@ perces szünet %@-kor";
+"Capture %@–%@, %@ gaps totaling %@ minutes" = "Felvétel %@–%@, %@ szünet, összesen %@ perc";
