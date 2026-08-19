@@ -22,10 +22,24 @@ import Foundation
 public struct RatingCoverageSnapshot: Equatable, Sendable {
     public let unratedNightCount: Int
     public let unratedFrameCount: Int
+    /// OWNER BUG (2026-08-19 real-library audit): scanned, targeted light
+    /// frames whose extension `Rater.processFrame` can never turn into a
+    /// `ratings` row at all -- today, exactly the non-`LibraryScanner.fitsExtensions`
+    /// ones (Canon CR3 today; `NativeStats.compute` only understands FITS
+    /// bytes, so it throws on a CR3 read and `processFrame` silently `return
+    /// nil`s, skipping the frame forever). These are EXCLUDED from
+    /// `unratedNightCount`/`unratedFrameCount` above -- counting them there
+    /// promises "rate them from Home" will eventually zero the gate out,
+    /// which is false: no number of `ProjectRatingRunner` reruns can ever
+    /// produce a score for a frame `NativeStats` cannot read. Counted here
+    /// instead so a caller can say so honestly (e.g. "N CR3 frame nem
+    /// mérhető").
+    public let unmeasurableFrameCount: Int
 
-    public init(unratedNightCount: Int, unratedFrameCount: Int) {
+    public init(unratedNightCount: Int, unratedFrameCount: Int, unmeasurableFrameCount: Int = 0) {
         self.unratedNightCount = unratedNightCount
         self.unratedFrameCount = unratedFrameCount
+        self.unmeasurableFrameCount = unmeasurableFrameCount
     }
 }
 
@@ -60,12 +74,27 @@ public struct RatingCoverageQuery: Sendable {
 
         var unratedNights = Set<SessionKey>()
         var unratedFrameCount = 0
+        var unmeasurableFrameCount = 0
         for file in lights {
             guard let fileID = file.id, let target = file.target, let sessionDate = file.sessionDate else { continue }
             guard ratings[fileID]?.score == nil else { continue }
+            // `LibraryScanner.fitsExtensions` ("fit"/"fits"/"fz") is the exact set
+            // `NativeStats.compute` can actually read -- anything else (CR3
+            // today) makes `Rater.processFrame` skip the frame silently and
+            // forever, so it must never be counted as something "Rate
+            // Everything" could still close out. See `RatingCoverageSnapshot.
+            // unmeasurableFrameCount`'s own doc comment.
+            guard LibraryScanner.fitsExtensions.contains(file.ext.lowercased()) else {
+                unmeasurableFrameCount += 1
+                continue
+            }
             unratedFrameCount += 1
             unratedNights.insert(SessionKey(target: target, sessionDate: sessionDate))
         }
-        return RatingCoverageSnapshot(unratedNightCount: unratedNights.count, unratedFrameCount: unratedFrameCount)
+        return RatingCoverageSnapshot(
+            unratedNightCount: unratedNights.count,
+            unratedFrameCount: unratedFrameCount,
+            unmeasurableFrameCount: unmeasurableFrameCount
+        )
     }
 }

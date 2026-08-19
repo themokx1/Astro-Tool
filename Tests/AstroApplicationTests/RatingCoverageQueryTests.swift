@@ -35,10 +35,11 @@ private struct CoverageFixture {
         sessionDate: String,
         area: LibraryArea = .sessions,
         role: FrameRole = .light,
+        ext: String = "fit",
         mtime: Double = 1_700_000_000
     ) throws -> Int64 {
         let record = FileRecord(
-            path: relativePath, size: 1024, mtime: mtime, ext: "fit", kind: "fits",
+            path: relativePath, size: 1024, mtime: mtime, ext: ext, kind: ext == "cr3" ? "raw" : "fits",
             area: area, target: target, sessionDate: sessionDate, role: role,
             scannedAt: Date().timeIntervalSince1970
         )
@@ -166,5 +167,57 @@ struct RatingCoverageQueryTests {
 
         #expect(snapshot.unratedNightCount == 0)
         #expect(snapshot.unratedFrameCount == 0)
+    }
+
+    // MARK: - Owner bug (2026-08-19 real-library audit): CR3 can never be rated
+
+    @Test("A night shot entirely on CR3 (Canon R8) never counts as unrated -- Rater.rate can never produce a score for it, so the gate must never promise it")
+    func cr3OnlyNightIsExcludedFromTheUnratedPromise() throws {
+        let fixture = try CoverageFixture.make()
+        defer { fixture.cleanup() }
+
+        // `NativeStats.compute` only understands FITS bytes -- a `.cr3` file
+        // makes `Rater.processFrame` throw on the read and silently `return
+        // nil` (skip), so this file NEVER gets a `ratings` row no matter how
+        // many times "Rate Everything"/`ProjectRatingRunner` reruns. Counting
+        // it as "unrated" (as the pre-fix filter did, since it never checked
+        // `ext` at all) makes a promise the rating button structurally can
+        // never keep -- the owner's own library has 1550 such CR3 frames.
+        try fixture.addLight(relativePath: "sessions/WideField/2026-01-01/lights/a.cr3", target: "WideField", sessionDate: "2026-01-01", ext: "cr3")
+
+        let snapshot = try RatingCoverageQuery(db: fixture.db).snapshot()
+
+        #expect(snapshot.unratedNightCount == 0)
+        #expect(snapshot.unratedFrameCount == 0)
+        #expect(snapshot.unmeasurableFrameCount == 1)
+    }
+
+    @Test("A night mixing a real FITS light with a CR3 light still counts the FITS as unrated, and the CR3 as unmeasurable, separately")
+    func mixedNightSplitsUnratedFromUnmeasurable() throws {
+        let fixture = try CoverageFixture.make()
+        defer { fixture.cleanup() }
+
+        try fixture.addLight(relativePath: "sessions/M31/2026-01-01/lights/a.fit", target: "M31", sessionDate: "2026-01-01")
+        try fixture.addLight(relativePath: "sessions/M31/2026-01-01/lights/wide.cr3", target: "M31", sessionDate: "2026-01-01", ext: "cr3")
+
+        let snapshot = try RatingCoverageQuery(db: fixture.db).snapshot()
+
+        #expect(snapshot.unratedNightCount == 1)
+        #expect(snapshot.unratedFrameCount == 1)
+        #expect(snapshot.unmeasurableFrameCount == 1)
+    }
+
+    @Test("A .fz FITS light still counts as a normal unrated frame -- only the extensions Rater can never read at all are unmeasurable")
+    func fzExtensionStillCountsAsUnrated() throws {
+        let fixture = try CoverageFixture.make()
+        defer { fixture.cleanup() }
+
+        try fixture.addLight(relativePath: "sessions/M31/2026-01-01/lights/a.fz", target: "M31", sessionDate: "2026-01-01", ext: "fz")
+
+        let snapshot = try RatingCoverageQuery(db: fixture.db).snapshot()
+
+        #expect(snapshot.unratedNightCount == 1)
+        #expect(snapshot.unratedFrameCount == 1)
+        #expect(snapshot.unmeasurableFrameCount == 0)
     }
 }
