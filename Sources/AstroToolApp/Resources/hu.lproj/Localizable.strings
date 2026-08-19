@@ -2036,6 +2036,30 @@
 "Not yet rated — run scoring first" = "Még nincs kiértékelve — futtasd le a pontozást";
 "could not render the card" = "nem sikerült renderelni a kártyát";
 
+/* Year Wrapped (expert ideation reserve #9, "Év-összegző Wrapped", wow
+   5/5): InsightsView.swift's yearWrappedCard/yearWrappedHeadline/
+   yearWrappedFirstLightsDetail/yearWrappedTile, built from AstroCore's
+   YearWrapped.summarize(points:year:). Visible only when a specific year is
+   selected in the Period picker (never on "Minden év") and only when that
+   year holds at least one session -- an empty year drops the whole card.
+   Both headline forms interpolate ONLY pre-formatted Strings (year/hours/
+   nights counts, and the target name itself), same "%@, never %lld/%lf"
+   rule this file's other hand-added Int-interpolation keys already follow
+   -- see "Worth celebrating"'s own comment above. "Light frames" and "No
+   monthly data" reuse this file's existing keys verbatim (MetricCard's own
+   "Light frames" tile / averageNightDetail's own fallback) rather than a
+   near-duplicate second entry. */
+"Year in review" = "Év összefoglaló";
+"In %@, you spent %@ collecting light across %@ nights — your favorite was %@." = "%@-ban %@ fényt gyűjtöttél %@ éjszaka alatt — a kedvenced a(z) %@ volt.";
+"In %@, you spent %@ collecting light across %@ nights." = "%@-ban %@ fényt gyűjtöttél %@ éjszaka alatt.";
+"Favorite target" = "Kedvenc célpont";
+"No sessions yet" = "Még nincs session";
+"Usable, deduplicated" = "Használható, deduplikált";
+"Biggest month" = "Legerősebb hónap";
+"New targets" = "Új célpontok";
+"None this year" = "Egy sem idén";
+"Best FWHM night" = "Legjobb FWHM-éjszaka";
+
 /* Season Window Finder (expert ideation reserve #1, "mikor van az
    M31-szezon nálam"): SeasonWindowChart.swift's SeasonWindowSummary
    (Sources/AstroUI/Features/Planning/), wired into PlanningView's footer

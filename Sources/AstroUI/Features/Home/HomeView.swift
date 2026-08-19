@@ -155,6 +155,11 @@ public struct HomeView: View {
                             if project.phase == .collecting {
                                 Text("Least collected active project · \(AstroFormat.duration(seconds: store.snapshot.nextProjectIntegrationSeconds)) so far.")
                                     .font(.callout).foregroundStyle(.secondary)
+                                if let caption = featuredClearNightCaption {
+                                    caption
+                                        .font(.caption).foregroundStyle(.secondary)
+                                        .accessibilityIdentifier("v2.home.featured-clear-night")
+                                }
                             } else {
                                 Text("Open the project and plan its first capture series.")
                                     .font(.callout).foregroundStyle(.secondary)
@@ -225,6 +230,33 @@ public struct HomeView: View {
             .astroRaisedSurface()
             .accessibilityIdentifier("v2.home.highlights")
         }
+    }
+
+    /// Expert ideation reserve #5 ("Clear-Night Countdown"): the "Continue
+    /// where it matters" card's own extra caption line, "~6 clear nights to
+    /// the goal · 2 chances this week" -- only rendered when BOTH real
+    /// numbers exist (`store.snapshot.featuredCompletionForecast`, the
+    /// featured project's own pace-based estimate, AND
+    /// `nightCloud?.clearNightsInHorizon`, this library's fetched 7-day
+    /// weather); `nil` whenever either is missing, so a library with
+    /// weather disabled (or too little session history for a pace) simply
+    /// shows no extra line rather than a half-true one. Deliberately never
+    /// shows the "if this rate holds ~N weeks" extrapolation
+    /// `ProjectWorkspaceView`'s own Overview forecast row does -- a
+    /// one-line dashboard caption has no room for the qualifying language
+    /// that soft projection needs to stay honest (`ClearNightOutlook`'s own
+    /// doc comment), so this only ever states the two hard facts.
+    private var featuredClearNightCaption: Text? {
+        guard let estimate = store.snapshot.featuredCompletionForecast,
+              let clearNights = store.snapshot.nightCloud?.clearNightsInHorizon
+        else { return nil }
+        // Same "+"-suffix-when-capped convention `ProjectWorkspaceView
+        // .completionForecastText` already uses for this exact estimate.
+        let nightsText = estimate.isCapped
+            ? "\(AstroFormat.count(estimate.nightsNeeded))+"
+            : AstroFormat.count(estimate.nightsNeeded)
+        let chancesText = AstroFormat.count(clearNights)
+        return Text("~\(nightsText) clear nights to the goal · \(chancesText) chances this week")
     }
 
     private func highlightSystemImage(_ kind: HomeSnapshot.Highlight.Kind) -> String {
