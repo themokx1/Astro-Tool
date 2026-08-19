@@ -288,6 +288,18 @@ struct V2AstroToolCommands: Commands {
             // "no seed" value and are reset back to it on the sheet's own
             // dismiss, so presenting with neither set behaves exactly like a
             // plain, context-free "start one from scratch" entry point.
+            // Standard macOS back shortcut (Finder, Safari, System
+            // Settings all bind it): pops the active section's stack by
+            // one, exactly like the native Back chevron. `pop()` is a
+            // documented no-op at a section root, so no extra guard.
+            Button("Back") {
+                router?.pop()
+            }
+            .keyboardShortcut("[", modifiers: .command)
+            .disabled(router == nil)
+
+            Divider()
+
             Button("New Project…") {
                 router?.present(.newProject)
             }
