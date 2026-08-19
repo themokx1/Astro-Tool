@@ -2197,6 +2197,26 @@
 "%lld frames: possible satellite trail — check" = "%lld keret: esetleg műholdcsík — ellenőrizd";
 "Select possible-streak frames" = "Kijelölés: műholdcsík-gyanús keretek";
 
+/* Ideation #4 ("Célpont-történet idővonal"): the project workspace's
+   Overview tab's own "History" section (`ProjectWorkspaceView.swift`'s
+   `historySection`/`historyEventText`) -- a vertical timeline composing
+   first light, every session (integration + best-measured FWHM), and
+   every produced stack family into one chronological event list, oldest
+   first. "No recorded session for this target." reuses the Sessions
+   section's own existing key verbatim (same honest empty state, same
+   underlying fact) rather than a near-duplicate second entry. Every
+   interpolated value across these three sentence shapes is a
+   pre-formatted String (AstroFormat.duration/.fwhmArcsec/.fwhmPixels/
+   .count), never a raw Int/Double -- same "%@, never %lld/%lf" rule this
+   file's other recent entries already state. */
+"History" = "Történet";
+"First light" = "Első fény";
+"%@ collected" = "%@ gyűjtés";
+"%@ collected · FWHM %@" = "%@ gyűjtés · FWHM %@";
+"%@ stack produced: %@" = "%@ stack elkészült: %@";
+"%@ more" = "%@ további";
+"Show fewer" = "Kevesebb mutatása";
+
 /* Ideation #5 ("Két géped mára" -- tonight's rig split): HomeView's
    `twoRigSplitCard`/`twoRigSplitRow` (TwoRigSplitQuery.swift, AstroApplication,
    is the pure decision behind it). The card heading is deliberately an
