@@ -2270,3 +2270,20 @@
 "%lld measured capture so far — FWHM needs an actual star-measurement pass, not just background/score." = "Eddig %lld mért capture — a FWHM-hez valódi csillagmérésre van szükség, nem csak háttér/pontszám-mérésre.";
 "No sensor profile has been measured yet — measure it from Home to convert background into e⁻/s/arcsec²." = "Még nincs mérve szenzorprofil — mérd meg a Kezdőlapon, hogy a háttér e⁻/s/ívmásodperc² értékké alakulhasson.";
 "Start Measuring" = "Mérés indítása";
+
+/* Éjszaka-tanulságok banner (ideation #9): HomeView.swift's
+   highlightText/highlightSystemImage, fed by NightHealthLessons.evaluate
+   (AstroApplication) -- aggregates NightHealth.report's per-night cooler/
+   focus verdicts across the last ~8 sessions and names a lesson only once a
+   real pattern repeats (strictly over half of the sessions that actually
+   HAD the reading), never from a "3 of 8" minority. Ranks below the
+   anniversary/milestone highlights above (HomeStore.composeHighlights) and
+   shares their same "Worth celebrating" card. Both keys interpolate ONLY
+   pre-formatted Strings (failingCount/sessionCount), same "%@, never
+   %lld/%lf" rule this file's other hand-added Int-interpolation keys
+   already follow -- see "Worth celebrating"'s own comment above. The
+   Hungarian entries keep the SAME %@ argument order as the English source
+   (failingCount first, sessionCount second) rather than reordering with
+   positional specifiers -- both read naturally in that order. */
+"Your cooler missed set-point on %@ of your last %@ nights — check the cooling headroom on hot nights." = "A hűtőd %@ alkalommal nem tartotta a célhőmérsékletet az utolsó %@ éjszakából — nézd át a hűtő tartalékát meleg éjszakákon.";
+"Focus drifted on %@ of your last %@ nights — consider a mid-session refocus." = "A fókuszod %@ alkalommal csúszott el az utolsó %@ éjszakából — iktass be egy fókuszellenőrzést az éjszaka közepén.";
