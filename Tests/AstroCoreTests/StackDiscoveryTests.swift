@@ -390,6 +390,26 @@ private func insertFile(
     ))
 }
 
+@Test func stackOutputRecognitionIgnoresSessionScopedResiduePatterns() throws {
+    // `looksLikeStackOutput`'s residue exclusion is (and must stay) the
+    // UNIVERSAL `residuePatterns` list only: `result_Ha_12720s.fit` and
+    // `starless_*` names match `AstroConfig.sessionResiduePatterns`'s
+    // defaults, yet in the `stacks/`/`processed/` areas -- the only areas
+    // this recognizer runs on -- they are first-class, WANTED output (the
+    // real library keeps exactly these basenames there). A regression here
+    // is the "6 broken tests" failure mode that got the token-broadening
+    // attempt reverted.
+    #expect(StackDiscovery.looksLikeStackOutput(
+        fileName: "result_Ha_12720s.fit", ext: "fit", sizeBytes: 1_000_000))
+    #expect(StackDiscovery.variantKind(
+        fileName: "starless_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og.fit"
+    ) == .starless)
+    // The universal exclusion itself still works -- a Siril-registered
+    // r_*-named file is rejected despite containing "_stacked".
+    #expect(!StackDiscovery.looksLikeStackOutput(
+        fileName: "r_merged_lights_stacked.fit", ext: "fit", sizeBytes: 1_000_000))
+}
+
 @Test func classifiesAsStackProductIsFalseForAPlainUnmarkedOriginalName() throws {
     // Same real family, but the bare "_og" original -- no edit markers, no
     // starless/starmask prefix, not an export extension. This is also

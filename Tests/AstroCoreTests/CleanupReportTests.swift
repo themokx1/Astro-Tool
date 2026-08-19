@@ -108,6 +108,29 @@ private func group(_ summary: CleanupSummary, category: String) -> CleanupGroup?
     #expect(categories.contains("residue-process-dir"))
 }
 
+@Test func cleanupReportListsSessionScopedResidueOnlyForSessionsAreaPaths() throws {
+    let fixture = try CleanupFixture.make()
+    defer { fixture.cleanup() }
+
+    // The SAME basename in three areas: junk loose in `sessions/`
+    // (`residue-session` via `config.sessionResiduePatterns`), a
+    // first-class StackVariantKind keeper in `stacks/`/`processed/` --
+    // exactly the real library's `starless_*`/`result_*` situation.
+    try fixture.db.upsertFile(makeFileRecord(
+        path: "sessions/M42/2026-01-17/starless_result.fit", size: 3_000_000, area: .sessions))
+    try fixture.db.upsertFile(makeFileRecord(
+        path: "stacks/M42/2026-01-17/starless_result.fit", size: 3_000_000))
+    try fixture.db.upsertFile(makeFileRecord(
+        path: "processed/M42/2026-01-17/starless_result.fit", size: 3_000_000, area: .processed))
+
+    let summary = try CleanupReport.build(db: fixture.db, config: fixture.config)
+
+    let session = try #require(group(summary, category: "residue-session"))
+    #expect(session.paths == ["sessions/M42/2026-01-17/starless_result.fit"])
+    #expect(session.totalBytes == 3_000_000)
+    #expect(summary.grandTotalBytes == 3_000_000)
+}
+
 @Test func cleanupReportComputesDuplicateWastedBytesExcludingKeeper() throws {
     let fixture = try CleanupFixture.make()
     defer { fixture.cleanup() }

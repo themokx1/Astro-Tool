@@ -2,45 +2,39 @@ import Foundation
 import Testing
 @testable import AstroCore
 
-// MARK: - Broadened default residue patterns, pinned against a real library
+// MARK: - Residue recognition, pinned against a real library
 //
-// `AstroConfig.residuePatterns`'s original 8 defaults (`*.seq`, `*.lst`,
-// `*_conv*`, `*_bkg*`, `*_pp_*`, `r_*`, `bkg_*`, `.DS_Store`) were designed
-// around Siril/PixInsight intermediate-file conventions, not around the
-// stack-PRODUCT names (`starless_*`, `starmask_*`, `VeraLux_*`, ...) that
-// `Scan/Scanner.swift`'s IMAGETYP-promotion bug actually let through. Of the
-// 48 real wrongly-promoted rows confirmed against a copy of the owner's
-// library, the original defaults caught only 1.
+// Three layers, each pinned separately against the same read-only copy of
+// the owner's real `index.sqlite` (see `RealLibraryResiduePaths`):
 //
-// The obvious next step -- add `starless*`/`starmask*`/`graxpert_result*` to
-// the default list too, since those account for most of the 48 -- was tried
-// and REVERTED: `Stats/StackDiscovery.swift` hardcodes this exact default
-// list (`ResidueMatcher.matchesFilePattern(name:, config: AstroConfig())`)
-// to decide what to skip as junk in the `stacks/`/`processed/` areas, where
-// `starless`/`starmask`/`graxpert`-processed files are first-class, WANTED
-// `StackVariantKind` output (`.starless`/`.starmask`/`.edited`), not
-// residue. Adding those tokens broke 6 real tests (`StackDiscoveryTests`,
-// `ResultsQueryTests`, `ResultsStoreTests`, `CLISmokeTests`) by making
-// `looksLikeStackOutput` reject legitimate stack variants before
-// variant-kind classification ever ran. Residue-ness for that vocabulary is
-// AREA-dependent (junk loose in `sessions/`, a keeper in `stacks/`/
-// `processed/`) -- a single flat global pattern list can't express that, so
-// this fix only broadens the default with tokens that don't collide with
-// `StackDiscovery`'s vocabulary anywhere in the codebase. See
-// `AstroConfig.residuePatterns`'s own doc comment for the full list and
-// reasoning. Reaching the other 38 (35 starless/starmask + 3 bare
-// `Ha.fit`/`Oiii.fit`/`RGB.fit`) needs an area-scoped predicate, not just
-// more global patterns -- tracked as a follow-up, not attempted here.
+//  1. UNIVERSAL patterns (`AstroConfig.residuePatterns`) -- match anywhere
+//     in the library. `Stats/StackDiscovery.swift` hardcodes this exact
+//     default list (`ResidueMatcher.matchesFilePattern(name:, config:
+//     AstroConfig())`) to decide what to skip as junk in the `stacks/`/
+//     `processed/` areas, so `starless`/`starmask`/`graxpert`/`result`
+//     tokens can NEVER live here: that same vocabulary is first-class,
+//     WANTED `StackVariantKind`/`looksLikeStackOutput` output there.
+//     Adding them was tried and REVERTED (6 test failures across
+//     `StackDiscoveryTests`, `ResultsQueryTests`, `ResultsStoreTests`,
+//     `CLISmokeTests`).
+//  2. SESSION-scoped patterns (`AstroConfig.sessionResiduePatterns`) --
+//     consulted by `ResidueMatcher.category`/`isResidue` ONLY for paths
+//     whose `PathClassifier` area is `.sessions`. This is where the
+//     colliding vocabulary lives: junk loose in `sessions/`, a keeper in
+//     `stacks/`/`processed/`. Feeds BOTH `CleanupReport` (via `category`)
+//     and `LibraryScanner`'s IMAGETYP-promotion guard (via `isResidue`).
+//  3. CODE-driven recognition (`StackDiscovery.classifiesAsStackProduct`)
+//     -- `LibraryScanner`'s promotion guard consults it as an extra,
+//     config-independent backstop so a `starless_*` byproduct is never
+//     promoted even if the owner's `config.json` empties the pattern lists.
 
-/// The 38 of the 48 wrongly-promoted paths deliberately left uncaught by
-/// this change: 35 use `starless`/`starmask`/`graxpert_result` tokens that
-/// collide with `StackDiscovery`'s `StackVariantKind` vocabulary (see the
-/// file-level doc comment above), and the remaining 3 bare basenames
-/// (`Ha.fit`/`Oiii.fit`/`RGB.fit`) are indistinguishable from a genuine
-/// narrowband/RGB-combine sub's filename -- no residue pattern could catch
-/// either group without risking misclassifying real, wanted content
-/// elsewhere in the library.
-private let honestRemainder: Set<String> = [
+/// The 43 of the 53 wrongly-promoted paths the UNIVERSAL default patterns
+/// alone leave uncaught: 40 use `starless`/`starmask`/`graxpert`/`result_`
+/// tokens that collide with `StackDiscovery`'s vocabulary (they live in
+/// `sessionResiduePatterns` instead -- see the file-level comment), and the
+/// remaining 3 bare basenames (`Ha.fit`/`Oiii.fit`/`RGB.fit`) are
+/// indistinguishable from a genuine narrowband/RGB-combine sub's filename.
+private let universalPatternRemainder: Set<String> = [
     "sessions/M42_Orion/2026-01-17/starless_FOV______136x60sec_8160s_2026-01-22_2045_og_process_spcc_bgextract.fit",
     "sessions/M42_Orion/2026-01-17/starless_FOV______136x60sec_8160s_2026-01-22_2045_og_process_spcc_bgextract_process.fit",
     "sessions/M42_Orion/2026-01-17/starless_FOV______136x60sec_8160s_2026-01-22_2045_og_process_spcc_bgextract_process2.fit",
@@ -52,9 +46,12 @@ private let honestRemainder: Set<String> = [
     "sessions/NGC2237_Rosette_Nebula/2026-02-25/starless_NGC_2237_085x60sec_5100s_2026-03-01_1629_og_work_streched.fit",
     "sessions/NGC2237_Rosette_Nebula/2026-02-25/starmask_NGC_2237_085x60sec_5100s_2026-03-01_1629_og_work.fit",
     "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/Ha.fit",
+    "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert.fit",
+    "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_manual_strech.fit",
     "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_result_HOO_Improved.fit",
     "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_result_HSO_Improved.fit",
     "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_result_SHO_Improved.fit",
+    "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_strech.fit",
     "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/New/starless_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_stars_remove_at_full_res.fit",
     "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/New/starless_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_starnet_two_x_test.fit",
     "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/New/starless_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_workú.fit",
@@ -79,15 +76,33 @@ private let honestRemainder: Set<String> = [
     "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/starmask_r_osc_and_filtered_00002.fit",
     "sessions/NGC2237_Rosette_Nebula/2026-03-15-OSC/starless_NGC_2244_Satellite_Cluster_009x60sec_540s_2026-03-16_1958_og.fit",
     "sessions/NGC2237_Rosette_Nebula/2026-03-15-OSC/starmask_NGC_2244_Satellite_Cluster_009x60sec_540s_2026-03-16_1958_og.fit",
+    "sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_Ha_12720s.fit",
+    "sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_OIII_12720s.fit",
 ]
 
-@Test func broadenedResiduePatternsCatch10Of48RealWronglyPromotedFrames() throws {
+/// The 3 of the 53 wrongly-promoted paths no layer can safely catch: bare
+/// `Ha.fit`/`Oiii.fit`/`RGB.fit` basenames are legitimate real
+/// narrowband/RGB-combine filter names too, and
+/// `StackDiscovery.variantKind` classifies them `.original` (no starless/
+/// starmask prefix, no edit marker, not an export extension) -- exactly the
+/// same ambiguous bucket a genuine unmarked capture falls into. No safe
+/// pattern or classifier rule exists to tell them apart from here.
+private let honestRemainder: Set<String> = [
+    "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/Ha.fit",
+    "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/Oiii.fit",
+    "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/RGB.fit",
+]
+
+// MARK: - Layer 1: universal patterns (the list StackDiscovery also uses)
+
+@Test func universalPatternsCatch10Of53RealWronglyPromotedFrames() throws {
     let config = AstroConfig()
 
     var caught: [String] = []
     var missed: [String] = []
     for path in RealLibraryResiduePaths.wronglyPromoted {
-        if ResidueMatcher.isResidue(path: path, config: config) {
+        let name = (path as NSString).lastPathComponent
+        if ResidueMatcher.matchesFilePattern(name: name, config: config) {
             caught.append(path)
         } else {
             missed.append(path)
@@ -96,23 +111,10 @@ private let honestRemainder: Set<String> = [
 
     #expect(caught.count == 10)
     // Exactly the acknowledged remainder is missed -- not more (a pattern
-    // regressed), not fewer (a pattern got broader than intended, which
-    // would also need re-checking against `otherSessionLightPaths` below
-    // AND against `StackDiscoveryTests`/`ResultsQueryTests`).
-    #expect(Set(missed) == honestRemainder)
-}
-
-@Test func broadenedResiduePatternsNeverMatchAnyOtherRealSessionLightFrame() throws {
-    let config = AstroConfig()
-
-    let falsePositives = RealLibraryResiduePaths.otherSessionLightPaths.filter {
-        ResidueMatcher.isResidue(path: $0, config: config)
-    }
-
-    #expect(
-        falsePositives.isEmpty,
-        "Broadened residue patterns wrongly matched \(falsePositives.count) real/other session light frame(s): \(falsePositives.prefix(5))"
-    )
+    // regressed), not fewer (a universal pattern got broader than intended,
+    // which would also need re-checking against `otherSessionLightPaths`
+    // below AND against `StackDiscoveryTests`/`ResultsQueryTests`).
+    #expect(Set(missed) == universalPatternRemainder)
 }
 
 @Test func residueFilePatternMatchingIsCaseInsensitive() throws {
@@ -128,29 +130,106 @@ private let honestRemainder: Set<String> = [
     #expect(ResidueMatcher.matchesFilePattern(name: "Comet_Stack_work.fit", config: config))
 }
 
-// MARK: - The combined guard: config patterns OR StackDiscovery classification
+// MARK: - Layer 2: session-area-scoped patterns
+
+@Test func sessionResiduePatternsOnlyApplyInTheSessionsArea() throws {
+    let config = AstroConfig()
+
+    // Junk when loose in a session date dir...
+    #expect(ResidueMatcher.isResidue(
+        path: "sessions/M42_Orion/2026-01-17/starless_result.fit", config: config))
+    #expect(ResidueMatcher.category(
+        forPath: "sessions/M42_Orion/2026-01-17/starless_result.fit", config: config) == "residue-session")
+
+    // ...a first-class keeper everywhere StackDiscovery groups variants.
+    // These exact stacks/processed twins of `wronglyPromoted`'s two
+    // `result_*` rows exist in the real library (same basename, wanted
+    // there) -- the sharpest possible demonstration of why this vocabulary
+    // is area-scoped, not universal.
+    #expect(!ResidueMatcher.isResidue(
+        path: "stacks/NGC_7000_North_American_Nebula/2026-05-23/Mono/result_Ha_12720s.fit", config: config))
+    #expect(!ResidueMatcher.isResidue(
+        path: "processed/NGC_7000_North_American_Nebula/2026-05-23/Mono/result_OIII_12720s.fit", config: config))
+    #expect(!ResidueMatcher.isResidue(
+        path: "stacks/M42_Orion/2026-01-17/starless_result.fit", config: config))
+}
+
+@Test func toolOutputDirStillShieldsSessionResiduePatternMatches() throws {
+    // `Stack/` (LightFrameRater's triage folder) is a `toolOutputDirNames`
+    // entry -- anything under it is known-intentional tool output, never
+    // residue, and that guard must keep beating the session-scoped patterns
+    // exactly as it already beats the universal ones.
+    let config = AstroConfig()
+    #expect(ResidueMatcher.category(
+        forPath: "sessions/M42_Orion/2026-01-17/Stack/starless_result.fit", config: config) == nil)
+}
+
+@Test func emptyingSessionResiduePatternsDisablesTheSessionLayer() throws {
+    // The session layer is config-driven: an owner who deliberately empties
+    // the list gets pattern-free behavior back (the Scanner's promotion
+    // guard still has the config-independent StackDiscovery backstop).
+    var config = AstroConfig()
+    config.sessionResiduePatterns = []
+    #expect(!ResidueMatcher.isResidue(
+        path: "sessions/M42_Orion/2026-01-17/starless_result.fit", config: config))
+}
+
+@Test func sessionAwareIsResidueCatches50Of53RealWronglyPromotedFrames() throws {
+    let config = AstroConfig()
+
+    var caught: [String] = []
+    var missed: [String] = []
+    for path in RealLibraryResiduePaths.wronglyPromoted {
+        if ResidueMatcher.isResidue(path: path, config: config) {
+            caught.append(path)
+        } else {
+            missed.append(path)
+        }
+    }
+
+    #expect(caught.count == 50)
+    #expect(Set(missed) == honestRemainder)
+}
+
+/// The ONLY `otherSessionLightPaths` rows the session-aware `isResidue`
+/// matches: starless/starmask byproducts the user dumped INSIDE a real
+/// `lights/` folder. Correct matches (they ARE Siril stack byproducts --
+/// `CleanupReport` listing them is the point of the session layer), and
+/// harmless for the Scanner: their `role=.light` comes from the `lights/`
+/// path itself, a shape `refineLooseFrameRole`/`healStaleClassification`
+/// never evaluates (both are gated on path-role `.other` first).
+private let byproductsInsideRealLightsFolders: Set<String> = [
+    "sessions/M42_Orion/2026-01-17/lights/starless_FOV______161x60sec_9660s__drizzle-1-5x_2026-01-19_2102_og_process.fit",
+    "sessions/M42_Orion/2026-01-17/lights/starless_FOV______161x60sec_9660s__drizzle-1-5x_2026-01-19_2102_og_process_strechy.fit",
+    "sessions/M42_Orion/2026-01-17/lights/starless_FOV______161x60sec_9660s__drizzle-1-5x_2026-01-19_2102_og_process_strechy_2.fit",
+    "sessions/M42_Orion/2026-01-17/lights/starless_FOV______161x60sec_9660s__drizzle-1-5x_2026-01-19_2102_og_process_strechy_overstreched.fit",
+    "sessions/M42_Orion/2026-01-17/lights/starless_FOV______161x60sec_9660s__drizzle-1-5x_2026-01-19_2102_og_process_strechy_veraluxú.fit",
+    "sessions/M42_Orion/2026-01-17/lights/starmask_FOV______161x60sec_9660s__drizzle-1-5x_2026-01-19_2102_og_process.fit",
+]
+
+@Test func sessionAwareIsResidueMatchesOnlyKnownByproductsAmongOtherRealSessionLightFrames() throws {
+    let config = AstroConfig()
+
+    let matches = RealLibraryResiduePaths.otherSessionLightPaths.filter {
+        ResidueMatcher.isResidue(path: $0, config: config)
+    }
+
+    #expect(
+        Set(matches) == byproductsInsideRealLightsFolders,
+        "Session-aware isResidue matched an unexpected set among real session light frames: \(matches.prefix(8))"
+    )
+}
+
+// MARK: - Layer 3: the combined Scanner guard (patterns OR StackDiscovery)
 //
-// `Scan/Scanner.swift`'s `isNonPromotableSessionResidue` adds a SECOND,
-// code-driven check on top of `ResidueMatcher.isResidue`:
+// `Scan/Scanner.swift`'s `isNonPromotableSessionResidue` ORs the
+// config-driven `ResidueMatcher.isResidue` with the code-driven
 // `StackDiscovery.classifiesAsStackProduct` -- the exact same starless/
 // starmask/edited/export recognition `stacks/`/`processed`-area variant
 // grouping already applies, reused rather than re-implemented. These tests
 // mirror that OR exactly (never re-deriving the match themselves) and pin
 // its combined coverage/false-positive behavior against the same real
 // library data.
-
-/// The 3 of the 48 wrongly-promoted paths still uncaught even by the
-/// combined guard: bare `Ha.fit`/`Oiii.fit`/`RGB.fit` basenames are
-/// legitimate real narrowband/RGB-combine filter names too, and
-/// `StackDiscovery.variantKind` classifies them `.original` (no starless/
-/// starmask prefix, no edit marker, not an export extension) -- exactly the
-/// same ambiguous bucket a genuine unmarked capture falls into. No safe
-/// pattern or classifier rule exists to tell them apart from here.
-private let combinedGuardHonestRemainder: Set<String> = [
-    "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/Ha.fit",
-    "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/Oiii.fit",
-    "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/RGB.fit",
-]
 
 /// Exactly what `LibraryScanner.isNonPromotableSessionResidue` does --
 /// duplicated here ONLY as a two-line OR of the two real engines (never a
@@ -162,7 +241,7 @@ private func isNonPromotableSessionResidue(path: String, config: AstroConfig) ->
     return StackDiscovery.classifiesAsStackProduct(fileName: fileName)
 }
 
-@Test func combinedGuardCatches45Of48RealWronglyPromotedFramesIncludingStarlessStarmaskGraxpert() throws {
+@Test func combinedGuardCatches50Of53RealWronglyPromotedFrames() throws {
     let config = AstroConfig()
 
     var caught: [String] = []
@@ -175,8 +254,25 @@ private func isNonPromotableSessionResidue(path: String, config: AstroConfig) ->
         }
     }
 
-    #expect(caught.count == 45)
-    #expect(Set(missed) == combinedGuardHonestRemainder)
+    #expect(caught.count == 50)
+    #expect(Set(missed) == honestRemainder)
+}
+
+@Test func combinedGuardStillCatchesStarlessStarmaskWhenSessionPatternsAreEmptied() throws {
+    // The StackDiscovery backstop is code, not config: even with BOTH
+    // pattern lists emptied, a starless/starmask byproduct is still
+    // non-promotable. (`result_*` names are the session-pattern layer's
+    // sole responsibility -- variantKind sees them as `.original` -- so
+    // they correctly fall through here; that's what
+    // `sessionResiduePatterns`'s default exists for.)
+    var config = AstroConfig()
+    config.residuePatterns = []
+    config.sessionResiduePatterns = []
+
+    #expect(isNonPromotableSessionResidue(
+        path: "sessions/M42_Orion/2026-01-17/starless_result.fit", config: config))
+    #expect(!isNonPromotableSessionResidue(
+        path: "sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_Ha_12720s.fit", config: config))
 }
 
 @Test func combinedGuardNeverMatchesAnyScannerReachableCleanSessionLightFrame() throws {
@@ -192,21 +288,22 @@ private func isNonPromotableSessionResidue(path: String, config: AstroConfig) ->
     )
 }
 
-@Test func resultHaAndResultOIIIStackedIntegrationsStayHonestRemainderNotAnInventedPattern() throws {
+@Test func resultHaAndResultOIIIStackedIntegrationsAreCaughtBySessionPatterns() throws {
     // Flagged while building fixtures for the prior commit: these two rows
-    // are ALSO wrongly promoted (imagetyp=Light, but the filename bakes in a
+    // are wrongly promoted too (imagetyp=Light, but the filename bakes in a
     // 12720s total integration and the file sits in a `results/` folder --
     // not a real single sub), yet their `fits_meta.filter` values (Ha/OIII)
-    // are legitimate real filter names, and `StackDiscovery.variantKind`
-    // classifies `"result_Ha_12720s.fit"`/`"result_OIII_12720s.fit"` as
-    // `.original` (no starless/starmask/edit marker). Per instructions: do
-    // NOT invent a `result_*` residue pattern to catch these -- pin them as
-    // a deliberate, disclosed remainder instead.
+    // are legitimate real filter names and `StackDiscovery.variantKind`
+    // classifies the basename `.original`, so neither the fake-filter
+    // survey nor the code-driven backstop can reach them. The session-area
+    // `result_*` pattern is what catches them -- verified against the DB
+    // copy to match zero genuine session subs (its only other session-area
+    // hits are `result_work.fit`-style Siril byproducts, equally junk).
     let config = AstroConfig()
-    #expect(!isNonPromotableSessionResidue(
+    #expect(isNonPromotableSessionResidue(
         path: "sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_Ha_12720s.fit", config: config
     ))
-    #expect(!isNonPromotableSessionResidue(
+    #expect(isNonPromotableSessionResidue(
         path: "sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_OIII_12720s.fit", config: config
     ))
 }

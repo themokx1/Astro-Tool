@@ -523,18 +523,22 @@ public final class LibraryScanner {
     /// its FITS IMAGETYP header -- `true` when EITHER of two independent
     /// engines says so, neither one copied:
     ///  1. `ResidueMatcher.isResidue` -- config-driven, from
-    ///     `AstroConfig.residuePatterns`/`residueDirNames`, the same
-    ///     predicate `CleanupReport`'s cleanup summary uses.
+    ///     `AstroConfig.residuePatterns`/`residueDirNames` (universal) plus
+    ///     `AstroConfig.sessionResiduePatterns` (applied by `ResidueMatcher`
+    ///     itself to `.sessions`-area paths only -- the vocabulary that is
+    ///     junk here but WANTED StackDiscovery output in `stacks/`/
+    ///     `processed/`, e.g. `result_*` integrations). The same predicate
+    ///     `CleanupReport`'s cleanup summary uses.
     ///  2. `StackDiscovery.classifiesAsStackProduct` -- code-driven, the
     ///     same starless/starmask/edited/export recognition `stacks/`/
     ///     `processed`-area variant grouping already applies to filenames.
-    /// The second check exists because `starless`/`starmask`/`graxpert`
-    /// tokens can't safely live in `residuePatterns`'s defaults (see that
-    /// property's own doc comment -- they're first-class, WANTED variant
-    /// output there, not residue), but a Siril byproduct using those exact
-    /// names sitting loose in `sessions/` must still never be promoted,
-    /// REGARDLESS of what a given library's `config.json` says, since this
-    /// recognition is code, not config.
+    /// The second check overlaps the session-pattern defaults on purpose: a
+    /// Siril byproduct named `starless_*` sitting loose in `sessions/` must
+    /// still never be promoted even when a library's `config.json` empties
+    /// the pattern lists, since this recognition is code, not config. The
+    /// session-pattern layer in turn reaches names `variantKind` can't
+    /// (`result_Ha_12720s.fit` classifies `.original`) and is what
+    /// `CleanupReport` surfaces to the user.
     private func isNonPromotableSessionResidue(path: String) -> Bool {
         if ResidueMatcher.isResidue(path: path, config: config) { return true }
         let fileName = (path as NSString).lastPathComponent

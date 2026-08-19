@@ -7,19 +7,24 @@
 /// both lists are DATA, not something to hand-edit when a pattern changes;
 /// re-derive them from the DB copy instead.
 enum RealLibraryResiduePaths {
-    /// The 48 session-area FITS files confirmed wrongly promoted to
+    /// The 53 session-area FITS files confirmed wrongly promoted to
     /// `role=.light` by the pre-fix `refineLooseFrameRole`: Siril stack
     /// byproducts (starless/starmask/graxpert/composited results) sitting
     /// loose in a session date dir, whose FITS header inherited
-    /// `IMAGETYP='Light Frame'` from the subs they were stacked from --
-    /// `fits_meta.filter` on every one of these rows is `Starless`/`StarMask`/
-    /// `R`/`mixed`, never a real filter name. Only 10 of the 48 are safely
-    /// caught by the broadened default patterns -- see
+    /// `IMAGETYP='Light Frame'` from the subs they were stacked from. 48
+    /// were found by the original fake-`fits_meta.filter` survey (their
+    /// filter is `Starless`/`StarMask`/`R`/`mixed`, never a real filter
+    /// name); the other 5 carry a legit-looking (`Ha`/`OIII`) or EMPTY
+    /// filter value and were only found by a follow-up filename+path
+    /// re-survey of the same DB copy: `results/result_Ha_12720s.fit`/
+    /// `result_OIII_12720s.fit` (the filename bakes in a 12720s total
+    /// integration -- a full stacked result, not a single sub) and 3 loose
+    /// `..._og_work_graxpert*`-named GraXpert intermediates. Only 10 of the
+    /// 53 are safely caught by the UNIVERSAL default patterns -- see
     /// `AstroConfig.residuePatterns`'s own doc comment for why
-    /// `starless`/`starmask`/`graxpert_result` (35 of the 48) are
-    /// deliberately NOT part of the broadened default, plus 3 more
-    /// (`Ha.fit`/`Oiii.fit`/`RGB.fit`) that are legitimate real filter names
-    /// too.
+    /// `starless`/`starmask`/`graxpert`/`result_` tokens live in the
+    /// session-area-scoped `AstroConfig.sessionResiduePatterns` list
+    /// instead.
     static let wronglyPromoted: [String] = rawWronglyPromoted
         .split(separator: "\n").map(String.init)
 
@@ -43,7 +48,7 @@ enum RealLibraryResiduePaths {
     static let otherSessionLightPaths: [String] = rawOtherSessionLightPaths
         .split(separator: "\n").map(String.init)
 
-    /// The 35 `sessions`-area, role='light', `.fit`/`.fits`/`.fz`, path-role
+    /// The 33 `sessions`-area, role='light', `.fit`/`.fits`/`.fz`, path-role
     /// `.other` files -- i.e. exactly the shape `LibraryScanner`'s
     /// `refineLooseFrameRole`/`healStaleClassification` guards actually
     /// evaluate -- that are NOT in `wronglyPromoted` and that the COMBINED
@@ -58,9 +63,9 @@ enum RealLibraryResiduePaths {
     /// STACKS with no edit marker at all -- `StackVariantKind.original`
     /// deliberately covers both (see `classifiesAsStackProduct`'s doc
     /// comment), since telling them apart isn't possible from the filename
-    /// alone without risking a real sub. That means some of these 35 may
+    /// alone without risking a real sub. That means some of these 33 may
     /// still be undetected pollution the combined guard can't safely reach
-    /// -- an honest, disclosed limitation, not a claim that all 35 are
+    /// -- an honest, disclosed limitation, not a claim that all 33 are
     /// verified real subs.
     static let scannerReachableCleanPaths: [String] = rawScannerReachableCleanPaths
         .split(separator: "\n").map(String.init)
@@ -81,9 +86,12 @@ sessions/NGC2237_Rosette_Nebula/2026-02-25/starless_NGC_2237_085x60sec_5100s_202
 sessions/NGC2237_Rosette_Nebula/2026-02-25/starless_NGC_2237_085x60sec_5100s_2026-03-01_1629_og_work_streched.fit
 sessions/NGC2237_Rosette_Nebula/2026-02-25/starmask_NGC_2237_085x60sec_5100s_2026-03-01_1629_og_work.fit
 sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/Ha.fit
+sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert.fit
+sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_manual_strech.fit
 sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_result_HOO_Improved.fit
 sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_result_HSO_Improved.fit
 sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_result_SHO_Improved.fit
+sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_strech.fit
 sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/New/Unsaved star recomposition result.fit
 sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/New/VeraLux_StarComposer_result.fit
 sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/New/VeraLux_StarComposer_result_og_size.fit
@@ -114,6 +122,8 @@ sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/starmask_NGC_2244_Satellit
 sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/starmask_r_osc_and_filtered_00002.fit
 sessions/NGC2237_Rosette_Nebula/2026-03-15-OSC/starless_NGC_2244_Satellite_Cluster_009x60sec_540s_2026-03-16_1958_og.fit
 sessions/NGC2237_Rosette_Nebula/2026-03-15-OSC/starmask_NGC_2244_Satellite_Cluster_009x60sec_540s_2026-03-16_1958_og.fit
+sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_Ha_12720s.fit
+sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_OIII_12720s.fit
 """
 
     private static let rawOtherSessionLightPaths = """
@@ -3565,9 +3575,6 @@ sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster
 sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_130x120sec_11460s_2026-03-16_1956_og_work.fit
 sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_130x120sec_11460s_2026-03-16_1956_og_work_.fit
 sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og.fit
-sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert.fit
-sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_manual_strech.fit
-sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_strech.fit
 sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_seti.fit
 sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_seti_strech.fit
 sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_workú.fit
@@ -4289,8 +4296,6 @@ sessions/NGC_7000_North_American_Nebula/2026-05-23/lights/Light_NGC 7000_120.0s_
 sessions/NGC_7000_North_American_Nebula/2026-05-23/lights/Light_NGC 7000_120.0s_Bin1_2600MC_gain100_20260523-034522_178deg_-10.0C_0142.fit
 sessions/NGC_7000_North_American_Nebula/2026-05-23/lights/Light_NGC 7000_120.0s_Bin1_2600MC_gain100_20260523-034522_178deg_-10.0C_0142.info.txt
 sessions/NGC_7000_North_American_Nebula/2026-05-23/lights/Light_NGC 7000_120.stackinfo.txt
-sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_Ha_12720s.fit
-sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_OIII_12720s.fit
 """
 
     private static let rawScannerReachableCleanPaths = """
@@ -4327,7 +4332,5 @@ sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster
 sessions/NGC2237_Rosette_Nebula/2026-03-15-OSC/NGC_2244_Satellite_Cluster_009x60sec_540s_2026-03-16_1958_og.fit
 sessions/NGC2237_Rosette_Nebula/2026-03-15/NGC_2244_Satellite_Cluster_044x120sec_5280s__drizzle-2-0x_2026-03-17_1843_og.fit
 sessions/NGC2237_Rosette_Nebula/2026-03-15/NGC_2244_Satellite_Cluster_047x120sec_5640s_2026-03-16_1941_og.fit
-sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_Ha_12720s.fit
-sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_OIII_12720s.fit
 """
 }

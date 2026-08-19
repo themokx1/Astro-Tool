@@ -550,6 +550,22 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     /// Root-relative paths to exclude from scanning, beyond `excludedDirNames`.
     public var excludedPaths: [String]
     public var residuePatterns: [String]
+    /// Residue filename globs that only count for files whose
+    /// `PathClassifier` area is `.sessions` -- the vocabulary that is junk
+    /// when loose in a session date dir but first-class, WANTED
+    /// `StackVariantKind`/`looksLikeStackOutput` output in `stacks/`/
+    /// `processed/` (`starless_*` variants, GraXpert intermediates, Siril
+    /// `result*` integrations), which `residuePatterns`'s universal list
+    /// therefore can never carry (see its doc comment for the reverted
+    /// attempt). Consulted by `ResidueMatcher.category`/`isResidue` --
+    /// i.e. it feeds both `CleanupReport`'s cleanup summary (category
+    /// `residue-session`) and `LibraryScanner`'s IMAGETYP-promotion guard
+    /// -- and deliberately NOT by `StackDiscovery`, whose stack-variant
+    /// recognition keeps using only the universal list. Every default is
+    /// verified against a copy of the owner's real library to match only
+    /// confirmed stack byproducts in the sessions area, zero genuine subs
+    /// (`ResidueMatcherRealLibraryTests`).
+    public var sessionResiduePatterns: [String]
     public var residueDirNames: [String]
     /// Directory names (case-sensitive match on the path component) that are
     /// known outputs of coexisting tools -- currently `tools/rate/
@@ -622,13 +638,15 @@ public struct AstroConfig: Codable, Equatable, Sendable {
             // `ResultsStoreTests`, `CLISmokeTests`) -- residue-ness for that
             // vocabulary is area-dependent (junk loose in `sessions/`, a
             // keeper in `stacks/`/`processed/`), which a single flat global
-            // pattern list can't express. Catches 10 of 48 confirmed
+            // pattern list can't express: that vocabulary lives in
+            // `sessionResiduePatterns` below instead, which only applies to
+            // `.sessions`-area paths. Catches 10 of 53 confirmed
             // wrongly-promoted files with zero matches among ~4200 other
-            // session light frames; the remaining 38 (35 starless/starmask +
-            // the 3 bare `Ha.fit`/`Oiii.fit`/`RGB.fit` filter-name-only
-            // basenames) need an area-scoped fix in `Scanner`/
-            // `ResidueMatcher` to catch safely, tracked separately.
+            // session light frames.
             "veralux_*", "*stack_work*", "*_synt*", "fixstars*", "*star recomposition result*",
+        ],
+        sessionResiduePatterns: [String] = [
+            "starless*", "starmask*", "*graxpert*", "result_*",
         ],
         residueDirNames: [String] = ["process"],
         toolOutputDirNames: [String] = ["Stack", "Review", "Reject", "light_frame_rating_report_assets", "masters"],
@@ -650,6 +668,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.excludedDirNames = excludedDirNames
         self.excludedPaths = excludedPaths
         self.residuePatterns = residuePatterns
+        self.sessionResiduePatterns = sessionResiduePatterns
         self.residueDirNames = residueDirNames
         self.toolOutputDirNames = toolOutputDirNames
         self.intentional = intentional
@@ -668,7 +687,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case rootPath, excludedDirNames, excludedPaths, residuePatterns, residueDirNames, toolOutputDirNames
+        case rootPath, excludedDirNames, excludedPaths, residuePatterns, sessionResiduePatterns, residueDirNames, toolOutputDirNames
         case intentional, wideField, calib, rating, stats, site, sites, expose, weather, plan, integrationReference, imagingSetups, astrobin
     }
 
@@ -679,6 +698,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.excludedDirNames = try container.decodeIfPresent([String].self, forKey: .excludedDirNames) ?? defaults.excludedDirNames
         self.excludedPaths = try container.decodeIfPresent([String].self, forKey: .excludedPaths) ?? defaults.excludedPaths
         self.residuePatterns = try container.decodeIfPresent([String].self, forKey: .residuePatterns) ?? defaults.residuePatterns
+        self.sessionResiduePatterns = try container.decodeIfPresent([String].self, forKey: .sessionResiduePatterns) ?? defaults.sessionResiduePatterns
         self.residueDirNames = try container.decodeIfPresent([String].self, forKey: .residueDirNames) ?? defaults.residueDirNames
         self.toolOutputDirNames = try container.decodeIfPresent([String].self, forKey: .toolOutputDirNames) ?? defaults.toolOutputDirNames
         self.intentional = try container.decodeIfPresent(IntentionalPatterns.self, forKey: .intentional) ?? defaults.intentional

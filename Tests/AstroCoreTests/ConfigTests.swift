@@ -12,6 +12,9 @@ import Testing
         "*.seq", "*.lst", "*_conv*", "*_bkg*", "*_pp_*", "r_*", "bkg_*", ".DS_Store",
         "veralux_*", "*stack_work*", "*_synt*", "fixstars*", "*star recomposition result*",
     ])
+    #expect(config.sessionResiduePatterns == [
+        "starless*", "starmask*", "*graxpert*", "result_*",
+    ])
     #expect(config.residueDirNames == ["process"])
     #expect(config.toolOutputDirNames == ["Stack", "Review", "Reject", "light_frame_rating_report_assets", "masters"])
     #expect(config.intentional == IntentionalPatterns())
@@ -49,6 +52,24 @@ import Testing
     #expect(config.weather.enabled == false)
 
     #expect(config.integrationReference == IntegrationReferenceRule())
+}
+
+@Test func decodingConfigWithoutSessionResiduePatternsFallsBackToDefaults() throws {
+    // Every pre-existing on-disk config.json predates this key -- decoding
+    // one must yield the same defaults a fresh `AstroConfig()` has, and an
+    // explicit empty list must survive a round-trip (an owner deliberately
+    // disabling the session layer), not get "repaired" back to defaults.
+    let withoutKey = try JSONDecoder().decode(AstroConfig.self, from: Data("{}".utf8))
+    #expect(withoutKey.sessionResiduePatterns == AstroConfig().sessionResiduePatterns)
+
+    let explicitlyEmpty = try JSONDecoder().decode(
+        AstroConfig.self, from: Data(#"{"sessionResiduePatterns": []}"#.utf8))
+    #expect(explicitlyEmpty.sessionResiduePatterns == [])
+
+    var config = AstroConfig()
+    config.sessionResiduePatterns = ["custom_*"]
+    let decoded = try JSONDecoder().decode(AstroConfig.self, from: JSONEncoder().encode(config))
+    #expect(decoded.sessionResiduePatterns == ["custom_*"])
 }
 
 @Test func defaultSiteRuleHasNilCoordinates() {

@@ -14,6 +14,7 @@ struct LibraryRulesSettingsView: View {
     @Environment(AppState.self) private var appState
 
     @State private var residuePatterns: [String] = []
+    @State private var sessionResiduePatterns: [String] = []
     @State private var residueDirNames: [String] = []
     @State private var toolOutputDirNames: [String] = []
     @State private var intentionalLabels: [String] = []
@@ -49,6 +50,13 @@ struct LibraryRulesSettingsView: View {
                     reset: { residuePatterns = defaults.residuePatterns }
                 ) {
                     EditableStringListView(title: "Residue-minták", items: $residuePatterns)
+                }
+                SettingsResetRow(
+                    isModified: sessionResiduePatterns != defaults.sessionResiduePatterns,
+                    caption: "Csak a sessions/ területen residue-nak számító minták -- a stacks/processed alatt ugyanezek a nevek (starless, result_...) megtartott stack-változatok.",
+                    reset: { sessionResiduePatterns = defaults.sessionResiduePatterns }
+                ) {
+                    EditableStringListView(title: "Session-residue minták", items: $sessionResiduePatterns)
                 }
                 SettingsResetRow(
                     isModified: residueDirNames != defaults.residueDirNames,
@@ -225,6 +233,7 @@ struct LibraryRulesSettingsView: View {
     private var isDirty: Bool {
         let config = appState.config
         return residuePatterns != config.residuePatterns
+            || sessionResiduePatterns != config.sessionResiduePatterns
             || residueDirNames != config.residueDirNames
             || toolOutputDirNames != config.toolOutputDirNames
             || intentionalLabels != config.intentional.labels
@@ -243,6 +252,7 @@ struct LibraryRulesSettingsView: View {
         let defaultConfig = AstroConfig()
         let defaultIntentional = IntentionalPatterns()
         residuePatterns = defaultConfig.residuePatterns
+        sessionResiduePatterns = defaultConfig.sessionResiduePatterns
         residueDirNames = defaultConfig.residueDirNames
         toolOutputDirNames = defaultConfig.toolOutputDirNames
         intentionalLabels = defaultIntentional.labels
@@ -260,6 +270,7 @@ struct LibraryRulesSettingsView: View {
     private func loadFromConfig() {
         let config = appState.config
         residuePatterns = config.residuePatterns
+        sessionResiduePatterns = config.sessionResiduePatterns
         residueDirNames = config.residueDirNames
         toolOutputDirNames = config.toolOutputDirNames
         intentionalLabels = config.intentional.labels
@@ -280,6 +291,7 @@ struct LibraryRulesSettingsView: View {
 
         var newConfig = appState.config
         newConfig.residuePatterns = residuePatterns
+        newConfig.sessionResiduePatterns = sessionResiduePatterns
         newConfig.residueDirNames = residueDirNames
         newConfig.toolOutputDirNames = toolOutputDirNames
 

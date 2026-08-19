@@ -1888,6 +1888,7 @@ private func printConfigHumanReadable(_ config: AstroConfig) {
     print("  excludedDirNames: \(joinedOrDash(config.excludedDirNames))")
     print("  excludedPaths: \(joinedOrDash(config.excludedPaths))")
     print("  residuePatterns: \(joinedOrDash(config.residuePatterns))")
+    print("  sessionResiduePatterns: \(joinedOrDash(config.sessionResiduePatterns))")
     print("  residueDirNames: \(joinedOrDash(config.residueDirNames))")
     print("  toolOutputDirNames: \(joinedOrDash(config.toolOutputDirNames))")
 
