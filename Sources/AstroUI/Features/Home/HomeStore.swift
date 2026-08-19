@@ -235,6 +235,18 @@ public struct HomeSnapshot: Equatable, Sendable {
     /// optional field on this snapshot keeps.
     public let featuredCompletionForecast: CompletionForecastEstimate?
 
+    /// Ideation #5 ("Két géped mára" -- tonight's rig split): which saved
+    /// `ImagingSetupProfile` best frames which of `tonightRecommendations`,
+    /// from `TwoRigSplitQuery.assign` (`AstroApplication`) -- computed FRESH
+    /// every `configure(...)`, never re-derived from `tonightRecommendations`
+    /// by this view layer. `nil` in two honest cases `HomeView` treats the
+    /// same way (hide the whole card): fewer than
+    /// `TwoRigSplitQuery.minimumSetupCount` setups are saved (V2 has no
+    /// imaging-setup CRUD yet, a known gap), or no `rootURL` is open at all.
+    /// An empty (non-`nil`) array means the setups exist but tonight has
+    /// nothing to recommend -- also nothing to show.
+    public let twoRigSplit: [TwoRigSplitAssignment]?
+
     /// One `(target, sessionDate)` session anchors `FrameRatingCommand`'s own
     /// scope (`firstKnownFrame`), so `unratedNightCount` here counts exactly
     /// the sessions one "Rate Everything" run would still need to touch --
@@ -296,7 +308,8 @@ public struct HomeSnapshot: Equatable, Sendable {
         nightCloudError: WeatherError? = nil,
         ratingGate: RatingGate = .clear,
         highlights: [Highlight] = [],
-        featuredCompletionForecast: CompletionForecastEstimate? = nil
+        featuredCompletionForecast: CompletionForecastEstimate? = nil,
+        twoRigSplit: [TwoRigSplitAssignment]? = nil
     ) {
         self.libraryName = libraryName
         self.nightContext = nightContext
@@ -311,6 +324,7 @@ public struct HomeSnapshot: Equatable, Sendable {
         self.ratingGate = ratingGate
         self.highlights = highlights
         self.featuredCompletionForecast = featuredCompletionForecast
+        self.twoRigSplit = twoRigSplit
     }
 
     /// Neutral preview content: it conveys the shape of the workspace without
@@ -358,6 +372,15 @@ public final class HomeStore {
     /// the same reason every other provider here is: tests supply a fixed
     /// result without a real FITS-backed library or index DB.
     public typealias CompletionOutlookProvider = @Sendable (URL, String) async throws -> CompletionForecastEstimate?
+    /// Ideation #5 ("Két géped mára"): resolves `TwoRigSplitQuery.assign`'s
+    /// result for an open library, given tonight's already-planned targets
+    /// (`configure`'s own `recommendations`, mapped to the dependency-free
+    /// `TwoRigSplitTarget` shape -- this is the "reuse Home's existing
+    /// tonight data source, never re-plan" contract; see
+    /// `TwoRigSplitQuery`'s own doc comment). Injectable for the same reason
+    /// every other provider here is: tests supply a fixed result without a
+    /// real FITS-backed library, index DB, or saved imaging setups.
+    public typealias TwoRigSplitProvider = @Sendable (URL, [TwoRigSplitTarget]) async throws -> [TwoRigSplitAssignment]?
     public private(set) var snapshot: HomeSnapshot
     /// The full plan `tonightRecommendations` was sliced from (`prefix(8)`,
     /// display-only) -- kept around so the "Export Plan" menu
@@ -402,6 +425,7 @@ public final class HomeStore {
     private let ratingGateProvider: RatingGateProvider
     private let highlightsProvider: HighlightsProvider
     private let completionOutlookProvider: CompletionOutlookProvider
+    private let twoRigSplitProvider: TwoRigSplitProvider
     /// Bumped at the start of every `loadWeather(rootURL:)` call and captured
     /// into that call's own local `generation` -- the weather fetch runs as
     /// its own fire-and-forget `Task` (never awaited by `configure`, so a
@@ -437,7 +461,8 @@ public final class HomeStore {
         weatherProvider: WeatherProvider? = nil,
         ratingGateProvider: RatingGateProvider? = nil,
         highlightsProvider: HighlightsProvider? = nil,
-        completionOutlookProvider: CompletionOutlookProvider? = nil
+        completionOutlookProvider: CompletionOutlookProvider? = nil,
+        twoRigSplitProvider: TwoRigSplitProvider? = nil
     ) {
         self.snapshot = snapshot
         self.tonightProvider = tonightProvider ?? HomeStore.productionTonight
@@ -447,6 +472,7 @@ public final class HomeStore {
         self.ratingGateProvider = ratingGateProvider ?? HomeStore.productionRatingGate
         self.highlightsProvider = highlightsProvider ?? HomeStore.productionHighlights
         self.completionOutlookProvider = completionOutlookProvider ?? HomeStore.productionCompletionOutlook
+        self.twoRigSplitProvider = twoRigSplitProvider ?? HomeStore.productionTwoRigSplit
     }
 
     public func replaceSnapshot(_ snapshot: HomeSnapshot) {
@@ -503,7 +529,8 @@ public final class HomeStore {
             nightCloudError: nightCloudError,
             ratingGate: snapshot.ratingGate,
             highlights: snapshot.highlights,
-            featuredCompletionForecast: snapshot.featuredCompletionForecast
+            featuredCompletionForecast: snapshot.featuredCompletionForecast,
+            twoRigSplit: snapshot.twoRigSplit
         )
     }
 
@@ -650,6 +677,20 @@ public final class HomeStore {
         } else {
             nil
         }
+        // Ideation #5 ("Két géped mára"): reuses `recommendations` (this same
+        // `configure` call's own tonight plan, already filtered to what's
+        // actually shootable and capped to 8) -- `TwoRigSplitQuery.assign`
+        // never re-plans. Mapped to the dependency-free `TwoRigSplitTarget`
+        // shape since `AstroApplication` cannot see `HomeTonightRecommendation`
+        // (this module's own type).
+        let twoRigSplit: [TwoRigSplitAssignment]? = if let rootURL {
+            (try? await twoRigSplitProvider(
+                rootURL,
+                recommendations.map { TwoRigSplitTarget(target: $0.target, displayName: $0.displayName) }
+            )) ?? nil
+        } else {
+            nil
+        }
         snapshot = HomeSnapshot(
             libraryName: libraryName,
             nightContext: nightContext,
@@ -661,7 +702,8 @@ public final class HomeStore {
             hasActiveProjectsExcludedTonight: hasActiveProjectsExcludedTonight,
             ratingGate: ratingGate,
             highlights: highlights,
-            featuredCompletionForecast: featuredCompletionForecast
+            featuredCompletionForecast: featuredCompletionForecast,
+            twoRigSplit: twoRigSplit
         )
         // Fire-and-forget, same reasoning as V1's `AppState.loadWeather`
         // (called right after its own site-scoped load lands): weather is
@@ -870,6 +912,48 @@ public final class HomeStore {
                 .suffix(5)
                 .map(\.integrationSeconds)
             return CompletionForecast.nightsNeeded(remainingSeconds: missing, recentSessionSeconds: recent)
+        }.value
+    }
+
+    /// Ideation #5 ("Két géped mára"): resolves `config.imagingSetups` and,
+    /// for each of `targets`, this library's own dominant historical
+    /// `EquipmentProfile` fingerprint (`TwoRigSplitQuery
+    /// .historicalDominantFingerprint`, the fallback branch's own input),
+    /// then hands both to the pure `TwoRigSplitQuery.assign`. Short-circuits
+    /// before any per-target DB read when fewer than
+    /// `TwoRigSplitQuery.minimumSetupCount` setups are saved -- the whole
+    /// feature is hidden then, so there is nothing to resolve a history for.
+    public static func productionTwoRigSplit(
+        rootURL: URL, targets: [TwoRigSplitTarget]
+    ) async throws -> [TwoRigSplitAssignment]? {
+        try await Task.detached(priority: .utility) {
+            let identity = LibraryIdentity(rootURL: rootURL)
+            let paths = try AppStoragePaths.production(libraryID: identity, libraryRoot: rootURL)
+            let database = try Database(path: paths.indexDatabase.path)
+            let configURL = rootURL.appendingPathComponent(".astro_tool/config.json")
+            var config = (try? AstroConfig.load(from: configURL)) ?? AstroConfig()
+            config.rootPath = rootURL.path
+            guard config.imagingSetups.count >= TwoRigSplitQuery.minimumSetupCount else { return nil }
+
+            var mutableFingerprintByTarget: [String: SetupFingerprint] = [:]
+            for row in targets {
+                if let fingerprint = try? TwoRigSplitQuery.historicalDominantFingerprint(
+                    target: row.target, db: database, config: config
+                ) {
+                    mutableFingerprintByTarget[row.target] = fingerprint
+                }
+            }
+            // `historicalFingerprint` below must be `@Sendable`
+            // (`TwoRigSplitQuery.assign`'s own parameter) -- a `let` capture
+            // of the finished dictionary, never the `var` being built above,
+            // is what makes that legal.
+            let fingerprintByTarget = mutableFingerprintByTarget
+
+            return TwoRigSplitQuery.assign(
+                targets: targets,
+                setups: config.imagingSetups,
+                historicalFingerprint: { fingerprintByTarget[$0] }
+            )
         }.value
     }
 

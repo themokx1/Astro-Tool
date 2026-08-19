@@ -203,6 +203,7 @@ public struct HomeView: View {
             .astroRaisedSurface()
             ratingGateCard
             tonightRecommendations
+            twoRigSplitCard
             cloudyDarksCard
         }
         .accessibilityIdentifier("v2.home.library-overview")
@@ -557,6 +558,54 @@ public struct HomeView: View {
         // a content block, and a content block belongs on the raised layer.
         .astroRaisedSurface()
         .accessibilityIdentifier("v2.home.tonight-recommendations")
+    }
+
+    /// Ideation #5 ("Két géped mára"): a compact block under "Best targets
+    /// tonight", not one more column inside those already info-rich rows --
+    /// this only ever fires with two-plus saved setups AND at least one
+    /// tonight recommendation, both narrow, occasional conditions, so a
+    /// short separate block reads as "an extra fact, when it applies"
+    /// instead of permanently widening every row for a feature most nights
+    /// have nothing to say. `store.snapshot.twoRigSplit` is `nil` for BOTH
+    /// honest "nothing to show" cases (`HomeStore.HomeSnapshot.twoRigSplit`'s
+    /// own doc: fewer than `TwoRigSplitQuery.minimumSetupCount` saved
+    /// setups, or no library open) and an empty array when the setups exist
+    /// but tonight has nothing recommended -- this view only ever renders
+    /// what it was handed, never recomputes the split itself.
+    @ViewBuilder
+    private var twoRigSplitCard: some View {
+        if let assignments = store.snapshot.twoRigSplit, !assignments.isEmpty {
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+                Text("Two rigs tonight").font(.headline)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(assignments) { assignment in
+                        twoRigSplitRow(assignment)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .astroRaisedSurface()
+            .accessibilityIdentifier("v2.home.two-rig-split")
+        }
+    }
+
+    /// `.undecidable` renders its own honest "nem eldönthető" line rather
+    /// than a blank or a guessed rig name -- the exact per-target contract
+    /// `TwoRigSplitReason`'s own doc documents. The two resolved reasons
+    /// (`.fieldOfViewFit`/`.historicalFingerprint`) render identically
+    /// ("Rig → Target"): WHY a rig won is this feature's own internal
+    /// honesty check (covered by `TwoRigSplitQueryTests`), not something the
+    /// owner needs read out loud every night.
+    @ViewBuilder
+    private func twoRigSplitRow(_ assignment: TwoRigSplitAssignment) -> some View {
+        if let setupName = assignment.setupName {
+            Text("\(setupName) → \(assignment.displayName)")
+                .font(.callout)
+        } else {
+            (Text(assignment.displayName) + Text(verbatim: " — ") + Text("not decidable"))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var planExportItems: [ExportMenuItem] {
