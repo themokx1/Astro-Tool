@@ -54,6 +54,13 @@ public struct NightWorkspaceView: View {
     /// generated/saved as a file -- the owner's own words: "ne html
     /// oldalakat generáljunk és mentsünk".
     @State private var reportStore = NightReportStore()
+    /// Ideation #6 ("Éjszaka idővonala"): the visual night ribbon --
+    /// astronomical twilight/Moon-up/target-visible/capture/gap bands.
+    /// Loaded AFTER `reportStore` (same `.task(id: row)` block below) since
+    /// it consumes that load's own `SessionTimeline`, never re-querying
+    /// per-frame `DATE-OBS` data itself -- see `NightRibbonQuery`'s own doc
+    /// comment.
+    @State private var ribbonStore = NightRibbonStore()
 
     public init(
         row: NightRow,
@@ -196,10 +203,11 @@ public struct NightWorkspaceView: View {
         .onChange(of: row) { _, _ in publishWorkspaceActions() }
         .onDisappear { workspaceActionCenter.clear(owner: actionOwner) }
         .task(id: row) {
-            await reportStore.load(
-                rootURL: rootURL,
-                target: row.snapshot.projects.first.map(ProjectsQuery.canonicalFolderName(for:)),
-                date: row.date
+            let target = row.snapshot.projects.first.map(ProjectsQuery.canonicalFolderName(for:))
+            await reportStore.load(rootURL: rootURL, target: target, date: row.date)
+            await ribbonStore.load(
+                rootURL: rootURL, target: target, date: row.date,
+                timeline: reportStore.result?.timeline
             )
         }
     }
@@ -473,6 +481,15 @@ public struct NightWorkspaceView: View {
             // like an unexplained duplicate rather than two real sessions.
             if !report.mergedSessionDates.isEmpty {
                 ReportEmptyNote(text: "Filters and Capture Groups below combine every session folder for this calendar night: \(([report.date] + report.mergedSessionDates).joined(separator: ", ")).")
+            }
+            ReportSection(title: "Night Ribbon") {
+                if ribbonStore.isLoading, ribbonStore.result == nil {
+                    ProgressView().frame(maxWidth: .infinity, alignment: .center)
+                } else if let ribbon = ribbonStore.result {
+                    NightRibbonView(model: ribbon)
+                } else {
+                    ReportEmptyNote(text: "No timestamped events for this night.")
+                }
             }
             ReportSection(title: "Filters") {
                 if report.filterRows.isEmpty {
