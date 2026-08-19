@@ -1982,6 +1982,8 @@
 "guiding error" = "vezetési hiba";
 "cloud or haze" = "felhő/pára";
 "Select focus-slip frames" = "Kijelölés: fókusz-hibás keretek";
+"Select guiding-error frames" = "Kijelölés: vezetési hibás keretek";
+"Select cloud/haze frames" = "Kijelölés: felhős/párás keretek";
 
 /* Moon x sky-brightness correlation (expert ideation spec #3,
    2026-08-19): InsightsView.swift's moonSkyCorrelationCard +
