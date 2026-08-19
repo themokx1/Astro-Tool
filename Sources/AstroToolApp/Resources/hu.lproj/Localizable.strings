@@ -2196,3 +2196,17 @@
    verdict. Int interpolation produces a %lld key, not %@. */
 "%lld frames: possible satellite trail — check" = "%lld keret: esetleg műholdcsík — ellenőrizd";
 "Select possible-streak frames" = "Kijelölés: műholdcsík-gyanús keretek";
+
+/* Ideation #5 ("Két géped mára" -- tonight's rig split): HomeView's
+   `twoRigSplitCard`/`twoRigSplitRow` (TwoRigSplitQuery.swift, AstroApplication,
+   is the pure decision behind it). The card heading is deliberately an
+   English key whose OWN Hungarian translation is the feature's own name;
+   the row key's two `%@` placeholders are the resolved setup name and the
+   target's display name ("2600MC+SV220 → IC 1396") -- no further wording
+   to translate around the arrow, so the Hungarian entry keeps the same
+   placeholders verbatim. "not decidable" is the honest per-target fallback
+   when neither a resolvable catalog size nor an unambiguous shooting
+   history exists (`TwoRigSplitReason.undecidable`). */
+"Two rigs tonight" = "Két géped mára";
+"%@ → %@" = "%@ → %@";
+"not decidable" = "nem eldönthető";
