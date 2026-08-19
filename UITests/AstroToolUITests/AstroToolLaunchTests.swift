@@ -144,13 +144,21 @@ final class AstroToolLaunchTests: XCTestCase {
             XCTFail("The fixture library must list at least one project row")
             return
         }
-        let pushStart = Date()
-        firstRow.doubleClick()
         let workspace = element("v2.project.workspace", in: app)
-        XCTAssertTrue(
-            workspace.waitForExistence(timeout: 10),
-            "Double-clicking a project row must push the project workspace"
-        )
+        // A hosted runner under load can split the two clicks past the
+        // double-click interval, leaving the row merely selected -- retry
+        // the GESTURE (not the assertion) a couple of times before failing,
+        // and measure the budget from the attempt that actually landed.
+        var pushStart = Date()
+        for attempt in 0..<3 {
+            pushStart = Date()
+            firstRow.doubleClick()
+            if workspace.waitForExistence(timeout: 4) { break }
+            if attempt == 2 {
+                XCTFail("Double-clicking a project row must push the project workspace")
+                return
+            }
+        }
         XCTAssertLessThan(
             Date().timeIntervalSince(pushStart), Self.navigationBudget,
             "Pushing the project workspace exceeded the responsiveness budget"

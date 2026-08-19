@@ -420,6 +420,17 @@ private struct V2Shell: View {
         NavigationSplitView {
             V2Sidebar(router: router, badges: sidebarBadges)
         } detail: {
+            // The GeometryReader absorbs the detail content's MINIMUM size:
+            // without it a rigid page taller than the window (Planning
+            // demands ~836pt) propagates its minimum up through the
+            // NavigationSplitView, which then CENTERS the overflow -- the
+            // whole split view, sidebar included, slid above the title bar
+            // on a small display and its top rows stopped being clickable
+            // (CI runner AX snapshot: SplitGroup 836pt tall at y=-22 in a
+            // 652pt window). GeometryReader itself is fully flexible, so
+            // the split view stays window-sized and the top-aligned frame
+            // below spills any overflow downward only.
+            GeometryReader { _ in
             DetailHost(
                 router: router,
                 homeStore: homeStore,
@@ -456,6 +467,7 @@ private struct V2Shell: View {
             // reached, never upward under the toolbar. (Verified from a CI
             // runner's AX snapshot: SplitGroup at y=-22 in a 652pt window.)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
             // Task 7b (2026-08-17): THE page backdrop, and the only one.
             //
             // Task 6 removed the three `ground` tints that used to sit on
