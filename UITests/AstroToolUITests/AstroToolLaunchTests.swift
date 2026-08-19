@@ -129,7 +129,17 @@ final class AstroToolLaunchTests: XCTestCase {
         XCTAssertTrue(element("v2.detail.library.calibration", in: app).waitForExistence(timeout: 10))
 
         enterSection("v2.sidebar.projects", revealing: "v2.detail.projects", in: app)
-        let firstRow = app.tables.firstMatch.tableRows.element(boundBy: 0)
+        // macOS 26 vends SwiftUI `Table` as an AX *outline* (verified from a
+        // runner snapshot: the project list renders as Outline/OutlineRow
+        // while `app.tables` matches nothing). The sidebar is also an
+        // outline, but it is the only one labeled "Sidebar" -- so the first
+        // non-sidebar outline IS the page table, on either vending.
+        let projectTable = app.tables.firstMatch.exists
+            ? app.tables.firstMatch
+            : app.outlines.matching(NSPredicate(format: "label != 'Sidebar'")).firstMatch
+        let firstRow = projectTable.descendants(matching: .outlineRow).firstMatch.exists
+            ? projectTable.descendants(matching: .outlineRow).element(boundBy: 0)
+            : projectTable.tableRows.element(boundBy: 0)
         guard firstRow.waitForExistence(timeout: 8) else {
             XCTFail("The fixture library must list at least one project row")
             return
