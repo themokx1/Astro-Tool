@@ -46,9 +46,16 @@ struct ReleasePackagingSurfaceTests {
         #expect(smoke.contains("ASTROTOOL_CLEAN_INSTALL_SMOKE_LIBRARY=\"$SMOKE_LIBRARY\""))
         #expect(smoke.contains("-ResetOnboarding"))
         #expect(smoke.contains("cleanInstallSmokeReachedFirstScan"))
-        #expect(smoke.contains(".astro_tool/astrotool.sqlite"))
-        #expect(smoke.contains("finished_at IS NOT NULL"))
-        #expect(!smoke.contains("completed_at IS NOT NULL"))
+        // V2 architecture (2026-08-20): metadata lives OUTSIDE the library
+        // (~/Library/Caches/AstroTool/Libraries/<id>/index.sqlite) and the
+        // app auto-indexes read-only on open BY DESIGN -- the smoke asserts
+        // the external index appears and the library itself stays untouched,
+        // replacing the V1-era in-library .astro_tool/astrotool.sqlite and
+        // "no scan without a user choice" checks.
+        #expect(smoke.contains("Caches/AstroTool/Libraries"))
+        #expect(smoke.contains("index.sqlite"))
+        #expect(smoke.contains("! -name .astro_tool"))
+        #expect(!smoke.contains("astrotool.sqlite"))
         #expect(smoke.contains("kill -0"))
         #expect(workflow.contains("scripts/smoke-clean-install.sh"))
     }

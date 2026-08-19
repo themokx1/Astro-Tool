@@ -1,5 +1,6 @@
 import AppKit
 import AstroApplication
+import AstroCore
 import Foundation
 import SwiftUI
 
@@ -162,6 +163,20 @@ public struct V2RootView: View {
                 guard onboardingStore.phase == .chooseLibrary else { return }
                 if let uiTestFixture {
                     try? await onboardingStore.openAndScan(uiTestFixture.libraryRoot)
+                } else if let smokeURL = Self.cleanInstallSmokeLibraryURL() {
+                    // scripts/smoke-clean-install.sh: the packaged app, an
+                    // isolated defaults suite and a real temporary empty
+                    // library -- same raw awaited rail as the UI-test
+                    // fixture above. The flag below is what the script
+                    // polls for; it is only ever set when BOTH smoke env
+                    // variables are present, so normal launches can never
+                    // take this branch. (The V1 shell has the same hook in
+                    // `AppState.markCleanInstallFirstScanVisible`.)
+                    _ = try? await onboardingStore.openAndScan(smokeURL)
+                    if let suite = ProcessInfo.processInfo.environment["ASTROTOOL_DEFAULTS_SUITE"],
+                       let defaults = UserDefaults(suiteName: suite) {
+                        defaults.set(true, forKey: "cleanInstallSmokeReachedFirstScan")
+                    }
                 } else if scanOnOpen {
                     await onboardingStore.restoreSavedLibrary(through: operationHost)
                 }
@@ -179,6 +194,20 @@ public struct V2RootView: View {
                     appModel.clearPendingLibrarySwitch()
                 }
             }
+    }
+
+    /// The clean-install smoke's auto-open target -- non-nil only when the
+    /// isolated smoke defaults suite AND the temporary library path are both
+    /// present in the environment (see scripts/smoke-clean-install.sh).
+    private static func cleanInstallSmokeLibraryURL() -> URL? {
+        let environment = ProcessInfo.processInfo.environment
+        guard let suite = environment["ASTROTOOL_DEFAULTS_SUITE"],
+              suite.hasPrefix("\(ProductInfo.bundleIdentifier).clean-install-smoke."),
+              let path = environment["ASTROTOOL_CLEAN_INSTALL_SMOKE_LIBRARY"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !path.isEmpty
+        else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
     }
 
     /// Runs the post-scan "prepare this library" pipeline (materialize
