@@ -2217,6 +2217,25 @@
 "%@ more" = "%@ további";
 "Show fewer" = "Kevesebb mutatása";
 
+/* Expert ideation #2 ("melyik géppel fér be?"), Planning: once ≥2 setups
+   are saved, an opt-in toggle in the setup bar (PlanningView.setupBar)
+   runs a SECOND DiscoveryPlanner.discover sweep for the other saved
+   setup's own FOV (RigCompareQuery.swift, AstroApplication) and shows how
+   it would frame each recommended target too -- both in a compact third
+   line under the existing "Framing" column (PlanningView
+   .rigCompareLine/.compactFitText, reusing PlanningFit.displayLabel's own
+   entries below rather than a second vocabulary) and as one sentence under
+   the selected row's sky-path chart. That sentence is composed entirely in
+   PlanningView via Text's own nested-Text interpolation (never
+   String(format:), which V2PolishSurfaceTests.noHandRolledFormatting
+   forbids under Sources/AstroUI) -- PlanningStore.rigCompareSentenceComponents(for:)
+   only hands back the raw (setup name, PlanningFit) pieces. The setup name
+   itself (a free-text ImagingSetupProfile.cameraName) is never part of
+   the template. */
+"Compare with %@" = "Összevetés a(z) %@ felszereléssel";
+"Show how your other saved setup would frame each recommended target." = "Megmutatja, hogyan venné be az egyes ajánlott célpontokat a másik mentett felszereléseddel.";
+"With %@, this target would be %@." = "A(z) %@ felszereléssel ez a célpont %@ lenne.";
+
 /* Ideation #5 ("Két géped mára" -- tonight's rig split): HomeView's
    `twoRigSplitCard`/`twoRigSplitRow` (TwoRigSplitQuery.swift, AstroApplication,
    is the pure decision behind it). The card heading is deliberately an
