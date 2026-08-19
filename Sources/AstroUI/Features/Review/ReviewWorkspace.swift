@@ -647,7 +647,13 @@ private struct TriageDigestBanner: View {
                 .font(.callout.weight(.semibold))
             ForEach(digest.causes, id: \.metric) { cause in
                 HStack(spacing: 8) {
-                    Text("\(cause.count)×")
+                    // `verbatim`, matching `HomeView`'s own rating-gate
+                    // progress text ("`completed / total`"): a bare
+                    // "N×" multiplier reads identically in every locale, so
+                    // routing it through `Text`'s `LocalizedStringKey`
+                    // initializer would only add an untranslatable "%lld×"
+                    // key with no real phrase for `hu.lproj` to translate.
+                    Text(verbatim: "\(cause.count)×")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                     Text(cause.metric.triageCauseLabel)
