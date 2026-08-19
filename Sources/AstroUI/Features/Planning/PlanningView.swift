@@ -62,8 +62,7 @@ public struct PlanningView: View {
             skyPathSection
         }
         .navigationTitle("Planning")
-        .accessibilityLabel("Planning")
-        .accessibilityIdentifier("v2.detail.planning")
+        .astroSectionMarker("v2.detail.planning", label: "Planning")
         .task { store.activate() }
         .task {
             // First launch: fetch the catalog, then re-rank so the wider list

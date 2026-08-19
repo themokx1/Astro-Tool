@@ -130,8 +130,7 @@ public struct ArchiveView: View {
         // exists to catch. The floating card treatment lives one level
         // down, on `ArchiveTaskCard` itself.
         .navigationTitle("Archive")
-        .accessibilityLabel("Archive")
-        .accessibilityIdentifier("v2.detail.library")
+        .astroSectionMarker("v2.detail.library", label: "Library")
         .task(id: rootURL) { if let rootURL { await store.load(rootURL: rootURL) } }
         .task(id: store.snapshot) { recomputeDerivedState() }
         .task(id: store.tasks) { recomputeDerivedState() }

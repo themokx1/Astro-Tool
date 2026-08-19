@@ -116,8 +116,7 @@ public struct HomeView: View {
         // detail column, which now owns the page backdrop for all 21 routes
         // -- see the `.background(AstroTokens.Color.ground)` there.
         .navigationTitle("Home")
-        .accessibilityLabel("Home")
-        .accessibilityIdentifier("v2.detail.home")
+        .astroSectionMarker("v2.detail.home", label: "Home")
     }
 
     private var libraryOverview: some View {

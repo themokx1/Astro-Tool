@@ -259,7 +259,7 @@ public struct ProjectWorkspaceView: View {
         // Task 7b (2026-08-17): self-tint removed -- `V2RootView`'s detail
         // column owns the single opaque `ground` page backdrop now.
         .navigationTitle(snapshot.project.displayName)
-        .accessibilityIdentifier("v2.project.workspace")
+        .astroSectionMarker("v2.project.workspace", label: "Project workspace")
         // Task 4 (2026-08-17 owner-feedback wave 3): reverses Wave 4 Task 2's
         // "actions live only in the shell's stable toolbar" decision -- the
         // owner could not find them there ("nem tetszik hogy az akció gomb

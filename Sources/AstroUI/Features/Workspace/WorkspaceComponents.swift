@@ -286,3 +286,27 @@ struct RetryButton: View {
             .accessibilityIdentifier(identifier)
     }
 }
+
+// MARK: - XCUITest section markers
+
+extension View {
+    /// Attaches an XCUITest marker as a single, invisible accessibility LEAF
+    /// instead of tagging the whole page container. On macOS 26 a
+    /// container-level `accessibilityIdentifier` propagates onto every
+    /// descendant element that has no identifier of its own -- and OVERWRITES
+    /// the ones that do (verified from a CI runner's AX snapshot: the
+    /// Planning page's setup picker reported `v2.detail.planning` instead of
+    /// its own `v2.planning.setup`, and six unrelated elements all matched
+    /// `v2.detail.projects`). A 1x1 clear overlay -- the same idiom
+    /// `v2.sidebar.badge.*` already uses -- carries the identifier exactly
+    /// once and stomps nothing.
+    func astroSectionMarker(_ identifier: String, label: LocalizedStringKey) -> some View {
+        overlay(alignment: .topLeading) {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(label)
+                .accessibilityIdentifier(identifier)
+        }
+    }
+}

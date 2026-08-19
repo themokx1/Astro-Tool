@@ -81,8 +81,7 @@ public struct NightsView: View {
                 Button("Open Library…", action: chooseLibrary).buttonStyle(.borderedProminent)
             }
             .navigationTitle("Nights")
-            .accessibilityLabel("Nights")
-            .accessibilityIdentifier("v2.detail.nights")
+            .astroSectionMarker("v2.detail.nights", label: "Nights")
         } else {
             nightsWorkspace
         }
@@ -162,8 +161,7 @@ public struct NightsView: View {
             tableContent
         }
         .navigationTitle("Nights")
-        .accessibilityLabel("Nights")
-        .accessibilityIdentifier("v2.detail.nights")
+        .astroSectionMarker("v2.detail.nights", label: "Nights")
         .onChange(of: sortOrder) { _, newValue in store.setSortOrder(newValue) }
         .onChange(of: planningSortOrder) { _, newValue in store.setPlanningSortOrder(newValue) }
         .sheet(item: $noteEditorTarget) { editing in

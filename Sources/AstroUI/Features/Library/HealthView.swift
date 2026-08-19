@@ -82,8 +82,7 @@ public struct HealthView: View {
         .task(id: store.snapshot) { recomputeDisplayedItems() }
         .task(id: rootURL) { if let rootURL { await store.load(rootURL: rootURL, accessMode: accessMode) } }
         .navigationTitle("Library Health")
-        .accessibilityLabel("Library Health")
-        .accessibilityIdentifier("v2.detail.library.health")
+        .astroSectionMarker("v2.detail.library.health", label: "Library Health")
         .sheet(item: $acknowledgeRequest) { request in
             AcknowledgeFindingSheet(item: request.item) { note in
                 Task { await store.acknowledge(request.item, note: note) }

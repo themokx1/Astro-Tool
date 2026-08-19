@@ -217,8 +217,7 @@ public struct InsightsView: View {
             }
         }
         .navigationTitle("Insights")
-        .accessibilityLabel("Insights")
-        .accessibilityIdentifier("v2.detail.insights")
+        .astroSectionMarker("v2.detail.insights", label: "Insights")
         .task(id: rootURL) { await store.load(rootURL: rootURL) }
         // Reloads once "Start Measuring" (or Home's "Rate Everything",
         // sharing the same `ProjectRatingRunner.kind`) transitions from

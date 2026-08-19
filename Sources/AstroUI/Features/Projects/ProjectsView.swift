@@ -41,8 +41,7 @@ public struct ProjectsView: View {
                 Button("Open Library…", action: chooseLibrary).buttonStyle(.borderedProminent)
             }
             .navigationTitle("Projects")
-            .accessibilityLabel("Projects")
-            .accessibilityIdentifier("v2.detail.projects")
+            .astroSectionMarker("v2.detail.projects", label: "Projects")
         } else {
             projectsWorkspace
         }
@@ -97,8 +96,7 @@ public struct ProjectsView: View {
             tableContent
         }
         .navigationTitle("Projects")
-        .accessibilityLabel("Projects")
-        .accessibilityIdentifier("v2.detail.projects")
+        .astroSectionMarker("v2.detail.projects", label: "Projects")
         .task(id: store.projects) {
             visibleProjects = (try? await store.search(searchText)) ?? store.projects
         }

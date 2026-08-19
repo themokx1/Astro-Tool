@@ -96,8 +96,7 @@ public struct CalibrationView: View {
             store.onLibraryFindingsChanged = onLibraryFindingsChanged
         }
         .navigationTitle("Calibration")
-        .accessibilityLabel("Calibration")
-        .accessibilityIdentifier("v2.detail.library.calibration")
+        .astroSectionMarker("v2.detail.library.calibration", label: "Calibration")
         .sheet(isPresented: $showsLinkPreview) {
             linkPreviewSheet
         }
