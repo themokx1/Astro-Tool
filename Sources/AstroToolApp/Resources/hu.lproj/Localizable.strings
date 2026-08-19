@@ -2007,3 +2007,31 @@
 "Your sky background reads about %@× brighter under a bright Moon (≥75%% illuminated) than under a dark one (<25%%)." = "A saját égi háttered kb. %@×-szer fényesebb fényes Holdnál (≥75%% megvilágítottság), mint sötét Holdnál (<25%%).";
 "Not enough measured sessions across different Moon phases yet to show this — rate a few more nights under different Moon conditions to build up your own sky-brightness history." = "Még nincs elég mért session a Hold-hatás méréséhez különböző holdfázisok alatt — értékelj még néhány éjszakát eltérő holdfázisok mellett, hogy felépülhessen a saját égi fényesség-történeted.";
 "%lld nights still have unrated frames — rate them from Home to start measuring the Moon's effect on your sky." = "%lld éjszaka képkockái még értékeletlenek — értékeld őket a Kezdőlapon, hogy elkezdődhessen a Hold égre gyakorolt hatásának mérése.";
+
+/* First-Light Anniversaries + honest milestones (expert ideation spec #5,
+   2026-08-19): HomeView.swift's highlightsCard -- real dates and real
+   integration-hour thresholds only, zero invented scoring. Both keys
+   interpolate ONLY pre-formatted String args (highlightText's own comment
+   explains why), so both carry %@ placeholders, never %lld/%lf. The
+   Hungarian text is deliberately phrased with an em dash before the target
+   name rather than a grammatical suffix (an "-on/-en/-ön"-style ending
+   glued onto an arbitrary catalog id/display name has no single correct
+   form -- "NGC 7000-en" vs "IC 1805-ön" -- so this sidesteps vowel harmony
+   entirely instead of guessing it). */
+"Worth celebrating" = "Ünnepelnivaló";
+"%@ years ago today: first light on %@" = "%@ éve ma volt az első fény — %@";
+"Reached the %@-hour milestone on %@" = "Elérted a %@ órás mérföldkövet — %@!";
+
+/* Session Summary Card -- shareable PNG (expert ideation spec #4):
+   SessionCardAssembler.unmeasuredText (Sources/AstroUI/Features/Reports/
+   SessionCardContent.swift) and NightWorkspaceView's new "Export Session
+   Card…" secondary action (the header row next to Review Frames/Open
+   Project/Rate Frames -- W5-1 removed this workspace's own file-export
+   menu entirely, so there is no existing export/share affordance to add a
+   menu item to instead). */
+"Not measured" = "nincs mérve";
+"Export Session Card…" = "Session-kártya exportálása…";
+"Export Session Card" = "Session-kártya exportálása";
+"Save a shareable PNG summary of this session" = "Egy megosztható PNG-összefoglaló mentése erről a session-ről";
+"Not yet rated — run scoring first" = "Még nincs kiértékelve — futtasd le a pontozást";
+"could not render the card" = "nem sikerült renderelni a kártyát";

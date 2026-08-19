@@ -1,3 +1,4 @@
+import AppKit
 import AstroApplication
 import AstroCore
 import SwiftUI
@@ -115,6 +116,27 @@ public struct NightWorkspaceView: View {
                         }
                         .help("Measure quality for every series captured this night")
                         .accessibilityIdentifier("v2.night.page.rate")
+
+                        // Expert ideation spec #4 ("Session Summary Card --
+                        // shareable PNG"): W5-1 removed this workspace's own
+                        // file-export UI entirely (see `workspaceActions`'
+                        // own doc comment) in favor of native on-page report
+                        // sections, so there is no existing export/share
+                        // menu to add a menu item to here -- a small
+                        // secondary action next to Review/Open/Rate is the
+                        // closest fit, matching this same header's own
+                        // "primary actions, above the content they act on"
+                        // convention.
+                        Button {
+                            exportSessionCard()
+                        } label: {
+                            Label("Export Session Card…", systemImage: "photo.on.rectangle.angled")
+                        }
+                        .help(isSessionCardExportable
+                            ? "Save a shareable PNG summary of this session"
+                            : "Not yet rated — run scoring first")
+                        .disabled(!isSessionCardExportable)
+                        .accessibilityIdentifier("v2.night.page.export-session-card")
                     }
                     .buttonStyle(.bordered)
                 }
@@ -184,6 +206,53 @@ public struct NightWorkspaceView: View {
 
     private func publishWorkspaceActions() {
         workspaceActionCenter.publish(owner: actionOwner, workspaceActions)
+    }
+
+    /// Mirrors the exact "has at least one rated frame" predicate the
+    /// Overview tab's own Quality section already gates on
+    /// (`report.quality.map { $0.frameCount > 0 } ?? false`, `reportSections`
+    /// below) -- see `SessionCardAssembler.isExportable`'s own doc comment.
+    private var isSessionCardExportable: Bool {
+        SessionCardAssembler.isExportable(quality: reportStore.result?.quality)
+    }
+
+    /// Renders `SessionCardView` off-screen via `ImageRenderer` and saves it
+    /// as a PNG through an `NSSavePanel` -- same "panel only ever supplies
+    /// `url`, this never invents a destination of its own" rule
+    /// `ExportMenu.performFile` follows, just for binary PNG bytes instead
+    /// of `ExportFileWriter`'s `String` content (see `SessionCardFileWriter`'s
+    /// own doc comment for why this is a separate writer rather than a new
+    /// `ExportMenuItem` case).
+    private func exportSessionCard() {
+        guard let report = reportStore.result else { return }
+        let content = SessionCardAssembler.content(
+            targetName: report.displayName,
+            dateText: row.date,
+            integrationText: row.integrationSummary,
+            quality: report.quality,
+            // See `SessionCardContent.thumbnailRelativePath`'s own doc
+            // comment: nothing this workspace already loads names an actual
+            // frame file, so the card renders without one for now.
+            thumbnailRelativePath: nil
+        )
+        let renderer = ImageRenderer(content: SessionCardView(content: content, rootURL: rootURL))
+        renderer.scale = 2
+        guard let nsImage = renderer.nsImage, let pngData = SessionCardImageEncoder.pngData(from: nsImage) else {
+            operationHost.notify(.failure, message: "\(OperationHost.localized("Export Session Card")) \(OperationHost.localized("failed:")) \(OperationHost.localized("could not render the card"))")
+            return
+        }
+        let panel = NSSavePanel()
+        panel.title = "Export Session Card"
+        panel.nameFieldStringValue = SessionCardAssembler.suggestedFilename(targetName: report.displayName, dateText: row.date)
+        panel.allowedContentTypes = [.png]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try SessionCardFileWriter.write(pngData: pngData, to: url)
+            operationHost.notify(.success, message: "\(OperationHost.localized("Exported")) \(url.lastPathComponent)")
+        } catch {
+            operationHost.notify(.failure, message: "Export Session Card \(OperationHost.localized("failed:")) \(error.localizedDescription)")
+        }
     }
 
     /// Wave 4 Task 3: the flat one-scroll layout is now four segmented
