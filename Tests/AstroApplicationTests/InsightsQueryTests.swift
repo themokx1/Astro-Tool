@@ -475,4 +475,96 @@ struct InsightsQueryTests {
         #expect(wrapped.mostShotTarget?.target == "NGC 2237")
         #expect(wrapped.firstLights == ["NGC 2237"])
     }
+
+    // MARK: - This month vs last year (ideation #3)
+
+    private static let utcCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }()
+
+    private static func fixedToday(year: Int, month: Int, day: Int) -> Date {
+        var components = DateComponents()
+        components.year = year
+        components.month = month
+        components.day = day
+        return utcCalendar.date(from: components)!
+    }
+
+    /// `yearOverYearComparison` is built from the SAME `trendPointsForTesting`
+    /// provider the Moon-sky/Year-Wrapped cards read, never a second,
+    /// independently-queried trend list -- and reflects the real wall-clock
+    /// "today" (here fixed via `todayForTesting`), never the `year` argument
+    /// passed to `snapshot`. Present both on "Minden év" (`year: nil`) and
+    /// under a selected year, since the caller (not `InsightsQuery`) decides
+    /// which of those two contexts actually renders the card.
+    @Test("Year-over-year comparison is built regardless of the snapshot's own year scope")
+    func yearOverYearComparisonIgnoresYearScope() async throws {
+        func point(_ target: String, _ date: String, seconds: Double = 600) -> TrendPoint {
+            TrendPoint(target: target, date: date, sessionStartDate: date, integrationSeconds: seconds, usableFrameCount: 5)
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let index = directory.appendingPathComponent("index.sqlite")
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("""
+        CREATE TABLE files(id INTEGER PRIMARY KEY, area TEXT, target TEXT, session_date TEXT, role TEXT, missing INTEGER);
+        CREATE TABLE fits_meta(file_id INTEGER PRIMARY KEY, exptime REAL);
+        """)
+
+        let points = [
+            point("M31", "2026-08-05", seconds: 1800),
+            point("M31", "2025-08-03", seconds: 1200),
+        ]
+        let today = Self.fixedToday(year: 2026, month: 8, day: 19)
+
+        let query = InsightsQuery(
+            indexDatabaseForTesting: index,
+            trendPointsForTesting: { points },
+            todayForTesting: { today }
+        )
+
+        let allYears = try await query.snapshot()
+        let comparisonAllYears = try #require(allYears.yearOverYearComparison)
+        #expect(comparisonAllYears.month == 8)
+        #expect(comparisonAllYears.thisYear == 2026)
+        #expect(comparisonAllYears.lastYear == 2025)
+        #expect(comparisonAllYears.thisYearIntegrationSeconds == 1800)
+        #expect(comparisonAllYears.lastYearIntegrationSeconds == 1200)
+
+        let scopedToOtherYear = try await query.snapshot(year: 2025)
+        let comparisonScoped = try #require(scopedToOtherYear.yearOverYearComparison)
+        #expect(comparisonScoped == comparisonAllYears)
+    }
+
+    /// No prior-year session in the same calendar month at all -- the whole
+    /// comparison is `nil`, matching `YearOverYearComparison.summarize`'s
+    /// own "nothing to compare against yet" contract.
+    @Test("Year-over-year comparison is nil when last year has no session in the same month")
+    func yearOverYearComparisonNilWithoutPriorYearData() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let index = directory.appendingPathComponent("index.sqlite")
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("""
+        CREATE TABLE files(id INTEGER PRIMARY KEY, area TEXT, target TEXT, session_date TEXT, role TEXT, missing INTEGER);
+        CREATE TABLE fits_meta(file_id INTEGER PRIMARY KEY, exptime REAL);
+        """)
+
+        let points = [
+            TrendPoint(target: "M31", date: "2026-08-05", sessionStartDate: "2026-08-05", integrationSeconds: 600, usableFrameCount: 5),
+        ]
+        let today = Self.fixedToday(year: 2026, month: 8, day: 19)
+
+        let result = try await InsightsQuery(
+            indexDatabaseForTesting: index,
+            trendPointsForTesting: { points },
+            todayForTesting: { today }
+        ).snapshot()
+
+        #expect(result.yearOverYearComparison == nil)
+    }
 }

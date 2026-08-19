@@ -87,6 +87,17 @@ public struct InsightsSnapshot: Equatable, Sendable {
     /// -- "Minden év" has no single year to summarize -- or when the
     /// selected year holds no session at all.
     public let yearWrapped: YearWrapped?
+    /// Ideation #3 ("Ez a hónap tavalyhoz képest"): the CURRENT calendar
+    /// month's sessions this year vs the same month last year, from
+    /// `AstroCore`'s `YearOverYearComparison.summarize`. Unlike
+    /// `yearWrapped` above, this is built from the FULL `trendPointsProvider`
+    /// output regardless of this snapshot's own `year` scope -- "this
+    /// month" is always the real wall-clock month, not whatever the Period
+    /// picker happens to be filtered to. `nil` only when the same calendar
+    /// month last year holds no session at all on record (see that
+    /// function's own doc comment for why this year's own side is allowed
+    /// to be empty without suppressing the whole comparison).
+    public let yearOverYearComparison: YearOverYearComparison?
     public let isReadOnly: Bool
     public var bestMonth: MonthlyCapture? { months.max { $0.integrationSeconds < $1.integrationSeconds } }
     public var averageIntegrationPerNight: Double {
@@ -297,17 +308,26 @@ public struct InsightsQuery: Sendable {
     /// `CaptureTrendPoint` split it), which is what a session-dated Moon
     /// phase actually keys against.
     typealias TrendPointsProvider = @Sendable () throws -> [TrendPoint]
+    /// What "now" is for `yearOverYearComparison`'s "current calendar
+    /// month" -- the real wall clock in production, a fixed date in tests
+    /// (same `ForTesting`-override shape every other provider above already
+    /// uses, rather than a bare `Date = Date()` default parameter on
+    /// `snapshot` itself, since `snapshot` already has its own `year`
+    /// parameter with an unrelated meaning).
+    typealias TodayProvider = @Sendable () -> Date
 
     private let indexDatabase: URL
     private let captureTrendProvider: CaptureTrendProvider?
     private let libraryProvider: LibraryProvider
     private let trendPointsProvider: TrendPointsProvider?
+    private let todayProvider: TodayProvider
 
     init(
         indexDatabaseForTesting: URL,
         captureTrendPointsForTesting: CaptureTrendProvider? = nil,
         libraryForTesting: LibraryProvider? = nil,
-        trendPointsForTesting: TrendPointsProvider? = nil
+        trendPointsForTesting: TrendPointsProvider? = nil,
+        todayForTesting: TodayProvider? = nil
     ) {
         self.indexDatabase = indexDatabaseForTesting
         self.captureTrendProvider = captureTrendPointsForTesting
@@ -317,6 +337,7 @@ public struct InsightsQuery: Sendable {
         // full scanned fixture just to satisfy this parameter.
         self.libraryProvider = libraryForTesting ?? { ([], [:], AstroConfig()) }
         self.trendPointsProvider = trendPointsForTesting
+        self.todayProvider = todayForTesting ?? { Date() }
     }
 
     public static func production(rootURL: URL) throws -> Self {
@@ -447,6 +468,7 @@ public struct InsightsQuery: Sendable {
             rejectedFrameCount: rejectedFrameCount, captureTrendPoints: capturePoints,
             moonSkyCorrelation: Self.moonSkyCorrelationSummary(points: trendPoints),
             yearWrapped: year.flatMap { YearWrapped.summarize(points: trendPoints, year: $0) },
+            yearOverYearComparison: YearOverYearComparison.summarize(points: trendPoints, today: todayProvider()),
             isReadOnly: true
         )
     }
