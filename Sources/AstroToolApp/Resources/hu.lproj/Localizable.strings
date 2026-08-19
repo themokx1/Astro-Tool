@@ -2084,3 +2084,21 @@
 "Season: %@" = "Szezon: %@";
 "Season %@ – %@" = "Szezon: %@ – %@";
 "peak %@ (%@ h)" = "csúcs: %@ (%@ ó)";
+
+/* Clear-Night Countdown to project completion (expert ideation reserve #5,
+   wow 4/5 x usefulness 4/5): ClearNightOutlook.swift (AstroApplication)
+   marries CompletionForecast.nightsNeeded with the 7-day Open-Meteo cloud
+   forecast already fetched elsewhere in this app. The two
+   ProjectWorkspaceView.clearNightOutlookText sentences below both
+   interpolate ONLY pre-formatted Strings (AstroFormat.count), same "%@,
+   never %lld/%lf" rule this file's other hand-added Int-interpolation keys
+   already follow -- see "Worth celebrating"'s own comment above. The
+   "if this rate holds" clause is load-bearing honesty, not decoration: it
+   is the ONLY place a rate beyond the real fetched 7-day horizon is ever
+   projected forward, and it is never printed without that qualifier (see
+   ClearNightOutlook's own doc comment). HomeView.featuredClearNightCaption's
+   own compact "Continue where it matters" caption never extrapolates at
+   all -- just the two hard facts, no weeks. */
+"Of the next %@ days, %@ look clear — if this rate holds, about %@ more weeks to the goal." = "A következő %@ napból %@ tűnik tisztának — ha ez a ráta tartja magát, még kb. %@ hét a cél.";
+"Of the next %@ days, %@ look clear." = "A következő %@ napból %@ tűnik tisztának.";
+"~%@ clear nights to the goal · %@ chances this week" = "~%@ tiszta éjszaka a célig · a héten %@ esély";

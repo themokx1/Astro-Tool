@@ -78,6 +78,24 @@ enum ProjectNextActionResolution {
     }
 }
 
+/// Expert ideation reserve #5 ("Clear-Night Countdown to project
+/// completion"): resolves this project's own site's 7-day
+/// `WeatherService.dailySummaries` for `ProjectWorkspaceView`'s Overview
+/// forecast row. Injectable so tests can supply a fixed result without a
+/// real FITS-backed library, index DB, or network call -- the same
+/// contract `HomeStore`'s own providers already establish.
+///
+/// Defaulted to `nil` (never directly to `ClearNightOutlook
+/// .productionDailySummaries`) and resolved inside `ProjectWorkspaceView
+/// .init`'s own body -- an `async` default ARGUMENT (rather than an
+/// `Optional` resolved in the initializer) re-emits a weak async function
+/// pointer record into every calling module with a context size that can
+/// silently disagree with the declaring module's own copy, corrupting the
+/// task allocator at link time (`AsyncContextSizeGateTests`' own header
+/// comment has the full account; `HomeStore.init`'s doc comment states the
+/// same rule for its own providers).
+public typealias ClearNightDailySummariesProvider = @Sendable (URL) async throws -> [String: DailyCloudSummary]?
+
 public struct ProjectWorkspaceView: View {
     let snapshot: ProjectSnapshot
     let rootURL: URL?
@@ -93,6 +111,7 @@ public struct ProjectWorkspaceView: View {
     let openInsights: (String?) -> Void
     let annotation: ProjectAnnotationRecord?
     let saveAnnotation: (Double?, String) async throws -> Void
+    let dailySummariesProvider: ClearNightDailySummariesProvider
     /// Wave 4 Task 3: the segmented tab used to be `@State` here, which
     /// `.id(route)` (see `DetailHost`'s doc comment) resets on every push --
     /// so drilling into a night and popping back silently reset the tab to
@@ -127,6 +146,11 @@ public struct ProjectWorkspaceView: View {
     /// Overview tab down to `reportSections` instead of opening a (now
     /// deleted) export menu -- see that affordance case's own doc comment.
     @State private var reportScrollProxy: ScrollViewProxy?
+    /// Expert ideation reserve #5: this project's own site's fetched 7-day
+    /// cloud forecast, `nil` until `loadClearNightOutlook()` resolves (or
+    /// forever, when weather is disabled or no site resolves -- the same
+    /// honest "no row" case `HomeSnapshot.nightCloud` already has).
+    @State private var clearNightDailySummaries: [String: DailyCloudSummary]?
 
     public init(
         snapshot: ProjectSnapshot,
@@ -141,7 +165,8 @@ public struct ProjectWorkspaceView: View {
         openSeries: @escaping (UUID) -> Void,
         openCalibration: @escaping () -> Void = {},
         openInsights: @escaping (String?) -> Void = { _ in },
-        saveAnnotation: @escaping (Double?, String) async throws -> Void
+        saveAnnotation: @escaping (Double?, String) async throws -> Void,
+        dailySummariesProvider: ClearNightDailySummariesProvider? = nil
     ) {
         self.snapshot = snapshot
         self.rootURL = rootURL
@@ -156,6 +181,7 @@ public struct ProjectWorkspaceView: View {
         self.openCalibration = openCalibration
         self.openInsights = openInsights
         self.saveAnnotation = saveAnnotation
+        self.dailySummariesProvider = dailySummariesProvider ?? ClearNightOutlook.productionDailySummaries
         _goalHours = State(initialValue: annotation?.integrationGoalHours)
         _projectNotes = State(initialValue: annotation?.notes ?? "")
     }
@@ -238,6 +264,38 @@ public struct ProjectWorkspaceView: View {
         .onChange(of: snapshot) { _, _ in publishWorkspaceActions() }
         .onDisappear { workspaceActionCenter.clear(owner: actionOwner) }
         .task(id: snapshot) { await reportStore.load(rootURL: rootURL, target: snapshot.canonicalFolderName) }
+        // Expert ideation reserve #5: keyed on `rootURL` alone (not
+        // `snapshot`, unlike `reportStore`'s own load above) -- this
+        // project's SITE weather doesn't change when the project's own
+        // report data does, only when a different library opens.
+        // SwiftUI's own `.task(id:)` cancellation is the generation guard
+        // here: an in-flight fetch for a just-replaced `rootURL` is
+        // cancelled before `loadClearNightOutlook()` can ever assign its
+        // stale result.
+        .task(id: rootURL) { await loadClearNightOutlook() }
+    }
+
+    /// Expert ideation reserve #5: fetches this project's own site's 7-day
+    /// cloud forecast via `dailySummariesProvider`. `Task.isCancelled` is
+    /// checked AFTER the `await` (never before -- SwiftUI already skips
+    /// starting a `.task(id:)` closure whose id changed before it got a
+    /// chance to run) because `.task(id:)`'s own cancellation only signals
+    /// this task, it does not un-schedule the state write below; without
+    /// this check, a fetch already in flight when `rootURL` changes could
+    /// still land its stale write after a newer task starts.
+    private func loadClearNightOutlook() async {
+        guard let rootURL else {
+            clearNightDailySummaries = nil
+            return
+        }
+        let summaries: [String: DailyCloudSummary]?
+        do {
+            summaries = try await dailySummariesProvider(rootURL)
+        } catch {
+            summaries = nil
+        }
+        guard !Task.isCancelled else { return }
+        clearNightDailySummaries = summaries
     }
 
     private func publishWorkspaceActions() {
@@ -938,8 +996,45 @@ public struct ProjectWorkspaceView: View {
                     ? "\(AstroFormat.count(estimate.nightsNeeded))+"
                     : AstroFormat.count(estimate.nightsNeeded)
                 Text("At your current pace (~\(paceHoursText) h/night) about ~\(nightsText) more clear nights are needed to reach the goal.")
+                clearNightOutlookText(nightsNeeded: estimate.nightsNeeded)
             } else if report.recentSessionIntegrationSeconds.count < 2 {
                 Text("Not enough data yet to estimate the pace.")
+            }
+        }
+    }
+
+    /// Expert ideation reserve #5 ("Clear-Night Countdown to project
+    /// completion"): appends the "of the next N days, M look clear" fact --
+    /// and, only when the observed rate is non-zero, an EXPLICITLY marked
+    /// "if this rate holds" weeks projection -- right under
+    /// `completionForecastText`'s own pace sentence.
+    ///
+    /// Renders nothing at all when `clearNightDailySummaries` hasn't landed
+    /// yet, or landed empty/`nil` (weather disabled, no site, or the fetch
+    /// failed) -- the honest "no row" case, same contract
+    /// `HomeSnapshot.nightCloud` already keeps: the pace sentence above
+    /// stands alone rather than showing a half-true addition.
+    ///
+    /// Same `Text(_:)`-interpolation-literal requirement as
+    /// `completionForecastText`'s own doc comment explains -- every
+    /// interpolated value here is a pre-formatted `String`
+    /// (`AstroFormat.count`), never a raw `Int`/`Double`.
+    @ViewBuilder
+    private func clearNightOutlookText(nightsNeeded: Int) -> some View {
+        if let dailySummaries = clearNightDailySummaries, !dailySummaries.isEmpty,
+           let projection = ClearNightOutlook.project(
+               nightsNeeded: nightsNeeded,
+               clearNightsInHorizon: ClearNightOutlook.clearNightCount(dailySummaries: dailySummaries),
+               horizonNights: dailySummaries.count
+           )
+        {
+            let clearText = AstroFormat.count(projection.clearNightsInHorizon)
+            let horizonText = AstroFormat.count(projection.horizonNights)
+            if let paceWeeks = projection.paceWeeks {
+                let weeksText = AstroFormat.count(max(Int(paceWeeks.rounded()), 1))
+                Text("Of the next \(horizonText) days, \(clearText) look clear — if this rate holds, about \(weeksText) more weeks to the goal.")
+            } else {
+                Text("Of the next \(horizonText) days, \(clearText) look clear.")
             }
         }
     }

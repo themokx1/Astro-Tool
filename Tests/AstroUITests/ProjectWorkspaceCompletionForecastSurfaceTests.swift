@@ -56,4 +56,63 @@ struct ProjectWorkspaceCompletionForecastSurfaceTests {
             "\"At your current pace (~%@ h/night) about ~%@ more clear nights are needed to reach the goal.\" ="
         ))
     }
+
+    // MARK: - Expert ideation reserve #5 (Clear-Night Countdown to project completion)
+
+    @Test("The pace sentence is immediately followed by the clear-night outlook row")
+    func clearNightOutlookFollowsThePaceSentence() throws {
+        let source = try contents("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift")
+        #expect(source.contains(
+            "Text(\"At your current pace (~\\(paceHoursText) h/night) about ~\\(nightsText) more clear nights are needed to reach the goal.\")"
+            + "\n                clearNightOutlookText(nightsNeeded: estimate.nightsNeeded)"
+        ))
+    }
+
+    @Test("The clear-night outlook reads the real fetched horizon size and the shared threshold's own count, never a hardcoded 7")
+    func clearNightOutlookFeedsRealCounts() throws {
+        let source = try contents("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift")
+        #expect(source.contains("ClearNightOutlook.project("))
+        #expect(source.contains("clearNightsInHorizon: ClearNightOutlook.clearNightCount(dailySummaries: dailySummaries)"))
+        #expect(source.contains("horizonNights: dailySummaries.count"))
+    }
+
+    @Test("The soft weeks projection is never printed without its own 'if this rate holds' qualifier")
+    func weeksProjectionAlwaysCarriesItsQualifier() throws {
+        let source = try contents("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift")
+        // The ONLY place `paceWeeks`/`weeksText` is interpolated into a
+        // sentence, that sentence must contain the qualifying language --
+        // grepping for the one sentence that uses `weeksText` and asserting
+        // it also contains "if this rate holds" pins that down structurally
+        // rather than by convention alone.
+        #expect(source.contains("if this rate holds, about \\(weeksText)"))
+    }
+
+    @Test("Both new clear-night sentences have a Hungarian translation")
+    func clearNightSentencesAreTranslated() throws {
+        let translations = try contents("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
+        #expect(translations.contains(
+            "\"Of the next %@ days, %@ look clear — if this rate holds, about %@ more weeks to the goal.\" ="
+        ))
+        #expect(translations.contains("\"Of the next %@ days, %@ look clear.\" ="))
+    }
+
+    @Test("The dailySummariesProvider parameter follows the Optional + resolve-in-initializer async-default shape")
+    func dailySummariesProviderUsesTheSafeAsyncDefaultShape() throws {
+        let source = try contents("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift")
+        // Never a direct default (`= ClearNightOutlook.productionDailySummaries`
+        // right on the parameter) -- see `AsyncContextSizeGateTests`'s own
+        // header comment for why that shape corrupts the task allocator at
+        // link time. Must be `Optional`, defaulted to `nil`, then resolved
+        // inside the initializer's own body.
+        #expect(source.contains("dailySummariesProvider: ClearNightDailySummariesProvider? = nil"))
+        #expect(source.contains("self.dailySummariesProvider = dailySummariesProvider ?? ClearNightOutlook.productionDailySummaries"))
+        #expect(!source.contains("dailySummariesProvider: ClearNightDailySummariesProvider = ClearNightOutlook.productionDailySummaries"))
+    }
+
+    @Test("The per-site weather fetch is keyed on rootURL and guards against a stale write after cancellation")
+    func clearNightFetchIsGenerationGuarded() throws {
+        let source = try contents("Sources/AstroUI/Features/Projects/ProjectWorkspaceView.swift")
+        #expect(source.contains(".task(id: rootURL) { await loadClearNightOutlook() }"))
+        #expect(source.contains("guard !Task.isCancelled else { return }"))
+    }
 }
