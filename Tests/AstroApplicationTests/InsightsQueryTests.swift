@@ -595,4 +595,137 @@ struct InsightsQueryTests {
 
         #expect(result.yearOverYearComparison == nil)
     }
+
+    // MARK: - Night leaderboard (ideation #7)
+
+    /// Same minimal ad hoc schema `exposesQualityTrendSeries` above uses --
+    /// `nightLeaderboard` is built entirely from the injected
+    /// `captureTrendPointsForTesting` provider, never from the `files`/
+    /// `fits_meta` tables `snapshot`'s SQL half reads.
+    private func leaderboardIndex() throws -> (index: URL, cleanup: () -> Void) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let index = directory.appendingPathComponent("index.sqlite")
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("""
+        CREATE TABLE files(id INTEGER PRIMARY KEY, area TEXT, target TEXT, session_date TEXT, role TEXT, missing INTEGER);
+        CREATE TABLE fits_meta(file_id INTEGER PRIMARY KEY, exptime REAL);
+        """)
+        return (index, { try? FileManager.default.removeItem(at: directory) })
+    }
+
+    private func leaderboardCapture(
+        target: String,
+        date: String,
+        fwhm: Double? = nil,
+        efficiency: Double? = nil,
+        background: Double? = nil
+    ) -> CaptureTrendPoint {
+        CaptureTrendPoint(
+            target: target, date: date, sessionStartDate: date,
+            displayName: "OSC 30 s", filterLabel: "—",
+            medianFWHMArcsec: fwhm, backgroundEPerSecPerArcsec2: background,
+            efficiencyPercent: efficiency, usableFrameCount: 10, integrationSeconds: 300,
+            groupKey: "implicit"
+        )
+    }
+
+    /// `nightLeaderboard` defaults to the honest empty summary when no
+    /// `captureTrendPointsForTesting` provider is wired at all -- unlike
+    /// `InsightsQueryFixture.query()` (which always wires a REAL one via
+    /// `InsightsQuery.captureTrendPoints(db:config:)`, so it isn't the right
+    /// fixture for this particular case), this constructs `InsightsQuery`
+    /// directly against a bare, empty schema.
+    @Test("Night leaderboard defaults to the empty summary when no capture-trend provider is wired")
+    func nightLeaderboardDefaultsToEmptyWithNoProvider() async throws {
+        let (index, cleanup) = try leaderboardIndex()
+        defer { cleanup() }
+
+        let result = try await InsightsQuery(indexDatabaseForTesting: index).snapshot()
+        #expect(result.nightLeaderboard == NightLeaderboardSummary.empty)
+        #expect(!result.nightLeaderboard.hasEnoughDataToDisplay)
+    }
+
+    /// Fewer than `NightLeaderboard.minimumMeasuredCount` measured captures
+    /// -- the section must render its honest empty state, not a partial
+    /// leaderboard.
+    @Test("Night leaderboard stays empty below the minimum measured-capture count")
+    func nightLeaderboardEmptyBelowMinimum() async throws {
+        let (index, cleanup) = try leaderboardIndex()
+        defer { cleanup() }
+        let points = (1...4).map { i in
+            leaderboardCapture(target: "T\(i)", date: "2026-01-0\(i)", fwhm: Double(i), efficiency: 80, background: 0.002)
+        }
+
+        let result = try await InsightsQuery(indexDatabaseForTesting: index, captureTrendPointsForTesting: { points })
+            .snapshot()
+
+        #expect(result.nightLeaderboard.best.isEmpty)
+        #expect(result.nightLeaderboard.worst.isEmpty)
+        #expect(result.nightLeaderboard.measuredCount == 4)
+        #expect(!result.nightLeaderboard.hasEnoughDataToDisplay)
+    }
+
+    /// At/above the minimum, `nightLeaderboard` actually ranks -- and each
+    /// resulting row is joined back to its own `CaptureTrendPoint`'s display
+    /// fields (`displayName`, `sessionStartDate`), not just the three bare
+    /// metrics `NightLeaderboard` (`AstroCore`) itself knows about.
+    @Test("Night leaderboard ranks measured captures and joins each row back to its own display fields")
+    func nightLeaderboardRanksAndJoinsDisplayFields() async throws {
+        let (index, cleanup) = try leaderboardIndex()
+        defer { cleanup() }
+        // All three metrics agree: T1 best on every axis, T5 worst.
+        let points = (1...5).map { i in
+            leaderboardCapture(
+                target: "T\(i)", date: "2026-01-0\(i)",
+                fwhm: Double(i), efficiency: 100 - Double(i) * 10, background: Double(i) * 0.001
+            )
+        }
+
+        let result = try await InsightsQuery(indexDatabaseForTesting: index, captureTrendPointsForTesting: { points })
+            .snapshot()
+
+        #expect(result.nightLeaderboard.measuredCount == 5)
+        #expect(result.nightLeaderboard.hasEnoughDataToDisplay)
+        #expect(result.nightLeaderboard.best.map(\.target) == ["T1", "T2", "T3", "T4", "T5"])
+        #expect(result.nightLeaderboard.worst.map(\.target) == ["T5", "T4", "T3", "T2", "T1"])
+        let bestRow = try #require(result.nightLeaderboard.best.first)
+        #expect(bestRow.displayName == "OSC 30 s")
+        #expect(bestRow.sessionStartDate == "2026-01-01")
+        #expect(bestRow.medianFWHMArcsec == 1.0)
+        #expect(bestRow.efficiencyPercent == 90)
+        #expect(bestRow.backgroundEPerSecPerArcsec2 == 0.001)
+    }
+
+    /// A capture with only a pixel-fallback FWHM measurement (no arcsec
+    /// conversion available) is excluded from the FWHM ranking AXIS --
+    /// `NightLeaderboard` only ever ranks `medianFWHMArcsec` (mixing arcsec
+    /// and raw-pixel units in one ranking would be physically meaningless,
+    /// the same unit-mismatch guard `YearOverYearComparison.bestFWHM`'s own
+    /// doc comment establishes) -- but the row still displays its raw pixel
+    /// reading via `fwhmValue`'s pixel-fallback, exactly like the "Recent
+    /// captures" table above it does.
+    @Test("A pixel-fallback-only FWHM measurement is excluded from ranking but still shown on the row")
+    func nightLeaderboardExcludesPixelFallbackFromRankingButDisplaysIt() async throws {
+        let (index, cleanup) = try leaderboardIndex()
+        defer { cleanup() }
+        let pixelOnly: CaptureTrendPoint = {
+            var point = leaderboardCapture(target: "PixelOnly", date: "2026-01-01", efficiency: 95, background: 0.001)
+            point.medianFWHMPixels = 3.2
+            return point
+        }()
+        let others = (2...5).map { i in
+            leaderboardCapture(target: "T\(i)", date: "2026-01-0\(i)", fwhm: Double(i), efficiency: 50, background: 0.004)
+        }
+        let allPoints = [pixelOnly] + others
+
+        let result = try await InsightsQuery(
+            indexDatabaseForTesting: index, captureTrendPointsForTesting: { allPoints }
+        ).snapshot()
+
+        let row = try #require(result.nightLeaderboard.best.first { $0.target == "PixelOnly" })
+        #expect(row.medianFWHMArcsec == nil)
+        #expect(row.fwhmValue?.value == 3.2)
+        #expect(row.fwhmValue?.isPixelFallback == true)
+    }
 }

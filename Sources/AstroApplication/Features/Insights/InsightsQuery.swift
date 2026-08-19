@@ -77,6 +77,12 @@ public struct InsightsSnapshot: Equatable, Sendable {
     /// background rather than only ones already resolved to a capture
     /// group.
     public let moonSkyCorrelation: MoonSkyCorrelationSummary
+    /// Ideation #7 ("Legjobb/legrosszabb éjszakák ranglistája"): the top-5/
+    /// bottom-5 measured CAPTURES (`NightLeaderboard`'s own doc comment
+    /// explains why per-capture, not per-session, the same grain choice
+    /// `captureTrendPoints` above already made). Built from the exact same
+    /// `captureTrendPoints` this snapshot exposes, never a second query.
+    public let nightLeaderboard: NightLeaderboardSummary
     /// Expert ideation reserve #9 ("Év-összegző Wrapped"): the year-card's
     /// data, built from the exact same `trendPointsProvider` the Moon-sky
     /// card above reads (never a second, year-scoped query) -- `AstroCore`'s
@@ -265,6 +271,82 @@ public struct MoonSkyBucket: Equatable, Sendable, Identifiable {
         self.medianBackgroundEPerSecPerArcsec2 = medianBackgroundEPerSecPerArcsec2
         self.medianMagnitudePerArcsec2 = medianMagnitudePerArcsec2
     }
+}
+
+/// One `NightLeaderboard.RankedEntry` (`AstroCore`, pure) plus the display
+/// fields it can't carry itself -- `displayName`/`sessionStartDate`/
+/// `medianFWHMPixels` all live on `CaptureTrendPoint`, an `AstroApplication`-
+/// layer type `AstroCore` cannot import (see `NightLeaderboard`'s own doc
+/// comment on why the pure ranking type only knows the three raw metrics
+/// plus bare identity). `InsightsQuery.nightLeaderboardSummary(points:)`
+/// joins the two back together by `id` -- the exact "join, never re-derive"
+/// pattern `MoonSkyBucket` above already establishes for the Moon-sky card.
+public struct NightLeaderboardRow: Equatable, Sendable, Identifiable {
+    public let id: String
+    public let target: String
+    /// Raw session date-dir name, verbatim -- same convention as
+    /// `CaptureTrendPoint.date`.
+    public let date: String
+    public let sessionStartDate: String?
+    public let displayName: String
+    public let medianFWHMArcsec: Double?
+    public let medianFWHMPixels: Double?
+    public let backgroundEPerSecPerArcsec2: Double?
+    public let efficiencyPercent: Double?
+
+    public init(
+        id: String,
+        target: String,
+        date: String,
+        sessionStartDate: String?,
+        displayName: String,
+        medianFWHMArcsec: Double?,
+        medianFWHMPixels: Double?,
+        backgroundEPerSecPerArcsec2: Double?,
+        efficiencyPercent: Double?
+    ) {
+        self.id = id
+        self.target = target
+        self.date = date
+        self.sessionStartDate = sessionStartDate
+        self.displayName = displayName
+        self.medianFWHMArcsec = medianFWHMArcsec
+        self.medianFWHMPixels = medianFWHMPixels
+        self.backgroundEPerSecPerArcsec2 = backgroundEPerSecPerArcsec2
+        self.efficiencyPercent = efficiencyPercent
+    }
+
+    /// Same "arcsec when derivable, else raw pixels" convention
+    /// `CaptureTrendPoint.fwhmValue`/`TrendPoint.fwhmValue` already
+    /// establish.
+    public var fwhmValue: (value: Double, isPixelFallback: Bool)? {
+        if let arcsec = medianFWHMArcsec { return (arcsec, false) }
+        if let pixels = medianFWHMPixels { return (pixels, true) }
+        return nil
+    }
+}
+
+/// Ideation #7 ("Legjobb/legrosszabb éjszakák ranglistája" -- "best/worst
+/// nights leaderboard"): the "Éjszakák ranglistája" section's data --
+/// `NightLeaderboard.rank`'s pure result, wrapped with display fields.
+public struct NightLeaderboardSummary: Equatable, Sendable {
+    public let best: [NightLeaderboardRow]
+    public let worst: [NightLeaderboardRow]
+    public let measuredCount: Int
+
+    public init(best: [NightLeaderboardRow], worst: [NightLeaderboardRow], measuredCount: Int) {
+        self.best = best
+        self.worst = worst
+        self.measuredCount = measuredCount
+    }
+
+    /// Below `NightLeaderboard.minimumMeasuredCount`, `best`/`worst` are
+    /// both empty by construction (`NightLeaderboard.rank`'s own guard) --
+    /// this reads the same threshold rather than re-deriving it from
+    /// `measuredCount` so the two can never quietly disagree.
+    public var hasEnoughDataToDisplay: Bool { measuredCount >= NightLeaderboard.minimumMeasuredCount }
+
+    public static let empty = NightLeaderboardSummary(best: [], worst: [], measuredCount: 0)
 }
 
 /// Display-ready wrapper around `MoonSkyCorrelation.Result` -- the
@@ -480,6 +562,7 @@ public struct InsightsQuery: Sendable {
             filterUsage: filterUsage, setupUsage: setupUsage,
             rejectedFrameCount: rejectedFrameCount, captureTrendPoints: capturePoints,
             moonSkyCorrelation: Self.moonSkyCorrelationSummary(points: trendPoints),
+            nightLeaderboard: Self.nightLeaderboardSummary(points: capturePoints),
             yearWrapped: year.flatMap { YearWrapped.summarize(points: trendPoints, year: $0) },
             yearOverYearComparison: YearOverYearComparison.summarize(points: trendPoints, today: today),
             currentMonth: todayComponents.month ?? 1,
@@ -510,6 +593,41 @@ public struct InsightsQuery: Sendable {
         }
         return MoonSkyCorrelationSummary(
             buckets: buckets, headlineRatio: result.headlineRatio, usableBucketCount: result.usableBucketCount
+        )
+    }
+
+    /// Wraps `NightLeaderboard.rank` (`AstroCore`, pure) with the one join
+    /// it deliberately cannot do itself: mapping each `RankedEntry` back to
+    /// its own `CaptureTrendPoint` for the display fields Core has no type
+    /// for (`displayName`, `sessionStartDate`, the pixel-fallback FWHM) --
+    /// called, never re-derived, so a leaderboard row's numbers can never
+    /// quietly disagree with the exact same capture's row in the "Capture
+    /// quality trends" table above it.
+    static func nightLeaderboardSummary(points: [CaptureTrendPoint]) -> NightLeaderboardSummary {
+        let byID = Dictionary(uniqueKeysWithValues: points.map { ($0.id, $0) })
+        let inputs = points.map {
+            NightLeaderboard.Input(
+                id: $0.id, target: $0.target, date: $0.sessionStartDate ?? $0.date,
+                medianFWHMArcsec: $0.medianFWHMArcsec,
+                efficiencyPercent: $0.efficiencyPercent,
+                backgroundEPerSecPerArcsec2: $0.backgroundEPerSecPerArcsec2
+            )
+        }
+        let result = NightLeaderboard.rank(inputs)
+        func row(_ entry: NightLeaderboard.RankedEntry) -> NightLeaderboardRow {
+            let source = byID[entry.id]
+            return NightLeaderboardRow(
+                id: entry.id, target: entry.target, date: entry.date,
+                sessionStartDate: source?.sessionStartDate,
+                displayName: source?.displayName ?? entry.target,
+                medianFWHMArcsec: entry.medianFWHMArcsec,
+                medianFWHMPixels: source?.medianFWHMPixels,
+                backgroundEPerSecPerArcsec2: entry.backgroundEPerSecPerArcsec2,
+                efficiencyPercent: entry.efficiencyPercent
+            )
+        }
+        return NightLeaderboardSummary(
+            best: result.best.map(row), worst: result.worst.map(row), measuredCount: result.measuredCount
         )
     }
 
