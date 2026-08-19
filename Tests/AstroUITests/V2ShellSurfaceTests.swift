@@ -97,6 +97,61 @@ struct V2ShellSurfaceTests {
         #expect(root.contains("ScanWorkflowMaterializer.materializeProductionLibrary"))
     }
 
+    /// Owner feedback 2026-08-19 ("miért nem rendes liquid glass-os még
+    /// mindig?"): the sidebar was pure system material sitting next to an
+    /// opaque detail column that stopped dead at its own edge -- vibrancy
+    /// needs content behind the glass to refract, and a hard edge is
+    /// nothing. `backgroundExtensionEffect()` is the macOS 26 primitive
+    /// that mirrors/blurs the detail column's edge into the region under
+    /// the sidebar's glass. Pinned on the exact detail-column paint site so
+    /// a future edit that drops the call regresses back to a flat sidebar
+    /// without this test noticing the reason why.
+    @Test("The detail column extends its backdrop under the sidebar's glass")
+    func detailColumnExtendsBackdropUnderSidebarGlass() throws {
+        let sourceURL = repositoryRoot.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift")
+        let root = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        guard let groundRange = root.range(of: ".background(AstroTokens.Color.ground)") else {
+            Issue.record("the detail column's ground paint is gone -- see theDetailColumnPaintsTheOpaqueBackdrop")
+            return
+        }
+        guard let extensionRange = root.range(of: ".backgroundExtensionEffect()", range: groundRange.upperBound..<root.endIndex) else {
+            Issue.record("`.backgroundExtensionEffect()` not found after the detail column's `ground` paint")
+            return
+        }
+        let between = root[groundRange.upperBound..<extensionRange.lowerBound]
+        let onlyCommentsOrBlankBetween = between
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .allSatisfy { $0.isEmpty || $0.hasPrefix("//") }
+        #expect(onlyCommentsOrBlankBetween, """
+            `backgroundExtensionEffect()` must sit immediately after the \
+            detail column's `ground` paint with nothing but comments in \
+            between -- it extends exactly that backdrop under the \
+            sidebar's glass, not some later, different layer:
+            \(between)
+            """)
+
+        // The sidebar itself must stay pure system material: vibrancy dies
+        // the moment anything opaque sits on or behind it, so the sidebar
+        // type must carry no `.background(` of its own.
+        guard let sidebarRange = root.range(of: "private struct V2Sidebar") else {
+            Issue.record("V2Sidebar not found")
+            return
+        }
+        guard let nextStructRange = root.range(of: "\nprivate struct ", range: sidebarRange.upperBound..<root.endIndex)
+            ?? root.range(of: "\nstruct ", range: sidebarRange.upperBound..<root.endIndex) else {
+            Issue.record("could not bound V2Sidebar's body")
+            return
+        }
+        let sidebarBody = root[sidebarRange.upperBound..<nextStructRange.lowerBound]
+        #expect(!sidebarBody.contains(".background("), """
+            V2Sidebar must stay unpainted -- any `.background(` here would \
+            sit behind the system glass and kill the refraction \
+            `backgroundExtensionEffect()` on the detail column exists to feed.
+            """)
+    }
+
     @Test("Appearance tokens are adaptive and unavailable actions are honest")
     func adaptiveTokensAndHonestActions() throws {
         let tokens = try String(

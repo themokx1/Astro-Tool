@@ -492,6 +492,23 @@ private struct V2Shell: View {
             // genuinely does put its own material. Nothing here reaches
             // them.
             .background(AstroTokens.Color.ground)
+            // Owner feedback 2026-08-19: the sidebar read as flat system
+            // material next to Finder's floating Liquid Glass, because
+            // Finder's content extends UNDER its sidebar and this column's
+            // `ground` backdrop stopped dead at the column boundary --
+            // vibrancy needs something behind the glass to refract, and an
+            // opaque sidebar-column edge is nothing. `backgroundExtensionEffect()`
+            // is the macOS 26 primitive for exactly this: it mirrors and
+            // blurs this content's edge into the region the sidebar's glass
+            // sits over, without changing what is drawn inside the detail
+            // column itself. W2-7b's guarantee is untouched by this --
+            // `ground` is still painted, opaque, at the same site (the
+            // `theDetailColumnPaintsTheOpaqueBackdrop` gate still greps for
+            // that exact call); only the EXTENSION beyond this column's own
+            // edge is new. Applied here rather than per-route for the same
+            // "single owner" reason `ground` itself lives here: `DetailHost`
+            // has 21 routes and most never touch `WorkspacePage`.
+            .backgroundExtensionEffect()
         }
         .navigationSplitViewStyle(.balanced)
         .overlay {
