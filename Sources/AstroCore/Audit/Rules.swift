@@ -38,9 +38,11 @@ enum GlobMatcher {
     }
 }
 
-/// Shared residue-matching primitives used by both `ResidueRule` (the
-/// per-run audit finding) and `CleanupReport` (the aggregated, size-ordered
-/// cleanup summary) so the two never drift on what counts as residue.
+/// Shared residue-matching primitives used by `ResidueRule` (the per-run
+/// audit finding), `CleanupReport` (the aggregated, size-ordered cleanup
+/// summary), and `LibraryScanner` (which must never promote a residue file
+/// to a specific frame role via its FITS IMAGETYP header) so none of the
+/// three ever drift on what counts as residue.
 enum ResidueMatcher {
     /// Whether `name` (a bare filename, no path) matches one of
     /// `config.residuePatterns`.
@@ -52,6 +54,42 @@ enum ResidueMatcher {
     /// `config.residueDirNames`, case-insensitively.
     static func isResidueDirName(_ name: String, config: AstroConfig) -> Bool {
         config.residueDirNames.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    /// The cleanup-report sub-category a file at `path` (root-relative)
+    /// falls into, or `nil` if it isn't residue at all. An ancestor
+    /// directory named in `residueDirNames` (e.g. `process/`) takes
+    /// precedence over filename pattern matching -- everything under it is
+    /// residue regardless of its own name, mirroring `ResidueRule`'s
+    /// whole-directory finding -- then filename-pattern matches split by
+    /// extension (`.seq`/`.lst`/other). A file sitting anywhere under a
+    /// `toolOutputDirNames` directory is never residue, however its name
+    /// looks: those are known-intentional tool output (`ToolOutputRule`'s
+    /// territory), not mess.
+    static func category(forPath path: String, config: AstroConfig) -> String? {
+        let components = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard !components.contains(where: { config.toolOutputDirNames.contains($0) }) else { return nil }
+
+        let ancestors = components.dropLast()
+        if ancestors.contains(where: { isResidueDirName($0, config: config) }) {
+            return "residue-process-dir"
+        }
+
+        let name = components.last ?? path
+        guard matchesFilePattern(name: name, config: config) else { return nil }
+
+        switch (name as NSString).pathExtension.lowercased() {
+        case "seq": return "residue-seq"
+        case "lst": return "residue-lst"
+        default: return "residue-other"
+        }
+    }
+
+    /// Whether `path` (root-relative) is residue at all, per
+    /// `category(forPath:config:)` -- the plain match/no-match check
+    /// `LibraryScanner` needs (it doesn't care which residue sub-kind).
+    static func isResidue(path: String, config: AstroConfig) -> Bool {
+        category(forPath: path, config: config) != nil
     }
 }
 

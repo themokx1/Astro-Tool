@@ -101,39 +101,14 @@ public enum CleanupReport {
     private static func residueGroups(files: [FileRecord], config: AstroConfig, maxPathsPerGroup: Int) -> [CleanupGroup] {
         var byCategory: [String: [FileRecord]] = [:]
         for file in files {
-            guard let category = residueCategory(for: file.path, config: config) else { continue }
+            // Delegates to `ResidueMatcher.category` -- the single shared
+            // predicate `LibraryScanner`'s residue guard also uses, so the
+            // two engines never drift on what counts as residue.
+            guard let category = ResidueMatcher.category(forPath: file.path, config: config) else { continue }
             byCategory[category, default: []].append(file)
         }
         return byCategory.map { category, entries in
             makeGroup(category: category, entries: entries, maxPathsPerGroup: maxPathsPerGroup)
-        }
-    }
-
-    /// The cleanup-report sub-category a file falls into, or `nil` if it
-    /// isn't residue at all. An ancestor directory named in
-    /// `residueDirNames` (e.g. `process/`) takes precedence over filename
-    /// pattern matching — everything under it is residue regardless of its
-    /// own name, mirroring `ResidueRule`'s whole-directory finding — then
-    /// filename-pattern matches split by extension (`.seq`/`.lst`/other). A
-    /// file sitting anywhere under a `toolOutputDirNames` directory is never
-    /// residue, however its name looks: those are known-intentional tool
-    /// output (`ToolOutputRule`'s territory), not mess.
-    private static func residueCategory(for path: String, config: AstroConfig) -> String? {
-        let components = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-        guard !components.contains(where: { config.toolOutputDirNames.contains($0) }) else { return nil }
-
-        let ancestors = components.dropLast()
-        if ancestors.contains(where: { ResidueMatcher.isResidueDirName($0, config: config) }) {
-            return "residue-process-dir"
-        }
-
-        let name = components.last ?? path
-        guard ResidueMatcher.matchesFilePattern(name: name, config: config) else { return nil }
-
-        switch (name as NSString).pathExtension.lowercased() {
-        case "seq": return "residue-seq"
-        case "lst": return "residue-lst"
-        default: return "residue-other"
         }
     }
 

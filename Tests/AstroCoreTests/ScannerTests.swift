@@ -746,6 +746,132 @@ private struct ScanFixture {
     #expect(second.reclassified == 0)
 }
 
+// MARK: - Residue must never be promoted via IMAGETYP
+//
+// Siril stack products (starless/starmask/registered sequences) inherit
+// IMAGETYP='Light Frame' from the subs they were stacked from. Sitting loose
+// in a session date dir (no lights/flats/darks/biases subdir), they hit the
+// exact same "role .other, area .sessions, FITS header says Light" shape as
+// a genuine loose light frame -- `refineLooseFrameRole` must not promote
+// them just because their filename/dir happens to match
+// `AstroConfig.residuePatterns`/`residueDirNames`, the SAME predicate
+// `CleanupReport`'s audit uses to flag residue for cleanup.
+
+@Test func looseResidueNamedFrameStaysOtherDespiteLightIMAGETYP() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    // "r_*" is one of the default `residuePatterns` -- a Siril registered/
+    // stacked byproduct left loose in the date dir, same shape as the
+    // Heart-and-Soul fixture above but with a residue-matching name.
+    let relativePath = "sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/r_stacked.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try #require(try fixture.db.file(path: relativePath))
+    #expect(record.role == .other)
+    #expect(record.area == .sessions)
+}
+
+@Test func looseFrameInsideResidueProcessDirStaysOtherDespiteLightIMAGETYP() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    // An ancestor directory named "process" (a default `residueDirNames`
+    // entry) makes everything under it residue regardless of its own
+    // filename -- mirrors `CleanupReport.residueCategory`'s dir-name
+    // precedence.
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/process/starless.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try #require(try fixture.db.file(path: relativePath))
+    #expect(record.role == .other)
+    #expect(record.area == .sessions)
+}
+
+/// Writes a real residue-named FITS file (`r_*` pattern) with a Light Frame
+/// IMAGETYP header, scans once (the residue guard already keeps it `.other`
+/// on this first scan), then force-writes the stored role back to `.light`
+/// -- simulating a row left over from BEFORE this fix, where the wrong
+/// IMAGETYP-based promotion had already happened and was persisted. Returns
+/// the scanner (reused across rescans) and the path so heal-pass tests can
+/// pick up from exactly this "already polluted" state.
+private func makeFixtureWithStaleResiduePromotion() throws -> (fixture: ScanFixture, scanner: LibraryScanner, relativePath: String) {
+    let fixture = try ScanFixture.make()
+    let relativePath = "sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/r_stacked.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    var record = try #require(try fixture.db.file(path: relativePath))
+    record.role = .light
+    _ = try fixture.db.upsertFile(record)
+
+    return (fixture, scanner, relativePath)
+}
+
+@Test func healDemotesPreviouslyPromotedResidueRowBackToOther() throws {
+    let (fixture, scanner, relativePath) = try makeFixtureWithStaleResiduePromotion()
+    defer { fixture.cleanup() }
+
+    let second = try scanner.scan()
+    #expect(second.reclassified == 1)
+
+    let healed = try #require(try fixture.db.file(path: relativePath))
+    #expect(healed.role == .other)
+}
+
+@Test func healDemotionOfResidueRowIsIdempotentOnRescan() throws {
+    let (fixture, scanner, relativePath) = try makeFixtureWithStaleResiduePromotion()
+    defer { fixture.cleanup() }
+
+    _ = try scanner.scan() // first heal pass: demotes the stale `.light` row back to `.other`
+    let third = try scanner.scan()
+    #expect(third.reclassified == 0)
+
+    let healed = try #require(try fixture.db.file(path: relativePath))
+    #expect(healed.role == .other)
+}
+
 @Test func normalUnchangedFileHasNoRowChurn() throws {
     let fixture = try ScanFixture.make()
     defer { fixture.cleanup() }

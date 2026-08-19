@@ -481,10 +481,19 @@ public final class LibraryScanner {
         // classifier never sees. A rescan of that same (unchanged) file
         // must not undo that upgrade just because the path alone still
         // resolves to `.other`; keep the stored role in that case.
+        //
+        // EXCEPT when the path matches `ResidueMatcher` (the same
+        // patterns/dir-names predicate `CleanupReport` uses): a specific
+        // frame role there can only be a leftover wrong promotion from
+        // BEFORE `refineLooseFrameRole` grew its own residue guard above
+        // (residue is never promoted going forward, so no legitimate
+        // upgrade could have produced this combination post-fix). Demote it
+        // back to the path-derived `.other` so a plain rescan is
+        // self-healing, without needing a dedicated migration.
         let specificFrameRoles: Set<FrameRole> = [.light, .flat, .dark, .bias]
         let effectiveRole: FrameRole
         if info.area == .sessions, info.role == .other, specificFrameRoles.contains(existing.role) {
-            effectiveRole = existing.role
+            effectiveRole = ResidueMatcher.isResidue(path: existing.path, config: config) ? .other : existing.role
         } else {
             effectiveRole = info.role
         }
@@ -512,6 +521,15 @@ public final class LibraryScanner {
     private func refineLooseFrameRole(fileID: Int64, info: PathInfo, ext: String, baseRecord: FileRecord) throws {
         guard info.area == .sessions, info.role == .other else { return }
         guard ["fit", "fits", "fz"].contains(ext) else { return }
+        // Siril stack products (starless/starmask/registered sequences)
+        // inherit IMAGETYP='Light Frame' from the subs they were stacked
+        // from -- a residue file sitting loose in a session date dir hits
+        // the exact same "role .other, FITS header says Light" shape as a
+        // genuine loose light frame. `ResidueMatcher.isResidue` is the same
+        // predicate `CleanupReport`'s cleanup summary uses (patterns + dir
+        // names from `config`), so the two engines never drift on what
+        // counts as residue -- never promote it via IMAGETYP.
+        guard !ResidueMatcher.isResidue(path: baseRecord.path, config: config) else { return }
         guard let meta = try db.fitsMeta(fileID: fileID),
               let imagetyp = meta.imagetyp,
               let refined = Self.roleFromImagetyp(imagetyp)
