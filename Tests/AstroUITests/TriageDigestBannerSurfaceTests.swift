@@ -29,11 +29,14 @@ struct TriageDigestBannerSurfaceTests {
         )
     }
 
-    @Test("The digest card is built from the table's own already-loaded rows, hidden when there are zero outliers")
+    @Test("The digest card is built from the table's own already-loaded rows, hidden when there are zero outliers and no low-altitude insight")
     func digestBuiltFromExistingRowsAndHiddenWhenEmpty() throws {
         let text = try source()
         #expect(text.contains("let digest = triageDigest(for: rows)"))
-        #expect(text.contains("if !digest.isEmpty {"), "must not render a zero-outlier card")
+        #expect(
+            text.contains("if !digest.isEmpty || lowAltitudeInsight != nil {"),
+            "must not render a card with zero outliers AND no low-altitude insight"
+        )
         #expect(text.contains("TriageDigestBanner("))
         #expect(text.contains(#"accessibilityIdentifier("v2.review.triage-digest")"#))
     }
@@ -86,5 +89,47 @@ struct TriageDigestBannerSurfaceTests {
         #expect(hedgeBody.contains(".foregroundStyle(.tertiary)"), "quieter than the causes' own .secondary rows")
         #expect(hedgeBody.contains(".italic()"))
         #expect(hedgeBody.contains("possible satellite trail"), "the English key must carry the hedge, never a bare 'satellite trail'")
+    }
+
+    /// Ideation #10 ("A leggyengébb kereteid mind alacsonyan készültek" --
+    /// `FrameAirmassQuery.lowAltitudeQC`): pins the digest card's third
+    /// insight line -- a CONFIDENT sky-geometry signal (never re-derived from
+    /// `TriageDigestQuery`'s own causes, and never merged into the hedged
+    /// possible-streak row below it), with its own accessibility identifier
+    /// and no per-row "select frames" button (unlike `causes`, this names a
+    /// whole-session pattern, not one specific set of frames to act on now).
+    @Test("The low-altitude insight is its own confident line, distinct from both causes and the hedged streak row")
+    func lowAltitudeInsightIsOwnConfidentLine() throws {
+        let text = try source()
+        #expect(text.contains("let lowAltitudeInsight: LowAltitudeQC?"))
+        #expect(text.contains("if let lowAltitudeInsight {"))
+        #expect(text.contains(#"accessibilityIdentifier("v2.review.triage-digest.low-altitude")"#))
+        #expect(text.contains("lowAltitudeInsight.worstQuartileFrameCount"))
+
+        let bannerRange = try #require(text.range(of: "private struct TriageDigestBanner"))
+        let extensionRange = try #require(text.range(of: "extension OutlierBreakdown.Metric"))
+        let bannerBody = text[bannerRange.lowerBound..<extensionRange.lowerBound]
+        #expect(!bannerBody.contains("apply("), "the low-altitude line must never write a verdict")
+
+        let lowAltitudeRange = try #require(bannerBody.range(of: "if let lowAltitudeInsight {"))
+        let hedgeRange = try #require(bannerBody.range(of: "if digest.hasPossibleStreak {"))
+        #expect(lowAltitudeRange.lowerBound < hedgeRange.lowerBound, "the confident low-altitude line renders above the hedged streak row")
+        let lowAltitudeBody = bannerBody[lowAltitudeRange.lowerBound..<hedgeRange.lowerBound]
+        #expect(lowAltitudeBody.contains(".foregroundStyle(.secondary)"), "same weight as a confident cause row, not the hedge's .tertiary/.italic")
+        #expect(!lowAltitudeBody.contains(".italic()"), "a confident signal, never rendered like the hedge")
+    }
+
+    /// The DB-backed query behind this line must never run straight from
+    /// `body`/a computed getter -- `refreshLowAltitudeInsight()` only ever
+    /// fires from `.onChange` handlers, matching the codebase's own
+    /// documented "heavy query in a computed getter can crash this app"
+    /// lesson.
+    @Test("The low-altitude insight is refreshed imperatively from onChange, never computed straight in body")
+    func lowAltitudeInsightRefreshedImperatively() throws {
+        let text = try source()
+        #expect(text.contains("private func refreshLowAltitudeInsight()"))
+        #expect(text.contains(".onChange(of: store.selectedSeriesID) { _, _ in"))
+        #expect(text.contains("refreshLowAltitudeInsight()"))
+        #expect(text.contains(".onChange(of: store.qualityByPath) { _, _ in refreshLowAltitudeInsight() }"))
     }
 }

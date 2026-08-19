@@ -11,6 +11,14 @@ public struct ReviewWorkspace: View {
     @State private var selectedCaptureSlug: String?
     @State private var selectedNightFilter: String?
     @State private var blinkReviewStore: FrameBlinkReviewStore?
+    /// Ideation #10 ("A leggyengébb kereteid mind alacsonyan készültek"):
+    /// refreshed imperatively from `.onChange` below, never computed straight
+    /// in `body` -- unlike `triageDigest(for:)` (pure over already-loaded
+    /// `rows`), `FrameAirmassQuery` opens its own index-DB connection and
+    /// walks `files`/`fits_meta` per frame, so recomputing it on every body
+    /// evaluation would be the exact "heavy query in a computed getter" shape
+    /// that has crashed this app before.
+    @State private var lowAltitudeInsight: LowAltitudeQC?
     @Environment(OperationHost.self) private var operationHost
     @Environment(WorkspaceActionCenter.self) private var workspaceActionCenter
     /// Wave 4 (post-20014) fix: see `ProjectWorkspaceView.actionOwner`'s own
@@ -93,11 +101,21 @@ public struct ReviewWorkspace: View {
                 action: { Task { await store.rateSelectedSeries(mode: .nativeOnly, operationHost: operationHost) } }
             )
         )
-        .onChange(of: store.selectedSeriesID) { _, _ in selectedDecisionIDs.removeAll() }
+        .onChange(of: store.selectedSeriesID) { _, _ in
+            selectedDecisionIDs.removeAll()
+            refreshLowAltitudeInsight()
+        }
         .onChange(of: store.snapshot) { _, _ in
             guard let blinkReviewStore, let selected = store.selectedSeries else { return }
             blinkReviewStore.refresh(decisions: qualityRows(for: selected).map(\.decision))
         }
+        .onChange(of: store.snapshot) { _, _ in refreshLowAltitudeInsight() }
+        // `qualityByPath` (unlike `snapshot`) updates a beat later, once
+        // `ReviewStore.refreshQuality()`'s own await settles -- scores are
+        // exactly what this insight ranks frames by, so it needs its own
+        // trigger rather than piggy-backing on the `snapshot` change above,
+        // which fires before scores are actually in hand on first load.
+        .onChange(of: store.qualityByPath) { _, _ in refreshLowAltitudeInsight() }
         .sheet(isPresented: Binding(
             get: { blinkReviewStore != nil },
             set: { if !$0 { blinkReviewStore = nil } }
@@ -348,9 +366,10 @@ public struct ReviewWorkspace: View {
                 // matching the spec's own "no card, don't invent" empty
                 // state.
                 let digest = triageDigest(for: rows)
-                if !digest.isEmpty {
+                if !digest.isEmpty || lowAltitudeInsight != nil {
                     TriageDigestBanner(
                         digest: digest,
+                        lowAltitudeInsight: lowAltitudeInsight,
                         onSelectCause: { metric in
                             selectedDecisionIDs = Set(digest.selectFrames(forCause: metric))
                         },
@@ -465,6 +484,25 @@ public struct ReviewWorkspace: View {
         TriageDigestQuery(frames: rows.map {
             TriageDigestFrame(id: $0.id, relativePath: $0.decision.relativePath, quality: $0.quality)
         })
+    }
+
+    /// Ideation #10: re-derives `lowAltitudeInsight` for whichever series is
+    /// currently selected, over EVERY decision in that series (not narrowed
+    /// by `selectedCaptureSlug` the way `qualityRows(for:)`/`triageDigest(for:)`
+    /// are) -- this is a whole-session sky-geometry signal, not a per-capture-
+    /// group one. Best-effort, matching `ReviewStore.refreshQuality()`'s own
+    /// stance: a query failure (no index DB yet, e.g.) simply clears the
+    /// insight rather than surfacing an error, since this line is
+    /// supplementary to the review workflow itself.
+    private func refreshLowAltitudeInsight() {
+        guard let selected = store.selectedSeries, let query = try? FrameAirmassQuery.production(rootURL: rootURL) else {
+            lowAltitudeInsight = nil
+            return
+        }
+        let inputs = selected.decisions.map {
+            FrameAirmassScoreInput(relativePath: $0.relativePath, score: store.quality(for: $0.relativePath)?.score)
+        }
+        lowAltitudeInsight = (try? query.lowAltitudeQC(frames: inputs)) ?? nil
     }
 
     /// Every frame decision of `selected`, joined with its measured quality
@@ -655,8 +693,18 @@ private struct QualityDistribution: View {
 /// silently folded into) a confident cause. `causes`' own header line only
 /// renders when `causes` is non-empty, so a possible-streak-only session
 /// never shows a misleading "0 frames flagged as outliers tonight".
+///
+/// `lowAltitudeInsight` (expert ideation #10, "A leggyengébb kereteid mind
+/// alacsonyan készültek") sits between `causes` and the possible-streak
+/// hedge: a CONFIDENT sky-geometry signal like `causes` (never a hedge), but
+/// with no per-cause "select frames" action of its own -- it names a whole
+/// pattern across the session ("shoot this target later, higher in the
+/// sky"), not one specific set of frames to act on right now, so it renders
+/// as a plain secondary-styled line with no button, same weight as a
+/// `causes` row's own label/count.
 private struct TriageDigestBanner: View {
     let digest: TriageDigestQuery
+    let lowAltitudeInsight: LowAltitudeQC?
     let onSelectCause: (OutlierBreakdown.Metric) -> Void
     let onSelectPossibleStreak: () -> Void
 
@@ -690,6 +738,17 @@ private struct TriageDigestBanner: View {
                         .accessibilityIdentifier("v2.review.triage-digest.select.\(cause.metric.rawValue)")
                     }
                 }
+            }
+            if let lowAltitudeInsight {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.down.forward.circle")
+                        .foregroundStyle(.secondary)
+                    Text("Your \(lowAltitudeInsight.worstQuartileFrameCount) weakest frames were shot below 35° — worth starting this target later.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .accessibilityIdentifier("v2.review.triage-digest.low-altitude")
             }
             if digest.hasPossibleStreak {
                 HStack(spacing: 8) {

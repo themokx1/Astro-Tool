@@ -2287,3 +2287,15 @@
    positional specifiers -- both read naturally in that order. */
 "Your cooler missed set-point on %@ of your last %@ nights — check the cooling headroom on hot nights." = "A hűtőd %@ alkalommal nem tartotta a célhőmérsékletet az utolsó %@ éjszakából — nézd át a hűtő tartalékát meleg éjszakákon.";
 "Focus drifted on %@ of your last %@ nights — consider a mid-session refocus." = "A fókuszod %@ alkalommal csúszott el az utolsó %@ éjszakából — iktass be egy fókuszellenőrzést az éjszaka közepén.";
+
+/* Expert ideation #10 ("A leggyengébb kereteid mind alacsonyan készültek"):
+   ReviewWorkspace's Morning Triage Digest gains a third insight line, next
+   to the confident cause rows and the hedged possible-streak row --
+   FrameAirmassQuery.lowAltitudeQC fires when this session's worst-scoring
+   quarter of frames (by the SAME score the causes above already rank by)
+   sat measurably lower in the sky than its best-scoring quarter. The %lld
+   placeholder is the fired quartile's own frame count
+   (LowAltitudeQC.worstQuartileFrameCount) -- a plain Int interpolated
+   straight into the LocalizedStringKey literal, the same convention the
+   possible-streak row's own count already uses just above in this file. */
+"Your %lld weakest frames were shot below 35° — worth starting this target later." = "A leggyengébb %lld kereted 35° alatt készült — érdemes később kezdeni.";
