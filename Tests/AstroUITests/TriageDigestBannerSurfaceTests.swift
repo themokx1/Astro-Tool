@@ -9,6 +9,10 @@ import Testing
 /// for verifying an actual live card (see `W3T12SilentFailureSurfaceTests`'s
 /// own doc comment for the established literal-source-text convention this
 /// follows instead, also used by `W6EReviewActionBarSurfaceTests`).
+///
+/// Also pins the "esetleg műholdcsík -- ellenőrizd" hedge row (expert
+/// ideation #8): its own select callback, own accessibility identifier,
+/// and never folded into `causes`' own confident-verdict selection path.
 @Suite("Morning Triage Digest banner")
 struct TriageDigestBannerSurfaceTests {
     private var repositoryRoot: URL {
@@ -30,7 +34,7 @@ struct TriageDigestBannerSurfaceTests {
         let text = try source()
         #expect(text.contains("let digest = triageDigest(for: rows)"))
         #expect(text.contains("if !digest.isEmpty {"), "must not render a zero-outlier card")
-        #expect(text.contains("TriageDigestBanner(digest: digest)"))
+        #expect(text.contains("TriageDigestBanner("))
         #expect(text.contains(#"accessibilityIdentifier("v2.review.triage-digest")"#))
     }
 
@@ -55,5 +59,32 @@ struct TriageDigestBannerSurfaceTests {
         #expect(text.contains("var triageSelectButtonLabel: LocalizedStringKey"))
         #expect(!text.contains("cause.metric.likelyCauseText"))
         #expect(!text.contains("cause.metric.displayName"))
+    }
+
+    @Test("The possible-streak hedge row has its own selection callback, own identifier, and its own (never auto-reject) selection path")
+    func possibleStreakHasOwnSelectionPath() throws {
+        let text = try source()
+        #expect(text.contains("onSelectPossibleStreak: {"), "the call site must wire a dedicated closure, not reuse onSelectCause")
+        #expect(text.contains("selectedDecisionIDs = Set(digest.selectPossibleStreakFrames())"))
+        #expect(text.contains(#"accessibilityIdentifier("v2.review.triage-digest.select.possible-streak")"#))
+
+        let bannerRange = try #require(text.range(of: "private struct TriageDigestBanner"))
+        let extensionRange = try #require(text.range(of: "extension OutlierBreakdown.Metric"))
+        let bannerBody = text[bannerRange.lowerBound..<extensionRange.lowerBound]
+        #expect(!bannerBody.contains("apply("), "the possible-streak row must only select frames, never call apply(...)")
+        #expect(bannerBody.contains("if digest.hasPossibleStreak {"), "absent entirely at zero hits")
+    }
+
+    @Test("The possible-streak row is visually distinct (secondary/hedged styling) from the confident cause rows")
+    func possibleStreakRowIsVisuallyDistinct() throws {
+        let text = try source()
+        let bannerRange = try #require(text.range(of: "private struct TriageDigestBanner"))
+        let extensionRange = try #require(text.range(of: "extension OutlierBreakdown.Metric"))
+        let bannerBody = text[bannerRange.lowerBound..<extensionRange.lowerBound]
+        let hedgeRange = try #require(bannerBody.range(of: "if digest.hasPossibleStreak {"))
+        let hedgeBody = bannerBody[hedgeRange.lowerBound...]
+        #expect(hedgeBody.contains(".foregroundStyle(.tertiary)"), "quieter than the causes' own .secondary rows")
+        #expect(hedgeBody.contains(".italic()"))
+        #expect(hedgeBody.contains("possible satellite trail"), "the English key must carry the hedge, never a bare 'satellite trail'")
     }
 }

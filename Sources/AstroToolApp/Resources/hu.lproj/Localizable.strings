@@ -2185,3 +2185,14 @@
 "Capture %@–%@" = "Felvétel %@–%@";
 "Capture %@–%@, %@-minute gap at %@" = "Felvétel %@–%@, %@ perces szünet %@-kor";
 "Capture %@–%@, %@ gaps totaling %@ minutes" = "Felvétel %@–%@, %@ szünet, összesen %@ perc";
+
+/* "Esetleg műholdcsík -- ellenőrizd" (expert ideation #8): the Morning
+   Triage Digest's hedged "possible satellite trail" row (ReviewWorkspace
+   .swift's TriageDigestBanner, appended below its confident `causes`
+   section) -- SatelliteStreakHeuristic.swift (AstroCore) is the pure
+   z-score proxy behind it. Deliberately never merged into the confident
+   cause strings above ("focus slip" etc.): the English key keeps the hedge
+   ("possible ... -- check") so no locale can accidentally read this as a
+   verdict. Int interpolation produces a %lld key, not %@. */
+"%lld frames: possible satellite trail — check" = "%lld keret: esetleg műholdcsík — ellenőrizd";
+"Select possible-streak frames" = "Kijelölés: műholdcsík-gyanús keretek";

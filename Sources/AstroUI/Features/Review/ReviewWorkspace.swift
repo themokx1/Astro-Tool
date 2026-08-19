@@ -349,9 +349,15 @@ public struct ReviewWorkspace: View {
                 // state.
                 let digest = triageDigest(for: rows)
                 if !digest.isEmpty {
-                    TriageDigestBanner(digest: digest) { metric in
-                        selectedDecisionIDs = Set(digest.selectFrames(forCause: metric))
-                    }
+                    TriageDigestBanner(
+                        digest: digest,
+                        onSelectCause: { metric in
+                            selectedDecisionIDs = Set(digest.selectFrames(forCause: metric))
+                        },
+                        onSelectPossibleStreak: {
+                            selectedDecisionIDs = Set(digest.selectPossibleStreakFrames())
+                        }
+                    )
                     .padding(.horizontal, AstroTokens.Spacing.standard)
                     .padding(.vertical, 10)
                     Divider()
@@ -637,37 +643,71 @@ private struct QualityDistribution: View {
 /// above already uses -- an `.astroRaisedSurface()` here would nest inside
 /// the workspace's own outer raised surface and collapse to its inset alone
 /// (see that modifier's own doc comment), buying no visual distinction.
+///
+/// The "esetleg műholdcsík -- ellenőrizd" row (expert ideation #8,
+/// `SatelliteStreakHeuristic`) is appended below `causes` as its OWN
+/// section, never merged into it: `causes` are confident dominant-metric
+/// verdicts derived straight from `Rater`'s own outlier flag, while the
+/// possible-streak row is a hedge that never claims to know anything --
+/// hence the visually quieter `questionmark.circle`/tertiary/italic
+/// treatment and its own `onSelectPossibleStreak` callback, kept entirely
+/// separate from `onSelectCause` so it can never be confused with (or
+/// silently folded into) a confident cause. `causes`' own header line only
+/// renders when `causes` is non-empty, so a possible-streak-only session
+/// never shows a misleading "0 frames flagged as outliers tonight".
 private struct TriageDigestBanner: View {
     let digest: TriageDigestQuery
     let onSelectCause: (OutlierBreakdown.Metric) -> Void
+    let onSelectPossibleStreak: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
-            Text("\(digest.totalOutlierCount) frames flagged as outliers tonight")
-                .font(.callout.weight(.semibold))
-            ForEach(digest.causes, id: \.metric) { cause in
+            if !digest.causes.isEmpty {
+                Text("\(digest.totalOutlierCount) frames flagged as outliers tonight")
+                    .font(.callout.weight(.semibold))
+                ForEach(digest.causes, id: \.metric) { cause in
+                    HStack(spacing: 8) {
+                        // `verbatim`, matching `HomeView`'s own rating-gate
+                        // progress text ("`completed / total`"): a bare
+                        // "N×" multiplier reads identically in every locale, so
+                        // routing it through `Text`'s `LocalizedStringKey`
+                        // initializer would only add an untranslatable "%lld×"
+                        // key with no real phrase for `hu.lproj` to translate.
+                        Text(verbatim: "\(cause.count)×")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        Text(cause.metric.triageCauseLabel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            onSelectCause(cause.metric)
+                        } label: {
+                            Text(cause.metric.triageSelectButtonLabel)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("v2.review.triage-digest.select.\(cause.metric.rawValue)")
+                    }
+                }
+            }
+            if digest.hasPossibleStreak {
                 HStack(spacing: 8) {
-                    // `verbatim`, matching `HomeView`'s own rating-gate
-                    // progress text ("`completed / total`"): a bare
-                    // "N×" multiplier reads identically in every locale, so
-                    // routing it through `Text`'s `LocalizedStringKey`
-                    // initializer would only add an untranslatable "%lld×"
-                    // key with no real phrase for `hu.lproj` to translate.
-                    Text(verbatim: "\(cause.count)×")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    Text(cause.metric.triageCauseLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Image(systemName: "questionmark.circle")
+                        .foregroundStyle(.tertiary)
+                    Text("\(digest.possibleStreakCount) frames: possible satellite trail — check")
+                        .font(.caption.italic())
+                        .foregroundStyle(.tertiary)
                     Spacer()
                     Button {
-                        onSelectCause(cause.metric)
+                        onSelectPossibleStreak()
                     } label: {
-                        Text(cause.metric.triageSelectButtonLabel)
+                        Text("Select possible-streak frames")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .accessibilityIdentifier("v2.review.triage-digest.select.\(cause.metric.rawValue)")
+                    .tint(.secondary)
+                    .accessibilityIdentifier("v2.review.triage-digest.select.possible-streak")
                 }
             }
         }
