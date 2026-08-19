@@ -113,6 +113,13 @@ public struct BreadcrumbBar: View {
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.bar)
+        // `.contain` makes this bar ONE addressable AX group whose crumb
+        // buttons stay real children. Without it, macOS 26 propagates a
+        // container-level identifier onto every descendant and flattens
+        // the bar to a single static text on some hosts (verified from a
+        // CI runner AX snapshot) -- the launch test's
+        // `breadcrumb.buttons.firstMatch` then finds nothing to click.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("v2.breadcrumb")
     }
 }
