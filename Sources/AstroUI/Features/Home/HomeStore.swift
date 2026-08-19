@@ -100,7 +100,7 @@ public struct HomeSnapshot: Equatable, Sendable {
         /// the next clear night"): `true` when tonight's own dark-hours mean
         /// cloud (`WeatherService.dailySummaries`, NOT the dusk/dawn POINT
         /// samples above -- a genuinely different reading) crosses
-        /// `HomeStore.cloudyThresholdPercent`. Computed once here, in
+        /// `ClearNightOutlook.cloudyThresholdPercent`. Computed once here, in
         /// `productionWeather`, so the "name the next clear night" line and
         /// the "cloudy night = darks night" card gate on the exact same
         /// signal instead of each re-deriving (and risking disagreeing with)
@@ -113,26 +113,39 @@ public struct HomeSnapshot: Equatable, Sendable {
         /// cloud drops back under the threshold; `.unavailable` is the
         /// honest case where none of the remaining forecast nights do.
         public let nextClearNight: NextClearNight?
+        /// Expert ideation reserve #5 ("Clear-Night Countdown"): how many of
+        /// the fetched 7-day `WeatherService.dailySummaries` count as clear
+        /// by `ClearNightOutlook.cloudyThresholdPercent`
+        /// (`ClearNightOutlook.clearNightCount`) -- feeds the "Continue
+        /// where it matters" card's own clear-night caption
+        /// (`HomeView.featuredClearNightCaption`) once paired with
+        /// `HomeSnapshot.featuredCompletionForecast`. `nil` whenever no
+        /// weather data was fetched at all (weather disabled, no site, or
+        /// the fetch failed) -- distinct from a real `0`, which means the
+        /// forecast was read and genuinely found no clear night yet.
+        public let clearNightsInHorizon: Int?
 
         public init(
             duskPercent: Double?,
             dawnPercent: Double?,
             fetchedAt: Date,
             isCloudyTonight: Bool = false,
-            nextClearNight: NextClearNight? = nil
+            nextClearNight: NextClearNight? = nil,
+            clearNightsInHorizon: Int? = nil
         ) {
             self.duskPercent = duskPercent
             self.dawnPercent = dawnPercent
             self.fetchedAt = fetchedAt
             self.isCloudyTonight = isCloudyTonight
             self.nextClearNight = nextClearNight
+            self.clearNightsInHorizon = clearNightsInHorizon
         }
     }
 
     /// W7-E workflow #3: the outcome of searching `WeatherService
     /// .dailySummaries`'s 7-day forecast for the first night whose own mean
-    /// cloud reads back under `HomeStore.cloudyThresholdPercent`, once
-    /// tonight itself has already crossed it. A plain `nil` on `NightCloud`
+    /// cloud reads back under `ClearNightOutlook.cloudyThresholdPercent`,
+    /// once tonight itself has already crossed it. A plain `nil` on `NightCloud`
     /// means "tonight isn't cloudy, this search never ran" -- once it DOES
     /// run, its own two outcomes are both worth telling the user, so neither
     /// collapses to `nil`.
@@ -209,6 +222,19 @@ public struct HomeSnapshot: Equatable, Sendable {
     /// prioritized), never counted or judged again here or in the view body.
     public let highlights: [Highlight]
 
+    /// Expert ideation reserve #5 ("Clear-Night Countdown to project
+    /// completion"): the SAME `CompletionForecast.nightsNeeded` estimate
+    /// `ProjectWorkspaceView`'s own Overview forecast row computes, resolved
+    /// here for `nextProject` specifically so the "Continue where it
+    /// matters" card can add one honest caption line once weather data
+    /// ALSO exists for this library (`nightCloud?.clearNightsInHorizon`) --
+    /// see `HomeView.featuredClearNightCaption`. `nil` on every ordinary
+    /// case this estimate itself already returns `nil` for (no
+    /// `nextProject`, goal already met, fewer than two recent sessions) --
+    /// the same "nothing real, so nothing shown" contract every other
+    /// optional field on this snapshot keeps.
+    public let featuredCompletionForecast: CompletionForecastEstimate?
+
     /// One `(target, sessionDate)` session anchors `FrameRatingCommand`'s own
     /// scope (`firstKnownFrame`), so `unratedNightCount` here counts exactly
     /// the sessions one "Rate Everything" run would still need to touch --
@@ -269,7 +295,8 @@ public struct HomeSnapshot: Equatable, Sendable {
         nightCloud: NightCloud? = nil,
         nightCloudError: WeatherError? = nil,
         ratingGate: RatingGate = .clear,
-        highlights: [Highlight] = []
+        highlights: [Highlight] = [],
+        featuredCompletionForecast: CompletionForecastEstimate? = nil
     ) {
         self.libraryName = libraryName
         self.nightContext = nightContext
@@ -283,6 +310,7 @@ public struct HomeSnapshot: Equatable, Sendable {
         self.nightCloudError = nightCloudError
         self.ratingGate = ratingGate
         self.highlights = highlights
+        self.featuredCompletionForecast = featuredCompletionForecast
     }
 
     /// Neutral preview content: it conveys the shape of the workspace without
@@ -323,6 +351,13 @@ public final class HomeStore {
     /// other provider here is: tests supply a fixed result without a real
     /// FITS-backed library, index DB, or milestone ledger file on disk.
     public typealias HighlightsProvider = @Sendable (URL) async throws -> [HomeSnapshot.Highlight]
+    /// Expert ideation reserve #5 ("Clear-Night Countdown"): resolves
+    /// `CompletionForecast.nightsNeeded` for one specific project (`target`
+    /// is its `ProjectSnapshot.canonicalFolderName`, the same key
+    /// `ProjectStatusQueries`/`TrendQueries` both index by). Injectable for
+    /// the same reason every other provider here is: tests supply a fixed
+    /// result without a real FITS-backed library or index DB.
+    public typealias CompletionOutlookProvider = @Sendable (URL, String) async throws -> CompletionForecastEstimate?
     public private(set) var snapshot: HomeSnapshot
     /// The full plan `tonightRecommendations` was sliced from (`prefix(8)`,
     /// display-only) -- kept around so the "Export Plan" menu
@@ -341,6 +376,7 @@ public final class HomeStore {
     private let weatherProvider: WeatherProvider
     private let ratingGateProvider: RatingGateProvider
     private let highlightsProvider: HighlightsProvider
+    private let completionOutlookProvider: CompletionOutlookProvider
     /// Bumped at the start of every `loadWeather(rootURL:)` call and captured
     /// into that call's own local `generation` -- the weather fetch runs as
     /// its own fire-and-forget `Task` (never awaited by `configure`, so a
@@ -375,7 +411,8 @@ public final class HomeStore {
         nightContextProvider: NightContextProvider? = nil,
         weatherProvider: WeatherProvider? = nil,
         ratingGateProvider: RatingGateProvider? = nil,
-        highlightsProvider: HighlightsProvider? = nil
+        highlightsProvider: HighlightsProvider? = nil,
+        completionOutlookProvider: CompletionOutlookProvider? = nil
     ) {
         self.snapshot = snapshot
         self.tonightProvider = tonightProvider ?? HomeStore.productionTonight
@@ -384,6 +421,7 @@ public final class HomeStore {
         self.weatherProvider = weatherProvider ?? HomeStore.productionWeather
         self.ratingGateProvider = ratingGateProvider ?? HomeStore.productionRatingGate
         self.highlightsProvider = highlightsProvider ?? HomeStore.productionHighlights
+        self.completionOutlookProvider = completionOutlookProvider ?? HomeStore.productionCompletionOutlook
     }
 
     public func replaceSnapshot(_ snapshot: HomeSnapshot) {
@@ -439,7 +477,8 @@ public final class HomeStore {
             nightCloud: nightCloud,
             nightCloudError: nightCloudError,
             ratingGate: snapshot.ratingGate,
-            highlights: snapshot.highlights
+            highlights: snapshot.highlights,
+            featuredCompletionForecast: snapshot.featuredCompletionForecast
         )
     }
 
@@ -493,10 +532,17 @@ public final class HomeStore {
 
         let active = projectsStore.projects.filter { $0.phase == .collecting || $0.phase == .planned }
         let continuable = active.filter { !isKnownUnshootableTonight($0) }
-        var ranked: [(ProjectRecord, Double)] = []
+        // Expert ideation reserve #5: `canonicalFolderName` rides along with
+        // the same `projectSnapshot` lookup this loop already makes for
+        // `integration` -- the "least collected" ranking's own per-project
+        // fetch -- rather than a second pass, purely so `next`'s eventual
+        // winner already carries the key `completionOutlookProvider` needs
+        // (`ProjectStatusQueries`/`TrendQueries` both index by this same
+        // canonical folder name, not the raw `catalogID`).
+        var ranked: [(ProjectRecord, Double, String?)] = []
         for project in continuable {
-            let integration = (try? await projectsStore.projectSnapshot(id: project.id)?.integrationSeconds) ?? 0
-            ranked.append((project, integration))
+            let projectSnapshot = (try? await projectsStore.projectSnapshot(id: project.id)) ?? nil
+            ranked.append((project, projectSnapshot?.integrationSeconds ?? 0, projectSnapshot?.canonicalFolderName))
         }
         let next = ranked.min {
             if $0.1 != $1.1 { return $0.1 < $1.1 }
@@ -566,6 +612,19 @@ public final class HomeStore {
         } else {
             []
         }
+        // Expert ideation reserve #5: same "await it inline, honest nil
+        // default on failure" shape as `ratingGate`/`highlights` above -- a
+        // fast, synchronous index-DB read (`ProjectStatusQueries`/
+        // `TrendQueries`), never worth `loadWeather`'s fire-and-forget
+        // dance. Only ever computed for the SAME project `next` already
+        // names -- `canonicalFolderName == nil` (an unresolved snapshot)
+        // is treated the same as "nothing to forecast" rather than guessing
+        // at a key.
+        let featuredCompletionForecast: CompletionForecastEstimate? = if let rootURL, let next, let target = next.2 {
+            (try? await completionOutlookProvider(rootURL, target)) ?? nil
+        } else {
+            nil
+        }
         snapshot = HomeSnapshot(
             libraryName: libraryName,
             nightContext: nightContext,
@@ -576,7 +635,8 @@ public final class HomeStore {
             tonightRecommendations: Array(recommendations),
             hasActiveProjectsExcludedTonight: hasActiveProjectsExcludedTonight,
             ratingGate: ratingGate,
-            highlights: highlights
+            highlights: highlights,
+            featuredCompletionForecast: featuredCompletionForecast
         )
         // Fire-and-forget, same reasoning as V1's `AppState.loadWeather`
         // (called right after its own site-scoped load lands): weather is
@@ -746,17 +806,61 @@ public final class HomeStore {
         // `NightsStore`/`PlanningStore` already share for this exact lookup.
         let tonightKey = WeatherService.isoDateFormatter.string(from: now)
         let outlook = Self.cloudOutlook(tonightKey: tonightKey, dailySummaries: dailySummaries)
+        // Expert ideation reserve #5: counted off the SAME `dailySummaries`
+        // this fetch already pulled down, no second network call -- see
+        // `HomeSnapshot.NightCloud.clearNightsInHorizon`'s own doc comment.
+        let clearNightsInHorizon = ClearNightOutlook.clearNightCount(dailySummaries: dailySummaries)
         return HomeSnapshot.NightCloud(
             duskPercent: duskPercent, dawnPercent: dawnPercent, fetchedAt: forecast.fetchedAt,
-            isCloudyTonight: outlook.isCloudyTonight, nextClearNight: outlook.nextClearNight
+            isCloudyTonight: outlook.isCloudyTonight, nextClearNight: outlook.nextClearNight,
+            clearNightsInHorizon: clearNightsInHorizon
         )
+    }
+
+    /// Expert ideation reserve #5: `CompletionForecast.nightsNeeded` for one
+    /// project, resolved the exact same way `ProjectReportQuery.project(...)`
+    /// (`AstroApplication`'s Reports feature) resolves
+    /// `projectState.missingSeconds`/`recentSessionIntegrationSeconds` for
+    /// its own Overview forecast row -- `ProjectStatusQueries.projects`
+    /// filtered to `target`, `TrendQueries.points` filtered to `target` and
+    /// capped to the last 5. Deliberately its own independent DB read
+    /// rather than reusing `ProjectReportQuery` itself: that query builds
+    /// a whole project report (stacks, sessions, panel geometry, ...) this
+    /// caption needs none of, and `AstroUI` already accepts this exact
+    /// "duplicate the narrow DB read" trade-off between its own
+    /// `production…` methods (see `productionWeather`'s own doc comment).
+    public static func productionCompletionOutlook(rootURL: URL, target: String) async throws -> CompletionForecastEstimate? {
+        try await Task.detached(priority: .utility) {
+            let identity = LibraryIdentity(rootURL: rootURL)
+            let paths = try AppStoragePaths.production(libraryID: identity, libraryRoot: rootURL)
+            let database = try Database(path: paths.indexDatabase.path)
+            let configURL = rootURL.appendingPathComponent(".astro_tool/config.json")
+            var config = (try? AstroConfig.load(from: configURL)) ?? AstroConfig()
+            config.rootPath = rootURL.path
+            guard let missing = try ProjectStatusQueries.projects(db: database, config: config)
+                .first(where: { $0.target == target })?.missingSeconds
+            else { return nil }
+            let recent = try TrendQueries.points(db: database, config: config)
+                .filter { $0.target == target }
+                .suffix(5)
+                .map(\.integrationSeconds)
+            return CompletionForecast.nightsNeeded(remainingSeconds: missing, recentSessionSeconds: recent)
+        }.value
     }
 
     /// W7-E workflow #2/#3: tonight's mean cloud crosses this to count as
     /// "cloudy" -- the one threshold both the "name the next clear night"
     /// line and the "cloudy night = darks night" card gate on, per the
     /// owner audit's own "~60%" figure.
-    static let cloudyThresholdPercent: Double = 60
+    ///
+    /// Expert ideation reserve #5 ("Clear-Night Countdown"): moved to
+    /// `ClearNightOutlook.cloudyThresholdPercent` (`AstroApplication`) so
+    /// that feature's own clear-night counting reads the exact same number
+    /// rather than an independently-tuned duplicate -- `AstroUI` depends on
+    /// `AstroApplication`, never the other way around, so the shared home
+    /// has to live there. This alias keeps every existing reference in this
+    /// file unchanged.
+    static let cloudyThresholdPercent: Double = ClearNightOutlook.cloudyThresholdPercent
 
     /// The pure decision behind `productionWeather`'s cloud-outlook fields,
     /// extracted so `HomeStoreTests` can exercise the actual threshold/search

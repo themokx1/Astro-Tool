@@ -635,6 +635,94 @@ struct HomeStoreTests {
     func composeHighlightsIsEmptyOnAnOrdinaryDay() {
         #expect(HomeStore.composeHighlights(anniversaries: [], milestones: []).isEmpty)
     }
+
+    // MARK: - Expert ideation reserve #5 (Clear-Night Countdown)
+
+    @Test("The featured project's own completion forecast is resolved for the SAME project 'next' names")
+    func featuredCompletionForecastIsResolvedForTheNextProject() async throws {
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .collecting
+        )
+        let metadata = try MetadataStore.temporary()
+        try await metadata.save(project)
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let expectedTarget = ProjectsQuery.canonicalFolderName(for: project)
+        let estimate = CompletionForecastEstimate(nightsNeeded: 4, paceSecondsPerNight: 10_800, isCapped: false)
+        let store = HomeStore(
+            tonightProvider: { _ in [] },
+            completionOutlookProvider: { selectedRoot, target in
+                #expect(selectedRoot == root)
+                #expect(target == expectedTarget)
+                return estimate
+            }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+
+        #expect(store.snapshot.featuredCompletionForecast == estimate)
+    }
+
+    @Test("No active project at all means no completion forecast is even attempted")
+    func featuredCompletionForecastIsNilWithoutANextProject() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in [] },
+            completionOutlookProvider: { _, _ in
+                Issue.record("completionOutlookProvider must not be called with no next project to forecast")
+                return nil
+            }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+
+        #expect(store.snapshot.featuredCompletionForecast == nil)
+    }
+
+    @Test("A later weather update never clobbers the featured completion forecast configure() already resolved")
+    func weatherUpdatePreservesFeaturedCompletionForecast() async throws {
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .collecting
+        )
+        let metadata = try MetadataStore.temporary()
+        try await metadata.save(project)
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let estimate = CompletionForecastEstimate(nightsNeeded: 6, paceSecondsPerNight: 7200, isCapped: false)
+        let store = HomeStore(
+            tonightProvider: { _ in [] },
+            weatherProvider: { _ in HomeSnapshot.NightCloud(duskPercent: 10, dawnPercent: 20, fetchedAt: Date(), clearNightsInHorizon: 2) },
+            completionOutlookProvider: { _, _ in estimate }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.pendingWeatherLoad?.value
+
+        #expect(store.snapshot.featuredCompletionForecast == estimate)
+        #expect(store.snapshot.nightCloud?.clearNightsInHorizon == 2)
+    }
+
+    @Test("No weather at all leaves clearNightsInHorizon nil, distinct from a genuine zero")
+    func noWeatherLeavesClearNightsInHorizonNil() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in [] },
+            weatherProvider: { _ in nil }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.pendingWeatherLoad?.value
+
+        #expect(store.snapshot.nightCloud == nil)
+    }
 }
 
 /// W5-2 finding 5 (owner pixel review): cold start on a spun-down SSD spent
