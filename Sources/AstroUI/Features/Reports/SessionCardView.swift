@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -22,15 +23,21 @@ public struct SessionCardView: View {
     public static let cardSize = CGSize(width: 1200, height: 675)
 
     let content: SessionCardContent
-    /// Needed only to resolve `content.thumbnailRelativePath` against the
-    /// open library -- `nil` (no library, or no thumbnail path) simply
-    /// renders the card without one; see `FrameThumbnailCell.resolvedURL`'s
-    /// own containment check for what a bad path would do (nothing shows).
-    let rootURL: URL?
+    /// Resolved and awaited (with a timeout) by the caller BEFORE this view
+    /// is ever handed to `ImageRenderer` -- see `SessionCardThumbnailLoader`
+    /// (`SessionCardExport.swift`) for why: `ImageRenderer` snapshots a
+    /// view's state synchronously, so loading the thumbnail through
+    /// `FrameThumbnailCell`'s own `.task`-driven async body here would risk
+    /// losing that race and baking its `ProgressView` placeholder into the
+    /// exported PNG instead of the real thumbnail (or nothing at all).
+    /// `nil` -- no thumbnail path, load failure, or timeout -- renders the
+    /// card without one, all three indistinguishable from each other: the
+    /// current no-thumbnail layout.
+    let preloadedThumbnail: NSImage?
 
-    public init(content: SessionCardContent, rootURL: URL?) {
+    public init(content: SessionCardContent, preloadedThumbnail: NSImage? = nil) {
         self.content = content
-        self.rootURL = rootURL
+        self.preloadedThumbnail = preloadedThumbnail
     }
 
     public var body: some View {
@@ -75,8 +82,11 @@ public struct SessionCardView: View {
 
     @ViewBuilder
     private var thumbnail: some View {
-        if let rootURL, let relativePath = content.thumbnailRelativePath {
-            FrameThumbnailCell(rootURL: rootURL, relativePath: relativePath, size: 220)
+        if let preloadedThumbnail {
+            Image(nsImage: preloadedThumbnail)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 220, height: 220)
                 .clipShape(RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel))
         }
     }

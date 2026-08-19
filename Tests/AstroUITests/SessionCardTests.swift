@@ -1,3 +1,4 @@
+import AppKit
 import AstroCore
 import Foundation
 import Testing
@@ -138,9 +139,65 @@ struct SessionCardTests {
     @Test("NightWorkspaceView wires the session-card export through ImageRenderer and NSSavePanel")
     func nightWorkspaceWiresSessionCardExport() throws {
         let source = try contents("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift")
-        #expect(source.contains("ImageRenderer(content: SessionCardView(content: content, rootURL: rootURL))"))
+        #expect(source.contains("ImageRenderer(content: SessionCardView(content: content, preloadedThumbnail: preloadedThumbnail))"))
         #expect(source.contains("NSSavePanel()"))
         #expect(source.contains("v2.night.page.export-session-card"))
         #expect(source.contains("isSessionCardExportable"))
+    }
+
+    @Test("NightWorkspaceView resolves the representative frame and its thumbnail BEFORE snapshotting the card")
+    func nightWorkspaceResolvesThumbnailBeforeSnapshot() throws {
+        let source = try contents("Sources/AstroUI/Features/Nights/NightWorkspaceView.swift")
+        #expect(source.contains("RepresentativeFrameQuery.production(rootURL: rootURL)"))
+        #expect(source.contains("SessionCardThumbnailLoader.load"))
+        // The thumbnail must be awaited (and the query run) BEFORE the
+        // `ImageRenderer(content:` call appears in the source -- textual
+        // order pins the intended control-flow order in a function that
+        // itself cannot run headlessly (`ImageRenderer`/`NSSavePanel`).
+        let thumbnailCallSite = try #require(source.range(of: "resolvedThumbnail(relativePath:"))
+        let rendererCallSite = try #require(source.range(of: "ImageRenderer(content:"))
+        #expect(thumbnailCallSite.lowerBound < rendererCallSite.lowerBound)
+    }
+
+    // MARK: - SessionCardThumbnailLoader (export-without-thumbnail timeout path)
+
+    @Test("A loader that resolves in time wins the race")
+    func loaderThatResolvesInTimeWins() async {
+        let image = NSImage(size: NSSize(width: 1, height: 1))
+        let result = await SessionCardThumbnailLoader.load(timeout: .seconds(2)) {
+            image
+        }
+        #expect(result === image)
+    }
+
+    @Test("A never-resolving loader times out to nil rather than hanging the export")
+    func neverResolvingLoaderTimesOutToNil() async {
+        let start = ContinuousClock.now
+        let result = await SessionCardThumbnailLoader.load(timeout: .milliseconds(50)) {
+            // Sleeps far longer than the 50ms timeout below -- simulates a
+            // wedged QuickLook daemon or a pathological FITS render that
+            // never returns in any reasonable time. `try?` swallows
+            // `CancellationError` -- this loader Task is deliberately never
+            // cancelled by `load(timeout:_:)` (see that method's own doc
+            // comment: the loser just keeps running, unobserved), so this
+            // sleeps its full duration in the background after the test
+            // itself has already moved on with the timeout's `nil`.
+            try? await Task.sleep(for: .seconds(999))
+            return nil
+        }
+        let elapsed = start.duration(to: .now)
+        #expect(result == nil)
+        // Generous upper bound (well above the 50ms timeout) -- the point is
+        // "did not hang", not a tight latency assertion that could flake
+        // under CI scheduling jitter.
+        #expect(elapsed < .seconds(5))
+    }
+
+    @Test("A loader that itself returns nil (load failure) also resolves to nil, same as a timeout")
+    func loaderReturningNilResolvesToNil() async {
+        let result = await SessionCardThumbnailLoader.load(timeout: .seconds(2)) {
+            nil
+        }
+        #expect(result == nil)
     }
 }

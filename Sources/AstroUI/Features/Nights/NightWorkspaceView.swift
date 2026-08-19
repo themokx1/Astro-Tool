@@ -128,7 +128,7 @@ public struct NightWorkspaceView: View {
                         // "primary actions, above the content they act on"
                         // convention.
                         Button {
-                            exportSessionCard()
+                            Task { await exportSessionCard() }
                         } label: {
                             Label("Export Session Card…", systemImage: "photo.on.rectangle.angled")
                         }
@@ -222,20 +222,25 @@ public struct NightWorkspaceView: View {
     /// `ExportMenu.performFile` follows, just for binary PNG bytes instead
     /// of `ExportFileWriter`'s `String` content (see `SessionCardFileWriter`'s
     /// own doc comment for why this is a separate writer rather than a new
-    /// `ExportMenuItem` case).
-    private func exportSessionCard() {
+    /// `ExportMenuItem` case). `async` (called from the button as `Task {
+    /// await exportSessionCard() }`) so it can resolve the representative
+    /// frame and its thumbnail BEFORE `ImageRenderer` ever snapshots
+    /// `SessionCardView` -- see `resolvedThumbnail`/`SessionCardThumbnailLoader`'s
+    /// own doc comments for why that ordering, not `FrameThumbnailCell`'s
+    /// own in-view async load, is what keeps the export from either hanging
+    /// or baking a placeholder spinner into the PNG.
+    private func exportSessionCard() async {
         guard let report = reportStore.result else { return }
+        let thumbnailRelativePath = await representativeFramePath(target: report.target, date: row.date)
         let content = SessionCardAssembler.content(
             targetName: report.displayName,
             dateText: row.date,
             integrationText: row.integrationSummary,
             quality: report.quality,
-            // See `SessionCardContent.thumbnailRelativePath`'s own doc
-            // comment: nothing this workspace already loads names an actual
-            // frame file, so the card renders without one for now.
-            thumbnailRelativePath: nil
+            thumbnailRelativePath: thumbnailRelativePath
         )
-        let renderer = ImageRenderer(content: SessionCardView(content: content, rootURL: rootURL))
+        let preloadedThumbnail = await resolvedThumbnail(relativePath: content.thumbnailRelativePath)
+        let renderer = ImageRenderer(content: SessionCardView(content: content, preloadedThumbnail: preloadedThumbnail))
         renderer.scale = 2
         guard let nsImage = renderer.nsImage, let pngData = SessionCardImageEncoder.pngData(from: nsImage) else {
             operationHost.notify(.failure, message: "\(OperationHost.localized("Export Session Card")) \(OperationHost.localized("failed:")) \(OperationHost.localized("could not render the card"))")
@@ -252,6 +257,39 @@ public struct NightWorkspaceView: View {
             operationHost.notify(.success, message: "\(OperationHost.localized("Exported")) \(url.lastPathComponent)")
         } catch {
             operationHost.notify(.failure, message: "Export Session Card \(OperationHost.localized("failed:")) \(error.localizedDescription)")
+        }
+    }
+
+    /// Off-`MainActor` DB lookup for `SessionCardContent.thumbnailRelativePath`
+    /// -- see `RepresentativeFrameQuery`'s own doc comment for the selection
+    /// rule (highest-scored usable light, else the middle usable light by
+    /// capture time, else none). `nil` on any failure (no library open,
+    /// query error, no usable frame at all) -- the card simply renders
+    /// without a thumbnail, same as before this frame-picking query existed.
+    private func representativeFramePath(target: String, date: String) async -> String? {
+        guard let rootURL else { return nil }
+        return await Task.detached(priority: .userInitiated) {
+            do {
+                let query = try RepresentativeFrameQuery.production(rootURL: rootURL)
+                return try query.representativeFrame(target: target, date: date)
+            } catch {
+                return nil
+            }
+        }.value
+    }
+
+    /// Awaits (with a short timeout) the representative frame's thumbnail
+    /// through `SessionCardThumbnailLoader` -- BEFORE `ImageRenderer` ever
+    /// sees `SessionCardView`, not inside it (see that loader's own doc
+    /// comment). `nil` when there is no path, no open library, the path
+    /// doesn't resolve under the library root, or the load times out --
+    /// `SessionCardView` treats all of those identically.
+    private func resolvedThumbnail(relativePath: String?) async -> NSImage? {
+        guard let rootURL, let relativePath,
+              let url = FrameThumbnailCell.resolvedURL(rootURL: rootURL, relativePath: relativePath)
+        else { return nil }
+        return await SessionCardThumbnailLoader.load {
+            await SessionCardThumbnailLoader.loadFrameImage(url: url)
         }
     }
 
