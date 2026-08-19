@@ -758,6 +758,85 @@ struct PlanningStoreTests {
         #expect(store.cloudState == .hidden)
     }
 
+    // MARK: - Ideation #2 ("melyik géppel fér be?"): rig comparison
+
+    @Test("Toggling compareOtherRig recomputes the rig comparison exactly once, without re-running the recommendations pipeline")
+    func toggleCompareOtherRigRecomputesOnce() async throws {
+        let counter = CallCounter()
+        let setups: [ImagingSetupProfile] = [.apsCReference, .canonR8Zoom]
+        let store = PlanningStore(
+            setups: setups,
+            computeRecommendations: { query in
+                counter.increment()
+                return query.recommendations()
+            },
+            catalogProvider: { TargetCatalog.all },
+            skyContextProvider: fixedSkyContext
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+        #expect(counter.current == 1)
+        #expect(store.rigCompare == nil, "the comparison must not be computed until the toggle is actually turned on")
+
+        store.compareOtherRig = true
+        await store.pendingRigCompareRefresh?.value
+
+        #expect(store.rigCompare != nil)
+        #expect(counter.current == 1, "turning on the comparison display option must not re-run the recommendations pipeline")
+
+        // Same-value guard: re-asserting the current value (a `Toggle`
+        // binding does this during its own update pass) must not recompute.
+        let afterFirstToggle = store.rigCompare
+        store.compareOtherRig = true
+        #expect(store.rigCompare != nil)
+        #expect(store.rigCompare == afterFirstToggle)
+
+        // Turning it back off clears the stored comparison rather than
+        // leaving a stale one the UI might read while the toggle reads off.
+        store.compareOtherRig = false
+        await store.pendingRigCompareRefresh?.value
+        #expect(store.rigCompare == nil)
+    }
+
+    @Test("Fewer than two saved setups means the comparison stays unavailable and hidden")
+    func fewerThanTwoSetupsMeansRigCompareUnavailable() async {
+        let store = PlanningStore(
+            setups: [.apsCReference], catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+
+        #expect(store.canCompareRigs == false)
+        #expect(store.otherSetupForCompare == nil)
+
+        store.compareOtherRig = true
+        await store.pendingRigCompareRefresh?.value
+
+        #expect(store.rigCompare == nil, "toggling on with no second setup to compare against must not invent a comparison")
+    }
+
+    @Test("The rig-compare sentence components name the other setup and its own fit for the selected target")
+    func rigCompareSentenceComponentsNameTheOtherSetupAndFit() async throws {
+        let setups: [ImagingSetupProfile] = [.apsCReference, .canonR8Zoom]
+        let store = PlanningStore(
+            setups: setups, catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+        store.compareOtherRig = true
+        await store.pendingRigCompareRefresh?.value
+
+        let designation = try #require(store.rigCompare?.first { $0.value.otherFit != nil }?.key)
+        let components = try #require(store.rigCompareSentenceComponents(for: designation))
+        #expect(components.setupName == ImagingSetupProfile.canonR8Zoom.cameraName)
+        #expect(components.fit == store.rigCompare?[designation]?.otherFit)
+
+        // No components at all once the toggle is off, or for a target this
+        // designation-keyed lookup has never heard of.
+        store.compareOtherRig = false
+        #expect(store.rigCompareSentenceComponents(for: designation) == nil)
+    }
+
     @Test("A fetch failure with no cached forecast surfaces the mapped error instead of silently hiding")
     func cloudStateSurfacesFetchFailure() async throws {
         let store = PlanningStore(

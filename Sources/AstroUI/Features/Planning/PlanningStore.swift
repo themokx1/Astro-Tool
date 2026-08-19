@@ -240,6 +240,47 @@ public final class PlanningStore {
     /// Never persisted, never grown by anything other than a genuine
     /// on-selection evaluate -- explicitly NOT a whole-catalog cache.
     private var seasonWindowCache: [SeasonWindowCacheKey: SeasonWindowResult] = [:]
+
+    /// Ideation #2 ("melyik géppel fér be?"): when the owner has ≥2 saved
+    /// setups, lets Planning show -- for every recommended target -- how the
+    /// OTHER setup would frame it too, not just the one currently selected.
+    /// Off by default: the second `DiscoveryPlanner.discover` sweep this
+    /// drives (`recomputeRigCompare()`) is real, measurable extra work, so it
+    /// only runs when the owner actually asks for the comparison. Same-value
+    /// guard as every other toggle in this file.
+    public var compareOtherRig = false {
+        didSet {
+            guard oldValue != compareOtherRig else { return }
+            recomputeRigCompare()
+        }
+    }
+    /// `true` only once ≥2 setups are saved -- `PlanningView` hides the
+    /// compare toggle entirely below that, matching the feature's own scope
+    /// note: V2 has no setups CRUD yet, so an owner with 0-1 setups simply
+    /// never sees a control that could never do anything for them.
+    public var canCompareRigs: Bool { setups.count >= 2 }
+    /// The first OTHER saved setup (not the one currently selected) --
+    /// `RigCompareQuery.compare`'s own deterministic pick, exposed here so
+    /// `PlanningView` can name it in the comparison column/sentence without
+    /// re-deriving the same rule a second time.
+    public var otherSetupForCompare: ImagingSetupProfile? {
+        setups.first { $0.id != selectedSetupID }
+    }
+    /// This target's FOV-fit comparison across both rigs, keyed by
+    /// `CatalogTarget.designation` -- `nil` while the toggle is off, fewer
+    /// than two setups are saved, or nothing has resolved yet to compare
+    /// against. STORED and recomputed only by `recomputeRigCompare()`, off
+    /// the main actor -- never derived in `PlanningView.body`, the same
+    /// "recompute path, not a body-time derivation" discipline
+    /// `recommendations`/`filteredRecommendations`/`skyPath`/`seasonWindow`
+    /// all already follow in this file.
+    public private(set) var rigCompare: [String: RigCompareRow]?
+    public private(set) var isComputingRigCompare = false
+    private var rigCompareGeneration = 0
+    /// Test-only handle to the in-flight rig-compare recompute `Task`,
+    /// mirroring `pendingSkyPathRefresh`'s own contract -- never read by
+    /// production code.
+    private(set) var pendingRigCompareRefresh: Task<Void, Never>?
     private let defaults: UserDefaults
     private let computeRecommendations: RecommendationsComputer
     /// Bumped at the start of every `refresh()` and captured into that
@@ -532,6 +573,12 @@ public final class PlanningStore {
             // does. `recomputeSeasonWindow` itself is cache-guarded, so a
             // planning-date-only change (same site) is a cheap no-op here.
             self.recomputeSeasonWindow()
+            // A new setup, focal length, planned night, or library can all
+            // change what there is to compare -- follows `resolvedSite`/
+            // `planningDate` the same way `recomputeSkyPath` does.
+            // `recomputeRigCompare` itself is a no-op unless
+            // `compareOtherRig` is actually on.
+            self.recomputeRigCompare()
         }
         pendingRefresh = task
         return task
@@ -618,6 +665,76 @@ public final class PlanningStore {
         }
         pendingSeasonWindowRefresh = task
         return task
+    }
+
+    /// Recomputes `rigCompare` off the main actor, guarded against a stale
+    /// (superseded) completion by `rigCompareGeneration` -- the same shape
+    /// `recomputeSkyPath()`/`recomputeSeasonWindow()` use. Called both when
+    /// the toggle itself flips (no need to re-resolve the site/weather/
+    /// measured-sky pipeline just to turn a display option on -- this reuses
+    /// the already-resolved `resolvedSite`/`planningDate`) and again whenever
+    /// `refresh()` itself lands (a new setup, focal length, planned night, or
+    /// library can all change what there is to compare). A second
+    /// `DiscoveryPlanner.discover` sweep over the whole catalog is real
+    /// work -- gated behind `compareOtherRig` so an owner who never asks for
+    /// the comparison never pays for it.
+    @discardableResult
+    private func recomputeRigCompare() -> Task<Void, Never> {
+        rigCompareGeneration += 1
+        let generation = rigCompareGeneration
+        guard compareOtherRig, let site = resolvedSite, let date = planningDate,
+              otherSetupForCompare != nil
+        else {
+            rigCompare = nil
+            isComputingRigCompare = false
+            let task = Task {}
+            pendingRigCompareRefresh = task
+            return task
+        }
+        isComputingRigCompare = true
+        let selectedSetupID = selectedSetupID
+        let allSetups = setups
+        let focalLength = focalLength
+        let targets = catalogProvider()
+        let task = Task { [weak self] in
+            let result = await Task.detached(priority: .utility) {
+                RigCompareQuery.compare(
+                    selectedSetupID: selectedSetupID,
+                    setups: allSetups,
+                    focalLengthMM: focalLength,
+                    site: site,
+                    date: date,
+                    targets: targets
+                )
+            }.value
+            guard let self, generation == self.rigCompareGeneration else { return }
+            self.rigCompare = result
+            self.isComputingRigCompare = false
+        }
+        pendingRigCompareRefresh = task
+        return task
+    }
+
+    /// The two raw pieces (the other setup's name, its own framing verdict
+    /// for the given target) `PlanningView` composes into one sentence for
+    /// the sky-path footer under whichever row is selected -- returning
+    /// pieces rather than a finished sentence keeps this store's own
+    /// `String(format:)`-free, matching `V2PolishSurfaceTests
+    /// .noHandRolledFormatting`'s "use `Text`'s own interpolation, never a
+    /// hand-rolled format string, anywhere under `Sources/AstroUI`" gate --
+    /// `PlanningView` composes the actual `Text` via `Text`'s own nested-
+    /// `Text` interpolation (`Text("... \(Text(verbatim: name)) ... \(Text
+    /// (fit.displayLabel)).")`), which resolves through the SAME `hu.lproj`
+    /// without ever calling `String(format:)` in source. `nil` under the
+    /// exact same conditions `rigCompare` itself is (toggle off, <2 setups,
+    /// nothing resolved yet), or when this particular designation has no
+    /// comparison row, or the other setup's own fit is unknown (no size/FOV
+    /// to judge).
+    public func rigCompareSentenceComponents(for designation: String) -> (setupName: String, fit: PlanningFit)? {
+        guard compareOtherRig, let other = otherSetupForCompare,
+              let compare = rigCompare?[designation], let otherFit = compare.otherFit
+        else { return nil }
+        return (other.cameraName, otherFit)
     }
 
     /// Recomputes `filteredRecommendations` from the current

@@ -144,6 +144,25 @@ public struct PlanningView: View {
                 }
                 .accessibilityIdentifier("v2.planning.focal-length")
             }
+            // Ideation #2 ("melyik géppel fér be?"): only shown once a second
+            // saved setup actually exists to compare against -- with 0-1
+            // setups this toggle could never do anything, so it stays hidden
+            // entirely rather than sitting there disabled (the feature's own
+            // scope note: no setups CRUD exists yet in V2, so an empty/short
+            // setups list is a known gap, not a bug this feature works around).
+            if store.canCompareRigs, let other = store.otherSetupForCompare {
+                // Plain `String` interpolation (not an embedded `Text`) into
+                // this `Text`'s `LocalizedStringKey` -- same "%@ substitution"
+                // shape `cloudIndicator`'s "Cloud tonight: \(...)" below
+                // already uses, so this reaches the SAME hu.lproj lookup
+                // machinery rather than an untested embedded-view path.
+                Toggle(isOn: $store.compareOtherRig) {
+                    Text("Compare with \(other.cameraName)")
+                }
+                .toggleStyle(.checkbox)
+                .accessibilityIdentifier("v2.planning.compare-rig")
+                .help("Show how your other saved setup would frame each recommended target.")
+            }
         }
     }
 
@@ -472,9 +491,23 @@ public struct PlanningView: View {
                                     Text(row.fit.displayLabel).fontWeight(.medium)
                                     Text("\((row.frameCoverage * 100), format: .number.precision(.fractionLength(0)))% of short edge")
                                         .font(.caption).foregroundStyle(.secondary)
+                                    // Ideation #2: a third, compact line naming
+                                    // how the OTHER saved setup would frame
+                                    // this SAME target -- only once the owner
+                                    // actually asked for the comparison, and
+                                    // only for a row that resolved one (both
+                                    // gated by `store.rigCompare` itself being
+                                    // `nil` while the toggle is off/unavailable/
+                                    // still computing). Kept in this column
+                                    // rather than a whole extra column: this
+                                    // table already fights for width across
+                                    // seven columns, and both fits are
+                                    // literally "framing" information about
+                                    // the same target.
+                                    rigCompareLine(row)
                                 }
                             }
-                            .width(min: 145, ideal: 180)
+                            .width(min: 145, ideal: 200)
                             TableColumn("Integration") { row in
                                 VStack(alignment: .trailing, spacing: 2) {
                                     if let hours = row.integrationHours {
@@ -564,6 +597,24 @@ public struct PlanningView: View {
                         .frame(maxWidth: .infinity, minHeight: 160)
                 } else if let skyPath = store.skyPath {
                     SkyPathChart(result: skyPath)
+                    // Ideation #2: one comparison sentence naming how the
+                    // OTHER saved setup would frame THIS selected target --
+                    // `nil` (renders nothing) under the exact same conditions
+                    // the Framing column's own comparison line is hidden for
+                    // (toggle off, <2 setups, no comparison row yet). Built
+                    // with `Text`'s own nested-`Text` interpolation (never
+                    // `String(format:)`, which `V2PolishSurfaceTests
+                    // .noHandRolledFormatting` forbids under `Sources/AstroUI`)
+                    // so both the sentence template AND `fit.displayLabel`
+                    // resolve through the SAME `hu.lproj`.
+                    if let selectedRow,
+                       let components = store.rigCompareSentenceComponents(for: selectedRow.target.designation)
+                    {
+                        Text("With \(Text(verbatim: components.setupName)), this target would be \(Text(components.fit.displayLabel)).")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("v2.planning.rig-compare-sentence")
+                    }
                 } else {
                     ContentUnavailableView(
                         "No Sky Path Available",
@@ -687,6 +738,34 @@ public struct PlanningView: View {
         case let .pastPeakAtWindowStart(windowEndLocal):
             return Text("window ends \(windowEndLocal)")
         }
+    }
+
+    /// Ideation #2's compact "both rigs" comparison line for the Framing
+    /// column -- renders nothing at all while the toggle is off, while a
+    /// recompute is still in flight, or for a target `store.rigCompare` has
+    /// no entry for (never a placeholder dash, which would just be table
+    /// noise for the common "toggle off" case). Both fit labels reuse
+    /// `PlanningFit.displayLabel` (already localized) rather than a second,
+    /// unlocalized vocabulary -- `DiscoveryPlanner`'s own raw Hungarian
+    /// `fovFitLabel` string is deliberately never rendered directly (the
+    /// class of bug `SkyVerdictKind.displayLabel`/`CatalogTargetKind
+    /// .displayLabel` above were already fixed for).
+    @ViewBuilder
+    private func rigCompareLine(_ row: PlanningRecommendation) -> some View {
+        if store.compareOtherRig, let other = store.otherSetupForCompare,
+           let compare = store.rigCompare?[row.target.designation]
+        {
+            (compactFitText(setupName: store.selectedSetup.cameraName, fit: compare.primaryFit)
+                + Text(verbatim: " · ")
+                + compactFitText(setupName: other.cameraName, fit: compare.otherFit))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func compactFitText(setupName: String, fit: PlanningFit?) -> Text {
+        guard let fit else { return Text(verbatim: setupName) }
+        return Text(verbatim: "\(setupName): ") + Text(fit.displayLabel)
     }
 
     private func displayName(_ row: PlanningRecommendation) -> String {
