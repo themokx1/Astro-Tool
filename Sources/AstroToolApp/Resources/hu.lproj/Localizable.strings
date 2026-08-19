@@ -2288,6 +2288,28 @@
 "Your cooler missed set-point on %@ of your last %@ nights — check the cooling headroom on hot nights." = "A hűtőd %@ alkalommal nem tartotta a célhőmérsékletet az utolsó %@ éjszakából — nézd át a hűtő tartalékát meleg éjszakákon.";
 "Focus drifted on %@ of your last %@ nights — consider a mid-session refocus." = "A fókuszod %@ alkalommal csúszott el az utolsó %@ éjszakából — iktass be egy fókuszellenőrzést az éjszaka közepén.";
 
+/* Ideation #7 ("Legjobb/legrosszabb éjszakák ranglistája" -- "best/worst
+   nights leaderboard"): InsightsView.nightLeaderboardCard/nightLeaderboardTable,
+   backed by AstroCore.NightLeaderboard + InsightsQuery.nightLeaderboardSummary.
+   Ranks measured CAPTURES, not whole nights -- a night can mix more than one
+   rig, the same reason the "Capture quality trends" chart above already
+   moved off whole-session TrendPoints -- by a transparent composite of
+   median FWHM, accept rate and background; a capture missing one of those
+   three competes only on the ones it has, and no hidden score is ever shown
+   (only the raw numbers the composite was computed from). Below
+   NightLeaderboard.minimumMeasuredCount (5) measured captures, the section
+   shows the honest empty-state hint below instead of a leaderboard nobody
+   could trust yet, and points at the "Start Measuring" button already on
+   this same screen (OWNER BUG, 2026-08-19) rather than growing a second
+   one. The table's "Night"/"Efficiency"/"Background" column headers reuse
+   this file's existing entries of the same name; "FWHM" stays untranslated
+   like every other FWHM label in this file. */
+"Nights leaderboard" = "Éjszakák ranglistája";
+"Ranks measured captures by FWHM, accept rate and background — one row per rig/filter combination, since a single night can mix more than one." = "A mért capture-öket rangsorolja FWHM, elfogadási arány és háttér szerint — soronként egy műszer/szűrő kombináció, mivel egyetlen éjszaka is tartalmazhat többet.";
+"Best" = "Legjobb";
+"Worst" = "Legrosszabb";
+"Not enough measured nights for a leaderboard yet (at least 5 needed) — use “Start Measuring” above to build up FWHM and background history." = "Még nincs elég mért éjszaka a ranglistához (legalább 5 kell) — indíts mérést a fenti „Mérés indítása” gombbal a FWHM- és háttér-előzmények felépítéséhez.";
+
 /* Expert ideation #10 ("A leggyengébb kereteid mind alacsonyan készültek"):
    ReviewWorkspace's Morning Triage Digest gains a third insight line, next
    to the confident cause rows and the hedged possible-streak row --

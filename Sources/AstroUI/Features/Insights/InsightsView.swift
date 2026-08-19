@@ -173,6 +173,7 @@ public struct InsightsView: View {
                 qualitySummary(insight)
                 qualityTrends(insight)
                 moonSkyCorrelationCard(insight)
+                nightLeaderboardCard(insight)
                 HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
                     activityChart(insight).frame(maxWidth: .infinity)
                     targetRanking(insight).frame(width: 320)
@@ -600,6 +601,94 @@ public struct InsightsView: View {
         case .bright: return "50–75% Moon"
         case .veryBright: return "Bright Moon (≥75%)"
         }
+    }
+
+    // Ideation #7 ("Legjobb/legrosszabb éjszakák ranglistája" -- "best/worst
+    // nights leaderboard"): ranks measured CAPTURES, not whole nights --
+    // `NightLeaderboard` (`AstroCore`)/`InsightsQuery.nightLeaderboardSummary`'s
+    // own doc comments spell out why: the "Capture quality trends" chart
+    // above already moved off whole-session `TrendPoint`s for the identical
+    // reason (a night can mix more than one rig, and blending them into one
+    // number hides which half was actually good), so the leaderboard ranks
+    // the exact same per-capture grain rather than reintroducing that blend.
+    // No hidden score is ever shown -- `nightLeaderboardTable` below prints
+    // each row's own raw FWHM/efficiency/background, exactly the three
+    // numbers `NightLeaderboard`'s composite was computed from, so the order
+    // is auditable by eye without trusting an opaque figure.
+    private func nightLeaderboardCard(_ insight: InsightsSnapshot) -> some View {
+        let leaderboard = insight.nightLeaderboard
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Nights leaderboard").font(.headline)
+            if leaderboard.hasEnoughDataToDisplay {
+                Text("Ranks measured captures by FWHM, accept rate and background — one row per rig/filter combination, since a single night can mix more than one.")
+                    .font(.callout).foregroundStyle(.secondary)
+                HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
+                    nightLeaderboardTable(
+                        title: "Best", rows: leaderboard.best,
+                        accessibilityIdentifier: "v2.insights.night-leaderboard-best"
+                    ).frame(maxWidth: .infinity, alignment: .leading)
+                    nightLeaderboardTable(
+                        title: "Worst", rows: leaderboard.worst,
+                        accessibilityIdentifier: "v2.insights.night-leaderboard-worst"
+                    ).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                // Coordinates with (never duplicates) the "Start Measuring"
+                // button `fwhmMeasurementHint` above already put on this
+                // same screen (OWNER BUG, 2026-08-19) -- this section grows
+                // no second button of its own, only a pointer back to that
+                // one.
+                Text("Not enough measured nights for a leaderboard yet (at least 5 needed) — use “Start Measuring” above to build up FWHM and background history.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("v2.insights.night-leaderboard-hint")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .astroRaisedSurface()
+        .accessibilityIdentifier("v2.insights.night-leaderboard")
+    }
+
+    /// One `title` (`"Best"`/`"Worst"`) column of the leaderboard -- `rows`
+    /// already arrives best-first/worst-first respectively
+    /// (`NightLeaderboard.rank`'s own ordering), so this only renders, never
+    /// re-sorts.
+    private func nightLeaderboardTable(
+        title: LocalizedStringKey,
+        rows: [NightLeaderboardRow],
+        accessibilityIdentifier: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.subheadline.weight(.semibold))
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 7) {
+                GridRow {
+                    Text("Night").font(.caption.weight(.semibold))
+                    Text("FWHM").font(.caption.weight(.semibold))
+                    Text("Efficiency").font(.caption.weight(.semibold))
+                    Text("Background").font(.caption.weight(.semibold))
+                }
+                Divider().gridCellColumns(4)
+                ForEach(rows) { row in
+                    GridRow {
+                        Text("\(row.sessionStartDate ?? row.date) · \(row.target)").lineLimit(1)
+                        // Same "arcsec when derivable, else pixels" unit
+                        // convention `recentTrendSessions` already uses --
+                        // `NightLeaderboard` only ever RANKS the arcsec
+                        // figure (mixing units in a composite would be
+                        // physically meaningless), but a row still DISPLAYS
+                        // whatever raw FWHM it has, ranked on or not.
+                        Text(row.fwhmValue.map {
+                            $0.isPixelFallback ? AstroFormat.fwhmPixels($0.value) : AstroFormat.fwhmArcsec($0.value)
+                        } ?? "—").monospacedDigit()
+                        Text(row.efficiencyPercent.map { "\($0.formatted(.number.precision(.fractionLength(0))))%" } ?? "—")
+                            .monospacedDigit()
+                        Text(row.backgroundEPerSecPerArcsec2?.formatted(.number.precision(.significantDigits(2...3))) ?? "—")
+                            .monospacedDigit()
+                    }
+                    .font(.caption)
+                }
+            }
+        }
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 
     // Expert ideation reserve #9 ("Év-összegző Wrapped", wow 5/5): one
