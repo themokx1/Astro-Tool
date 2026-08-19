@@ -151,6 +151,20 @@ public struct ProjectWorkspaceView: View {
     /// forever, when weather is disabled or no site resolves -- the same
     /// honest "no row" case `HomeSnapshot.nightCloud` already has).
     @State private var clearNightDailySummaries: [String: DailyCloudSummary]?
+    /// Ideation #4 ("Célpont-történet idővonal"): this target's own
+    /// chronological history, `nil` until `loadHistoryEvents()` resolves
+    /// (loading), OR forever once it resolves to "this target has no
+    /// recorded session at all" (`TargetHistoryTimeline.build`'s own
+    /// documented `nil` case) -- `historyIsLoading` is the only thing that
+    /// tells `historySection` apart the two, same "still loading vs.
+    /// genuinely empty" split every other report subsection on this tab
+    /// already keeps.
+    @State private var historyEvents: [TargetHistoryEvent]?
+    @State private var historyIsLoading = false
+    /// Task-instructed row cap (">12" rows gets a disclosure) -- `historySection`'s
+    /// own "továbbiak" ("more") button reveals the rest without ever
+    /// dropping a row permanently.
+    @State private var isHistoryExpanded = false
 
     public init(
         snapshot: ProjectSnapshot,
@@ -273,6 +287,11 @@ public struct ProjectWorkspaceView: View {
         // cancelled before `loadClearNightOutlook()` can ever assign its
         // stale result.
         .task(id: rootURL) { await loadClearNightOutlook() }
+        // Ideation #4: keyed on `snapshot` (not `rootURL` alone) -- like
+        // `reportStore`'s own load above, and unlike the weather task just
+        // above it, this target's own history changes whenever the project
+        // being viewed changes, not only when a different library opens.
+        .task(id: snapshot) { await loadHistoryEvents() }
     }
 
     /// Expert ideation reserve #5: fetches this project's own site's 7-day
@@ -296,6 +315,36 @@ public struct ProjectWorkspaceView: View {
         }
         guard !Task.isCancelled else { return }
         clearNightDailySummaries = summaries
+    }
+
+    /// Ideation #4: resolves this target's own chronological history via
+    /// `TargetHistoryTimeline.production`, off the main thread (the same
+    /// `Task.detached` shape `ProjectReportStore.load` already uses for its
+    /// own DB-backed read) so opening the index and walking every session/
+    /// stack file never blocks this view's body. `Task.isCancelled` is
+    /// checked AFTER the `await`, not before, for the exact reason
+    /// `loadClearNightOutlook`'s own doc comment states: `.task(id:)`
+    /// cancellation only signals THIS task, it does not un-schedule the
+    /// state write below.
+    private func loadHistoryEvents() async {
+        guard let rootURL else {
+            historyEvents = nil
+            historyIsLoading = false
+            return
+        }
+        historyIsLoading = true
+        let target = snapshot.canonicalFolderName
+        do {
+            let events = try await Task.detached(priority: .userInitiated) {
+                try TargetHistoryTimeline.production(rootURL: rootURL, target: target)
+            }.value
+            guard !Task.isCancelled else { return }
+            historyEvents = events
+        } catch {
+            guard !Task.isCancelled else { return }
+            historyEvents = nil
+        }
+        historyIsLoading = false
     }
 
     private func publishWorkspaceActions() {
@@ -845,6 +894,128 @@ public struct ProjectWorkspaceView: View {
                     }
                 }
             }
+        }
+        // Ideation #4 ("Célpont-történet idővonal"): a sibling of the
+        // `if`/`else if` chain above, not nested inside its `report`
+        // branch -- this target's own history loads independently
+        // (`loadHistoryEvents`/`historyEvents`) of `reportStore`'s report
+        // assembly, so it renders its own loading/empty/data states
+        // regardless of whether the target report above loaded, is still
+        // loading, or failed.
+        historySection
+    }
+
+    /// Ideation #4: the timeline's own section, always the LAST thing on
+    /// the Overview tab -- "below the report sections" per spec. A
+    /// dedicated sixth tab was the other option this ticket's spec offered
+    /// ("a sixth tab if Overview is already heavy"); this stays a section
+    /// instead because splitting the OWN reads this composes (`TrendQueries
+    /// .points`, `StackDiscovery.groupedStacks`, first light) into a whole
+    /// separate workspace tab -- alongside Overview/Nights/Series/Results/
+    /// Notes, none of which this file may add a case to -- would be a much
+    /// bigger surface change than the story itself calls for. The row cap
+    /// below (`historyVisibleCap`) is what actually keeps a long project's
+    /// timeline from making this already-long tab unmanageable, which is
+    /// the concrete problem a sixth tab would have solved anyway.
+    @ViewBuilder private var historySection: some View {
+        ReportSection(title: "History") {
+            if historyIsLoading, historyEvents == nil {
+                ProgressView().frame(maxWidth: .infinity, alignment: .center)
+            } else if let events = historyEvents, !events.isEmpty {
+                VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+                    ForEach(Array(visibleHistoryEvents(events).enumerated()), id: \.offset) { _, event in
+                        historyEventRow(event)
+                    }
+                    if events.count > Self.historyVisibleCap {
+                        // W3-9's own trap, avoided the same way this file's
+                        // `saveTargetLocalizesDespiteTernary`-style call
+                        // sites already do: a `Text(cond ? "A" : "\(x) B")`
+                        // TERNARY infers as plain `String` the moment EITHER
+                        // branch interpolates (Swift unifies both arms to
+                        // the same type), which routes the WHOLE thing
+                        // through `Text`'s verbatim overload -- silently
+                        // English forever, in both branches, no matter what
+                        // `hu.lproj` says. Two separate `Text(_:)` calls,
+                        // each its own interpolation LITERAL at the call
+                        // site, sidesteps this entirely -- same fix
+                        // `historyEventText`/`completionForecastText` above
+                        // already use for the same reason.
+                        Button {
+                            isHistoryExpanded.toggle()
+                        } label: {
+                            if isHistoryExpanded {
+                                Text("Show fewer")
+                            } else {
+                                Text("\(AstroFormat.count(events.count - Self.historyVisibleCap)) more")
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityIdentifier("v2.project.history.disclosure")
+                    }
+                }
+            } else {
+                ReportEmptyNote(text: "No recorded session for this target.")
+            }
+        }
+        .accessibilityIdentifier("v2.project.history")
+    }
+
+    /// ">12" per this ticket's own design gate -- everything beyond this
+    /// stays reachable through `historySection`'s own "továbbiak" ("more")
+    /// disclosure, never dropped.
+    private static let historyVisibleCap = 12
+
+    private func visibleHistoryEvents(_ events: [TargetHistoryEvent]) -> [TargetHistoryEvent] {
+        isHistoryExpanded ? events : Array(events.prefix(Self.historyVisibleCap))
+    }
+
+    @ViewBuilder
+    private func historyEventRow(_ event: TargetHistoryEvent) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: historyEventIcon(event.kind))
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(event.date).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                historyEventText(event.kind)
+            }
+        }
+    }
+
+    private func historyEventIcon(_ kind: TargetHistoryEvent.Kind) -> String {
+        switch kind {
+        case .firstLight: return "sparkles"
+        case .session: return "moon.stars"
+        case .stacksProduced: return "square.stack.3d.up"
+        }
+    }
+
+    /// Same `Text(_:)`-interpolation-literal requirement as
+    /// `goalProgressText`'s own doc comment explains -- every interpolated
+    /// value is a pre-formatted `String` (`AstroFormat.duration`/
+    /// `.fwhmArcsec`/`.fwhmPixels`/`.count`), never a raw `Double`/`Int`.
+    @ViewBuilder
+    private func historyEventText(_ kind: TargetHistoryEvent.Kind) -> some View {
+        switch kind {
+        case .firstLight:
+            Text("First light")
+        case let .session(integrationSeconds, fwhmArcsec, fwhmPixels):
+            let durationText = AstroFormat.duration(seconds: integrationSeconds)
+            if let fwhmArcsec {
+                Text("\(durationText) collected · FWHM \(AstroFormat.fwhmArcsec(fwhmArcsec))")
+            } else if let fwhmPixels {
+                Text("\(durationText) collected · FWHM \(AstroFormat.fwhmPixels(fwhmPixels))")
+            } else {
+                Text("\(durationText) collected")
+            }
+        case let .stacksProduced(fileNames):
+            let displayNames = fileNames.prefix(3).map { ($0 as NSString).deletingPathExtension }
+            let remaining = fileNames.count - displayNames.count
+            let namesText = remaining > 0
+                ? "\(displayNames.joined(separator: ", ")) +\(AstroFormat.count(remaining))"
+                : displayNames.joined(separator: ", ")
+            Text("\(AstroFormat.count(fileNames.count)) stack produced: \(namesText)")
         }
     }
 
