@@ -217,6 +217,29 @@ public final class PlanningStore {
     /// Test-only handle to the in-flight sky-path recompute `Task`, mirroring
     /// `pendingRefresh`'s own contract -- never read by production code.
     private(set) var pendingSkyPathRefresh: Task<Void, Never>?
+    /// Season Window Finder (expert ideation reserve #1): the selected
+    /// target's year-shaped visibility at tonight's resolved site --
+    /// "when does its usable window open, peak, close", not just tonight.
+    /// STORED and recomputed off the main actor, same discipline as
+    /// `skyPath`/`recommendations` above -- `SeasonWindowQuery.evaluate`
+    /// sweeps ~150-200 single-target `DiscoveryPlanner.discover` calls, cheap
+    /// enough for one selection but not for `body` or for the whole catalog.
+    /// `nil` means "nothing selected" or "no site resolved" -- the same
+    /// honest-empty-state contract `skyPath` already has.
+    public private(set) var seasonWindow: SeasonWindowResult?
+    public private(set) var isComputingSeasonWindow = false
+    private var seasonWindowGeneration = 0
+    /// Test-only handle to the in-flight season-window recompute `Task`,
+    /// mirroring `pendingSkyPathRefresh`'s own contract -- never read by
+    /// production code.
+    private(set) var pendingSeasonWindowRefresh: Task<Void, Never>?
+    /// Session-lifetime cache keyed by (designation, site) -- a season
+    /// doesn't depend on `planningDate` at all (it's an evergreen property of
+    /// target+site), so re-selecting an already-evaluated target, or picking
+    /// a different night for the SAME target, must never re-run the sweep.
+    /// Never persisted, never grown by anything other than a genuine
+    /// on-selection evaluate -- explicitly NOT a whole-catalog cache.
+    private var seasonWindowCache: [SeasonWindowCacheKey: SeasonWindowResult] = [:]
     private let defaults: UserDefaults
     private let computeRecommendations: RecommendationsComputer
     /// Bumped at the start of every `refresh()` and captured into that
@@ -503,6 +526,12 @@ public final class PlanningStore {
             // its sky path must follow, the same way `recommendations` itself
             // just did.
             self.recomputeSkyPath()
+            // The season window doesn't care which night is planned, only
+            // which SITE resolved -- a library switch can change that, so
+            // this must follow `resolvedSite` the same way `recomputeSkyPath`
+            // does. `recomputeSeasonWindow` itself is cache-guarded, so a
+            // planning-date-only change (same site) is a cheap no-op here.
+            self.recomputeSeasonWindow()
         }
         pendingRefresh = task
         return task
@@ -516,6 +545,7 @@ public final class PlanningStore {
         guard target != selectedSkyPathTarget else { return }
         selectedSkyPathTarget = target
         recomputeSkyPath()
+        recomputeSeasonWindow()
     }
 
     /// Recomputes `skyPath` off the main actor, guarded against a stale
@@ -544,6 +574,49 @@ public final class PlanningStore {
             self.isComputingSkyPath = false
         }
         pendingSkyPathRefresh = task
+        return task
+    }
+
+    /// Recomputes `seasonWindow` off the main actor, guarded against a stale
+    /// (superseded) completion by `seasonWindowGeneration` -- the exact same
+    /// shape `recomputeSkyPath()` uses. Called whenever the selected target
+    /// changes, and again whenever `refresh()` itself lands (the resolved
+    /// site may have moved under an already-selected target). A cache hit
+    /// resolves synchronously with no spinner at all -- re-selecting a target
+    /// already evaluated this session (or returning to it after picking a
+    /// different planning night) must never re-run the sweep.
+    @discardableResult
+    private func recomputeSeasonWindow() -> Task<Void, Never> {
+        seasonWindowGeneration += 1
+        let generation = seasonWindowGeneration
+        guard let target = selectedSkyPathTarget, let site = resolvedSite else {
+            seasonWindow = nil
+            isComputingSeasonWindow = false
+            let task = Task {}
+            pendingSeasonWindowRefresh = task
+            return task
+        }
+        let cacheKey = SeasonWindowCacheKey(designation: target.designation, site: site)
+        if let cached = seasonWindowCache[cacheKey] {
+            seasonWindow = cached
+            isComputingSeasonWindow = false
+            let task = Task {}
+            pendingSeasonWindowRefresh = task
+            return task
+        }
+        isComputingSeasonWindow = true
+        let task = Task { [weak self] in
+            let result = await Task.detached(priority: .utility) {
+                SeasonWindowQuery.evaluate(target: target, site: site)
+            }.value
+            guard let self, generation == self.seasonWindowGeneration else { return }
+            if let result {
+                self.seasonWindowCache[cacheKey] = result
+            }
+            self.seasonWindow = result
+            self.isComputingSeasonWindow = false
+        }
+        pendingSeasonWindowRefresh = task
         return task
     }
 
@@ -739,6 +812,25 @@ public final class PlanningStore {
             fNumber: 4, relativeEfficiency: 1, isDefault: false
         ),
     ]
+}
+
+/// `PlanningStore.seasonWindowCache`'s key -- a season is entirely determined
+/// by which target and which site, never by the planned night, so this
+/// deliberately carries neither `planningDate` nor anything else. `SiteRule`
+/// itself isn't `Hashable` (only `Equatable`), so this pulls out just the two
+/// `Double?`s that actually vary -- both `Optional<Double>` conform to
+/// `Hashable` already, so the synthesized conformance below is exact, not an
+/// approximation.
+private struct SeasonWindowCacheKey: Hashable {
+    let designation: String
+    let latitudeDeg: Double?
+    let longitudeDeg: Double?
+
+    init(designation: String, site: SiteRule) {
+        self.designation = designation
+        self.latitudeDeg = site.latitudeDeg
+        self.longitudeDeg = site.longitudeDeg
+    }
 }
 
 /// V2 UI/UX audit (2026-08-16): `PlanningFit.label` is a plain `String`

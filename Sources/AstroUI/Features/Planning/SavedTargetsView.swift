@@ -1,4 +1,5 @@
 import AstroApplication
+import AstroCore
 import Observation
 import SwiftUI
 
@@ -21,17 +22,64 @@ public enum SavedTargetsStoreError: LocalizedError, Equatable {
 @Observable
 public final class SavedTargetsStore {
     public typealias MetadataFactory = @MainActor @Sendable (URL) throws -> MetadataStore
+    /// Resolves the library's own observing site -- same shape/contract
+    /// `PlanningStore.SkyContextProvider` uses (`Planner.resolveSite` under
+    /// the hood), injected for the same testability reason.
+    public typealias SiteResolver = @Sendable (URL?) async throws -> PlanningSkyContext?
+    /// The catalog to look a saved designation up in (built-in + whatever
+    /// the extended-catalog cache holds) -- `@MainActor` because
+    /// `PlanningStore.productionCatalog()` itself reads `UserDefaults`/the
+    /// cache file synchronously and is only ever called from the main actor
+    /// in `PlanningStore`'s own use; called once per `reload()` here, before
+    /// the detached season sweep starts.
+    public typealias TargetCatalogProvider = @MainActor () -> [CatalogTarget]
 
     public private(set) var savedTargets: [SavedTargetRecord] = []
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
     public private(set) var rootURL: URL?
+    /// Season Window Finder (expert ideation reserve #1): each saved
+    /// target's YEAR-shaped visibility at this library's resolved site,
+    /// keyed by designation -- `SavedTargetsView`'s per-row compact caption.
+    /// Computed off the main actor after every `reload()`, session-cached
+    /// (never re-swept for a designation this store already evaluated
+    /// against the CURRENT site), and deliberately never for more than the
+    /// user's own bookmarked handful-to-dozens -- never the whole catalog.
+    public private(set) var seasonWindows: [String: SeasonWindowResult] = [:]
+    public private(set) var isLoadingSeasonWindows = false
+    private var seasonWindowGeneration = 0
+    /// Test-only handle to the in-flight season sweep, mirroring
+    /// `PlanningStore.pendingSeasonWindowRefresh`'s own contract -- never
+    /// read by production code.
+    private(set) var pendingSeasonWindowsTask: Task<Void, Never>?
+    private var seasonSite: SiteRule?
 
     private let metadataFactory: MetadataFactory
+    private let siteResolver: SiteResolver
+    private let targetCatalogProvider: TargetCatalogProvider
     private var metadata: MetadataStore?
 
-    public init(metadataFactory: @escaping MetadataFactory = SavedTargetsStore.productionMetadata) {
+    public init(
+        metadataFactory: @escaping MetadataFactory = SavedTargetsStore.productionMetadata,
+        /// Optional rather than an async default argument -- the exact
+        /// Swift 6.3.3 async-default-arg linker bug `PlanningStore.init`'s
+        /// own `skyContextProvider` doc explains (see
+        /// `docs/swift-async-default-arg-bug/`); resolving inside the body
+        /// keeps the record non-external.
+        siteResolver: SiteResolver? = nil,
+        targetCatalogProvider: TargetCatalogProvider? = nil
+    ) {
         self.metadataFactory = metadataFactory
+        self.siteResolver = siteResolver ?? PlanningStore.productionSkyContext
+        self.targetCatalogProvider = targetCatalogProvider ?? { PlanningStore.productionCatalog() }
+    }
+
+    /// This designation's season summary, if it's already been computed --
+    /// `nil` either because the sweep hasn't landed yet (see
+    /// `isLoadingSeasonWindows`) or because no site resolves for the current
+    /// library at all, in which case it never will.
+    public func seasonWindow(for designation: String) -> SeasonWindowResult? {
+        seasonWindows[designation]
     }
 
     /// The saved designations, for `PlanningView`'s table to mark rows with --
@@ -59,6 +107,10 @@ public final class SavedTargetsStore {
         guard url != nil else {
             savedTargets = []
             errorMessage = nil
+            seasonWindows = [:]
+            seasonSite = nil
+            seasonWindowGeneration += 1
+            isLoadingSeasonWindows = false
             return
         }
         await reload()
@@ -107,6 +159,71 @@ public final class SavedTargetsStore {
         } catch {
             errorMessage = error.localizedDescription
         }
+        // Fire-and-forget: the season sweep is a nice-to-have per-row
+        // caption, not part of `reload()`'s own contract, so a slow sweep
+        // must never hold up a save/note/remove round-trip that already
+        // awaits this function.
+        recomputeSeasonWindows()
+    }
+
+    /// Recomputes `seasonWindows` off the main actor for every currently
+    /// saved designation not already cached against the CURRENT site,
+    /// guarded against a stale (superseded) completion by
+    /// `seasonWindowGeneration` -- the same discipline `PlanningStore
+    /// .recomputeSeasonWindow()` uses one target at a time, here fanned out
+    /// over the (bounded, user-curated) saved list instead of the whole
+    /// catalog.
+    @discardableResult
+    private func recomputeSeasonWindows() -> Task<Void, Never> {
+        seasonWindowGeneration += 1
+        let generation = seasonWindowGeneration
+        guard !savedTargets.isEmpty else {
+            seasonWindows = [:]
+            isLoadingSeasonWindows = false
+            let task = Task {}
+            pendingSeasonWindowsTask = task
+            return task
+        }
+        let designations = savedTargets.map(\.designation)
+        let rootURL = rootURL
+        let resolveSite = siteResolver
+        let catalog = targetCatalogProvider()
+        isLoadingSeasonWindows = true
+        let task = Task { [weak self] in
+            let context = try? await resolveSite(rootURL)
+            guard let self, generation == self.seasonWindowGeneration else { return }
+            guard let resolvedSite = context?.site else {
+                // No resolvable site -- same "nothing invented" honesty
+                // `SeasonWindowQuery.evaluate` itself already has for this
+                // case, one level up: no site means no per-row caption.
+                self.seasonWindows = [:]
+                self.seasonSite = nil
+                self.isLoadingSeasonWindows = false
+                return
+            }
+            // A site change invalidates every previously-cached
+            // designation -- yesterday's season at the OLD site says
+            // nothing about this one.
+            var results = self.seasonSite == resolvedSite ? self.seasonWindows : [:]
+            let missing = designations.filter { results[$0] == nil }
+            if !missing.isEmpty {
+                let targets = missing.compactMap { designation in catalog.first { $0.designation == designation } }
+                let computed = await Task.detached(priority: .utility) {
+                    targets.reduce(into: [String: SeasonWindowResult]()) { partial, target in
+                        if let result = SeasonWindowQuery.evaluate(target: target, site: resolvedSite) {
+                            partial[target.designation] = result
+                        }
+                    }
+                }.value
+                results.merge(computed) { _, new in new }
+            }
+            guard generation == self.seasonWindowGeneration else { return }
+            self.seasonSite = resolvedSite
+            self.seasonWindows = results
+            self.isLoadingSeasonWindows = false
+        }
+        pendingSeasonWindowsTask = task
+        return task
     }
 
     private func resolveMetadata() throws -> MetadataStore {
@@ -237,6 +354,19 @@ public struct SavedTargetsView: View {
                         Text(record.designation).font(.headline)
                         if let note = record.note, !note.isEmpty {
                             Text(note).font(.callout).foregroundStyle(.secondary)
+                        }
+                        // Season Window Finder (expert ideation reserve #1):
+                        // compact text only here (a chart per bookmarked row
+                        // would be noise across a list that can hold dozens)
+                        // -- `nil` while the background sweep hasn't reached
+                        // this designation yet, or no site resolves for this
+                        // library at all, in which case the row simply says
+                        // nothing rather than showing a stale guess.
+                        if let seasonWindow = store.seasonWindow(for: record.designation) {
+                            SeasonWindowSummary.compactText(seasonWindow)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier("v2.planning.saved-season")
                         }
                         Text("Saved \(record.savedAt.formatted(date: .abbreviated, time: .omitted))")
                             .font(.caption2).foregroundStyle(.secondary)

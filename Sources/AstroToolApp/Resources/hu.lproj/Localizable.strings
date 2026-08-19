@@ -2035,3 +2035,28 @@
 "Save a shareable PNG summary of this session" = "Egy megosztható PNG-összefoglaló mentése erről a session-ről";
 "Not yet rated — run scoring first" = "Még nincs kiértékelve — futtasd le a pontozást";
 "could not render the card" = "nem sikerült renderelni a kártyát";
+
+/* Season Window Finder (expert ideation reserve #1, "mikor van az
+   M31-szezon nálam"): SeasonWindowChart.swift's SeasonWindowSummary
+   (Sources/AstroUI/Features/Planning/), wired into PlanningView's footer
+   (a compact section below "Sky path tonight" once a row is selected) and
+   SavedTargetsView's per-row caption. Every key interpolates ONLY
+   pre-formatted Strings (dateText/hoursText, both plain `String`s), never
+   a raw Date/Double, so the %@ placeholders below match exactly what
+   renders -- same rule this file's other hand-added interpolation keys
+   already follow. "Season: %@" carries the range list (one or more
+   "day. month – day. month" spans, comma-joined); "peak %@ (%@ h)" is
+   appended as its own sentence fragment (PlanningView's fullText) rather
+   than folded into the same key, because it is genuinely optional (no
+   fragment at all when a peak couldn't be determined). The compact
+   SavedTargetsView caption only ever shows the FIRST range, hence its own
+   distinct "Season %@ – %@" key rather than reusing "Season: %@". */
+"Season" = "Szezon";
+"Calculating season…" = "Szezon számítása…";
+"This target never usefully clears the horizon from this site" = "Erről a helyszínről nem emelkedik használható magasságba";
+"No usable season from this site" = "Nincs innen látható szezonja";
+"Visible year-round from here" = "Innen egész évben látható";
+"Visible year-round" = "Egész évben látható";
+"Season: %@" = "Szezon: %@";
+"Season %@ – %@" = "Szezon: %@ – %@";
+"peak %@ (%@ h)" = "csúcs: %@ (%@ ó)";

@@ -582,10 +582,47 @@ public struct PlanningView: View {
                     .frame(maxWidth: .infinity, minHeight: 160)
                 }
             }
+            // Season Window Finder (expert ideation reserve #1): only once a
+            // row is actually selected -- when nothing is selected the sky
+            // path placeholder above already says so, and this second
+            // section would just repeat "select a target" a second time.
+            if selectedTargetID != nil {
+                Divider()
+                seasonWindowSection
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .astroRaisedSurface()
         .accessibilityIdentifier("v2.planning.sky-path-section")
+    }
+
+    /// The selected row's YEAR-shaped visibility -- "when does its usable
+    /// window open, peak, close" -- computed and cached by `PlanningStore
+    /// .recomputeSeasonWindow()` off the main actor, never here in `body`.
+    /// `store.seasonWindow == nil` while `isComputingSeasonWindow` is still
+    /// `true` is the honest "still computing" gap; once it lands `nil` means
+    /// the site itself never resolved, which can't actually happen while a
+    /// row is selected (the table only has selectable rows once
+    /// `store.skyAvailability == .available`) but is handled anyway rather
+    /// than force-unwrapped.
+    @ViewBuilder
+    private var seasonWindowSection: some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+            Text("Season").font(.headline)
+            if store.isComputingSeasonWindow {
+                ProgressView("Calculating season…")
+                    .frame(maxWidth: .infinity, minHeight: 40)
+            } else if let seasonWindow = store.seasonWindow {
+                SeasonWindowSummary.fullText(seasonWindow)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("v2.planning.season-summary")
+                if !seasonWindow.hasNoUsableSeason {
+                    SeasonWindowChart(result: seasonWindow)
+                }
+            }
+        }
+        .accessibilityIdentifier("v2.planning.season-section")
     }
 
     private func percent(_ factor: Double) -> String {
