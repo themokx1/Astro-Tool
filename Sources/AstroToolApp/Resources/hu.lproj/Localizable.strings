@@ -1963,3 +1963,13 @@
 // W7-E utójavítás: az Int-interpoláció %lld kulcsot termel, nem %@-ot;
 // plusz az Éjszakák kártya új részletsora.
 "Deduplicated calendar nights" = "Deduplikált naptári éjszakák";
+
+/* Morning Triage Digest (expert ideation spec #1, "the owner triages ~2800
+   lights"): ReviewWorkspace.swift's TriageDigestBanner card + the
+   OutlierBreakdown.Metric.triageCauseLabel/triageSelectButtonLabel switches
+   it reads. Int interpolation produces a %lld key, not %@. */
+"%lld frames flagged as outliers tonight" = "%lld keret kiugró ma este";
+"focus slip" = "fókuszcsúszás";
+"guiding error" = "vezetési hiba";
+"cloud or haze" = "felhő/pára";
+"Select focus-slip frames" = "Kijelölés: fókusz-hibás keretek";

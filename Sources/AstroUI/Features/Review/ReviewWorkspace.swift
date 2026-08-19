@@ -337,6 +337,25 @@ public struct ReviewWorkspace: View {
                     .padding(.horizontal, AstroTokens.Spacing.standard)
                     .padding(.vertical, 10)
                 Divider()
+                // Morning Triage Digest (expert ideation spec #1, "the owner
+                // triages ~2800 lights"): rolls up WHY this session's
+                // outliers scored low instead of leaving that only in the
+                // per-frame ⚠️ popover, and lets one click select every
+                // frame sharing the worst cause. `triageDigest(for:)` is
+                // pure over `rows` (already loaded for the table below, no
+                // second query) -- `TriageDigestBanner` renders nothing of
+                // its own when `digest.isEmpty` (zero outliers tonight),
+                // matching the spec's own "no card, don't invent" empty
+                // state.
+                let digest = triageDigest(for: rows)
+                if !digest.isEmpty {
+                    TriageDigestBanner(digest: digest) { metric in
+                        selectedDecisionIDs = Set(digest.selectFrames(forCause: metric))
+                    }
+                    .padding(.horizontal, AstroTokens.Spacing.standard)
+                    .padding(.vertical, 10)
+                    Divider()
+                }
                 if selected.decisions.isEmpty {
                     ContentUnavailableView {
                         Label("No reviewed frames", systemImage: "photo.on.rectangle.angled")
@@ -427,6 +446,19 @@ public struct ReviewWorkspace: View {
         } else {
             ContentUnavailableView("Select a series", systemImage: "square.stack.3d.up")
         }
+    }
+
+    /// The Morning Triage Digest for whichever rows the table is currently
+    /// showing -- built straight from `rows` (already joined against
+    /// `store.qualityByPath` by `qualityRows(for:)` above), never a second
+    /// read of quality data. Pure/cheap (in-memory grouping over frames
+    /// already in hand, no DB access), so calling it directly from `body`
+    /// alongside `qualityRows(for:)` carries none of the "heavy query in a
+    /// computed getter" risk a DB-backed call would.
+    private func triageDigest(for rows: [ReviewFrameRow]) -> TriageDigestQuery {
+        TriageDigestQuery(frames: rows.map {
+            TriageDigestFrame(id: $0.id, relativePath: $0.decision.relativePath, quality: $0.quality)
+        })
     }
 
     /// Every frame decision of `selected`, joined with its measured quality
@@ -592,6 +624,76 @@ private struct QualityDistribution: View {
         color.frame(width: snapshot.decisions.isEmpty
             ? (color == AstroTokens.Color.dataUnclassified ? totalWidth : 0)
             : totalWidth * Double(count) / Double(snapshot.decisions.count))
+    }
+}
+
+/// Morning Triage Digest (expert ideation spec #1): "N frames flagged as
+/// outliers tonight", one row per dominant cause with a one-click select
+/// button -- the caller still drives whatever gets selected through the
+/// EXISTING accept/reject bar below; this view only ever changes
+/// `selectedDecisionIDs` via `onSelectCause`, never a verdict itself. Sits
+/// directly on `frameReview`'s own flush surface (Task 7c) between two
+/// `Divider()`s, the same "no card-in-a-card" placement `QualityDistribution`
+/// above already uses -- an `.astroRaisedSurface()` here would nest inside
+/// the workspace's own outer raised surface and collapse to its inset alone
+/// (see that modifier's own doc comment), buying no visual distinction.
+private struct TriageDigestBanner: View {
+    let digest: TriageDigestQuery
+    let onSelectCause: (OutlierBreakdown.Metric) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+            Text("\(digest.totalOutlierCount) frames flagged as outliers tonight")
+                .font(.callout.weight(.semibold))
+            ForEach(digest.causes, id: \.metric) { cause in
+                HStack(spacing: 8) {
+                    Text("\(cause.count)×")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Text(cause.metric.triageCauseLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        onSelectCause(cause.metric)
+                    } label: {
+                        Text(cause.metric.triageSelectButtonLabel)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("v2.review.triage-digest.select.\(cause.metric.rawValue)")
+                }
+            }
+        }
+        .accessibilityIdentifier("v2.review.triage-digest")
+    }
+}
+
+/// Morning Triage Digest (expert ideation spec #1): a short display tag per
+/// dominant-metric cause, deliberately NOT `OutlierBreakdown
+/// .likelyCauseText` -- that property returns a plain (already-Hungarian)
+/// `String` computed in `AstroCore`, which has no localization table of its
+/// own; passing it straight to `Text` would render literally on every
+/// locale rather than through `hu.lproj`, the exact raw-value leak
+/// `FrameVerdict.displayLabel`/`FrameDecisionRecord.stackInclusionLabel`
+/// (this same file, above) were fixed for. A real `LocalizedStringKey`
+/// switch here keeps the digest card on the same localization footing as
+/// the rest of this view instead of adding a 12th instance of that leak.
+extension OutlierBreakdown.Metric {
+    var triageCauseLabel: LocalizedStringKey {
+        switch self {
+        case .fwhm: "focus slip"
+        case .roundness: "guiding error"
+        case .starCount, .background: "cloud or haze"
+        }
+    }
+
+    var triageSelectButtonLabel: LocalizedStringKey {
+        switch self {
+        case .fwhm: "Select focus-slip frames"
+        case .roundness: "Select guiding-error frames"
+        case .starCount, .background: "Select cloud/haze frames"
+        }
     }
 }
 
