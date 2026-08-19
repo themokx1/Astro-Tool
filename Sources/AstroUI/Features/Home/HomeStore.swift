@@ -370,6 +370,31 @@ public final class HomeStore {
     /// relevant-tonight filtering V1's "Kalibrációs teendők ma estére" card
     /// already applies.
     public private(set) var calibShoppingItems: [CalibShoppingList.Item] = []
+    /// Pre-flight Checklist (ideation #1, "Indulás előtti lista"): composed
+    /// FRESH from state this store already loaded, on every read -- never
+    /// stored on `HomeSnapshot` itself, and never a new query of its own.
+    /// `PreflightChecklist.build` (`AstroApplication`) is the pure decision;
+    /// this property only ever unpacks the exact facts `HomeSnapshot`/
+    /// `calibShoppingItems` already carry into that function's plain-value
+    /// inputs -- `AstroApplication` cannot depend on this module's own
+    /// `HomeSnapshot`, so the seam has to be plain values/`SkyVerdictKind`
+    /// (an `AstroCore` type both modules already share), not that struct
+    /// itself. See `PreflightChecklist`'s own doc for exactly which four
+    /// facts feed this.
+    public var preflightChecklist: PreflightChecklist {
+        let topRecommendation = snapshot.tonightRecommendations.first.map {
+            PreflightChecklist.TopRecommendation(
+                displayName: $0.displayName,
+                visibleWindow: $0.visibleWindow,
+                verdict: SkyVerdict.parse($0.verdict)
+            )
+        }
+        return PreflightChecklist.build(
+            calibrationMissingCount: calibShoppingItems.count,
+            isCloudyTonight: snapshot.nightCloud?.isCloudyTonight,
+            topRecommendation: topRecommendation
+        )
+    }
     private let tonightProvider: TonightProvider
     private let calibCoverageProvider: CalibCoverageProvider
     private let nightContextProvider: NightContextProvider

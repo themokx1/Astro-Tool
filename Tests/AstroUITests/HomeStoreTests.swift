@@ -723,6 +723,154 @@ struct HomeStoreTests {
 
         #expect(store.snapshot.nightCloud == nil)
     }
+
+    // MARK: - Pre-flight Checklist (ideation #1, "Indulás előtti lista")
+    //
+    // `PreflightChecklistTests` (AstroApplicationTests) already exercises
+    // `PreflightChecklist.build`'s own pure ✓/✗/n-a rules directly with
+    // fixture values. These tests instead pin `HomeStore.preflightChecklist`
+    // -- the seam that unpacks a REAL, `configure()`-loaded `HomeSnapshot`/
+    // `calibShoppingItems` into that pure function's plain-value inputs --
+    // so a future change to what `configure()` resolves can't silently
+    // stop reaching the checklist at all.
+
+    @Test("A library with current calibration, a clear sky, and no Moon interference is all-clear")
+    func preflightChecklistIsAllClearForAHealthyLibrary() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in
+                [TargetPlan(
+                    target: "IC_1396", displayName: "Elefántormány-köd", usableIntegrationSeconds: 0,
+                    visibleWindowLocal: "21:48–01:23", verdict: SkyVerdict.good, score: 0.9
+                )]
+            },
+            calibCoverageProvider: { _ in [] },
+            weatherProvider: { _ in HomeSnapshot.NightCloud(duskPercent: 10, dawnPercent: 15, fetchedAt: Date(), isCloudyTonight: false) }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.pendingWeatherLoad?.value
+
+        #expect(store.preflightChecklist.allClear)
+    }
+
+    @Test("A real calibration shortfall reaches the checklist as its own red line")
+    func preflightChecklistSurfacesRealCalibrationShortfall() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in
+                [TargetPlan(target: "M31", displayName: "M31", usableIntegrationSeconds: 0, verdict: SkyVerdict.good, score: 0.5)]
+            },
+            calibCoverageProvider: { _ in
+                [CalibNeed(
+                    kind: .dark, exposureSeconds: 300, tempC: -10, lightCount: 68,
+                    targets: ["M31"], matchedMasterPath: nil, masterAgeDays: nil, isStale: false,
+                    todo: "Készíts 300 s / -10 °C darkot (68 light frame-hez)"
+                )]
+            }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+
+        let calibItem = store.preflightChecklist.items.first {
+            if case .calibrationCurrent = $0.kind { true } else { false }
+        }
+        #expect(calibItem?.status == .attention)
+        #expect(!store.preflightChecklist.allClear)
+    }
+
+    @Test("No open library means no weather/tonight plan was ever fetched -- the sky/Moon/altitude lines read n/a, never a red ✗")
+    func preflightChecklistIsHonestlyNotApplicableWithNoOpenLibrary() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let store = HomeStore()
+
+        await store.configure(libraryName: "Astro", projectsStore: projects, nightCount: 0)
+
+        let checklist = store.preflightChecklist
+        let skyItem = checklist.items.first { $0.kind == .skyClear }
+        let moonItem = checklist.items.first { if case .moonImpact = $0.kind { true } else { false } }
+        let altitudeItem = checklist.items.first { if case .altitudeWindow = $0.kind { true } else { false } }
+        #expect(skyItem?.status == .notApplicable)
+        #expect(moonItem?.status == .notApplicable)
+        #expect(altitudeItem?.status == .notApplicable)
+        #expect(checklist.items.allSatisfy { $0.status != .attention })
+    }
+
+    @Test("A cloudy tonight fetched by the real weather provider reaches the checklist as its own red sky line")
+    func preflightChecklistSurfacesRealCloudyForecast() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in [] },
+            weatherProvider: { _ in HomeSnapshot.NightCloud(duskPercent: 92, dawnPercent: 97, fetchedAt: Date(), isCloudyTonight: true) }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.pendingWeatherLoad?.value
+
+        let skyItem = store.preflightChecklist.items.first { $0.kind == .skyClear }
+        #expect(skyItem?.status == .attention)
+    }
+
+    @Test("A Moon-interferes verdict on the real top tonight recommendation reaches the checklist as its own red Moon line")
+    func preflightChecklistSurfacesRealMoonInterference() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(tonightProvider: { _ in
+            [TargetPlan(
+                target: "M 42", displayName: "M 42", usableIntegrationSeconds: 0,
+                visibleWindowLocal: "20:00–23:00",
+                verdict: SkyVerdict.moonInterferes(separationDeg: 34, illuminationPercent: 62), score: 0.8
+            )]
+        })
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+
+        let moonItem = store.preflightChecklist.items.first { if case .moonImpact = $0.kind { true } else { false } }
+        #expect(moonItem?.status == .attention)
+        if case let .moonImpact(separationDeg, illuminationPercent) = moonItem?.kind {
+            #expect(separationDeg == 34)
+            #expect(illuminationPercent == 62)
+        } else {
+            Issue.record("Expected a .moonImpact item")
+        }
+    }
+
+    @Test("The real top tonight recommendation's own visible window feeds the altitude line's clear time")
+    func preflightChecklistReadsRealVisibleWindowStart() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(tonightProvider: { _ in
+            [TargetPlan(
+                target: "IC_1396", displayName: "IC 1396", usableIntegrationSeconds: 0,
+                visibleWindowLocal: "21:48–01:23", verdict: SkyVerdict.good, score: 0.9
+            )]
+        })
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+
+        let altitudeItem = store.preflightChecklist.items.first { if case .altitudeWindow = $0.kind { true } else { false } }
+        #expect(altitudeItem?.status == .ready)
+        if case let .altitudeWindow(targetDisplayName, clearsAtLocal) = altitudeItem?.kind {
+            #expect(targetDisplayName == "IC 1396")
+            #expect(clearsAtLocal == "21:48")
+        } else {
+            Issue.record("Expected a .altitudeWindow item")
+        }
+    }
 }
 
 /// W5-2 finding 5 (owner pixel review): cold start on a spun-down SSD spent
