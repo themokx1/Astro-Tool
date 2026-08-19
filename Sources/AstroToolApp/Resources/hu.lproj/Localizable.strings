@@ -2256,3 +2256,17 @@
    NativeStats.compute only reads FITS bytes), instead of silently
    excluding them from unratedNightCount with no explanation. */
 "%lld frames cannot be measured (RAW format not supported)" = "%lld képkocka nem mérhető (a RAW formátum nem támogatott)";
+
+/* OWNER BUG (2026-08-19 real-library audit): Insights' "Capture quality
+   trends" card (InsightsView.qualityTrends/fwhmMeasurementHint) now names
+   the FWHM blocker (needs an actual star-measurement pass) distinctly from
+   the Background blocker (needs a measured sensor profile) instead of one
+   generic "rate them from Home" hint that neither fired for the owner's
+   own "1 mért capture" case nor could ever be satisfied by re-pressing the
+   nativeOnly-only "Rate Everything" button. "Start Measuring" runs the
+   same ProjectRatingRunner engine with .fullReMeasure, right on this
+   screen -- the button the owner explicitly asked for. */
+"FWHM has never been measured — background/score alone can never fill this trend in." = "A FWHM-et még sosem mérték — ezt a trendet önmagában a háttér/pontszám sosem tölti ki.";
+"%lld measured capture so far — FWHM needs an actual star-measurement pass, not just background/score." = "Eddig %lld mért capture — a FWHM-hez valódi csillagmérésre van szükség, nem csak háttér/pontszám-mérésre.";
+"No sensor profile has been measured yet — measure it from Home to convert background into e⁻/s/arcsec²." = "Még nincs mérve szenzorprofil — mérd meg a Kezdőlapon, hogy a háttér e⁻/s/ívmásodperc² értékké alakulhasson.";
+"Start Measuring" = "Mérés indítása";

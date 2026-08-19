@@ -23,28 +23,45 @@ public final class InsightsStore {
     /// own `async` providers need -- see `AsyncContextSizeGateTests`'s doc
     /// comment for why that distinction matters.
     public typealias RatingGapProvider = @Sendable (URL) throws -> Int
+    /// OWNER BUG (2026-08-19 real-library audit): whether ANY sensor profile
+    /// has been measured for this library -- `HomeStore.productionRatingGate`'s
+    /// exact same `SensorProfilesQuery` read, never a second one invented for
+    /// Insights. `async`, unlike `RatingGapProvider`, since
+    /// `SensorProfilesQuery.snapshot()` itself is `async throws`. Feeds the
+    /// Background trend's own hint: `backgroundEPerSecPerArcsec2` is `nil`
+    /// for EVERY capture until a sensor profile exists (`SessionQuality`'s
+    /// own "no bias level, no honest e-/s/arcsec2 number" rule) -- a
+    /// completely different blocker than FWHM's (needs an actual star
+    /// measurement pass), so the hint must never conflate the two.
+    public typealias SensorProfileMeasuredProvider = @Sendable (URL) async throws -> Bool
 
     public private(set) var snapshot: InsightsSnapshot?
     public private(set) var availableYears: [Int] = []
     public private(set) var errorMessage: String?
     public private(set) var isLoading = false
     public private(set) var unratedNightCount = 0
+    public private(set) var sensorProfileMeasured = true
 
     private let queryFactory: QueryFactory
     private let ratingGapProvider: RatingGapProvider
+    private let sensorProfileMeasuredProvider: SensorProfileMeasuredProvider
 
     public init(
         queryFactory: @escaping QueryFactory = { rootURL in try InsightsQuery.production(rootURL: rootURL) },
         ratingGapProvider: @escaping RatingGapProvider = { rootURL in
             try RatingCoverageQuery.production(rootURL: rootURL).snapshot().unratedNightCount
+        },
+        sensorProfileMeasuredProvider: @escaping SensorProfileMeasuredProvider = { rootURL in
+            try await !SensorProfilesQuery.production(rootURL: rootURL).snapshot().profiles.isEmpty
         }
     ) {
         self.queryFactory = queryFactory
         self.ratingGapProvider = ratingGapProvider
+        self.sensorProfileMeasuredProvider = sensorProfileMeasuredProvider
     }
 
     public func load(rootURL: URL?, year: Int? = nil) async {
-        guard let rootURL else { snapshot = nil; unratedNightCount = 0; return }
+        guard let rootURL else { snapshot = nil; unratedNightCount = 0; sensorProfileMeasured = true; return }
         isLoading = true
         defer { isLoading = false }
         do {
@@ -58,6 +75,7 @@ public final class InsightsStore {
             // provider calls -- a rating-coverage read failing must never
             // block the trends this screen exists to show.
             unratedNightCount = (try? ratingGapProvider(rootURL)) ?? 0
+            sensorProfileMeasured = (try? await sensorProfileMeasuredProvider(rootURL)) ?? true
         }
         catch { errorMessage = error.localizedDescription }
     }
@@ -76,6 +94,13 @@ public struct InsightsView: View {
     @State private var store: InsightsStore
     @State private var selectedYear: Int?
     @State private var selectedSetup: String?
+    /// OWNER BUG (2026-08-19 real-library audit): the button the owner
+    /// literally asked for ("erre kell valami gomb, akár ide a felületre" --
+    /// "there needs to be some button, maybe right here on this screen").
+    /// Already provided globally by `V2RootView`'s `.environment(operationHost)`
+    /// -- reading it here needs no wiring change anywhere else, exactly like
+    /// `HomeView`'s own `@Environment(OperationHost.self)`.
+    @Environment(OperationHost.self) private var operationHost
 
     public init(
         snapshot: LibrarySnapshot?,
@@ -194,6 +219,21 @@ public struct InsightsView: View {
         .accessibilityLabel("Insights")
         .accessibilityIdentifier("v2.detail.insights")
         .task(id: rootURL) { await store.load(rootURL: rootURL) }
+        // Reloads once "Start Measuring" (or Home's "Rate Everything",
+        // sharing the same `ProjectRatingRunner.kind`) transitions from
+        // running to finished, so the just-filled FWHM/background trends
+        // actually appear without the owner having to leave and reopen this
+        // screen. `measuringOperation` is `nil` on both sides of a run that
+        // never started here at all, so this never fires spuriously.
+        .onChange(of: operationHost.activeOperations) { old, new in
+            guard let rootURL else { return }
+            let kind = ProjectRatingRunner.kind(for: .allProjects(libraryName: rootURL.lastPathComponent))
+            let wasRunning = old.contains { $0.kind == kind }
+            let stillRunning = new.contains { $0.kind == kind }
+            if wasRunning, !stillRunning {
+                Task { await store.load(rootURL: rootURL, year: selectedYear) }
+            }
+        }
     }
 
     private func qualityTrends(_ insight: InsightsSnapshot) -> some View {
@@ -211,20 +251,37 @@ public struct InsightsView: View {
         // a session -- `CaptureTrendPoint` (`InsightsQuery.swift`) is the
         // reworked per-capture unit; the "Összeállítás" setup filter below
         // now finally means something (one setup = one comparable series).
-        VStack(alignment: .leading, spacing: 12) {
+        // OWNER BUG (2026-08-19 real-library audit): the owner's own words,
+        // "1 mért capture — a trendhez több mérés kell, erre kell valami
+        // gomb" -- ONE point is not "empty" (`insight.captureTrendPoints.
+        // isEmpty` was false in his exact case, so the old generic hint
+        // below never even rendered for him), and pressing "Minden projekt
+        // értékelése" a second time changed nothing because that button's
+        // `.nativeOnly` mode structurally can never populate FWHM (see
+        // `ProjectRatingRunner.run`'s own doc comment). Computed once, up
+        // front, so both the new hints below and the three charts share the
+        // exact same filtered point lists.
+        let fwhmPoints = trendData(insight) { $0.fwhmValue?.value }
+        let backgroundPoints = trendData(insight) { $0.backgroundEPerSecPerArcsec2 }
+        let efficiencyPoints = trendData(insight) { $0.efficiencyPercent }
+
+        return VStack(alignment: .leading, spacing: 12) {
             Text("Capture quality trends").font(.headline)
-            // W7-E workflow #1 (2026-08-18 owner audit): the matching
-            // Insights half of Home's rating-gate card -- these three trend
-            // charts have nothing to plot only because nothing has been
-            // measured yet (`captureTrendPoints` only ever contains rated
-            // captures), so say that plainly instead of leaving the owner to
-            // infer it from three separate "No measured values" charts. A
-            // grouping WITHIN this card (Task 7c's own rule, see this
-            // function's header comment), never a second `.astroRaisedSurface()`.
-            if insight.captureTrendPoints.isEmpty, store.unratedNightCount > 0 {
-                Label("\(store.unratedNightCount) nights still have unrated frames — rate them from Home to fill in these trends.", systemImage: "star.leadinghalf.filled")
+            // Two DISTINCT blockers, never one conflated hint: FWHM needs an
+            // actual star-measurement pass (Siril, `.fullReMeasure`) that
+            // background/score-only rating can never provide; Background
+            // needs a measured sensor profile (bias level), an unrelated
+            // one-time calibration `SessionQuality` requires before it will
+            // ever report a e-/s/arcsec2 number (see its own doc comment on
+            // that guard -- reporting one computed against an unsubtracted
+            // bias pedestal is the very bug that rule exists to prevent).
+            if fwhmPoints.count < 2 {
+                fwhmMeasurementHint(measuredCount: fwhmPoints.count)
+            }
+            if backgroundPoints.isEmpty, !store.sensorProfileMeasured {
+                Label("No sensor profile has been measured yet — measure it from Home to convert background into e⁻/s/arcsec².", systemImage: "camera.aperture")
                     .font(.callout).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("v2.insights.rating-gap-hint")
+                    .accessibilityIdentifier("v2.insights.sensor-profile-hint")
             }
             HStack {
                 Text("Compare measured captures over time. Lower FWHM and background are better; higher efficiency is better.")
@@ -237,24 +294,9 @@ public struct InsightsView: View {
                 .frame(maxWidth: 280)
             }
             HStack(alignment: .top, spacing: 12) {
-                trendChart(
-                    title: "FWHM",
-                    unit: "arcsec / px",
-                    points: trendData(insight) { point in point.fwhmValue?.value },
-                    color: AstroTokens.Color.accent
-                )
-                trendChart(
-                    title: "Background",
-                    unit: "e⁻/s/arcsec²",
-                    points: trendData(insight) { $0.backgroundEPerSecPerArcsec2 },
-                    color: AstroTokens.Color.accent
-                )
-                trendChart(
-                    title: "Efficiency",
-                    unit: "%",
-                    points: trendData(insight) { $0.efficiencyPercent },
-                    color: AstroTokens.Color.accent
-                )
+                trendChart(title: "FWHM", unit: "arcsec / px", points: fwhmPoints, color: AstroTokens.Color.accent)
+                trendChart(title: "Background", unit: "e⁻/s/arcsec²", points: backgroundPoints, color: AstroTokens.Color.accent)
+                trendChart(title: "Efficiency", unit: "%", points: efficiencyPoints, color: AstroTokens.Color.accent)
             }
             recentTrendSessions(insight)
         }
@@ -268,6 +310,76 @@ public struct InsightsView: View {
         // than paint the box-in-box the owner reported.)
         .astroRaisedSurface()
         .accessibilityIdentifier("v2.insights.quality-trends")
+    }
+
+    /// OWNER BUG (2026-08-19 real-library audit): the "Mérés indítása"/
+    /// "Start Measuring" button the owner asked for, right on this screen --
+    /// same `ProjectRatingRunner` engine and `OperationHost` progress Home's
+    /// "Rate Everything" card already uses, just a second entry point that
+    /// asks for `.fullReMeasure` instead of defaulting to `.nativeOnly`, so
+    /// pressing it can actually fill FWHM in (unlike the button he already
+    /// tried).
+    @ViewBuilder
+    private func fwhmMeasurementHint(measuredCount: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // An `if`/`else` `Text(...)` branch, not a ternary: the ELSE
+            // branch interpolates `measuredCount`, and `LocalizedStringKey(
+            // aTernary)` would resolve to `LocalizedStringKey.init(_ value:
+            // String)` -- the PLAIN string-wrapping initializer, which bakes
+            // the already-interpolated number straight into the "key" itself
+            // (a different key per count!) rather than producing the "%lld
+            // ..." pattern `Text("\(count) ...")`'s own interpolation-literal
+            // initializer produces (the same "%lld nights still have unrated
+            // frames" key already proven elsewhere in this file/`hu.lproj`).
+            if measuredCount == 0 {
+                Text("FWHM has never been measured — background/score alone can never fill this trend in.")
+                    .font(.callout).foregroundStyle(.secondary)
+            } else {
+                Text("\(measuredCount) measured capture so far — FWHM needs an actual star-measurement pass, not just background/score.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            if let measuringOperation {
+                HStack(spacing: 8) {
+                    ProgressView(
+                        value: measuringOperation.total.map { Double(measuringOperation.completed) / Double(max($0, 1)) }
+                    )
+                    if let total = measuringOperation.total {
+                        Text(verbatim: "\(measuringOperation.completed) / \(total)")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityIdentifier("v2.insights.measure-progress")
+            } else {
+                Button("Start Measuring", action: startMeasuring)
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("v2.insights.start-measuring")
+            }
+        }
+        .accessibilityIdentifier("v2.insights.fwhm-measurement-hint")
+    }
+
+    /// Mirrors `HomeView.ratingOperation` exactly -- looked up by
+    /// `ProjectRatingRunner.kind(for:)` so an in-flight run started from
+    /// EITHER entry point (Home's "Rate Everything" or this screen's "Start
+    /// Measuring") shows its progress here too, rather than this button
+    /// silently starting a second, redundant run.
+    private var measuringOperation: OperationHost.ActiveOperation? {
+        guard let rootURL else { return nil }
+        let kind = ProjectRatingRunner.kind(for: .allProjects(libraryName: rootURL.lastPathComponent))
+        return operationHost.activeOperations.first { $0.kind == kind }
+    }
+
+    private func startMeasuring() {
+        guard let rootURL else { return }
+        Task {
+            await ProjectRatingRunner.run(
+                scope: .allProjects(libraryName: rootURL.lastPathComponent),
+                rootURL: rootURL,
+                metadataFactory: ProjectsStore.productionMetadata,
+                operationHost: operationHost,
+                mode: .fullReMeasure
+            )
+        }
     }
 
     private func trendData(

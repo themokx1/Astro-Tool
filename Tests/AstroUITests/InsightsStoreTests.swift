@@ -87,10 +87,30 @@ struct InsightsStoreTests {
         )
     }
 
+    /// Every `InsightsStore` construction below supplies BOTH
+    /// `ratingGapProvider` and `sensorProfileMeasuredProvider` explicitly --
+    /// never relying on either default, which resolves a REAL
+    /// `~/Library/Application Support/AstroTool/...` path from `rootURL`'s
+    /// own identity hash (`RatingCoverageQuery.production`/
+    /// `SensorProfilesQuery.production`). Every test in this file passes the
+    /// SAME `NSTemporaryDirectory()` `rootURL`, so swift-testing's parallel
+    /// execution had multiple tests' default providers racing to open the
+    /// exact same shared sqlite path concurrently -- adding the second
+    /// production call (`sensorProfileMeasuredProvider`) alongside the
+    /// already-present `ratingGapProvider` default tipped this from latent
+    /// into a real `malloc: freed pointer was not the last allocation`
+    /// crash. Matches `HomeStoreTests`' own discipline of never leaving an
+    /// async provider at its filesystem-resolving default in a test.
+    private static let noSensorProfileWarning: InsightsStore.SensorProfileMeasuredProvider = { _ in true }
+
     @Test("Loading a library populates the insights snapshot")
     func loadingPopulatesSnapshot() async throws {
         let fixture = try Self.makeFixture()
-        let store = InsightsStore(queryFactory: { _ in Self.query(fixture) })
+        let store = InsightsStore(
+            queryFactory: { _ in Self.query(fixture) },
+            ratingGapProvider: { _ in 0 },
+            sensorProfileMeasuredProvider: Self.noSensorProfileWarning
+        )
 
         await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
 
@@ -102,7 +122,11 @@ struct InsightsStoreTests {
     @Test("A nil root clears the snapshot instead of loading anything")
     func nilRootClearsSnapshot() async throws {
         let fixture = try Self.makeFixture()
-        let store = InsightsStore(queryFactory: { _ in Self.query(fixture) })
+        let store = InsightsStore(
+            queryFactory: { _ in Self.query(fixture) },
+            ratingGapProvider: { _ in 0 },
+            sensorProfileMeasuredProvider: Self.noSensorProfileWarning
+        )
         await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
         #expect(store.snapshot != nil)
 
@@ -114,7 +138,11 @@ struct InsightsStoreTests {
     @Test("A load failure surfaces its error message rather than throwing past the view")
     func loadFailureSurfacesError() async throws {
         struct BoomError: Error {}
-        let store = InsightsStore(queryFactory: { _ in throw BoomError() })
+        let store = InsightsStore(
+            queryFactory: { _ in throw BoomError() },
+            ratingGapProvider: { _ in 0 },
+            sensorProfileMeasuredProvider: Self.noSensorProfileWarning
+        )
 
         await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
 
@@ -129,7 +157,8 @@ struct InsightsStoreTests {
         let fixture = try Self.makeFixture()
         let store = InsightsStore(
             queryFactory: { _ in Self.query(fixture) },
-            ratingGapProvider: { _ in 4 }
+            ratingGapProvider: { _ in 4 },
+            sensorProfileMeasuredProvider: Self.noSensorProfileWarning
         )
 
         await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
@@ -142,7 +171,8 @@ struct InsightsStoreTests {
         let fixture = try Self.makeFixture()
         let store = InsightsStore(
             queryFactory: { _ in Self.query(fixture) },
-            ratingGapProvider: { _ in 4 }
+            ratingGapProvider: { _ in 4 },
+            sensorProfileMeasuredProvider: Self.noSensorProfileWarning
         )
         await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
         #expect(store.unratedNightCount == 4)
@@ -158,12 +188,62 @@ struct InsightsStoreTests {
         let fixture = try Self.makeFixture()
         let store = InsightsStore(
             queryFactory: { _ in Self.query(fixture) },
-            ratingGapProvider: { _ in throw BoomError() }
+            ratingGapProvider: { _ in throw BoomError() },
+            sensorProfileMeasuredProvider: Self.noSensorProfileWarning
         )
 
         await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
 
         #expect(store.unratedNightCount == 0)
+        #expect(store.snapshot != nil)
+        #expect(store.errorMessage == nil)
+    }
+
+    // MARK: - OWNER BUG (2026-08-19 real-library audit): sensor-profile gate
+
+    @Test("Loading a library also surfaces whether a sensor profile has been measured, distinct from the rating gap")
+    func loadingSurfacesSensorProfileMeasured() async throws {
+        let fixture = try Self.makeFixture()
+        let store = InsightsStore(
+            queryFactory: { _ in Self.query(fixture) },
+            ratingGapProvider: { _ in 0 },
+            sensorProfileMeasuredProvider: { _ in false }
+        )
+
+        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        #expect(store.sensorProfileMeasured == false)
+    }
+
+    @Test("A nil root resets sensor-profile-measured back to the honest default")
+    func nilRootResetsSensorProfileMeasured() async throws {
+        let fixture = try Self.makeFixture()
+        let store = InsightsStore(
+            queryFactory: { _ in Self.query(fixture) },
+            ratingGapProvider: { _ in 0 },
+            sensorProfileMeasuredProvider: { _ in false }
+        )
+        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+        #expect(store.sensorProfileMeasured == false)
+
+        await store.load(rootURL: nil)
+
+        #expect(store.sensorProfileMeasured == true)
+    }
+
+    @Test("A sensor-profile read failure reports the honest 'measured' default, never blocking the trends themselves")
+    func sensorProfileFailureFallsBackToTrue() async throws {
+        struct BoomError: Error {}
+        let fixture = try Self.makeFixture()
+        let store = InsightsStore(
+            queryFactory: { _ in Self.query(fixture) },
+            ratingGapProvider: { _ in 0 },
+            sensorProfileMeasuredProvider: { _ in throw BoomError() }
+        )
+
+        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+        #expect(store.sensorProfileMeasured == true)
         #expect(store.snapshot != nil)
         #expect(store.errorMessage == nil)
     }
