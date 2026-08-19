@@ -539,6 +539,34 @@ struct InsightsQueryTests {
         #expect(comparisonScoped == comparisonAllYears)
     }
 
+    /// `currentMonth`/`currentYear` come from the SAME `todayForTesting`
+    /// clock as `yearOverYearComparison` and stay populated even when the
+    /// comparison itself is `nil` -- `InsightsView`'s own visibility gate
+    /// needs them independently of whether a comparison could be built.
+    @Test("currentMonth/currentYear stay populated from the same clock even when the comparison itself is nil")
+    func currentMonthYearPopulatedEvenWhenComparisonIsNil() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let index = directory.appendingPathComponent("index.sqlite")
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("""
+        CREATE TABLE files(id INTEGER PRIMARY KEY, area TEXT, target TEXT, session_date TEXT, role TEXT, missing INTEGER);
+        CREATE TABLE fits_meta(file_id INTEGER PRIMARY KEY, exptime REAL);
+        """)
+
+        let today = Self.fixedToday(year: 2026, month: 8, day: 19)
+        let result = try await InsightsQuery(
+            indexDatabaseForTesting: index,
+            trendPointsForTesting: { [] },
+            todayForTesting: { today }
+        ).snapshot()
+
+        #expect(result.yearOverYearComparison == nil)
+        #expect(result.currentMonth == 8)
+        #expect(result.currentYear == 2026)
+    }
+
     /// No prior-year session in the same calendar month at all -- the whole
     /// comparison is `nil`, matching `YearOverYearComparison.summarize`'s
     /// own "nothing to compare against yet" contract.

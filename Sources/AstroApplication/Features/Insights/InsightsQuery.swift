@@ -98,6 +98,17 @@ public struct InsightsSnapshot: Equatable, Sendable {
     /// function's own doc comment for why this year's own side is allowed
     /// to be empty without suppressing the whole comparison).
     public let yearOverYearComparison: YearOverYearComparison?
+    /// The real wall-clock calendar month/year this snapshot was built
+    /// against (from the same `todayProvider` `yearOverYearComparison`
+    /// itself reads) -- ALWAYS present, even when `yearOverYearComparison`
+    /// is `nil` for lack of prior-year data. `InsightsView`'s own visibility
+    /// gate ("show the card on 'Minden év' or when the selected year IS the
+    /// current one") needs this pair independently of whether a comparison
+    /// could actually be built, since the honest-empty-state text still has
+    /// to render (and still has to know which year is "current") even with
+    /// nothing to compare against yet.
+    public let currentMonth: Int
+    public let currentYear: Int
     public let isReadOnly: Bool
     public var bestMonth: MonthlyCapture? { months.max { $0.integrationSeconds < $1.integrationSeconds } }
     public var averageIntegrationPerNight: Double {
@@ -459,6 +470,8 @@ public struct InsightsQuery: Sendable {
 
         let capturePoints = try captureTrendProvider?() ?? []
         let trendPoints = try trendPointsProvider?() ?? []
+        let today = todayProvider()
+        let todayComponents = Calendar.current.dateComponents([.year, .month], from: today)
         return InsightsSnapshot(
             nightCount: nightCount, targetCount: targetCount, frameCount: dedupedLights.count,
             integrationSeconds: dedupedLights.reduce(0) { $0 + exptime($1) },
@@ -468,7 +481,9 @@ public struct InsightsQuery: Sendable {
             rejectedFrameCount: rejectedFrameCount, captureTrendPoints: capturePoints,
             moonSkyCorrelation: Self.moonSkyCorrelationSummary(points: trendPoints),
             yearWrapped: year.flatMap { YearWrapped.summarize(points: trendPoints, year: $0) },
-            yearOverYearComparison: YearOverYearComparison.summarize(points: trendPoints, today: todayProvider()),
+            yearOverYearComparison: YearOverYearComparison.summarize(points: trendPoints, today: today),
+            currentMonth: todayComponents.month ?? 1,
+            currentYear: todayComponents.year ?? 1970,
             isReadOnly: true
         )
     }
