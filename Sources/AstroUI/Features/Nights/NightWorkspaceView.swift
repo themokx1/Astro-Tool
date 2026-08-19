@@ -175,6 +175,26 @@ public struct NightWorkspaceView: View {
                 }
             }
         }
+        // Owner review (2026-08-19): "ahogy váltok a tabok között, a tabsor
+        // elugrál a tartalom függvényében" -- the IDENTICAL defect
+        // `ProjectWorkspaceView` fixed in 4fc3993 ("stop the header floating
+        // mid-page"). The Overview/Frames/Notes tabs wrap `content` in a
+        // `ScrollView` above, which always claims its full proposed height
+        // and top-aligns regardless of how little it contains -- but the
+        // Series tab renders `seriesTable` directly (deliberately outside
+        // that `ScrollView`, see its own doc comment) with a row-count-capped
+        // height (`tableMaxHeight`), never the full pane. With no
+        // `.frame(maxHeight:)` of its own, this top-level `VStack` was
+        // proposed the whole pane's height by `DetailHost`'s
+        // `NavigationStack` but only claimed as much as its shortest tab's
+        // content needed, so it centered vertically in the leftover space --
+        // moving the header + Divider + Picker up or down depending on
+        // whether the current tab's content (a handful of series rows vs. a
+        // scrolling report) filled the pane. `alignment: .top` makes every
+        // tab claim the full height and pin the header at a constant
+        // position, the same fix `ProjectWorkspaceView`'s own Sorozat tab
+        // needed for the same reason.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // Task 7b (2026-08-17): self-tint removed -- `V2RootView`'s detail
         // column owns the single opaque `ground` page backdrop now.
         .navigationTitle(row.date)
