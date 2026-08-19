@@ -107,6 +107,18 @@ public struct InsightsView: View {
                     Task { await store.load(rootURL: rootURL, year: year) }
                 }
                 metrics(insight)
+                // Expert ideation reserve #9 ("Év-összegző Wrapped", wow
+                // 5/5): a year's story, not "Minden év"'s -- there is no
+                // single year to celebrate when every year is blended
+                // together, and `insight.yearWrapped` is already `nil` in
+                // that case (`InsightsQuery.snapshot` only ever builds it
+                // when `year` itself is non-nil). The `selectedYear != nil`
+                // half of this guard is what `InsightsWrappedSurfaceTests`
+                // pins: the card must never render on "Minden év" even if a
+                // future change somehow left a stale `yearWrapped` behind.
+                if selectedYear != nil, let wrapped = insight.yearWrapped {
+                    yearWrappedCard(wrapped)
+                }
                 if insight.hasDuplicateExposure {
                     Text("Duplicate frames in the index were counted once — raw index total before dedup: \(duration(insight.grossIntegrationSeconds))")
                         .font(.caption).foregroundStyle(.secondary)
@@ -454,6 +466,117 @@ public struct InsightsView: View {
         case .bright: return "50–75% Moon"
         case .veryBright: return "Bright Moon (≥75%)"
         }
+    }
+
+    // Expert ideation reserve #9 ("Év-összegző Wrapped", wow 5/5): one
+    // emotional, screenshot-worthy year card built entirely from
+    // `AstroCore.YearWrapped` -- every number here is a real aggregate
+    // (`InsightsQuery.snapshot` builds it from the exact same trend points
+    // the Moon-sky card above reads), never a second, independently-derived
+    // figure. Sparse-data honesty carries all the way through: the best-
+    // FWHM tile is the one most likely to have nothing to show (this
+    // owner's own library has ~1 measured session at the time this card
+    // shipped) and simply does not render rather than showing a fabricated
+    // "best" over zero measurements.
+    private func yearWrappedCard(_ wrapped: YearWrapped) -> some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+            Text("Year in review").font(.headline)
+            yearWrappedHeadline(wrapped)
+                .astroDisplay()
+                .accessibilityIdentifier("v2.insights.year-wrapped-headline")
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 160), spacing: AstroTokens.Spacing.compact)],
+                spacing: AstroTokens.Spacing.compact
+            ) {
+                yearWrappedTile(
+                    title: "Favorite target",
+                    value: wrapped.mostShotTarget?.target ?? "—",
+                    detail: wrapped.mostShotTarget.map { Text(duration($0.integrationSeconds)) } ?? Text("No sessions yet"),
+                    systemImage: "star.fill"
+                )
+                yearWrappedTile(
+                    title: "Light frames",
+                    value: AstroFormat.count(wrapped.totalUsableFrameCount),
+                    detail: Text("Usable, deduplicated"),
+                    systemImage: "photo.stack"
+                )
+                yearWrappedTile(
+                    title: "Biggest month",
+                    value: wrapped.biggestMonth?.month ?? "—",
+                    detail: wrapped.biggestMonth.map { Text(duration($0.integrationSeconds)) } ?? Text("No monthly data"),
+                    systemImage: "calendar"
+                )
+                yearWrappedTile(
+                    title: "New targets",
+                    value: "\(wrapped.firstLights.count)",
+                    detail: yearWrappedFirstLightsDetail(wrapped),
+                    systemImage: "sparkles"
+                )
+                // Sparse-data honesty: this tile drops entirely (not a
+                // placeholder) when no session this year carries a measured
+                // FWHM at all -- a fabricated "best" over zero measurements
+                // would be worse than no tile.
+                if let best = wrapped.bestFWHMNight {
+                    yearWrappedTile(
+                        title: "Best FWHM night",
+                        value: best.isPixelFallback ? AstroFormat.fwhmPixels(best.value) : AstroFormat.fwhmArcsec(best.value),
+                        detail: Text("\(best.target) · \(best.date)"),
+                        systemImage: "star.circle.fill"
+                    )
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .astroRaisedSurface()
+        .accessibilityIdentifier("v2.insights.year-wrapped")
+    }
+
+    /// Both branches interpolate ONLY pre-formatted `String`s (`String(wrapped.year)`,
+    /// `duration(...)`, `String(wrapped.sessionCount)`, and `mostShotTarget.
+    /// target` itself is already one) -- same rule `HomeView.highlightText`'s
+    /// own doc comment states: an `Int`/`Double` interpolated straight into a
+    /// `Text` emits a `%lld`/`%lf` runtime key, while this codebase's hand-
+    /// added `hu.lproj` entries are written against the `%@` key the
+    /// extraction script normalizes every interpolation to.
+    private func yearWrappedHeadline(_ wrapped: YearWrapped) -> Text {
+        let yearText = String(wrapped.year)
+        let hoursText = duration(wrapped.totalIntegrationSeconds)
+        let nightsText = String(wrapped.sessionCount)
+        guard let target = wrapped.mostShotTarget?.target else {
+            return Text("In \(yearText), you spent \(hoursText) collecting light across \(nightsText) nights.")
+        }
+        return Text("In \(yearText), you spent \(hoursText) collecting light across \(nightsText) nights — your favorite was \(target).")
+    }
+
+    /// `firstLights` is arbitrary target/catalog data, not UI copy -- joined
+    /// verbatim (same convention `recentTrendSessions`' `filterLabel` row
+    /// already uses for arbitrary filter-wheel text), only the zero-count
+    /// and "too many to list" fallbacks route through `Text`'s
+    /// `LocalizedStringKey` initializer.
+    private func yearWrappedFirstLightsDetail(_ wrapped: YearWrapped) -> Text {
+        guard !wrapped.firstLights.isEmpty else { return Text("None this year") }
+        let shown = wrapped.firstLights.prefix(3).joined(separator: ", ")
+        return wrapped.firstLights.count > 3 ? Text(verbatim: "\(shown), …") : Text(verbatim: shown)
+    }
+
+    private func yearWrappedTile(
+        title: LocalizedStringKey,
+        value: String,
+        detail: Text,
+        systemImage: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            Text(value).astroDataHero()
+            detail
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .astroRecessedSurface()
     }
 
     private func metrics(_ insight: InsightsSnapshot) -> some View {
