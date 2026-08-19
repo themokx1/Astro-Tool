@@ -332,4 +332,81 @@ struct InsightsQueryTests {
         #expect(wide.integrationSeconds == reportWide.group.integrationSeconds)
         #expect(narrow.integrationSeconds == reportNarrow.group.integrationSeconds)
     }
+
+    // MARK: - Moon x sky-brightness correlation
+
+    /// `moonSkyCorrelation` defaults to the honest empty summary when no
+    /// `trendPointsForTesting` provider is wired -- every other test in
+    /// this file (and every existing caller of `InsightsQueryFixture.query()`)
+    /// never supplies one, and must keep working exactly as before.
+    @Test("Moon-sky correlation defaults to the empty summary when no trend-point provider is wired")
+    func moonSkyCorrelationDefaultsToEmptyWithNoProvider() async throws {
+        let fixture = try InsightsQueryFixture.make()
+        defer { fixture.cleanup() }
+        try fixture.writeFITSLight("sessions/T1/2026-01-10/lights/l1.fit", exptime: 300, instrume: "Cam")
+        try fixture.scan()
+
+        let result = try await fixture.query().snapshot()
+        #expect(result.moonSkyCorrelation == MoonSkyCorrelationSummary.empty)
+        #expect(!result.moonSkyCorrelation.hasEnoughDataToDisplay)
+    }
+
+    /// Wires real `TrendPoint`s (dates with known, independently confirmed
+    /// Moon illumination -- see `MoonSkyCorrelationTests`'s own fixture
+    /// comment for the source dates) through `trendPointsForTesting` and
+    /// checks both halves of the AstroApplication-layer wrapper: (1) it
+    /// defers bucketing entirely to `MoonSkyCorrelation.buckets(points:)`
+    /// (never re-derives band membership itself), and (2) it actually
+    /// calls `MeasuredSkyQuery.magnitudePerArcsec2(fromEPerSecPerArcsec2:)`
+    /// per bucket rather than leaving the mag/arcsec2 reading `nil`.
+    @Test("Moon-sky correlation buckets TrendPoints and converts each bucket's median to mag/arcsec2")
+    func exposesMoonSkyCorrelationWithMagnitudeConversion() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let index = directory.appendingPathComponent("index.sqlite")
+        let db = try SQLiteDB(path: index.path)
+        try db.exec("""
+        CREATE TABLE files(id INTEGER PRIMARY KEY, area TEXT, target TEXT, session_date TEXT, role TEXT, missing INTEGER);
+        CREATE TABLE fits_meta(file_id INTEGER PRIMARY KEY, exptime REAL);
+        """)
+
+        func point(_ target: String, _ date: String, _ background: Double) -> TrendPoint {
+            TrendPoint(target: target, date: date, sessionStartDate: date, backgroundEPerSecPerArcsec2: background)
+        }
+        // 2024-01-11 (0.19% illum, veryDark) x3, 2024-01-25 (99.76%, veryBright) x3
+        // -- both extremes clear `MoonSkyCorrelation.minimumSampleCount`, so a
+        // headline ratio (0.006 / 0.002 = 3.0) is expected.
+        let points = (0..<3).map { point("D\($0)", "2024-01-11", 0.002) }
+            + (0..<3).map { point("B\($0)", "2024-01-25", 0.006) }
+
+        let result = try await InsightsQuery(
+            indexDatabaseForTesting: index,
+            trendPointsForTesting: { points }
+        ).snapshot()
+
+        let moonSky = result.moonSkyCorrelation
+        #expect(moonSky.buckets.count == 4)
+        #expect(moonSky.usableBucketCount == 2)
+        #expect(moonSky.hasEnoughDataToDisplay)
+        #expect(moonSky.headlineRatio == 3.0)
+
+        let veryDark = try #require(moonSky.buckets.first { $0.band == .veryDark })
+        #expect(veryDark.sampleCount == 3)
+        #expect(veryDark.isLowConfidence == false)
+        #expect(veryDark.medianBackgroundEPerSecPerArcsec2 == 0.002)
+        #expect(veryDark.medianMagnitudePerArcsec2 == MeasuredSkyQuery.magnitudePerArcsec2(fromEPerSecPerArcsec2: 0.002))
+
+        let veryBright = try #require(moonSky.buckets.first { $0.band == .veryBright })
+        #expect(veryBright.medianBackgroundEPerSecPerArcsec2 == 0.006)
+        #expect(veryBright.medianMagnitudePerArcsec2 == MeasuredSkyQuery.magnitudePerArcsec2(fromEPerSecPerArcsec2: 0.006))
+
+        let untouchedBands: [MoonSkyCorrelation.IlluminationBand] = [.dark, .bright]
+        for band in untouchedBands {
+            let bucket = try #require(moonSky.buckets.first { $0.band == band })
+            #expect(bucket.sampleCount == 0)
+            #expect(bucket.isLowConfidence)
+            #expect(bucket.medianMagnitudePerArcsec2 == nil)
+        }
+    }
 }

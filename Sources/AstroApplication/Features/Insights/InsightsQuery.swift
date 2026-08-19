@@ -67,6 +67,16 @@ public struct InsightsSnapshot: Equatable, Sendable {
     public let setupUsage: [SetupUsage]
     public let rejectedFrameCount: Int
     public let captureTrendPoints: [CaptureTrendPoint]
+    /// Every measured session (any capture group, whole-night background)
+    /// bucketed by the Moon's illumination fraction on its own date -- "how
+    /// much brighter does this owner's own sky actually read near full
+    /// Moon than under a dark one." Built from `TrendPoint`s (whole
+    /// sessions, `SessionQuality`'s original unit), NOT `captureTrendPoints`
+    /// (per-capture-group) -- the Moon doesn't care which rig was mounted,
+    /// only what night it was, so this reuses every rated session's
+    /// background rather than only ones already resolved to a capture
+    /// group.
+    public let moonSkyCorrelation: MoonSkyCorrelationSummary
     public let isReadOnly: Bool
     public var bestMonth: MonthlyCapture? { months.max { $0.integrationSeconds < $1.integrationSeconds } }
     public var averageIntegrationPerNight: Double {
@@ -197,6 +207,68 @@ public struct CaptureTrendPoint: Equatable, Sendable, Identifiable {
     }
 }
 
+/// One `MoonSkyCorrelation.IlluminationBand`'s display-ready aggregate --
+/// `AstroCore`'s pure `MoonSkyCorrelation.Bucket` plus the mag/arcsec2
+/// reading `MeasuredSkyQuery.magnitudePerArcsec2(fromEPerSecPerArcsec2:)`
+/// converts its median flux into (never recomputed here -- that
+/// conversion's zero-point assumption lives in exactly one place).
+public struct MoonSkyBucket: Equatable, Sendable, Identifiable {
+    public let band: MoonSkyCorrelation.IlluminationBand
+    public let sampleCount: Int
+    public let isLowConfidence: Bool
+    public let medianBackgroundEPerSecPerArcsec2: Double?
+    public let medianMagnitudePerArcsec2: Double?
+    public var id: Int { band.rawValue }
+
+    public init(
+        band: MoonSkyCorrelation.IlluminationBand,
+        sampleCount: Int,
+        isLowConfidence: Bool,
+        medianBackgroundEPerSecPerArcsec2: Double?,
+        medianMagnitudePerArcsec2: Double?
+    ) {
+        self.band = band
+        self.sampleCount = sampleCount
+        self.isLowConfidence = isLowConfidence
+        self.medianBackgroundEPerSecPerArcsec2 = medianBackgroundEPerSecPerArcsec2
+        self.medianMagnitudePerArcsec2 = medianMagnitudePerArcsec2
+    }
+}
+
+/// Display-ready wrapper around `MoonSkyCorrelation.Result` -- the
+/// "Moon x sky brightness" card's data.
+public struct MoonSkyCorrelationSummary: Equatable, Sendable {
+    public let buckets: [MoonSkyBucket]
+    public let headlineRatio: Double?
+    public let usableBucketCount: Int
+
+    public init(buckets: [MoonSkyBucket], headlineRatio: Double?, usableBucketCount: Int) {
+        self.buckets = buckets
+        self.headlineRatio = headlineRatio
+        self.usableBucketCount = usableBucketCount
+    }
+
+    /// Fewer than two bands ever reached a trustworthy sample count -- the
+    /// card collapses to the honest "not enough measured sessions yet"
+    /// hint instead of a two-bar chart that can't say anything real.
+    public var hasEnoughDataToDisplay: Bool { usableBucketCount >= 2 }
+
+    /// The empty summary every `moonSkyCorrelation` field starts from when
+    /// no `TrendPoint` provider is wired (e.g. a test fixture that doesn't
+    /// care about this card) -- four empty, low-confidence buckets and no
+    /// headline, matching `MoonSkyCorrelation.buckets(points: [])`.
+    public static let empty = MoonSkyCorrelationSummary(
+        buckets: MoonSkyCorrelation.IlluminationBand.allCases.map {
+            MoonSkyBucket(
+                band: $0, sampleCount: 0, isLowConfidence: true,
+                medianBackgroundEPerSecPerArcsec2: nil, medianMagnitudePerArcsec2: nil
+            )
+        },
+        headlineRatio: nil,
+        usableBucketCount: 0
+    )
+}
+
 public struct InsightsQuery: Sendable {
     typealias CaptureTrendProvider = @Sendable () throws -> [CaptureTrendPoint]
     /// The whole library's session-light `FileRecord`s (any target/date, not
@@ -208,15 +280,24 @@ public struct InsightsQuery: Sendable {
     /// from ever again disagreeing with the target detail page or the CLI
     /// about what "real integration" means.
     typealias LibraryProvider = @Sendable () throws -> (files: [FileRecord], meta: [Int64: FITSMetaRecord], config: AstroConfig)
+    /// Every session on record, `TrendQueries.points`'s own unit -- the
+    /// Moon-correlation card's raw material. A separate provider from
+    /// `CaptureTrendProvider` above: that one is per-capture-group, this
+    /// one is per-WHOLE-SESSION (`SessionQuality`'s original scope, before
+    /// `CaptureTrendPoint` split it), which is what a session-dated Moon
+    /// phase actually keys against.
+    typealias TrendPointsProvider = @Sendable () throws -> [TrendPoint]
 
     private let indexDatabase: URL
     private let captureTrendProvider: CaptureTrendProvider?
     private let libraryProvider: LibraryProvider
+    private let trendPointsProvider: TrendPointsProvider?
 
     init(
         indexDatabaseForTesting: URL,
         captureTrendPointsForTesting: CaptureTrendProvider? = nil,
-        libraryForTesting: LibraryProvider? = nil
+        libraryForTesting: LibraryProvider? = nil,
+        trendPointsForTesting: TrendPointsProvider? = nil
     ) {
         self.indexDatabase = indexDatabaseForTesting
         self.captureTrendProvider = captureTrendPointsForTesting
@@ -225,6 +306,7 @@ public struct InsightsQuery: Sendable {
         // schema) get an empty library rather than being forced to build a
         // full scanned fixture just to satisfy this parameter.
         self.libraryProvider = libraryForTesting ?? { ([], [:], AstroConfig()) }
+        self.trendPointsProvider = trendPointsForTesting
     }
 
     public static func production(rootURL: URL) throws -> Self {
@@ -248,6 +330,10 @@ public struct InsightsQuery: Sendable {
                 let files = try database.allFiles(includeMissing: false)
                 let meta = try database.fitsMetaBatch(fileIDs: files.compactMap(\.id))
                 return (files, meta, config)
+            },
+            trendPointsForTesting: {
+                let database = try Database(path: index.path)
+                return try TrendQueries.points(db: database, config: config)
             }
         )
     }
@@ -341,13 +427,41 @@ public struct InsightsQuery: Sendable {
             .map { SetupUsage(camera: $0.camera, focalLength: $0.focalLength, frameCount: setupFrames[$0] ?? 0, integrationSeconds: setupSeconds[$0] ?? 0) }
 
         let capturePoints = try captureTrendProvider?() ?? []
+        let trendPoints = try trendPointsProvider?() ?? []
         return InsightsSnapshot(
             nightCount: nightCount, targetCount: targetCount, frameCount: dedupedLights.count,
             integrationSeconds: dedupedLights.reduce(0) { $0 + exptime($1) },
             grossIntegrationSeconds: grossIntegrationSeconds,
             months: months, topTargets: targets,
             filterUsage: filterUsage, setupUsage: setupUsage,
-            rejectedFrameCount: rejectedFrameCount, captureTrendPoints: capturePoints, isReadOnly: true
+            rejectedFrameCount: rejectedFrameCount, captureTrendPoints: capturePoints,
+            moonSkyCorrelation: Self.moonSkyCorrelationSummary(points: trendPoints),
+            isReadOnly: true
+        )
+    }
+
+    /// Wraps `MoonSkyCorrelation.buckets(points:)` (`AstroCore`, pure) with
+    /// the one conversion it deliberately doesn't do itself: each bucket's
+    /// median flux into a mag/arcsec2 reading, via `MeasuredSkyQuery.
+    /// magnitudePerArcsec2(fromEPerSecPerArcsec2:)` -- called, never
+    /// copied, so this card and Planning's own "own sky: mu~=X" caption can
+    /// never quietly disagree about what a measured flux means in
+    /// magnitudes.
+    static func moonSkyCorrelationSummary(points: [TrendPoint]) -> MoonSkyCorrelationSummary {
+        let result = MoonSkyCorrelation.buckets(points: points)
+        let buckets = result.buckets.map { bucket in
+            MoonSkyBucket(
+                band: bucket.band,
+                sampleCount: bucket.sampleCount,
+                isLowConfidence: bucket.isLowConfidence,
+                medianBackgroundEPerSecPerArcsec2: bucket.medianBackgroundEPerSecPerArcsec2,
+                medianMagnitudePerArcsec2: bucket.medianBackgroundEPerSecPerArcsec2.flatMap {
+                    MeasuredSkyQuery.magnitudePerArcsec2(fromEPerSecPerArcsec2: $0)
+                }
+            )
+        }
+        return MoonSkyCorrelationSummary(
+            buckets: buckets, headlineRatio: result.headlineRatio, usableBucketCount: result.usableBucketCount
         )
     }
 
