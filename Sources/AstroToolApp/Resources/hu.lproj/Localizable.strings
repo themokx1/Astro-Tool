@@ -2333,3 +2333,86 @@
    form keeps the fit label as its own clause instead, which reads
    correctly capitalized in both languages. */
 "With %@: %@" = "A(z) %@ felszereléssel: %@";
+
+/* Imaging-setup CRUD (V2 UI/UX audit, 2026-08-19): the last missing V2
+   settings surface -- V1's own `EquipmentSettingsView` has always been able
+   to add/edit/delete `AstroConfig.imagingSetups`, but V1's UI is unreachable
+   from the default V2 shell, so an owner using V2 exclusively had no way at
+   all to create/edit/delete a setup; only the three hardcoded
+   `PlanningStore.defaultSetups` samples were ever visible. New tab
+   `ImagingSetupsSettingsView` (V2SettingsView.swift), backed by the new
+   `EquipmentSetupsStore`; its add/edit sheet is `ImagingSetupEditorView`.
+   Tab title translated as "Felszerelés" per the owner's own naming for this
+   exact feature in V1's tab (`EquipmentSettingsView`'s own header comment),
+   not a literal "Képalkotó setupok", since "Equipment" (the V2 Filters tab,
+   translated "Eszközök") already occupies that other name in this same
+   TabView. */
+"Imaging Setups" = "Felszerelés";
+"Saved imaging setups" = "Mentett képalkotó setupok";
+"No imaging setups saved yet. Add your camera and optics so Planning can frame targets for your real gear." = "Még nincs mentett képalkotó setup. Add hozzá a kamerádat és optikádat, hogy a Tervezés a valós felszerelésedhez tudja méretezni a látómezőt.";
+"Add Setup…" = "Setup hozzáadása…";
+"Edit…" = "Szerkesztés…";
+"Delete…" = "Törlés…";
+"Delete Setup" = "Setup törlése";
+"Planning falls back to another saved setup, or to its built-in defaults if none remain. This cannot be undone." = "A Tervezés átvált egy másik mentett setupra, vagy a beépített alapértelmezésekre, ha egy sem marad. Ez nem vonható vissza.";
+"Planning uses these to frame targets for your real camera and optics -- the setup marked default opens first." = "A Tervezés ezekből méretezi a célpontok látómezejét a valós kamerádhoz és optikádhoz -- az alapértelmezettként megjelölt setup nyílik meg elsőként.";
+/* `ImagingSetupsSettingsView.deletionTitle(for:)`: a switch/function-
+   returned `LocalizedStringKey`, invisible to the extraction script's
+   literal-argument scan -- same hand-added shape as `removalTitle`'s own
+   "Remove \"%@\"?" entry above, for the identical interpolated-title
+   reason. */
+"Delete \"%@\"?" = "„%@” törlése?";
+/* `Table` column headers, `ImagingSetupsSettingsView`/`ImagingSetupEditorView`. */
+"Camera kind" = "Kamera jellege";
+"Default" = "Alapértelmezett";
+"Default setup" = "Alapértelmezett setup";
+"Width" = "Szélesség";
+"Height" = "Magasság";
+"Optics" = "Optika";
+"Zoom / variable focal length" = "Zoom / változó fókusztáv";
+"Minimum focal length" = "Minimum fókusztáv";
+"Maximum focal length" = "Maximum fókusztáv";
+"Default focal length" = "Alapértelmezett fókusztáv";
+"F-number" = "F-szám";
+"Relative system efficiency" = "Relatív rendszerhatékonyság";
+"Used for Planning's integration-time estimate; 1.0 = reference." = "A Tervezés integrációs idő becsléséhez használva; 1,0 = referencia.";
+"Default filter (optional)" = "Alapértelmezett szűrő (opcionális)";
+"Filter name, e.g. SV220" = "Szűrő neve, pl. SV220";
+"Used when a frame from this setup's camera has no FITS FILTER header, capture group, or capture-slug name to fall back on." = "Akkor kerül elő, ha ennek a setupnak a kamerájából származó képen nincs FITS FILTER fejléc, capture csoport vagy capture-szlug név, amire támaszkodni lehetne.";
+/* `ImagingSetupEditorView`'s numeric fields: `TextField(_, value:, format:
+   .number)` placeholders/units, plus `focalLengthText`'s zoom-range
+   interpolation ("%@–%@ mm" is the extraction script's own %@ rendering of
+   two chained `\(_, format: .number)` interpolations). */
+"1.0" = "1,0";
+"mm" = "mm";
+"%@–%@ mm" = "%@–%@ mm";
+/* `ImagingSetupEditorView.errorMessage(for:)`/`.validationMessage(_:)`: the
+   shared `EquipmentSetupsStore.EquipmentSetupsError`/`ImagingSetupValidationError`
+   surfaced as localized, human text -- both switch-returned `LocalizedStringKey`s,
+   same hand-added reason as every other switch-returned key in this file.
+   The validation wording mirrors V1's own `EquipmentSettingsView
+   .validationMessage(_:)` Hungarian text exactly, translated back into the
+   English source key this file's convention requires. */
+"Open a library before managing imaging setups." = "Előbb nyiss meg egy könyvtárat a képalkotó setupok kezeléséhez.";
+"Another saved setup already has this name." = "Ezzel a névvel már van mentett setup.";
+"Could not save this setup. Try again." = "Nem sikerült elmenteni ezt a setupot. Próbáld újra.";
+"Every setup needs a name." = "Minden setupnak nevet kell adni.";
+"Enter the camera name for every setup." = "Minden setupnál add meg a kamera nevét.";
+"Choose a camera kind for every setup." = "Minden setupnál válaszd ki a kamera jellegét.";
+"Sensor width and height must be positive numbers." = "A szenzor szélessége és magassága pozitív szám legyen.";
+"Focal length must be positive, and the minimum cannot exceed the maximum." = "A fókusztáv pozitív legyen, és a minimum nem lehet nagyobb a maximumnál.";
+"The default focal length must fall within the zoom range." = "Az alapértelmezett fókusztávnak a zoomtartományba kell esnie.";
+"The f-number must be a positive number." = "Az f-szám pozitív szám legyen.";
+"Relative system efficiency must be a positive number (1.0 = reference)." = "A relatív rendszerhatékonyság pozitív szám legyen (1,0 = referencia).";
+/* `CameraKind.settingsLabel` (`ImagingSetupEditorView`'s own private
+   extension) -- switch-returned, hand-added for the same reason as every
+   other switch-returned key above. `SignalMode.settingsLabel` deliberately
+   reuses this file's existing "Broadband"/"Dual-band"/"Narrowband"/
+   "Not specified"/"LRGB"/"Luminance"/"Unfiltered"/"Other" entries
+   (`EquipmentFilterPassband.title`'s own established vocabulary), so it
+   needs no new entries of its own. */
+"Choose a kind" = "Válassz típust";
+"Dedicated astro camera" = "Dedikált asztrokamera";
+"Unmodified color" = "Nem modifikált színes";
+"Astro-modified color" = "Asztromodifikált színes";
+"Monochrome" = "Monokróm";

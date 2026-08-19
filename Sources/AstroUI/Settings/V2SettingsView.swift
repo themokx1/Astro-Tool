@@ -19,6 +19,7 @@ public struct V2SettingsView: View {
             LibrariesSettingsView(appModel: appModel).tabItem { Label("Libraries & Safety", systemImage: "externaldrive.badge.checkmark") }
             LocationSettingsView(appModel: appModel).tabItem { Label("Location", systemImage: "location") }
             PlanningSettingsView().tabItem { Label("Planning", systemImage: "sparkles") }
+            ImagingSetupsSettingsView(appModel: appModel).tabItem { Label("Imaging Setups", systemImage: "camera.on.rectangle") }
             EquipmentEvaluationSettingsView(store: store).tabItem { Label("Equipment", systemImage: "camera.aperture") }
             IntegrationsSupportSettingsView(appModel: appModel, store: store).tabItem { Label("Support", systemImage: "lifepreserver") }
         }
@@ -561,6 +562,362 @@ private struct EquipmentEvaluationSettingsView: View {
     private func removalTitle(for filter: EquipmentFilter) -> LocalizedStringKey {
         let name = [filter.manufacturer, filter.model].filter { !$0.isEmpty }.joined(separator: " ")
         return "Remove \"\(name)\"?"
+    }
+}
+
+/// V2 UI/UX audit: the imaging-setup CRUD V2's default shell never had. V1's
+/// `EquipmentSettingsView` (`Sources/AstroToolApp`) has always been able to
+/// add/edit/delete `AstroConfig.imagingSetups`, but V1's UI is unreachable
+/// from the default V2 shell -- so an owner using V2 exclusively had no way
+/// at all to tell Planning about their real camera/optics combinations, only
+/// the three hardcoded `PlanningStore.defaultSetups` samples. Same
+/// cross-scene rebuild pattern `LocationSettingsView` above already uses:
+/// `EquipmentSetupsStore` reads `AppModel.currentLibraryRootURL` only at
+/// construction, so this view rebuilds the store on `.onChange` rather than
+/// relying on a live binding across the two separate scenes.
+private struct ImagingSetupsSettingsView: View {
+    let appModel: AppModel
+    @State private var store: EquipmentSetupsStore
+    @State private var selectedSetupID: String?
+    @State private var isAddingSetup = false
+    @State private var editingSetup: ImagingSetupProfile?
+    @State private var pendingDeletion: ImagingSetupProfile?
+
+    init(appModel: AppModel) {
+        self.appModel = appModel
+        _store = State(initialValue: EquipmentSetupsStore(rootURL: appModel.currentLibraryRootURL))
+    }
+
+    var body: some View {
+        Form {
+            if !store.hasLibraryOpen {
+                Section {
+                    Label("Open a library first, using Choose Image Library… on Home.", systemImage: "externaldrive.badge.xmark")
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("v2.settings.equipment-setups.no-library")
+            } else {
+                Section("Saved imaging setups") {
+                    if store.setups.isEmpty {
+                        Text("No imaging setups saved yet. Add your camera and optics so Planning can frame targets for your real gear.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Table(store.setups, selection: $selectedSetupID) {
+                            TableColumn("Name") { setup in
+                                HStack(spacing: 4) {
+                                    Text(setup.name)
+                                    if setup.isDefault {
+                                        Image(systemName: "star.fill")
+                                            .foregroundStyle(AstroTokens.Color.attention)
+                                            .accessibilityLabel(Text("Default"))
+                                    }
+                                }
+                            }
+                            TableColumn("Camera") { setup in Text(setup.cameraName) }
+                            TableColumn("Focal length") { setup in focalLengthText(setup) }
+                        }
+                        .frame(maxHeight: 220)
+                        .accessibilityIdentifier("v2.settings.equipment-setups.table")
+                    }
+                    HStack {
+                        Button("Add Setup…") { isAddingSetup = true }
+                            .accessibilityIdentifier("v2.settings.equipment-setups.add")
+                        Button("Edit…") {
+                            if let setup = selectedSetup { editingSetup = setup }
+                        }
+                        .disabled(selectedSetup == nil)
+                        Button("Delete…", role: .destructive) {
+                            if let setup = selectedSetup { pendingDeletion = setup }
+                        }
+                        .disabled(selectedSetup == nil)
+                    }
+                    if let saveMessage = store.saveMessage {
+                        Text(saveMessage).foregroundStyle(AstroTokens.Color.ok)
+                    }
+                    Text("Planning uses these to frame targets for your real camera and optics -- the setup marked default opens first.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .sheet(isPresented: $isAddingSetup) {
+            ImagingSetupEditorView(store: store, original: nil)
+        }
+        .sheet(item: $editingSetup) { setup in
+            ImagingSetupEditorView(store: store, original: setup)
+        }
+        .confirmationDialog(
+            pendingDeletion.map { deletionTitle(for: $0) } ?? "Delete this setup?",
+            isPresented: Binding(
+                get: { pendingDeletion != nil },
+                set: { isPresented in if !isPresented { pendingDeletion = nil } }
+            )
+        ) {
+            Button("Delete Setup", role: .destructive) {
+                if let pendingDeletion { store.delete(id: pendingDeletion.id) }
+                selectedSetupID = nil
+                pendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { pendingDeletion = nil }
+        } message: {
+            Text("Planning falls back to another saved setup, or to its built-in defaults if none remain. This cannot be undone.")
+        }
+        .onChange(of: appModel.currentLibraryRootURL) { _, newRootURL in
+            // Settings is a separate scene (see `LocationSettingsView`'s own
+            // doc comment): rebuilding the store is the only way this tab
+            // notices a library opening or switching afterward.
+            store = EquipmentSetupsStore(rootURL: newRootURL)
+            selectedSetupID = nil
+        }
+        .accessibilityIdentifier("v2.settings.equipment-setups")
+    }
+
+    private var selectedSetup: ImagingSetupProfile? {
+        guard let selectedSetupID else { return nil }
+        return store.setups.first { $0.id == selectedSetupID }
+    }
+
+    private func focalLengthText(_ setup: ImagingSetupProfile) -> Text {
+        setup.isZoom
+            ? Text("\(setup.focalLengthMinMM, format: .number)–\(setup.focalLengthMaxMM, format: .number) mm")
+            : Text("\(setup.focalLengthMinMM, format: .number) mm")
+    }
+
+    // W2-10-style fix (see `effectiveSourceCaption`/`removalTitle` above in
+    // this file): a plain `String` default in the `??` below would infer the
+    // WHOLE expression as `String`, never translating through
+    // `confirmationDialog`'s title. `LocalizedStringKey`'s own interpolation
+    // takes the setup's name as genuine DATA, matching `removalTitle`'s own
+    // shape exactly; hand-added to hu.lproj for the same reason (the
+    // extraction script cannot see a switch/function-returned key).
+    private func deletionTitle(for setup: ImagingSetupProfile) -> LocalizedStringKey {
+        "Delete \"\(setup.name)\"?"
+    }
+}
+
+/// The add/edit sheet for one `ImagingSetupProfile` -- shared by both
+/// `ImagingSetupsSettingsView`'s "Add Setup…" and "Edit…" actions, keyed by
+/// whether `original` is `nil`. All numeric fields bind directly to `Double`
+/// via `TextField(_, value:, format: .number)` (the same pattern
+/// `PlanningSettingsView`'s reference-baseline fields already use), so this
+/// view does no manual text parsing of its own -- domain validation is
+/// entirely `ImagingSetupProfile.validate()`'s, surfaced through
+/// `EquipmentSetupsStore.lastError`.
+private struct ImagingSetupEditorView: View {
+    let store: EquipmentSetupsStore
+    let original: ImagingSetupProfile?
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: ImagingSetupDraft
+
+    init(store: EquipmentSetupsStore, original: ImagingSetupProfile?) {
+        self.store = store
+        self.original = original
+        _draft = State(initialValue: original.map(ImagingSetupDraft.init(profile:)) ?? ImagingSetupDraft())
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section("Setup") {
+                    TextField("Name", text: $draft.name)
+                        .accessibilityIdentifier("v2.settings.equipment-setups.editor.name")
+                    TextField("Camera", text: $draft.cameraName)
+                    Picker("Camera kind", selection: $draft.cameraKind) {
+                        ForEach(CameraKind.allCases, id: \.self) { kind in
+                            Text(kind.settingsLabel).tag(kind)
+                        }
+                    }
+                    Toggle("Default setup", isOn: $draft.isDefault)
+                }
+                Section("Sensor") {
+                    LabeledContent("Width") { TextField("mm", value: $draft.sensorWidthMM, format: .number).frame(width: 90) }
+                    LabeledContent("Height") { TextField("mm", value: $draft.sensorHeightMM, format: .number).frame(width: 90) }
+                }
+                Section("Optics") {
+                    Toggle("Zoom / variable focal length", isOn: $draft.isZoom)
+                    if draft.isZoom {
+                        LabeledContent("Minimum focal length") { TextField("mm", value: $draft.focalLengthMinMM, format: .number).frame(width: 90) }
+                        LabeledContent("Maximum focal length") { TextField("mm", value: $draft.focalLengthMaxMM, format: .number).frame(width: 90) }
+                        LabeledContent("Default focal length") { TextField("mm", value: $draft.defaultFocalLengthMM, format: .number).frame(width: 90) }
+                    } else {
+                        LabeledContent("Focal length") { TextField("mm", value: $draft.focalLengthMinMM, format: .number).frame(width: 90) }
+                    }
+                    LabeledContent("F-number") { TextField("f/", value: $draft.fNumber, format: .number).frame(width: 90) }
+                    LabeledContent("Relative system efficiency") { TextField("1.0", value: $draft.relativeEfficiency, format: .number).frame(width: 90) }
+                    Text("Used for Planning's integration-time estimate; 1.0 = reference.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Default filter (optional)") {
+                    Picker("Passband", selection: $draft.defaultFilterSignalMode) {
+                        ForEach(SignalMode.allCases, id: \.self) { mode in
+                            Text(LocalizedStringKey(mode.settingsLabel)).tag(mode)
+                        }
+                    }
+                    TextField("Filter name, e.g. SV220", text: $draft.defaultFilterName)
+                    Text("Used when a frame from this setup's camera has no FITS FILTER header, capture group, or capture-slug name to fall back on.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if let lastError = store.lastError {
+                    Text(errorMessage(for: lastError))
+                        .foregroundStyle(AstroTokens.Color.critical)
+                        .accessibilityIdentifier("v2.settings.equipment-setups.editor.error")
+                }
+            }
+            .formStyle(.grouped)
+            Divider()
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Save") {
+                    if store.save(draft.makeProfile()) { dismiss() }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("v2.settings.equipment-setups.editor.save")
+            }
+            .padding()
+        }
+        .frame(width: 460, height: 560)
+        .accessibilityIdentifier("v2.settings.equipment-setups.editor")
+    }
+
+    private func errorMessage(for error: EquipmentSetupsStore.EquipmentSetupsError) -> LocalizedStringKey {
+        switch error {
+        case .noLibraryOpen: "Open a library before managing imaging setups."
+        case .duplicateName: "Another saved setup already has this name."
+        case .saveFailed: "Could not save this setup. Try again."
+        case .validation(let validationError): validationMessage(validationError)
+        }
+    }
+
+    // Hand-added to hu.lproj (see `effectiveSourceCaption`'s own doc comment
+    // above for why a switch-returned `LocalizedStringKey` needs that): the
+    // shared `ImagingSetupValidationError` surfaced as localized, human text
+    // rather than its raw case name.
+    private func validationMessage(_ error: ImagingSetupValidationError) -> LocalizedStringKey {
+        switch error {
+        case .emptyName: "Every setup needs a name."
+        case .emptyCameraName: "Enter the camera name for every setup."
+        case .unspecifiedCameraKind: "Choose a camera kind for every setup."
+        case .invalidSensorSize: "Sensor width and height must be positive numbers."
+        case .invalidFocalRange: "Focal length must be positive, and the minimum cannot exceed the maximum."
+        case .defaultFocalLengthOutsideRange: "The default focal length must fall within the zoom range."
+        case .invalidFNumber: "The f-number must be a positive number."
+        case .invalidRelativeEfficiency: "Relative system efficiency must be a positive number (1.0 = reference)."
+        }
+    }
+}
+
+/// Editable draft for one `ImagingSetupProfile` -- `isZoom` is a plain
+/// stored toggle here (unlike `ImagingSetupProfile.isZoom`, which is
+/// DERIVED from the min/max focal length actually being different) so a
+/// fixed-optic setup being edited can be told apart from a one-off zoom
+/// whose min happens to equal its max, and so the "Zoom" toggle has
+/// something stable to bind to while the user is still typing the range.
+private struct ImagingSetupDraft {
+    var id: String
+    var name: String
+    var cameraName: String
+    var cameraKind: CameraKind
+    var sensorWidthMM: Double
+    var sensorHeightMM: Double
+    var isZoom: Bool
+    var focalLengthMinMM: Double
+    var focalLengthMaxMM: Double
+    var defaultFocalLengthMM: Double
+    var fNumber: Double
+    var relativeEfficiency: Double
+    var isDefault: Bool
+    var defaultFilterSignalMode: SignalMode
+    var defaultFilterName: String
+
+    init() {
+        id = UUID().uuidString
+        name = ""
+        cameraName = ""
+        cameraKind = .unspecified
+        sensorWidthMM = 23.5
+        sensorHeightMM = 15.6
+        isZoom = false
+        focalLengthMinMM = 50
+        focalLengthMaxMM = 50
+        defaultFocalLengthMM = 50
+        fNumber = 5
+        relativeEfficiency = 1
+        isDefault = false
+        defaultFilterSignalMode = .unknown
+        defaultFilterName = ""
+    }
+
+    init(profile: ImagingSetupProfile) {
+        id = profile.id
+        name = profile.name
+        cameraName = profile.cameraName
+        cameraKind = profile.cameraKind
+        sensorWidthMM = profile.sensorWidthMM
+        sensorHeightMM = profile.sensorHeightMM
+        isZoom = profile.isZoom
+        focalLengthMinMM = profile.focalLengthMinMM
+        focalLengthMaxMM = profile.isZoom ? profile.focalLengthMaxMM : profile.focalLengthMinMM
+        defaultFocalLengthMM = profile.isZoom ? profile.defaultFocalLengthMM : profile.focalLengthMinMM
+        fNumber = profile.fNumber
+        relativeEfficiency = profile.relativeEfficiency
+        isDefault = profile.isDefault
+        defaultFilterSignalMode = profile.defaultFilterSignalMode
+        defaultFilterName = profile.defaultFilterName ?? ""
+    }
+
+    func makeProfile() -> ImagingSetupProfile {
+        let minFocal = focalLengthMinMM
+        let maxFocal = isZoom ? focalLengthMaxMM : minFocal
+        let defaultFocal = isZoom ? defaultFocalLengthMM : minFocal
+        let trimmedFilterName = defaultFilterName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ImagingSetupProfile(
+            id: id,
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            cameraName: cameraName.trimmingCharacters(in: .whitespacesAndNewlines),
+            cameraKind: cameraKind,
+            sensorWidthMM: sensorWidthMM, sensorHeightMM: sensorHeightMM,
+            focalLengthMinMM: minFocal, focalLengthMaxMM: maxFocal, defaultFocalLengthMM: defaultFocal,
+            fNumber: fNumber, relativeEfficiency: relativeEfficiency, isDefault: isDefault,
+            defaultFilterSignalMode: defaultFilterSignalMode,
+            defaultFilterName: trimmedFilterName.isEmpty ? nil : trimmedFilterName
+        )
+    }
+}
+
+private extension CameraKind {
+    // Hand-added to hu.lproj (see `effectiveSourceCaption`'s own doc comment
+    // above): a switch-returned `LocalizedStringKey` is invisible to
+    // `scripts/extract-localizable-strings.swift`'s literal-argument scan.
+    var settingsLabel: LocalizedStringKey {
+        switch self {
+        case .unspecified: "Choose a kind"
+        case .dedicatedAstro: "Dedicated astro camera"
+        case .unmodifiedColor: "Unmodified color"
+        case .modifiedColor: "Astro-modified color"
+        case .monochrome: "Monochrome"
+        }
+    }
+}
+
+private extension SignalMode {
+    // Task 5b (`EquipmentFilterPassband.title`'s own doc comment): stays
+    // `String`-returning so this reuses the SAME hu.lproj entries that type
+    // already established for the four shared cases ("Broadband",
+    // "Dual-band", "Narrowband", "Not specified") -- wrapped as
+    // `LocalizedStringKey` only at the `Text(...)` call site above.
+    var settingsLabel: String {
+        switch self {
+        case .broadband: "Broadband"
+        case .dualBand: "Dual-band"
+        case .narrowband: "Narrowband"
+        case .lrgb: "LRGB"
+        case .luminance: "Luminance"
+        case .unfiltered: "Unfiltered"
+        case .other: "Other"
+        case .unknown: "Not specified"
+        }
     }
 }
 
