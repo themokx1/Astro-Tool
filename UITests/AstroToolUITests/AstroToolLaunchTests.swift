@@ -150,9 +150,22 @@ final class AstroToolLaunchTests: XCTestCase {
         // the GESTURE (not the assertion) a couple of times before failing,
         // and measure the budget from the attempt that actually landed.
         var pushStart = Date()
+        // The row is WIDER than the window on a small display (the fixture
+        // table's columns overflow horizontally), so a row-center double
+        // click can land outside the safely-hittable region. Aim at real
+        // cell content first, then fall back to the row itself and to an
+        // explicit near-left coordinate.
         for attempt in 0..<3 {
             pushStart = Date()
-            firstRow.doubleClick()
+            switch attempt {
+            case 0:
+                let text = firstRow.staticTexts.firstMatch
+                (text.exists ? text : firstRow).doubleClick()
+            case 1:
+                firstRow.doubleClick()
+            default:
+                firstRow.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).doubleClick()
+            }
             if workspace.waitForExistence(timeout: 4) { break }
             if attempt == 2 {
                 XCTFail("Double-clicking a project row must push the project workspace")
