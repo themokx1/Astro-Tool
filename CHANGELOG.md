@@ -8,6 +8,47 @@ történik.
 
 ## [Unreleased]
 
+## [2.0.0-rc.7] - 2026-08-19
+
+A szakértő kiadás: egy szenior-asztrofotós szemlélettel végzett audit, amely a
+teljes égi motort független számítással igazolta (percre pontos), és minden
+talált hibát és hiányt bevitt.
+
+### Hozzáadva
+
+- **Munkára hajtó Kezdőlap**: „N éjszaka képkockái még értékeletlenek" kártya
+  egy-gombos értékeléssel és szenzorprofil-méréssel; felhős esténél
+  „Legközelebbi tiszta éjszaka: …" a 7 napos előrejelzésből; „felhős éjszaka =
+  dark-éjszaka" kártya a hiányzó kalibrációkkal.
+- **Meridián-átfordulás jelzés**: ahol a delelés a ma esti ablakon belülre
+  esik, a sor jelzi („delelés 23:50 — meridián-átfordulás várható"), új
+  szójegyzék-szócikkel.
+- **Mozaik panel-főkönyv**: panelenkénti lemaradás a legjobb panelhez képest,
+  és domináns eltérésnél a projekt következő lépése a kiegyenlítés — előtöltött
+  Új session-nel. (Csak plate-solve-olt képkockákból számol; nem talál ki
+  deficitet.)
+- Az integráció-becslés megmondja, mire épül („μ=21 égi háttérrel becsülve"),
+  és 3+ mért sessiontől a saját méréseidből származó égi háttérrel számol.
+
+### Javítva
+
+- **A Hold csak akkor büntet, ha fent van**: a tervezés a Hold horizont
+  feletti idejével súlyoz a célpont látható ablakában; a 60%/40°-os
+  szikla-vétó helyett folytonos függvény — egyetlen közös képlet a
+  pontszámnak, a havi nézetnek és a vétónak.
+- **Egy fizikai rig egy setup**: a plate-solve által finomított gyújtótáv
+  (255/256/261/262 mm) nem darabolja szét az összeállítást; az
+  expozíció-tanács a teljes anyagot számolja.
+- **A duoband szűrő látszik**: fejléc nélküli OSC-képkockák a capture-mappa
+  vagy -csoport jelmódját öröklik (pl. sv220_dual-band), és a setuphoz
+  alapértelmezett szűrő is rendelhető.
+- **A beolvasás megőrzi a döntéseidet**: a sorozat-azonosítók változásakor a
+  képkocka-döntések átkötődnek az új sorozatokhoz — e nélkül a következő
+  beolvasás hibával leállt volna, és a triázs-munka elveszettnek látszott
+  volna.
+- A két integráció-motor (cél és idő) azonos órákat ad; ablak-széli időpont
+  nem jelenik meg delelésként; a read-noise arány magyarázata pontos.
+
 ## [2.0.0-rc.6] - 2026-08-18
 
 ### Hozzáadva
