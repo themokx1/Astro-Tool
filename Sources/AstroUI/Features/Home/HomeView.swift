@@ -456,19 +456,32 @@ public struct HomeView: View {
     }
 
     /// "N nights still have unrated frames", plus " · No sensor profile has
-    /// been measured yet" when true -- two distinct `Text` values combined
-    /// with `+`, not a ternary of two literals (the same trap this file's
-    /// own `libraryOverview` comment above already documents), so the
-    /// sensor clause's own presence/absence can never silently break
+    /// been measured yet" when true, plus " · N frames cannot be measured
+    /// (RAW format not supported)" when the library has any -- three
+    /// distinct `Text` values combined with `+` (never a ternary of
+    /// literals, the same trap this file's own `libraryOverview` comment
+    /// documents), reduced the same way this file's own `parts.dropFirst().
+    /// reduce(first) { $0 + Text(verbatim: " · ") + $1 }` pattern already
+    /// does, so any clause's own presence/absence can never silently break
     /// localization.
+    ///
+    /// OWNER BUG (2026-08-19 real-library audit): the owner's own library
+    /// has 1550 Canon R8 CR3 frames `NativeStats` can never read -- before
+    /// `RatingCoverageQuery`'s own fix these silently inflated
+    /// `unratedNightCount` forever (a promise "Rate Everything" could never
+    /// keep); now they're excluded from that count, but the card must still
+    /// say WHY it never fully clears for a CR3-heavy library, rather than
+    /// going quiet about them.
     @ViewBuilder
     private func ratingGateMessage(_ gate: HomeSnapshot.RatingGate) -> some View {
         let nightsPart = Text("\(gate.unratedNightCount) nights still have unrated frames")
-        if gate.sensorProfileMeasured {
-            nightsPart
-        } else {
-            nightsPart + Text(verbatim: " · ") + Text("No sensor profile has been measured yet")
-        }
+        let extraParts: [Text] = [
+            gate.sensorProfileMeasured ? nil : Text("No sensor profile has been measured yet"),
+            gate.unmeasurableFrameCount > 0
+                ? Text("\(gate.unmeasurableFrameCount) frames cannot be measured (RAW format not supported)")
+                : nil,
+        ].compactMap { $0 }
+        extraParts.reduce(nightsPart) { $0 + Text(verbatim: " · ") + $1 }
     }
 
     /// The `ProjectRatingRunner` operation this card's own "Rate Everything"

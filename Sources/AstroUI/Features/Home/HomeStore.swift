@@ -254,10 +254,18 @@ public struct HomeSnapshot: Equatable, Sendable {
     public struct RatingGate: Equatable, Sendable {
         public let unratedNightCount: Int
         public let sensorProfileMeasured: Bool
+        /// OWNER BUG (2026-08-19 real-library audit): `RatingCoverageSnapshot.
+        /// unmeasurableFrameCount` passed straight through -- frames (CR3
+        /// today) no rerun of "Rate Everything" can ever produce a score for.
+        /// Surfaced separately so the card can say so honestly instead of
+        /// silently omitting them from `unratedNightCount` with no
+        /// explanation.
+        public let unmeasurableFrameCount: Int
 
-        public init(unratedNightCount: Int, sensorProfileMeasured: Bool) {
+        public init(unratedNightCount: Int, sensorProfileMeasured: Bool, unmeasurableFrameCount: Int = 0) {
             self.unratedNightCount = unratedNightCount
             self.sensorProfileMeasured = sensorProfileMeasured
+            self.unmeasurableFrameCount = unmeasurableFrameCount
         }
 
         /// Nothing left to rate, and a sensor profile is on record -- the
@@ -1013,7 +1021,8 @@ public final class HomeStore {
         let sensorProfiles = try await SensorProfilesQuery.production(rootURL: rootURL).snapshot()
         return HomeSnapshot.RatingGate(
             unratedNightCount: coverage.unratedNightCount,
-            sensorProfileMeasured: !sensorProfiles.profiles.isEmpty
+            sensorProfileMeasured: !sensorProfiles.profiles.isEmpty,
+            unmeasurableFrameCount: coverage.unmeasurableFrameCount
         )
     }
 

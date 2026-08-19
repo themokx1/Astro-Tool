@@ -445,6 +445,28 @@ struct HomeStoreTests {
         #expect(store.snapshot.ratingGate == .clear)
     }
 
+    @Test("A CR3-heavy library's unmeasurable frame count passes through the gate honestly")
+    func configureSurfacesUnmeasurableFrameCount() async throws {
+        // OWNER BUG (2026-08-19 real-library audit): 1550 CR3 frames sit
+        // forever outside `unratedNightCount` (RatingCoverageQuery's own
+        // fix), but the card must still be able to say WHY the gate never
+        // reaches zero for them, rather than silently going quiet.
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in [] },
+            ratingGateProvider: { _ in
+                HomeSnapshot.RatingGate(unratedNightCount: 2, sensorProfileMeasured: true, unmeasurableFrameCount: 1550)
+            }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+
+        #expect(store.snapshot.ratingGate.unmeasurableFrameCount == 1550)
+    }
+
     @Test("No open library means no rating gate to compute, not a stale one carried forward")
     func configureFallsBackToClearRatingGateWithNoRoot() async throws {
         let metadata = try MetadataStore.temporary()

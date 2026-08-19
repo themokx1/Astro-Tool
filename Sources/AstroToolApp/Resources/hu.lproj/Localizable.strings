@@ -2249,3 +2249,10 @@
 "Two rigs tonight" = "Két géped mára";
 "%@ → %@" = "%@ → %@";
 "not decidable" = "nem eldönthető";
+
+/* OWNER BUG (2026-08-19 real-library audit): Home's rating-gate card
+   (HomeView.ratingGateMessage) now names WHY the gate can never fully
+   clear for a library with unmeasurable frames (Canon CR3 today --
+   NativeStats.compute only reads FITS bytes), instead of silently
+   excluding them from unratedNightCount with no explanation. */
+"%lld frames cannot be measured (RAW format not supported)" = "%lld képkocka nem mérhető (a RAW formátum nem támogatott)";
