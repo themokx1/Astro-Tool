@@ -127,3 +127,86 @@ private let honestRemainder: Set<String> = [
     #expect(ResidueMatcher.matchesFilePattern(name: "VeraLux_Alchemy_Linear.fit", config: config))
     #expect(ResidueMatcher.matchesFilePattern(name: "Comet_Stack_work.fit", config: config))
 }
+
+// MARK: - The combined guard: config patterns OR StackDiscovery classification
+//
+// `Scan/Scanner.swift`'s `isNonPromotableSessionResidue` adds a SECOND,
+// code-driven check on top of `ResidueMatcher.isResidue`:
+// `StackDiscovery.classifiesAsStackProduct` -- the exact same starless/
+// starmask/edited/export recognition `stacks/`/`processed`-area variant
+// grouping already applies, reused rather than re-implemented. These tests
+// mirror that OR exactly (never re-deriving the match themselves) and pin
+// its combined coverage/false-positive behavior against the same real
+// library data.
+
+/// The 3 of the 48 wrongly-promoted paths still uncaught even by the
+/// combined guard: bare `Ha.fit`/`Oiii.fit`/`RGB.fit` basenames are
+/// legitimate real narrowband/RGB-combine filter names too, and
+/// `StackDiscovery.variantKind` classifies them `.original` (no starless/
+/// starmask prefix, no edit marker, not an export extension) -- exactly the
+/// same ambiguous bucket a genuine unmarked capture falls into. No safe
+/// pattern or classifier rule exists to tell them apart from here.
+private let combinedGuardHonestRemainder: Set<String> = [
+    "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/Ha.fit",
+    "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/Oiii.fit",
+    "sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/RGB.fit",
+]
+
+/// Exactly what `LibraryScanner.isNonPromotableSessionResidue` does --
+/// duplicated here ONLY as a two-line OR of the two real engines (never a
+/// re-implementation of either one's matching logic), since that method
+/// itself is `private` to `Scanner.swift`.
+private func isNonPromotableSessionResidue(path: String, config: AstroConfig) -> Bool {
+    if ResidueMatcher.isResidue(path: path, config: config) { return true }
+    let fileName = (path as NSString).lastPathComponent
+    return StackDiscovery.classifiesAsStackProduct(fileName: fileName)
+}
+
+@Test func combinedGuardCatches45Of48RealWronglyPromotedFramesIncludingStarlessStarmaskGraxpert() throws {
+    let config = AstroConfig()
+
+    var caught: [String] = []
+    var missed: [String] = []
+    for path in RealLibraryResiduePaths.wronglyPromoted {
+        if isNonPromotableSessionResidue(path: path, config: config) {
+            caught.append(path)
+        } else {
+            missed.append(path)
+        }
+    }
+
+    #expect(caught.count == 45)
+    #expect(Set(missed) == combinedGuardHonestRemainder)
+}
+
+@Test func combinedGuardNeverMatchesAnyScannerReachableCleanSessionLightFrame() throws {
+    let config = AstroConfig()
+
+    let falsePositives = RealLibraryResiduePaths.scannerReachableCleanPaths.filter {
+        isNonPromotableSessionResidue(path: $0, config: config)
+    }
+
+    #expect(
+        falsePositives.isEmpty,
+        "Combined guard wrongly matched \(falsePositives.count) real/other session light frame(s): \(falsePositives.prefix(5))"
+    )
+}
+
+@Test func resultHaAndResultOIIIStackedIntegrationsStayHonestRemainderNotAnInventedPattern() throws {
+    // Flagged while building fixtures for the prior commit: these two rows
+    // are ALSO wrongly promoted (imagetyp=Light, but the filename bakes in a
+    // 12720s total integration and the file sits in a `results/` folder --
+    // not a real single sub), yet their `fits_meta.filter` values (Ha/OIII)
+    // are legitimate real filter names, and `StackDiscovery.variantKind`
+    // classifies `"result_Ha_12720s.fit"`/`"result_OIII_12720s.fit"` as
+    // `.original` (no starless/starmask/edit marker). Per instructions: do
+    // NOT invent a `result_*` residue pattern to catch these -- pin them as
+    // a deliberate, disclosed remainder instead.
+    let config = AstroConfig()
+    #expect(!isNonPromotableSessionResidue(
+        path: "sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_Ha_12720s.fit", config: config
+    ))
+    #expect(!isNonPromotableSessionResidue(
+        path: "sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_OIII_12720s.fit", config: config
+    ))
+}

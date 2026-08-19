@@ -365,6 +365,41 @@ private func insertFile(
     ) == .export_)
 }
 
+// MARK: - classifiesAsStackProduct
+//
+// `Scan/Scanner.swift`'s loose-frame promotion guard needs a plain
+// yes/no answer ("does this filename look like a stack PRODUCT, as opposed
+// to a raw captured sub") without duplicating `variantKind`'s recognition
+// rules -- these tests pin that `classifiesAsStackProduct` is exactly
+// `variantKind(fileName:) != .original`, reusing the SAME engine that
+// already classifies `stacks/`/`processed`-area variants (starless/
+// starmask/edited/export), not a second copy of the predicate.
+
+@Test func classifiesAsStackProductIsTrueForStarlessStarmaskEditedAndExportVariants() throws {
+    #expect(StackDiscovery.classifiesAsStackProduct(
+        fileName: "starless_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_seti_strech.fit"
+    ))
+    #expect(StackDiscovery.classifiesAsStackProduct(
+        fileName: "starmask_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956.fit"
+    ))
+    #expect(StackDiscovery.classifiesAsStackProduct(
+        fileName: "NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_result_HOO_Improved.fit"
+    ))
+    #expect(StackDiscovery.classifiesAsStackProduct(
+        fileName: "NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_seti_strech.jpg"
+    ))
+}
+
+@Test func classifiesAsStackProductIsFalseForAPlainUnmarkedOriginalName() throws {
+    // Same real family, but the bare "_og" original -- no edit markers, no
+    // starless/starmask prefix, not an export extension. This is also
+    // exactly the shape of a genuine ASIAIR-style raw light frame name with
+    // no processing markers, so it must stay `false`.
+    #expect(!StackDiscovery.classifiesAsStackProduct(
+        fileName: "NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og.fit"
+    ))
+}
+
 // MARK: - stem (R8-3)
 
 @Test func stemGroupsRealNGC2244FamilyUnderOneKey() throws {

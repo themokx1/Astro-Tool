@@ -872,6 +872,103 @@ private func makeFixtureWithStaleResiduePromotion() throws -> (fixture: ScanFixt
     #expect(healed.role == .other)
 }
 
+// MARK: - Stack-product recognition (StackDiscovery), the SECOND residue guard
+//
+// `starless_`/`starmask_`/`graxpert`-marked Siril byproducts don't match any
+// `AstroConfig.residuePatterns` default -- adding those tokens there was
+// tried and reverted (breaks `StackDiscovery`'s own stacks/processed-area
+// variant recognition, which treats this exact vocabulary as first-class,
+// WANTED output). Instead, `refineLooseFrameRole`/`healStaleClassification`
+// additionally consult `StackDiscovery.classifiesAsStackProduct` -- the same
+// engine `stacks/`/`processed`-area variant grouping already uses -- so this
+// recognition is code, not config, and applies regardless of what the
+// owner's `config.json` says.
+
+@Test func looseStarlessNamedFrameStaysOtherDespiteLightIMAGETYPEvenWithoutAResiduePattern() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    // "starless_*" matches NO default `residuePatterns` glob (that was
+    // deliberately reverted -- see `AstroConfig.residuePatterns`'s doc
+    // comment) but DOES classify as a stack product via `StackDiscovery`.
+    let relativePath = "sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/starless_stacked_result.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try #require(try fixture.db.file(path: relativePath))
+    #expect(record.role == .other)
+    #expect(record.area == .sessions)
+    // Confirms the config-pattern predicate really doesn't already cover
+    // this name -- otherwise this test wouldn't be exercising the new
+    // stack-product guard at all.
+    #expect(!ResidueMatcher.isResidue(path: relativePath, config: fixture.config))
+}
+
+/// Same shape as `makeFixtureWithStaleResiduePromotion` above, but for a
+/// filename that only the STACK-PRODUCT guard recognizes (no
+/// `residuePatterns` glob matches it).
+private func makeFixtureWithStaleStackProductPromotion() throws -> (fixture: ScanFixture, scanner: LibraryScanner, relativePath: String) {
+    let fixture = try ScanFixture.make()
+    let relativePath = "sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/starmask_stacked_result.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    var record = try #require(try fixture.db.file(path: relativePath))
+    record.role = .light
+    _ = try fixture.db.upsertFile(record)
+
+    return (fixture, scanner, relativePath)
+}
+
+@Test func healDemotesPreviouslyPromotedStackProductRowBackToOther() throws {
+    let (fixture, scanner, relativePath) = try makeFixtureWithStaleStackProductPromotion()
+    defer { fixture.cleanup() }
+
+    let second = try scanner.scan()
+    #expect(second.reclassified == 1)
+
+    let healed = try #require(try fixture.db.file(path: relativePath))
+    #expect(healed.role == .other)
+}
+
+@Test func healDemotionOfStackProductRowIsIdempotentOnRescan() throws {
+    let (fixture, scanner, relativePath) = try makeFixtureWithStaleStackProductPromotion()
+    defer { fixture.cleanup() }
+
+    _ = try scanner.scan()
+    let third = try scanner.scan()
+    #expect(third.reclassified == 0)
+
+    let healed = try #require(try fixture.db.file(path: relativePath))
+    #expect(healed.role == .other)
+}
+
 @Test func normalUnchangedFileHasNoRowChurn() throws {
     let fixture = try ScanFixture.make()
     defer { fixture.cleanup() }

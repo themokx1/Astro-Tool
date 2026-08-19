@@ -43,6 +43,28 @@ enum RealLibraryResiduePaths {
     static let otherSessionLightPaths: [String] = rawOtherSessionLightPaths
         .split(separator: "\n").map(String.init)
 
+    /// The 35 `sessions`-area, role='light', `.fit`/`.fits`/`.fz`, path-role
+    /// `.other` files -- i.e. exactly the shape `LibraryScanner`'s
+    /// `refineLooseFrameRole`/`healStaleClassification` guards actually
+    /// evaluate -- that are NOT in `wronglyPromoted` and that the COMBINED
+    /// guard (`ResidueMatcher.isResidue` OR
+    /// `StackDiscovery.classifiesAsStackProduct`) correctly leaves alone.
+    /// Deliberately narrower than `otherSessionLightPaths` (which also
+    /// includes thumbnail `.png`s and files already sitting inside a real
+    /// `lights/` folder -- neither shape `LibraryScanner`'s guard ever
+    /// actually sees, since it's gated on extension and path-role first).
+    /// This is a MIX of genuine single-sub captures (`Light_..._0001.fit`
+    /// timestamped frames) and `_og`/plain total-exposure-named finished
+    /// STACKS with no edit marker at all -- `StackVariantKind.original`
+    /// deliberately covers both (see `classifiesAsStackProduct`'s doc
+    /// comment), since telling them apart isn't possible from the filename
+    /// alone without risking a real sub. That means some of these 35 may
+    /// still be undetected pollution the combined guard can't safely reach
+    /// -- an honest, disclosed limitation, not a claim that all 35 are
+    /// verified real subs.
+    static let scannerReachableCleanPaths: [String] = rawScannerReachableCleanPaths
+        .split(separator: "\n").map(String.init)
+
     private static let rawWronglyPromoted = """
 sessions/C2025_R3_C2025_R3_Panstarrs/2026-04-18/Comet_Stack_work.fit
 sessions/C2025_R3_C2025_R3_Panstarrs/2026-04-18/comet_starless_r_bkg_pp_lights_stacked_work.fit
@@ -4267,6 +4289,44 @@ sessions/NGC_7000_North_American_Nebula/2026-05-23/lights/Light_NGC 7000_120.0s_
 sessions/NGC_7000_North_American_Nebula/2026-05-23/lights/Light_NGC 7000_120.0s_Bin1_2600MC_gain100_20260523-034522_178deg_-10.0C_0142.fit
 sessions/NGC_7000_North_American_Nebula/2026-05-23/lights/Light_NGC 7000_120.0s_Bin1_2600MC_gain100_20260523-034522_178deg_-10.0C_0142.info.txt
 sessions/NGC_7000_North_American_Nebula/2026-05-23/lights/Light_NGC 7000_120.stackinfo.txt
+sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_Ha_12720s.fit
+sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_OIII_12720s.fit
+"""
+
+    private static let rawScannerReachableCleanPaths = """
+sessions/C2025_R3_C2025_R3_Panstarrs/2026-04-18/FOV______017x60sec_1020s_drizzle-1-0x_2026-04-24_1806_og.fit
+sessions/C2025_R3_C2025_R3_Panstarrs/2026-04-18/Light_FOV_60.0s_Bin1_2600MC_gain100_20260418-042915_231deg_-10.0C_0009.fit
+sessions/C2025_R3_C2025_R3_Panstarrs/2026-04-18/individual_stacks/FOV______017x60sec_1020s_drizzle-1-0x_2026-04-24_1806_session1.fit
+sessions/C2025_R3_C2025_R3_Panstarrs/2026-04-18/test_00001.fit
+sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/Light_Hearth 3_179deg_120.0s_Bin1_2600MC_gain100_20260117-192707_-9.9C_0001.fit
+sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/Light_Hearth 3_179deg_120.0s_Bin1_2600MC_gain100_20260117-193123_-10.0C_0003.fit
+sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/Light_Hearth 3_179deg_120.0s_Bin1_2600MC_gain100_20260117-193323_-10.0C_0004.fit
+sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/Light_Hearth 3_179deg_120.0s_Bin1_2600MC_gain100_20260117-193533_-10.0C_0005.fit
+sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/Light_Hearth 3_179deg_120.0s_Bin1_2600MC_gain100_20260117-193734_-9.9C_0006.fit
+sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/Light_Hearth 3_179deg_120.0s_Bin1_2600MC_gain100_20260117-193944_-10.0C_0007.fit
+sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/Light_Hearth 3_179deg_120.0s_Bin1_2600MC_gain100_20260117-194145_-10.0C_0008.fit
+sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/Light_Hearth 3_187deg_120.0s_Bin1_2600MC_gain100_20260117-192907_-10.0C_0002.fit
+sessions/M42_Orion/2026-01-17/FOV______123x60sec_7380s_2026-01-19_2033_og.fit
+sessions/M42_Orion/2026-01-17/FOV______136x60sec_8160s_2026-01-22_2045_og.fit
+sessions/M42_Orion/2026-01-17/FOV______136x60sec_8160s_2026-01-22_2045_og_pixisgnist.fit
+sessions/M42_Orion/2026-01-17/FOV______136x60sec_8160s_2026-01-22_2045_og_process.fit
+sessions/M42_Orion/2026-01-17/FOV______160x60sec_9600s__drizzle-1-5x_2026-01-22_1625_og.fit
+sessions/M42_Orion/2026-01-17/FOV______160x60sec_9600s__drizzle-1-5x_2026-01-22_1625_og_og.fit
+sessions/M42_Orion/2026-01-17/FOV______161x60sec_9660s__drizzle-1-5x_2026-01-19_2102_og_process.fit
+sessions/M42_Orion/2026-01-17/FOV______161x60sec_9660s__drizzle-1-5x_2026-01-19_2102_og_process_2.fit
+sessions/M42_Orion/2026-01-17/FOV______161x60sec_9660s__drizzle-1-5x_2026-01-19_2102_og_process_test.fit
+sessions/M84_Markarians_Chain/2026-04-18/Markarians_Chain_027x180sec_4860s_drizzle-1-0x_2026-04-18_1459_og.fit
+sessions/M84_Markarians_Chain/2026-04-18/Markarians_Chain_027x180sec_4860s_drizzle-1-0x_2026-04-18_1502_og.fit
+sessions/M84_Markarians_Chain/2026-04-18/Markarians_Chain_027x180sec_4860s_drizzle-1-0x_2026-04-18_1507_og.fit
+sessions/M84_Markarians_Chain/2026-04-18/Markarians_Chain_027x180sec_4860s_drizzle-1-0x_2026-04-18_1511_og.fit
+sessions/M84_Markarians_Chain/2026-04-18/individual_stacks/Markarians_Chain_027x180sec_4860s_drizzle-1-0x_2026-04-18_1511_session1.fit
+sessions/NGC2237_Rosette_Nebula/2026-02-25/NGC_2237_085x60sec_5100s_2026-03-01_1629_og.fit
+sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/Drizzle/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og.fit
+sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_130x120sec_11460s_2026-03-16_1956_og.fit
+sessions/NGC2237_Rosette_Nebula/2026-02-25_2026-03-15/NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og.fit
+sessions/NGC2237_Rosette_Nebula/2026-03-15-OSC/NGC_2244_Satellite_Cluster_009x60sec_540s_2026-03-16_1958_og.fit
+sessions/NGC2237_Rosette_Nebula/2026-03-15/NGC_2244_Satellite_Cluster_044x120sec_5280s__drizzle-2-0x_2026-03-17_1843_og.fit
+sessions/NGC2237_Rosette_Nebula/2026-03-15/NGC_2244_Satellite_Cluster_047x120sec_5640s_2026-03-16_1941_og.fit
 sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_Ha_12720s.fit
 sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_OIII_12720s.fit
 """

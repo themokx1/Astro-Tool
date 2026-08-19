@@ -482,18 +482,18 @@ public final class LibraryScanner {
         // must not undo that upgrade just because the path alone still
         // resolves to `.other`; keep the stored role in that case.
         //
-        // EXCEPT when the path matches `ResidueMatcher` (the same
-        // patterns/dir-names predicate `CleanupReport` uses): a specific
-        // frame role there can only be a leftover wrong promotion from
-        // BEFORE `refineLooseFrameRole` grew its own residue guard above
-        // (residue is never promoted going forward, so no legitimate
-        // upgrade could have produced this combination post-fix). Demote it
-        // back to the path-derived `.other` so a plain rescan is
-        // self-healing, without needing a dedicated migration.
+        // EXCEPT when the path is non-promotable session residue (see
+        // `isNonPromotableSessionResidue`): a specific frame role there can
+        // only be a leftover wrong promotion from BEFORE `refineLooseFrameRole`
+        // grew its residue guards above (residue is never promoted going
+        // forward, so no legitimate upgrade could have produced this
+        // combination post-fix). Demote it back to the path-derived `.other`
+        // so a plain rescan is self-healing, without needing a dedicated
+        // migration.
         let specificFrameRoles: Set<FrameRole> = [.light, .flat, .dark, .bias]
         let effectiveRole: FrameRole
         if info.area == .sessions, info.role == .other, specificFrameRoles.contains(existing.role) {
-            effectiveRole = ResidueMatcher.isResidue(path: existing.path, config: config) ? .other : existing.role
+            effectiveRole = isNonPromotableSessionResidue(path: existing.path) ? .other : existing.role
         } else {
             effectiveRole = info.role
         }
@@ -518,6 +518,29 @@ public final class LibraryScanner {
         summary.reclassified += 1
     }
 
+    /// Whether a file at `path`, sitting loose in a session date dir (path
+    /// role `.other`), must never be promoted to a specific frame role via
+    /// its FITS IMAGETYP header -- `true` when EITHER of two independent
+    /// engines says so, neither one copied:
+    ///  1. `ResidueMatcher.isResidue` -- config-driven, from
+    ///     `AstroConfig.residuePatterns`/`residueDirNames`, the same
+    ///     predicate `CleanupReport`'s cleanup summary uses.
+    ///  2. `StackDiscovery.classifiesAsStackProduct` -- code-driven, the
+    ///     same starless/starmask/edited/export recognition `stacks/`/
+    ///     `processed`-area variant grouping already applies to filenames.
+    /// The second check exists because `starless`/`starmask`/`graxpert`
+    /// tokens can't safely live in `residuePatterns`'s defaults (see that
+    /// property's own doc comment -- they're first-class, WANTED variant
+    /// output there, not residue), but a Siril byproduct using those exact
+    /// names sitting loose in `sessions/` must still never be promoted,
+    /// REGARDLESS of what a given library's `config.json` says, since this
+    /// recognition is code, not config.
+    private func isNonPromotableSessionResidue(path: String) -> Bool {
+        if ResidueMatcher.isResidue(path: path, config: config) { return true }
+        let fileName = (path as NSString).lastPathComponent
+        return StackDiscovery.classifiesAsStackProduct(fileName: fileName)
+    }
+
     private func refineLooseFrameRole(fileID: Int64, info: PathInfo, ext: String, baseRecord: FileRecord) throws {
         guard info.area == .sessions, info.role == .other else { return }
         guard ["fit", "fits", "fz"].contains(ext) else { return }
@@ -525,11 +548,10 @@ public final class LibraryScanner {
         // inherit IMAGETYP='Light Frame' from the subs they were stacked
         // from -- a residue file sitting loose in a session date dir hits
         // the exact same "role .other, FITS header says Light" shape as a
-        // genuine loose light frame. `ResidueMatcher.isResidue` is the same
-        // predicate `CleanupReport`'s cleanup summary uses (patterns + dir
-        // names from `config`), so the two engines never drift on what
-        // counts as residue -- never promote it via IMAGETYP.
-        guard !ResidueMatcher.isResidue(path: baseRecord.path, config: config) else { return }
+        // genuine loose light frame. Never promote it via IMAGETYP -- see
+        // `isNonPromotableSessionResidue`'s doc comment for the two
+        // independent engines this consults.
+        guard !isNonPromotableSessionResidue(path: baseRecord.path) else { return }
         guard let meta = try db.fitsMeta(fileID: fileID),
               let imagetyp = meta.imagetyp,
               let refined = Self.roleFromImagetyp(imagetyp)

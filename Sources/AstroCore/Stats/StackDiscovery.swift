@@ -638,6 +638,31 @@ public enum StackDiscovery {
         return .original
     }
 
+    /// Whether `fileName` (bare, no path) looks like a finished stack
+    /// PRODUCT -- an edited/starless/starmask/exported variant, as opposed
+    /// to a raw captured sub or an unmarked/unrecognized name -- purely by
+    /// delegating to `variantKind(fileName:)` (the exact same recognition
+    /// this file already applies when grouping `stacks/`/`processed`-area
+    /// variant families). `true` for every `StackVariantKind` except
+    /// `.original`, which deliberately covers BOTH a genuine raw stacker
+    /// output AND an ordinary unmarked filename -- too ambiguous to call
+    /// "definitely a stack product" on its own (a real ASIAIR-style light
+    /// frame name with no edit markers must classify `.original` too, and
+    /// therefore `false` here).
+    ///
+    /// `Scan/Scanner.swift`'s loose-frame promotion guard uses this as its
+    /// SECOND check (alongside `ResidueMatcher.isResidue`, which only knows
+    /// about `AstroConfig.residuePatterns`): a Siril stack byproduct
+    /// (`starless_*`, `starmask_*`, a `graxpert`/`_seti`/`_work`-marked
+    /// intermediate) sitting loose in a session date dir must never be
+    /// promoted to a captured frame role via its inherited IMAGETYP header,
+    /// even when the owner's `config.json` doesn't list these names as
+    /// residue patterns -- this recognition is code, not config, so it
+    /// applies unconditionally.
+    static func classifiesAsStackProduct(fileName: String) -> Bool {
+        variantKind(fileName: fileName) != .original
+    }
+
     /// `groupedStacks`' base-selection: prefer a `.original`-kind member
     /// (there's usually exactly one -- the raw stacker output the whole
     /// family descends from), else the largest file in the group. `members`
