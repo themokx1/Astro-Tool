@@ -37,6 +37,12 @@ public struct HomeView: View {
     /// against.
     private let openNightsCalendar: () -> Void
     @AppStorage("v2.general.showGuidance") private var showGuidance = true
+    /// Pre-flight Checklist (ideation #1): `nil` means "no manual override
+    /// yet" -- the card then falls back to its own honest default
+    /// (`!checklist.allClear`, expanded whenever there is something red to
+    /// see) rather than a fixed collapsed/expanded state that could hide a
+    /// new problem behind yesterday's "all clear" tap.
+    @State private var preflightExpandedOverride: Bool?
     /// Wave W6-A section B: the "nothing to shoot tonight, no site
     /// configured" placeholder's own escape hatch -- the same
     /// `@Environment(\.openSettings)` pattern `V2RootView`'s own calls use
@@ -116,6 +122,7 @@ public struct HomeView: View {
 
     private var libraryOverview: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
+            preflightChecklistCard
             HStack(spacing: AstroTokens.Spacing.standard) {
                 MetricCard(title: "Projects", value: "\(store.snapshot.projectCount)", detail: "In \(store.snapshot.libraryName ?? "library")", systemImage: "scope")
                 // W6-E item 3: "Indexed observing sessions" read as though
@@ -199,6 +206,123 @@ public struct HomeView: View {
             cloudyDarksCard
         }
         .accessibilityIdentifier("v2.home.library-overview")
+    }
+
+    /// Ideation #1 ("Indulás előtti lista", usefulness 5/5): synthesizes
+    /// four facts this store already computed (`HomeStore.preflightChecklist`
+    /// -- composed by `PreflightChecklist.build`, `AstroApplication`) into
+    /// one honest ritual right under the night-context rail, before the
+    /// owner drags gear outside. All-clear collapses to one line; any red
+    /// line expands automatically (`PreflightChecklist.displayOrder` already
+    /// sorts the failing lines first) until the owner taps it shut again.
+    /// This card sits at the very top of `libraryOverview`, so it never
+    /// renders at all while no library is open -- the same "nothing real,
+    /// nothing shown" contract `ratingGateCard`/`cloudyDarksCard` follow.
+    private var preflightChecklistCard: some View {
+        let checklist = store.preflightChecklist
+        let isExpanded = preflightExpandedOverride ?? !checklist.allClear
+        return VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+            Button {
+                preflightExpandedOverride = !isExpanded
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: checklist.allClear ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                        .foregroundStyle(checklist.allClear ? AstroTokens.Color.ok : AstroTokens.Color.attention)
+                    if checklist.allClear, !isExpanded {
+                        Text("Ready to head out tonight ✓").font(.headline)
+                    } else {
+                        Text("Pre-flight checklist").font(.headline)
+                    }
+                    Spacer()
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("v2.home.preflight-checklist-toggle")
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(checklist.displayOrder) { item in
+                        preflightItemRow(item)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .astroRaisedSurface()
+        .accessibilityIdentifier("v2.home.preflight-checklist")
+    }
+
+    /// One `PreflightChecklist.Item` row: a status icon plus the item's own
+    /// composed sentence (`preflightItemText`). Icon-only for status (never
+    /// color alone) so the ✓/✗/n-a reads without relying on color vision.
+    private func preflightItemRow(_ item: PreflightChecklist.Item) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: preflightStatusSystemImage(item.status))
+                .foregroundStyle(preflightStatusColor(item.status))
+                .frame(width: 16)
+            preflightItemText(item)
+        }
+        .font(.callout)
+    }
+
+    private func preflightStatusSystemImage(_ status: PreflightChecklist.Status) -> String {
+        switch status {
+        case .ready: "checkmark.circle.fill"
+        case .attention: "xmark.circle.fill"
+        case .notApplicable: "minus.circle"
+        }
+    }
+
+    private func preflightStatusColor(_ status: PreflightChecklist.Status) -> Color {
+        switch status {
+        case .ready: AstroTokens.Color.ok
+        case .attention: AstroTokens.Color.critical
+        case .notApplicable: AstroTokens.Color.inkFaint
+        }
+    }
+
+    /// `missingCount` interpolates as a raw `Int` (the same `%lld` shape
+    /// `ratingGateMessage`'s own "nights still have unrated frames" line
+    /// already uses); the Moon numbers are pre-formatted into ONE `String`
+    /// before interpolation (same "%@, never %lld/%lf for a MULTI-number
+    /// fragment" rule `NightContextRail`'s "Nearest clear night" comment
+    /// documents) since a `Double` interpolated straight into a
+    /// `LocalizedStringKey` emits a `%lf` runtime key that is easy to get
+    /// wrong twice over in one sentence.
+    @ViewBuilder
+    private func preflightItemText(_ item: PreflightChecklist.Item) -> some View {
+        switch item.kind {
+        case let .calibrationCurrent(missingCount):
+            if missingCount > 0 {
+                Text("\(missingCount) calibration items still need attention")
+            } else {
+                Text("Darks and flats are current")
+            }
+        case .skyClear:
+            switch item.status {
+            case .ready: Text("Sky looks clear tonight")
+            case .attention: Text("Sky looks cloudy tonight")
+            case .notApplicable: Text("No sky forecast available")
+            }
+        case let .moonImpact(separationDeg, illuminationPercent):
+            if let separationDeg, let illuminationPercent {
+                let numbers = "\(Int(separationDeg.rounded()))°, \(Int(illuminationPercent.rounded()))%"
+                Text("Moon interferes tonight (\(numbers))")
+            } else if item.status == .ready {
+                Text("Moon won't interfere tonight")
+            } else {
+                Text("No tonight recommendation yet")
+            }
+        case let .altitudeWindow(targetDisplayName, clearsAtLocal):
+            if let targetDisplayName, let clearsAtLocal {
+                Text("\(targetDisplayName) clears 30° at \(clearsAtLocal)")
+            } else {
+                Text("No tonight recommendation yet")
+            }
+        }
     }
 
     /// Expert ideation spec #5 ("First-Light Anniversaries + honest
