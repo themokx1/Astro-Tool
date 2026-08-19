@@ -84,15 +84,43 @@ enum ProjectRatingRunner {
     /// `ReviewStore.rateSelectedSeries`/`NightActionMenu.rateFrames` already
     /// do, and cooperatively cancellable between nights (and between frames
     /// within a night, via `FrameRatingCommand`'s own `isCancelled`).
-    /// Always `.nativeOnly` -- a run spanning a whole project (or every
-    /// project) can be dozens of nights long and must never block on Siril
-    /// or throw `FrameRatingCommandError.sirilUnavailable`, the same choice
-    /// `NightActionMenu.rateFrames`'s own night-wide rate already makes.
+    ///
+    /// `mode` defaults to `.nativeOnly` -- every existing call site (Home's
+    /// "Rate Everything" gate card, `ProjectsView`'s "Rate All Projects",
+    /// `ProjectWorkspaceView`'s per-project button) keeps its original
+    /// behavior unchanged: a run spanning a whole project (or every project)
+    /// can be dozens of nights long, so its default never blocks on Siril or
+    /// throws `FrameRatingCommandError.sirilUnavailable`, mirroring
+    /// `NightActionMenu.rateFrames`'s own night-wide rate.
+    ///
+    /// OWNER BUG (2026-08-19, real-library audit): `.nativeOnly` was
+    /// previously the ONLY mode this function could ever run -- it computes
+    /// `NativeStats` background/score but never invokes a
+    /// `StarMetricsProvider` (`FrameRatingCommand.run`'s `provider = nil` for
+    /// `.nativeOnly`), so it can NEVER populate `ratings.fwhm`. The owner
+    /// pressed "Minden projekt értékelése" (this function's `.allProjects`
+    /// scope) and reported the Insights FWHM trend never changing -- his
+    /// real `ratings` table confirmed it: 489 rows written by that exact
+    /// run, all with `fwhm IS NULL`, `siril_version = ''`. Pressing the same
+    /// nativeOnly-only button again could never have fixed that, no matter
+    /// how many times. `mode` is now a real parameter so a caller that wants
+    /// star metrics (`InsightsView`'s new "Start Measuring" action, wired to
+    /// `.fullReMeasure`) can ask for them through this exact same batching
+    /// layer, instead of duplicating it.
+    ///
+    /// `commandFactory` mirrors `metadataFactory`'s injection shape purely so
+    /// tests can supply a fixture-backed `FrameRatingCommand(db:config:root:)`
+    /// (real sqlite + real FITS bytes on disk, `RatingCommandFixture`'s own
+    /// pattern in `FrameRatingCommandTests`) instead of `.production(rootURL:)`,
+    /// which resolves a REAL `~/Library/Application Support/AstroTool/...`
+    /// path from `rootURL`'s own identity hash.
     static func run(
         scope: ProjectRatingScope,
         rootURL: URL,
         metadataFactory: @escaping ProjectsStore.MetadataFactory,
-        operationHost: OperationHost
+        operationHost: OperationHost,
+        mode: FrameRatingMode = .nativeOnly,
+        commandFactory: @escaping (URL) throws -> FrameRatingCommand = { try FrameRatingCommand.production(rootURL: $0) }
     ) async {
         let kind = Self.kind(for: scope)
         let title: String
@@ -141,7 +169,7 @@ enum ProjectRatingRunner {
             // mutates it concurrently.
             let frozenGroups = groups
             let totalFrames = frozenGroups.reduce(0) { $0 + $1.count }
-            let command = try FrameRatingCommand.production(rootURL: rootURL)
+            let command = try commandFactory(rootURL)
             let box = ProjectRatingProgressBox()
 
             let id = await operationHost.run(kind: kind, title: title, cancellation: .cooperative) {
@@ -151,7 +179,7 @@ enum ProjectRatingRunner {
                     let base = cumulative
                     _ = try command.run(
                         relativePaths: paths,
-                        mode: .nativeOnly,
+                        mode: mode,
                         progress: { done, _ in box.update(done: base + done, total: totalFrames) },
                         isCancelled: { Task.isCancelled }
                     )
