@@ -3,6 +3,38 @@ import AstroCore
 import Foundation
 import Testing
 
+private func historicalFingerprintHeaderJSON(_ cards: [String: String]) -> String {
+    let data = try! JSONEncoder().encode(cards)
+    return String(data: data, encoding: .utf8)!
+}
+
+private func makeHistoricalFingerprintDB() throws -> Database {
+    try Database(path: ":memory:")
+}
+
+/// Same fixture shape as `EquipmentProfileTests.insertLight` -- a fresh
+/// in-memory `Database`, one scanned light per call, unique fake inode per
+/// row so same-exptime/no-DATE-OBS frames in one session don't collapse to a
+/// single canonical copy under `FrameSet`'s fallback dedup key.
+@discardableResult
+private func insertHistoricalFingerprintLight(
+    db: Database, target: String, date: String, name: String, instrume: String, focallen: Double, xpixsz: Double
+) throws -> Int64 {
+    let path = "sessions/\(target)/\(date)/lights/\(name).fit"
+    let fileID = try db.upsertFile(
+        FileRecord(
+            path: path, size: 1024, mtime: 1_700_000_000, ext: "fit", kind: "fits",
+            area: .sessions, target: target, sessionDate: date, role: .light,
+            scannedAt: 1_700_000_100
+        )
+    )
+    try db.backfillInode(id: fileID, inode: fileID, nlink: 1)
+    try db.upsertFITSMeta(
+        FITSMetaRecord(fileID: fileID, exptime: 60, instrume: instrume, focallen: focallen, xpixsz: xpixsz)
+    )
+    return fileID
+}
+
 /// Ideation #5 ("Két géped mára"): a wide, short-focal-length rig and a
 /// narrow, long-focal-length rig -- the exact two setups the feature's own
 /// UI example names (`HomeView`'s "2600MC+SV220 → IC 1396 · R8 wide →
@@ -122,5 +154,78 @@ struct TwoRigSplitQueryTests {
 
         #expect(first == second)
         #expect(first == third)
+    }
+
+    // MARK: - historicalDominantFingerprint delegates to EquipmentProfile
+
+    /// W5-4 item 3: `historicalDominantFingerprint` used to hand-roll its own
+    /// frame-counting/majority-vote loop against `EquipmentProfile
+    /// .fingerprint`'s output instead of calling the SAME canonical
+    /// `EquipmentProfile.fingerprintCounts`/`.dominant(_:)` the mixed-setup
+    /// audit rules and `SessionStatsQueries` already share. This pins the
+    /// mixed-fingerprint case (3 frames of one setup vs. 2 of another,
+    /// across two different session dates -- `historicalDominantFingerprint`
+    /// pools the target's FULL history, unlike `sessionFingerprints`, which
+    /// is scoped to one date) against a value independently computed via the
+    /// canonical `EquipmentProfile` calls on the same usable-lights buckets,
+    /// proving the two paths agree.
+    @Test("historicalDominantFingerprint agrees with EquipmentProfile.fingerprintCounts/.dominant on a mixed-fingerprint history")
+    func historicalDominantFingerprintAgreesWithEquipmentProfileOnMixedHistory() throws {
+        let db = try makeHistoricalFingerprintDB()
+        let config = AstroConfig()
+        let target = "Some_Uncataloged_Nebula"
+
+        // Dominant setup: 3 frames, ASI2600MC @ 302mm, spread across two
+        // session dates (pooled history, not a single session).
+        for i in 0..<2 {
+            try insertHistoricalFingerprintLight(
+                db: db, target: target, date: "2026-06-01", name: "a\(i)",
+                instrume: "ASI2600MC", focallen: 302, xpixsz: 3.76
+            )
+        }
+        try insertHistoricalFingerprintLight(
+            db: db, target: target, date: "2026-06-05", name: "a2",
+            instrume: "ASI2600MC", focallen: 302, xpixsz: 3.76
+        )
+        // Minority setup: 2 frames, a different camera+focal length entirely.
+        for i in 0..<2 {
+            try insertHistoricalFingerprintLight(
+                db: db, target: target, date: "2026-06-05", name: "b\(i)",
+                instrume: "Canon R8", focallen: 135, xpixsz: 5.94
+            )
+        }
+        // A different target entirely -- must not leak into this target's
+        // history.
+        try insertHistoricalFingerprintLight(
+            db: db, target: "Other_Target", date: "2026-06-01", name: "c0",
+            instrume: "Canon R8", focallen: 135, xpixsz: 5.94
+        )
+
+        let actual = try TwoRigSplitQuery.historicalDominantFingerprint(target: target, db: db, config: config)
+
+        // Independently reproduce the expected answer via the SAME canonical
+        // `EquipmentProfile` calls `historicalDominantFingerprint` itself
+        // now delegates to, against the target's pooled usable lights.
+        let files = try db.allFiles(includeMissing: false)
+        let lights = files.filter { $0.target == target && $0.area == .sessions && $0.role == .light }
+        var metaByFileID: [Int64: FITSMetaRecord] = [:]
+        for file in lights {
+            guard let id = file.id else { continue }
+            if let meta = try db.fitsMeta(fileID: id) { metaByFileID[id] = meta }
+        }
+        let buckets = FrameSet.lightBuckets(files: lights, meta: metaByFileID, config: config)
+        let expectedCounts = EquipmentProfile.fingerprintCounts(usableLights: buckets.usable, meta: metaByFileID)
+        let expected = EquipmentProfile.dominant(expectedCounts)
+
+        #expect(actual == expected)
+        #expect(actual?.camera == "ASI2600MC")
+        #expect(actual?.descriptor == "ASI2600MC·302mm·3.76µm")
+    }
+
+    @Test("historicalDominantFingerprint is nil when the target has no usable light with a derivable fingerprint")
+    func historicalDominantFingerprintNilWhenNoUsableLight() throws {
+        let db = try makeHistoricalFingerprintDB()
+        let actual = try TwoRigSplitQuery.historicalDominantFingerprint(target: "Never_Scanned_Target", db: db, config: AstroConfig())
+        #expect(actual == nil)
     }
 }

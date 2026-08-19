@@ -213,10 +213,8 @@ public enum TwoRigSplitQuery {
     /// through to `.undecidable`.
     ///
     /// `EquipmentProfile.fingerprintCounts(usableLights:meta:)`/`.dominant(_:)`
-    /// are `internal` to `AstroCore` (this module only sees `.fingerprint`
-    /// itself, which IS public), so the frame-counting/majority-vote here is
-    /// a small, deliberate re-implementation of exactly those two functions'
-    /// own logic against the SAME public `EquipmentProfile.fingerprint` --
+    /// are now `public` in `AstroCore` for exactly this call -- the
+    /// frame-counting/majority-vote (and its tie-break) live in ONE place,
     /// never a second, divergent notion of "the dominant setup".
     public static func historicalDominantFingerprint(
         target: String, db: Database, config: AstroConfig
@@ -234,18 +232,7 @@ public enum TwoRigSplitQuery {
         let buckets = FrameSet.lightBuckets(files: lights, meta: metaByFileID, config: config)
         guard !buckets.usable.isEmpty else { return nil }
 
-        var counts: [SetupFingerprint: Int] = [:]
-        for file in buckets.usable {
-            guard let id = file.id, let meta = metaByFileID[id],
-                  let fingerprint = EquipmentProfile.fingerprint(meta: meta, headerJSON: meta.headerJSON)
-            else { continue }
-            counts[fingerprint, default: 0] += 1
-        }
-        // Same tie-break as `EquipmentProfile.dominant(_:)`: highest frame
-        // count wins, descriptor text (descending) breaks a tie, purely for
-        // deterministic output.
-        return counts.max { a, b in
-            a.value != b.value ? a.value < b.value : a.key.descriptor > b.key.descriptor
-        }?.key
+        let counts = EquipmentProfile.fingerprintCounts(usableLights: buckets.usable, meta: metaByFileID)
+        return EquipmentProfile.dominant(counts)
     }
 }

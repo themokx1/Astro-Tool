@@ -116,7 +116,12 @@ public enum EquipmentProfile {
     /// (no jitter canonicalization, matching every caller that predates
     /// W7-C); pass `EquipmentProfile.focalLengthBuckets(_:)`'s result to
     /// fold ASI-Air plate-solve jitter into one setup per physical rig.
-    static func fingerprintCounts(
+    ///
+    /// `public` (rather than `internal`, its original scope) so
+    /// `TwoRigSplitQuery.historicalDominantFingerprint` in `AstroApplication`
+    /// can call this SAME counting logic instead of hand-rolling its own --
+    /// see that function's own doc comment.
+    public static func fingerprintCounts(
         usableLights: [FileRecord],
         meta: [Int64: FITSMetaRecord],
         focalLengthBuckets: [String: [Double: Double]] = [:]
@@ -153,7 +158,11 @@ public enum EquipmentProfile {
     /// the mixed-setup-in-target comparison and `SessionDetail.setupDescriptor`.
     /// Ties break on the descriptor text (ascending) purely for
     /// deterministic output; `nil` for an empty `counts`.
-    static func dominant(_ counts: [SetupFingerprint: Int]) -> SetupFingerprint? {
+    ///
+    /// `public` for the same reason as `fingerprintCounts` above --
+    /// `TwoRigSplitQuery.historicalDominantFingerprint` shares this exact
+    /// majority-vote/tie-break instead of reproducing it.
+    public static func dominant(_ counts: [SetupFingerprint: Int]) -> SetupFingerprint? {
         counts.max { a, b in
             a.value != b.value ? a.value < b.value : a.key.descriptor > b.key.descriptor
         }?.key
