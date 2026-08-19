@@ -446,6 +446,16 @@ private struct V2Shell: View {
                 },
                 libraryFindingsChanged: refreshSidebarBadges
             )
+            // A rigid page taller than the window (Planning's charts +
+            // table demand ~836pt) used to CENTER its overflow, pushing the
+            // whole split view up past the title bar -- on a small display the
+            // sidebar rows landed above the window edge and stopped being
+            // clickable. Same disease, same cure as the project/night
+            // workspace tab-strip fix: pin the detail content to the top so
+            // any overflow spills downward only, where it can at least be
+            // reached, never upward under the toolbar. (Verified from a CI
+            // runner's AX snapshot: SplitGroup at y=-22 in a 652pt window.)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             // Task 7b (2026-08-17): THE page backdrop, and the only one.
             //
             // Task 6 removed the three `ground` tints that used to sit on

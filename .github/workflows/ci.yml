@@ -19,22 +19,6 @@ jobs:
         run: brew install xcodegen
       - name: Generate Xcode project
         run: xcodegen generate
-      - name: Enlarge the runner's virtual display
-        # The hosted macOS runner boots a 1024x768 virtual display; the app's
-        # main window declares minWidth 1100 / minHeight 700 and the Planning
-        # page needs ~836pt of height, so at 1024x768 the window gets clamped
-        # to 900x652 and content overflows the title bar (sidebar rows become
-        # non-hittable). Verified from an AX snapshot of run 2026-08-19.
-        run: |
-          brew install --quiet jakehilborn/jakehilborn/displayplacer || brew install --quiet displayplacer || true
-          if command -v displayplacer >/dev/null; then
-            main_id="$(displayplacer list | sed -n 's/^Persistent screen id: //p' | head -1)"
-            displayplacer "id:$main_id res:1920x1080" || echo "WARN: display resize failed"
-          else
-            echo "WARN: displayplacer unavailable"
-          fi
-          system_profiler SPDisplaysDataType | grep -i resolution || true
-
       - name: V2 UI smoke
         run: >-
           xcodebuild test
