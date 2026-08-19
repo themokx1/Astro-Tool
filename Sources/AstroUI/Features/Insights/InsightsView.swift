@@ -113,6 +113,7 @@ public struct InsightsView: View {
                 }
                 qualitySummary(insight)
                 qualityTrends(insight)
+                moonSkyCorrelationCard(insight)
                 HStack(alignment: .top, spacing: AstroTokens.Spacing.standard) {
                     activityChart(insight).frame(maxWidth: .infinity)
                     targetRanking(insight).frame(width: 320)
@@ -368,6 +369,91 @@ public struct InsightsView: View {
             }
         }
         .accessibilityIdentifier("v2.insights.recent-quality-table")
+    }
+
+    // Expert ideation spec #3 (2026-08-19): every rated session already
+    // carries a bias-corrected sky background (`SessionQuality`'s
+    // `backgroundEPerSecPerArcsec2`), and the Moon engine knows the
+    // illumination fraction on any date -- crossing them gives this owner a
+    // personal SQM history nobody else could hand him: "my sky reads N
+    // times brighter near full Moon than under a dark one." Pure bucketing
+    // lives in `MoonSkyCorrelation` (`AstroCore`), the mag/arcsec2 reading
+    // is `MeasuredSkyQuery`'s own conversion applied per bucket
+    // (`InsightsQuery.moonSkyCorrelationSummary`) -- this view only renders
+    // what those two already computed.
+    //
+    // Current reality (2026-08-19 real-index replay, read-only, this
+    // owner's own cached index): 26 sessions on record, ZERO with a
+    // measured (bias-corrected) background yet -- `Rate` has never been run
+    // against a sensor profile that could subtract the bias pedestal. That
+    // makes the EMPTY state below what he will actually see first; it says
+    // so honestly (ties into the same rating-gap hint `qualityTrends`
+    // above already surfaces) rather than a bare "no data" dead end.
+    private func moonSkyCorrelationCard(_ insight: InsightsSnapshot) -> some View {
+        let moonSky = insight.moonSkyCorrelation
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Sky brightness vs. Moon phase").font(.headline)
+            if moonSky.hasEnoughDataToDisplay {
+                if let ratio = moonSky.headlineRatio {
+                    Text("Your sky background reads about \(ratio.formatted(.number.precision(.fractionLength(1))))× brighter under a bright Moon (≥75% illuminated) than under a dark one (<25%).")
+                        .font(.callout.weight(.semibold))
+                        .accessibilityIdentifier("v2.insights.moon-sky-headline")
+                }
+                Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 7) {
+                    GridRow {
+                        Text("Moon phase").font(.caption.weight(.semibold))
+                        Text("Sessions").font(.caption.weight(.semibold))
+                        Text("Background").font(.caption.weight(.semibold))
+                        Text("Sky brightness").font(.caption.weight(.semibold))
+                    }
+                    Divider().gridCellColumns(4)
+                    ForEach(moonSky.buckets) { bucket in
+                        GridRow {
+                            Text(moonPhaseBandLabel(bucket.band))
+                            Text("\(bucket.sampleCount)").monospacedDigit()
+                            if bucket.isLowConfidence {
+                                Text("Too few sessions").foregroundStyle(.secondary)
+                            } else {
+                                Text(bucket.medianBackgroundEPerSecPerArcsec2?.formatted(.number.precision(.significantDigits(2...3))) ?? "—")
+                                    .monospacedDigit()
+                            }
+                            if bucket.isLowConfidence {
+                                Text("—").foregroundStyle(.secondary)
+                            } else {
+                                Text(bucket.medianMagnitudePerArcsec2.map {
+                                    "μ≈\($0.formatted(.number.precision(.fractionLength(1))))"
+                                } ?? "—").monospacedDigit()
+                            }
+                        }
+                        .font(.caption)
+                    }
+                }
+            } else {
+                // W7-E workflow #1's own convention (see `qualityTrends`
+                // above): name the rating gate plainly when it's the reason
+                // there's nothing to show yet, rather than a bare "no data".
+                if store.unratedNightCount > 0 {
+                    Label("\(store.unratedNightCount) nights still have unrated frames — rate them from Home to start measuring the Moon's effect on your sky.", systemImage: "star.leadinghalf.filled")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("v2.insights.moon-sky-rating-gap-hint")
+                } else {
+                    Text("Not enough measured sessions across different Moon phases yet to show this — rate a few more nights under different Moon conditions to build up your own sky-brightness history.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .astroRaisedSurface()
+        .accessibilityIdentifier("v2.insights.moon-sky-correlation")
+    }
+
+    private func moonPhaseBandLabel(_ band: MoonSkyCorrelation.IlluminationBand) -> LocalizedStringKey {
+        switch band {
+        case .veryDark: return "Dark Moon (<25%)"
+        case .dark: return "25–50% Moon"
+        case .bright: return "50–75% Moon"
+        case .veryBright: return "Bright Moon (≥75%)"
+        }
     }
 
     private func metrics(_ insight: InsightsSnapshot) -> some View {
