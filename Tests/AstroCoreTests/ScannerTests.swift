@@ -746,6 +746,118 @@ private struct ScanFixture {
     #expect(second.reclassified == 0)
 }
 
+/// Writes a minimal FITS file carrying `IMAGETYP= 'Light Frame'` at
+/// `relativePath` under the fixture root — the exact header a
+/// Siril/PixInsight-produced derivative keeps from its original subs, which
+/// is what makes a bare IMAGETYP check unable to tell a real sub from a
+/// stacked/starless/processed output.
+private func writeLightFrameHeaderFITS(fixture: ScanFixture, relativePath: String) throws {
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+}
+
+@Test func looseResidueNamedFileIsNotPromotedByIMAGETYP() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    // The filename matches the config's own `*_pp_*` residue pattern — a
+    // Siril preprocessing byproduct, not a raw sub, even though its header
+    // still says `IMAGETYP= 'Light Frame'`. It must stay role `.other`.
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/light_pp_registered_0001.fit"
+    try writeLightFrameHeaderFITS(fixture: fixture, relativePath: relativePath)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try #require(try fixture.db.file(path: relativePath))
+    #expect(record.role == .other)
+}
+
+@Test func looseProcessingOutputNamesAreNotPromotedByIMAGETYP() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    // Real offenders observed in a live library: derivative FITS files that
+    // keep `IMAGETYP= 'Light Frame'` from the subs they were built from.
+    // Their names carry the same stack/edit markers `StackDiscovery`
+    // already recognizes (`_stacked`, `_work`, `starless_`/`starmask_`
+    // prefixes, `result`), so none of them may be promoted to `.light`.
+    let relativePaths = [
+        "sessions/M45_Pleiades/2026-01-10/Comet_Stack_work.fit",
+        "sessions/M45_Pleiades/2026-01-10/starless_FOV_M45_process.fit",
+        "sessions/M45_Pleiades/2026-01-10/starmask_FOV_M45_process.fit",
+        "sessions/M45_Pleiades/2026-01-10/VeraLux_StarComposer_result.fit",
+        "sessions/M45_Pleiades/2026-01-10/session1_flats_stacked.fit",
+    ]
+    for relativePath in relativePaths {
+        try writeLightFrameHeaderFITS(fixture: fixture, relativePath: relativePath)
+    }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    for relativePath in relativePaths {
+        let record = try #require(try fixture.db.file(path: relativePath))
+        #expect(record.role == .other, "\(relativePath) must not be promoted")
+    }
+}
+
+@Test func fitsFileInUnrecognizedSessionSubfolderIsNotPromotedByIMAGETYP() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    // The loose-frame refinement exists for frames sitting DIRECTLY in the
+    // date dir (the real IC1805 session that motivated it). A file inside an
+    // unrecognized subfolder (`individual_stacks/`, a user's own processing
+    // area) is far more likely a derivative output — the path classifier's
+    // `.other` verdict must stand, and the audit engine is the channel that
+    // surfaces such folders, not a silent role promotion.
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/individual_stacks/FOV_M45_session1.fit"
+    try writeLightFrameHeaderFITS(fixture: fixture, relativePath: relativePath)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try #require(try fixture.db.file(path: relativePath))
+    #expect(record.role == .other)
+}
+
+@Test func rescanHealsStaleLooseFramePromotionBackToOther() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/starless_FOV_M45_process.fit"
+    try writeLightFrameHeaderFITS(fixture: fixture, relativePath: relativePath)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    // Simulate a row promoted by a pre-fix scanner version: on disk the
+    // file is unchanged, but its stored role is the bogus `.light` an older
+    // IMAGETYP-only refinement would have written. The loose-frame guard in
+    // `healStaleClassification` must NOT preserve a promotion the current
+    // eligibility rules would no longer make — the rescan heals it back.
+    var stale = try #require(try fixture.db.file(path: relativePath))
+    stale.role = .light
+    _ = try fixture.db.upsertFile(stale)
+
+    let second = try scanner.scan()
+    #expect(second.reclassified == 1)
+
+    let healed = try #require(try fixture.db.file(path: relativePath))
+    #expect(healed.role == .other)
+}
+
 @Test func normalUnchangedFileHasNoRowChurn() throws {
     let fixture = try ScanFixture.make()
     defer { fixture.cleanup() }

@@ -437,10 +437,15 @@ public final class LibraryScanner {
         // using the FITS IMAGETYP header -- content the pure path
         // classifier never sees. A rescan of that same (unchanged) file
         // must not undo that upgrade just because the path alone still
-        // resolves to `.other`; keep the stored role in that case.
+        // resolves to `.other`; keep the stored role in that case -- but
+        // ONLY when the file would still be eligible for that promotion
+        // under `looseFramePromotionEligible`'s rules. A role promoted by
+        // an older scanner version for a file the current rules recognize
+        // as processing residue/output heals back to `.other` here.
         let specificFrameRoles: Set<FrameRole> = [.light, .flat, .dark, .bias]
         let effectiveRole: FrameRole
-        if info.area == .sessions, info.role == .other, specificFrameRoles.contains(existing.role) {
+        if info.area == .sessions, info.role == .other, specificFrameRoles.contains(existing.role),
+           Self.looseFramePromotionEligible(relativePath: existing.path, sizeBytes: existing.size, config: config) {
             effectiveRole = existing.role
         } else {
             effectiveRole = info.role
@@ -469,6 +474,9 @@ public final class LibraryScanner {
     private func refineLooseFrameRole(fileID: Int64, info: PathInfo, ext: String, baseRecord: FileRecord) throws {
         guard info.area == .sessions, info.role == .other else { return }
         guard ["fit", "fits", "fz"].contains(ext) else { return }
+        guard Self.looseFramePromotionEligible(
+            relativePath: baseRecord.path, sizeBytes: baseRecord.size, config: config
+        ) else { return }
         guard let meta = try db.fitsMeta(fileID: fileID),
               let imagetyp = meta.imagetyp,
               let refined = Self.roleFromImagetyp(imagetyp)
@@ -477,6 +485,52 @@ public final class LibraryScanner {
         var refinedRecord = baseRecord
         refinedRecord.role = refined
         _ = try db.upsertFile(refinedRecord)
+    }
+
+    /// Whether a sessions-area file whose PATH alone classifies as role
+    /// `.other` may have that role refined from its FITS IMAGETYP header at
+    /// all. Siril/PixInsight-produced derivatives (stacks, starless/starmask
+    /// variants, preprocessing byproducts) keep `IMAGETYP= 'Light Frame'`
+    /// from the subs they were built from, so the header by itself cannot
+    /// tell a real sub from processing output — the file's name and place
+    /// have to look like a raw capture before the header is trusted:
+    ///
+    /// - The file must sit DIRECTLY in the date dir
+    ///   (`sessions/<target>/<date>/<file>`) — the layout that motivated the
+    ///   refinement in the first place. A file inside an unrecognized
+    ///   subfolder (`individual_stacks/`, `process/`, ...) is far more
+    ///   likely a user's own processing output; the audit engine is the
+    ///   channel that surfaces such folders, not a silent role promotion.
+    /// - The filename must not match one of `config.residuePatterns`
+    ///   (`*_pp_*`, `r_*`, `*_bkg*`, ...) — the same residue notion
+    ///   `ResidueRule`/`CleanupReport` already flag for deletion.
+    /// - The filename must not look like a finished stack/processed output
+    ///   (`StackDiscovery.looksLikeStackOutput`: `*_stacked*`, ASIAIR
+    ///   autosave names, `result*`, ...) nor carry a stack-variant marker
+    ///   (`StackDiscovery.variantKind`: `starless_`/`starmask_` prefixes,
+    ///   `_work`/`graxpert`/channel-composite edit markers).
+    /// - A filename containing `"result"` anywhere is also rejected —
+    ///   VeraLux/Siril-style composer outputs (`..._StarComposer_result`)
+    ///   carry the token mid-name, where `looksLikeStackOutput`'s
+    ///   prefix-only `result*` check never sees it. No capture software
+    ///   names a raw sub that way.
+    ///
+    /// `healStaleClassification`'s loose-frame guard applies the SAME rule,
+    /// so a role promoted by an older scanner version that this eligibility
+    /// check would no longer allow heals back to `.other` on rescan.
+    private static func looseFramePromotionEligible(
+        relativePath: String, sizeBytes: Int64, config: AstroConfig
+    ) -> Bool {
+        let components = relativePath.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard components.count == 4 else { return false }
+
+        let fileName = components[3]
+        let fileExtension = (fileName as NSString).pathExtension.lowercased()
+        guard !ResidueMatcher.matchesFilePattern(name: fileName, config: config) else { return false }
+        guard !StackDiscovery.looksLikeStackOutput(fileName: fileName, ext: fileExtension, sizeBytes: sizeBytes) else { return false }
+        guard StackDiscovery.variantKind(fileName: fileName) == .original else { return false }
+        guard !fileName.lowercased().contains("result") else { return false }
+        return true
     }
 
     private static func roleFromImagetyp(_ imagetyp: String) -> FrameRole? {
