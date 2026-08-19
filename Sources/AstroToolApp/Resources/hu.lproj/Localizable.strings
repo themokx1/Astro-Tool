@@ -2217,25 +2217,6 @@
 "%@ more" = "%@ további";
 "Show fewer" = "Kevesebb mutatása";
 
-/* Expert ideation #2 ("melyik géppel fér be?"), Planning: once ≥2 setups
-   are saved, an opt-in toggle in the setup bar (PlanningView.setupBar)
-   runs a SECOND DiscoveryPlanner.discover sweep for the other saved
-   setup's own FOV (RigCompareQuery.swift, AstroApplication) and shows how
-   it would frame each recommended target too -- both in a compact third
-   line under the existing "Framing" column (PlanningView
-   .rigCompareLine/.compactFitText, reusing PlanningFit.displayLabel's own
-   entries below rather than a second vocabulary) and as one sentence under
-   the selected row's sky-path chart. That sentence is composed entirely in
-   PlanningView via Text's own nested-Text interpolation (never
-   String(format:), which V2PolishSurfaceTests.noHandRolledFormatting
-   forbids under Sources/AstroUI) -- PlanningStore.rigCompareSentenceComponents(for:)
-   only hands back the raw (setup name, PlanningFit) pieces. The setup name
-   itself (a free-text ImagingSetupProfile.cameraName) is never part of
-   the template. */
-"Compare with %@" = "Összevetés a(z) %@ felszereléssel";
-"Show how your other saved setup would frame each recommended target." = "Megmutatja, hogyan venné be az egyes ajánlott célpontokat a másik mentett felszereléseddel.";
-"With %@, this target would be %@." = "A(z) %@ felszereléssel ez a célpont %@ lenne.";
-
 /* Ideation #5 ("Két géped mára" -- tonight's rig split): HomeView's
    `twoRigSplitCard`/`twoRigSplitRow` (TwoRigSplitQuery.swift, AstroApplication,
    is the pure decision behind it). The card heading is deliberately an
@@ -2321,3 +2302,34 @@
    straight into the LocalizedStringKey literal, the same convention the
    possible-streak row's own count already uses just above in this file. */
 "Your %lld weakest frames were shot below 35° — worth starting this target later." = "A leggyengébb %lld kereted 35° alatt készült — érdemes később kezdeni.";
+
+/* Expert ideation #2 ("melyik géppel fér be?"), Planning, reworked per
+   owner feedback (2026-08-19): a boolean "compare with the other rig"
+   checkbox only ever made sense with exactly two saved setups, and its own
+   label baked in the OTHER setup's name (ImagingSetupProfile.cameraName),
+   reading as if the owner's personal gear were hardcoded into the product.
+   Replaced with a generic Picker in the setup bar (PlanningView.setupBar)
+   whose own label never names a setup, and whose options are every OTHER
+   saved setup (never the currently selected one) plus "None" as the
+   off state -- scales to three or more saved setups instead of forcing a
+   single guessed "other" rig. Still runs a SECOND DiscoveryPlanner.discover
+   sweep for the PICKED setup's own FOV (RigCompareQuery.swift,
+   AstroApplication) and shows how it would frame each recommended target
+   too, both in a compact third line under the existing "Framing" column
+   (PlanningView.rigCompareLine/.compactFitText, reusing
+   PlanningFit.displayLabel's own entries above rather than a second
+   vocabulary) and as one sentence under the selected row's sky-path chart.
+   That sentence is composed entirely in PlanningView via Text's own
+   nested-Text interpolation (never String(format:), which
+   V2PolishSurfaceTests.noHandRolledFormatting forbids under Sources/AstroUI)
+   -- PlanningStore.rigCompareSentenceComponents(for:) only hands back the
+   raw (setup name, PlanningFit) pieces. */
+"Compare with" = "Összevetés";
+"None" = "Nincs";
+"Show how another saved setup would frame each recommended target." = "Megmutatja, hogyan venné be az egyes ajánlott célpontokat egy másik mentett felszereléseddel.";
+/* Owner pixel review (2026-08-19): the selected-target sentence used to
+   read "...ez a célpont Túl kicsi lenne." -- the fit label's own
+   capitalization spliced mid-clause, reading broken in Hungarian. A colon
+   form keeps the fit label as its own clause instead, which reads
+   correctly capitalized in both languages. */
+"With %@: %@" = "A(z) %@ felszereléssel: %@";

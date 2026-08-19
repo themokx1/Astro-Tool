@@ -37,22 +37,26 @@ public struct RigCompareRow: Sendable, Equatable {
 /// exact sky/FOV math `PlanningQuery` already runs for its own single
 /// selected setup.
 public enum RigCompareQuery {
-    /// `nil` whenever there is nothing honest to compare: fewer than two
-    /// saved setups, the selected ID no longer matches any of them, or
-    /// either setup's field of view can't be resolved at its own focal
-    /// length (`ImagingSetupProfile.fieldOfView` already returns `nil` for a
-    /// corrupt hand-edited profile -- see its own doc). `PlanningStore` is
-    /// the intended caller; it already hides its "compare" toggle whenever
-    /// this would be `nil` on the `setups.count < 2` account, matching the
-    /// feature's own "stays hidden, no setups CRUD is built for this" scope.
+    /// `nil` whenever there is nothing honest to compare: `compareSetupID`
+    /// names the same setup as `selectedSetupID`, either ID no longer
+    /// matches a saved setup, or either setup's field of view can't be
+    /// resolved at its own focal length (`ImagingSetupProfile.fieldOfView`
+    /// already returns `nil` for a corrupt hand-edited profile -- see its
+    /// own doc). `PlanningStore` is the intended caller; it already hides
+    /// its "compare" picker whenever this would be `nil` on the
+    /// `setups.count < 2` account, matching the feature's own "stays
+    /// hidden, no setups CRUD is built for this" scope.
     ///
-    /// The OTHER setup is the first saved setup whose `id` is not
-    /// `selectedSetupID`, in `setups`' own declaration order -- the owner's
-    /// actual "I run two rigs" scenario never has a third profile to
-    /// disambiguate between; a longer hand-edited list still gets a
-    /// deterministic pick rather than an error.
+    /// `compareSetupID` used to be derived here (the first saved setup whose
+    /// `id` was not `selectedSetupID`) back when the caller only offered a
+    /// boolean "compare with the other one" checkbox -- a rule that quietly
+    /// broke down the moment a third setup existed (there is no single
+    /// "other" rig anymore). The owner now picks the comparison setup
+    /// explicitly (`PlanningView`'s picker), so this function only resolves
+    /// whichever ID it is handed, never re-derives one of its own.
     public static func compare(
         selectedSetupID: String,
+        compareSetupID: String,
         setups: [ImagingSetupProfile],
         focalLengthMM: Double?,
         site: SiteRule,
@@ -60,9 +64,9 @@ public enum RigCompareQuery {
         minAltitudeDeg: Double = PlanningQuery.defaultMinAltitudeDeg,
         targets: [CatalogTarget] = TargetCatalog.all
     ) -> [String: RigCompareRow]? {
-        guard setups.count >= 2,
+        guard selectedSetupID != compareSetupID,
               let primary = setups.first(where: { $0.id == selectedSetupID }),
-              let other = setups.first(where: { $0.id != selectedSetupID }),
+              let other = setups.first(where: { $0.id == compareSetupID }),
               let primaryFOV = primary.fieldOfView(at: focalLengthMM),
               let otherFOV = other.fieldOfView()
         else { return nil }

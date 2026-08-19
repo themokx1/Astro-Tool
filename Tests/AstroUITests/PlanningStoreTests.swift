@@ -759,9 +759,16 @@ struct PlanningStoreTests {
     }
 
     // MARK: - Ideation #2 ("melyik géppel fér be?"): rig comparison
+    //
+    // Reworked per owner feedback (2026-08-19): the boolean `compareOtherRig`
+    // checkbox (which always meant "compare against the one OTHER saved
+    // setup") is now an explicit `compareSetupID: String?` selection --
+    // `nil` means the same thing `compareOtherRig == false` used to, and any
+    // non-`nil` value must name one of `store.compareOptions` (every saved
+    // setup except the one currently selected).
 
-    @Test("Toggling compareOtherRig recomputes the rig comparison exactly once, without re-running the recommendations pipeline")
-    func toggleCompareOtherRigRecomputesOnce() async throws {
+    @Test("Setting compareSetupID recomputes the rig comparison exactly once, without re-running the recommendations pipeline")
+    func settingCompareSetupIDRecomputesOnce() async throws {
         let counter = CallCounter()
         let setups: [ImagingSetupProfile] = [.apsCReference, .canonR8Zoom]
         let store = PlanningStore(
@@ -776,29 +783,90 @@ struct PlanningStoreTests {
         store.activate()
         await store.pendingRefresh?.value
         #expect(counter.current == 1)
-        #expect(store.rigCompare == nil, "the comparison must not be computed until the toggle is actually turned on")
+        #expect(store.rigCompare == nil, "the comparison must not be computed until a compare setup is actually picked")
 
-        store.compareOtherRig = true
+        store.compareSetupID = ImagingSetupProfile.canonR8Zoom.id
         await store.pendingRigCompareRefresh?.value
 
         #expect(store.rigCompare != nil)
-        #expect(counter.current == 1, "turning on the comparison display option must not re-run the recommendations pipeline")
+        #expect(counter.current == 1, "picking a comparison setup must not re-run the recommendations pipeline")
 
-        // Same-value guard: re-asserting the current value (a `Toggle`
+        // Same-value guard: re-asserting the current value (a `Picker`
         // binding does this during its own update pass) must not recompute.
-        let afterFirstToggle = store.rigCompare
-        store.compareOtherRig = true
+        let afterFirstPick = store.rigCompare
+        store.compareSetupID = ImagingSetupProfile.canonR8Zoom.id
         #expect(store.rigCompare != nil)
-        #expect(store.rigCompare == afterFirstToggle)
+        #expect(store.rigCompare == afterFirstPick)
 
-        // Turning it back off clears the stored comparison rather than
-        // leaving a stale one the UI might read while the toggle reads off.
-        store.compareOtherRig = false
+        // Setting it back to nil ("None") clears the stored comparison
+        // rather than leaving a stale one the UI might read while the
+        // picker reads "None".
+        store.compareSetupID = nil
         await store.pendingRigCompareRefresh?.value
         #expect(store.rigCompare == nil)
     }
 
-    @Test("Fewer than two saved setups means the comparison stays unavailable and hidden")
+    @Test("A nil selection ('None') produces no compare data")
+    func nilSelectionProducesNoCompareData() async {
+        let setups: [ImagingSetupProfile] = [.apsCReference, .canonR8Zoom]
+        let store = PlanningStore(
+            setups: setups, catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+
+        #expect(store.compareSetupID == nil, "comparison starts off until the owner explicitly picks a setup")
+        #expect(store.rigCompare == nil)
+        #expect(store.isComputingRigCompare == false)
+    }
+
+    @Test("compareOptions lists every saved setup except the one currently selected")
+    func compareOptionsExcludesTheSelectedSetup() async {
+        let setups: [ImagingSetupProfile] = [.apsCReference, .canonR8Zoom, .narrowReflector]
+        let store = PlanningStore(
+            setups: setups, catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+
+        #expect(store.selectedSetupID == ImagingSetupProfile.apsCReference.id)
+        let optionIDs = Set(store.compareOptions.map(\.id))
+        #expect(optionIDs == [ImagingSetupProfile.canonR8Zoom.id, ImagingSetupProfile.narrowReflector.id])
+        #expect(!optionIDs.contains(ImagingSetupProfile.apsCReference.id), "the currently selected setup must never be its own compare option")
+
+        // Switching which setup is selected moves the exclusion, not just
+        // the initial one -- the picker's options must always track
+        // whichever setup is primary right now.
+        store.selectedSetupID = ImagingSetupProfile.canonR8Zoom.id
+        await store.pendingRefresh?.value
+        let optionIDsAfterSwitch = Set(store.compareOptions.map(\.id))
+        #expect(optionIDsAfterSwitch == [ImagingSetupProfile.apsCReference.id, ImagingSetupProfile.narrowReflector.id])
+    }
+
+    @Test("Selecting the primary setup as its own former compare target clears the now-invalid selection")
+    func selectingThePickedCompareSetupClearsIt() async {
+        let setups: [ImagingSetupProfile] = [.apsCReference, .canonR8Zoom, .narrowReflector]
+        let store = PlanningStore(
+            setups: setups, catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+        store.compareSetupID = ImagingSetupProfile.canonR8Zoom.id
+        await store.pendingRigCompareRefresh?.value
+        #expect(store.rigCompare != nil)
+
+        // The setup that was picked as the COMPARE target becomes the newly
+        // SELECTED one -- comparing a setup against itself is meaningless,
+        // so this must clear the stale pick rather than silently comparing
+        // Canon R8 zoom against itself.
+        store.selectedSetupID = ImagingSetupProfile.canonR8Zoom.id
+        await store.pendingRefresh?.value
+
+        #expect(store.compareSetupID == nil)
+        #expect(store.rigCompare == nil)
+    }
+
+    @Test("Fewer than two saved setups means no compare options and the comparison stays unavailable")
     func fewerThanTwoSetupsMeansRigCompareUnavailable() async {
         let store = PlanningStore(
             setups: [.apsCReference], catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext
@@ -807,23 +875,26 @@ struct PlanningStoreTests {
         await store.pendingRefresh?.value
 
         #expect(store.canCompareRigs == false)
-        #expect(store.otherSetupForCompare == nil)
+        #expect(store.compareOptions.isEmpty, "a single-setup library exposes no compare options at all")
+        #expect(store.compareSetup == nil)
 
-        store.compareOtherRig = true
+        // Nothing in `compareOptions` to pick anyway, but even a hand-fed
+        // invalid ID must not invent a comparison.
+        store.compareSetupID = "does-not-exist"
         await store.pendingRigCompareRefresh?.value
 
-        #expect(store.rigCompare == nil, "toggling on with no second setup to compare against must not invent a comparison")
+        #expect(store.rigCompare == nil, "picking an unresolvable compare setup must not invent a comparison")
     }
 
-    @Test("The rig-compare sentence components name the other setup and its own fit for the selected target")
-    func rigCompareSentenceComponentsNameTheOtherSetupAndFit() async throws {
+    @Test("The rig-compare sentence components name the picked setup and its own fit for the selected target")
+    func rigCompareSentenceComponentsNameThePickedSetupAndFit() async throws {
         let setups: [ImagingSetupProfile] = [.apsCReference, .canonR8Zoom]
         let store = PlanningStore(
             setups: setups, catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext
         )
         store.activate()
         await store.pendingRefresh?.value
-        store.compareOtherRig = true
+        store.compareSetupID = ImagingSetupProfile.canonR8Zoom.id
         await store.pendingRigCompareRefresh?.value
 
         let designation = try #require(store.rigCompare?.first { $0.value.otherFit != nil }?.key)
@@ -831,10 +902,53 @@ struct PlanningStoreTests {
         #expect(components.setupName == ImagingSetupProfile.canonR8Zoom.cameraName)
         #expect(components.fit == store.rigCompare?[designation]?.otherFit)
 
-        // No components at all once the toggle is off, or for a target this
+        // No components at all once nothing is picked, or for a target this
         // designation-keyed lookup has never heard of.
-        store.compareOtherRig = false
+        store.compareSetupID = nil
         #expect(store.rigCompareSentenceComponents(for: designation) == nil)
+    }
+
+    @Test("A stale rig-compare sweep never overwrites a newer one's result")
+    func staleRigCompareSweepDoesNotOverwriteNewer() async throws {
+        let setups: [ImagingSetupProfile] = [.apsCReference, .canonR8Zoom, .narrowReflector]
+        let counter = CallCounter()
+        let store = PlanningStore(
+            setups: setups,
+            computeRigCompare: { selectedSetupID, compareSetupID, allSetups, focalLengthMM, site, date, targets in
+                let call = counter.increment()
+                if call == 1 {
+                    // The FIRST (canonR8Zoom-targeting) sweep is the slow
+                    // one, so it completes AFTER the second, faster,
+                    // narrowReflector-targeting sweep below -- exactly the
+                    // ordering that would clobber the newer result if
+                    // `rigCompareGeneration` didn't guard against it.
+                    Thread.sleep(forTimeInterval: 0.2)
+                }
+                return RigCompareQuery.compare(
+                    selectedSetupID: selectedSetupID, compareSetupID: compareSetupID,
+                    setups: allSetups, focalLengthMM: focalLengthMM, site: site, date: date, targets: targets
+                )
+            },
+            catalogProvider: { TargetCatalog.all },
+            skyContextProvider: fixedSkyContext
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+
+        store.compareSetupID = ImagingSetupProfile.canonR8Zoom.id
+        let firstSweep = store.pendingRigCompareRefresh
+        store.compareSetupID = ImagingSetupProfile.narrowReflector.id
+        await store.pendingRigCompareRefresh?.value
+        // Let the slow, now-stale first sweep finish; its generation is
+        // behind, so it must not clobber `rigCompare` with narrowReflector's
+        // own comparison overwritten back to canonR8Zoom's.
+        await firstSweep?.value
+        try? await Task.sleep(nanoseconds: 350_000_000)
+
+        #expect(store.compareSetupID == ImagingSetupProfile.narrowReflector.id)
+        let designation = try #require(store.rigCompare?.first { $0.value.otherFit != nil }?.key)
+        let components = try #require(store.rigCompareSentenceComponents(for: designation))
+        #expect(components.setupName == ImagingSetupProfile.narrowReflector.cameraName, "the stale canonR8Zoom sweep must not have landed after the newer narrowReflector one")
     }
 
     @Test("A fetch failure with no cached forecast surfaces the mapped error instead of silently hiding")
@@ -867,6 +981,20 @@ private extension ImagingSetupProfile {
             cameraKind: .unmodifiedColor, sensorWidthMM: 36, sensorHeightMM: 24,
             focalLengthMinMM: 24, focalLengthMaxMM: 70, defaultFocalLengthMM: 50,
             fNumber: 4, relativeEfficiency: 1, isDefault: false
+        )
+    }
+
+    /// A THIRD saved setup, distinct from both `apsCReference` and
+    /// `canonR8Zoom` -- exists only so the rig-compare picker tests can
+    /// prove the owner's explicit selection is honored among three or more
+    /// setups, not just "the one other setup" a boolean checkbox used to
+    /// assume.
+    static var narrowReflector: Self {
+        Self(
+            id: "narrow-reflector", name: "Big reflector · 673 mm", cameraName: "Big reflector",
+            cameraKind: .dedicatedAstro, sensorWidthMM: 23.5, sensorHeightMM: 15.6,
+            focalLengthMinMM: 600, focalLengthMaxMM: 800, defaultFocalLengthMM: 673,
+            fNumber: 8, relativeEfficiency: 1, isDefault: false
         )
     }
 }

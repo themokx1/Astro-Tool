@@ -37,12 +37,24 @@ private let narrowRig = ImagingSetupProfile(
     focalLengthMinMM: 600, focalLengthMaxMM: 800, defaultFocalLengthMM: 673,
     fNumber: 8, relativeEfficiency: 1, isDefault: false
 )
+/// A THIRD saved setup, distinct from both `wideRig` and `narrowRig` -- exists
+/// only to prove `compare(compareSetupID:)` resolves whichever ID it is
+/// explicitly handed, never falls back to "the first other one" (the
+/// checkbox-era heuristic this function used to have, which broke down the
+/// moment a third setup existed: there is no single "other" rig to guess).
+private let thirdRig = ImagingSetupProfile(
+    id: "third-rig", name: "Widefield lens · 24 mm", cameraName: "Widefield lens",
+    cameraKind: .unmodifiedColor, sensorWidthMM: 36, sensorHeightMM: 24,
+    focalLengthMinMM: 24, focalLengthMaxMM: 24, defaultFocalLengthMM: 24,
+    fNumber: 2.8, relativeEfficiency: 1, isDefault: false
+)
 
 struct RigCompareQueryTests {
     @Test("A target too wide for the narrow rig's long focal length needs a mosaic there, while the wide rig frames it well")
     func wideTargetNeedsMosaicOnTheLongFocalRig() throws {
         let result = try #require(RigCompareQuery.compare(
             selectedSetupID: wideRig.id,
+            compareSetupID: narrowRig.id,
             setups: [wideRig, narrowRig],
             focalLengthMM: 200,
             site: budapest,
@@ -54,10 +66,54 @@ struct RigCompareQueryTests {
         #expect(m31.otherFit == .mosaic)
     }
 
+    @Test("With three or more saved setups, the explicitly picked compareSetupID decides the comparison, not just the first other one")
+    func explicitCompareSetupIDIsHonoredAmongThreeOrMoreSetups() throws {
+        let comparedAgainstThird = try #require(RigCompareQuery.compare(
+            selectedSetupID: wideRig.id,
+            compareSetupID: thirdRig.id,
+            setups: [wideRig, narrowRig, thirdRig],
+            focalLengthMM: 200,
+            site: budapest,
+            date: fixtureDate
+        ))
+        let comparedAgainstNarrow = try #require(RigCompareQuery.compare(
+            selectedSetupID: wideRig.id,
+            compareSetupID: narrowRig.id,
+            setups: [wideRig, narrowRig, thirdRig],
+            focalLengthMM: 200,
+            site: budapest,
+            date: fixtureDate
+        ))
+
+        // Same primary setup, same target catalog -- only the compare side
+        // moved, so the OTHER fit must reflect whichever setup was actually
+        // named, not the array's own first-non-selected entry (`narrowRig`
+        // sits before `thirdRig` in `setups`, so a "first other" heuristic
+        // would silently ignore the explicit `thirdRig` request here).
+        let m31Third = try #require(comparedAgainstThird["M 31"])
+        let m31Narrow = try #require(comparedAgainstNarrow["M 31"])
+        #expect(m31Third.primaryFit == m31Narrow.primaryFit, "the primary side must not move just because the compare side did")
+        #expect(m31Third.otherFit != m31Narrow.otherFit, "a wide lens and a long reflector must not report the same fit for M 31")
+    }
+
+    @Test("Naming the same setup on both sides means no invented self-comparison")
+    func sameSetupOnBothSidesMeansNilComparison() {
+        let result = RigCompareQuery.compare(
+            selectedSetupID: wideRig.id,
+            compareSetupID: wideRig.id,
+            setups: [wideRig, narrowRig],
+            focalLengthMM: 200,
+            site: budapest,
+            date: fixtureDate
+        )
+        #expect(result == nil)
+    }
+
     @Test("Fewer than two saved setups means no invented comparison")
     func fewerThanTwoSetupsMeansNilComparison() {
         let result = RigCompareQuery.compare(
             selectedSetupID: wideRig.id,
+            compareSetupID: narrowRig.id,
             setups: [wideRig],
             focalLengthMM: 200,
             site: budapest,
@@ -70,6 +126,7 @@ struct RigCompareQueryTests {
     func emptySetupsMeansNilComparison() {
         let result = RigCompareQuery.compare(
             selectedSetupID: wideRig.id,
+            compareSetupID: narrowRig.id,
             setups: [],
             focalLengthMM: 200,
             site: budapest,
@@ -82,6 +139,7 @@ struct RigCompareQueryTests {
     func unresolvedSelectedIDMeansNilComparison() {
         let result = RigCompareQuery.compare(
             selectedSetupID: "does-not-exist",
+            compareSetupID: narrowRig.id,
             setups: [wideRig, narrowRig],
             focalLengthMM: 200,
             site: budapest,
@@ -94,6 +152,7 @@ struct RigCompareQueryTests {
     func zipIntegrityMatchesEachRowToItsOwnDesignation() throws {
         let result = try #require(RigCompareQuery.compare(
             selectedSetupID: wideRig.id,
+            compareSetupID: narrowRig.id,
             setups: [wideRig, narrowRig],
             focalLengthMM: 200,
             site: budapest,
@@ -129,6 +188,7 @@ struct RigCompareQueryTests {
     func swappingSelectedSetupSwapsSides() throws {
         let asWideSelected = try #require(RigCompareQuery.compare(
             selectedSetupID: wideRig.id,
+            compareSetupID: narrowRig.id,
             setups: [wideRig, narrowRig],
             focalLengthMM: 200,
             site: budapest,
@@ -136,6 +196,7 @@ struct RigCompareQueryTests {
         ))
         let asNarrowSelected = try #require(RigCompareQuery.compare(
             selectedSetupID: narrowRig.id,
+            compareSetupID: wideRig.id,
             setups: [wideRig, narrowRig],
             focalLengthMM: 673,
             site: budapest,

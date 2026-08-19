@@ -144,24 +144,27 @@ public struct PlanningView: View {
                 }
                 .accessibilityIdentifier("v2.planning.focal-length")
             }
-            // Ideation #2 ("melyik géppel fér be?"): only shown once a second
-            // saved setup actually exists to compare against -- with 0-1
-            // setups this toggle could never do anything, so it stays hidden
-            // entirely rather than sitting there disabled (the feature's own
-            // scope note: no setups CRUD exists yet in V2, so an empty/short
-            // setups list is a known gap, not a bug this feature works around).
-            if store.canCompareRigs, let other = store.otherSetupForCompare {
-                // Plain `String` interpolation (not an embedded `Text`) into
-                // this `Text`'s `LocalizedStringKey` -- same "%@ substitution"
-                // shape `cloudIndicator`'s "Cloud tonight: \(...)" below
-                // already uses, so this reaches the SAME hu.lproj lookup
-                // machinery rather than an untested embedded-view path.
-                Toggle(isOn: $store.compareOtherRig) {
-                    Text("Compare with \(other.cameraName)")
+            // Ideation #2 ("melyik géppel fér be?"), reworked per owner
+            // feedback (2026-08-19): a checkbox labeled with the OTHER
+            // setup's name only ever made sense with exactly two saved
+            // setups, and it read as if the owner's own gear were hardcoded
+            // into the product. This is now a generic Picker -- its label
+            // never names a setup, and its options are every OTHER saved
+            // setup (never the one currently selected), so it scales to
+            // three or more setups instead of forcing a single guessed
+            // "other" rig. Hidden entirely below two saved setups, same
+            // "no setups CRUD exists yet in V2" scope note as before -- an
+            // owner with 0-1 setups would see a control that could never do
+            // anything for them.
+            if store.canCompareRigs {
+                Picker("Compare with", selection: $store.compareSetupID) {
+                    Text("None").tag(String?.none)
+                    ForEach(store.compareOptions) { setup in
+                        Text(setup.name).tag(Optional(setup.id))
+                    }
                 }
-                .toggleStyle(.checkbox)
-                .accessibilityIdentifier("v2.planning.compare-rig")
-                .help("Show how your other saved setup would frame each recommended target.")
+                .accessibilityIdentifier("v2.planning.compare-rig-picker")
+                .help("Show how another saved setup would frame each recommended target.")
             }
         }
     }
@@ -598,19 +601,26 @@ public struct PlanningView: View {
                 } else if let skyPath = store.skyPath {
                     SkyPathChart(result: skyPath)
                     // Ideation #2: one comparison sentence naming how the
-                    // OTHER saved setup would frame THIS selected target --
-                    // `nil` (renders nothing) under the exact same conditions
-                    // the Framing column's own comparison line is hidden for
-                    // (toggle off, <2 setups, no comparison row yet). Built
-                    // with `Text`'s own nested-`Text` interpolation (never
-                    // `String(format:)`, which `V2PolishSurfaceTests
-                    // .noHandRolledFormatting` forbids under `Sources/AstroUI`)
-                    // so both the sentence template AND `fit.displayLabel`
-                    // resolve through the SAME `hu.lproj`.
+                    // PICKED comparison setup would frame THIS selected
+                    // target -- `nil` (renders nothing) under the exact same
+                    // conditions the Framing column's own comparison line is
+                    // hidden for (nothing picked, <2 setups, no comparison
+                    // row yet). Built with `Text`'s own nested-`Text`
+                    // interpolation (never `String(format:)`, which
+                    // `V2PolishSurfaceTests.noHandRolledFormatting` forbids
+                    // under `Sources/AstroUI`) so both the sentence template
+                    // AND `fit.displayLabel` resolve through the SAME
+                    // `hu.lproj`. Owner pixel review (2026-08-19): the fit
+                    // label used to be spliced mid-sentence ("...this target
+                    // would be Túl kicsi lenne.", the capitalized Hungarian
+                    // label reading broken stuck in the middle of a lowercase
+                    // clause) -- a colon form keeps the label as its own
+                    // clause instead, which reads correctly capitalized in
+                    // both languages.
                     if let selectedRow,
                        let components = store.rigCompareSentenceComponents(for: selectedRow.target.designation)
                     {
-                        Text("With \(Text(verbatim: components.setupName)), this target would be \(Text(components.fit.displayLabel)).")
+                        Text("With \(Text(verbatim: components.setupName)): \(Text(components.fit.displayLabel))")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .accessibilityIdentifier("v2.planning.rig-compare-sentence")
@@ -741,25 +751,31 @@ public struct PlanningView: View {
     }
 
     /// Ideation #2's compact "both rigs" comparison line for the Framing
-    /// column -- renders nothing at all while the toggle is off, while a
-    /// recompute is still in flight, or for a target `store.rigCompare` has
-    /// no entry for (never a placeholder dash, which would just be table
-    /// noise for the common "toggle off" case). Both fit labels reuse
-    /// `PlanningFit.displayLabel` (already localized) rather than a second,
-    /// unlocalized vocabulary -- `DiscoveryPlanner`'s own raw Hungarian
-    /// `fovFitLabel` string is deliberately never rendered directly (the
-    /// class of bug `SkyVerdictKind.displayLabel`/`CatalogTargetKind
-    /// .displayLabel` above were already fixed for).
+    /// column -- renders nothing at all while no comparison setup is picked,
+    /// while a recompute is still in flight, or for a target
+    /// `store.rigCompare` has no entry for (never a placeholder dash, which
+    /// would just be table noise for the common "nothing picked" case). Both
+    /// fit labels reuse `PlanningFit.displayLabel` (already localized)
+    /// rather than a second, unlocalized vocabulary -- `DiscoveryPlanner`'s
+    /// own raw Hungarian `fovFitLabel` string is deliberately never rendered
+    /// directly (the class of bug `SkyVerdictKind.displayLabel`/
+    /// `CatalogTargetKind.displayLabel` above were already fixed for).
+    /// `.lineLimit(2)` (owner report, 2026-08-19): this column is one of the
+    /// narrowest in the table, and the default single-line truncation was
+    /// eliding the SECOND rig's verdict entirely whenever both setup names
+    /// plus both fit labels didn't fit on one line -- wrapping to a second
+    /// line keeps both verdicts readable instead of silently dropping one.
     @ViewBuilder
     private func rigCompareLine(_ row: PlanningRecommendation) -> some View {
-        if store.compareOtherRig, let other = store.otherSetupForCompare,
+        if let compareSetup = store.compareSetup,
            let compare = store.rigCompare?[row.target.designation]
         {
             (compactFitText(setupName: store.selectedSetup.cameraName, fit: compare.primaryFit)
                 + Text(verbatim: " · ")
-                + compactFitText(setupName: other.cameraName, fit: compare.otherFit))
+                + compactFitText(setupName: compareSetup.cameraName, fit: compare.otherFit))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .lineLimit(2)
         }
     }
 

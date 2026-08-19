@@ -72,6 +72,18 @@ public final class PlanningStore {
         didSet {
             guard oldValue != selectedSetupID else { return }
             adoptSelectedSetupDefaults()
+            // A setup picked as the COMPARE target can become the newly
+            // SELECTED one (the picker's own options exclude the selected
+            // setup, so this only happens via `selectedSetupID` moving out
+            // from under an already-made compare choice) -- comparing a
+            // setup against itself is meaningless, so this clears the now-
+            // invalid choice by writing the backing field directly rather
+            // than through `compareSetupID`'s own setter, which would kick
+            // off a second, redundant `recomputeRigCompare()` on top of the
+            // one `refresh()` below already runs at the end of its pipeline.
+            if compareSetupIDStorage == selectedSetupID {
+                compareSetupIDStorage = nil
+            }
             refresh()
         }
     }
@@ -241,36 +253,54 @@ public final class PlanningStore {
     /// on-selection evaluate -- explicitly NOT a whole-catalog cache.
     private var seasonWindowCache: [SeasonWindowCacheKey: SeasonWindowResult] = [:]
 
-    /// Ideation #2 ("melyik géppel fér be?"): when the owner has ≥2 saved
-    /// setups, lets Planning show -- for every recommended target -- how the
-    /// OTHER setup would frame it too, not just the one currently selected.
-    /// Off by default: the second `DiscoveryPlanner.discover` sweep this
-    /// drives (`recomputeRigCompare()`) is real, measurable extra work, so it
-    /// only runs when the owner actually asks for the comparison. Same-value
-    /// guard as every other toggle in this file.
-    public var compareOtherRig = false {
-        didSet {
-            guard oldValue != compareOtherRig else { return }
+    /// Ideation #2 ("melyik géppel fér be?"), reworked per owner feedback
+    /// (2026-08-19): a boolean "compare with the other rig" checkbox only
+    /// ever made sense with exactly two saved setups -- with three or more
+    /// there is no single "other" rig for a checkbox to imply, and the
+    /// checkbox's own label baked in that other setup's name, which read as
+    /// the owner's personal gear hardcoded into the product. This is now the
+    /// EXPLICITLY picked comparison setup's `id` -- `nil` means "off", same
+    /// meaning `compareOtherRig == false` used to carry. Backed by
+    /// `compareSetupIDStorage` (not a plain stored `didSet`) so
+    /// `selectedSetupID`'s own didSet can clear a now-invalid selection by
+    /// writing that backing field directly, without a second, redundant
+    /// `recomputeRigCompare()` dispatch -- `refresh()` already calls it once
+    /// more at the end of its own pipeline regardless.
+    public var compareSetupID: String? {
+        get { compareSetupIDStorage }
+        set {
+            guard newValue != compareSetupIDStorage else { return }
+            compareSetupIDStorage = newValue
             recomputeRigCompare()
         }
     }
+    private var compareSetupIDStorage: String?
     /// `true` only once ≥2 setups are saved -- `PlanningView` hides the
-    /// compare toggle entirely below that, matching the feature's own scope
+    /// compare picker entirely below that, matching the feature's own scope
     /// note: V2 has no setups CRUD yet, so an owner with 0-1 setups simply
     /// never sees a control that could never do anything for them.
     public var canCompareRigs: Bool { setups.count >= 2 }
-    /// The first OTHER saved setup (not the one currently selected) --
-    /// `RigCompareQuery.compare`'s own deterministic pick, exposed here so
-    /// `PlanningView` can name it in the comparison column/sentence without
-    /// re-deriving the same rule a second time.
-    public var otherSetupForCompare: ImagingSetupProfile? {
-        setups.first { $0.id != selectedSetupID }
+    /// Every saved setup EXCEPT the one currently selected -- `PlanningView`'s
+    /// picker options, so an owner with three or more setups can name exactly
+    /// which one to compare against instead of the old checkbox's forced
+    /// "the other one" guess.
+    public var compareOptions: [ImagingSetupProfile] {
+        setups.filter { $0.id != selectedSetupID }
+    }
+    /// The setup `compareSetupID` currently names, resolved against `setups`
+    /// -- `nil` while comparison is off, or if a stale ID (a setup removed
+    /// out from under an active selection; no setups CRUD exists in V2 yet,
+    /// but this stays honest rather than assuming it can't happen) no longer
+    /// resolves.
+    public var compareSetup: ImagingSetupProfile? {
+        guard let compareSetupID else { return nil }
+        return setups.first { $0.id == compareSetupID }
     }
     /// This target's FOV-fit comparison across both rigs, keyed by
-    /// `CatalogTarget.designation` -- `nil` while the toggle is off, fewer
-    /// than two setups are saved, or nothing has resolved yet to compare
-    /// against. STORED and recomputed only by `recomputeRigCompare()`, off
-    /// the main actor -- never derived in `PlanningView.body`, the same
+    /// `CatalogTarget.designation` -- `nil` while comparison is off, the
+    /// picked setup no longer resolves, or nothing has resolved yet to
+    /// compare against. STORED and recomputed only by `recomputeRigCompare()`,
+    /// off the main actor -- never derived in `PlanningView.body`, the same
     /// "recompute path, not a body-time derivation" discipline
     /// `recommendations`/`filteredRecommendations`/`skyPath`/`seasonWindow`
     /// all already follow in this file.
@@ -281,8 +311,25 @@ public final class PlanningStore {
     /// mirroring `pendingSkyPathRefresh`'s own contract -- never read by
     /// production code.
     private(set) var pendingRigCompareRefresh: Task<Void, Never>?
+    /// Runs `RigCompareQuery.compare` for `recomputeRigCompare()`. Injectable
+    /// for the same reason `computeRecommendations` is: it lets
+    /// `PlanningStoreTests` control the relative timing of two overlapping
+    /// sweeps (proving the stale-generation guard drops the older one)
+    /// without needing `RigCompareQuery` itself to be mockable. `@Sendable`
+    /// because it runs inside `Task.detached`, off the main actor -- see
+    /// `recomputeRigCompare()`.
+    public typealias RigCompareComputer = @Sendable (
+        _ selectedSetupID: String,
+        _ compareSetupID: String,
+        _ setups: [ImagingSetupProfile],
+        _ focalLengthMM: Double?,
+        _ site: SiteRule,
+        _ date: Date,
+        _ targets: [CatalogTarget]
+    ) -> [String: RigCompareRow]?
     private let defaults: UserDefaults
     private let computeRecommendations: RecommendationsComputer
+    private let computeRigCompare: RigCompareComputer
     /// Bumped at the start of every `refresh()` and captured into that
     /// call's own local `generation` -- mirrors the guard
     /// `ProjectsStore.selectProject` uses for the same "several async calls
@@ -348,6 +395,22 @@ public final class PlanningStore {
         setups: [ImagingSetupProfile] = PlanningStore.defaultSetups,
         defaults: UserDefaults = .standard,
         computeRecommendations: @escaping RecommendationsComputer = { $0.recommendations() },
+        /// Injectable for the same reason `computeRecommendations` is --
+        /// `PlanningStoreTests` uses this to control the relative timing of
+        /// two overlapping rig-compare sweeps, proving `rigCompareGeneration`
+        /// actually drops a stale one rather than letting it clobber a newer
+        /// result.
+        computeRigCompare: @escaping RigCompareComputer = { selectedSetupID, compareSetupID, setups, focalLengthMM, site, date, targets in
+            RigCompareQuery.compare(
+                selectedSetupID: selectedSetupID,
+                compareSetupID: compareSetupID,
+                setups: setups,
+                focalLengthMM: focalLengthMM,
+                site: site,
+                date: date,
+                targets: targets
+            )
+        },
         catalogSearch: CatalogSearch? = nil,
         catalogProvider: CatalogProvider? = nil,
         /// Optional rather than an async default argument. Swift 6.3.3 emits
@@ -376,6 +439,7 @@ public final class PlanningStore {
         self.setups = safeSetups
         self.defaults = defaults
         self.computeRecommendations = computeRecommendations
+        self.computeRigCompare = computeRigCompare
         self.skyContextProvider = skyContextProvider ?? PlanningStore.productionSkyContext
         self.weatherProvider = weatherProvider ?? PlanningStore.productionWeather
         self.measuredSkyProvider = measuredSkyProvider ?? PlanningStore.productionMeasuredSky
@@ -577,7 +641,7 @@ public final class PlanningStore {
             // change what there is to compare -- follows `resolvedSite`/
             // `planningDate` the same way `recomputeSkyPath` does.
             // `recomputeRigCompare` itself is a no-op unless
-            // `compareOtherRig` is actually on.
+            // `compareSetupID` actually names a setup.
             self.recomputeRigCompare()
         }
         pendingRefresh = task
@@ -670,20 +734,20 @@ public final class PlanningStore {
     /// Recomputes `rigCompare` off the main actor, guarded against a stale
     /// (superseded) completion by `rigCompareGeneration` -- the same shape
     /// `recomputeSkyPath()`/`recomputeSeasonWindow()` use. Called both when
-    /// the toggle itself flips (no need to re-resolve the site/weather/
-    /// measured-sky pipeline just to turn a display option on -- this reuses
-    /// the already-resolved `resolvedSite`/`planningDate`) and again whenever
-    /// `refresh()` itself lands (a new setup, focal length, planned night, or
-    /// library can all change what there is to compare). A second
-    /// `DiscoveryPlanner.discover` sweep over the whole catalog is real
-    /// work -- gated behind `compareOtherRig` so an owner who never asks for
-    /// the comparison never pays for it.
+    /// the picked comparison setup itself changes (no need to re-resolve the
+    /// site/weather/measured-sky pipeline just to change a display option --
+    /// this reuses the already-resolved `resolvedSite`/`planningDate`) and
+    /// again whenever `refresh()` itself lands (a new setup, focal length,
+    /// planned night, or library can all change what there is to compare). A
+    /// second `DiscoveryPlanner.discover` sweep over the whole catalog is
+    /// real work -- gated behind `compareSetupID` being non-`nil` so an
+    /// owner who never picks a comparison setup never pays for it.
     @discardableResult
     private func recomputeRigCompare() -> Task<Void, Never> {
         rigCompareGeneration += 1
         let generation = rigCompareGeneration
-        guard compareOtherRig, let site = resolvedSite, let date = planningDate,
-              otherSetupForCompare != nil
+        guard let compareSetupID, let site = resolvedSite, let date = planningDate,
+              compareSetup != nil
         else {
             rigCompare = nil
             isComputingRigCompare = false
@@ -696,16 +760,10 @@ public final class PlanningStore {
         let allSetups = setups
         let focalLength = focalLength
         let targets = catalogProvider()
+        let compute = computeRigCompare
         let task = Task { [weak self] in
             let result = await Task.detached(priority: .utility) {
-                RigCompareQuery.compare(
-                    selectedSetupID: selectedSetupID,
-                    setups: allSetups,
-                    focalLengthMM: focalLength,
-                    site: site,
-                    date: date,
-                    targets: targets
-                )
+                compute(selectedSetupID, compareSetupID, allSetups, focalLength, site, date, targets)
             }.value
             guard let self, generation == self.rigCompareGeneration else { return }
             self.rigCompare = result
@@ -715,26 +773,25 @@ public final class PlanningStore {
         return task
     }
 
-    /// The two raw pieces (the other setup's name, its own framing verdict
-    /// for the given target) `PlanningView` composes into one sentence for
-    /// the sky-path footer under whichever row is selected -- returning
-    /// pieces rather than a finished sentence keeps this store's own
-    /// `String(format:)`-free, matching `V2PolishSurfaceTests
+    /// The two raw pieces (the compared setup's name, its own framing
+    /// verdict for the given target) `PlanningView` composes into one
+    /// sentence for the sky-path footer under whichever row is selected --
+    /// returning pieces rather than a finished sentence keeps this store's
+    /// own `String(format:)`-free, matching `V2PolishSurfaceTests
     /// .noHandRolledFormatting`'s "use `Text`'s own interpolation, never a
     /// hand-rolled format string, anywhere under `Sources/AstroUI`" gate --
     /// `PlanningView` composes the actual `Text` via `Text`'s own nested-
-    /// `Text` interpolation (`Text("... \(Text(verbatim: name)) ... \(Text
-    /// (fit.displayLabel)).")`), which resolves through the SAME `hu.lproj`
+    /// `Text` interpolation (`Text("With \(Text(verbatim: name)): \(Text
+    /// (fit.displayLabel))")`), which resolves through the SAME `hu.lproj`
     /// without ever calling `String(format:)` in source. `nil` under the
-    /// exact same conditions `rigCompare` itself is (toggle off, <2 setups,
-    /// nothing resolved yet), or when this particular designation has no
-    /// comparison row, or the other setup's own fit is unknown (no size/FOV
-    /// to judge).
+    /// exact same conditions `rigCompare` itself is (nothing picked, <2
+    /// setups, nothing resolved yet), or when this particular designation
+    /// has no comparison row, or the compared setup's own fit is unknown (no
+    /// size/FOV to judge).
     public func rigCompareSentenceComponents(for designation: String) -> (setupName: String, fit: PlanningFit)? {
-        guard compareOtherRig, let other = otherSetupForCompare,
-              let compare = rigCompare?[designation], let otherFit = compare.otherFit
+        guard let compareSetup, let compare = rigCompare?[designation], let otherFit = compare.otherFit
         else { return nil }
-        return (other.cameraName, otherFit)
+        return (compareSetup.cameraName, otherFit)
     }
 
     /// Recomputes `filteredRecommendations` from the current
