@@ -388,23 +388,37 @@ public struct HomeView: View {
         switch kind {
         case .anniversary: "birthday.cake.fill"
         case .milestone: "trophy.fill"
+        case .coolerLesson: "thermometer.snowflake"
+        case .focusLesson: "scope"
         }
     }
 
-    /// Both branches interpolate ONLY pre-formatted `String`s
-    /// (`String(yearsAgo)`/`String(hours)`, `highlight.displayName` is
-    /// already one) -- an `Int` interpolated straight into a
-    /// `LocalizedStringKey` emits a `%lld` runtime key while this
-    /// codebase's own extraction script normalizes every interpolation to
-    /// `%@` (see `NightContextRail`'s "Nearest clear night" comment for the
-    /// same rule applied there); pre-formatting keeps the hand-added
-    /// `hu.lproj` key matching what actually renders at runtime.
+    /// All branches interpolate ONLY pre-formatted `String`s
+    /// (`String(yearsAgo)`/`String(hours)`/`String(failingCount)`/
+    /// `String(sessionCount)`, `highlight.displayName` is already one) -- an
+    /// `Int` interpolated straight into a `LocalizedStringKey` emits a
+    /// `%lld` runtime key while this codebase's own extraction script
+    /// normalizes every interpolation to `%@` (see `NightContextRail`'s
+    /// "Nearest clear night" comment for the same rule applied there);
+    /// pre-formatting keeps the hand-added `hu.lproj` key matching what
+    /// actually renders at runtime. The two lesson cases (ideation #9,
+    /// "Éjszaka-tanulságok banner") never reference `highlight.displayName`
+    /// -- see that field's own doc comment for why a lesson has none of its
+    /// own to show.
     private func highlightText(_ highlight: HomeSnapshot.Highlight) -> Text {
         switch highlight.kind {
         case .anniversary(let yearsAgo):
             Text("\(String(yearsAgo)) years ago today: first light on \(highlight.displayName)")
         case .milestone(let hours):
             Text("Reached the \(String(hours))-hour milestone on \(highlight.displayName)")
+        case .coolerLesson(let failingCount, let sessionCount):
+            Text(
+                "Your cooler missed set-point on \(String(failingCount)) of your last \(String(sessionCount)) nights — check the cooling headroom on hot nights."
+            )
+        case .focusLesson(let failingCount, let sessionCount):
+            Text(
+                "Focus drifted on \(String(failingCount)) of your last \(String(sessionCount)) nights — consider a mid-session refocus."
+            )
         }
     }
 

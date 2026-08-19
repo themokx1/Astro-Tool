@@ -658,6 +658,53 @@ struct HomeStoreTests {
         #expect(HomeStore.composeHighlights(anniversaries: [], milestones: []).isEmpty)
     }
 
+    // MARK: - Ideation #9 ("Éjszaka-tanulságok banner"): lessons rank below
+    // celebrations and share their same cap.
+
+    @Test("A lesson shows when there is room under the cap, ranked after every anniversary/milestone")
+    func composeHighlightsShowsLessonWhenThereIsRoom() {
+        let anniversary = AnniversaryHit(
+            projectID: UUID(), catalogID: "IC 1805", displayName: "IC 1805", yearsAgo: 2, firstLightDate: "2024-08-19"
+        )
+        let lesson = NightHealthLesson(kind: .coolerNotHoldingSetpoint, failingCount: 4, sessionCount: 6)
+
+        let highlights = HomeStore.composeHighlights(anniversaries: [anniversary], milestones: [], lessons: [lesson])
+
+        #expect(highlights.count == 2)
+        #expect(highlights[0].kind == .anniversary(yearsAgo: 2))
+        #expect(highlights[1].kind == .coolerLesson(failingCount: 4, sessionCount: 6))
+    }
+
+    @Test("A lesson is dropped entirely once two anniversaries/milestones already fill the card")
+    func composeHighlightsDropsLessonWhenCelebrationsFillTheCap() {
+        let anniversary = AnniversaryHit(
+            projectID: UUID(), catalogID: "M 31", displayName: "M 31", yearsAgo: 5, firstLightDate: "2021-08-19"
+        )
+        let milestone = MilestoneHit(
+            projectID: UUID(), catalogID: "NGC 7000", displayName: "NGC 7000", thresholdHours: 100
+        )
+        let lesson = NightHealthLesson(kind: .focusDrift, failingCount: 5, sessionCount: 8)
+
+        let highlights = HomeStore.composeHighlights(
+            anniversaries: [anniversary], milestones: [milestone], lessons: [lesson]
+        )
+
+        #expect(highlights.count == 2)
+        #expect(!highlights.contains { $0.kind == .focusLesson(failingCount: 5, sessionCount: 8) })
+    }
+
+    @Test("Lessons alone (no celebrations at all) still show, up to the same cap")
+    func composeHighlightsShowsLessonsAloneUpToCap() {
+        let coolerLesson = NightHealthLesson(kind: .coolerNotHoldingSetpoint, failingCount: 4, sessionCount: 6)
+        let focusLesson = NightHealthLesson(kind: .focusDrift, failingCount: 5, sessionCount: 8)
+
+        let highlights = HomeStore.composeHighlights(anniversaries: [], milestones: [], lessons: [coolerLesson, focusLesson])
+
+        #expect(highlights.count == 2)
+        #expect(highlights[0].kind == .coolerLesson(failingCount: 4, sessionCount: 6))
+        #expect(highlights[1].kind == .focusLesson(failingCount: 5, sessionCount: 8))
+    }
+
     // MARK: - Expert ideation reserve #5 (Clear-Night Countdown)
 
     @Test("The featured project's own completion forecast is resolved for the SAME project 'next' names")

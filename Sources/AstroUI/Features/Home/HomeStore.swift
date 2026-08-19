@@ -284,8 +284,22 @@ public struct HomeSnapshot: Equatable, Sendable {
         public enum Kind: Equatable, Sendable {
             case anniversary(yearsAgo: Int)
             case milestone(hours: Int)
+            /// Ideation #9 ("Éjszaka-tanulságok banner"): a repeated
+            /// `NightHealthLesson` pattern, ranked below every anniversary/
+            /// milestone by `HomeStore.composeHighlights`. `failingCount`/
+            /// `sessionCount` are `NightHealthLesson`'s own numerator/
+            /// denominator, carried through unchanged -- see that type's own
+            /// honesty-rail doc comment.
+            case coolerLesson(failingCount: Int, sessionCount: Int)
+            case focusLesson(failingCount: Int, sessionCount: Int)
         }
         public let kind: Kind
+        /// Not a real project/catalog reference for the two lesson `Kind`
+        /// cases -- a lesson is a fact about the whole library's recent
+        /// sessions, not about one project. `HomeStore.composeHighlights`
+        /// fills these with a stable, non-project tag ("night-health-cooler"/
+        /// "night-health-focus") purely so `id` stays unique; `HomeView`'s
+        /// lesson text is built entirely from `kind`, never from this field.
         public let catalogID: String
         public let displayName: String
 
@@ -299,6 +313,8 @@ public struct HomeSnapshot: Equatable, Sendable {
             switch kind {
             case .anniversary(let yearsAgo): "anniversary|\(catalogID)|\(yearsAgo)"
             case .milestone(let hours): "milestone|\(catalogID)|\(hours)"
+            case .coolerLesson(let failingCount, let sessionCount): "coolerLesson|\(failingCount)|\(sessionCount)"
+            case .focusLesson(let failingCount, let sessionCount): "focusLesson|\(failingCount)|\(sessionCount)"
             }
         }
     }
@@ -1038,14 +1054,18 @@ public final class HomeStore {
     /// anniversary is the rarer, more personal fact of the two), each group
     /// already sorted with its own largest hit first
     /// (`AnniversaryQuery.anniversaries`/`MilestoneQuery.evaluate`'s own
-    /// sort) -- "prioritize larger anniversaries" from the spec. The
-    /// combined list is then capped to `AnniversaryQuery.maximumHits` (2):
-    /// three anniversaries firing the same day show only the two largest,
-    /// and a milestone is dropped entirely once two anniversaries already
-    /// fill the card.
+    /// sort) -- "prioritize larger anniversaries" from the spec. `lessons`
+    /// (ideation #9, "Éjszaka-tanulságok banner") rank BELOW both -- a
+    /// hardware-health pattern is a useful nudge, never as screenshot-worthy
+    /// as a real anniversary or milestone, so it only shows once neither of
+    /// those has filled the card. The combined list is then capped to
+    /// `AnniversaryQuery.maximumHits` (2): three anniversaries firing the
+    /// same day show only the two largest, and a milestone -- or a lesson --
+    /// is dropped entirely once two anniversaries already fill the card.
     static func composeHighlights(
         anniversaries: [AnniversaryHit],
-        milestones: [MilestoneHit]
+        milestones: [MilestoneHit],
+        lessons: [NightHealthLesson] = []
     ) -> [HomeSnapshot.Highlight] {
         let anniversaryHighlights = anniversaries.map {
             HomeSnapshot.Highlight(kind: .anniversary(yearsAgo: $0.yearsAgo), catalogID: $0.catalogID, displayName: $0.displayName)
@@ -1053,7 +1073,24 @@ public final class HomeStore {
         let milestoneHighlights = milestones.map {
             HomeSnapshot.Highlight(kind: .milestone(hours: $0.thresholdHours), catalogID: $0.catalogID, displayName: $0.displayName)
         }
-        return Array((anniversaryHighlights + milestoneHighlights).prefix(AnniversaryQuery.maximumHits))
+        // See `HomeSnapshot.Highlight.catalogID`'s own doc comment for why
+        // these two tags are stable, non-project strings rather than a real
+        // catalog reference.
+        let lessonHighlights = lessons.map { lesson -> HomeSnapshot.Highlight in
+            switch lesson.kind {
+            case .coolerNotHoldingSetpoint:
+                HomeSnapshot.Highlight(
+                    kind: .coolerLesson(failingCount: lesson.failingCount, sessionCount: lesson.sessionCount),
+                    catalogID: "night-health-cooler", displayName: ""
+                )
+            case .focusDrift:
+                HomeSnapshot.Highlight(
+                    kind: .focusLesson(failingCount: lesson.failingCount, sessionCount: lesson.sessionCount),
+                    catalogID: "night-health-focus", displayName: ""
+                )
+            }
+        }
+        return Array((anniversaryHighlights + milestoneHighlights + lessonHighlights).prefix(AnniversaryQuery.maximumHits))
     }
 
     /// Expert ideation spec #5: resolves every project's own snapshot for
@@ -1083,7 +1120,14 @@ public final class HomeStore {
         let (milestones, updatedTotals) = MilestoneQuery.evaluate(projects: snapshots, previousTotals: previousTotals)
         try? ledger.save(updatedTotals)
 
-        return composeHighlights(anniversaries: anniversaries, milestones: milestones)
+        // Ideation #9 ("Éjszaka-tanulságok banner"): same "await it inline,
+        // honest empty default on failure" shape the milestone ledger write
+        // above already takes -- a lesson that fails to resolve just risks
+        // staying silent this once, never worth failing the whole highlights
+        // read.
+        let lessons = (try? await NightHealthLessons.production(rootURL: rootURL)) ?? []
+
+        return composeHighlights(anniversaries: anniversaries, milestones: milestones, lessons: lessons)
     }
 
     /// Darks + flats concatenated into one list -- same "one merged coverage
