@@ -56,6 +56,23 @@ private final class CallCounter: @unchecked Sendable {
     }
 }
 
+/// Thread-safe mutable holder for a `PlanningStore.SetupsProvider`'s
+/// result -- `@Sendable` closures can't capture a plain `var` (same
+/// restriction `CallCounter` above exists to work around), and these tests
+/// need to change what "config on disk" reports MID-TEST to simulate a
+/// Settings-tab edit landing between two `refresh()` calls.
+private final class SetupsProviderBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: [ImagingSetupProfile]
+
+    init(_ value: [ImagingSetupProfile]) { self.value = value }
+
+    var current: [ImagingSetupProfile] {
+        get { lock.lock(); defer { lock.unlock() }; return value }
+        set { lock.lock(); defer { lock.unlock() }; value = newValue }
+    }
+}
+
 @MainActor
 struct PlanningStoreTests {
     // Build 20015 shipped a Planning freeze caused by a side-effectful
@@ -962,6 +979,120 @@ struct PlanningStoreTests {
         await store.pendingRefresh?.value
 
         #expect(store.cloudState == .error(.network))
+    }
+
+    // MARK: - Task (imaging-setup CRUD): setups stay fresh across refreshes
+
+    @Test("A setupsProvider result different from the injected setups replaces them on the next refresh")
+    func refreshAdoptsANewSetupsListFromTheProvider() async {
+        let store = PlanningStore(
+            setups: [.apsCReference],
+            setupsProvider: { _ in [.canonR8Zoom] },
+            skyContextProvider: { _ in nil }
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+
+        #expect(store.setups == [.canonR8Zoom])
+        #expect(store.selectedSetupID == ImagingSetupProfile.canonR8Zoom.id)
+        #expect(store.focalLength == ImagingSetupProfile.canonR8Zoom.defaultFocalLengthMM)
+    }
+
+    @Test("A nil setupsProvider result leaves the current setups untouched")
+    func refreshWithNoProviderResultKeepsInjectedSetups() async {
+        let store = PlanningStore(
+            setups: [.apsCReference],
+            setupsProvider: { _ in nil },
+            skyContextProvider: { _ in nil }
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+
+        #expect(store.setups == [.apsCReference])
+        #expect(store.selectedSetupID == ImagingSetupProfile.apsCReference.id)
+    }
+
+    @Test("A setups reload that drops the active rig-compare pick clears the comparison")
+    func refreshClearsAnInvalidatedCompareSetupID() async {
+        let providerResult = SetupsProviderBox([.apsCReference, .canonR8Zoom])
+        let store = PlanningStore(
+            setups: [.apsCReference, .canonR8Zoom],
+            setupsProvider: { _ in providerResult.current },
+            skyContextProvider: { _ in nil }
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+        store.compareSetupID = ImagingSetupProfile.canonR8Zoom.id
+        #expect(store.compareSetupID == ImagingSetupProfile.canonR8Zoom.id)
+
+        // The next reload reports canonR8Zoom deleted from config.
+        providerResult.current = [.apsCReference]
+        store.setPlanningDate(Date(timeIntervalSince1970: 0)) // forces a genuine refresh.
+        await store.pendingRefresh?.value
+
+        #expect(store.setups == [.apsCReference])
+        #expect(store.compareSetupID == nil)
+        #expect(store.selectedSetupID == ImagingSetupProfile.apsCReference.id)
+    }
+
+    @Test("Deleting the currently selected setup falls back to the config's own default, mirroring the no-setups-configured state")
+    func refreshFallsBackWhenTheSelectedSetupIsDeleted() async {
+        let providerResult = SetupsProviderBox([.apsCReference, .canonR8Zoom])
+        let store = PlanningStore(
+            setups: [.apsCReference, .canonR8Zoom],
+            setupsProvider: { _ in providerResult.current },
+            skyContextProvider: { _ in nil }
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+        store.selectedSetupID = ImagingSetupProfile.canonR8Zoom.id
+        #expect(store.selectedSetupID == ImagingSetupProfile.canonR8Zoom.id)
+
+        // Settings deletes canonR8Zoom; apsCReference is config's own default.
+        providerResult.current = [.apsCReference]
+        store.setPlanningDate(Date(timeIntervalSince1970: 0))
+        await store.pendingRefresh?.value
+
+        #expect(store.selectedSetupID == ImagingSetupProfile.apsCReference.id)
+        #expect(store.focalLength == ImagingSetupProfile.apsCReference.defaultFocalLengthMM)
+    }
+
+    // MARK: - `productionSetupsProvider`: the real config.json round trip
+
+    @Test("productionSetupsProvider reads config.imagingSetups from disk")
+    func productionSetupsProviderReadsConfiguredSetups() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AstroTool-PlanningSetupsProviderTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var config = AstroConfig()
+        config.rootPath = root.path
+        config.imagingSetups = [.canonR8Zoom]
+        try config.save(using: WriteGuard(root: root))
+
+        let result = PlanningStore.productionSetupsProvider(rootURL: root)
+        #expect(result == [.canonR8Zoom])
+    }
+
+    @Test("productionSetupsProvider falls back to the bundled defaults once every saved setup is deleted")
+    func productionSetupsProviderFallsBackWhenConfigHasNoSetups() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AstroTool-PlanningSetupsProviderTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var config = AstroConfig()
+        config.rootPath = root.path
+        config.imagingSetups = []
+        try config.save(using: WriteGuard(root: root))
+
+        let result = PlanningStore.productionSetupsProvider(rootURL: root)
+        #expect(result == PlanningStore.defaultSetups)
+    }
+
+    @Test("productionSetupsProvider reports nothing new for a library with no config on disk yet")
+    func productionSetupsProviderIsNilWithoutAConfigFile() {
+        #expect(PlanningStore.productionSetupsProvider(rootURL: URL(fileURLWithPath: "/tmp/does-not-matter")) == nil)
+        #expect(PlanningStore.productionSetupsProvider(rootURL: nil) == nil)
     }
 }
 

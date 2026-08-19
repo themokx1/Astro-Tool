@@ -61,16 +61,40 @@ public final class PlanningStore {
     /// `skyContextProvider` is: tests supply a fixed result without a real
     /// network call.
     public typealias WeatherProvider = @Sendable (URL?) async throws -> [String: DailyCloudSummary]?
+    /// Re-reads this library's saved imaging setups on every `refresh()`,
+    /// exactly the fresh-every-call contract `SkyContextProvider`/
+    /// `WeatherProvider` already have -- `nil` means "nothing new to
+    /// report" (no root yet, or no config on disk at all), which leaves
+    /// `setups` untouched; the production implementation only ever returns
+    /// nil in exactly that case, falling back to `PlanningStore.defaultSetups`
+    /// itself once a real config loads with an empty `imagingSetups` (the
+    /// same graceful-degrade a fresh install with no setups configured at
+    /// all already gets -- deleting every saved setup must land in the
+    /// identical place). Synchronous, unlike the two providers above: it is
+    /// only ever a small on-disk JSON read (`SiteSettingsStore
+    /// .productionConfigLoader`'s own shape), never a database open.
+    public typealias SetupsProvider = @Sendable (URL?) -> [ImagingSetupProfile]?
 
-    public let setups: [ImagingSetupProfile]
+    /// No longer a `let`: the equipment-setups Settings tab (V2 UI/UX audit,
+    /// imaging-setup CRUD) is a SEPARATE `Settings { }` scene from the one
+    /// hosting this store (see `SiteSettingsStore`'s own cross-scene doc
+    /// comment), so there is no direct call path from an edit there into an
+    /// already-running `PlanningStore` here. Instead this is kept fresh the
+    /// exact same way `resolvedSite`/`cloudState` already are: `refresh()`
+    /// re-reads it from disk via `setupsProvider` on every recompute, never
+    /// only once at `init`, so a Settings edit is picked up the next time
+    /// anything re-triggers `refresh()` -- no cross-scene signal needed.
+    public private(set) var setups: [ImagingSetupProfile]
     /// AppKit's Picker re-asserts the bound selection during its own update
     /// pass, and `didSet` fires on every assignment -- equal values included.
     /// `@Observable` reports a mutation regardless of equality, so an
     /// unguarded didSet here closes an infinite view-invalidation loop
     /// (the build 20016 Planning freeze). Same-value writes must be no-ops.
     public var selectedSetupID: String {
-        didSet {
-            guard oldValue != selectedSetupID else { return }
+        get { selectedSetupIDStorage }
+        set {
+            guard newValue != selectedSetupIDStorage else { return }
+            selectedSetupIDStorage = newValue
             adoptSelectedSetupDefaults()
             // A setup picked as the COMPARE target can become the newly
             // SELECTED one (the picker's own options exclude the selected
@@ -81,12 +105,20 @@ public final class PlanningStore {
             // than through `compareSetupID`'s own setter, which would kick
             // off a second, redundant `recomputeRigCompare()` on top of the
             // one `refresh()` below already runs at the end of its pipeline.
-            if compareSetupIDStorage == selectedSetupID {
+            if compareSetupIDStorage == selectedSetupIDStorage {
                 compareSetupIDStorage = nil
             }
             refresh()
         }
     }
+    /// Backs `selectedSetupID` -- `reloadSetupsIfNeeded()` (called from
+    /// `refresh()`, i.e. from WITHIN `selectedSetupID`'s own setter's call
+    /// chain in the reentrant case) writes here directly to correct a
+    /// selection a fresh `setups` reload just invalidated, the same
+    /// direct-backing-field technique `compareSetupIDStorage` already uses
+    /// to avoid a second, redundant `refresh()`/`recomputeRigCompare()`
+    /// dispatch on top of the one already running.
+    private var selectedSetupIDStorage: String
     public private(set) var focalLength: Double
     /// Same-value guard: a SwiftUI `TextField` binding can re-assert the
     /// current text during its own update pass, and `didSet` fires on every
@@ -353,6 +385,7 @@ public final class PlanningStore {
     private var lastObservedReferenceSurfaceBrightness: Double
     private let catalogSearch: CatalogSearch
     private let catalogProvider: CatalogProvider
+    private let setupsProvider: SetupsProvider
     private let skyContextProvider: SkyContextProvider
     private let weatherProvider: WeatherProvider
     private let measuredSkyProvider: MeasuredSkyProvider
@@ -413,6 +446,11 @@ public final class PlanningStore {
         },
         catalogSearch: CatalogSearch? = nil,
         catalogProvider: CatalogProvider? = nil,
+        /// Not `async`, so (unlike the three providers below) this can stay
+        /// a plain defaulted parameter -- the async-default-argument bug
+        /// documented on `skyContextProvider` below only affects `async`
+        /// closures.
+        setupsProvider: @escaping SetupsProvider = PlanningStore.productionSetupsProvider,
         /// Optional rather than an async default argument. Swift 6.3.3 emits
         /// an async default's implicit closure as a `weak private external`
         /// record whose context size differs between the defining module and
@@ -440,6 +478,7 @@ public final class PlanningStore {
         self.defaults = defaults
         self.computeRecommendations = computeRecommendations
         self.computeRigCompare = computeRigCompare
+        self.setupsProvider = setupsProvider
         self.skyContextProvider = skyContextProvider ?? PlanningStore.productionSkyContext
         self.weatherProvider = weatherProvider ?? PlanningStore.productionWeather
         self.measuredSkyProvider = measuredSkyProvider ?? PlanningStore.productionMeasuredSky
@@ -453,7 +492,7 @@ public final class PlanningStore {
             TargetCatalog.search(query, limit: source.count, in: source)
         }
         let initial = safeSetups.first(where: \.isDefault) ?? safeSetups[0]
-        selectedSetupID = initial.id
+        selectedSetupIDStorage = initial.id
         focalLength = initial.defaultFocalLengthMM
         lastObservedReferenceHours = defaults.double(forKey: Self.referenceHoursKey)
         lastObservedReferenceFocalRatio = defaults.double(forKey: Self.referenceFocalRatioKey)
@@ -568,6 +607,7 @@ public final class PlanningStore {
     /// this `Task`, never in `body`.
     @discardableResult
     public func refresh() -> Task<Void, Never> {
+        reloadSetupsIfNeeded()
         lastObservedReferenceHours = referenceHours
         lastObservedReferenceFocalRatio = referenceFocalRatio
         lastObservedReferenceSurfaceBrightness = referenceSurfaceBrightness
@@ -835,6 +875,36 @@ public final class PlanningStore {
         focalLength = selectedSetup.defaultFocalLengthMM
     }
 
+    /// Re-reads `setups` from `setupsProvider` at the top of every
+    /// `refresh()` -- see `setups`'s own doc comment for why this, not a
+    /// cross-scene signal from the Settings tab, is how an equipment-setup
+    /// edit reaches an already-running `PlanningStore`. A `nil`/unchanged
+    /// result is a no-op; a genuinely different list replaces `setups` and,
+    /// if the current selection (or an active rig-compare pick) no longer
+    /// resolves in it, falls back the same way `EquipmentSettingsView.save()`
+    /// (V1's own imaging-setup editor) already does when the previously
+    /// selected setup disappears: the config's own explicit default, or
+    /// simply the first remaining setup.
+    ///
+    /// Writes `selectedSetupIDStorage`/`compareSetupIDStorage` directly
+    /// (never through `selectedSetupID`/`compareSetupID`'s own setters) so
+    /// correcting an invalidated selection here -- itself already running
+    /// INSIDE `refresh()` -- can't recursively kick off a second, redundant
+    /// `refresh()`/`recomputeRigCompare()` on top of the one already in
+    /// flight; `adoptSelectedSetupDefaults()` is called directly instead for
+    /// the same reason.
+    private func reloadSetupsIfNeeded() {
+        guard let updated = setupsProvider(rootURL), updated != setups else { return }
+        setups = updated
+        if !setups.contains(where: { $0.id == selectedSetupIDStorage }) {
+            selectedSetupIDStorage = ImagingSetupProfile.defaultSetup(in: setups)?.id ?? setups[0].id
+            adoptSelectedSetupDefaults()
+        }
+        if let compareID = compareSetupIDStorage, !setups.contains(where: { $0.id == compareID }) {
+            compareSetupIDStorage = nil
+        }
+    }
+
     /// `UserDefaults.didChangeNotification` fires for ANY write to the
     /// suite, not just the three Planning-reference keys, so
     /// `handleDefaultsChange()` below compares the live values against
@@ -966,7 +1036,25 @@ public final class PlanningStore {
         return summaries
     }
 
-    public static let defaultSetups: [ImagingSetupProfile] = [
+    /// Reads `<root>/.astro_tool/config.json`'s own `imagingSetups` --
+    /// exactly the file `SiteSettingsStore.productionConfigLoader`/
+    /// `SupportDiagnosticsWeatherState.weatherEnabled` already read for
+    /// their own settings, so an edit made in the Equipment Settings tab is
+    /// visible here with no second config-writing/-reading path. `nil` for
+    /// no root or a config that fails to load (missing file, malformed
+    /// JSON) -- `reloadSetupsIfNeeded()` treats that as "nothing new",
+    /// leaving whatever `setups` already held. A config that DOES load with
+    /// an empty `imagingSetups` (every saved setup deleted) falls back to
+    /// `defaultSetups` here, the same bundled fallback a library that never
+    /// had any configured setups already gets.
+    public nonisolated static func productionSetupsProvider(rootURL: URL?) -> [ImagingSetupProfile]? {
+        guard let rootURL else { return nil }
+        let configURL = rootURL.appendingPathComponent(".astro_tool/config.json")
+        guard let config = try? AstroConfig.load(from: configURL) else { return nil }
+        return config.imagingSetups.isEmpty ? PlanningStore.defaultSetups : config.imagingSetups
+    }
+
+    public nonisolated static let defaultSetups: [ImagingSetupProfile] = [
         ImagingSetupProfile(
             id: "aps-c-astro-100-400", name: "APS-C astro · 100–400 mm", cameraName: "APS-C astro",
             cameraKind: .dedicatedAstro, sensorWidthMM: 23.5, sensorHeightMM: 15.6,
