@@ -27,6 +27,14 @@ public struct NightWorkspaceView: View {
     /// caller not yet updated to pass a real route -- never a button with
     /// nothing wired behind it.
     let openSensorProfiles: (() -> Void)?
+    /// V3 pre-stack program, section 5.6 (Élő éjszaka-mód): true when the
+    /// currently-watched live session's own night matches `row.date` -- the
+    /// spec's own "a `NightWorkspaceView` egy 'ÉLŐ' jelvényt kap, ha a
+    /// megnyitott éjszaka éppen a figyelt session." `false` (the default)
+    /// is zero behavior change for every night that isn't the one being
+    /// actively watched right now; see `LiveNightWatcher`'s own doc comment
+    /// for how the caller derives this.
+    let isLiveSession: Bool
     /// Wave 4 Task 3: router-owned for the same reason as
     /// `ProjectWorkspaceView.router` -- see that view's own doc comment.
     @Bindable var router: AppRouter
@@ -71,7 +79,8 @@ public struct NightWorkspaceView: View {
         reviewProject: @escaping (ProjectRecord) -> Void,
         openCalibration: @escaping () -> Void = {},
         openInsights: @escaping (String?) -> Void = { _ in },
-        openSensorProfiles: (() -> Void)? = nil
+        openSensorProfiles: (() -> Void)? = nil,
+        isLiveSession: Bool = false
     ) {
         self.row = row
         self.rootURL = rootURL
@@ -82,13 +91,19 @@ public struct NightWorkspaceView: View {
         self.openCalibration = openCalibration
         self.openInsights = openInsights
         self.openSensorProfiles = openSensorProfiles
+        self.isLiveSession = isLiveSession
     }
 
     public var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(row.projectSummary).font(.title2.weight(.semibold))
+                    HStack(spacing: 8) {
+                        Text(row.projectSummary).font(.title2.weight(.semibold))
+                        if isLiveSession {
+                            liveBadge
+                        }
+                    }
                     Text("\(row.snapshot.usableFrames) usable · \(row.excludedFrames) excluded · \(row.integrationSummary)")
                         .font(.callout).foregroundStyle(.secondary)
                 }
@@ -234,6 +249,24 @@ public struct NightWorkspaceView: View {
 
     private func publishWorkspaceActions() {
         workspaceActionCenter.publish(owner: actionOwner, workspaceActions)
+    }
+
+    /// V3 pre-stack program, section 5.6 (Élő éjszaka-mód): the "ÉLŐ"
+    /// pill next to this night's own title, shown only while
+    /// `isLiveSession` is true. `.capsule` rather than a
+    /// `RoundedRectangle(cornerRadius:)` literal -- no numeric corner
+    /// radius to drift from a token (`CornerRadiusLiteralGate`).
+    /// `AstroTokens.Color.critical` reads as "attention, live right now",
+    /// the same status-not-category color this app reserves for a
+    /// genuinely live/urgent state, never a data category.
+    private var liveBadge: some View {
+        Text("LIVE")
+            .font(.caption2.weight(.bold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(AstroTokens.Color.critical.opacity(0.15), in: .capsule)
+            .foregroundStyle(AstroTokens.Color.critical)
+            .accessibilityIdentifier("v2.night.live-badge")
     }
 
     /// Mirrors the exact "has at least one rated frame" predicate the

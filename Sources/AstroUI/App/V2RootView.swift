@@ -378,6 +378,10 @@ private struct V2Shell: View {
     /// `DetailHost` only ever reads its `candidate`/`libraryContext`, never
     /// owns the watcher itself.
     @State private var ingestWatcher = IngestWatcher()
+    /// V3 pre-stack program, section 5.6 (Élő éjszaka-mód): owned here (same
+    /// lifetime as `ingestWatcher` above, same reasoning -- its poll loop
+    /// and `UserDefaults` observer must survive route/section changes).
+    @State private var liveNightWatcher = LiveNightWatcher()
     @AppStorage("v2.library.enableWriteOperations") private var enableWriteOperations = false
     @Environment(\.openSettings) private var openSettings
     @Environment(OperationHost.self) private var operationHost
@@ -475,6 +479,7 @@ private struct V2Shell: View {
                 reviewStore: reviewStore,
                 archiveStore: archiveStore,
                 ingestWatcher: ingestWatcher,
+                liveNightWatcher: liveNightWatcher,
                 libraryRootFallback: libraryRootFallback,
                 chooseLibrary: presentOnboarding,
                 createPlannedProject: { designation in
@@ -1350,6 +1355,12 @@ private struct DetailHost: View {
     /// the watcher's library context current as the open library/access
     /// mode/project list change.
     let ingestWatcher: IngestWatcher
+    /// V3 pre-stack program, section 5.6 (Élő éjszaka-mód): owned by
+    /// `V2Shell` (see its own doc comment), handed down so the Home route
+    /// below can register `LiveNightHomeCardProvider`, the Nights route can
+    /// read whether the open night is the one being watched, and this file
+    /// can keep the watcher's project/goal context current.
+    let liveNightWatcher: LiveNightWatcher
     let libraryRootFallback: URL?
     let chooseLibrary: () -> Void
     let createPlannedProject: (String) -> Void
@@ -1369,6 +1380,12 @@ private struct DetailHost: View {
     let presentQuarantineApply: (LibraryMutationPlan, URL, LibraryAccessMode) -> Void
     let libraryFindingsChanged: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// V3 pre-stack program, section 5.6 (Élő éjszaka-mód): backs
+    /// `liveNightWatcher.start(operationHost:)` -- the watch loop registers
+    /// under `.liveNightWatch` through the SAME `OperationHost` the
+    /// toolbar's own Activity popover already reads, same as
+    /// `HomeView`/`NightWorkspaceView`'s own `@Environment(OperationHost.self)`.
+    @Environment(OperationHost.self) private var operationHost
 
     /// Wave 4 Task 1: the detail column is a real `NavigationStack` bound to
     /// the active section's own push stack (`AppRouter.currentSectionPath`)
@@ -1431,10 +1448,28 @@ private struct DetailHost: View {
         .task {
             ingestWatcher.start()
             refreshIngestContext()
+            liveNightWatcher.start(operationHost: operationHost)
+            refreshLiveNightContext()
         }
         .onChange(of: onboardingStore.selectedRoot) { _, _ in refreshIngestContext() }
         .onChange(of: accessMode) { _, _ in refreshIngestContext() }
         .onChange(of: projectsStore.projects) { _, _ in refreshIngestContext() }
+        .onChange(of: projectsStore.workspaceRows) { _, _ in refreshLiveNightContext() }
+    }
+
+    /// Feeds `LiveNightWatcher` every project's own `ProjectRecord` plus its
+    /// already-loaded `ProjectAnnotationRecord.integrationGoalHours`
+    /// (`ProjectsStore.workspaceRows`, the SAME per-project goal value
+    /// `HomeStore`'s "Continue where it matters" card and `ProjectsView`'s
+    /// own list already surface) -- see `LiveNightWatcher.ProjectGoalInfo`'s
+    /// own doc comment for why this reuses V2's native goal representation
+    /// rather than V1's separate `GoalTag` string-tag convention.
+    private func refreshLiveNightContext() {
+        liveNightWatcher.updateLibraryContext(.init(
+            projectGoals: projectsStore.workspaceRows.map {
+                .init(project: $0.project, goalHours: $0.goalHours)
+            }
+        ))
     }
 
     /// Feeds `IngestWatcher` the SAME `rootURL`/`accessMode`/
@@ -1603,7 +1638,13 @@ private struct DetailHost: View {
                 // directly. `rescan` is the exact same post-copy refresh the
                 // manual `.importCapture` route already runs (see this
                 // file's own `.sheet(item:)` case just above).
-                extraCardProviders: [IngestHomeCardProvider(watcher: ingestWatcher, runScan: rescan)]
+                // V3 pre-stack program, section 5.6 (Élő éjszaka-mód): the
+                // ONLY other provider this Home page registers -- same seam,
+                // same "own file, never HomeView's shared body" contract.
+                extraCardProviders: [
+                    IngestHomeCardProvider(watcher: ingestWatcher, runScan: rescan),
+                    LiveNightHomeCardProvider(watcher: liveNightWatcher),
+                ]
             )
         case .projects:
             ProjectsView(
@@ -1676,7 +1717,14 @@ private struct DetailHost: View {
                     reviewProject: { project in router.push(.review(projectID: project.id)) },
                     openCalibration: { router.push(.calibration) },
                     openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) },
-                    openSensorProfiles: { router.push(.sensorProfiles) }
+                    openSensorProfiles: { router.push(.sensorProfiles) },
+                    // V3 pre-stack program, section 5.6 (Élő éjszaka-mód):
+                    // "a NightWorkspaceView egy 'ÉLŐ' jelvényt kap, ha a
+                    // megnyitott éjszaka éppen a figyelt session" -- compares
+                    // this night's own `localDate` against the watched
+                    // session's folder-name-derived night key.
+                    isLiveSession: liveNightWatcher.folderURL != nil
+                        && LiveNightNightKey.forNow() == row.date
                 )
             } else {
                 // V2 UI/UX audit, section 5 ("Végtelen töltő"): this branch

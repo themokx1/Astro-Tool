@@ -212,6 +212,13 @@ final class AppState: @unchecked Sendable {
     /// above) -- see that constant's own doc comment for why this is one
     /// shared literal rather than two that could silently drift apart.
     private static let ingestWatcherEnabledKey = IngestWatcherSettings.enabledDefaultsKey
+    /// V3 pre-stack program, section 5.6 (Élő éjszaka-mód): same sharing
+    /// reasoning as `ingestWatcherEnabledKey` above, but for the two keys
+    /// `AstroUI.LiveNightWatcher` reads independently
+    /// (`LiveNightWatcherSettings`, `AstroApplication`) -- the toggle and
+    /// the chosen-folder bookmark.
+    private static let liveNightWatcherEnabledKey = LiveNightWatcherSettings.enabledDefaultsKey
+    private static let liveNightWatchFolderBookmarkKey = LiveNightWatcherSettings.folderBookmarkDefaultsKey
     /// R11-T12/F12: `firstStepsCardDismissed`'s `UserDefaults` key.
     private static let firstStepsCardDismissedKey = "firstStepsCardDismissed"
     /// R11-T15/F16: `selectedSiteName`'s `UserDefaults` key.
@@ -572,6 +579,13 @@ final class AppState: @unchecked Sendable {
     /// keeping their UX language sharply separated.
     var ingestWatcherEnabled: Bool = false {
         didSet { preferences.set(ingestWatcherEnabled, forKey: Self.ingestWatcherEnabledKey) }
+    }
+    /// V3 pre-stack program, section 5.6 (Élő éjszaka-mód): same "plain
+    /// stored property, `didSet` mirrors to `UserDefaults`, default OFF"
+    /// shape as `ingestWatcherEnabled` right above -- gates the V2 Home
+    /// live-session card (`AstroUI.LiveNightWatcher`), never anything V1.
+    var liveNightWatcherEnabled: Bool = false {
+        didSet { preferences.set(liveNightWatcherEnabled, forKey: Self.liveNightWatcherEnabledKey) }
     }
     var findings: [Finding] = []
     /// Audit and verify evidence are persisted independently, then composed
@@ -1320,6 +1334,7 @@ final class AppState: @unchecked Sendable {
         firstStepsCardDismissed = preferences.bool(forKey: Self.firstStepsCardDismissedKey)
         autoScanOnMount = preferences.bool(forKey: Self.autoScanOnMountKey)
         ingestWatcherEnabled = preferences.bool(forKey: Self.ingestWatcherEnabledKey)
+        liveNightWatcherEnabled = preferences.bool(forKey: Self.liveNightWatcherEnabledKey)
         selectedSiteName = preferences.string(forKey: Self.selectedSiteNameKey)
         selectedImagingSetupID = preferences.string(forKey: Self.selectedImagingSetupIDKey)
         if let data = preferences.data(forKey: Self.discoveryFocalLengthsBySetupKey),
@@ -1549,6 +1564,35 @@ final class AppState: @unchecked Sendable {
 
     private func makeBookmark(for url: URL) -> Data? {
         try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+    }
+
+    /// V3 pre-stack program, section 5.6 (Élő éjszaka-mód): "Figyelt mappa
+    /// kiválasztása…" -- prompts via `NSOpenPanel`, exactly `chooseRoot()`'s
+    /// own shape, then persists a security-scoped bookmark under
+    /// `LiveNightWatcherSettings.folderBookmarkDefaultsKey`, which
+    /// `AstroUI.LiveNightWatcher` resolves independently (this `AppState`
+    /// never talks to the watcher directly -- see that key's own doc
+    /// comment for why). Reuses THIS type's own `makeBookmark(for:)`/
+    /// `resolveBookmark(_:)` rather than a second bookmark helper.
+    func chooseLiveNightFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Kiválasztás"
+        panel.message = "Válaszd ki a figyelendő mappát (rig megosztása vagy bármely mappa)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let bookmark = makeBookmark(for: url) else { return }
+        preferences.set(bookmark, forKey: Self.liveNightWatchFolderBookmarkKey)
+    }
+
+    /// Settings ▸ Könyvtár's own read-only display of whatever
+    /// `chooseLiveNightFolder()` last saved -- `nil` when nothing has been
+    /// chosen yet, or the saved bookmark no longer resolves (the folder was
+    /// deleted/renamed since).
+    var liveNightWatchFolderDisplayPath: String? {
+        guard let data = preferences.data(forKey: Self.liveNightWatchFolderBookmarkKey) else { return nil }
+        return Self.resolveBookmark(data)?.path
     }
 
     private func loadRecentRoots() {

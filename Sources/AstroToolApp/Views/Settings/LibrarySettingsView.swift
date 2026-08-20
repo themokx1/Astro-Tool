@@ -68,6 +68,25 @@ struct LibrarySettingsView: View {
                 Text("Ha be van kapcsolva, egy új memóriakártya vagy hálózati megosztás csatlakozásakor a Home oldal felajánlja az import varázslót, már kitöltött burst-csoportokkal.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                // V3 pre-stack program, section 5.6 (Élő éjszaka-mód): egy
+                // HARMADIK, külön kapcsoló -- ez a V2 Home élő-kártyáját
+                // vezérli (`LiveNightWatcher`, `Sources/AstroUI/Features/
+                // LiveNight/LiveNightWatcher.swift`), nem az `autoScanOnMount`
+                // vagy az `ingestWatcherEnabled` beolvasás/import útvonalait.
+                // Ugyanaz a "sima UserDefaults boolean, alapból KI" minta.
+                Toggle("Élő éjszaka-figyelő (élő kártya a Home oldalon)", isOn: $appState.liveNightWatcherEnabled)
+                Text("Ha be van kapcsolva, a Home oldal élőben mutatja egy figyelt mappa keretszámlálóját, egy közelítő FWHM-et és a cél-teljesítés becslését, amíg a rig éjszaka fényez. Csak akkor figyel, ha az AstroTool éppen fut.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button("Figyelt mappa kiválasztása…") { appState.chooseLiveNightFolder() }
+                    if let path = appState.liveNightWatchFolderDisplayPath {
+                        Text(path).font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("Nincs mappa kiválasztva").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
 
             Section("Kizárások") {
