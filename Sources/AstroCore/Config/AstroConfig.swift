@@ -353,24 +353,31 @@ public struct WeatherRule: Codable, Equatable, Sendable {
 /// off by default, because enabling it is what will let that feature request
 /// `UNUserNotificationCenter` permission and read `WeatherService`, so
 /// silence-by-default matters here the same way it does for `WeatherRule`.
-/// Deliberately empty beyond `enabled` for now -- 5.5 adds its own
-/// check-window field (e.g. `checkHourLocal`, per the wave plan) in its own
-/// commit, not here.
+/// 5.5's own commit (V3 pre-stack program section 5.5, Derült-trigger): adds
+/// `checkHourLocal` -- the local hour of day (0-23) the afternoon "has it
+/// cleared up?" check is allowed to actually fire a notification at, per the
+/// spec's own "délutáni ablak (pl. 14:00-16:00)" -- additive, same
+/// `decodeIfPresent(...) ?? default` pattern every other field in this file
+/// uses, so a config.json written before this field existed still decodes
+/// cleanly at the honest `14` default rather than throwing.
 public struct NotificationRule: Codable, Equatable, Sendable {
     public var enabled: Bool
+    public var checkHourLocal: Int
 
-    public init(enabled: Bool = false) {
+    public init(enabled: Bool = false, checkHourLocal: Int = 14) {
         self.enabled = enabled
+        self.checkHourLocal = checkHourLocal
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled
+        case enabled, checkHourLocal
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = NotificationRule()
         self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
+        self.checkHourLocal = try container.decodeIfPresent(Int.self, forKey: .checkHourLocal) ?? defaults.checkHourLocal
     }
 }
 

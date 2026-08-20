@@ -326,6 +326,41 @@ import Testing
     #expect(decoded.notification.enabled == true)
 }
 
+// MARK: - 5.5 own commit: NotificationRule.checkHourLocal
+
+@Test func defaultNotificationRuleChecksAtFourteenLocal() {
+    #expect(NotificationRule().checkHourLocal == 14)
+}
+
+@Test func decodingPartialNotificationRuleFillsMissingCheckHourWithDefault() throws {
+    // A config written after `enabled` existed but before `checkHourLocal`
+    // did -- must still decode cleanly, defaulting the check hour rather
+    // than throwing (the same additive-field contract this file's every
+    // other `Rule` type already documents).
+    let json = """
+    { "notification": { "enabled": true } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.notification.enabled == true)
+    #expect(config.notification.checkHourLocal == 14)
+}
+
+@Test func decodingExplicitCheckHourLocalRoundTrips() throws {
+    let json = """
+    { "notification": { "enabled": true, "checkHourLocal": 16 } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.notification.checkHourLocal == 16)
+
+    let reencoded = try JSONEncoder().encode(config)
+    let redecoded = try JSONDecoder().decode(AstroConfig.self, from: reencoded)
+    #expect(redecoded.notification.checkHourLocal == 16)
+}
+
 // MARK: - Wave 0 seam (V3 pre-stack program, section 5.2, Kalibrációs automata)
 
 @Test func defaultCalibRuleHasAutoMasterBuildDisabled() {
