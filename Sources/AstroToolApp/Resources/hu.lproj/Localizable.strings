@@ -2437,13 +2437,28 @@
 "Pattern, e.g. starless*" = "Minta, pl. starless*";
 "Restore Defaults" = "Alaphelyzetbe állítás";
 "These patterns only count as processing residue inside the sessions area -- the same names (e.g. starless, result_...) are kept stack variants under stacks/processed." = "Ezek a minták csak a sessions területen számítanak feldolgozási maradéknak -- ugyanezek a nevek (pl. starless, result_...) a stacks/processed alatt megtartott stack-változatok.";
-/* Wave 0 seam (V3 pre-stack program, section 5.2, Kalibrációs automata):
-   PreflightChecklist.Item.Kind.flatNeeded's placeholder copy
-   (HomeView.preflightItemText). Never actually shown yet -- build(...)
-   never produces this case in Wave 0 -- added now so
-   LocalizationCoverageTests stays green and 5.2's own commit doesn't have
-   to touch hu.lproj for text that already exists. */
+/* Section 5.2 (V3 pre-stack program, Kalibrációs automata):
+   PreflightChecklist.Item.Kind.flatNeeded's copy (HomeView.preflightItemText).
+   HomeStore.preflightChecklist now feeds PreflightChecklist.build a real
+   flatMissingCount (HomeStore.flatShoppingItems.count), so this renders for
+   real whenever a filter's flat coverage is missing or stale tonight. */
 "%lld flat calibration items still need attention" = "%lld flat kalibrációs tétel még figyelmet igényel";
+
+/* Section 5.2 (V3 pre-stack program, Kalibrációs automata):
+   CalibrationView.swift's "Build Master…" action + build-preview sheet
+   (CalibrationStore.swift's buildPreview/buildMaster) -- queues a Siril-
+   backed master-dark build for one CalibAnalyzer.coverage() gap. */
+"Build Master…" = "Master építése…";
+"Build a master dark from already-scanned session dark subs, via Siril" = "Master dark építése a már beszkennelt session dark-subokból, Sirilen keresztül";
+"Build Master" = "Master építése";
+"%lld source dark(s) found, %lld needed" = "%lld forrás dark található, %lld kell";
+"Enable automatic master build" = "Automata masterépítés engedélyezése";
+"Lets Build Master actually run Siril. Off by default until explicitly enabled here." = "Ettől fut le ténylegesen a Siril a Master építése gombra. Alapból kikapcsolva, amíg itt explicit be nem kapcsolod.";
+"Requires write access. Enable write operations in Settings to build this master." = "Íráshoz jogosultság kell. Kapcsold be az írási műveleteket a Beállításokban ehhez a masterépítéshez.";
+"Siril was not found -- build this master manually." = "A Siril nem található -- építsd meg ezt a mastert kézzel.";
+"Built %@ from %lld frame(s)" = "Elkészült: %@ (%lld keretből)";
+"Build" = "Építés";
+"Stack the source dark frames into a new master via Siril" = "A forrás dark keretek összegzése új masterré, Sirilen keresztül";
 
 /* V3 pre-stack program section 5.5 ("Derült-trigger"): Settings ▸
    Notifications (NotificationSettingsView, AstroUI) -- the toggle, its
@@ -2554,3 +2569,24 @@
 "Inferred from this folder's own name" = "A mappa saját nevéből következtetve";
 "Matches every other night using this same folder name" = "Minden más, ugyanezt a mappanevet használó éjszakával egyezik";
 "Matches this library's default imaging setup" = "Egyezik a könyvtár alapértelmezett felszerelésével";
+
+/* Feature 5.6 (V3 prestack program, Élő éjszaka-mód): LiveNightHomeCard.swift
+   -- the Home card for a folder currently being watched during a live
+   capture session (LiveNightWatcher.swift). Numbers are always
+   pre-formatted (AstroFormat.count/.percent/.fwhmPixels) before entering an
+   interpolated sentence, per this file's own established convention. */
+"Live night" = "Élő éjszaka";
+"Watching" = "Figyelés";
+"No new frames — is the night over?" = "Nincs új keret — vége az éjszakának?";
+"Connection lost" = "Kapcsolat megszakadt";
+"%@ frames captured tonight" = "%@ keret készült ma este";
+"%@ frames captured tonight (%@ FITS, %@ CR3)" = "%@ keret készült ma este (%@ FITS, %@ CR3)";
+"FWHM (proxy): n/a — CR3" = "FWHM (közelítő): n/a — CR3";
+"FWHM (proxy): %@" = "FWHM (közelítő): %@";
+"FWHM (proxy): not measured yet" = "FWHM (közelítő): még nincs mérve";
+"Goal: %@" = "Cél: %@";
+
+/* Feature 5.6 (V3 prestack program, Élő éjszaka-mód): NightWorkspaceView.swift
+   -- the "ÉLŐ" badge shown when the open night is the one LiveNightWatcher
+   is currently watching. */
+"LIVE" = "ÉLŐ";
