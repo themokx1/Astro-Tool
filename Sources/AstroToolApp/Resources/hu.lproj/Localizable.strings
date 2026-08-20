@@ -2590,3 +2590,47 @@
    -- the "ÉLŐ" badge shown when the open night is the one LiveNightWatcher
    is currently watching. */
 "LIVE" = "ÉLŐ";
+
+/* V3 first-success onboarding: novice-facing entry choices, the visual
+   library model, explicit write consent, and the combined copy-only import. */
+"FIRST STEPS" = "ELSŐ LÉPÉSEK";
+"Let’s give your night-sky photos a clear home." = "Adjunk átlátható otthont az égboltfotóidnak.";
+"You do not need to know a folder standard. Choose what fits your situation, and AstroTool will guide you safely." = "Nem kell ismerned semmilyen mappaszabványt. Válaszd azt, ami rád illik, az AstroTool pedig biztonságosan végigvezet.";
+"Create a new image library" = "Új képkönyvtár létrehozása";
+"AstroTool creates the right folders, then can copy in your first photos." = "Az AstroTool létrehozza a megfelelő mappákat, majd be tudja másolni az első fotóidat.";
+"I already have an AstroTool library" = "Már van AstroTool-könyvtáram";
+"Choose it, check its structure, and continue where you left off." = "Válaszd ki, ellenőrizd a felépítését, és folytasd ott, ahol abbahagytad.";
+"I want to understand it first" = "Előbb szeretném megérteni";
+"See the idea in a few calm steps. Nothing will be changed." = "Néhány nyugodt lépésben megmutatjuk a lényeget. Semmi nem változik meg.";
+"How AstroTool keeps things understandable" = "Így tartja átláthatóan az AstroTool";
+"A library is the home. Projects follow one object, nights keep dates honest, and captures separate different setups or exposure series." = "A könyvtár az otthon. A projektek egy-egy objektumot követnek, az éjszakák megőrzik a dátumot, a capture-ök pedig különválasztják az eltérő felszereléseket és expozíciós sorozatokat.";
+"Light frames contain the sky. Flats, darks, and biases help correct the camera and optical system. AstroTool keeps their roles clear without changing your originals." = "A light képek tartalmazzák az égboltot. A flat, dark és bias képek a kamera és az optika hibáinak javításában segítenek. Az AstroTool érthetően elkülöníti őket, az eredetiek módosítása nélkül.";
+"Back to the three choices" = "Vissza a három választáshoz";
+"I’m ready to choose" = "Készen állok választani";
+"The home of everything AstroTool follows" = "Minden AstroTool által követett kép közös otthona";
+"One object you collect over time" = "Egy égboltobjektum hosszabb távú gyűjtése";
+"What happened on one date" = "Egy adott dátum megfigyelése";
+"Frames made with the same setup" = "Azonos felszereléssel készült képsorozat";
+"Choose a familiar name and a place with enough room for your photos. AstroTool only creates the missing folders." = "Válassz ismerős nevet és olyan helyet, ahol elférnek a fotóid. Az AstroTool csak a hiányzó mappákat hozza létre.";
+"Library name" = "A könyvtár neve";
+"Choose Location…" = "Hely kiválasztása…";
+"What will be created on my Mac?" = "Mi jön létre a gépemen?";
+"Projects and nights · Stacks · Processed images" = "Projektek és éjszakák · Stackek · Feldolgozott képek";
+"Calibration library: darks, flats, and biases" = "Kalibrációs könyvtár: dark, flat és bias képek";
+"AstroTool’s small private index area" = "Az AstroTool kis saját indexterülete";
+"Create Library" = "Könyvtár létrehozása";
+"Your source files stay unchanged" = "A forrásaid változatlanok maradnak";
+"AstroTool only creates verified copies in your library. It never overwrites a file and offers no standalone delete action." = "Az AstroTool csak ellenőrzött másolatokat készít a könyvtáradban. Soha nem ír felül fájlt, és nem kínál önálló törlési műveletet.";
+"Would you like to copy in your first photos now?" = "Szeretnéd most bemásolni az első fotóidat?";
+"This optional step creates the first project, night, and capture together, then copies your selected photos into it." = "Ez a kihagyható lépés együtt hozza létre az első projektet, éjszakát és capture-t, majd bemásolja oda a kiválasztott fotóidat.";
+"Skip this whole step" = "Az egész lépés kihagyása";
+"Copy my first photos" = "Első fotóim bemásolása";
+"No library is open" = "Nincs megnyitott könyvtár";
+"Return and choose or create a library before importing photos." = "Térj vissza, és válassz vagy hozz létre könyvtárat a fotók importálása előtt.";
+"You’re ready" = "Készen állsz";
+"Your first project is ready" = "Elkészült az első projekted";
+"No project or capture was created. You can return to First Steps whenever you want." = "Nem jött létre projekt vagy capture. Az Első lépésekhez bármikor visszatérhetsz.";
+"The import receipt shows what was copied, verified, skipped, or could not be copied." = "Az import eredménye megmutatja, mi lett bemásolva és ellenőrizve, mi maradt ki, illetve mit nem sikerült másolni.";
+"Enter AstroTool" = "Belépés az AstroToolba";
+"Open Project" = "Projekt megnyitása";
+"This step needs attention" = "Ez a lépés figyelmet igényel";

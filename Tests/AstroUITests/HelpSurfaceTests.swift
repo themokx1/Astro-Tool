@@ -42,9 +42,9 @@ struct HelpSurfaceTests {
         #expect(folderStructure.contains("calibration_library/"))
 
         let firstSteps = try contents("Sources/AstroUI/Help/FirstStepsView.swift")
+        #expect(firstSteps.contains("FirstSuccessOnboardingView("))
+        #expect(firstSteps.contains("mode: .help"))
         #expect(firstSteps.contains("v2.help.first-steps"))
-        #expect(firstSteps.contains("step.perform(router)"))
-        #expect(firstSteps.contains(".present(.glossary(nil))"))
     }
 
     @Test("MetricInfoButton is wired onto Home, Planning, and Review")
@@ -101,7 +101,9 @@ struct HelpSurfaceTests {
         let root = try contents("Sources/AstroUI/App/V2RootView.swift")
         #expect(root.contains("GlossaryView(anchor:"))
         #expect(root.contains("FolderStructureHelpView(dismiss:"))
-        #expect(root.contains("FirstStepsView(router:"))
+        #expect(root.contains("FirstStepsView("))
+        #expect(root.contains("FirstSuccessOnboardingView("))
+        #expect(root.contains("mode: .firstRun"))
 
         let appRoute = try contents("Sources/AstroUI/App/AppRoute.swift")
         #expect(appRoute.contains("case glossary(String?)"))

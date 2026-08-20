@@ -117,7 +117,11 @@ public struct V2RootView: View {
         _projectsStore = State(initialValue: ProjectsStore(metadataFactory: metadataFactory))
         _nightsStore = State(initialValue: NightsStore(metadataFactory: metadataFactory))
         _reviewStore = State(initialValue: ReviewStore(metadataFactory: metadataFactory))
-        _isOnboardingPresented = State(initialValue: uiTestFixture != nil)
+        let completedOnboardingVersion = UserDefaults.standard.integer(forKey: "onboardingCompletedVersion")
+        _isOnboardingPresented = State(initialValue:
+            uiTestFixture != nil
+                || OnboardingLifecycle.shouldPresent(completedVersion: completedOnboardingVersion)
+        )
         _libraryPreparationError = State(initialValue: nil)
     }
 
@@ -383,6 +387,7 @@ private struct V2Shell: View {
     /// and `UserDefaults` observer must survive route/section changes).
     @State private var liveNightWatcher = LiveNightWatcher()
     @AppStorage("v2.library.enableWriteOperations") private var enableWriteOperations = false
+    @AppStorage("onboardingCompletedVersion") private var completedOnboardingVersion = 0
     @Environment(\.openSettings) private var openSettings
     @Environment(OperationHost.self) private var operationHost
     /// Wave 4 Task 2: whatever the CURRENT route's workspace published as its
@@ -794,7 +799,19 @@ private struct V2Shell: View {
             } else if presentation == .folderStructure {
                 FolderStructureHelpView(dismiss: router.dismissPresentation)
             } else if presentation == .firstSteps {
-                FirstStepsView(router: router, dismiss: router.dismissPresentation)
+                FirstStepsView(
+                    libraryStore: onboardingStore,
+                    currentRootURL: onboardingStore.selectedRoot ?? libraryRootFallback,
+                    indexedFolders: projectsStore.projects.map(ProjectsQuery.canonicalFolderName(for:)),
+                    existingProjects: projectsStore.projects,
+                    onEnableWrites: { enableWriteOperations = true },
+                    onContinue: {
+                        router.dismissPresentation()
+                        router.navigate(to: .library)
+                    },
+                    runScan: performRescan,
+                    dismiss: router.dismissPresentation
+                )
             } else {
                 V2PresentationPlaceholder(route: presentation) {
                     router.dismissPresentation()
@@ -802,16 +819,20 @@ private struct V2Shell: View {
             }
         }
         .sheet(isPresented: $isOnboardingPresented) {
-            LibraryWelcomeView(
-                store: onboardingStore,
+            FirstSuccessOnboardingView(
+                mode: .firstRun,
+                libraryStore: onboardingStore,
+                currentRootURL: onboardingStore.selectedRoot ?? libraryRootFallback,
+                indexedFolders: projectsStore.projects.map(ProjectsQuery.canonicalFolderName(for:)),
+                existingProjects: projectsStore.projects,
+                onEnableWrites: { enableWriteOperations = true },
                 onContinue: {
+                    completedOnboardingVersion = OnboardingLifecycle.currentVersion
                     isOnboardingPresented = false
                     router.navigate(to: .library)
                 },
-                onPersonalize: {
-                    isOnboardingPresented = false
-                    openSettings()
-                }
+                runScan: performRescan,
+                dismiss: { isOnboardingPresented = false }
             )
         }
         .alert(
