@@ -56,6 +56,18 @@ struct LibrarySettingsView: View {
                 Text("Ha be van kapcsolva, a beolvasás automatikusan elindul, amikor a kötet csatlakozik és a gyökér elérhetővé válik (csak ha épp nem fut más művelet).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                // V3 pre-stack program, section 5.1 (Ingest-figyelő): a
+                // MÁSIK, külön kapcsoló -- ez a V2 Home-kártyát vezérli
+                // (`IngestWatcher`, `Sources/AstroUI/Features/Library/
+                // IngestWatcher.swift`), nem ezt a beolvasást. Ugyanaz a
+                // "sima UserDefaults boolean, alapból KI" minta, mint az
+                // `autoScanOnMount`-é fentebb -- lásd `AppState
+                // .ingestWatcherEnabled`'s doc komment.
+                Toggle("Ingest-figyelő (kártya-előretöltés a Home oldalon)", isOn: $appState.ingestWatcherEnabled)
+                Text("Ha be van kapcsolva, egy új memóriakártya vagy hálózati megosztás csatlakozásakor a Home oldal felajánlja az import varázslót, már kitöltött burst-csoportokkal.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Kizárások") {

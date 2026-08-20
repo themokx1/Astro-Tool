@@ -19,30 +19,32 @@ public enum ScanWorkflowMaterializer {
     ) async throws -> ScanWorkflowMaterializationSummary {
         let database = try SQLiteDB(readOnlyPath: indexDatabase.standardizedFileURL.path)
         var frames: [ScannedFrame] = []
-        // W7-D: capture groups (V1's own equipment/filter metadata table,
-        // stored in this exact index database) are the second rung of the
-        // passband precedence chain -- a headerless OSC frame sitting under
-        // `captures/<slug>/` inherits its group's declared `signal_mode`
-        // rather than being guessed as broadband. Keyed like
-        // `CaptureResolver.scopeKey` (target/session_date/slug), using the
-        // RAW session-date string (not the civil night `SessionDateParser`
-        // resolves below) because that raw string is exactly what
-        // `capture_groups.session_date` was written with.
-        var captureGroupSignalModeByScope: [String: SignalMode] = [:]
-        try? database.query(
-            "SELECT target, session_date, slug, signal_mode FROM capture_groups;"
-        ) { row in
-            guard let target = row.string(0), let sessionDate = row.string(1),
-                  let slug = row.string(2),
-                  let signalMode = row.string(3).flatMap(SignalMode.init(rawValue:)),
-                  signalMode != .unknown
-            else { return }
-            captureGroupSignalModeByScope[captureGroupScopeKey(target: target, sessionDate: sessionDate, slug: slug)] = signalMode
-        }
-        // The fallback of last resort (precedence level 4): the default
-        // imaging setup's declared filter, if the user configured one --
-        // see `ImagingSetupProfile.defaultFilterSignalMode`'s own doc
-        // comment for why this only ever applies to OSC frames.
+        // V3 5.4 (metadata fixer): V2 used to run its own ad hoc "W7-D"
+        // precedence chain here (FITS filter text > raw-SQL capture_groups.
+        // signal_mode > slug text > setup default), which never consulted
+        // `file_capture_assignments` at all -- a manual override made in V1
+        // was completely invisible to every V2 session grouping and filter
+        // breakdown. `CaptureResolver` is V1's own mature, override-aware
+        // engine for exactly this resolution (manual override > capture
+        // group > FITS header, with `conflicts` when two sources disagree);
+        // this materializer now builds one from the same index database and
+        // asks it, rather than re-deriving a second, override-blind copy of
+        // the same precedence. See `ScannedFrame.passband`/`filterName`/
+        // `sensorMode` below for exactly which V2-only fallback levels still
+        // apply when the resolver has nothing to say (no override, no
+        // group, no FITS header), and
+        // `ScanWorkflowMaterializerCaptureResolverParityTests` for the
+        // documented, intentional behavior differences from the old chain.
+        let resolver = CaptureResolver(
+            groups: loadCaptureGroups(from: database),
+            sources: loadCaptureSources(from: database),
+            assignments: loadFileCaptureAssignments(from: database)
+        )
+        // The fallback of last resort (used only when the resolver's own
+        // three levels all come back empty): the default imaging setup's
+        // declared filter, if the user configured one -- see
+        // `ImagingSetupProfile.defaultFilterSignalMode`'s own doc comment
+        // for why this only ever applies to OSC frames.
         let setupDefaultSignalMode: SignalMode? = {
             guard let mode = ImagingSetupProfile.defaultSetup(in: imagingSetups)?.defaultFilterSignalMode,
                   mode != .unknown
@@ -51,10 +53,10 @@ public enum ScanWorkflowMaterializer {
         }()
         try database.query(
             """
-            SELECT files.path, files.target, files.session_date, files.ext,
+            SELECT files.id, files.path, files.target, files.session_date, files.ext,
+                   fits_meta.filter, fits_meta.header_json,
                    fits_meta.exptime, fits_meta.gain, fits_meta."offset",
-                   fits_meta.instrume, fits_meta.focallen, fits_meta.filter,
-                   fits_meta.header_json
+                   fits_meta.instrume, fits_meta.focallen
             FROM files
             LEFT JOIN fits_meta ON fits_meta.file_id = files.id
             WHERE files.missing = 0
@@ -65,25 +67,29 @@ public enum ScanWorkflowMaterializer {
             ORDER BY files.target, files.session_date, files.path;
             """
         ) { row in
-            guard let path = row.string(0), let target = row.string(1),
-                  let rawDate = row.string(2),
+            guard let fileID = row.int64(0), let path = row.string(1), let target = row.string(2),
+                  let rawDate = row.string(3),
                   let sessionDate = SessionDateParser.parse(rawDate),
-                  let exposure = row.double(4), exposure.isFinite, exposure > 0
+                  let exposure = row.double(7), exposure.isFinite, exposure > 0
             else { return }
             let captureSlug = PathClassifier.classify(relativePath: path).captureSlug
-            let captureGroupSignalMode = captureSlug.flatMap {
-                captureGroupSignalModeByScope[captureGroupScopeKey(target: target, sessionDate: rawDate, slug: $0)]
-            }
+            let fileRecord = FileRecord(
+                id: fileID, path: path, size: 0, mtime: 0, ext: row.string(4) ?? "",
+                kind: "fits", area: .sessions, target: target, sessionDate: rawDate,
+                role: .light, scannedAt: 0
+            )
+            let fitsMeta = FITSMetaRecord(fileID: fileID, filter: row.string(5), headerJSON: row.string(6))
             frames.append(ScannedFrame(
                 path: path, target: target, date: sessionDate.start,
-                fileExtension: row.string(3) ?? "",
+                fileExtension: row.string(4) ?? "",
                 exposure: exposure,
-                gain: row.double(5), offset: row.double(6),
-                instrument: nonBlank(row.string(7)), focalLength: row.double(8),
-                filter: nonBlank(row.string(9)), headerJSON: row.string(10),
+                gain: row.double(8), offset: row.double(9),
+                instrument: nonBlank(row.string(10)), focalLength: row.double(11),
+                headerJSON: row.string(6),
+                rawFITSFilter: nonBlank(row.string(5)),
                 captureSlug: captureSlug,
-                captureGroupSignalMode: captureGroupSignalMode,
-                setupDefaultSignalMode: setupDefaultSignalMode
+                setupDefaultSignalMode: setupDefaultSignalMode,
+                resolved: resolver.resolve(file: fileRecord, meta: fitsMeta)
             ))
         }
 
@@ -281,12 +287,86 @@ public enum ScanWorkflowMaterializer {
         )
     }
 
-    /// Same identity `CaptureResolver.scopeKey` uses for the equivalent V1
-    /// lookup -- kept file-private here since V2's series builder never
-    /// shares a `CaptureResolver` instance (it reads the scan index
-    /// directly, read-only, rather than loading a full `Database`).
-    private static func captureGroupScopeKey(target: String, sessionDate: String, slug: String) -> String {
-        "\(target)\u{1F}\(sessionDate)\u{1F}\(slug)"
+    /// Reads every `capture_groups` row from the (read-only) scan index --
+    /// same column set and ordering `Database.allCaptureGroups()` uses, kept
+    /// as a private raw-SQL mirror here rather than opening a second,
+    /// read-write `Database` connection onto a file this materializer only
+    /// ever reads. A missing/pre-v11 index (no such table) yields an empty
+    /// list rather than throwing, matching this file's existing
+    /// "best-effort against an old index" convention.
+    private static func loadCaptureGroups(from database: SQLiteDB) -> [CaptureGroupRecord] {
+        var result: [CaptureGroupRecord] = []
+        try? database.query(
+            """
+            SELECT id, target, session_date, slug, display_name, sensor_mode, signal_mode,
+                   filter_manufacturer, filter_model, filter_name, notes, created_at, updated_at
+            FROM capture_groups;
+            """
+        ) { row in
+            result.append(CaptureGroupRecord(
+                id: row.int64(0),
+                target: row.string(1) ?? "",
+                sessionDate: row.string(2) ?? "",
+                slug: row.string(3) ?? "",
+                displayName: row.string(4) ?? "",
+                sensorMode: row.string(5).flatMap(SensorMode.init(rawValue:)) ?? .unknown,
+                signalMode: row.string(6).flatMap(SignalMode.init(rawValue:)) ?? .unknown,
+                filterManufacturer: row.string(7),
+                filterModel: row.string(8),
+                filterName: row.string(9),
+                notes: row.string(10),
+                createdAt: row.double(11) ?? 0,
+                updatedAt: row.double(12) ?? 0
+            ))
+        }
+        return result
+    }
+
+    /// Same convention as `loadCaptureGroups` for `capture_sources`.
+    private static func loadCaptureSources(from database: SQLiteDB) -> [CaptureSourceRecord] {
+        var result: [CaptureSourceRecord] = []
+        try? database.query(
+            "SELECT id, capture_group_id, relative_path, role FROM capture_sources;"
+        ) { row in
+            result.append(CaptureSourceRecord(
+                id: row.int64(0),
+                captureGroupID: row.int64(1) ?? 0,
+                relativePath: row.string(2) ?? "",
+                role: row.string(3).flatMap(FrameRole.init(rawValue:)) ?? .other
+            ))
+        }
+        return result
+    }
+
+    /// Same convention as `loadCaptureGroups` for `file_capture_assignments`
+    /// -- this is the table a V1 manual override lives in, and the whole
+    /// reason this materializer now builds a `CaptureResolver` instead of
+    /// re-deriving its own precedence: without reading this table, no V2
+    /// surface could ever see an override a user already made in V1.
+    private static func loadFileCaptureAssignments(from database: SQLiteDB) -> [Int64: FileCaptureAssignmentRecord] {
+        var result: [Int64: FileCaptureAssignmentRecord] = [:]
+        try? database.query(
+            """
+            SELECT file_id, capture_group_id, sensor_mode_override, signal_mode_override,
+                   filter_manufacturer_override, filter_model_override, filter_name_override,
+                   assignment_source, assigned_at
+            FROM file_capture_assignments;
+            """
+        ) { row in
+            let record = FileCaptureAssignmentRecord(
+                fileID: row.int64(0) ?? 0,
+                captureGroupID: row.int64(1) ?? 0,
+                sensorModeOverride: row.string(2).flatMap(SensorMode.init(rawValue:)),
+                signalModeOverride: row.string(3).flatMap(SignalMode.init(rawValue:)),
+                filterManufacturerOverride: row.string(4),
+                filterModelOverride: row.string(5),
+                filterNameOverride: row.string(6),
+                assignmentSource: row.string(7) ?? "",
+                assignedAt: row.double(8) ?? 0
+            )
+            result[record.fileID] = record
+        }
+        return result
     }
 
     private static func catalogIdentity(for rawTarget: String) -> (catalogID: String, displayName: String) {
@@ -329,55 +409,103 @@ private struct ScannedFrame {
     let offset: Double?
     let instrument: String?
     let focalLength: Double?
-    let filter: String?
     let headerJSON: String?
+    /// The raw, un-normalized `fits_meta.filter` text, kept ALONGSIDE
+    /// `resolved` purely for the V2-only fallback tail in `passband` below.
+    /// `CaptureResolver.signalMode(fromFilter:)` uses a deliberately
+    /// conservative marker vocabulary (e.g. it recognizes "h-alpha"/"halpha"/
+    /// "ha "/"ha-" but not a bare "Ha", to avoid false-positive substring
+    /// matches on unrelated filter names) -- when that marker set doesn't
+    /// match a real, present filter string, this file's own historically
+    /// looser inline classifier (`inferredPassband(fromText:)`) still gets a
+    /// chance, exactly as it did before this refactor. This is NOT a copy of
+    /// `CaptureResolver`'s predicate; it only ever runs when `CaptureResolver`
+    /// found nothing at all (`resolved.signalOrigin == .unknown`).
+    let rawFITSFilter: String?
     /// Slug from `sessions/<target>/<date>/captures/<slug>/...`, or `nil`
-    /// for a classic non-capture-aware session path (W7-D precedence
-    /// level 3: the folder name itself is evidence when nothing else is).
+    /// for a classic non-capture-aware session path. Still consulted as a
+    /// V2-only fallback (see `passband` below) when `resolved` itself has
+    /// nothing to say -- `CaptureResolver` has no notion of "infer a
+    /// passband from the folder's own name text", only from a real
+    /// `capture_groups` row or FITS header.
     let captureSlug: String?
-    /// This frame's capture group's own declared `signal_mode`, already
-    /// resolved by the caller (W7-D precedence level 2) -- `nil` when the
-    /// frame isn't in a captures/ folder, has no matching group row, or
-    /// that group never declared one (`.unknown`).
-    let captureGroupSignalMode: SignalMode?
     /// The library's default imaging setup's configured fallback filter
-    /// (W7-D precedence level 4), resolved once per `materialize` call.
+    /// (the last-resort V2-only fallback level), resolved once per
+    /// `materialize` call.
     let setupDefaultSignalMode: SignalMode?
+    /// V1's own `CaptureResolver.resolve(file:meta:)` verdict for this exact
+    /// frame -- manual override (`file_capture_assignments`) > declared
+    /// capture group > FITS header, in that authoritative order, with
+    /// `conflicts` populated whenever two sources disagree. This REPLACES
+    /// the old ad hoc "W7-D" raw-SQL precedence this type used to run
+    /// entirely for `filterName`, and supplies the first three (of up to
+    /// six) precedence levels for `passband`/`sensorMode` below.
+    let resolved: ResolvedCaptureMetadata
 
+    /// `resolved.sensorOrigin == .manualOverride` is the only case this
+    /// overrides the classic extension/header-based guess -- `CaptureResolver
+    /// .SensorMode` has no `.dslr` case (CR3 files carry no `fits_meta` row
+    /// for it to read BAYERPAT from at all), so a CR3 frame with no explicit
+    /// override still falls through to the extension check below exactly as
+    /// before.
     var sensorMode: SeriesSensorMode {
+        if resolved.sensorOrigin == .manualOverride,
+           let mapped = SeriesSensorMode(rawValue: resolved.sensorMode.rawValue)
+        {
+            return mapped
+        }
         if ["cr3", "tif", "tiff"].contains(fileExtension.lowercased()) { return .dslr }
         if headerJSON?.localizedCaseInsensitiveContains("BAYERPAT") == true { return .osc }
         return .mono
     }
 
-    /// W7-D: one derivation for the whole precedence chain -- FITS header
-    /// text > capture group's declared signal mode > the capture slug's own
-    /// name > the default setup's configured fallback > an unfiltered/
-    /// broadband guess. Each level is only ever consulted when every level
-    /// above it has nothing to say, so a real FITS `FILTER` value (however
-    /// it's spelled) always wins, and the ASI Air "no filter wheel, no
-    /// FILTER header" case for an OSC + duoband/narrowband train is the
-    /// ONLY case that ever reaches levels 2-4.
+    /// `resolved.filterLabel` (manufacturer + model/name, formatted by
+    /// `CaptureFilterLabel`) is a strict superset of what the old raw FITS
+    /// `filter` text column gave `SeriesKey.filter`: `resolved.filterOrigin`
+    /// only stays `.unknown` when there is neither an override nor a group
+    /// filter NOR a FITS filter -- exactly the cases where the old raw
+    /// column was `nil` too.
+    var filterName: String? { resolved.filterLabel }
+
+    /// V1-authoritative precedence (via `resolved`) first, falling through
+    /// to the two V2-only levels `CaptureResolver` doesn't know about
+    /// (capture-slug folder-name text, then the default imaging setup's
+    /// configured fallback) only when the resolver found nothing at all --
+    /// no override, no group signal mode, no FITS filter text. Documented,
+    /// intentional difference from the pre-refactor chain: a capture
+    /// group's declared signal mode now OUTRANKS a raw FITS `FILTER` header
+    /// value instead of losing to it (matches `CaptureResolver`'s own
+    /// precedence, the same one V1 has used since capture groups shipped) --
+    /// see `ScanWorkflowMaterializerCaptureResolverParityTests`.
     var passband: SeriesPassband {
-        if let filter {
-            return Self.inferredPassband(fromText: filter) ?? .other
-        }
-        if let captureGroupSignalMode, let mapped = SeriesPassband(rawValue: captureGroupSignalMode.rawValue) {
+        if resolved.signalOrigin != .unknown, let mapped = SeriesPassband(rawValue: resolved.signalMode.rawValue) {
             return mapped
+        }
+        // CaptureResolver had nothing at all to say -- no override, no
+        // group, and (if a FITS filter string exists) no match in its own
+        // marker vocabulary either. Preserve the pre-refactor chain's
+        // remaining levels exactly: the raw filter text under the older,
+        // looser inline vocabulary (matching a bare "Ha", for instance),
+        // then the capture-slug folder name, then the default setup, then
+        // an absolute sensor-based guess.
+        if let rawFITSFilter {
+            return Self.inferredPassband(fromText: rawFITSFilter) ?? .other
         }
         if let captureSlug, let inferred = Self.inferredPassband(fromText: captureSlug) {
             return inferred
         }
         if sensorMode == .osc, let setupDefaultSignalMode,
-           let mapped = SeriesPassband(rawValue: setupDefaultSignalMode.rawValue) {
+           let mapped = SeriesPassband(rawValue: setupDefaultSignalMode.rawValue)
+        {
             return mapped
         }
         return sensorMode == .mono ? .unfiltered : .broadband
     }
 
-    /// The same marker vocabulary applied to both a FITS `FILTER` value and
-    /// a capture-slug/folder name -- "sv220_dual-band" and a filter literally
-    /// named "SV220" mean the same thing to this derivation.
+    /// The same marker vocabulary applied to a capture-slug/folder name --
+    /// "sv220_dual-band" means dual-band whether it's a FITS `FILTER` value
+    /// (now `CaptureResolver`'s job) or a folder name (still this type's
+    /// job, since the resolver has no folder-name inference at all).
     private static func inferredPassband(fromText rawText: String) -> SeriesPassband? {
         let normalized = rawText.lowercased()
         if normalized.contains("sv220") || normalized.contains("dual") || normalized.contains("duo") { return .dualBand }
@@ -431,7 +559,7 @@ private struct SeriesKey: Hashable {
         self.sensorMode = frame.sensorMode
         self.passband = frame.passband
         self.exposure = frame.exposure
-        self.filter = frame.filter
+        self.filter = frame.filterName
         self.gain = frame.gain
         self.offset = frame.offset
         self.binning = frame.binning

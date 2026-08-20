@@ -109,13 +109,19 @@ public final class CaptureImportStore {
         accessMode: LibraryAccessMode,
         indexedFolders: [String],
         existingProjects: [ProjectRecord],
-        mountedVolumes: [ImportSourceVolume]? = nil
+        mountedVolumes: [ImportSourceVolume]? = nil,
+        // V3 pre-stack program, section 5.1 (Ingest-figyelő): `nil` for
+        // every existing call site (zero behavior change) -- the Home
+        // banner's pre-loaded entry point below is the only caller that
+        // ever supplies one, via `IngestSuggestionEngine.matchProject`'s
+        // unambiguous project match.
+        sessionPrefill: SessionCreationPrefill? = nil
     ) {
         self.rootURL = rootURL
         self.accessMode = accessMode
         self.existingProjects = existingProjects
         self.destinationStore = NewSessionStore(
-            rootURL: rootURL, accessMode: accessMode, indexedFolders: indexedFolders, prefill: nil
+            rootURL: rootURL, accessMode: accessMode, indexedFolders: indexedFolders, prefill: sessionPrefill
         )
         // Every byte this wizard writes lands under a capture's own
         // lights/flats/darks/biases branch (`WriteGuard.copyCaptureFile`
@@ -124,6 +130,31 @@ public final class CaptureImportStore {
         // shown.
         destinationStore.createsCapture = true
         self.mountedVolumes = mountedVolumes ?? ImportSourceVolumeLister.listMountedVolumes(libraryRootURL: rootURL)
+    }
+
+    /// V3 pre-stack program, section 5.1 (Ingest-figyelő): the Home banner's
+    /// pre-loaded entry point -- `IngestWatcher` already ran
+    /// `CaptureImportScanner.scan`/`IngestSuggestionEngine.matchProject` for
+    /// this exact volume, so this skips straight past the Source step by
+    /// reusing `recordScan(_:)` VERBATIM (same burst grouping, same
+    /// "unresolved role" gate, same jump to `.classify`) -- a pre-loaded run
+    /// and a manually-scanned run can never disagree about what counts as
+    /// ready to classify, because they share the one code path.
+    public convenience init(
+        prefilling rootURL: URL,
+        accessMode: LibraryAccessMode,
+        indexedFolders: [String],
+        existingProjects: [ProjectRecord],
+        sourceURL: URL,
+        discovered: [DiscoveredCaptureFile],
+        sessionPrefill: SessionCreationPrefill?
+    ) {
+        self.init(
+            rootURL: rootURL, accessMode: accessMode, indexedFolders: indexedFolders,
+            existingProjects: existingProjects, sessionPrefill: sessionPrefill
+        )
+        selectedSourceURL = sourceURL
+        recordScan(discovered)
     }
 
     // MARK: - Step 1 actions
@@ -418,6 +449,28 @@ public struct CaptureImportView: View {
         _store = State(initialValue: CaptureImportStore(
             rootURL: rootURL, accessMode: accessMode,
             indexedFolders: indexedFolders, existingProjects: existingProjects
+        ))
+        self.dismiss = dismiss
+        self.runScan = runScan
+    }
+
+    /// V3 pre-stack program, section 5.1 (Ingest-figyelő): the Home banner's
+    /// entry point -- opens straight into `.classify` with `ingestCandidate`
+    /// already scanned/grouped/matched by `IngestWatcher`, instead of the
+    /// Source step every other entry point starts from.
+    public init(
+        rootURL: URL,
+        accessMode: LibraryAccessMode,
+        indexedFolders: [String],
+        existingProjects: [ProjectRecord],
+        ingestCandidate: IngestWatcher.Candidate,
+        dismiss: @escaping () -> Void,
+        runScan: @escaping () -> Void
+    ) {
+        _store = State(initialValue: CaptureImportStore(
+            prefilling: rootURL, accessMode: accessMode, indexedFolders: indexedFolders,
+            existingProjects: existingProjects, sourceURL: ingestCandidate.volume.url,
+            discovered: ingestCandidate.discovered, sessionPrefill: ingestCandidate.sessionPrefill
         ))
         self.dismiss = dismiss
         self.runScan = runScan

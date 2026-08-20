@@ -372,6 +372,12 @@ private struct V2Shell: View {
     /// current numbers the next time it is visited, not whatever it last
     /// loaded before the operation ran.
     @State private var archiveStore = ArchiveStore()
+    /// V3 pre-stack program, section 5.1 (Ingest-figyelő): owned here (once
+    /// per window, same lifetime as `archiveStore`/`operationHost` above) so
+    /// its `NSWorkspace` mount observer survives route/section changes --
+    /// `DetailHost` only ever reads its `candidate`/`libraryContext`, never
+    /// owns the watcher itself.
+    @State private var ingestWatcher = IngestWatcher()
     @AppStorage("v2.library.enableWriteOperations") private var enableWriteOperations = false
     @Environment(\.openSettings) private var openSettings
     @Environment(OperationHost.self) private var operationHost
@@ -468,6 +474,7 @@ private struct V2Shell: View {
                 nightsStore: nightsStore,
                 reviewStore: reviewStore,
                 archiveStore: archiveStore,
+                ingestWatcher: ingestWatcher,
                 libraryRootFallback: libraryRootFallback,
                 chooseLibrary: presentOnboarding,
                 createPlannedProject: { designation in
@@ -1329,6 +1336,12 @@ private struct DetailHost: View {
     /// and `runAudit` (below) is how the Archive page reaches
     /// `LibraryHealthStore.runAudit` instead.
     let archiveStore: ArchiveStore
+    /// V3 pre-stack program, section 5.1 (Ingest-figyelő): owned by
+    /// `V2Shell` (see its own doc comment), handed down so the Home route
+    /// below can register `IngestHomeCardProvider` and this file can keep
+    /// the watcher's library context current as the open library/access
+    /// mode/project list change.
+    let ingestWatcher: IngestWatcher
     let libraryRootFallback: URL?
     let chooseLibrary: () -> Void
     let createPlannedProject: (String) -> Void
@@ -1398,6 +1411,41 @@ private struct DetailHost: View {
             )
         }
         .toolbarRole(.editor)
+        // V3 pre-stack program, section 5.1 (Ingest-figyelő): starts the
+        // mount observer once (`IngestWatcher.start()` is itself idempotent,
+        // same guard shape `AppState.startVolumeMountObserverIfNeeded` uses)
+        // and keeps its library context current -- `onChange` rather than
+        // recomputing inside `body` itself, since publishing through
+        // `@Observable` from a view's own body evaluation is exactly the
+        // side-effect-during-render antipattern this codebase avoids
+        // elsewhere (see `AstroUI`'s general "no state mutation from body"
+        // convention).
+        .task {
+            ingestWatcher.start()
+            refreshIngestContext()
+        }
+        .onChange(of: onboardingStore.selectedRoot) { _, _ in refreshIngestContext() }
+        .onChange(of: accessMode) { _, _ in refreshIngestContext() }
+        .onChange(of: projectsStore.projects) { _, _ in refreshIngestContext() }
+    }
+
+    /// Feeds `IngestWatcher` the SAME `rootURL`/`accessMode`/
+    /// `indexedFolders`/`existingProjects` the manual `.importCapture` route
+    /// already builds `CaptureImportView` from (see this file's own
+    /// `.sheet(item:)` handler above) -- one shared recipe for "what does
+    /// the card-import wizard need to know about this library", not a
+    /// second, parallel one for the ingest banner.
+    private func refreshIngestContext() {
+        guard let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback else {
+            ingestWatcher.updateLibraryContext(nil)
+            return
+        }
+        ingestWatcher.updateLibraryContext(.init(
+            rootURL: rootURL,
+            accessMode: accessMode,
+            indexedFolders: projectsStore.projects.map(ProjectsQuery.canonicalFolderName(for:)),
+            existingProjects: projectsStore.projects
+        ))
     }
 
     private var pathBinding: Binding<[ContentRoute]> {
@@ -1538,7 +1586,15 @@ private struct DetailHost: View {
                 // W7-E workflow #2: the "name the next clear night" line's
                 // link -- the Nights calendar section, where `NightsView`'s
                 // own "Cloud" column renders this exact forecast per date.
-                openNightsCalendar: { router.navigate(to: .nights) }
+                openNightsCalendar: { router.navigate(to: .nights) },
+                // V3 pre-stack program, section 5.1 (Ingest-figyelő): the
+                // ONLY file this feature needed to touch to add its banner
+                // -- see `HomeCardProviding`'s own doc comment for why this
+                // seam exists instead of editing `HomeView.libraryOverview`
+                // directly. `rescan` is the exact same post-copy refresh the
+                // manual `.importCapture` route already runs (see this
+                // file's own `.sheet(item:)` case just above).
+                extraCardProviders: [IngestHomeCardProvider(watcher: ingestWatcher, runScan: rescan)]
             )
         case .projects:
             ProjectsView(

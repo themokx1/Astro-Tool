@@ -276,15 +276,30 @@ struct HeaderlessOSCPassbandPrecedenceTests {
         #expect(series.passband == .dualBand)
     }
 
-    @Test("A real FITS FILTER value always wins over the capture group's own signal mode")
-    func fitsHeaderOutranksCaptureGroup() async throws {
+    // V3 5.4 (metadata fixer, CaptureResolver routing): before this
+    // refactor, a raw FITS `FILTER` header value always outranked a capture
+    // group's own declared signal mode here (this test used to assert
+    // `.narrowband` for exactly this fixture). Routing through V1's
+    // `CaptureResolver` intentionally FLIPS that precedence -- a capture
+    // group is human-curated, first-class metadata; a raw FITS `FILTER`
+    // string can simply be wrong or stale, and `CaptureResolver` (V1's own
+    // mature engine, unchanged by this refactor) has always treated the
+    // group as more authoritative than the header. This is the ONE
+    // documented, intentional parity difference the refactor introduces --
+    // see `ScanWorkflowMaterializerCaptureResolverParityTests` for the
+    // full before/after picture, including the conflict this now surfaces.
+    @Test("A capture group's declared signal mode now outranks a raw FITS FILTER header value (documented precedence flip)")
+    func captureGroupOutranksFITSHeaderAfterResolverRouting() async throws {
         let fixture = try Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.container) }
         let fileID = try Self.insertHeaderlessOSCFrame(
             db: fixture.db, sessionDate: "2026-08-08", slug: "sv220_dual-band"
         )
-        // Overwrite with an explicit, conflicting FITS filter -- the group
-        // says dual-band, the (unusual but possible) header says narrowband.
+        // The group says dual-band, the (unusual but possible) header says
+        // narrowband -- `CaptureResolver` now resolves this to the GROUP's
+        // dual-band, with a conflict recorded internally (not surfaced by
+        // `ScanWorkflowMaterializationSummary`, but visible via
+        // `CaptureAssignmentQuery`/`CaptureResolver` directly).
         try fixture.db.upsertFITSMeta(FITSMetaRecord(
             fileID: fileID, exptime: 300, gain: 100, offset: 50,
             instrume: "ZWO ASI2600MC Pro", focallen: 261, filter: "Ha",
@@ -301,7 +316,49 @@ struct HeaderlessOSCPassbandPrecedenceTests {
 
         let project = try #require(try await metadata.projects().first)
         let series = try #require(try await metadata.series(projectID: project.id).first)
+        #expect(series.passband == .dualBand)
+    }
+
+    // The headline fix this refactor exists for: a manual per-file override
+    // made through V1 (`file_capture_assignments`, e.g. via `AppState.
+    // assignCaptureMetadata`/the CLI) used to be completely invisible to V2
+    // -- the old chain never queried that table at all. It now wins over
+    // BOTH the capture group and the FITS header, exactly as `CaptureResolver
+    // .resolve` already guaranteed for V1 surfaces.
+    @Test("A V1 manual per-file override is now visible to V2's series filter/passband, outranking both the capture group and the FITS header")
+    func manualOverrideFromV1IsNowVisibleToV2() async throws {
+        let fixture = try Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        let fileID = try Self.insertHeaderlessOSCFrame(
+            db: fixture.db, sessionDate: "2026-08-08", slug: "sv220_dual-band"
+        )
+        try fixture.db.upsertFITSMeta(FITSMetaRecord(
+            fileID: fileID, exptime: 300, gain: 100, offset: 50,
+            instrume: "ZWO ASI2600MC Pro", focallen: 261, filter: "Ha",
+            headerJSON: "{\"BAYERPAT\":\"RGGB\"}"
+        ))
+        let groupID = try fixture.db.upsertCaptureGroup(CaptureGroupRecord(
+            target: "IC_1396_Elephants_Trunk_Nebula", sessionDate: "2026-08-08",
+            slug: "sv220_dual-band", displayName: "SV220 dual-band",
+            sensorMode: .osc, signalMode: .dualBand
+        ))
+        // The owner corrects this ONE frame by hand in V1: it's actually
+        // narrowband (e.g. a filter swap mid-session the group's own default
+        // doesn't reflect), with an explicit filter name.
+        try fixture.db.upsertFileCaptureAssignment(FileCaptureAssignmentRecord(
+            fileID: fileID, captureGroupID: groupID,
+            signalModeOverride: .narrowband,
+            filterNameOverride: "Ha 6nm",
+            assignmentSource: "app", assignedAt: 1
+        ))
+        let metadata = try MetadataStore.temporary()
+
+        _ = try await ScanWorkflowMaterializer.materialize(indexDatabase: fixture.indexURL, metadata: metadata)
+
+        let project = try #require(try await metadata.projects().first)
+        let series = try #require(try await metadata.series(projectID: project.id).first)
         #expect(series.passband == .narrowband)
+        #expect(series.filterName == "Ha 6nm")
     }
 
     @Test("A headerless frame in a captures/ folder with no matching capture group still reads dual-band from the slug name")

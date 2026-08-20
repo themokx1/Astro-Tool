@@ -204,6 +204,14 @@ final class AppState: @unchecked Sendable {
     private static let recentRootsKey = "recentRootBookmarks"
     /// R11-T9/F5: `autoScanOnMount`'s `UserDefaults` key.
     private static let autoScanOnMountKey = "autoScanOnMount"
+    /// V3 pre-stack program, section 5.1 (Ingest-figyelő):
+    /// `ingestWatcherEnabled`'s `UserDefaults` key -- the SAME literal
+    /// `AstroUI.IngestWatcher`'s own `isEnabled` default reads, via
+    /// `IngestWatcherSettings.enabledDefaultsKey` (`AstroApplication`, the
+    /// one layer both this V1-only `AppState` and V2's `IngestWatcher` sit
+    /// above) -- see that constant's own doc comment for why this is one
+    /// shared literal rather than two that could silently drift apart.
+    private static let ingestWatcherEnabledKey = IngestWatcherSettings.enabledDefaultsKey
     /// R11-T12/F12: `firstStepsCardDismissed`'s `UserDefaults` key.
     private static let firstStepsCardDismissedKey = "firstStepsCardDismissed"
     /// R11-T15/F16: `selectedSiteName`'s `UserDefaults` key.
@@ -552,6 +560,18 @@ final class AppState: @unchecked Sendable {
     /// `init()` reads the persisted starting value once.
     var autoScanOnMount: Bool = false {
         didSet { preferences.set(autoScanOnMount, forKey: Self.autoScanOnMountKey) }
+    }
+    /// V3 pre-stack program, section 5.1 (Ingest-figyelő): Settings ▸
+    /// Könyvtár's OTHER, separate toggle right below `autoScanOnMount` --
+    /// same "plain stored property, `didSet` mirrors to `UserDefaults`,
+    /// default OFF" shape for the exact same `@Observable`-tracking reason
+    /// `autoScanOnMount`'s own doc comment explains. This one gates the V2
+    /// Home banner (`AstroUI.IngestWatcher`), never the V1 auto-scan
+    /// `autoScanOnMount` already controls -- two similarly-shaped toggles
+    /// with deliberately distinct copy, per the spec's own risk note about
+    /// keeping their UX language sharply separated.
+    var ingestWatcherEnabled: Bool = false {
+        didSet { preferences.set(ingestWatcherEnabled, forKey: Self.ingestWatcherEnabledKey) }
     }
     var findings: [Finding] = []
     /// Audit and verify evidence are persisted independently, then composed
@@ -1299,6 +1319,7 @@ final class AppState: @unchecked Sendable {
     private func loadStoredPreferences() {
         firstStepsCardDismissed = preferences.bool(forKey: Self.firstStepsCardDismissedKey)
         autoScanOnMount = preferences.bool(forKey: Self.autoScanOnMountKey)
+        ingestWatcherEnabled = preferences.bool(forKey: Self.ingestWatcherEnabledKey)
         selectedSiteName = preferences.string(forKey: Self.selectedSiteNameKey)
         selectedImagingSetupID = preferences.string(forKey: Self.selectedImagingSetupIDKey)
         if let data = preferences.data(forKey: Self.discoveryFocalLengthsBySetupKey),
