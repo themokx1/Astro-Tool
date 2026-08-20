@@ -136,15 +136,31 @@ public struct PreflightChecklist: Equatable, Sendable {
     /// the fetch hasn't landed/failed) -- `HomeSnapshot.NightCloud
     /// .isCloudyTonight` otherwise. `topRecommendation` is `nil` exactly
     /// when `HomeSnapshot.tonightRecommendations` is empty.
+    ///
+    /// `flatMissingCount` (V3 pre-stack program section 5.2, Kalibrációs
+    /// automata) is `nil` exactly when the caller never computed flat
+    /// coverage at all -- an honest "nothing to say yet", same reasoning as
+    /// `isCloudyTonight`/`topRecommendation`'s own `nil` cases, so omitting
+    /// it (every call site before 5.2 landed) never adds a `.flatNeeded`
+    /// item at all, rather than adding one that's always `.ready`. When
+    /// given, it is `CalibShoppingList.build(coverage:, plans:)`'s own item
+    /// count run over `CalibAnalyzer.flatCoverage()`'s needs -- the exact
+    /// same "actionable AND relevant to tonight" engine `calibrationMissingCount`
+    /// already reuses for darks, just handed the flat list instead; this
+    /// function never re-derives that filtering itself.
     public static func build(
         calibrationMissingCount: Int,
         isCloudyTonight: Bool?,
-        topRecommendation: TopRecommendation?
+        topRecommendation: TopRecommendation?,
+        flatMissingCount: Int? = nil
     ) -> PreflightChecklist {
         let calibrationItem = Item(
             kind: .calibrationCurrent(missingCount: calibrationMissingCount),
             status: calibrationMissingCount > 0 ? .attention : .ready
         )
+        let flatItem: Item? = flatMissingCount.map { count in
+            Item(kind: .flatNeeded(missingCount: count), status: count > 0 ? .attention : .ready)
+        }
 
         let skyStatus: Status = switch isCloudyTonight {
         case nil: .notApplicable
@@ -190,7 +206,10 @@ public struct PreflightChecklist: Equatable, Sendable {
             altitudeItem = Item(kind: .altitudeWindow(targetDisplayName: nil, clearsAtLocal: nil), status: .notApplicable)
         }
 
-        return PreflightChecklist(items: [calibrationItem, skyItem, moonItem, altitudeItem])
+        var items = [calibrationItem]
+        if let flatItem { items.append(flatItem) }
+        items.append(contentsOf: [skyItem, moonItem, altitudeItem])
+        return PreflightChecklist(items: items)
     }
 
     /// The local start time already embedded in a `"HH:mm–HH:mm"`

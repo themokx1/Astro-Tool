@@ -168,10 +168,10 @@ struct PreflightChecklistTests {
         #expect(statuses.prefix(firstNonAttention).allSatisfy { $0 == .attention })
     }
 
-    // MARK: - Wave 0 seam (V3 pre-stack program, section 5.2, Kalibrációs automata)
+    // MARK: - Section 5.2 (Kalibrációs automata): `.flatNeeded` wired to real data
 
-    @Test("The .flatNeeded stub case exists with a stable id, but build(...) never produces it yet")
-    func flatNeededSeamCaseExistsButIsNeverProduced() {
+    @Test("The .flatNeeded item has a stable id")
+    func flatNeededItemHasStableID() {
         let item = PreflightChecklist.Item(kind: .flatNeeded(missingCount: 3), status: .attention)
         #expect(item.id == "flatNeeded")
         if case let .flatNeeded(missingCount) = item.kind {
@@ -179,10 +179,10 @@ struct PreflightChecklistTests {
         } else {
             Issue.record("Expected a .flatNeeded item")
         }
+    }
 
-        // `build(...)` itself has no code path that constructs `.flatNeeded`
-        // in Wave 0 -- confirmed here by exercising every input it takes,
-        // not by inspecting its source.
+    @Test("Omitting flatMissingCount (every pre-5.2 call site) never produces a .flatNeeded item -- an honest 'nothing to say yet', not a silent .ready")
+    func omittedFlatMissingCountNeverProducesFlatNeededItem() {
         let checklist = PreflightChecklist.build(
             calibrationMissingCount: 5,
             isCloudyTonight: true,
@@ -192,5 +192,44 @@ struct PreflightChecklistTests {
             )
         )
         #expect(!checklist.items.contains { if case .flatNeeded = $0.kind { true } else { false } })
+        #expect(checklist.items.count == 4)
+    }
+
+    @Test("A positive flatMissingCount adds a red .flatNeeded line")
+    func positiveFlatMissingCountIsARedLine() {
+        let checklist = PreflightChecklist.build(
+            calibrationMissingCount: 0,
+            isCloudyTonight: false,
+            topRecommendation: .init(
+                displayName: "Elefántormány-köd", visibleWindow: "21:48–01:23", verdict: .goodTonight
+            ),
+            flatMissingCount: 2
+        )
+
+        #expect(!checklist.allClear)
+        #expect(checklist.items.count == 5)
+        let flatItem = checklist.items.first { if case .flatNeeded = $0.kind { true } else { false } }
+        #expect(flatItem?.status == .attention)
+        if case let .flatNeeded(missingCount) = flatItem?.kind {
+            #expect(missingCount == 2)
+        } else {
+            Issue.record("Expected a .flatNeeded item")
+        }
+    }
+
+    @Test("A zero flatMissingCount adds a ready .flatNeeded line, not an attention one")
+    func zeroFlatMissingCountIsReady() {
+        let checklist = PreflightChecklist.build(
+            calibrationMissingCount: 0,
+            isCloudyTonight: false,
+            topRecommendation: .init(
+                displayName: "Elefántormány-köd", visibleWindow: "21:48–01:23", verdict: .goodTonight
+            ),
+            flatMissingCount: 0
+        )
+
+        #expect(checklist.allClear)
+        let flatItem = checklist.items.first { if case .flatNeeded = $0.kind { true } else { false } }
+        #expect(flatItem?.status == .ready)
     }
 }
