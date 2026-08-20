@@ -66,8 +66,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           notes_file="docs/releases/$GITHUB_REF_NAME.md"
+          release_flag="$(scripts/github-release-flag.sh "$GITHUB_REF_NAME")"
+          release_args=()
+          if [ -n "$release_flag" ]; then
+            release_args+=("$release_flag")
+          fi
           gh release create "$GITHUB_REF_NAME" \
             build/AstroTool-*.dmg \
             build/astrotool-*.zip \
             build/SHA256SUMS.txt \
+            "${release_args[@]}" \
             --notes-file "$notes_file"

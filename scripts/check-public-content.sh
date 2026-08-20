@@ -3,6 +3,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+VERSION="$(sed -n 's/^[[:space:]]*public static let version = "\([^"]*\)"[[:space:]]*$/\1/p' Sources/AstroCore/Product/ProductInfo.swift)"
+
 targets=(README.md docs/index.html docs/features.html docs/tutorial.html docs/cli.html docs/privacy.html docs/support.html Sources/AstroToolApp)
 forbidden=(
     "/Volumes/images"
@@ -26,8 +28,8 @@ for needle in "${forbidden[@]}"; do
     fi
 done
 
-if ! grep -F 'public static let version = "2.0.0"' Sources/AstroCore/Product/ProductInfo.swift >/dev/null; then
-    echo "ERROR: ProductInfo is not version 2.0.0" >&2
+if [ -z "$VERSION" ]; then
+    echo "ERROR: ProductInfo.version could not be read" >&2
     failed=1
 fi
 

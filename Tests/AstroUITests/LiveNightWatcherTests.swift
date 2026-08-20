@@ -86,6 +86,24 @@ private func makeWatcher(
 @Suite("LiveNightWatcher polling")
 @MainActor
 struct LiveNightWatcherTests {
+    @Test("Switching watched folders cancels the previous operation before starting the next one")
+    func switchingFoldersKeepsExactlyOneWatchOperation() async throws {
+        let watcher = makeWatcher(lister: FakeFolderLister())
+        let host = OperationHost(center: OperationCenter())
+
+        await watcher.startWatching(folder: watchedFolder("M31"), operationHost: host)
+        #expect(host.activeOperations.filter { $0.kind == .liveNightWatch }.count == 1)
+
+        await watcher.startWatching(folder: watchedFolder("M42"), operationHost: host)
+        #expect(
+            host.activeOperations.filter { $0.kind == .liveNightWatch }.count == 1,
+            "changing folders must not leave the old polling loop alive"
+        )
+
+        await watcher.stopWatching(operationHost: host)
+        #expect(host.activeOperations.filter { $0.kind == .liveNightWatch }.isEmpty)
+    }
+
     @Test("pollNow does nothing when no folder is configured")
     func pollNowDoesNothingWithoutAFolder() async {
         let watcher = makeWatcher(lister: FakeFolderLister())

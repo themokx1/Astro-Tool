@@ -3,12 +3,28 @@ import Testing
 
 @Suite("Release packaging surface")
 struct ReleasePackagingSurfaceTests {
+    private var root: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
     private func source(_ relative: String) throws -> String {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
+    }
+
+    private func run(_ relative: String, arguments: [String]) throws -> (status: Int32, output: String) {
+        let process = Process()
+        process.executableURL = root.appendingPathComponent(relative)
+        process.arguments = arguments
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
     }
 
     @Test("Normal builds are Universal and never install as a side effect")
@@ -83,6 +99,35 @@ struct ReleasePackagingSurfaceTests {
         #expect(build.contains("COPYFILE_DISABLE=1 ditto -c -k --keepParent"))
         let workflow = try source(".github/workflows/release.yml")
         #expect(workflow.contains("SHA256SUMS.txt"))
+    }
+
+    @Test("GitHub beta tags publish as prereleases while stable tags remain final")
+    func githubReleaseChannelFlag() throws {
+        let relative = "scripts/github-release-flag.sh"
+        guard FileManager.default.fileExists(atPath: root.appendingPathComponent(relative).path) else {
+            Issue.record("missing executable release-channel helper: \(relative)")
+            return
+        }
+
+        let beta = try run(relative, arguments: ["v3.0.0-beta.1"])
+        #expect(beta.status == 0)
+        #expect(beta.output.trimmingCharacters(in: .whitespacesAndNewlines) == "--prerelease")
+
+        let stable = try run(relative, arguments: ["v3.0.0"])
+        #expect(stable.status == 0)
+        #expect(stable.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+        let workflow = try source(".github/workflows/release.yml")
+        #expect(workflow.contains("scripts/github-release-flag.sh"))
+    }
+
+    @Test("Public content validation derives the product version instead of pinning V2")
+    func publicContentCheckIsVersionAgnostic() throws {
+        let check = try source("scripts/check-public-content.sh")
+        #expect(check.contains("ProductInfo.swift"))
+        #expect(check.contains("VERSION="))
+        #expect(!check.contains("ProductInfo is not version 2.0.0"))
+        #expect(!check.contains(#"public static let version = "2.0.0""#))
     }
 
     @Test("Versioned release documentation is complete and public-safe")

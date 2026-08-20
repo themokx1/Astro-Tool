@@ -160,6 +160,11 @@ public final class IngestWatcher: @unchecked Sendable {
     /// still-mounted volume is never offered twice in a row (the spec's own
     /// "ne ajánlja fel ugyanazt kétszer").
     private var offeredVolumePaths: Set<String> = []
+    /// A scan runs detached and can finish after its volume was unmounted or
+    /// the open-library context changed. The per-path token lets the main
+    /// actor discard that stale result instead of resurrecting a candidate
+    /// for a source that is no longer valid.
+    private var pendingVolumeScans: [String: UUID] = [:]
     private var started = false
 
     public init(
@@ -200,6 +205,11 @@ public final class IngestWatcher: @unchecked Sendable {
     }
 
     public func updateLibraryContext(_ context: LibraryContext?) {
+        if libraryContext != context {
+            pendingVolumeScans.removeAll()
+            offeredVolumePaths.removeAll()
+            candidate = nil
+        }
         libraryContext = context
     }
 
@@ -224,6 +234,9 @@ public final class IngestWatcher: @unchecked Sendable {
         guard let context = libraryContext else { return }
         guard standardizedPath != libraryVolumePath(context.rootURL) else { return }
         guard !offeredVolumePaths.contains(standardizedPath) else { return }
+        guard pendingVolumeScans[standardizedPath] == nil else { return }
+        let scanToken = UUID()
+        pendingVolumeScans[standardizedPath] = scanToken
 
         let name = (try? url.resourceValues(forKeys: [.volumeNameKey]))?.volumeName ?? url.lastPathComponent
         let volume = ImportSourceVolume(name: name, path: standardizedPath)
@@ -238,23 +251,32 @@ public final class IngestWatcher: @unchecked Sendable {
         // .chooseSource`'s own `Task.detached` comment documents for the
         // manual wizard's identical scan call.
         Task.detached { [weak self] in
-            guard classifyFn(volume.url) else { return }
-            guard let discovered = try? scanFn(volume.url), !discovered.isEmpty else { return }
-            let groups = CaptureBurstGrouper.group(discovered)
-            let match = matchFn(volume.name, projects)
-            let prefill = match.map { SessionCreationPrefill.project($0.project) }
-            let candidate = Candidate(volume: volume, discovered: discovered, groups: groups, sessionPrefill: prefill)
-            await self?.publish(candidate)
+            let candidate: Candidate?
+            if classifyFn(volume.url), let discovered = try? scanFn(volume.url), !discovered.isEmpty {
+                let groups = CaptureBurstGrouper.group(discovered)
+                let match = matchFn(volume.name, projects)
+                let prefill = match.map { SessionCreationPrefill.project($0.project) }
+                candidate = Candidate(
+                    volume: volume, discovered: discovered, groups: groups, sessionPrefill: prefill
+                )
+            } else {
+                candidate = nil
+            }
+            await self?.finishScan(path: standardizedPath, token: scanToken, candidate: candidate)
         }
     }
 
-    private func publish(_ candidate: Candidate) {
+    private func finishScan(path: String, token: UUID, candidate: Candidate?) {
+        guard pendingVolumeScans[path] == token else { return }
+        pendingVolumeScans.removeValue(forKey: path)
+        guard let candidate else { return }
         offeredVolumePaths.insert(candidate.volume.path)
         self.candidate = candidate
     }
 
     private func handleUnmount(_ url: URL) {
         let standardizedPath = url.standardizedFileURL.path
+        pendingVolumeScans.removeValue(forKey: standardizedPath)
         offeredVolumePaths.remove(standardizedPath)
         if candidate?.volume.path == standardizedPath {
             candidate = nil

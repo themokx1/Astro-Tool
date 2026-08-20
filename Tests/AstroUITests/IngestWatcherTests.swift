@@ -34,6 +34,38 @@ private func libraryRoot() -> URL {
     URL(fileURLWithPath: "/Volumes/AstroLibrary", isDirectory: true)
 }
 
+private final class BlockingScan: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didStart = false
+    private let proceed = DispatchSemaphore(value: 0)
+
+    func scan(_ url: URL) -> [DiscoveredCaptureFile] {
+        lock.withLock { didStart = true }
+        proceed.wait()
+        return [DiscoveredCaptureFile(
+            sourceURL: url.appendingPathComponent("IMG_0001.CR3"),
+            relativeSourcePath: "IMG_0001.CR3",
+            fileName: "IMG_0001.CR3",
+            ext: "cr3",
+            kind: "raw",
+            sizeBytes: 1024,
+            proposedRole: nil,
+            captureDate: nil,
+            captureDateSource: nil
+        )]
+    }
+
+    func waitUntilStarted() async {
+        while !lock.withLock({ didStart }) {
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+
+    func finish() {
+        proceed.signal()
+    }
+}
+
 @MainActor
 private func makeWatcher(
     monitor: FakeIngestVolumeMonitor,
@@ -249,5 +281,24 @@ struct IngestWatcherTests {
         monitor.simulateMount(url)
         await waitUntil { watcher.candidate != nil }
         #expect(watcher.candidate != nil)
+    }
+
+    @Test func unmountDuringASlowScanCannotPublishAStaleCandidate() async {
+        let monitor = FakeIngestVolumeMonitor()
+        let blockingScan = BlockingScan()
+        let watcher = makeWatcher(monitor: monitor, scan: blockingScan.scan)
+        watcher.updateLibraryContext(.init(
+            rootURL: libraryRoot(), accessMode: .readOnly, indexedFolders: [], existingProjects: []
+        ))
+        watcher.start()
+        let url = URL(fileURLWithPath: "/Volumes/EOS_DIGITAL", isDirectory: true)
+
+        monitor.simulateMount(url)
+        await blockingScan.waitUntilStarted()
+        monitor.simulateUnmount(url)
+        blockingScan.finish()
+
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        #expect(watcher.candidate == nil, "a scan finishing after unmount must be discarded")
     }
 }

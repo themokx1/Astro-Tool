@@ -8,6 +8,49 @@ történik.
 
 ## [Unreleased]
 
+## [3.0.0-beta.1] - 2026-08-20
+
+Az első V3 béta a stackelés előtti teljes munkafolyamatot bővíti. A V2
+könyvtár- és projektmodellje változatlanul az alap; az új réteg a felvételek
+behozatalától az élő éjszaka követéséig ad opt-in automatizálást.
+
+### Hozzáadva
+
+- **Ingest-figyelő** újonnan csatlakoztatott felvételi kötetek felismerésével,
+  előre kitöltött importtal és óvatos projektjavaslattal.
+- **Kalibrációs automata** Siril-alapú dark master építéssel, explicit
+  mutációs jóváhagyással és „flat kell” indulás előtti jelzéssel.
+- **Irányított rendrakó**, amely a meglévő preview → karantén → nyugta →
+  visszaállítás biztonsági láncot lépésenkénti felülettel használja.
+- **Metaadat-javító** szabályjavaslatokkal és kézi capture-hozzárendelési
+  felülbírálásokkal.
+- **Derült-trigger** opt-in értesítéssel, cache-elt időjárásból és
+  konfigurálható helyi ellenőrzési idővel.
+- **Élő éjszaka-mód** read-only sessionfigyeléssel, gyors csillagmetrikával,
+  célbecsléssel és Kezdőlap-kártyával.
+
+### Javítva
+
+- A Siril verziólekérdezés a stdout pipe-ot a folyamatra várás előtt üríti,
+  ezért nagyobb indítási kimenet sem okozhat kölcsönös várakozást.
+- Az ingest-figyelő eldobja a közben leválasztott kötet későn befejeződő
+  vizsgálatát, ezért nem jelenhet meg elavult importjavaslat.
+- Az élő éjszaka figyelt mappájának cseréje leállítja az előző műveletet,
+  ezért gyors beállításváltás után is pontosan egy figyelőciklus fut.
+- A kalibrációs beállítás mentése megőrzi az automatikus masterépítés opt-in
+  kapcsolóját.
+- A scan materializáló a kanonikus `CaptureResolver` szabályait használja,
+  így az import és a könyvtárindex nem tér el egymástól.
+
+### Béta-korlátok
+
+- A kötetfigyelés, az értesítés és az élő éjszaka csak addig működik, amíg az
+  AstroTool fut; nincs háttér-daemon vagy login helper.
+- Minden könyvtármutáció alapból tiltott, külön engedélyt és tételes
+  megerősítést igényel.
+- Ez prerelease: pótolhatatlan képkönyvtáron használat előtt legyen külön
+  biztonsági mentés, és az első futás maradjon read-only.
+
 ## [2.0.0] - 2026-08-19
 
 A végleges 2.0.0: a béta lezárása. Tíz új funkció, a mérési út őszintesége,

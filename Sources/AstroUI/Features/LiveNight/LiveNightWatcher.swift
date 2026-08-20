@@ -158,6 +158,11 @@ public final class LiveNightWatcher: @unchecked Sendable {
     private var started = false
     private var boundOperationHost: OperationHost?
     private var activeOperationID: UUID?
+    /// Main-actor methods can be re-entered at each `await`. This generation
+    /// makes rapid Settings changes converge on the newest requested folder:
+    /// a superseded start cancels the operation it just registered instead
+    /// of publishing a second polling loop after the newer transition won.
+    private var watchTransitionGeneration = 0
     private var settingsObserver: NSObjectProtocol?
     private let pollIntervalSeconds: Double
 
@@ -219,18 +224,36 @@ public final class LiveNightWatcher: @unchecked Sendable {
     /// which `OperationHost.run` already treats as a clean, silent
     /// cancellation rather than a failure.
     public func startWatching(folder: URL, operationHost: OperationHost) async {
+        watchTransitionGeneration += 1
+        let generation = watchTransitionGeneration
+        let previousOperationID = activeOperationID
+        activeOperationID = nil
+        if let previousOperationID {
+            await operationHost.cancel(id: previousOperationID)
+        }
+        guard generation == watchTransitionGeneration else { return }
+
         configureFolder(folder)
         let title = OperationHost.localized("Live night watch")
-        activeOperationID = await operationHost.run(kind: .liveNightWatch, title: title, cancellation: .cooperative) { [weak self] in
+        let operationID = await operationHost.run(kind: .liveNightWatch, title: title, cancellation: .cooperative) { [weak self] in
             try await self?.watchLoop()
         }
+        guard generation == watchTransitionGeneration else {
+            await operationHost.cancel(id: operationID)
+            return
+        }
+        activeOperationID = operationID
     }
 
     public func stopWatching(operationHost: OperationHost) async {
-        if let activeOperationID {
-            await operationHost.cancel(id: activeOperationID)
-        }
+        watchTransitionGeneration += 1
+        let generation = watchTransitionGeneration
+        let previousOperationID = activeOperationID
         activeOperationID = nil
+        if let previousOperationID {
+            await operationHost.cancel(id: previousOperationID)
+        }
+        guard generation == watchTransitionGeneration else { return }
         configureFolder(nil)
     }
 

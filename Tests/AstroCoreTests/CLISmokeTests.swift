@@ -4486,11 +4486,11 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
 @Test func versionFlagPrintsVersion() async throws {
     let result = try await runCLI(["--version"])
     #expect(result.exitCode == 0)
-    // Format check rather than a pinned literal, so a release version bump
-    // in main.swift can't silently break the suite (which is exactly what
-    // happened at v0.10.0 with the old `== "astrotool 0.1.0"` expectation).
+    // The shared product identity accepts both stable and prerelease SemVer
+    // without duplicating either a pinned literal or a second version parser
+    // in this smoke test.
     let output = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-    #expect(output.wholeMatch(of: /astrotool \d+\.\d+\.\d+/) != nil, "unexpected --version output: \(output)")
+    #expect(output == "astrotool \(ProductInfo.version)", "unexpected --version output: \(output)")
 }
 
 } // CLISmokeTests
