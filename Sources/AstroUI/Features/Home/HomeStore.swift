@@ -364,6 +364,15 @@ public struct HomeSnapshot: Equatable, Sendable {
 public final class HomeStore {
     public typealias TonightProvider = @Sendable (URL) async throws -> [TargetPlan]
     public typealias CalibCoverageProvider = @Sendable (URL) async throws -> [CalibNeed]
+    /// Section 5.2 (Kalibrációs automata): flat-only coverage
+    /// (`CalibAnalyzer.flatCoverage()`), kept as its OWN provider rather than
+    /// folded into `calibCoverageProvider` (which already concatenates dark +
+    /// flat for `calibShoppingItems`'s existing "cloudy tonight" card/export
+    /// use) -- the Preflight `.flatNeeded` line needs a flat-only count, and
+    /// splitting `calibCoverageProvider` itself would change what
+    /// `calibShoppingItems`/`cloudyDarksCard` already show today. Injectable
+    /// for the same reason every other provider here is.
+    public typealias FlatCoverageProvider = @Sendable (URL) async throws -> [CalibNeed]
     /// Resolves tonight's honest night context for an open library -- real
     /// dusk/dawn (from the site the planner itself would resolve: explicit
     /// config, else the FITS-median fallback) when a site is available,
@@ -417,6 +426,17 @@ public final class HomeStore {
     /// relevant-tonight filtering V1's "Kalibrációs teendők ma estére" card
     /// already applies.
     public private(set) var calibShoppingItems: [CalibShoppingList.Item] = []
+    /// Section 5.2 (Kalibrációs automata): the SAME "actionable AND relevant
+    /// to tonight" `CalibShoppingList.build` engine `calibShoppingItems`
+    /// already uses, run over flat-only coverage instead -- feeds the
+    /// Preflight `.flatNeeded` line's `missingCount`. Deliberately a separate
+    /// list rather than filtering `calibShoppingItems` by `kind == .flat`:
+    /// `calibShoppingItems`'s own coverage input already concatenates dark +
+    /// flat (see `productionCalibCoverage`), so filtering it would only ever
+    /// see flats that happen to still be present after whatever the darks
+    /// side already contributed -- this is computed straight from
+    /// `flatCoverageProvider`'s own dedicated flat-only read instead.
+    public private(set) var flatShoppingItems: [CalibShoppingList.Item] = []
     /// Pre-flight Checklist (ideation #1, "Indulás előtti lista"): composed
     /// FRESH from state this store already loaded, on every read -- never
     /// stored on `HomeSnapshot` itself, and never a new query of its own.
@@ -439,11 +459,13 @@ public final class HomeStore {
         return PreflightChecklist.build(
             calibrationMissingCount: calibShoppingItems.count,
             isCloudyTonight: snapshot.nightCloud?.isCloudyTonight,
-            topRecommendation: topRecommendation
+            topRecommendation: topRecommendation,
+            flatMissingCount: flatShoppingItems.count
         )
     }
     private let tonightProvider: TonightProvider
     private let calibCoverageProvider: CalibCoverageProvider
+    private let flatCoverageProvider: FlatCoverageProvider
     private let nightContextProvider: NightContextProvider
     private let weatherProvider: WeatherProvider
     private let ratingGateProvider: RatingGateProvider
@@ -481,6 +503,7 @@ public final class HomeStore {
         snapshot: HomeSnapshot = .unconfigured,
         tonightProvider: TonightProvider? = nil,
         calibCoverageProvider: CalibCoverageProvider? = nil,
+        flatCoverageProvider: FlatCoverageProvider? = nil,
         nightContextProvider: NightContextProvider? = nil,
         weatherProvider: WeatherProvider? = nil,
         ratingGateProvider: RatingGateProvider? = nil,
@@ -491,6 +514,7 @@ public final class HomeStore {
         self.snapshot = snapshot
         self.tonightProvider = tonightProvider ?? HomeStore.productionTonight
         self.calibCoverageProvider = calibCoverageProvider ?? HomeStore.productionCalibCoverage
+        self.flatCoverageProvider = flatCoverageProvider ?? HomeStore.productionFlatCoverage
         self.nightContextProvider = nightContextProvider ?? HomeStore.productionNightContext
         self.weatherProvider = weatherProvider ?? HomeStore.productionWeather
         self.ratingGateProvider = ratingGateProvider ?? HomeStore.productionRatingGate
@@ -635,6 +659,13 @@ public final class HomeStore {
             []
         }
         calibShoppingItems = CalibShoppingList.build(coverage: coverage, plans: plans)
+
+        let flatCoverage: [CalibNeed] = if let rootURL {
+            (try? await flatCoverageProvider(rootURL)) ?? []
+        } else {
+            []
+        }
+        flatShoppingItems = CalibShoppingList.build(coverage: flatCoverage, plans: plans)
 
         // Task 1: a plan the shared `SkyVerdict` engine already flagged as
         // unshootable tonight (comet stale coordinate, no coordinate, low
@@ -1138,6 +1169,17 @@ public final class HomeStore {
         let query = try CalibrationQuery.production(rootURL: rootURL)
         return try await Task.detached(priority: .utility) {
             try query.coverage() + query.flatCoverage()
+        }.value
+    }
+
+    /// Section 5.2 (Kalibrációs automata): flat-only coverage, for the
+    /// Preflight `.flatNeeded` line -- see `FlatCoverageProvider`'s own doc
+    /// comment for why this is a separate read rather than filtering
+    /// `productionCalibCoverage`'s already-combined result.
+    public static func productionFlatCoverage(rootURL: URL) async throws -> [CalibNeed] {
+        let query = try CalibrationQuery.production(rootURL: rootURL)
+        return try await Task.detached(priority: .utility) {
+            try query.flatCoverage()
         }.value
     }
 

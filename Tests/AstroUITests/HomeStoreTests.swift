@@ -854,6 +854,65 @@ struct HomeStoreTests {
         #expect(!store.preflightChecklist.allClear)
     }
 
+    // MARK: - Section 5.2 (Kalibrációs automata): .flatNeeded wired to real data
+
+    @Test("A real flat coverage shortfall reaches the checklist as its own .flatNeeded red line, independent of the dark calibrationCurrent line")
+    func preflightChecklistSurfacesRealFlatShortfall() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in
+                [TargetPlan(target: "M31", displayName: "M31", usableIntegrationSeconds: 0, verdict: SkyVerdict.good, score: 0.5)]
+            },
+            calibCoverageProvider: { _ in [] },
+            flatCoverageProvider: { _ in
+                [CalibNeed(
+                    kind: .flat, exposureSeconds: 0, tempC: nil, lightCount: 40,
+                    targets: ["M31"], matchedMasterPath: nil, masterAgeDays: nil, isStale: false,
+                    todo: "Készíts Ha flatet — 1 session érintett", filter: "Ha"
+                )]
+            }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+
+        let checklist = store.preflightChecklist
+        let flatItem = checklist.items.first { if case .flatNeeded = $0.kind { true } else { false } }
+        #expect(flatItem?.status == .attention)
+        if case let .flatNeeded(missingCount) = flatItem?.kind {
+            #expect(missingCount == 1)
+        } else {
+            Issue.record("Expected a .flatNeeded item")
+        }
+        #expect(!checklist.allClear)
+        // The dark side (`calibShoppingItems`, fed by `calibCoverageProvider`
+        // alone) stays unaffected -- the two providers are independent reads.
+        let calibItem = checklist.items.first { if case .calibrationCurrent = $0.kind { true } else { false } }
+        #expect(calibItem?.status == .ready)
+    }
+
+    @Test("Flat coverage with nothing actionable for tonight's targets leaves .flatNeeded ready, not attention")
+    func preflightChecklistFlatNeededIsReadyWhenNothingIsActionable() async throws {
+        let metadata = try MetadataStore.temporary()
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let store = HomeStore(
+            tonightProvider: { _ in
+                [TargetPlan(target: "M31", displayName: "M31", usableIntegrationSeconds: 0, verdict: SkyVerdict.good, score: 0.5)]
+            },
+            calibCoverageProvider: { _ in [] },
+            flatCoverageProvider: { _ in [] }
+        )
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+
+        let flatItem = store.preflightChecklist.items.first { if case .flatNeeded = $0.kind { true } else { false } }
+        #expect(flatItem?.status == .ready)
+    }
+
     @Test("No open library means no weather/tonight plan was ever fetched -- the sky/Moon/altitude lines read n/a, never a red ✗")
     func preflightChecklistIsHonestlyNotApplicableWithNoOpenLibrary() async throws {
         let metadata = try MetadataStore.temporary()

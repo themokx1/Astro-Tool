@@ -44,11 +44,20 @@ public struct CalibrationView: View {
     let accessMode: LibraryAccessMode
     let chooseLibrary: () -> Void
     let onLibraryFindingsChanged: (() -> Void)?
+    @Environment(OperationHost.self) private var operationHost
     @State private var store = CalibrationStore()
     @State private var selectedSection: Section = .coverage
     @State private var selectedCoverageID: String?
     @State private var selectedMasterID: String?
     @State private var showsLinkPreview = false
+    /// Section 5.2 (Kalibrációs automata): "Build Master…" preview sheet.
+    @State private var showsBuildSheet = false
+    /// The exact `CalibNeed` the open build sheet is previewing -- kept here
+    /// (not just inside `store.buildPreview`, which only carries the plain
+    /// exposure/temp values a `CalibrationMasterBuildPreview` needs to
+    /// render) so the sheet's own "Build" button can hand the same `CalibNeed`
+    /// back to `store.buildMaster(need:)` without reconstructing one.
+    @State private var buildTargetNeed: CalibNeed?
     /// V2 UI/UX audit (2026-08-14) systemic pattern S7: `store.coverage` is
     /// a small, already-in-memory local list (one library's own dark-need
     /// combos), not a store-cached collection in its own right, so the sort
@@ -99,6 +108,9 @@ public struct CalibrationView: View {
         .astroSectionMarker("v2.detail.library.calibration", label: "Calibration")
         .sheet(isPresented: $showsLinkPreview) {
             linkPreviewSheet
+        }
+        .sheet(isPresented: $showsBuildSheet) {
+            buildMasterSheet
         }
     }
 
@@ -258,6 +270,17 @@ public struct CalibrationView: View {
         Button("Preview Link…") { preparePreview(for: row) }
             .disabled(row.need.sessions.isEmpty)
             .help("Preview which sessions would link to a matching master dark")
+        // Section 5.2 (Kalibrációs automata): only dark rows carry a
+        // (exposure, temp) combo `CalibrationMasterBuildCommand.preview`
+        // can act on -- `row.need.kind` is always `.dark` in THIS table
+        // today (`CalibrationQuery.coverage()`'s own v1 dark-only scope), so
+        // this never actually filters anything out yet, but stays explicit
+        // rather than assuming a future flat/bias row silently gets a
+        // "Build Master…" action that was only ever validated for darks.
+        if row.need.kind == .dark {
+            Button("Build Master…") { prepareBuildPreview(for: row) }
+                .help("Build a master dark from already-scanned session dark subs, via Siril")
+        }
     }
 
     @ViewBuilder
@@ -287,6 +310,85 @@ public struct CalibrationView: View {
             await store.preparePlan(target: session.target, date: session.date)
             showsLinkPreview = true
         }
+    }
+
+    // MARK: - Section 5.2 (Kalibrációs automata): master-build sheet
+
+    private func prepareBuildPreview(for row: CalibrationCoverageRow) {
+        buildTargetNeed = row.need
+        Task {
+            await store.prepareBuildPreview(need: row.need)
+            showsBuildSheet = true
+        }
+    }
+
+    @ViewBuilder
+    private var buildMasterSheet: some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+            HStack {
+                Text("Build Master").font(.title3.bold())
+                Spacer()
+                Button("Close") {
+                    showsBuildSheet = false
+                    store.clearBuildPreview()
+                    buildTargetNeed = nil
+                }.keyboardShortcut(.cancelAction)
+            }
+            if store.isPreviewingBuild {
+                ProgressView("Building plan…")
+            } else if let preview = store.buildPreview {
+                Text("\(AstroFormat.coefficient(preview.exposureSeconds)) s / \(preview.tempC.map { AstroFormat.coefficient($0) + " °C" } ?? "—")")
+                    .font(.headline)
+                Text("\(preview.sourceFrameCount) source dark(s) found, \(preview.minimumFrameCount) needed")
+                    .foregroundStyle(preview.sourceFrameCount >= preview.minimumFrameCount ? AstroTokens.Color.ok : AstroTokens.Color.attention)
+
+                if !preview.mismatchReasons.isEmpty {
+                    Text(preview.mismatchReasons.joined(separator: "; "))
+                        .font(.caption).foregroundStyle(AstroTokens.Color.attention)
+                }
+                if !preview.sirilAvailable {
+                    Label("Siril was not found -- build this master manually.", systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(AstroTokens.Color.attention)
+                }
+
+                Toggle(
+                    "Enable automatic master build",
+                    isOn: Binding(
+                        get: { preview.autoBuildEnabled },
+                        set: { newValue in Task { await store.setAutoMasterBuildEnabled(newValue) } }
+                    )
+                )
+                .help("Lets Build Master actually run Siril. Off by default until explicitly enabled here.")
+
+                if store.accessMode != .mutationEnabled {
+                    Label("Requires write access. Enable write operations in Settings to build this master.", systemImage: "lock.shield")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if let buildErrorMessage = store.buildErrorMessage {
+                    Text(buildErrorMessage).foregroundStyle(AstroTokens.Color.attention)
+                }
+                if let receipt = store.lastBuildReceipt {
+                    Label("Built \(receipt.masterPath) from \(receipt.sourceFrameCount) frame(s)", systemImage: "checkmark.seal")
+                        .foregroundStyle(AstroTokens.Color.ok)
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Build") {
+                        guard let buildTargetNeed else { return }
+                        Task { await store.buildMaster(need: buildTargetNeed, operationHost: operationHost) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(store.accessMode != .mutationEnabled || !preview.canBuild || store.isBuilding || buildTargetNeed == nil)
+                    .help("Stack the source dark frames into a new master via Siril")
+                }
+            } else if let buildErrorMessage = store.buildErrorMessage {
+                Text(buildErrorMessage).foregroundStyle(AstroTokens.Color.attention)
+            }
+        }
+        .padding(AstroTokens.Spacing.section)
+        .frame(minWidth: 480, minHeight: 360)
+        .accessibilityIdentifier("v2.calibration.build-preview")
     }
 
     @ViewBuilder

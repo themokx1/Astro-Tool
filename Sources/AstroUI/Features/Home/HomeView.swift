@@ -339,11 +339,12 @@ public struct HomeView: View {
             } else {
                 Text("No tonight recommendation yet")
             }
-        // Wave 0 seam (V3 pre-stack program, section 5.2, Kalibrációs
-        // automata): placeholder copy only -- `PreflightChecklist.build`
-        // never produces `.flatNeeded` yet, so this branch never renders in
-        // Wave 0. It exists purely so this exhaustive switch stays green
-        // once `.flatNeeded` exists as a case at all.
+        // Section 5.2 (Kalibrációs automata): `HomeStore.preflightChecklist`
+        // now feeds `PreflightChecklist.build` a real `flatMissingCount`
+        // (`HomeStore.flatShoppingItems.count`, `CalibShoppingList.build` run
+        // over `CalibAnalyzer.flatCoverage()`), so this branch renders for
+        // real whenever a filter's flat coverage is missing or stale for
+        // one of tonight's targets.
         case let .flatNeeded(missingCount):
             if missingCount > 0 {
                 Text("\(missingCount) flat calibration items still need attention")
