@@ -1,0 +1,7 @@
+# GitHub Pages (legacy Jekyll) build config.
+# docs/ is the Pages root, but superpowers/ (internal plans, specs and
+# reviews) and releases/ (raw release-note sources) are working documents,
+# not site content - exclude them from the built site entirely.
+exclude:
+  - superpowers
+  - releases
