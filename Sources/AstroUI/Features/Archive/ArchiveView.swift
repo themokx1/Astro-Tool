@@ -72,6 +72,15 @@ public struct ArchiveView: View {
     @State private var verdict: ArchiveVerdict?
     @State private var maxTargetBytes: Int64 = 0
     @State private var acknowledgeRequest: ArchiveTask?
+    /// Feature 5.3 (V3 prestack program spec) -- the guided-cleanup wizard's
+    /// own local sheet, following this file's own `acknowledgeRequest`
+    /// pattern right above (a self-contained sheet this view owns, never a
+    /// new `PresentationRoute`/`V2RootView` wiring): the wizard needs
+    /// nothing this view does not already have (`rootURL`, `accessMode`,
+    /// `store.tasks`), and its own confirm/apply step embeds
+    /// `MutationConfirmationStore` directly rather than round-tripping
+    /// through the app-wide `.mutationConfirmation` presentation.
+    @State private var isGuidedCleanupPresented = false
 
     public init(
         rootURL: URL?,
@@ -158,6 +167,29 @@ public struct ArchiveView: View {
                 onCancel: { acknowledgeRequest = nil }
             )
         }
+        .sheet(isPresented: $isGuidedCleanupPresented) {
+            if let rootURL {
+                GuidedCleanupView(
+                    rootURL: rootURL,
+                    accessMode: accessMode,
+                    tasks: store.tasks,
+                    dismiss: { isGuidedCleanupPresented = false },
+                    switchToTable: { categories in
+                        isGuidedCleanupPresented = false
+                        openQuarantinePreview(categories)
+                    }
+                )
+            }
+        }
+    }
+
+    /// `true` when at least one current task's kind can honestly be walked
+    /// through by the guided wizard -- see `GuidedCleanupStore.buildQueue
+    /// (from:)`'s own filter, reused here rather than re-derived so the
+    /// header button's own visibility can never disagree with what the
+    /// wizard would actually show once opened.
+    private var guidedCleanupIsAvailable: Bool {
+        !GuidedCleanupStore.buildQueue(from: store.tasks).isEmpty
     }
 
     // MARK: Required state branches
@@ -241,7 +273,7 @@ public struct ArchiveView: View {
             .astroRaisedSurface()
             List {
                 if !store.tasks.isEmpty {
-                    Section("Needs you") {
+                    Section {
                         ForEach(store.tasks) { task in
                             ArchiveTaskCard(
                                 task: task,
@@ -260,6 +292,30 @@ public struct ArchiveView: View {
                             )
                             .listRowSeparator(.hidden)
                             .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                        }
+                    } header: {
+                        HStack {
+                            Text("Needs you")
+                            Spacer()
+                            // Feature 5.3 (V3 prestack program spec): a
+                            // step-by-step walkthrough over the exact same
+                            // preview/confirm/apply/receipt chain the
+                            // "Preview Quarantine…" table already uses --
+                            // only offered when at least one card's own
+                            // category can actually be walked through one
+                            // at a time (`ArchiveTaskKind
+                            // .supportsBulkQuarantinePreview`, the same gate
+                            // `ArchiveTaskDetailView`'s own bulk action
+                            // uses). A library with only error-severity
+                            // cards (misplaced calibration, broken names,
+                            // corruption) never shows this button at all --
+                            // there is nothing a guided quarantine pass
+                            // could honestly do for those.
+                            if guidedCleanupIsAvailable {
+                                Button("Guided Cleanup…") { isGuidedCleanupPresented = true }
+                                    .font(.caption)
+                                    .accessibilityIdentifier("v2.archive.guided-cleanup")
+                            }
                         }
                     }
                 }

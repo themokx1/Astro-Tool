@@ -2437,3 +2437,32 @@
    to touch hu.lproj for text that already exists. */
 "%lld flat calibration items still need attention" = "%lld flat kalibrációs tétel még figyelmet igényel";
 "Flat calibration is current" = "A flat kalibráció naprakész";
+
+/* Feature 5.3 (V3 prestack program, Irányított rendrakó): GuidedCleanupView.swift/
+   GuidedCleanupStore.swift -- the step-by-step wizard over the Archive
+   page's existing preview/confirm/apply/receipt chain. Every literal below
+   that duplicates an existing key elsewhere (e.g. "Apply", "Undo", "Close",
+   "Files are moved into quarantine, never deleted.", "Confirmation token",
+   "Requires write access. Enable write operations in Settings to apply this
+   quarantine.", the per-step subtitle words "Category"/"Review"/"Confirm"/
+   "Quarantining"/"Receipt"/"Done"/"Continue"/"Previous"/"Next", "Loading
+   findings…", "Files affected", "Total size") already has a translation
+   from CaptureImportView.swift/MutationConfirmationSheet.swift/elsewhere
+   and needs no new entry here -- only the genuinely new sentences below
+   were reported by `swift scripts/extract-localizable-strings.swift --missing`. */
+"Guided Cleanup" = "Vezetett rendrakás";
+"Guided Cleanup…" = "Vezetett rendrakás…";
+"Switch to Table View" = "Váltás táblázatos nézetre";
+"%@ of %lld categories left to go through." = "%@ / %lld kategória van még hátra.";
+"%@ file(s) · %@" = "%@ fájl · %@";
+"Review These Files" = "Ezek a fájlok átnézése";
+"File %@ of %lld" = "%@ / %lld fájl";
+"No individual findings to show for this category." = "Ehhez a kategóriához nincs egyedi találat.";
+"Quarantine %@ file(s) in “%@”, or leave them where they are?" = "Karanténba kerüljön %@ fájl innen: „%@”, vagy maradjanak, ahol vannak?";
+"Leave These" = "Ezek maradjanak";
+"Quarantine These…" = "Ezek karanténba…";
+"%lld files moved to quarantine." = "%lld fájl került karanténba.";
+"Nothing needs a guided pass right now." = "Jelenleg semmi nem igényel vezetett átnézést.";
+"All caught up." = "Minden naprakész.";
+"%@ quarantined · %@ left as-is" = "%@ karanténba téve · %@ maradt változatlanul";
+"Decide" = "Döntés";
