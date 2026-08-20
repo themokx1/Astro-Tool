@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AstroTool · Guide</title>
+<meta name="description" content="AstroTool guide: library layout, naming rules, a night's workflow, and a calibration crash course for beginners.">
+
+<link rel="icon" type="image/png" sizes="32x32" href="../favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+<link rel="stylesheet" href="../site.css">
+<meta name="theme-color" content="#0B0B0D">
+<link rel="alternate" hreflang="hu" href="https://themokx1.github.io/Astro-Tool/tutorial.html">
+<link rel="alternate" hreflang="en" href="https://themokx1.github.io/Astro-Tool/en/tutorial.html">
+<link rel="alternate" hreflang="x-default" href="https://themokx1.github.io/Astro-Tool/tutorial.html">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="AstroTool · Guide">
+<meta property="og:description" content="Library layout, naming rules, a night's workflow, and a calibration crash course.">
+<meta property="og:url" content="https://themokx1.github.io/Astro-Tool/en/tutorial.html">
+<meta property="og:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AstroTool · Guide">
+<meta name="twitter:description" content="Library layout, naming rules, a night's workflow, and a calibration crash course.">
+<meta name="twitter:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="index.html" style="text-decoration:none;color:inherit;"><span class="brand-mark" aria-hidden="true"></span>AstroTool</a>
+    <div class="nav-lang">
+      <a href="../tutorial.html">HU</a>
+      <a href="tutorial.html" class="current">EN</a>
+    </div>
+  </div>
+</nav>
+
+<header class="wrap compact">
+  <h1>Guide</h1>
+  <p class="sub">The essentials on one page: how your library is laid out, and what to do with it after a night out.</p>
+  <p class="crumbs"><a href="features.html">Features</a> · <a href="cli.html">CLI</a> · <a href="install.html">Install</a> · <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Download</a></p>
+</header>
+
+<main class="doc-wrap doc">
+  <div class="panels">
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>1. Library layout</h2>
+      <p>AstroTool builds on four areas at the root of your library: <code>sessions</code>, <code>stacks</code>, <code>processed</code>, <code>calibration_library</code>. A session now stores its raw frames split into <strong>captures</strong>, because a single night often involves more than one camera/filter combination (e.g. a short OSC test and a long mono sequence on the same target):</p>
+      <pre class="tree">&lt;ROOT&gt;/
+├── <span class="dir">sessions</span>/&lt;TARGET&gt;/&lt;YYYY-MM-DD&gt;/
+│   ├── <span class="dir">captures</span>/&lt;slug&gt;/
+│   │   └── lights/   flats/   darks/   biases/
+│   ├── <span class="dir">captures</span>/&lt;other-slug&gt;/...      <span class="comment"># a night can have more than one capture</span>
+│   └── README.txt                        <span class="comment"># notes you fill in by hand: Bortle, SQM, seeing...</span>
+├── <span class="dir">stacks</span>/&lt;TARGET&gt;/&lt;YYYY-MM-DD&gt;/&lt;slug&gt;/
+├── <span class="dir">processed</span>/&lt;TARGET&gt;/&lt;YYYY-MM-DD&gt;/&lt;slug&gt;/
+└── <span class="dir">calibration_library</span>/
+    ├── darks/&lt;exp&gt;sec_&lt;temp&gt;deg/       <span class="comment"># e.g. 300sec_-10deg</span>
+    ├── flats/
+    └── biases/</pre>
+      <ul class="list">
+        <li><strong>sessions</strong>: the raw, original frames, grouped by capture (<code>captures/&lt;slug&gt;</code>). A capture records the sensor mode (OSC/mono), its character (broadband/narrowband/dual-band), and the exact filter. Nothing here is ever overwritten or deleted, this is the single source of truth.</li>
+        <li><strong>stacks</strong>: the stacked intermediate results, mirroring the same <code>&lt;slug&gt;</code>. You can always regenerate these from sessions if you lose them.</li>
+        <li><strong>processed</strong>: the final, post-processed images. This is the publish-ready state.</li>
+        <li><strong>calibration_library</strong>: reusable master dark/flat/bias frames, filed by exposure and temperature.</li>
+      </ul>
+      <div class="whenbox">
+        <strong>Older library?</strong> If your session folders contain <code>lights/</code>, <code>flats/</code>, <code>darks/</code>, <code>biases/</code> subfolders directly (no <code>captures/</code> level), you don't need to change anything: AstroTool's scanner recognizes this older shape too and handles it correctly, including odd folder names like <code>lights_osc</code>. The app's Library section has a <em>Conversion</em> wizard that can, on request, transparently reorganize old sessions into the new <code>captures/&lt;slug&gt;</code> form (with a preview, reversibly), but this is entirely optional. The CLI's <code>new-session</code> command also still creates this classic, capture-less four-folder layout.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>2. Naming rules</h2>
+      <p>The target name and the date folder's name aren't free text: the tool reads them to figure out which frame belongs to which target and which night. Data inside a capture (sensor mode, filter) now lives in its own fields, but the date-level naming rules below are unchanged:</p>
+      <div class="table-scroll">
+      <table>
+        <tr><th>Pattern</th><th>Meaning</th><th>Example</th></tr>
+        <tr><td><code>&lt;catalog&gt;_&lt;name&gt;</code></td><td>target folder name, spaces replaced with <code>_</code>, everything else filtered out</td><td><code>IC1805-1848_Heart_and_Soul_Nebula</code></td></tr>
+        <tr><td><code>YYYY-MM-DD</code></td><td>session date, strictly ISO format</td><td><code>2026-03-15</code></td></tr>
+        <tr><td><code>-N</code> suffix</td><td>a second (or Nth) run on the same target and night</td><td><code>2026-04-06-2</code></td></tr>
+        <tr><td>two dates joined</td><td>several nights combined into one session</td><td><code>2026-02-25_2026-03-15</code></td></tr>
+        <tr><td><code>-OSC</code> label</td><td>a deliberately flagged deviation (e.g. an OSC-camera frame next to a mono sequence)</td><td><code>2026-03-15-OSC</code></td></tr>
+        <tr><td><code>_hibas</code> label</td><td>a bad night: the tool deliberately <strong>excludes it from statistics</strong></td><td><code>2026-03-15_hibas</code></td></tr>
+      </table>
+      </div>
+      <p style="color:var(--muted);font-size:13.5px;margin-top:10px;">These patterns can be overridden in <code>config.json</code> (<code>intentional.runSuffix</code>/<code>dateRange</code>/<code>labels</code>), but the defaults recognize exactly these four cases. Date-level suffixes like <code>-OSC</code> survive because they operate at the session/date level; per-capture OSC/mono and filter data complements this, it doesn't replace it.</p>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>3. A night's workflow</h2>
+      <ol class="steps">
+        <li><strong>Import wizard</strong><span class="detail">plug in the card or volume (e.g. ASI Air, a camera card), the wizard classifies the found files by FITS <code>IMAGETYP</code>/<code>DATE-OBS</code> or Exif date, you pick or create the target session and capture, and after an itemized preview it copies the files with a SHA-256-verified, receipted copy. It never touches the originals on the card.</span></li>
+        <li><strong>Library check</strong><span class="detail">the Library section's Health view shows calibration gaps, duplicates, and audit findings before you stack anything.</span></li>
+        <li><strong>Review frames ("blink")</strong><span class="detail">opened from the Projects page: frame-level accept/reject, step with the arrow keys, <code>A</code> accepts, <code>X</code> rejects, <code>U</code> clears the decision and moves on.</span></li>
+        <li><strong>Link calibration</strong><span class="detail">the app hardlinks the matching master dark/flat/bias frames next to the session or capture, with a preview; also reachable from a night's context menu.</span></li>
+        <li><strong>Stack in Siril or DSS</strong><span class="detail">AstroTool doesn't stack for you: it exports the best frames (hardlink + <code>.dssfilelist</code> + Siril script), which you load into your own tool as usual.</span></li>
+        <li><strong>Plan and track</strong><span class="detail">the Planning page helps schedule the next clear night, and the Nights page shows your observations so far and their quality.</span></li>
+      </ol>
+      <div class="whenbox">
+        <strong>Which one, when?</strong> Before a clear evening, Planning (what's worth shooting tonight); on a cloudy or stay-in evening, Projects (where each target's processing stands: what still needs data, what just needs stacking or post-processing). The same steps are also available from the command line if you prefer: <code>astrotool scan</code> → <code>astrotool audit</code> → <code>astrotool rate</code> → <code>astrotool stacklist</code> → your own stacking tool → <code>astrotool report</code>; see the <a href="cli.html">CLI reference</a>.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>4. Calibration crash course</h2>
+      <p><strong>Dark</strong>: measures thermal noise at the same exposure, temperature, and gain; needs regular refreshing because the sensor's temperature drifts. <strong>Flat</strong>: measures optical vignetting and dust; needs retaking any time the camera or focus moved (rotator position matters too). <strong>Bias</strong>: the sensor's readout pedestal; rarely changes, but the gain and offset combo has to match exactly.</p>
+      <p>Under <code>calibration_library/darks/</code> the folder-naming convention is <code>&lt;exp&gt;sec_&lt;temp&gt;deg</code> (e.g. <code>300sec_-10deg</code>): this is how the tool figures out which dark matches which capture parameters.</p>
+      <p><code>astrotool calib</code> expects an exact match on camera, gain, offset, and temperature: it never guesses a false match, and it also watches the <strong>flat's rotator position</strong>, because a rotated flat isn't valid for the session. Calibration linking (from the Calibration view, a night's menu, or from the CLI's <code>link-calib</code>) hardlinks the matching master frames next to the session or capture, always with a preview: it will never overwrite a file.</p>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>5. Safety</h2>
+      <div class="yn">
+        <div class="col yes">
+          <h4>What the tool writes</h4>
+          <ul>
+            <li>Its own working directory: <code>.astro_tool/</code> (index, exports, reports, suggestion scripts)</li>
+            <li>New session and capture folders plus a README template (from the import wizard, or the CLI's <code>new-session</code>/<code>capture create</code> commands)</li>
+            <li>A SHA-256-verified, receipted copy on import; the source (card, volume) stays untouched</li>
+            <li>Hardlinks for calibration linking and stacking export, never in place of the original files</li>
+            <li>An internal SQLite index of the metadata</li>
+          </ul>
+        </div>
+        <div class="col no">
+          <h4>What it never does</h4>
+          <ul>
+            <li>Never deletes anything in your image library; whatever disappears from its spot goes to the archive (quarantine) instead</li>
+            <li>Never overwrites the original light/flat/dark/bias files</li>
+            <li>Never runs any suggestion script automatically</li>
+            <li>Only reads README.txt, never writes to it</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel callout">
+      <h2>Iron rule</h2>
+      <p>The tool <strong>never permanently deletes anything</strong> in your image library. In the app, this is handled by the Archive map: you can review audit and cleanup findings and move them to quarantine, and whatever disappears from its spot can be brought back. From the command line, the same logic applies: <code>audit</code>/<code>cleanup --suggest</code> only <em>flags</em> things (a list of findings) and writes a reviewable <code>.sh</code> suggestion script into <code>.astro_tool/suggestions/</code>, which you review and run at your own discretion. The tool itself never performs a file operation outside your library except in its own <code>.astro_tool/</code> workspace.</p>
+    </div>
+
+  </div>
+  <p class="closing-note">MIT license.</p>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 AstroTool</span>
+    <span><a href="first-steps.html">First steps</a> · <a href="cli.html">CLI</a> · <a href="privacy.html">Privacy</a> · v3.0.0</span>
+  </div>
+</footer>
+
+</body>
+</html>

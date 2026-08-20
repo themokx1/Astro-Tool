@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AstroTool · First steps</title>
+<meta name="description" content="Create or open an AstroTool image library and optionally copy your first capture without changing the source files.">
+<link rel="icon" type="image/png" sizes="32x32" href="../favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+<link rel="stylesheet" href="../site.css">
+<meta name="theme-color" content="#0B0B0D">
+<link rel="alternate" hreflang="hu" href="https://themokx1.github.io/Astro-Tool/first-steps.html">
+<link rel="alternate" hreflang="en" href="https://themokx1.github.io/Astro-Tool/en/first-steps.html">
+</head>
+<body>
+<nav>
+  <div class="wrap">
+    <a class="brand" href="index.html" style="text-decoration:none;color:inherit;"><span class="brand-mark" aria-hidden="true"></span>AstroTool</a>
+    <div class="nav-lang"><a href="../first-steps.html">HU</a><a href="first-steps.html" class="current">EN</a></div>
+  </div>
+</nav>
+
+<header class="wrap compact">
+  <span class="eyebrow">AstroTool 3.0 · first success</span>
+  <h1>You don't need to know how astrophotos are “supposed” to be stored.</h1>
+  <p class="sub">AstroTool walks you through creating or opening a tidy image library. If you want, the same guided flow creates your first project and capture, then copies in your existing photos.</p>
+  <p class="crumbs"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Download</a></p>
+</header>
+
+<main class="doc-wrap doc">
+  <div class="panels">
+    <div class="panel callout">
+      <h2>Your source files stay unchanged</h2>
+      <p>AstroTool creates verified copies inside the new library. It does not overwrite existing files and never deletes files as a standalone action.</p>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Start with one of three choices</h2>
+      <ol class="steps">
+        <li><strong>Create a new image library</strong><span class="detail">Choose a familiar name and location. AstroTool creates the folders and offers to copy in your first photos.</span></li>
+        <li><strong>I already have an AstroTool library</strong><span class="detail">Select it. The app checks it first, explains what it found in plain language, and only then continues.</span></li>
+        <li><strong>I'd like to understand it first</strong><span class="detail">See a short read-only explanation, then return to the same three choices.</span></li>
+      </ol>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>The simple shape of a library</h2>
+      <p><strong>Library → Project → Night → Capture → Frames.</strong> A project collects one sky target over time; a night records one observing date; a capture groups images made with the same setup. Frames can be light, flat, dark, or bias.</p>
+      <p>You only answer questions that genuinely need your judgement: where the library should live, what target you photographed, the observing date, and a useful capture name. The app does not guess when it is unsure.</p>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Create the library</h2>
+      <ol class="steps">
+        <li><strong>Pick a name and location</strong><span class="detail">Use the Mac's internal disk or a familiar external drive.</span></li>
+        <li><strong>Review the exact preview</strong><span class="detail">You see the folders before anything is created.</span></li>
+        <li><strong>Allow writing</strong><span class="detail">The app clearly warns that it may now create folders and copy files into this library. Existing files are not replaced.</span></li>
+      </ol>
+      <pre class="tree">sessions/
+stacks/
+processed/
+calibration_library/
+  darks/  flats/  biases/
+.astro_tool/</pre>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Optional: make the first project and copy a capture</h2>
+      <ol class="steps">
+        <li><strong>Choose the current photo folder</strong><span class="detail">It can be organised in any way.</span></li>
+        <li><strong>Review recognition</strong><span class="detail">AstroTool recognises light, flat, dark, and bias frames when it can do so safely.</span></li>
+        <li><strong>Name the project, night, and capture</strong><span class="detail">You confirm the target, date, and series name.</span></li>
+        <li><strong>Review, copy, verify</strong><span class="detail">Every source and destination is shown. Name collisions are skipped, and each completed copy is checked with SHA-256.</span></li>
+      </ol>
+      <p>You may skip this whole block. Skipping does not leave a half-created project behind.</p>
+    </div>
+
+    <div class="panel callout">
+      <h2>The safety rule, precisely</h2>
+      <p>In the source folder, AstroTool does not move, rename, or delete anything. In the destination library, it may create new folders and new file copies. It never overwrites an existing destination file. If verification fails, it only cleans up the incomplete temporary copy it just created.</p>
+    </div>
+  </div>
+  <p class="closing-note">You can reopen the complete guide at any time from <strong>Help → First steps</strong>.</p>
+</main>
+
+<footer><div class="wrap"><span>© 2026 AstroTool</span><span><a href="first-steps.html">First steps</a> · <a href="install.html">Install</a> · <a href="privacy.html">Privacy</a> · v3.0.0</span></div></footer>
+</body>
+</html>

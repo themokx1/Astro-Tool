@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AstroTool · Install</title>
+<meta name="description" content="Install the signed and Apple-notarized AstroTool 3.0 release on Apple Silicon and Intel Macs.">
+
+<link rel="icon" type="image/png" sizes="32x32" href="../favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+<link rel="stylesheet" href="../site.css">
+<meta name="theme-color" content="#0B0B0D">
+<link rel="alternate" hreflang="hu" href="https://themokx1.github.io/Astro-Tool/install.html">
+<link rel="alternate" hreflang="en" href="https://themokx1.github.io/Astro-Tool/en/install.html">
+<link rel="alternate" hreflang="x-default" href="https://themokx1.github.io/Astro-Tool/install.html">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="AstroTool · Install">
+<meta property="og:description" content="Install the signed and notarized AstroTool 3.0 release on Apple Silicon and Intel Macs.">
+<meta property="og:url" content="https://themokx1.github.io/Astro-Tool/en/install.html">
+<meta property="og:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AstroTool · Install">
+<meta name="twitter:description" content="Install the signed and notarized AstroTool 3.0 release on Apple Silicon and Intel Macs.">
+<meta name="twitter:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="index.html" style="text-decoration:none;color:inherit;"><span class="brand-mark" aria-hidden="true"></span>AstroTool</a>
+    <div class="nav-lang">
+      <a href="../install.html">HU</a>
+      <a href="install.html" class="current">EN</a>
+    </div>
+  </div>
+</nav>
+
+<header class="wrap compact">
+  <h1>Install</h1>
+  <p class="sub">Four simple steps from download to first launch. The public release is Developer ID signed and Apple-notarized.</p>
+  <p class="crumbs"><a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Download</a> · <a href="first-steps.html">First steps</a> · <a href="cli.html">CLI</a></p>
+</header>
+
+<main class="doc-wrap doc">
+  <div class="panels">
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Requirements</h2>
+      <p>macOS 26 or later, an Apple Silicon or Intel Mac. The app is free, no account or registration needed.</p>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Installing</h2>
+      <ol class="steps">
+        <li><strong>Download the DMG</strong><span class="detail">get the latest <code>AstroTool-x.y.z.dmg</code> from the <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">GitHub releases page</a>.</span></li>
+        <li><strong>Open the DMG</strong><span class="detail">double-click the downloaded file, which opens a window with the AstroTool icon.</span></li>
+        <li><strong>Drag AstroTool into Applications</strong><span class="detail">in the window that opens, drag the app icon onto the "Applications" shortcut, then close the DMG window.</span></li>
+        <li><strong>Launch it from Applications</strong><span class="detail">the notarized release opens as a normal app; if macOS asks for confirmation, check that you downloaded the official GitHub release.</span></li>
+        <li><strong>Choose the image-library location</strong><span class="detail">AstroTool only asks for access to the folder or volume you select.</span></li>
+      </ol>
+    </div>
+
+    <div class="panel callout">
+      <h2>Verified release</h2>
+      <p>The checksums for the DMG and command-line ZIP are published in <code>SHA256SUMS.txt</code> beside the release. The release process verifies the app's signature and notarization before upload.</p>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Optional: CLI</h2>
+      <p>The <code>astrotool</code> command-line tool is a separate ZIP on the same <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">releases page</a> (<code>astrotool-x.y.z-macos-universal.zip</code>).</p>
+      <ol class="steps">
+        <li><strong>Unzip it</strong><span class="detail">double-click the ZIP, or run <code>unzip astrotool-x.y.z-macos-universal.zip</code> in Terminal.</span></li>
+        <li><strong>Put it on your PATH</strong><span class="detail">for example <code>mv astrotool /usr/local/bin/</code> (or any directory already on your PATH).</span></li>
+        <li><strong>Check it works</strong><span class="detail"><code>astrotool --help</code> in Terminal.</span></li>
+      </ol>
+    </div>
+
+  </div>
+  <p class="closing-note">Questions about installing? <a href="first-steps.html">First steps</a> and the <a href="cli.html">CLI reference</a> have more on actually using it. MIT license.</p>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 AstroTool</span>
+    <span><a href="first-steps.html">First steps</a> · <a href="cli.html">CLI</a> · <a href="privacy.html">Privacy</a> · v3.0.0</span>
+  </div>
+</footer>
+
+</body>
+</html>

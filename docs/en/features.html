@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AstroTool · Features</title>
+<meta name="description" content="AstroTool's full feature list across its six workspaces (Home, Projects, Nights, Planning, Library, Insights) and Settings, plus CLI-only extras.">
+
+<link rel="icon" type="image/png" sizes="32x32" href="../favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+<link rel="stylesheet" href="../site.css">
+<meta name="theme-color" content="#0B0B0D">
+<link rel="alternate" hreflang="hu" href="https://themokx1.github.io/Astro-Tool/features.html">
+<link rel="alternate" hreflang="en" href="https://themokx1.github.io/Astro-Tool/en/features.html">
+<link rel="alternate" hreflang="x-default" href="https://themokx1.github.io/Astro-Tool/features.html">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="AstroTool · Features">
+<meta property="og:description" content="Full feature list across the six workspaces, plus CLI-only extras.">
+<meta property="og:url" content="https://themokx1.github.io/Astro-Tool/en/features.html">
+<meta property="og:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AstroTool · Features">
+<meta name="twitter:description" content="Full feature list across the six workspaces, plus CLI-only extras.">
+<meta name="twitter:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="index.html" style="text-decoration:none;color:inherit;"><span class="brand-mark" aria-hidden="true"></span>AstroTool</a>
+    <div class="nav-lang">
+      <a href="../features.html">HU</a>
+      <a href="features.html" class="current">EN</a>
+    </div>
+  </div>
+</nav>
+
+<header class="wrap compact">
+  <h1>Features</h1>
+  <p class="sub">The full list in the order of the six workspaces (⌘1-⌘6), plus Settings and the CLI-only extras.</p>
+  <p class="crumbs"><a href="tutorial.html">Guide</a> · <a href="cli.html">CLI</a> · <a href="install.html">Install</a> · <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Download</a></p>
+</header>
+
+<main class="doc-wrap doc">
+  <p class="req-note">The app's interface is available in both English and Hungarian (Settings ▸ General ▸ Language; switching takes effect after a restart). Below we use the English names, since that's the language of this page.</p>
+  <div class="panels">
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Home</h2>
+      <p class="kicker">⌘1</p>
+      <ul class="list">
+        <li><strong>Pre-flight checklist</strong>: a 4-item checkmark/x check (calibration gaps, tonight's sky, moon interference, when the main target clears 30°); collapses to one "ready to head out" row once everything's fine.</li>
+        <li><strong>Night context rail</strong>: a dusk-to-dawn timeline, a cloud row, and a "nearest clear night" link if tonight isn't worth going out for.</li>
+        <li><strong>Repeated lessons</strong>: if most of your recent nights had the cooler missing setpoint or the focus drifting, it names it here.</li>
+        <li><strong>"Continue where it matters"</strong>: your least-collected active project, highlighted, with a one-click open button.</li>
+        <li><strong>Rating reminder</strong>: "N nights still have unrated frames" plus "Rate Everything" and "Measure Sensor Profile…" buttons.</li>
+        <li><strong>"Best targets tonight"</strong>: recommendation rows with an export menu (plan as CSV, copy plan, copy calibration shopping list).</li>
+        <li><strong>"Two rigs tonight"</strong>: with at least two saved equipment setups, a row-by-row suggestion for which rig suits which of tonight's targets.</li>
+        <li><strong>"Cloudy night, clear task"</strong>: on a cloudy forecast, points you at missing calibration frames so you can at least catch up on those.</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Projects</h2>
+      <p class="kicker">⌘2</p>
+      <ul class="list">
+        <li><strong>Table</strong>: Project (target + catalog name), Phase, Nights, Series, Integration, Frames (usable/excluded), Latest, Goal (conditional progress bar), Next (a next-step hint with a tooltip); with search, "New Project…", and "Rate All Projects" toolbar buttons.</li>
+        <li><strong>Row actions</strong>: Open Project, New Session…, Review Frames, Results.</li>
+        <li><strong>Project workspace</strong>: 5 tabs (Overview, Nights, Series, Results, Notes). Overview holds the target details, filters, sessions, quality, stacks, calibration status, a Panels table for mosaic targets (center/frames/integration/rotation/deficit), the planning stats, and at the bottom a <strong>target-history timeline</strong> (first light, sessions with integration and FWHM, finished stacks).</li>
+        <li><strong>New Project</strong>: catalog search by number or name (in English or Hungarian), with a folder preview.</li>
+        <li><strong>Series</strong>: one capture batch within a project's night, sharing the same filter/exposure/setup/binning/gain combination; its own Overview/Frames tabs.</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Nights</h2>
+      <p class="kicker">⌘3</p>
+      <ul class="list">
+        <li><strong>Table</strong>: Night, Projects, Series, Usable, Integration, Triage; a "Next 30 nights" calendar view with Night, Darkness, Moon, Cloud, and best target windows columns.</li>
+        <li><strong>Night Ribbon (timeline)</strong>: four bands aligned on a shared time axis: twilight, moon, target, and the actual capture spans with their gaps (e.g. "Capture 21:03-04:12, 2 gaps totaling 41 minutes").</li>
+        <li><strong>Night workspace</strong>: 4 tabs (Overview, Series, Frames, Notes). Menu: Open Night, Reveal in Finder, Edit Night Notes…, Open Calibration…, Rate Frames, Open in Insights.</li>
+        <li><strong>Night notes</strong>: fixed fields (Bortle, SQM, Seeing, Transparency, Wind, Dew) plus custom keys, with a README-conflict warning.</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Planning</h2>
+      <p class="kicker">⌘4</p>
+      <ul class="list">
+        <li><strong>Target recommendation table</strong>: free-text search (catalog number or name, English or Hungarian), "Hide non-photographable" and "Useful framing only" filters, a date picker for planning a different night. Columns: Target, Score, Photographable, Frame fill, Moon, Tonight's sky, Framing, Integration.</li>
+        <li><strong>Equipment comparison</strong>: a "Compare with" picker (shown once you have at least two saved setups) that compares framing/field of view against another saved setup, shown in the Framing column and under the sky path chart.</li>
+        <li><strong>Sky path chart</strong>: an altitude-over-time curve with the culmination point and a moon-separation caption.</li>
+        <li><strong>Season window finder</strong>: a monthly visible-hours bar chart with a text summary (e.g. "Season: {range} · peak {date}").</li>
+        <li><strong>Saved targets</strong>: your own list with notes, season captions; Note… and Remove (with confirmation) actions.</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Library</h2>
+      <p class="kicker">⌘5</p>
+      <ul class="list">
+        <li><strong>Archive map (the section's root)</strong>: a verdict-sentence header, a clickable byte-usage strip, then a "Needs you" section with 8 finding kinds (stacking leftovers, Finder metadata files, byte-identical copies, calibration in the wrong folder, folder names that break scanning, checksum mismatches, unconfirmable items, not-yet-checked items), plus a per-target "Targets" section. Opening a card shows a hierarchical file table (path, size, reveal in Finder) with either a "Move to Quarantine…" flow or a "no automatic fix" explanation.</li>
+        <li><strong>Never deletes</strong>: every file operation moves things to <code>.astro_tool/cleanup_quarantine</code>, never deletes; gated behind typing a confirmation code, and reversible.</li>
+        <li><strong>Calibration</strong>: two tables: "Session coverage" (combo/lights/master/sessions, with a "Preview Link…" row action) and "Master darks" (path/temperature/age/status, with a "Show in Finder" row action).</li>
+        <li><strong>Conversion (organize a session)</strong>: a 3-4 step wizard: choose a session (Logical or Physical mode) → review/edit the detected capture groups → optionally resolve ambiguous files → apply (with an impact summary and confirmation). Turns a raw session folder into named capture groups by exposure/filter/sensor, either database-only or with real file moves.</li>
+        <li><strong>Cleanup</strong>: a preview-only candidate list by category, each captioned "Proposed action: move to quarantine, never delete"; footer reads "Preview only, no files moved" with an "Apply Quarantine…" button.</li>
+        <li><strong>Sensor Profiles</strong>: per camera/gain/offset combo: bias ADU, read noise e⁻, dark rate e⁻/s, temperature °C, EGAIN, frame count, a staleness badge, and a measurement-history sparkline. "Measure Sensors…" only reads tracked BIAS/DARK frames and only writes to the local index, never to the image library.</li>
+        <li><strong>Import from card</strong>: the toolbar's "Import from Card…" action (reachable from both Home and Library) brings a connected card or volume's FIT/CR3 files into the library in 6 steps (Source → Classify → Destination → Preview → Copy → Receipt); it never touches the originals on the card.</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Insights</h2>
+      <p class="kicker">⌘6</p>
+      <ul class="list">
+        <li><strong>Period picker and 5 header tiles</strong>: Integration, Sessions, Targets, Light frames, Average night.</li>
+        <li><strong>"Year in review"</strong>: favorite target, light frame count, biggest month, new targets, best-FWHM night.</li>
+        <li><strong>"This month vs. last year"</strong>: the integration-hours and session-count difference against the same month last year, with an optional best-FWHM delta.</li>
+        <li><strong>Capture efficiency</strong>: usable/rejected ratio, efficiency%.</li>
+        <li><strong>Capture quality trends</strong>: 3 line charts (FWHM, background, efficiency), per capture, by date; a "Start Measuring" button triggers a real FWHM measurement.</li>
+        <li><strong>Sky brightness vs. moon phase</strong>: a 4-band illumination table with a headline sentence (e.g. "reads about Nx brighter under a full moon").</li>
+        <li><strong>Nights leaderboard</strong>: the best 5 and worst 5 nights, ranked by a combination of FWHM, efficiency, and background, showing only the raw numbers with no hidden score.</li>
+        <li><strong>Capture activity</strong>: a monthly integration-hours bar chart, with a "most photographed" ranking.</li>
+        <li><strong>Filters and passbands, Equipment usage</strong>: simple breakdown lists.</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Reviewing frames</h2>
+      <p class="kicker">From a Projects row or workspace ("Review Frames")</p>
+      <ul class="list">
+        <li><strong>"Rate Frames…"</strong> and <strong>"Review Frames…"</strong> are two separate actions: the first runs a real quality measurement (native, or native+Siril hybrid), the second opens the blink viewer.</li>
+        <li><strong>Blink viewer</strong>: a large-preview, steppable frame viewer (←/→ to page, <code>A</code> accepts, <code>X</code> rejects, <code>U</code> clears the decision), with a Score/FWHM/Roundness/Percentile tile per frame.</li>
+        <li><strong>Triage callouts</strong>: a low-altitude warning (if the weakest frames were all shot below 35°) and a satellite-streak suspicion flag, never an automatic rejection.</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Global commands</h2>
+      <p class="kicker">Available anywhere</p>
+      <ul class="list">
+        <li><code>⌘1</code>-<code>⌘6</code>: jump between the six workspaces.</li>
+        <li><code>⌘R</code> Rescan, <code>⌥⌘A</code> Run Audit (the fast, no-duplicate-scan variant is menu-only, no shortcut), <code>⌘F</code> Find (the global search popover), <code>⌘[</code> Back, <code>⌥⌘I</code> Show/Hide Inspector.</li>
+        <li><strong>Help menu</strong>: Glossary (also reachable from a specific entry via metric-explanation popovers), Folder Structure, First Steps.</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Settings</h2>
+      <p class="kicker">⌘,</p>
+      <ul class="list">
+        <li><strong>General</strong>: the interface-language picker (System/Hungarian/English; switching takes effect after a restart), and the confirmation rule for write operations.</li>
+        <li><strong>Libraries &amp; Safety</strong>: recent libraries, a "scan on open" toggle, enabling write operations, library rules, session-residue patterns (an editable list).</li>
+        <li><strong>Location</strong>: site name, latitude/longitude, and a display of what's currently in effect.</li>
+        <li><strong>Planning</strong>: the integration baseline references (hours, f-ratio, surface brightness) every Planning score is built on; also where the extended target catalog (SIMBAD/VizieR, on by default) is toggled on or off.</li>
+        <li><strong>Imaging Setups</strong>: managing saved camera+optics combinations (the same ones Planning's comparison and Home's "Two rigs tonight" card read).</li>
+        <li><strong>Equipment</strong>: actually the filter library (a manufacturer/model/passband table), which feeds Insights' "Filters and passbands" breakdown.</li>
+        <li><strong>Support</strong>: the privacy notice, diagnostics generation, and release channel.</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>CLI-only extras</h2>
+      <p style="color:var(--muted);font-size:14.5px;margin:0 0 16px;">Most of what used to be terminal-only now lives on a workspace (session organizing moved into Conversion, card import into the Import wizard, calibration linking into Library). What's still terminal-only after that:</p>
+      <ul class="list">
+        <li><code>tag</code>: adds, removes, and lists free-text target- and session-level tags.</li>
+        <li><code>match</code>: matches a given session's light/flat/dark/bias set and lists the problems it finds.</li>
+        <li><code>panels</code>: the full, row-by-row WCS-based integration table for a mosaic target's panels (the Projects Overview tab only shows a single summary deficit sentence from the same data).</li>
+        <li><code>solve</code>: plate-solves targets without coordinates (e.g. wide-field CR3) using Siril.</li>
+        <li><code>ingest-dss</code>: reads DeepSkyStacker metrics and decisions.</li>
+        <li><code>export --format csv|md</code>: a generic per-session CSV or Markdown log for a target (the AstroBin CSV export stayed in the app, these two formats didn't).</li>
+        <li><code>stacklist</code>'s full output: the hardlink tree, <code>.dssfilelist</code>, and Siril script generation are terminal-only; the app's "Stack List" button only gives the CSV manifest version of the same data.</li>
+        <li><code>report</code> / <code>target-report</code>: saving a standalone HTML night or target report to a file.</li>
+        <li><code>config</code>: printing the currently effective configuration or the path to <code>config.json</code>.</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <p class="closing-note">For the full command reference see the <a href="cli.html">CLI page</a>. MIT license.</p>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 AstroTool</span>
+    <span><a href="first-steps.html">First steps</a> · <a href="cli.html">CLI</a> · <a href="privacy.html">Privacy</a> · v3.0.0</span>
+  </div>
+</footer>
+
+</body>
+</html>

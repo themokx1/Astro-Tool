@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AstroTool privacy</title>
+<meta name="description" content="AstroTool's privacy notice: everything runs locally, no account, no telemetry.">
+<link rel="icon" type="image/png" sizes="32x32" href="../favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+<meta name="theme-color" content="#0B0B0D">
+<link rel="stylesheet" href="../site.css">
+<link rel="alternate" hreflang="hu" href="https://themokx1.github.io/Astro-Tool/privacy.html">
+<link rel="alternate" hreflang="en" href="https://themokx1.github.io/Astro-Tool/en/privacy.html">
+<link rel="alternate" hreflang="x-default" href="https://themokx1.github.io/Astro-Tool/privacy.html">
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="index.html" style="text-decoration:none;color:inherit;"><span class="brand-mark" aria-hidden="true"></span>AstroTool</a>
+    <div class="nav-lang">
+      <a href="../privacy.html">HU</a>
+      <a href="privacy.html" class="current">EN</a>
+    </div>
+  </div>
+</nav>
+
+<header class="wrap compact">
+  <h1>Privacy</h1>
+  <p class="sub">Short, because there isn't much to say: AstroTool works on your machine, and stays there.</p>
+  <p class="crumbs"><a href="tutorial.html">Guide</a> · <a href="cli.html">CLI</a> · <a href="features.html">Features</a></p>
+</header>
+
+<main class="doc-wrap doc">
+
+  <section class="panel">
+    <h2><span class="dot" aria-hidden="true"></span>Everything local</h2>
+    <p>Scanning your library, the index, the measurements and the analyses all run on your own machine. No account, no registration, no telemetry, no ads. The app is fully functional without an internet connection.</p>
+  </section>
+
+  <section class="panel">
+    <h2><span class="dot" aria-hidden="true"></span>What leaves your machine, if you allow it</h2>
+    <p>Two features request data over the network, and both can be turned off in Settings:</p>
+    <ul>
+      <li><strong>Weather</strong>: off by default. If you turn it on, the observing site's coordinates go to Open-Meteo for the cloud-cover forecast. No filename, no target, no other data.</li>
+      <li><strong>Extended target catalog</strong>: on by default, and it fetches missing data on its own the first time you open Discovery if there's no local catalog yet. When it does, catalog names and sky coordinates go to SIMBAD/VizieR, nothing else. The downloaded catalog is stored locally and works offline afterward; you can turn this off in Settings at any time.</li>
+    </ul>
+    <p>The contents of your library, its paths, files, and notes never leave your machine.</p>
+  </section>
+
+  <section class="panel">
+    <h2><span class="dot" aria-hidden="true"></span>Diagnostics</h2>
+    <p>A diagnostics report is only created when you ask for it in Settings, and you decide who you give it to. It contains the version number, system info, anonymous counts, and operation categories. No paths, filenames, targets, coordinates, or notes are in it.</p>
+  </section>
+
+  <section class="panel">
+    <h2><span class="dot" aria-hidden="true"></span>Your images stay safe</h2>
+    <p>The app only reads your image library by default. Every write operation sits behind its own toggle and asks for confirmation before each write. Instead of deleting, it quarantines: whatever disappears from its spot can be brought back.</p>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 AstroTool</span>
+    <span><a href="first-steps.html">First steps</a> · <a href="cli.html">CLI</a> · <a href="privacy.html">Privacy</a> · v3.0.0</span>
+  </div>
+</footer>
+
+</body>
+</html>

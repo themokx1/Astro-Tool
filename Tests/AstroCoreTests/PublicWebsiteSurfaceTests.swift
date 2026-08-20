@@ -47,6 +47,18 @@ struct PublicWebsiteSurfaceTests {
 
         let homepage = try source("docs/index.html")
         #expect(homepage.contains("href=\"first-steps.html\""))
+
+        let english = try source("docs/en/first-steps.html")
+        #expect(english.contains("Create a new image library"))
+        #expect(english.contains("I already have an AstroTool library"))
+        #expect(english.contains("I'd like to understand it first"))
+        #expect(english.contains("verified copies"))
+        #expect(english.contains("source files stay unchanged"))
+        #expect(english.contains("never deletes files as a standalone action"))
+        #expect(english.contains("href=\"../first-steps.html\""))
+
+        let englishHomepage = try source("docs/en/index.html")
+        #expect(englishHomepage.contains("href=\"first-steps.html\""))
     }
 
     @Test("Homepage describes the real stable 3.0 product and Universal download")
@@ -87,5 +99,19 @@ struct PublicWebsiteSurfaceTests {
         let support = try source("docs/support.html")
         #expect(support.contains("Biztonságos diagnosztika"))
         #expect(support.contains("Beállítások"))
+    }
+
+    @Test("Install guides describe the signed Universal stable release")
+    func accurateInstallGuides() throws {
+        for path in ["docs/install.html", "docs/en/install.html"] {
+            let html = try source(path)
+            #expect(html.contains("Apple Silicon"), Comment(rawValue: path))
+            #expect(html.contains("Intel"), Comment(rawValue: path))
+            #expect(html.contains("notar"), Comment(rawValue: path))
+            #expect(!html.contains("nincs notarizálva"), Comment(rawValue: path))
+            #expect(!html.contains("isn't notarized"), Comment(rawValue: path))
+            #expect(!html.contains("not yet notarized"), Comment(rawValue: path))
+            #expect(!html.contains("v2.0.0"), Comment(rawValue: path))
+        }
     }
 }

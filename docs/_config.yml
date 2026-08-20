@@ -1,0 +1,8 @@
+# GitHub Pages (legacy Jekyll) build config.
+# docs/ is the Pages root and is served in its entirety. Internal working
+# documents (plans, specs, reviews, raw release-note sources) must never
+# live under docs/ - they were removed from the tree, and the exclude list
+# below stays as defense in depth in case such a directory reappears.
+exclude:
+  - superpowers
+  - releases

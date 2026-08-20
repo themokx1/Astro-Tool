@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AstroTool · Telepítés</title>
+<meta name="description" content="Az aláírt és Apple által notarizált AstroTool 3.0 telepítése Apple Silicon és Intel Macre.">
+
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="stylesheet" href="site.css">
+<meta name="theme-color" content="#0B0B0D">
+<link rel="alternate" hreflang="hu" href="https://themokx1.github.io/Astro-Tool/install.html">
+<link rel="alternate" hreflang="en" href="https://themokx1.github.io/Astro-Tool/en/install.html">
+<link rel="alternate" hreflang="x-default" href="https://themokx1.github.io/Astro-Tool/install.html">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="AstroTool · Telepítés">
+<meta property="og:description" content="Az aláírt és notarizált AstroTool 3.0 telepítése Apple Silicon és Intel Macre.">
+<meta property="og:url" content="https://themokx1.github.io/Astro-Tool/install.html">
+<meta property="og:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AstroTool · Telepítés">
+<meta name="twitter:description" content="Az aláírt és notarizált AstroTool 3.0 telepítése Apple Silicon és Intel Macre.">
+<meta name="twitter:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="index.html" style="text-decoration:none;color:inherit;"><span class="brand-mark" aria-hidden="true"></span>AstroTool</a>
+    <div class="nav-lang">
+      <a href="install.html" class="current">HU</a>
+      <a href="en/install.html">EN</a>
+    </div>
+  </div>
+</nav>
+
+<header class="wrap compact">
+  <h1>Telepítés</h1>
+  <p class="sub">Négy egyszerű lépés a letöltéstől az első indításig. A nyilvános kiadás Developer ID aláírással és Apple-notarizációval készül.</p>
+  <p class="crumbs"><a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Letöltés</a> · <a href="first-steps.html">Első lépések</a> · <a href="cli.html">CLI</a></p>
+</header>
+
+<main class="doc-wrap doc">
+  <div class="panels">
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Rendszerkövetelmény</h2>
+      <p>macOS 26 vagy újabb, Apple Silicon vagy Intel Mac. Az app ingyenes, fiók vagy regisztráció nem kell hozzá.</p>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Telepítés</h2>
+      <ol class="steps">
+        <li><strong>Töltsd le a DMG-t</strong><span class="detail">a <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">GitHub kiadások oldaláról</a> a legfrissebb <code>AstroTool-x.y.z.dmg</code> fájlt.</span></li>
+        <li><strong>Nyisd meg a DMG-t</strong><span class="detail">dupla katt a letöltött fájlon, ez megnyit egy ablakot az AstroTool ikonjával.</span></li>
+        <li><strong>Húzd az AstroTool-t az Alkalmazások mappába</strong><span class="detail">a megnyíló ablakban húzd az app-ikont az "Alkalmazások" parancsikonra, majd zárd be a DMG-ablakot.</span></li>
+        <li><strong>Indítsd el az Alkalmazások mappából</strong><span class="detail">a notarizált kiadás normál alkalmazásként indul; ha a macOS megerősítést kér, ellenőrizd, hogy a hivatalos GitHub-kiadást töltötted le.</span></li>
+        <li><strong>Válaszd ki a képkönyvtár helyét</strong><span class="detail">az AstroTool csak ahhoz a mappához vagy kötethez kér hozzáférést, amelyet te kiválasztasz.</span></li>
+      </ol>
+    </div>
+
+    <div class="panel callout">
+      <h2>Ellenőrzött kiadás</h2>
+      <p>A DMG és a parancssoros ZIP ellenőrzőösszege a kiadás mellett található <code>SHA256SUMS.txt</code> fájlban van. Az alkalmazás aláírását és notarizációját a kiadási folyamat még a feltöltés előtt ellenőrzi.</p>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Opcionális: CLI</h2>
+      <p>A parancssoros <code>astrotool</code> eszköz külön ZIP-ben tölthető le ugyanarról a <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">kiadások oldalról</a> (<code>astrotool-x.y.z-macos-universal.zip</code>).</p>
+      <ol class="steps">
+        <li><strong>Csomagold ki</strong><span class="detail">dupla kattintás a ZIP-en, vagy <code>unzip astrotool-x.y.z-macos-universal.zip</code> a terminálban.</span></li>
+        <li><strong>Tedd a PATH-ba</strong><span class="detail">például <code>mv astrotool /usr/local/bin/</code> (vagy bármelyik, a PATH-adban szereplő mappa).</span></li>
+        <li><strong>Ellenőrizd</strong><span class="detail"><code>astrotool --help</code> a terminálban.</span></li>
+      </ol>
+    </div>
+
+  </div>
+  <p class="closing-note">Kérdésed van a telepítéssel? Az <a href="first-steps.html">Első lépésekben</a> és a <a href="cli.html">CLI-referenciában</a> több részlet van a használatról. MIT licenc.</p>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 AstroTool</span>
+    <span><a href="first-steps.html">Első lépések</a> · <a href="cli.html">CLI</a> · <a href="privacy.html">Adatvédelem</a> · v3.0.0</span>
+  </div>
+</footer>
+
+</body>
+</html>
