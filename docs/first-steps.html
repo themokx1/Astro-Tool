@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Első lépések — AstroTool 3.0</title>
+  <meta name="description" content="Új vagy meglévő asztrofotós képkönyvtár biztonságos beállítása, opcionális első projekt- és capture-importtal.">
+  <link rel="icon" href="favicon-32.png">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Ugrás a tartalomra</a>
+  <header class="site-header">
+    <nav class="nav-shell" aria-label="Fő navigáció">
+      <a class="wordmark" href="index.html"><img src="icon.png" alt="">AstroTool</a>
+      <div class="site-nav">
+        <a href="features.html">Funkciók</a><a href="first-steps.html" aria-current="page">Első lépések</a><a href="cli.html">CLI</a><a href="support.html">Támogatás</a>
+        <a class="nav-download" href="https://github.com/themokx1/Astro-Tool/releases/latest">Letöltés</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="main-content" tabindex="-1">
+    <section class="shell page-hero first-steps-hero">
+      <div class="eyebrow">AstroTool 3.0 · első siker</div>
+      <h1>Nem kell előre tudnod, hogyan „kell” tárolni az égboltfotókat.</h1>
+      <p>Az AstroTool végigvezet egy rendezett képkönyvtár létrehozásán vagy megnyitásán. Ha szeretnéd, rögtön létrehozza az első projektet és capture-t is, miközben a meglévő fotóid változatlanok maradnak.</p>
+      <div class="safety-strip" role="note" aria-label="A másolás biztonsági szabálya">
+        <strong>A forrásaid változatlanok maradnak.</strong>
+        <span>Az AstroTool csak ellenőrzött másolatokat készít az új könyvtárban; nem ír felül fájlt, és nincs önálló törlés.</span>
+      </div>
+    </section>
+
+    <section class="section tint compact" id="choices">
+      <div class="shell">
+        <div class="section-head">
+          <div class="eyebrow">Egy emberi kezdőpont</div>
+          <h2>Három választás. Egyikhez sem kell műszaki előképzettség.</h2>
+        </div>
+        <div class="choice-grid">
+          <article class="choice-card"><span class="choice-number">01</span><h3>Új képkönyvtár létrehozása</h3><p>Válassz egy nevet és egy helyet. Az AstroTool létrehozza a szükséges mappákat, majd felajánlja az első fotók bemásolását.</p></article>
+          <article class="choice-card"><span class="choice-number">02</span><h3>Már van AstroTool-könyvtáram</h3><p>Válaszd ki a meglévő könyvtárat. Az app először ellenőrzi, érthetően összefoglalja, mit talált, és csak utána folytatja.</p></article>
+          <article class="choice-card"><span class="choice-number">03</span><h3>Előbb szeretném megérteni</h3><p>Egy rövid, írásmentes bemutató elmagyarázza a rendszert. Utána ugyanide térsz vissza, és szabadon választasz.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="library-map">
+      <div class="shell first-steps-split">
+        <div>
+          <div class="eyebrow">A rendszer lényege</div>
+          <h2>Az egész egy egyszerű út.</h2>
+          <p class="section-lead">A technikai mappanevek helyett először azt érdemes látni, mit jelent egy-egy szint az asztrofotózásban.</p>
+          <div class="library-path" aria-label="Könyvtár, projekt, éjszaka, capture és képtípusok sorrendje">
+            <div><strong>Könyvtár</strong><span>Minden követett kép közös otthona</span></div>
+            <div><strong>Projekt</strong><span>Egy objektum hosszabb távú gyűjtése</span></div>
+            <div><strong>Éjszaka</strong><span>Egy adott dátum megfigyelése</span></div>
+            <div><strong>Capture</strong><span>Azonos felszereléssel készült sorozat</span></div>
+            <div class="frame-roles"><span>Light</span><span>Flat</span><span>Dark</span><span>Bias</span></div>
+          </div>
+        </div>
+        <div class="explain-card">
+          <h3>Mit vár tőled?</h3>
+          <p>Csak olyan döntéseket, amelyeket valóban te tudsz meghozni: hol legyen a könyvtár, melyik objektum készült, melyik éjszakán, és hogyan neveznéd a capture-t.</p>
+          <p>Amit a képekből biztosan felismer, azt előre kitöltheti. Amit nem tud biztosan, arra rákérdez vagy kihagyja — nem találgat.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section tint" id="create">
+      <div class="shell">
+        <div class="section-head"><div class="eyebrow">Új könyvtár</div><h2>Létrehoz, de nem rendez át titokban.</h2></div>
+        <ol class="steps first-steps-sequence">
+          <li><strong>Név és hely kiválasztása.</strong><br>Lehet a Mac belső lemeze vagy egy számodra ismerős külső meghajtó.</li>
+          <li><strong>Pontos előnézet.</strong><br>Még a létrehozás előtt láthatod, milyen fő részek készülnek.</li>
+          <li><strong>Hiányzó mappák létrehozása.</strong><br>Meglévő fájlt nem ír felül, önálló törlési műveletet nem végez.</li>
+          <li><strong>Írás engedélyezése.</strong><br>Az app világosan jelzi, hogy ettől kezdve létrehozhat mappát és bemásolhat fájlokat ebbe a könyvtárba.</li>
+        </ol>
+        <details>
+          <summary>Mi jön létre a gépemen?</summary>
+          <pre><code>sessions/
+stacks/
+processed/
+calibration_library/
+  darks/
+  flats/
+  biases/
+.astro_tool/</code></pre>
+          <p>A <code>.astro_tool</code> az alkalmazás saját kis nyilvántartási területe. A fotóid továbbra is normál, Finderből elérhető fájlok.</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="section" id="import">
+      <div class="shell first-steps-split">
+        <div>
+          <div class="eyebrow">Kihagyható első import</div>
+          <h2>Projekt, éjszaka, capture és másolás — egyben.</h2>
+          <p class="section-lead">A könyvtár elkészülte után ezt az egész blokkot elvégezheted vagy egyetlen gombbal kihagyhatod. Kihagyáskor nem marad utánad félig létrehozott projekt.</p>
+        </div>
+        <ol class="compact-flow">
+          <li><span>1</span><div><strong>Forrásmappa</strong><p>A fotók jelenlegi helye; nem kell szabványosnak lennie.</p></div></li>
+          <li><span>2</span><div><strong>Felismerés</strong><p>Light, flat, dark és bias. A bizonytalan fájl nem kap találgatott típust.</p></div></li>
+          <li><span>3</span><div><strong>Első projekt és capture</strong><p>Te ellenőrzöd a célpontot, dátumot és sorozatnevet.</p></div></li>
+          <li><span>4</span><div><strong>Másolási előnézet</strong><p>Minden forrás és cél látható, névütközésnél kihagyás történik.</p></div></li>
+          <li><span>5</span><div><strong>Másolás és ellenőrzés</strong><p>Minden elkészült másolat SHA-256 ellenőrzést kap.</p></div></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section tint compact" id="verify">
+      <div class="shell">
+        <div class="safety-strip large" role="note">
+          <strong>Mit jelent pontosan a biztonság?</strong>
+          <span>A forrásmappában az AstroTool nem mozgat, nem nevez át és nem töröl. A célkönyvtárban új mappát és fájlmásolatot hozhat létre. Meglévő célfájlt nem ír felül. Sikertelen ellenőrzéskor kizárólag a saját, éppen létrehozott hibás ideiglenes példányát takarítja el.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="reopen">
+      <div class="shell closing-cta">
+        <div><div class="eyebrow">Nem egyszer használatos</div><h2>Az Első lépések bármikor visszahívható.</h2><p>A <strong>Súgó → Első lépések</strong> menü ugyanazt a teljes folyamatot nyitja meg később is.</p></div>
+        <div class="actions"><a class="button primary" href="https://github.com/themokx1/Astro-Tool/releases/latest">AstroTool 3.0 letöltése</a><a class="button" href="support.html">Segítség kérése</a></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="footer-shell"><span>© <span data-year>2026</span> AstroTool contributors · MIT</span><span class="footer-links"><a href="index.html">Kezdőlap</a><a href="features.html">Funkciók</a><a href="privacy.html">Adatvédelem</a><a href="https://github.com/themokx1/Astro-Tool">GitHub</a></span></div></footer>
+  <script src="assets/site.js"></script>
+</body>
+</html>

@@ -7,7 +7,7 @@ capture-gyűjtések, minőség, kalibráció és észlelési tervek átlátható
 kezeléséhez.
 
 [Weboldal](https://themokx1.github.io/Astro-Tool/) ·
-[Első lépések](https://themokx1.github.io/Astro-Tool/tutorial.html) ·
+[Első lépések](https://themokx1.github.io/Astro-Tool/first-steps.html) ·
 [Funkciók](https://themokx1.github.io/Astro-Tool/features.html) ·
 [CLI referencia](https://themokx1.github.io/Astro-Tool/cli.html) ·
 [Adatvédelem](https://themokx1.github.io/Astro-Tool/privacy.html)

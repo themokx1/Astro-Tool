@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 
 VERSION="$(sed -n 's/^[[:space:]]*public static let version = "\([^"]*\)"[[:space:]]*$/\1/p' Sources/AstroCore/Product/ProductInfo.swift)"
 
-targets=(README.md docs/index.html docs/features.html docs/tutorial.html docs/cli.html docs/privacy.html docs/support.html Sources/AstroToolApp)
+targets=(README.md docs/index.html docs/features.html docs/first-steps.html docs/tutorial.html docs/cli.html docs/privacy.html docs/support.html Sources/AstroToolApp)
 forbidden=(
     "/Volumes/images"
     "/Users/zoltan"

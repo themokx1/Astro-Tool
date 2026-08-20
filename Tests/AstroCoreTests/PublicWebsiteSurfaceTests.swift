@@ -16,7 +16,7 @@ struct PublicWebsiteSurfaceTests {
 
     @Test("Every public page uses one responsive design system")
     func sharedDesignSystem() throws {
-        let pages = ["index.html", "features.html", "tutorial.html", "cli.html", "privacy.html", "support.html"]
+        let pages = ["index.html", "features.html", "first-steps.html", "tutorial.html", "cli.html", "privacy.html", "support.html"]
         for page in pages {
             let html = try source("docs/\(page)")
             #expect(html.contains("href=\"assets/site.css\""), Comment(rawValue: page))
@@ -31,6 +31,22 @@ struct PublicWebsiteSurfaceTests {
         #expect(css.contains("prefers-reduced-motion"))
         #expect(css.contains("prefers-color-scheme"))
         #expect(css.contains("@media"))
+    }
+
+    @Test("First Steps mirrors the novice onboarding and its safety promises")
+    func firstStepsMatchesTheApp() throws {
+        let html = try source("docs/first-steps.html")
+        #expect(html.contains("Új képkönyvtár létrehozása"))
+        #expect(html.contains("Már van AstroTool-könyvtáram"))
+        #expect(html.contains("Előbb szeretném megérteni"))
+        #expect(html.contains("csak ellenőrzött másolatokat készít"))
+        #expect(html.contains("A forrásaid változatlanok maradnak"))
+        #expect(html.contains("nincs önálló törlés"))
+        #expect(html.contains("<details"))
+        #expect(html.contains("Mi jön létre a gépemen?"))
+
+        let homepage = try source("docs/index.html")
+        #expect(homepage.contains("href=\"first-steps.html\""))
     }
 
     @Test("Homepage describes the real 2.0 product and Universal download")

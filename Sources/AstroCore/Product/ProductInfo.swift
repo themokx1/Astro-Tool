@@ -13,7 +13,7 @@ public enum ProductInfo: Sendable {
     public static let bundleIdentifier = "io.github.themokx1.AstroTool"
     public static let legacyBundleIdentifier = "com.zoltanpalotai.astrotool"
     public static let websiteURL = "https://themokx1.github.io/Astro-Tool/"
-    public static let documentationURL = "https://themokx1.github.io/Astro-Tool/tutorial.html"
+    public static let documentationURL = "https://themokx1.github.io/Astro-Tool/first-steps.html"
     public static let cliDocumentationURL = "https://themokx1.github.io/Astro-Tool/cli.html"
     public static let privacyURL = "https://themokx1.github.io/Astro-Tool/privacy.html"
     public static let supportURL = "https://github.com/themokx1/Astro-Tool/issues"
