@@ -6,7 +6,7 @@ import Foundation
 /// without touching a real `/Volumes` mount point.
 enum RootErrorClassifier {
     /// - `rootPath` starts with `/Volumes/` and its volume portion (the
-    ///   first two path components, e.g. `/Volumes/images`) doesn't exist
+    ///   first two path components, e.g. `/Volumes/AstroDrive`) doesn't exist
     ///   per `volumeExists` → `.volumeNotMounted(path: rootPath)`.
     /// - Otherwise the missing root/subpath itself doesn't exist (but its
     ///   parent does) → `.pathNotFound(path:)`, using `subpath` when one was
@@ -27,7 +27,7 @@ enum RootErrorClassifier {
     }
 
     /// The volume mount point portion of an absolute path — its first two
-    /// path components, e.g. `/Volumes/images/sessions` → `/Volumes/images`.
+    /// path components, e.g. `/Volumes/AstroDrive/sessions` → `/Volumes/AstroDrive`.
     static func volumePortion(of path: String) -> String {
         let comps = path.split(separator: "/", omittingEmptySubsequences: true)
         guard comps.count >= 2 else { return path }
@@ -136,6 +136,23 @@ public struct ScanSummary: Codable, Sendable {
     }
 }
 
+public struct ScanProgress: Equatable, Sendable {
+    public let scanned: Int
+    public let total: Int?
+
+    public var fraction: Double? {
+        guard let total else { return nil }
+        guard total > 0 else { return 1 }
+        return Double(scanned) / Double(total)
+    }
+
+    public init(scanned: Int, total: Int?) {
+        let safeTotal = total.map { max(0, $0) }
+        self.total = safeTotal
+        self.scanned = safeTotal.map { min(max(0, scanned), $0) } ?? max(0, scanned)
+    }
+}
+
 /// Walks the library tree and incrementally syncs `Database.files` with
 /// what's actually on disk. Never writes, deletes, or moves anything in the
 /// library itself — the only filesystem access here is read-only directory
@@ -167,8 +184,11 @@ public final class LibraryScanner {
     public func scan(
         subpath: String? = nil,
         refreshMeta: Bool = false,
-        progress: (@Sendable (Int) -> Void)? = nil
+        progress: (@Sendable (Int) -> Void)? = nil,
+        progressUpdate: (@Sendable (ScanProgress) -> Void)? = nil,
+        shouldCancel: @Sendable () -> Bool = { Task.isCancelled }
     ) throws -> ScanSummary {
+        try Self.checkCancellation(shouldCancel)
         let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
         let startURL = subpath.map { root.appendingPathComponent($0, isDirectory: true) } ?? root
 
@@ -185,6 +205,7 @@ public final class LibraryScanner {
         var processedCount = 0
         var changedTargets = Set<String>()
         var changedSessions = Set<ScanSummary.SessionKey>()
+        progressUpdate?(ScanProgress(scanned: 0, total: nil))
 
         try walk(
             dirURL: startURL,
@@ -192,12 +213,15 @@ public final class LibraryScanner {
             seen: &seen,
             processedCount: &processedCount,
             progress: progress,
+            progressUpdate: progressUpdate,
+            shouldCancel: shouldCancel,
             summary: &summary,
             refreshMeta: refreshMeta,
             changedTargets: &changedTargets,
             changedSessions: &changedSessions,
             isTopLevel: true
         )
+        try Self.checkCancellation(shouldCancel)
 
         let tracked = try db.allFiles(includeMissing: false)
         let scoped: [FileRecord]
@@ -214,9 +238,11 @@ public final class LibraryScanner {
         }
 
         try db.markMissing(pathsNotIn: seen, underSubpath: subpath, excludingPrefixes: summary.inaccessiblePaths)
+        try Self.checkCancellation(shouldCancel)
 
         summary.changedTargets = changedTargets.sorted()
         summary.changedSessions = changedSessions.sorted()
+        progressUpdate?(ScanProgress(scanned: processedCount, total: processedCount))
         return summary
     }
 
@@ -242,12 +268,15 @@ public final class LibraryScanner {
         seen: inout Set<String>,
         processedCount: inout Int,
         progress: (@Sendable (Int) -> Void)?,
+        progressUpdate: (@Sendable (ScanProgress) -> Void)?,
+        shouldCancel: @Sendable () -> Bool,
         summary: inout ScanSummary,
         refreshMeta: Bool,
         changedTargets: inout Set<String>,
         changedSessions: inout Set<ScanSummary.SessionKey>,
         isTopLevel: Bool = false
     ) throws {
+        try Self.checkCancellation(shouldCancel)
         let entries: [URL]
         do {
             entries = try FileManager.default.contentsOfDirectory(
@@ -270,6 +299,7 @@ public final class LibraryScanner {
         }
 
         for entryURL in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            try Self.checkCancellation(shouldCancel)
             let name = entryURL.lastPathComponent
             let relativePath = relPrefix.isEmpty ? name : relPrefix + "/" + name
 
@@ -296,6 +326,8 @@ public final class LibraryScanner {
                     seen: &seen,
                     processedCount: &processedCount,
                     progress: progress,
+                    progressUpdate: progressUpdate,
+                    shouldCancel: shouldCancel,
                     summary: &summary,
                     refreshMeta: refreshMeta,
                     changedTargets: &changedTargets,
@@ -321,6 +353,17 @@ public final class LibraryScanner {
                 changedTargets: &changedTargets,
                 changedSessions: &changedSessions
             )
+            if processedCount % 64 == 0 {
+                progressUpdate?(ScanProgress(scanned: processedCount, total: nil))
+            }
+        }
+    }
+
+    private static func checkCancellation(
+        _ shouldCancel: @Sendable () -> Bool
+    ) throws {
+        if shouldCancel() {
+            throw CancellationError()
         }
     }
 
@@ -438,10 +481,19 @@ public final class LibraryScanner {
         // classifier never sees. A rescan of that same (unchanged) file
         // must not undo that upgrade just because the path alone still
         // resolves to `.other`; keep the stored role in that case.
+        //
+        // EXCEPT when the path is non-promotable session residue (see
+        // `isNonPromotableSessionResidue`): a specific frame role there can
+        // only be a leftover wrong promotion from BEFORE `refineLooseFrameRole`
+        // grew its residue guards above (residue is never promoted going
+        // forward, so no legitimate upgrade could have produced this
+        // combination post-fix). Demote it back to the path-derived `.other`
+        // so a plain rescan is self-healing, without needing a dedicated
+        // migration.
         let specificFrameRoles: Set<FrameRole> = [.light, .flat, .dark, .bias]
         let effectiveRole: FrameRole
         if info.area == .sessions, info.role == .other, specificFrameRoles.contains(existing.role) {
-            effectiveRole = existing.role
+            effectiveRole = isNonPromotableSessionResidue(path: existing.path) ? .other : existing.role
         } else {
             effectiveRole = info.role
         }
@@ -466,9 +518,44 @@ public final class LibraryScanner {
         summary.reclassified += 1
     }
 
+    /// Whether a file at `path`, sitting loose in a session date dir (path
+    /// role `.other`), must never be promoted to a specific frame role via
+    /// its FITS IMAGETYP header -- `true` when EITHER of two independent
+    /// engines says so, neither one copied:
+    ///  1. `ResidueMatcher.isResidue` -- config-driven, from
+    ///     `AstroConfig.residuePatterns`/`residueDirNames` (universal) plus
+    ///     `AstroConfig.sessionResiduePatterns` (applied by `ResidueMatcher`
+    ///     itself to `.sessions`-area paths only -- the vocabulary that is
+    ///     junk here but WANTED StackDiscovery output in `stacks/`/
+    ///     `processed/`, e.g. `result_*` integrations). The same predicate
+    ///     `CleanupReport`'s cleanup summary uses.
+    ///  2. `StackDiscovery.classifiesAsStackProduct` -- code-driven, the
+    ///     same starless/starmask/edited/export recognition `stacks/`/
+    ///     `processed`-area variant grouping already applies to filenames.
+    /// The second check overlaps the session-pattern defaults on purpose: a
+    /// Siril byproduct named `starless_*` sitting loose in `sessions/` must
+    /// still never be promoted even when a library's `config.json` empties
+    /// the pattern lists, since this recognition is code, not config. The
+    /// session-pattern layer in turn reaches names `variantKind` can't
+    /// (`result_Ha_12720s.fit` classifies `.original`) and is what
+    /// `CleanupReport` surfaces to the user.
+    private func isNonPromotableSessionResidue(path: String) -> Bool {
+        if ResidueMatcher.isResidue(path: path, config: config) { return true }
+        let fileName = (path as NSString).lastPathComponent
+        return StackDiscovery.classifiesAsStackProduct(fileName: fileName)
+    }
+
     private func refineLooseFrameRole(fileID: Int64, info: PathInfo, ext: String, baseRecord: FileRecord) throws {
         guard info.area == .sessions, info.role == .other else { return }
         guard ["fit", "fits", "fz"].contains(ext) else { return }
+        // Siril stack products (starless/starmask/registered sequences)
+        // inherit IMAGETYP='Light Frame' from the subs they were stacked
+        // from -- a residue file sitting loose in a session date dir hits
+        // the exact same "role .other, FITS header says Light" shape as a
+        // genuine loose light frame. Never promote it via IMAGETYP -- see
+        // `isNonPromotableSessionResidue`'s doc comment for the two
+        // independent engines this consults.
+        guard !isNonPromotableSessionResidue(path: baseRecord.path) else { return }
         guard let meta = try db.fitsMeta(fileID: fileID),
               let imagetyp = meta.imagetyp,
               let refined = Self.roleFromImagetyp(imagetyp)
@@ -479,13 +566,10 @@ public final class LibraryScanner {
         _ = try db.upsertFile(refinedRecord)
     }
 
+    /// Delegates to `FrameRoleFromHeader` -- see that type's doc comment for
+    /// why this is no longer its own copy of the predicate.
     private static func roleFromImagetyp(_ imagetyp: String) -> FrameRole? {
-        let lower = imagetyp.lowercased()
-        if lower.contains("light") { return .light }
-        if lower.contains("flat") { return .flat }
-        if lower.contains("dark") { return .dark }
-        if lower.contains("bias") { return .bias }
-        return nil
+        FrameRoleFromHeader.role(fromImagetyp: imagetyp)
     }
 
     // MARK: - Metadata capture
@@ -664,12 +748,23 @@ public final class LibraryScanner {
 
     // MARK: - Kind bucket
 
+    /// Extensions this scanner records as `kind == "fits"` -- FITS proper
+    /// plus its gzip'd `.fz` sibling. `public` (card-import wizard): the
+    /// source-card scan step needs the exact same "does this file count as
+    /// a capture frame at all" list the library scanner already uses,
+    /// rather than a second, hand-picked one that could silently drift from
+    /// it (e.g. missing `.fz`, or adding an extension this scanner would
+    /// never index).
+    public static let fitsExtensions: Set<String> = ["fit", "fits", "fz"]
+    /// Extensions this scanner records as `kind == "raw"` -- camera RAW
+    /// (Canon CR3 today). `public` for the same cross-module reuse reason
+    /// as `fitsExtensions` above.
+    public static let rawExtensions: Set<String> = ["cr3"]
+
     private static func kind(for ext: String) -> String {
+        if fitsExtensions.contains(ext) { return "fits" }
+        if rawExtensions.contains(ext) { return "raw" }
         switch ext {
-        case "fit", "fits", "fz":
-            return "fits"
-        case "cr3":
-            return "raw"
         case "tif", "png", "jpg", "jpeg":
             return "image"
         case "xmp":

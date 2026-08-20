@@ -111,7 +111,7 @@ struct FilterProfilesPage: View {
                 .foregroundStyle(.purple)
             Text("Még nincs saját szűrőd elmentve")
                 .font(.headline)
-            Text("Például az SVBONY SV220-at itt egyszer felveheted, majd minden új capture-ben kiválaszthatod.")
+            Text("A saját szűrődet itt egyszer felveheted, majd minden új capture-ben kiválaszthatod.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

@@ -14,6 +14,28 @@ import Testing
     #expect(SignalMode.narrowband.displayNameHU == "Keskenysáv")
 }
 
+/// V2 UI/UX audit (2026-08-15) section 4: `displayNameHU` is V1/CLI's own
+/// vocabulary (both still read Hungarian labels today, pinned above) --
+/// `displayName` is the English sibling only the V2 `ConversionWorkspace`
+/// picker uses, so its own English UI never shows "Monokróm"/"Szélessáv"/
+/// "Keskenysáv"/"Szűrő nélkül".
+@Test func captureSensorModesHaveClearEnglishLabels() {
+    #expect(SensorMode.osc.displayName == "OSC")
+    #expect(SensorMode.mono.displayName == "Mono")
+    #expect(SensorMode.unknown.displayName == "Unknown sensor")
+}
+
+@Test func captureSignalModesHaveClearEnglishLabels() {
+    #expect(SignalMode.broadband.displayName == "Broadband")
+    #expect(SignalMode.dualBand.displayName == "Dual-band")
+    #expect(SignalMode.narrowband.displayName == "Narrowband")
+    #expect(SignalMode.lrgb.displayName == "LRGB")
+    #expect(SignalMode.luminance.displayName == "Luminance")
+    #expect(SignalMode.unfiltered.displayName == "No filter")
+    #expect(SignalMode.other.displayName == "Other passband")
+    #expect(SignalMode.unknown.displayName == "Unknown passband")
+}
+
 @Test func captureGroupQuickLabelIncludesSensorSignalAndSpecificFilter() {
     let group = CaptureGroupRecord(
         id: 7,

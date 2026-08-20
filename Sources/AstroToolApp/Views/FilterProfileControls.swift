@@ -197,11 +197,11 @@ struct FilterProfileEditorSheet: View {
                 Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
                     GridRow {
                         Text("Gyártó").foregroundStyle(.secondary)
-                        TextField("pl. SVBONY", text: $manufacturer)
+                        TextField("pl. gyártó", text: $manufacturer)
                     }
                     GridRow {
                         Text("Modell").foregroundStyle(.secondary)
-                        TextField("pl. SV220", text: $model)
+                        TextField("pl. modell", text: $model)
                     }
                     GridRow {
                         Text("Saját név / sáv").foregroundStyle(.secondary)

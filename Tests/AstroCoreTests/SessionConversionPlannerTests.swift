@@ -4,6 +4,50 @@ import Testing
 
 private let conversionScope = SessionConversionScope(target: "IC_1396", date: "2026-08-08")
 
+/// V2 UI/UX audit (2026-08-15) section 4: pins the rest of the closed
+/// vocabulary `SessionConversionPlanner.plan`/`resolving` generate that the
+/// fixture-driven tests above don't happen to exercise -- the "Stack/
+/// processed results" ambiguity and the manual-decision destination
+/// conflict `resolving` raises -- directly against literal values, since
+/// building a fixture that reaches each of them is unrelated to what those
+/// tests are otherwise about.
+@Suite("Conversion ambiguity/conflict English translation")
+struct ConversionEnglishTranslationTests {
+    @Test func artifactAmbiguityTranslatesToEnglish() {
+        let ambiguity = ConversionAmbiguity(
+            id: "artifacts",
+            kind: .artifactAssignment,
+            title: "Stack/processed eredmények kézi döntést kérnek",
+            explanation: "A név és az útvonal több gyűjtéssel is összeegyeztethető.",
+            affectedPaths: ["stacks/M31/2026-01-01/final.fit"],
+            candidateGroupSlugs: ["osc-30s"]
+        )
+        #expect(ambiguity.titleEnglish == "Stack/processed results need a manual decision")
+        #expect(ambiguity.explanationEnglish == "The name and path are consistent with more than one capture group.")
+    }
+
+    @Test func manualDecisionDestinationConflictTranslatesToEnglish() {
+        let conflict = ConversionConflict(
+            path: "sessions/M31/2026-01-01/captures/osc-30s/lights/a.fit",
+            message: "A kézi döntés célútvonala már foglalt; a konverter nem ír felül fájlt."
+        )
+        #expect(
+            conflict.messageEnglish
+                == "The manual decision's destination path is already taken; the converter will not overwrite a file."
+        )
+    }
+
+    @Test func unrecognizedTextPassesThroughRatherThanHidingInformation() {
+        let ambiguity = ConversionAmbiguity(
+            id: "x", kind: .mixedEvidence, title: "already English", explanation: "already English",
+            affectedPaths: [], candidateGroupSlugs: []
+        )
+        #expect(ambiguity.titleEnglish == "already English")
+        #expect(ambiguity.explanationEnglish == "already English")
+        #expect(ConversionConflict(path: "p", message: "already English").messageEnglish == "already English")
+    }
+}
+
 private func conversionFile(
     _ path: String,
     id: Int64,
@@ -155,6 +199,21 @@ private func ic1396ConversionFixture() -> (files: [FileRecord], meta: [Int64: FI
     #expect(plan.humanSummaryHU.contains("81 nyers expozíció"))
     #expect(plan.humanSummaryHU.contains("2 Stacked"))
     #expect(!plan.canApply)
+
+    // V2 UI/UX audit (2026-08-15) section 4: `humanSummary` is the English
+    // sibling `ConversionWorkspace` reads instead of `humanSummaryHU` -- same
+    // counts, English wording.
+    let humanSummary = try #require(plan.humanSummary)
+    #expect(humanSummary.contains("81 raw exposure"))
+    #expect(humanSummary.contains("2 Stacked"))
+    #expect(!humanSummary.contains("nyers"))
+    #expect(!humanSummary.contains("gyűjtési"))
+
+    let flatAmbiguity = try #require(plan.ambiguities.first { $0.kind == .calibrationAssignment })
+    #expect(flatAmbiguity.titleEnglish == "Which capture group these flat frames belong to is not clear")
+    #expect(flatAmbiguity.explanationEnglish.contains("FITS header and path"))
+    #expect(!flatAmbiguity.titleEnglish.contains("gyűjtése"))
+    #expect(!flatAmbiguity.explanationEnglish.contains("fejléc"))
 }
 
 @Test func alreadyConvertedMixedExposureGroupIsRepairableWithoutLosingCaptureMetadata() throws {
@@ -298,6 +357,13 @@ private func ic1396ConversionFixture() -> (files: [FileRecord], meta: [Int64: FI
     #expect(resolved.summary.fileAssignmentCount == resolved.assignments.count)
     #expect(resolved.summary.moveCount == resolved.moves.count)
     #expect(resolved.canApply)
+
+    // The English `humanSummary` gets the same "manual decision recorded"
+    // tail `humanSummaryHU` does, in English.
+    let resolvedSummary = try #require(resolved.humanSummary)
+    #expect(resolvedSummary.contains("Manual decision recorded"))
+    #expect(resolvedSummary.contains("\(ambiguity.affectedPaths.count) file"))
+    #expect(!resolvedSummary.contains("Kézi döntés"))
 }
 
 @Test func converterNeverTreatsFinderResidueOrPresetJSONAsCaptureData() throws {
@@ -403,6 +469,12 @@ private func ic1396ConversionFixture() -> (files: [FileRecord], meta: [Int64: FI
     )
     #expect(blocked.conflicts.contains { $0.path == move.destinationRelative })
     #expect(!blocked.canApply)
+
+    // V2 UI/UX audit (2026-08-15) section 4: `messageEnglish` is the English
+    // sibling `ConversionWorkspace` reads instead of `message` (kept
+    // Hungarian for V1/CLI).
+    let conflict = try #require(blocked.conflicts.first { $0.path == move.destinationRelative })
+    #expect(conflict.messageEnglish == "The destination path is already taken; the converter will not overwrite a file.")
 }
 
 @Test func zeroFileSessionProducesStableEmptyPreview() throws {
@@ -420,4 +492,6 @@ private func ic1396ConversionFixture() -> (files: [FileRecord], meta: [Int64: FI
     #expect(plan.summary.rawFrameCount == 0)
     #expect(plan.sourceFingerprint.fileCount == 0)
     #expect(plan.canApply)
+    #expect(plan.humanSummaryHU == "A kiválasztott sessionben nincs konvertálható fájl.")
+    #expect(plan.humanSummary == "The selected session has no convertible files.")
 }

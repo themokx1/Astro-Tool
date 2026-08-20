@@ -1,71 +1,10 @@
-<!DOCTYPE html>
-<html lang="hu">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AstroTool adatvédelem</title>
-<meta name="description" content="Az AstroTool adatvédelmi tájékoztatója: minden helyben fut, nincs fiók, nincs telemetria.">
-<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
-<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
-<meta name="theme-color" content="#0B0B0D">
-<link rel="stylesheet" href="site.css">
-<link rel="alternate" hreflang="hu" href="https://themokx1.github.io/Astro-Tool/privacy.html">
-<link rel="alternate" hreflang="en" href="https://themokx1.github.io/Astro-Tool/en/privacy.html">
-<link rel="alternate" hreflang="x-default" href="https://themokx1.github.io/Astro-Tool/privacy.html">
-</head>
-<body>
-
-<nav>
-  <div class="wrap">
-    <a class="brand" href="index.html" style="text-decoration:none;color:inherit;"><span class="brand-mark" aria-hidden="true"></span>AstroTool</a>
-    <div class="nav-lang">
-      <a href="privacy.html" class="current">HU</a>
-      <a href="en/privacy.html">EN</a>
-    </div>
-  </div>
-</nav>
-
-<header class="wrap compact">
-  <h1>Adatvédelem</h1>
-  <p class="sub">Rövid, mert kevés a mondanivaló: az AstroTool a gépeden dolgozik, és ott is marad.</p>
-  <p class="crumbs"><a href="tutorial.html">Útmutató</a> · <a href="cli.html">CLI</a> · <a href="features.html">Funkciók</a></p>
-</header>
-
-<main class="doc-wrap doc">
-
-  <section class="panel">
-    <h2><span class="dot" aria-hidden="true"></span>Minden helyben</h2>
-    <p>A könyvtárad beolvasása, az index, a mérések és az elemzések a saját gépeden futnak. Nincs fiók, nincs regisztráció, nincs telemetria, nincs hirdetés. Az app internet nélkül is teljes értékű.</p>
-  </section>
-
-  <section class="panel">
-    <h2><span class="dot" aria-hidden="true"></span>Ami elhagyja a géped, ha engeded</h2>
-    <p>Két funkció kér le adatot a hálózatról, és mindkettő kikapcsolható a Beállításokban:</p>
-    <ul>
-      <li><strong>Időjárás</strong>: alapból kikapcsolva. Ha bekapcsolod, a felhő-előrejelzéshez a megfigyelőhely koordinátái mennek el az Open-Meteo felé. Se fájlnév, se célpont, se más adat.</li>
-      <li><strong>Bővített célpontkatalógus</strong>: alapból bekapcsolva, és az első Felfedezés-megnyitáskor magától lekéri a hiányzó adatokat, ha még nincs helyi katalógus. Ilyenkor katalógusnevek és égi koordináták mennek a SIMBAD/VizieR felé, semmi más. A letöltött katalógus helyben tárolódik, utána offline is működik; a funkció bármikor kikapcsolható a Beállításokban.</li>
-    </ul>
-    <p>A könyvtárad tartalma, elérési útjai, fájljai és jegyzetei soha nem hagyják el a géped.</p>
-  </section>
-
-  <section class="panel">
-    <h2><span class="dot" aria-hidden="true"></span>Diagnosztika</h2>
-    <p>Diagnosztikai jelentés csak akkor készül, ha te kéred a Beállításokban, és te döntöd el, kinek adod oda. Verziószámot, rendszeradatokat, névtelen darabszámokat és művelet-kategóriákat tartalmaz. Elérési út, fájlnév, célpont, koordináta vagy jegyzet nincs benne.</p>
-  </section>
-
-  <section class="panel">
-    <h2><span class="dot" aria-hidden="true"></span>A képeid biztonsága</h2>
-    <p>Az app a képkönyvtárat alapból csak olvassa. Minden írási művelet külön kapcsoló mögött van, és minden egyes írás előtt megerősítést kér. Törlés helyett karantén: ami eltűnik a helyéről, az visszahozható.</p>
-  </section>
-
-</main>
-
-<footer>
-  <div class="wrap">
-    <span>© 2026 AstroTool</span>
-    <span><a href="tutorial.html">Útmutató</a> · <a href="cli.html">CLI</a> · <a href="privacy.html">Adatvédelem</a> · v2.0.0</span>
-  </div>
-</footer>
-
-</body>
-</html>
+<!doctype html><html lang="hu"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Adatvédelem — AstroTool</title><meta name="description" content="Az AstroTool helyi adatkezelése és opcionális hálózati funkciói."><link rel="icon" href="favicon-32.png"><link rel="stylesheet" href="assets/site.css"></head><body>
+<a class="skip-link" href="#main-content">Ugrás a tartalomra</a>
+<header class="site-header"><nav class="nav-shell" aria-label="Fő navigáció"><a class="wordmark" href="index.html"><img src="icon.png" alt="">AstroTool</a><div class="site-nav"><a href="features.html">Funkciók</a><a href="first-steps.html">Első lépések</a><a href="cli.html">CLI</a><a href="support.html">Támogatás</a><a class="nav-download" href="https://github.com/themokx1/Astro-Tool/releases/latest">Letöltés</a></div></nav></header>
+<main id="main-content" tabindex="-1"><div class="shell"><header class="page-hero"><div class="eyebrow">Adatvédelem</div><h1>A képeid helyben maradnak.</h1><p>Az AstroTool fájlrendszer-alapú, helyi macOS alkalmazás. Nincs fiók, nincs saját felhő és nincs háttérben futó telemetria.</p></header><div class="docs-layout"><nav class="toc" aria-label="Tartalom"><strong>Tartalom</strong><a href="#local">Helyi adatok</a><a href="#network">Hálózat</a><a href="#diagnostics">Diagnosztika</a><a href="#control">Törlés és kontroll</a></nav><article class="prose">
+<section id="local"><h2>Mit olvas és tárol helyben?</h2><p>Csak az általad kiválasztott képkönyvtárat és a hozzá kapcsolódó AstroTool-metaadatokat. Ide tartozhatnak a fájlok nevei és technikai adatai, FITS-fejlécek, helyi SQLite-index, pontozások, célpont- és sessionjegyzetek, beállítások, valamint előnézeti bizonylatok.</p><p>Ezek az adatok nem kerülnek AstroTool-szerverre, mert ilyen szolgáltatás nincs.</p></section>
+<section id="network"><h2>Mikor használ hálózatot?</h2><p>Az alapműködéshez nem szükséges hálózat. Az opcionális Open-Meteo időjárás alapból <strong>kikapcsolva</strong> van. Bekapcsolásakor a kiválasztott megfigyelési hely szélességi és hosszúsági foka az Open-Meteo végpontjához kerül a felhőzet lekéréséhez.</p><p>A dokumentáció, támogatás és kiadások linkjei csak akkor nyílnak meg, amikor rájuk kattintasz.</p></section>
+<section id="diagnostics"><h2>Biztonságos diagnosztika</h2><p>A támogatási export verziót, operációs rendszert, architektúrát, adatbázissémát, névtelen darabszámokat és műveletkategóriákat tartalmazhat. Export előtt az app pontos, rögzített előnézetet kér; a Másolás és Mentés csak ezt a látható tartalmat használja.</p><div class="callout safe"><p><strong>Nem tartalmaz:</strong> könyvtárútvonalat, fájlnevet, célpontot, koordinátát, jegyzetet, FITS-fejlécet, bookmarkot vagy szabad szöveges hibaüzenetet.</p></div></section>
+<section id="control"><h2>Kontroll és törlés</h2><p>A képfájlok tulajdonosa mindig te maradsz. Az AstroTool helyi segédadatai a könyvtár <code>.astro_tool</code> területén és a macOS alkalmazásbeállításaiban találhatók. Az app eltávolítása önmagában nem törli a képkönyvtárat.</p><p>Az audit nem töröl és nem mozgat. A kevés fájlmozgató művelet tételes előnézetet és megerősítést kér, nem ír felül, és visszaállítási bizonylatot készít.</p></section>
+</article></div></div></main>
+<footer class="site-footer"><div class="footer-shell"><span>© <span data-year>2026</span> AstroTool contributors · MIT</span><span class="footer-links"><a href="index.html">Kezdőlap</a><a href="support.html">Támogatás</a><a href="https://github.com/themokx1/Astro-Tool">Forráskód</a></span></div></footer><script src="assets/site.js"></script></body></html>

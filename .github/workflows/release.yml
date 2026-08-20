@@ -1,4 +1,4 @@
-name: Release
+name: Signed release
 
 on:
   push:
@@ -10,30 +10,70 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Run tests
+      - name: Verify tag matches product version
+        run: |
+          version="$(sed -n 's/^[[:space:]]*public static let version = "\([^"]*\)"[[:space:]]*$/\1/p' Sources/AstroCore/Product/ProductInfo.swift)"
+          test "$GITHUB_REF_NAME" = "v$version"
+          scripts/check-release-metadata.sh
+
+      - name: Test
         run: swift test --no-parallel
 
-      - name: Build app + CLI
-        env:
-          CI: true
-        run: ./build.sh
+      - name: Check public content
+        run: scripts/check-public-content.sh
 
-      - name: Create GitHub release
+      - name: Import Developer ID certificate
+        env:
+          DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          certificate="$RUNNER_TEMP/developer-id.p12"
+          keychain="$RUNNER_TEMP/astrotool-signing.keychain-db"
+          echo "$DEVELOPER_ID_CERTIFICATE_BASE64" | base64 --decode > "$certificate"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security import "$certificate" -P "$DEVELOPER_ID_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$keychain"
+          security list-keychains -d user -s "$keychain"
+
+      - name: Configure Apple notarization
+        env:
+          NOTARYTOOL_PRIVATE_KEY_BASE64: ${{ secrets.NOTARYTOOL_PRIVATE_KEY_BASE64 }}
+          NOTARYTOOL_KEY_ID: ${{ secrets.NOTARYTOOL_KEY_ID }}
+          NOTARYTOOL_ISSUER_ID: ${{ secrets.NOTARYTOOL_ISSUER_ID }}
+        run: |
+          key="$RUNNER_TEMP/AuthKey.p8"
+          echo "$NOTARYTOOL_PRIVATE_KEY_BASE64" | base64 --decode > "$key"
+          xcrun notarytool store-credentials AstroToolNotary \
+            --key "$key" \
+            --key-id "$NOTARYTOOL_KEY_ID" \
+            --issuer "$NOTARYTOOL_ISSUER_ID"
+
+      - name: Build, sign and notarize
+        env:
+          DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+          NOTARY_PROFILE: AstroToolNotary
+        run: scripts/release.sh
+
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           notes_file="docs/releases/$GITHUB_REF_NAME.md"
-          if [[ -f "$notes_file" ]]; then
-            notes_args=(--notes-file "$notes_file")
-          else
-            notes_args=(--generate-notes)
+          release_flag="$(scripts/github-release-flag.sh "$GITHUB_REF_NAME")"
+          release_args=()
+          if [ -n "$release_flag" ]; then
+            release_args+=("$release_flag")
           fi
           gh release create "$GITHUB_REF_NAME" \
-            build/AstroTool.dmg \
-            build/astrotool.zip \
-            "${notes_args[@]}"
+            build/AstroTool-*.dmg \
+            build/astrotool-*.zip \
+            build/SHA256SUMS.txt \
+            "${release_args[@]}" \
+            --notes-file "$notes_file"

@@ -20,6 +20,46 @@ public enum SessionCreator {
         }
     }
 
+    /// Resolves a catalog identity against both indexed targets and the
+    /// actual `sessions/` directories. Reading the filesystem here prevents
+    /// an empty or not-yet-scanned legacy spelling from being duplicated by
+    /// a newly created canonical folder.
+    public static func targetFolder(
+        for target: CatalogTarget,
+        root: URL,
+        indexedFolders: [String]
+    ) -> String {
+        let diskFolders = onDiskSessionFolders(root: root)
+        return TargetCatalog.existingFolder(
+            for: target,
+            among: Array(Set(indexedFolders + diskFolders))
+        ) ?? TargetCatalog.canonicalFolderName(for: target)
+    }
+
+    /// The distinct directory names directly under `<root>/sessions` --
+    /// symlinks and hidden entries excluded. Broken out of `targetFolder`
+    /// (2026-08-17, one-letter-drift fix) so any V2 caller that needs
+    /// "what folder does this target actually live under on disk?" but has
+    /// no scanned `Database` at hand (the Finder-reveal actions in
+    /// `InspectorView`/`NightActionMenu`) can feed the same disk listing
+    /// into `TargetCatalog.existingFolder(for:among:)` this function already
+    /// uses, rather than re-deriving its own directory scan.
+    public static func onDiskSessionFolders(root: URL) -> [String] {
+        let sessions = root.appendingPathComponent("sessions", isDirectory: true)
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
+        return (try? FileManager.default.contentsOfDirectory(
+            at: sessions,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        ))?.compactMap { url -> String? in
+            guard let values = try? url.resourceValues(forKeys: keys),
+                  values.isDirectory == true,
+                  values.isSymbolicLink != true
+            else { return nil }
+            return url.lastPathComponent
+        } ?? []
+    }
+
     /// - Parameters:
     ///   - root: library root.
     ///   - catalogRaw: catalog string exactly as typed (e.g. `"M1"`).
@@ -37,9 +77,12 @@ public enum SessionCreator {
         catalogRaw: String,
         nameRaw: String,
         date: String,
-        now: Date = Date()
+        now: Date = Date(),
+        targetFolderOverride: String? = nil
     ) throws -> Result {
-        let targetFolder = Sanitizer.makeTarget(catalog: catalogRaw, name: nameRaw)
+        let targetFolder = try resolvedTargetFolder(
+            catalogRaw: catalogRaw, nameRaw: nameRaw, override: targetFolderOverride
+        )
         guard !targetFolder.isEmpty else {
             throw AstroError.invalidInput(
                 "catalog \"\(catalogRaw)\" and name \"\(nameRaw)\" sanitize to an empty target folder name"
@@ -67,6 +110,18 @@ public enum SessionCreator {
     /// source-compatible and creates the unchanged classic tree; this one
     /// additionally creates and persists the explicitly requested first
     /// capture, and may therefore mention it in this brand-new README.
+    ///
+    /// W3-10 owner correction (screenshot of the shipped V2 preview):
+    /// "ezeket feleslegesen csinálja meg, a captures-be kellenek csak"
+    /// (these are made unnecessarily; they only belong under captures/) --
+    /// this overload creates the MINIMAL session root
+    /// (`WriteGuard.createSessionRoot`, not `.createSessionTree`), never the
+    /// classic date-level `lights/flats/darks/biases` quartet: once this
+    /// session's raw frames live under `captures/<slug>/{...}`, a parallel,
+    /// always-empty quartet at the session root only misleads the
+    /// card-copy workflow. The capture-LESS overload above is unaffected --
+    /// a session created with no capture at all still needs the classic
+    /// quartet as ITS OWN raw-frame destination.
     public static func create(
         root: URL,
         catalogRaw: String,
@@ -74,9 +129,12 @@ public enum SessionCreator {
         date: String,
         initialCapture: CaptureGroupDraft,
         db: Database,
-        now: Date = Date()
+        now: Date = Date(),
+        targetFolderOverride: String? = nil
     ) throws -> Result {
-        let targetFolder = Sanitizer.makeTarget(catalog: catalogRaw, name: nameRaw)
+        let targetFolder = try resolvedTargetFolder(
+            catalogRaw: catalogRaw, nameRaw: nameRaw, override: targetFolderOverride
+        )
         guard !targetFolder.isEmpty else {
             throw AstroError.invalidInput(
                 "catalog \"\(catalogRaw)\" and name \"\(nameRaw)\" sanitize to an empty target folder name"
@@ -97,7 +155,7 @@ public enum SessionCreator {
             initialCapture: initialCapture
         )
         let writeGuard = WriteGuard(root: root)
-        var created = try writeGuard.createSessionTree(
+        var created = try writeGuard.createSessionRoot(
             target: targetFolder,
             dateDir: date,
             readme: readme
@@ -118,6 +176,21 @@ public enum SessionCreator {
         )
     }
 
+    private static func resolvedTargetFolder(
+        catalogRaw: String,
+        nameRaw: String,
+        override: String?
+    ) throws -> String {
+        guard let override else {
+            return Sanitizer.makeTarget(catalog: catalogRaw, name: nameRaw)
+        }
+        let trimmed = override.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, Sanitizer.sanitize(trimmed) == trimmed else {
+            throw AstroError.invalidInput("unsafe canonical target folder: \"\(override)\"")
+        }
+        return trimmed
+    }
+
     /// Exact README.txt template ground-truthed against the real
     /// `add_new_session.sh` -- see the design spec's verification note.
     private static func readmeText(
@@ -133,6 +206,7 @@ public enum SessionCreator {
         let createdAt = formatter.string(from: now)
 
         let initialCaptureSection: String
+        let folderMapSection: String
         if let initialCapture {
             initialCaptureSection = """
 
@@ -142,8 +216,26 @@ public enum SessionCreator {
             - Type: \(initialCapture.sensorMode.displayNameHU) · \(initialCapture.signalMode.displayNameHU)
             - Folder: sessions/\(targetFolder)/\(date)/captures/\(initialCapture.slug)
             """
+            // W3-10 owner correction: no classic date-level quartet exists
+            // in this mode (see `WriteGuard.createSessionRoot`'s own doc
+            // comment) -- the folder map must not claim it does. Points
+            // instead at the capture's own raw-frame destination and its
+            // own stack/process locations.
+            folderMapSection = """
+            - sessions/\(targetFolder)/\(date)/captures/\(initialCapture.slug) : RAW frames for this capture
+            - stacks/\(targetFolder)/\(date)/\(initialCapture.slug)          : stacking outputs for this capture
+            - processed/\(targetFolder)/\(date)/\(initialCapture.slug)       : final edits/exports for this capture
+            """
         } else {
             initialCaptureSection = ""
+            folderMapSection = """
+            - sessions/\(targetFolder)/\(date)/lights : RAW light frames
+            - sessions/\(targetFolder)/\(date)/flats  : RAW flats
+            - sessions/\(targetFolder)/\(date)/darks  : RAW darks
+            - sessions/\(targetFolder)/\(date)/biases   : RAW biases (if used)
+            - stacks/\(targetFolder)/\(date)          : stacking outputs
+            - processed/\(targetFolder)/\(date)       : final edits/exports
+            """
         }
 
         return """
@@ -158,12 +250,7 @@ public enum SessionCreator {
 
         Folder map
         ----------
-        - sessions/\(targetFolder)/\(date)/lights : RAW light frames
-        - sessions/\(targetFolder)/\(date)/flats  : RAW flats
-        - sessions/\(targetFolder)/\(date)/darks  : RAW darks
-        - sessions/\(targetFolder)/\(date)/biases   : RAW biases (if used)
-        - stacks/\(targetFolder)/\(date)          : stacking outputs
-        - processed/\(targetFolder)/\(date)       : final edits/exports
+        \(folderMapSection)
         \(initialCaptureSection)
 
         Fill in metadata (recommended)

@@ -32,12 +32,21 @@ public enum DuplicateFinder {
     /// as before. Both tiers stream in bounded chunks inside an
     /// `autoreleasepool` per chunk, so peak memory stays flat regardless of
     /// file count or size — never loading a whole frame into memory.
+    ///
+    /// `onPrefixHash`/`onFullHash` are `throws` (R12-W3 fix) so a caller
+    /// (`AuditEngine.run`, forwarding its own `progress` hook here) can turn
+    /// a `throw CancellationError()` into a stop that lands right after the
+    /// file whose prefix/full hash was just computed and stored -- this is
+    /// the slow part of a full audit (hundreds of GB of frames), so
+    /// cancellation reaching in here matters far more than only stopping
+    /// between the fast, in-memory `AuditRule`s. Source-compatible with
+    /// every existing non-throwing closure literal call site.
     public static func findDuplicates(
         db: Database,
         config: AstroConfig,
         minSizeBytes: Int64 = 1_048_576,
-        onPrefixHash: (() -> Void)? = nil,
-        onFullHash: (() -> Void)? = nil
+        onPrefixHash: (() throws -> Void)? = nil,
+        onFullHash: (() throws -> Void)? = nil
     ) throws -> [Finding] {
         let files = try db.allFiles(includeMissing: false)
         let candidates = files.filter { $0.size >= minSizeBytes }
@@ -54,7 +63,7 @@ public enum DuplicateFinder {
         func fullHashAndStore(_ file: FileRecord) throws -> String {
             let fileURL = root.appendingPathComponent(file.path)
             let hash = try sha256Hash(of: fileURL)
-            onFullHash?()
+            try onFullHash?()
             var updated = file
             updated.contentHash = hash
             try db.upsertFile(updated)
@@ -98,7 +107,7 @@ public enum DuplicateFinder {
             for file in uncachedFiles {
                 let fileURL = root.appendingPathComponent(file.path)
                 let prefix = try prefixHash(of: fileURL)
-                onPrefixHash?()
+                try onPrefixHash?()
                 byPrefix[prefix, default: []].append(file)
             }
 
@@ -198,8 +207,12 @@ public enum DuplicateFinder {
     /// Not `private` (R11-T14): `FixityVerifier` re-hashes the exact same
     /// way to compare against a cached hash, and re-implementing the same
     /// chunked/autoreleasepool'd streaming logic there would just be a
-    /// second copy to keep in sync.
-    static func sha256Hash(of url: URL) throws -> String {
+    /// second copy to keep in sync. `public` (card-import wizard,
+    /// AstroApplication): copy verification needs the exact same streaming
+    /// SHA-256 to compare a freshly-copied library file against its source
+    /// on the card, rather than a second hand-rolled hasher in a different
+    /// module.
+    public static func sha256Hash(of url: URL) throws -> String {
         guard let handle = FileHandle(forReadingAtPath: url.path) else {
             throw AstroError.pathNotFound(path: url.path)
         }

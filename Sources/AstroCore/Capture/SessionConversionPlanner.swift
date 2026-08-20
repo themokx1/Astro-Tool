@@ -291,6 +291,15 @@ public struct SessionConversionPlan: Codable, Equatable, Sendable, Identifiable 
     public var summary: SessionConversionSummary
     public var sourceFingerprint: ConversionSourceFingerprint
     public var humanSummaryHU: String
+    /// English sibling of `humanSummaryHU` -- V1/CLI keep reading
+    /// `humanSummaryHU` unchanged (see that property's own doc); V2's
+    /// `ConversionWorkspace` reads this instead so its Review step never
+    /// shows a Hungarian sentence (V2 UI/UX audit, 2026-08-15, section 4).
+    /// Optional only for backward-compatible decoding of plans saved to disk
+    /// (`plan.json`, which `astrotool` can read back) before this field
+    /// existed -- mirrors `sourceRemovals` immediately above for the same
+    /// reason.
+    public var humanSummary: String?
 
     public var canApply: Bool {
         conflicts.isEmpty && !ambiguities.contains(where: \.isBlocking)
@@ -312,7 +321,8 @@ public struct SessionConversionPlan: Codable, Equatable, Sendable, Identifiable 
         summary: SessionConversionSummary,
         sourceFingerprint: ConversionSourceFingerprint,
         humanSummaryHU: String,
-        sourceRemovals: [ConversionSourceRemoval]? = nil
+        sourceRemovals: [ConversionSourceRemoval]? = nil,
+        humanSummary: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
@@ -330,6 +340,60 @@ public struct SessionConversionPlan: Codable, Equatable, Sendable, Identifiable 
         self.summary = summary
         self.sourceFingerprint = sourceFingerprint
         self.humanSummaryHU = humanSummaryHU
+        self.humanSummary = humanSummary
+    }
+}
+
+public extension ConversionAmbiguity {
+    /// English rendering of `title` -- V1/CLI keep reading `title` unchanged
+    /// (both still show Hungarian output today); V2's `ConversionWorkspace`
+    /// reads this instead so its "Resolve" step never shows a Hungarian
+    /// heading (V2 UI/UX audit, 2026-08-15, section 4). Parses this
+    /// instance's own closed vocabulary (produced only by
+    /// `SessionConversionPlanner.plan`) rather than storing a second string,
+    /// so old serialized plans on disk never gain or lose a Codable key --
+    /// see `SessionConversionPlan.humanSummary`'s own doc for why that
+    /// matters here. Unrecognized text (there is no such case today) passes
+    /// through unchanged rather than hiding it.
+    var titleEnglish: String {
+        if title == "Stack/processed eredmények kézi döntést kérnek" {
+            return "Stack/processed results need a manual decision"
+        }
+        if title.hasPrefix("A(z) "), title.hasSuffix(" frame-ek gyűjtése nem egyértelmű") {
+            let role = title
+                .dropFirst("A(z) ".count)
+                .dropLast(" frame-ek gyűjtése nem egyértelmű".count)
+            return "Which capture group these \(role) frames belong to is not clear"
+        }
+        return title
+    }
+
+    /// English rendering of `explanation` -- see `titleEnglish`'s own doc.
+    var explanationEnglish: String {
+        switch explanation {
+        case "A FITS fejléc és az útvonal nem mondja meg biztosan, melyik optikai/filteres gyűjtéshez tartoznak. Válassz gyűjtést az alkalmazás előtt.":
+            return "The FITS header and path don't say for certain which optical/filter capture group these belong to. Choose a group before applying."
+        case "A név és az útvonal több gyűjtéssel is összeegyeztethető.":
+            return "The name and path are consistent with more than one capture group."
+        default:
+            return explanation
+        }
+    }
+}
+
+public extension ConversionConflict {
+    /// English rendering of `message` -- see `ConversionAmbiguity.titleEnglish`'s
+    /// own doc for why this is a computed translation rather than a second
+    /// stored string.
+    var messageEnglish: String {
+        switch message {
+        case "A célútvonal már foglalt; a konverter nem ír felül fájlt.":
+            return "The destination path is already taken; the converter will not overwrite a file."
+        case "A kézi döntés célútvonala már foglalt; a konverter nem ír felül fájlt.":
+            return "The manual decision's destination path is already taken; the converter will not overwrite a file."
+        default:
+            return message
+        }
     }
 }
 
@@ -455,7 +519,8 @@ public enum SessionConversionPlanner {
                 conflicts: [],
                 summary: SessionConversionSummary(),
                 sourceFingerprint: fingerprint,
-                humanSummaryHU: "A kiválasztott sessionben nincs konvertálható fájl."
+                humanSummaryHU: "A kiválasztott sessionben nincs konvertálható fájl.",
+                humanSummary: "The selected session has no convertible files."
             )
         }
 
@@ -847,7 +912,13 @@ public enum SessionConversionPlanner {
             bytesToMove: moves.reduce(0) { $0 + $1.sizeBytes },
             unchangedCount: unchanged.count
         )
-        let humanSummary = "\(rawCount) nyers expozíció \(clusters.count) gyűjtési csomagban; \(stackedArtifactCount) Stacked* fájl nem nyers light. \(calibrationCount) kalibrációs frame közül \(unresolvedCalibration.values.reduce(0) { $0 + $1.count }) kér kézi döntést. \(mode == .logicalOnly ? "Fájlmozgatás nem történik." : "\(moves.count) fájl mozgatása lenne szükséges.")"
+        let unresolvedCalibrationCount = unresolvedCalibration.values.reduce(0) { $0 + $1.count }
+        let humanSummaryHU = "\(rawCount) nyers expozíció \(clusters.count) gyűjtési csomagban; \(stackedArtifactCount) Stacked* fájl nem nyers light. \(calibrationCount) kalibrációs frame közül \(unresolvedCalibrationCount) kér kézi döntést. \(mode == .logicalOnly ? "Fájlmozgatás nem történik." : "\(moves.count) fájl mozgatása lenne szükséges.")"
+        // English sibling of `humanSummaryHU` above -- same counts, same
+        // conditional tail, English wording. See `SessionConversionPlan
+        // .humanSummary`'s own doc for why this is a separate computed
+        // sentence rather than a translation of the Hungarian one.
+        let humanSummary = "\(rawCount) raw exposure(s) in \(clusters.count) capture group(s); \(stackedArtifactCount) Stacked* file(s) are not raw lights. \(unresolvedCalibrationCount) of \(calibrationCount) calibration frame(s) need a manual decision. \(mode == .logicalOnly ? "No files will be moved." : "\(moves.count) file(s) would need to move.")"
 
         return SessionConversionPlan(
             id: planID,
@@ -863,8 +934,9 @@ public enum SessionConversionPlanner {
             conflicts: conflicts,
             summary: summary,
             sourceFingerprint: fingerprint,
-            humanSummaryHU: humanSummary,
-            sourceRemovals: sourceRemovals
+            humanSummaryHU: humanSummaryHU,
+            sourceRemovals: sourceRemovals,
+            humanSummary: humanSummary
         )
     }
 
@@ -968,6 +1040,7 @@ public enum SessionConversionPlanner {
         plan.summary.bytesToMove = plan.moves.reduce(0) { $0 + $1.sizeBytes }
         plan.summary.unchangedCount = plan.unchangedItems.count
         plan.humanSummaryHU += " Kézi döntés rögzítve: \(ambiguity.affectedPaths.count) fájl → \(groupSlug)."
+        plan.humanSummary?.append(" Manual decision recorded: \(ambiguity.affectedPaths.count) file(s) → \(groupSlug).")
         return plan
     }
 

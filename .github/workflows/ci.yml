@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: swift test --no-parallel
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: V2 UI smoke
+        run: >-
+          xcodebuild test
+          -project AstroTool.xcodeproj
+          -scheme AstroTool
+          -destination 'platform=macOS'
+          -only-testing:AstroToolUITests/AstroToolLaunchTests
+      - name: Check public content
+        run: |
+          scripts/check-public-content.sh
+          scripts/check-release-metadata.sh
+      - name: Build Universal release artifacts
+        run: ./build.sh
+      - name: Smoke-test a clean installation
+        run: scripts/smoke-clean-install.sh
+      - name: Verify architectures and signature
+        run: |
+          lipo -archs build/AstroTool.app/Contents/MacOS/AstroTool
+          lipo -archs build/AstroTool.app/Contents/Resources/astrotool
+          codesign --verify --deep --strict build/AstroTool.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AstroTool-unsigned-test-build
+          path: |
+            build/AstroTool-*.dmg
+            build/astrotool-*.zip
+            build/SHA256SUMS.txt

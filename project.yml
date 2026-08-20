@@ -1,0 +1,61 @@
+name: AstroTool
+
+options:
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+
+packages:
+  AstroToolPackage:
+    path: .
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+
+targets:
+  AstroTool:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/AstroToolApp
+    dependencies:
+      - package: AstroToolPackage
+        product: AstroCore
+      - package: AstroToolPackage
+        product: AstroApplication
+      - package: AstroToolPackage
+        product: AstroUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.astrotool.app
+        PRODUCT_NAME: AstroTool
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: AstroTool
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
+
+  AstroToolUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: UITests/AstroToolUITests
+    dependencies:
+      - target: AstroTool
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.astrotool.app.UITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: AstroTool
+
+schemes:
+  AstroTool:
+    build:
+      targets:
+        AstroTool: all
+        AstroToolUITests: [test]
+    test:
+      targets:
+        - AstroToolUITests

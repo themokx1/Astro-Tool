@@ -20,19 +20,27 @@ public struct ImageMeta: Equatable, Sendable {
     public var exposureSeconds: Double?
     /// Exif `ISOSpeedRatings`, first value when the tag holds more than one.
     public var iso: Int?
+    /// Exif `FNumber` -- the aperture, e.g. `2.8` for f/2.8. `nil` for a lens
+    /// that doesn't report it (or a body with no lens metadata at all).
+    /// Added for the card-import wizard's Classify step (W4-1b): alongside
+    /// `exposureSeconds`/`iso` it's the third value a photographer actually
+    /// reads off a group of CR3 files to decide what they are.
+    public var apertureFNumber: Double?
 
     public init(
         focalLengthMM: Double? = nil,
         cameraModel: String? = nil,
         dateTaken: String? = nil,
         exposureSeconds: Double? = nil,
-        iso: Int? = nil
+        iso: Int? = nil,
+        apertureFNumber: Double? = nil
     ) {
         self.focalLengthMM = focalLengthMM
         self.cameraModel = cameraModel
         self.dateTaken = dateTaken
         self.exposureSeconds = exposureSeconds
         self.iso = iso
+        self.apertureFNumber = apertureFNumber
     }
 }
 
@@ -67,13 +75,15 @@ public enum ImageMetaReader {
         // more than one rating) -- ImageIO surfaces it as an NSNumber array;
         // only the first value is meaningful for our purposes.
         let iso = (exif?[kCGImagePropertyExifISOSpeedRatings] as? [NSNumber])?.first?.intValue
+        let apertureFNumber = exif?[kCGImagePropertyExifFNumber] as? Double
 
         return ImageMeta(
             focalLengthMM: focalLength,
             cameraModel: cameraModel,
             dateTaken: dateTaken,
             exposureSeconds: exposureSeconds,
-            iso: iso
+            iso: iso,
+            apertureFNumber: apertureFNumber
         )
     }
 }

@@ -52,9 +52,110 @@ private final class OutputBox: @unchecked Sendable {
 
 /// Runs the built `astrotool` binary with `args` and captures stdout/stderr/
 /// exit code. Reads stderr on a background queue concurrently with the
+/// stdout read, so a command that writes a lot to one stream while the other
+/// pipe's buffer fills can never deadlock this helper.
+///
+/// `async`, and every blocking call inside it happens on a Dispatch queue
+/// rather than on the caller's thread, because the caller's thread belongs
+/// to the Swift concurrency cooperative pool -- and that pool is
+/// process-wide, fixed-width (one thread per active core, 10 on this
+/// machine) and shared by every one of the 112 suites `swift test` runs in
+/// parallel.
+///
+/// This used to be a synchronous function called from 204 synchronous
+/// `@Test func`s, each of which therefore parked a cooperative thread for
+/// the whole lifetime of a subprocess. With 204 of them and only 10 threads,
+/// the pool sat fully occupied for the ~16 seconds this file takes, and
+/// nothing else in the run could get a thread: any test elsewhere waiting on
+/// a `Task.detached` to start simply did not get one inside its deadline.
+/// That is what made the suite's failures load-dependent and made them land
+/// on tests that have nothing to do with the CLI -- `LibraryLaunchScanTests`,
+/// `LibraryHealthStoreTests`, `ReviewStoreTests`, all of them merely waiting
+/// on `OperationHost.run`'s detached task. Skipping this one file took the
+/// full run from ~27s with a rotating cast of failures to ~10s clean, which
+/// is how it was identified.
+///
+/// Suspending instead of blocking costs nothing here (this file runs in
+/// about the same wall time either way -- subprocess spawn dominates) and
+/// hands those ten threads back to the rest of the run.
+private func runCLI(_ args: [String]) async throws -> CLIResult {
+    // The throttle is not optional. Blocking used to cap this file at ~10
+    // subprocesses in flight (one per cooperative thread) purely as a side
+    // effect of the bug above; suspending removes that accidental cap, and
+    // without a deliberate replacement all 204 tests spawn at once and
+    // several hundred blocking pipe reads pile onto `DispatchQueue.global`,
+    // which tops out around 64 threads. Eight keeps roughly the concurrency
+    // this file always had, and it is not competing with anything now.
+    await CLISubprocessLimiter.shared.acquire()
+    do {
+        let result = try await runCLIOffTheCooperativePool(args)
+        await CLISubprocessLimiter.shared.release()
+        return result
+    } catch {
+        await CLISubprocessLimiter.shared.release()
+        throw error
+    }
+}
+
+/// Caps concurrent `astrotool` subprocesses, restoring the throughput the
+/// old thread-blocking runner got by accident without taking the
+/// cooperative pool hostage to do it. Waiters suspend; they hold no thread.
+private actor CLISubprocessLimiter {
+    static let shared = CLISubprocessLimiter(limit: 8)
+
+    private let limit: Int
+    private var inFlight = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(limit: Int) {
+        self.limit = limit
+    }
+
+    func acquire() async {
+        guard inFlight >= limit else {
+            inFlight += 1
+            return
+        }
+        // Resumed by `release()`, which hands its slot over directly rather
+        // than decrementing -- so `inFlight` stays accurate without this
+        // side having to re-increment after waking.
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            inFlight -= 1
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+}
+
+/// Hands the whole original, synchronous body to a Dispatch queue and awaits
+/// it through a continuation. Deliberately NOT decomposed into concurrent
+/// async reads: `Process.waitUntilExit()` is not safe to call from a
+/// different thread than the one draining the pipes -- doing so hangs
+/// forever on an already-exited process (observed: a sample of the stalled
+/// run showed 2630 of 3000 samples parked inside `waitUntilExit`, with zero
+/// `astrotool` processes actually alive). The sequence below is byte-for-byte
+/// the one that has always worked; the only thing that changed is which
+/// thread pool it blocks.
+private func runCLIOffTheCooperativePool(_ args: [String]) async throws -> CLIResult {
+    try await withCheckedThrowingContinuation { continuation in
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                continuation.resume(returning: try runCLIBlocking(args))
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+}
+
+/// Reads stderr on a second background queue concurrently with the
 /// synchronous stdout read, so a command that writes a lot to one stream
 /// while the other pipe's buffer fills can never deadlock this helper.
-private func runCLI(_ args: [String]) throws -> CLIResult {
+private func runCLIBlocking(_ args: [String]) throws -> CLIResult {
     let process = Process()
     process.executableURL = astrotoolBinary()
     process.arguments = args
@@ -91,23 +192,32 @@ private func makeTempRoot(_ label: String) throws -> URL {
     return dir
 }
 
-@Test func sessionConvertPlanRequiresOneExactTargetAndDate() throws {
+@Test func rootRequiredCommandWithoutRootExplainsHowToContinue() async throws {
+    let result = try await runCLI(["stats"])
+
+    #expect(result.exitCode == 1)
+    #expect(result.stderr.contains("no library root selected"))
+    #expect(result.stderr.contains("--root /path/to/library"))
+    #expect(!result.stderr.contains("path not found: \n"))
+}
+
+@Test func sessionConvertPlanRequiresOneExactTargetAndDate() async throws {
     let root = try makeTempRoot("convert-scope")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let result = try runCLI(["session-convert", "plan", "--root", root.path, "--target", "IC_1396"])
+    let result = try await runCLI(["session-convert", "plan", "--root", root.path, "--target", "IC_1396"])
 
     #expect(result.exitCode == 1)
     #expect(result.stderr.contains("--target and --date are required"))
 }
 
-@Test func captureCreateAndListRoundTripThroughCLIJSON() throws {
+@Test func captureCreateAndListRoundTripThroughCLIJSON() async throws {
     let root = try makeTempRoot("capture-cli")
     defer { try? FileManager.default.removeItem(at: root) }
     let session = root.appendingPathComponent("sessions/IC_1396/2026-08-08", isDirectory: true)
     try FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)
 
-    let created = try runCLI([
+    let created = try await runCLI([
         "capture", "create", "--root", root.path, "--target", "IC_1396", "--date", "2026-08-08",
         "--name", "SV220 köd sorozat", "--slug", "sv220-300s", "--sensor", "osc",
         "--signal", "dual_band", "--filter-maker", "SVBONY", "--filter-model", "SV220", "--json"
@@ -115,14 +225,14 @@ private func makeTempRoot(_ label: String) throws -> URL {
     #expect(created.exitCode == 0)
     #expect(created.stdout.contains("\"slug\" : \"sv220-300s\""))
 
-    let listed = try runCLI([
+    let listed = try await runCLI([
         "capture", "list", "--root", root.path, "--target", "IC_1396", "--date", "2026-08-08", "--json"
     ])
     #expect(listed.exitCode == 0)
     #expect(listed.stdout.contains("SV220 köd sorozat"))
 }
 
-@Test func sessionConvertPlanJSONNamesExactSingleSessionPathsAndApplyNeedsConfirmation() throws {
+@Test func sessionConvertPlanJSONNamesExactSingleSessionPathsAndApplyNeedsConfirmation() async throws {
     let root = try makeTempRoot("convert-preview")
     defer { try? FileManager.default.removeItem(at: root) }
     let light = root.appendingPathComponent(
@@ -130,10 +240,10 @@ private func makeTempRoot(_ label: String) throws -> URL {
     )
     try FileManager.default.createDirectory(at: light.deletingLastPathComponent(), withIntermediateDirectories: true)
     try Data("not-a-real-fits-but-indexable".utf8).write(to: light)
-    #expect(try runCLI(["scan", "--root", root.path]).exitCode == 0)
+    #expect(try await runCLI(["scan", "--root", root.path]).exitCode == 0)
 
     let planURL = root.appendingPathComponent("preview-plan.json")
-    let preview = try runCLI([
+    let preview = try await runCLI([
         "session-convert", "plan", "--root", root.path, "--target", "IC_1396",
         "--date", "2026-08-08", "--out", planURL.path, "--json"
     ])
@@ -142,7 +252,7 @@ private func makeTempRoot(_ label: String) throws -> URL {
     #expect(preview.stdout.contains("sessions\\/IC_1396\\/2026-08-08\\/lights_osc\\/light_001.fit"))
     #expect(!preview.stdout.contains("2026-08-09"))
 
-    let refused = try runCLI([
+    let refused = try await runCLI([
         "session-convert", "apply", "--root", root.path, "--plan", planURL.path
     ])
     #expect(refused.exitCode == 1)
@@ -219,12 +329,12 @@ struct CLISmokeTests {
 
 // MARK: - scan
 
-@Test func scanJSONReportsAddedFiles() throws {
+@Test func scanJSONReportsAddedFiles() async throws {
     let root = try makeTempRoot("scan-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let result = try runCLI(["scan", "--root", root.path, "--json"])
+    let result = try await runCLI(["scan", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
@@ -232,15 +342,15 @@ struct CLISmokeTests {
     #expect(added > 0)
 }
 
-@Test func secondScanReportsUnchanged() throws {
+@Test func secondScanReportsUnchanged() async throws {
     let root = try makeTempRoot("scan-twice")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let first = try runCLI(["scan", "--root", root.path, "--json"])
+    let first = try await runCLI(["scan", "--root", root.path, "--json"])
     #expect(first.exitCode == 0, "stderr: \(first.stderr)")
 
-    let second = try runCLI(["scan", "--root", root.path, "--json"])
+    let second = try await runCLI(["scan", "--root", root.path, "--json"])
     #expect(second.exitCode == 0, "stderr: \(second.stderr)")
 
     let json = try JSONSerialization.jsonObject(with: Data(second.stdout.utf8)) as? [String: Any]
@@ -248,19 +358,19 @@ struct CLISmokeTests {
     #expect(unchanged > 0)
 }
 
-@Test func scanRefreshMetaFlagRunsAndExitsZero() throws {
+@Test func scanRefreshMetaFlagRunsAndExitsZero() async throws {
     let root = try makeTempRoot("scan-refresh-meta")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let first = try runCLI(["scan", "--root", root.path])
+    let first = try await runCLI(["scan", "--root", root.path])
     #expect(first.exitCode == 0, "stderr: \(first.stderr)")
 
-    let second = try runCLI(["scan", "--root", root.path, "--refresh-meta"])
+    let second = try await runCLI(["scan", "--root", root.path, "--refresh-meta"])
     #expect(second.exitCode == 0, "stderr: \(second.stderr)")
 }
 
-@Test func scanWithInaccessibleSubdirectoryStillExitsZeroAndWarnsOnStderr() throws {
+@Test func scanWithInaccessibleSubdirectoryStillExitsZeroAndWarnsOnStderr() async throws {
     let root = try makeTempRoot("scan-inaccessible-subdir")
     defer {
         try? FileManager.default.setAttributes(
@@ -271,28 +381,28 @@ struct CLISmokeTests {
     }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let first = try runCLI(["scan", "--root", root.path])
+    let first = try await runCLI(["scan", "--root", root.path])
     #expect(first.exitCode == 0, "stderr: \(first.stderr)")
 
     let restrictedDir = root.appendingPathComponent("sessions/M45_Pleiades/2026-01-10/lights")
     try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: restrictedDir.path)
 
-    let second = try runCLI(["scan", "--root", root.path])
+    let second = try await runCLI(["scan", "--root", root.path])
     #expect(second.exitCode == 0, "stdout: \(second.stdout), stderr: \(second.stderr)")
     #expect(second.stderr.contains("sessions/M45_Pleiades/2026-01-10/lights"))
 }
 
 // MARK: - audit
 
-@Test func auditJSONAfterScanReportsKnownCategories() throws {
+@Test func auditJSONAfterScanReportsKnownCategories() async throws {
     let root = try makeTempRoot("audit-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let audit = try runCLI(["audit", "--root", root.path, "--json"])
+    let audit = try await runCLI(["audit", "--root", root.path, "--json"])
     #expect(audit.exitCode == 0, "stderr: \(audit.stderr)")
 
     let json = try jsonItems(audit.stdout)
@@ -303,15 +413,15 @@ struct CLISmokeTests {
 
 // MARK: - audit --json diff (R11-T8/F6)
 
-@Test func auditJSONFirstRunHasNoDiffBlock() throws {
+@Test func auditJSONFirstRunHasNoDiffBlock() async throws {
     let root = try makeTempRoot("audit-diff-first")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let audit = try runCLI(["audit", "--root", root.path, "--json"])
+    let audit = try await runCLI(["audit", "--root", root.path, "--json"])
     #expect(audit.exitCode == 0, "stderr: \(audit.stderr)")
 
     let json = try jsonObject(audit.stdout)
@@ -321,20 +431,20 @@ struct CLISmokeTests {
     #expect((json?["items"] as? [[String: Any]])?.isEmpty == false)
 }
 
-@Test func auditJSONSecondRunHasDiffBlockWithUnchangedGroups() throws {
+@Test func auditJSONSecondRunHasDiffBlockWithUnchangedGroups() async throws {
     let root = try makeTempRoot("audit-diff-second")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let first = try runCLI(["audit", "--root", root.path, "--json"])
+    let first = try await runCLI(["audit", "--root", root.path, "--json"])
     #expect(first.exitCode == 0, "stderr: \(first.stderr)")
 
     // Nothing changed on disk between the two runs -- every group should
     // come back "unchanged", none new/resolved.
-    let second = try runCLI(["audit", "--root", root.path, "--json"])
+    let second = try await runCLI(["audit", "--root", root.path, "--json"])
     #expect(second.exitCode == 0, "stderr: \(second.stderr)")
 
     let diff = try #require(try jsonObject(second.stdout)?["diff"] as? [String: Any])
@@ -344,15 +454,15 @@ struct CLISmokeTests {
     #expect((diff["new_groups"] as? [Any])?.isEmpty == true)
 }
 
-@Test func auditJSONReportsNewGroupKeysAfterALibraryChange() throws {
+@Test func auditJSONReportsNewGroupKeysAfterALibraryChange() async throws {
     let root = try makeTempRoot("audit-diff-new")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let first = try runCLI(["audit", "--root", root.path, "--json"])
+    let first = try await runCLI(["audit", "--root", root.path, "--json"])
     #expect(first.exitCode == 0, "stderr: \(first.stderr)")
 
     // A brand-new placeholder-named stack directory the first audit never
@@ -361,10 +471,10 @@ struct CLISmokeTests {
     try FileManager.default.createDirectory(at: strayDir, withIntermediateDirectories: true)
     try "fixture dummy content\n".write(to: strayDir.appendingPathComponent("stack.fit"), atomically: true, encoding: .utf8)
 
-    let rescan = try runCLI(["scan", "--root", root.path])
+    let rescan = try await runCLI(["scan", "--root", root.path])
     #expect(rescan.exitCode == 0, "stderr: \(rescan.stderr)")
 
-    let second = try runCLI(["audit", "--root", root.path, "--json"])
+    let second = try await runCLI(["audit", "--root", root.path, "--json"])
     #expect(second.exitCode == 0, "stderr: \(second.stderr)")
 
     let diff = try #require(try jsonObject(second.stdout)?["diff"] as? [String: Any])
@@ -375,32 +485,32 @@ struct CLISmokeTests {
     })
 }
 
-@Test func auditHumanOutputPrintsDiffSummaryLineOnlyFromTheSecondRunOnward() throws {
+@Test func auditHumanOutputPrintsDiffSummaryLineOnlyFromTheSecondRunOnward() async throws {
     let root = try makeTempRoot("audit-diff-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let first = try runCLI(["audit", "--root", root.path])
+    let first = try await runCLI(["audit", "--root", root.path])
     #expect(first.exitCode == 0, "stderr: \(first.stderr)")
     #expect(!first.stdout.contains("diff (vs previous run)"))
 
-    let second = try runCLI(["audit", "--root", root.path])
+    let second = try await runCLI(["audit", "--root", root.path])
     #expect(second.exitCode == 0, "stderr: \(second.stderr)")
     #expect(second.stdout.contains("diff (vs previous run): 0 new, 0 resolved,"))
 }
 
-@Test func auditSuggestWritesSuggestionScript() throws {
+@Test func auditSuggestWritesSuggestionScript() async throws {
     let root = try makeTempRoot("audit-suggest")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["audit", "--root", root.path, "--suggest"])
+    let result = try await runCLI(["audit", "--root", root.path, "--suggest"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let suggestionsDir = root.appendingPathComponent(".astro_tool/suggestions")
@@ -408,17 +518,17 @@ struct CLISmokeTests {
     #expect(!contents.isEmpty)
 }
 
-@Test func auditJSONStdoutIsPureJSON() throws {
+@Test func auditJSONStdoutIsPureJSON() async throws {
     let root = try makeTempRoot("audit-pure-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     // --suggest on top of --json: the "suggestion written to ..." message
     // must NOT leak onto stdout -- only findings JSON belongs there.
-    let result = try runCLI(["audit", "--root", root.path, "--json", "--suggest"])
+    let result = try await runCLI(["audit", "--root", root.path, "--json", "--suggest"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     // Decoding from the FULL stdout data must succeed -- any stray
@@ -428,19 +538,19 @@ struct CLISmokeTests {
 
 // MARK: - audit --suggest --out (R11-T4)
 
-@Test func auditSuggestOutWritesScriptToCustomPathOutsideRoot() throws {
+@Test func auditSuggestOutWritesScriptToCustomPathOutsideRoot() async throws {
     let root = try makeTempRoot("audit-suggest-out")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     let outDir = try makeTempRoot("audit-suggest-out-dest")
     defer { try? FileManager.default.removeItem(at: outDir) }
     let outPath = outDir.appendingPathComponent("suggest.sh").path
 
-    let result = try runCLI(["audit", "--root", root.path, "--suggest", "--out", outPath])
+    let result = try await runCLI(["audit", "--root", root.path, "--suggest", "--out", outPath])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(FileManager.default.fileExists(atPath: outPath))
 
@@ -449,15 +559,15 @@ struct CLISmokeTests {
     #expect(!FileManager.default.fileExists(atPath: defaultDir.path))
 }
 
-@Test func auditSuggestOutDashPrintsScriptToStdoutInsteadOfWritingAFile() throws {
+@Test func auditSuggestOutDashPrintsScriptToStdoutInsteadOfWritingAFile() async throws {
     let root = try makeTempRoot("audit-suggest-out-dash")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["audit", "--root", root.path, "--suggest", "--out", "-"])
+    let result = try await runCLI(["audit", "--root", root.path, "--suggest", "--out", "-"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("#!/bin/bash"))
 
@@ -465,40 +575,40 @@ struct CLISmokeTests {
     #expect(!FileManager.default.fileExists(atPath: defaultDir.path))
 }
 
-@Test func auditOutWithoutSuggestExitsWithUsageError() throws {
+@Test func auditOutWithoutSuggestExitsWithUsageError() async throws {
     let root = try makeTempRoot("audit-out-no-suggest")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["audit", "--root", root.path, "--out", "-"])
+    let result = try await runCLI(["audit", "--root", root.path, "--out", "-"])
     #expect(result.exitCode == 1)
     #expect(result.stderr.contains("--out requires --suggest"))
 }
 
-@Test func auditSuggestOutInsideLibraryRootIsRejected() throws {
+@Test func auditSuggestOutInsideLibraryRootIsRejected() async throws {
     let root = try makeTempRoot("audit-suggest-out-inside")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     let insidePath = root.appendingPathComponent("sneaky.sh").path
-    let result = try runCLI(["audit", "--root", root.path, "--suggest", "--out", insidePath])
+    let result = try await runCLI(["audit", "--root", root.path, "--suggest", "--out", insidePath])
     #expect(result.exitCode == 1)
     #expect(!FileManager.default.fileExists(atPath: insidePath))
 }
 
 // MARK: - verify (R11-T14/F9)
 
-@Test func verifyOnAnEmptyDatabaseReportsZeroCheckedAndHintsToScanFirst() throws {
+@Test func verifyOnAnEmptyDatabaseReportsZeroCheckedAndHintsToScanFirst() async throws {
     let root = try makeTempRoot("verify-empty")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let result = try runCLI(["verify", "--root", root.path, "--json"])
+    let result = try await runCLI(["verify", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stderr.contains("scan"))
 
@@ -510,7 +620,7 @@ struct CLISmokeTests {
 /// `scan` + `audit` on two byte-identical files above `DuplicateFinder`'s
 /// size threshold caches a hash for both -- `verify` then re-checks them,
 /// finds nothing wrong, and exits 0.
-@Test func verifyJSONAfterAuditReportsOkForUnchangedFiles() throws {
+@Test func verifyJSONAfterAuditReportsOkForUnchangedFiles() async throws {
     let root = try makeTempRoot("verify-ok")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -519,12 +629,12 @@ struct CLISmokeTests {
     try writeVerifyFixtureFile(at: root.appendingPathComponent(path1), byte: 0xAB, size: verifyDupSize)
     try writeVerifyFixtureFile(at: root.appendingPathComponent(path2), byte: 0xAB, size: verifyDupSize)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
-    let audit = try runCLI(["audit", "--root", root.path])
+    let audit = try await runCLI(["audit", "--root", root.path])
     #expect(audit.exitCode == 0, "stderr: \(audit.stderr)")
 
-    let result = try runCLI(["verify", "--root", root.path, "--json"])
+    let result = try await runCLI(["verify", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let root2 = try #require(try jsonObject(result.stdout))
@@ -538,7 +648,7 @@ struct CLISmokeTests {
 /// The end-to-end exit-5 contract (F9/F10-a): a same-size, same-mtime
 /// content mismatch -- silent corruption -- must be reported as
 /// `content-changed` and exit 5, distinctly from every other exit code.
-@Test func verifyDetectsContentChangedAndExitsWithCode5() throws {
+@Test func verifyDetectsContentChangedAndExitsWithCode5() async throws {
     let root = try makeTempRoot("verify-corrupt")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -549,9 +659,9 @@ struct CLISmokeTests {
     try writeVerifyFixtureFile(at: url1, byte: 0xAB, size: verifyDupSize)
     try writeVerifyFixtureFile(at: url2, byte: 0xAB, size: verifyDupSize)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
-    let audit = try runCLI(["audit", "--root", root.path])
+    let audit = try await runCLI(["audit", "--root", root.path])
     #expect(audit.exitCode == 0, "stderr: \(audit.stderr)")
 
     let mtimeBeforeCorruption = try url1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate ?? Date()
@@ -559,7 +669,7 @@ struct CLISmokeTests {
     // bitrot shape: content changed, metadata didn't.
     try corruptFileInPlacePreservingMTime(at: url1, byte: 0xCD, size: verifyDupSize, mtime: mtimeBeforeCorruption)
 
-    let result = try runCLI(["verify", "--root", root.path, "--json"])
+    let result = try await runCLI(["verify", "--root", root.path, "--json"])
     #expect(result.exitCode == 5, "stdout: \(result.stdout), stderr: \(result.stderr)")
 
     let root2 = try #require(try jsonObject(result.stdout))
@@ -574,7 +684,7 @@ struct CLISmokeTests {
     #expect(items.first?["path"] as? String == path1)
 
     // Human output surfaces the same mismatch under an "ELTÉRÉS" line.
-    let humanResult = try runCLI(["verify", "--root", root.path])
+    let humanResult = try await runCLI(["verify", "--root", root.path])
     #expect(humanResult.exitCode == 5)
     #expect(humanResult.stdout.contains("ELTÉRÉS"))
     #expect(humanResult.stdout.contains(path1))
@@ -582,7 +692,7 @@ struct CLISmokeTests {
 
 /// A same-size rewrite with a newer mtime is suspicious and must be visible
 /// in the human CLI output, but it is not a confirmed-corruption exit-5.
-@Test func verifyHumanOutputReportsModifiedInPlaceSeparately() throws {
+@Test func verifyHumanOutputReportsModifiedInPlaceSeparately() async throws {
     let root = try makeTempRoot("verify-modified-in-place")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -593,8 +703,8 @@ struct CLISmokeTests {
     try writeVerifyFixtureFile(at: url1, byte: 0xAB, size: verifyDupSize)
     try writeVerifyFixtureFile(at: url2, byte: 0xAB, size: verifyDupSize)
 
-    #expect(try runCLI(["scan", "--root", root.path]).exitCode == 0)
-    #expect(try runCLI(["audit", "--root", root.path]).exitCode == 0)
+    #expect(try await runCLI(["scan", "--root", root.path]).exitCode == 0)
+    #expect(try await runCLI(["audit", "--root", root.path]).exitCode == 0)
 
     let oldMTime = try url1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate ?? Date()
     try writeVerifyFixtureFile(at: url1, byte: 0xCD, size: verifyDupSize)
@@ -603,28 +713,28 @@ struct CLISmokeTests {
         ofItemAtPath: url1.path
     )
 
-    let result = try runCLI(["verify", "--root", root.path])
+    let result = try await runCLI(["verify", "--root", root.path])
     #expect(result.exitCode == 0, "stdout: \(result.stdout), stderr: \(result.stderr)")
     #expect(result.stdout.contains("helyben módosult 1"))
     #expect(result.stdout.contains(path1))
 }
 
-@Test func verifySampleFlagRejectsOutOfRangeOrNonNumericValues() throws {
+@Test func verifySampleFlagRejectsOutOfRangeOrNonNumericValues() async throws {
     let root = try makeTempRoot("verify-sample-invalid")
     defer { try? FileManager.default.removeItem(at: root) }
 
     for badValue in ["0", "101", "abc", "-5"] {
-        let result = try runCLI(["verify", "--root", root.path, "--sample", badValue])
+        let result = try await runCLI(["verify", "--root", root.path, "--sample", badValue])
         #expect(result.exitCode == 1, "sample=\(badValue) should be rejected")
         #expect(result.stderr.contains("--sample"))
     }
 }
 
-@Test func verifyBaselineRejectsSampling() throws {
+@Test func verifyBaselineRejectsSampling() async throws {
     let root = try makeTempRoot("verify-baseline-sample")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "verify", "--root", root.path, "--baseline", "--sample", "10",
     ])
 
@@ -633,7 +743,7 @@ struct CLISmokeTests {
     #expect(result.stderr.contains("--sample"))
 }
 
-@Test func verifyBaselineHumanOutputHashesMissingChecksumsAndIsIdempotent() throws {
+@Test func verifyBaselineHumanOutputHashesMissingChecksumsAndIsIdempotent() async throws {
     let root = try makeTempRoot("verify-baseline-human")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -641,25 +751,25 @@ struct CLISmokeTests {
     try writeVerifyFixtureFile(
         at: root.appendingPathComponent(relativePath), byte: 0xAB, size: 128
     )
-    #expect(try runCLI(["scan", "--root", root.path]).exitCode == 0)
+    #expect(try await runCLI(["scan", "--root", root.path]).exitCode == 0)
 
-    let first = try runCLI(["verify", "--root", root.path, "--baseline"])
+    let first = try await runCLI(["verify", "--root", root.path, "--baseline"])
     #expect(first.exitCode == 0, "stdout: \(first.stdout), stderr: \(first.stderr)")
     #expect(first.stdout.contains("új hash 1"))
     #expect(first.stdout.contains("lefedettség 1/1"))
     #expect(first.stdout.contains("100"))
 
-    let second = try runCLI(["verify", "--root", root.path, "--baseline"])
+    let second = try await runCLI(["verify", "--root", root.path, "--baseline"])
     #expect(second.exitCode == 0, "stdout: \(second.stdout), stderr: \(second.stderr)")
     #expect(second.stdout.contains("új hash 0"))
     #expect(second.stdout.contains("lefedettség 1/1"))
 }
 
-@Test func verifyBaselineJSONReportsCoverageForAnEmptyLibrary() throws {
+@Test func verifyBaselineJSONReportsCoverageForAnEmptyLibrary() async throws {
     let root = try makeTempRoot("verify-baseline-empty-json")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "verify", "--root", root.path, "--baseline", "--json",
     ])
     #expect(result.exitCode == 0, "stdout: \(result.stdout), stderr: \(result.stderr)")
@@ -676,7 +786,7 @@ struct CLISmokeTests {
     #expect(try #require(payload["items"] as? [[String: Any]]).isEmpty)
 }
 
-@Test func verifyTargetFlagScopesToOneTargetOnly() throws {
+@Test func verifyTargetFlagScopesToOneTargetOnly() async throws {
     let root = try makeTempRoot("verify-target-scope")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -685,12 +795,12 @@ struct CLISmokeTests {
     try writeVerifyFixtureFile(at: root.appendingPathComponent("sessions/M42/2026-02-02/lights/c.fit"), byte: 0xCD, size: verifyDupSize)
     try writeVerifyFixtureFile(at: root.appendingPathComponent("sessions/M42/2026-02-02/lights/d.fit"), byte: 0xCD, size: verifyDupSize)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
-    let audit = try runCLI(["audit", "--root", root.path])
+    let audit = try await runCLI(["audit", "--root", root.path])
     #expect(audit.exitCode == 0, "stderr: \(audit.stderr)")
 
-    let result = try runCLI(["verify", "--root", root.path, "--target", "M42", "--json"])
+    let result = try await runCLI(["verify", "--root", root.path, "--target", "M42", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let root2 = try #require(try jsonObject(result.stdout))
@@ -700,15 +810,15 @@ struct CLISmokeTests {
 
 // MARK: - cleanup
 
-@Test func cleanupJSONAfterScanReportsResidueGroups() throws {
+@Test func cleanupJSONAfterScanReportsResidueGroups() async throws {
     let root = try makeTempRoot("cleanup-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["cleanup", "--root", root.path, "--json"])
+    let result = try await runCLI(["cleanup", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
@@ -724,15 +834,15 @@ struct CLISmokeTests {
 
 // MARK: - cleanup --json storage block (R11-T8/F19)
 
-@Test func cleanupJSONReportsPerTargetStorageBreakdown() throws {
+@Test func cleanupJSONReportsPerTargetStorageBreakdown() async throws {
     let root = try makeTempRoot("cleanup-storage-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["cleanup", "--root", root.path, "--json"])
+    let result = try await runCLI(["cleanup", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonObject(result.stdout)
@@ -760,29 +870,29 @@ struct CLISmokeTests {
     #expect(totals == totals.sorted(by: >))
 }
 
-@Test func cleanupHumanOutputPrintsGroupsAndTotal() throws {
+@Test func cleanupHumanOutputPrintsGroupsAndTotal() async throws {
     let root = try makeTempRoot("cleanup-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["cleanup", "--root", root.path])
+    let result = try await runCLI(["cleanup", "--root", root.path])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("residue-seq"))
     #expect(result.stdout.contains("összesen felszabadítható"))
 }
 
-@Test func cleanupSuggestWritesQuarantineScriptWithNoRM() throws {
+@Test func cleanupSuggestWritesQuarantineScriptWithNoRM() async throws {
     let root = try makeTempRoot("cleanup-suggest")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["cleanup", "--root", root.path, "--suggest"])
+    let result = try await runCLI(["cleanup", "--root", root.path, "--suggest"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let suggestionsDir = root.appendingPathComponent(".astro_tool/suggestions")
@@ -813,19 +923,19 @@ struct CLISmokeTests {
 
 // MARK: - cleanup --suggest --out (R11-T4)
 
-@Test func cleanupSuggestOutWritesScriptToCustomPath() throws {
+@Test func cleanupSuggestOutWritesScriptToCustomPath() async throws {
     let root = try makeTempRoot("cleanup-suggest-out")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     let outDir = try makeTempRoot("cleanup-suggest-out-dest")
     defer { try? FileManager.default.removeItem(at: outDir) }
     let outPath = outDir.appendingPathComponent("cleanup.sh").path
 
-    let result = try runCLI(["cleanup", "--root", root.path, "--suggest", "--out", outPath])
+    let result = try await runCLI(["cleanup", "--root", root.path, "--suggest", "--out", outPath])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(FileManager.default.fileExists(atPath: outPath))
 
@@ -833,30 +943,30 @@ struct CLISmokeTests {
     #expect(!FileManager.default.fileExists(atPath: defaultDir.path))
 }
 
-@Test func cleanupOutWithoutSuggestExitsWithUsageError() throws {
+@Test func cleanupOutWithoutSuggestExitsWithUsageError() async throws {
     let root = try makeTempRoot("cleanup-out-no-suggest")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["cleanup", "--root", root.path, "--out", "-"])
+    let result = try await runCLI(["cleanup", "--root", root.path, "--out", "-"])
     #expect(result.exitCode == 1)
     #expect(result.stderr.contains("--out requires --suggest"))
 }
 
 // MARK: - stats
 
-@Test func statsJSONContainsFixtureTarget() throws {
+@Test func statsJSONContainsFixtureTarget() async throws {
     let root = try makeTempRoot("stats-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stats", "--root", root.path, "--json"])
+    let result = try await runCLI(["stats", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -865,29 +975,29 @@ struct CLISmokeTests {
     #expect(targets.contains("M45_Pleiades"))
 }
 
-@Test func statsTargetNotFoundExitsWithError() throws {
+@Test func statsTargetNotFoundExitsWithError() async throws {
     let root = try makeTempRoot("stats-missing")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stats", "--root", root.path, "--target", "NONEXISTENT_TARGET"])
+    let result = try await runCLI(["stats", "--root", root.path, "--target", "NONEXISTENT_TARGET"])
     // R11-T4: target/session-lookup failures get their own exit code (3),
     // carved out of the generic usage/error bucket (1).
     #expect(result.exitCode == 3)
 }
 
-@Test func statsSessionsJSONDecodesForFixtureTarget() throws {
+@Test func statsSessionsJSONDecodesForFixtureTarget() async throws {
     let root = try makeTempRoot("stats-sessions-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--sessions", "--json"])
+    let result = try await runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--sessions", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -896,15 +1006,15 @@ struct CLISmokeTests {
     #expect(sessions.allSatisfy { $0["target"] as? String == "M45_Pleiades" })
 }
 
-@Test func statsJSONCarriesUsableAndGrossIntegrationFields() throws {
+@Test func statsJSONCarriesUsableAndGrossIntegrationFields() async throws {
     let root = try makeTempRoot("stats-json-r4-1")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--json"])
+    let result = try await runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
@@ -918,40 +1028,40 @@ struct CLISmokeTests {
     #expect(stats["excluded_session_dates"] != nil)
 }
 
-@Test func statsHumanOutputWithGrossFlagShowsGrossLine() throws {
+@Test func statsHumanOutputWithGrossFlagShowsGrossLine() async throws {
     let root = try makeTempRoot("stats-gross-flag")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--gross"])
+    let result = try await runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--gross"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("gross (undeduped):"))
 }
 
-@Test func statsSessionsWithoutTargetExitsWithError() throws {
+@Test func statsSessionsWithoutTargetExitsWithError() async throws {
     let root = try makeTempRoot("stats-sessions-no-target")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stats", "--root", root.path, "--sessions", "--json"])
+    let result = try await runCLI(["stats", "--root", root.path, "--sessions", "--json"])
     #expect(result.exitCode == 1)
 }
 
-@Test func statsTimelineJSONDecodesForFixtureTarget() throws {
+@Test func statsTimelineJSONDecodesForFixtureTarget() async throws {
     let root = try makeTempRoot("stats-timeline-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--timeline", "--json"])
+    let result = try await runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--timeline", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -962,68 +1072,68 @@ struct CLISmokeTests {
     #expect(timelines.allSatisfy { $0["gaps"] != nil })
 }
 
-@Test func statsTimelineHumanOutputPrintsWindowAndIntegration() throws {
+@Test func statsTimelineHumanOutputPrintsWindowAndIntegration() async throws {
     let root = try makeTempRoot("stats-timeline-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--timeline"])
+    let result = try await runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--timeline"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("window:"))
     #expect(result.stdout.contains("integration:"))
 }
 
-@Test func statsTimelineWithoutTargetExitsWithError() throws {
+@Test func statsTimelineWithoutTargetExitsWithError() async throws {
     let root = try makeTempRoot("stats-timeline-no-target")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stats", "--root", root.path, "--timeline", "--json"])
+    let result = try await runCLI(["stats", "--root", root.path, "--timeline", "--json"])
     #expect(result.exitCode == 1)
 }
 
-@Test func rateForceFlagReRatesAnAlreadyRatedTargetSuccessfully() throws {
+@Test func rateForceFlagReRatesAnAlreadyRatedTargetSuccessfully() async throws {
     let root = try makeTempRoot("rate-force")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let first = try runCLI(["rate", "--root", root.path, "--target", "M45_Pleiades", "--no-siril"])
+    let first = try await runCLI(["rate", "--root", root.path, "--target", "M45_Pleiades", "--no-siril"])
     #expect(first.exitCode == 0, "stderr: \(first.stderr)")
 
     // A second `rate` run with `--force` must succeed too (end-to-end CLI
     // wiring for `Rater.rate`'s `force` parameter, R7-B6 item 1) -- not
     // just short-circuit as an already-cached hit.
-    let forced = try runCLI(["rate", "--root", root.path, "--target", "M45_Pleiades", "--no-siril", "--force"])
+    let forced = try await runCLI(["rate", "--root", root.path, "--target", "M45_Pleiades", "--no-siril", "--force"])
     #expect(forced.exitCode == 0, "stderr: \(forced.stderr)")
     #expect(!forced.stdout.isEmpty)
 }
 
 // MARK: - stats --filters (R10-B8)
 
-@Test func statsFiltersJSONFrameCountsSumToPlainStatsUsableFrameCount() throws {
+@Test func statsFiltersJSONFrameCountsSumToPlainStatsUsableFrameCount() async throws {
     let root = try makeTempRoot("stats-filters-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let plain = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--json"])
+    let plain = try await runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--json"])
     #expect(plain.exitCode == 0, "stderr: \(plain.stderr)")
     let plainJSON = try #require(try JSONSerialization.jsonObject(with: Data(plain.stdout.utf8)) as? [String: Any])
     let expectedFrameCount = try #require(plainJSON["usable_frame_count"] as? Int)
     #expect(expectedFrameCount > 0)
 
-    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--filters", "--json"])
+    let result = try await runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--filters", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     let json = try jsonItems(result.stdout)
     let rows = try #require(json)
@@ -1034,15 +1144,15 @@ struct CLISmokeTests {
     #expect(totalFrames == expectedFrameCount)
 }
 
-@Test func statsFiltersHumanOutputPrintsHungarianHeaders() throws {
+@Test func statsFiltersHumanOutputPrintsHungarianHeaders() async throws {
     let root = try makeTempRoot("stats-filters-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--filters"])
+    let result = try await runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--filters"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("SZŰRŐ"))
     #expect(result.stdout.contains("KERET"))
@@ -1053,15 +1163,15 @@ struct CLISmokeTests {
 /// from `M45_Pleiades`'s whole-target roll-up (asserted indirectly above,
 /// via the frame-count-sum invariant) -- scoping `--filters` to exactly that
 /// date must still report its own real frame, never an empty result.
-@Test func statsFiltersWithDateStillReportsAnExcludedHibasSessionsOwnFrames() throws {
+@Test func statsFiltersWithDateStillReportsAnExcludedHibasSessionsOwnFrames() async throws {
     let root = try makeTempRoot("stats-filters-date-hibas")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "stats", "--root", root.path, "--target", "M45_Pleiades", "--filters", "--date", "2026-03-15_hibas", "--json",
     ])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
@@ -1071,32 +1181,32 @@ struct CLISmokeTests {
     #expect(totalFrames == 1)
 }
 
-@Test func statsFiltersWithoutTargetExitsWithError() throws {
+@Test func statsFiltersWithoutTargetExitsWithError() async throws {
     let root = try makeTempRoot("stats-filters-no-target")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stats", "--root", root.path, "--filters", "--json"])
+    let result = try await runCLI(["stats", "--root", root.path, "--filters", "--json"])
     #expect(result.exitCode == 1)
 }
 
 // MARK: - quality
 
-@Test func qualityJSONAfterRateDecodesForFixtureTarget() throws {
+@Test func qualityJSONAfterRateDecodesForFixtureTarget() async throws {
     let root = try makeTempRoot("quality-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let rate = try runCLI(["rate", "--root", root.path, "--target", "M45_Pleiades", "--no-siril"])
+    let rate = try await runCLI(["rate", "--root", root.path, "--target", "M45_Pleiades", "--no-siril"])
     #expect(rate.exitCode == 0, "stderr: \(rate.stderr)")
 
-    let result = try runCLI(["quality", "--root", root.path, "--target", "M45_Pleiades", "--json"])
+    let result = try await runCLI(["quality", "--root", root.path, "--target", "M45_Pleiades", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -1106,28 +1216,28 @@ struct CLISmokeTests {
     #expect(summaries.allSatisfy { $0["frame_count"] != nil })
 }
 
-@Test func qualityHumanOutputPrintsTable() throws {
+@Test func qualityHumanOutputPrintsTable() async throws {
     let root = try makeTempRoot("quality-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["quality", "--root", root.path, "--target", "M45_Pleiades"])
+    let result = try await runCLI(["quality", "--root", root.path, "--target", "M45_Pleiades"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("DATE"))
 }
 
-@Test func qualityWithoutTargetExitsWithError() throws {
+@Test func qualityWithoutTargetExitsWithError() async throws {
     let root = try makeTempRoot("quality-no-target")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["quality", "--root", root.path])
+    let result = try await runCLI(["quality", "--root", root.path])
     #expect(result.exitCode == 1)
 }
 
@@ -1137,15 +1247,15 @@ struct CLISmokeTests {
 /// `M45_Pleiades` and `IC1805-1848_Heart_and_Soul_Nebula` -- the minimum
 /// needed to exercise the CROSS-target join `stats --sessions`/`quality`
 /// (both scoped to one target) never had to do.
-@Test func nightsJSONAfterScanCoversMultipleTargetsNewestFirst() throws {
+@Test func nightsJSONAfterScanCoversMultipleTargetsNewestFirst() async throws {
     let root = try makeTempRoot("nights-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["nights", "--root", root.path, "--json"])
+    let result = try await runCLI(["nights", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -1171,21 +1281,21 @@ struct CLISmokeTests {
     #expect(excludedRow["is_excluded_from_totals"] as? Bool == true)
 }
 
-@Test func nightsHumanOutputPrintsHungarianHeaders() throws {
+@Test func nightsHumanOutputPrintsHungarianHeaders() async throws {
     let root = try makeTempRoot("nights-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["nights", "--root", root.path])
+    let result = try await runCLI(["nights", "--root", root.path])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("DÁTUM"))
     #expect(result.stdout.contains("CÉLPONT"))
 }
 
-@Test func nightsHumanOutputKeepsDisplayNameWhenFolderNameIsLong() throws {
+@Test func nightsHumanOutputKeepsDisplayNameWhenFolderNameIsLong() async throws {
     let root = try makeTempRoot("nights-long-name")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
@@ -1199,26 +1309,26 @@ struct CLISmokeTests {
     try "dummy light\n".write(
         to: lights.appendingPathComponent("Light_001.fit"), atomically: true, encoding: .utf8)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["nights", "--root", root.path])
+    let result = try await runCLI(["nights", "--root", root.path])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("NGC 7000"), "display name was truncated away: \(result.stdout)")
     #expect(!result.stdout.contains("… ("), "raw name kept while display name truncated: \(result.stdout)")
 }
 
-@Test func nightsYearAndMonthFilterOnlyShowsMatchingSessions() throws {
+@Test func nightsYearAndMonthFilterOnlyShowsMatchingSessions() async throws {
     let root = try makeTempRoot("nights-year-filter")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     // The fixture's "2026-04-06-2" run-suffix date-dir is the only session
     // whose canonical start date falls in April 2026.
-    let result = try runCLI(["nights", "--root", root.path, "--year", "2026", "--month", "4", "--json"])
+    let result = try await runCLI(["nights", "--root", root.path, "--year", "2026", "--month", "4", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     let json = try jsonItems(result.stdout)
     let rows = try #require(json)
@@ -1226,15 +1336,15 @@ struct CLISmokeTests {
     #expect(rows.allSatisfy { ($0["date"] as? String)?.hasPrefix("2026-04") == true })
 }
 
-@Test func nightsMonthWithoutYearExitsWithError() throws {
+@Test func nightsMonthWithoutYearExitsWithError() async throws {
     let root = try makeTempRoot("nights-month-no-year")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["nights", "--root", root.path, "--month", "3"])
+    let result = try await runCLI(["nights", "--root", root.path, "--month", "3"])
     #expect(result.exitCode == 1)
 }
 
@@ -1277,21 +1387,21 @@ private func writeTrendLightFITS(
     try data.write(to: url)
 }
 
-@Test func trendsRequiresMetricFlag() throws {
+@Test func trendsRequiresMetricFlag() async throws {
     let root = try makeTempRoot("trends-no-metric")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI(["trends", "--root", root.path])
+    let result = try await runCLI(["trends", "--root", root.path])
     #expect(result.exitCode == 1)
 }
 
-@Test func trendsRejectsUnknownMetric() throws {
+@Test func trendsRejectsUnknownMetric() async throws {
     let root = try makeTempRoot("trends-bad-metric")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI(["trends", "--root", root.path, "--metric", "bogus"])
+    let result = try await runCLI(["trends", "--root", root.path, "--metric", "bogus"])
     #expect(result.exitCode == 1)
 }
 
@@ -1300,7 +1410,7 @@ private func writeTrendLightFITS(
 /// derive a window, unlike FWHM/background which need a real Siril-measured
 /// rating (out of scope for a CI-safe CLI smoke test; `TrendQueriesTests`
 /// covers those numerically against a direct in-memory DB instead).
-@Test func trendsEfficiencyJSONAfterScanReportsSessionsOldestFirst() throws {
+@Test func trendsEfficiencyJSONAfterScanReportsSessionsOldestFirst() async throws {
     let root = try makeTempRoot("trends-efficiency-json")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -1317,10 +1427,10 @@ private func writeTrendLightFITS(
         "sessions/M31/2026-01-05/lights/b.fit", root: root, dateObs: "2026-01-05T20:02:00"
     )
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["trends", "--root", root.path, "--metric", "efficiency", "--json"])
+    let result = try await runCLI(["trends", "--root", root.path, "--metric", "efficiency", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let items = try #require(try jsonItems(result.stdout))
@@ -1329,24 +1439,24 @@ private func writeTrendLightFITS(
     #expect(items.allSatisfy { $0["is_pixel_fallback"] == nil })
 }
 
-@Test func trendsHumanOutputPrintsHungarianHeader() throws {
+@Test func trendsHumanOutputPrintsHungarianHeader() async throws {
     let root = try makeTempRoot("trends-human")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeTrendLightFITS("sessions/M42/2026-03-10/lights/a.fit", root: root, dateObs: "2026-03-10T20:00:00")
     try writeTrendLightFITS("sessions/M42/2026-03-10/lights/b.fit", root: root, dateObs: "2026-03-10T20:02:00")
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["trends", "--root", root.path, "--metric", "efficiency"])
+    let result = try await runCLI(["trends", "--root", root.path, "--metric", "efficiency"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("DÁTUM"))
     #expect(result.stdout.contains("CÉLPONT"))
     #expect(result.stdout.contains("HATÉKONYSÁG%"))
 }
 
-@Test func trendsFromToFiltersToTheGivenInclusiveRange() throws {
+@Test func trendsFromToFiltersToTheGivenInclusiveRange() async throws {
     let root = try makeTempRoot("trends-from-to")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -1357,10 +1467,10 @@ private func writeTrendLightFITS(
     try writeTrendLightFITS("sessions/M42/2026-03-30/lights/a.fit", root: root, dateObs: "2026-03-30T20:00:00")
     try writeTrendLightFITS("sessions/M42/2026-03-30/lights/b.fit", root: root, dateObs: "2026-03-30T20:02:00")
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "trends", "--root", root.path, "--metric", "efficiency",
         "--from", "2026-02-01", "--to", "2026-03-01", "--json",
     ])
@@ -1369,7 +1479,7 @@ private func writeTrendLightFITS(
     #expect(items.map { $0["date"] as? String } == ["2026-02-15"])
 }
 
-@Test func trendsSetupFilterRestrictsToTheMatchingSetupDescriptorOnly() throws {
+@Test func trendsSetupFilterRestrictsToTheMatchingSetupDescriptorOnly() async throws {
     let root = try makeTempRoot("trends-setup-filter")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -1390,11 +1500,11 @@ private func writeTrendLightFITS(
         instrume: "CamB", focallen: 200, xpixsz: 2.4, dateObs: "2026-02-01T20:02:00"
     )
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     let unfiltered = try #require(try jsonItems(
-        try runCLI(["trends", "--root", root.path, "--metric", "efficiency", "--json"]).stdout
+        try await runCLI(["trends", "--root", root.path, "--metric", "efficiency", "--json"]).stdout
     ))
     #expect(unfiltered.count == 2)
 
@@ -1403,43 +1513,43 @@ private func writeTrendLightFITS(
     // "·"), no binning/Bayer/guide-cam cards written here.
     let camASetup = "CamA·500mm·3.76µm"
     let filtered = try #require(try jsonItems(
-        try runCLI(["trends", "--root", root.path, "--metric", "efficiency", "--setup", camASetup, "--json"]).stdout
+        try await runCLI(["trends", "--root", root.path, "--metric", "efficiency", "--setup", camASetup, "--json"]).stdout
     ))
     #expect(filtered.map { $0["date"] as? String } == ["2026-01-01"])
 
     let noMatch = try #require(try jsonItems(
-        try runCLI(["trends", "--root", root.path, "--metric", "efficiency", "--setup", "no-such-setup", "--json"]).stdout
+        try await runCLI(["trends", "--root", root.path, "--metric", "efficiency", "--setup", "no-such-setup", "--json"]).stdout
     ))
     #expect(noMatch.isEmpty)
 }
 
-@Test func trendsWithNoMatchingDataPrintsEmptyResultAndHumanMessage() throws {
+@Test func trendsWithNoMatchingDataPrintsEmptyResultAndHumanMessage() async throws {
     let root = try makeTempRoot("trends-empty")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let jsonResult = try runCLI(["trends", "--root", root.path, "--metric", "fwhm", "--json"])
+    let jsonResult = try await runCLI(["trends", "--root", root.path, "--metric", "fwhm", "--json"])
     #expect(jsonResult.exitCode == 0, "stderr: \(jsonResult.stderr)")
     #expect(try jsonItems(jsonResult.stdout)?.isEmpty == true)
 
-    let humanResult = try runCLI(["trends", "--root", root.path, "--metric", "fwhm"])
+    let humanResult = try await runCLI(["trends", "--root", root.path, "--metric", "fwhm"])
     #expect(humanResult.exitCode == 0, "stderr: \(humanResult.stderr)")
     #expect(humanResult.stdout.contains("nincs adat"))
 }
 
 // MARK: - health
 
-@Test func healthJSONAfterScanDecodesForFixtureTarget() throws {
+@Test func healthJSONAfterScanDecodesForFixtureTarget() async throws {
     let root = try makeTempRoot("health-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["health", "--root", root.path, "--target", "M45_Pleiades", "--json"])
+    let result = try await runCLI(["health", "--root", root.path, "--target", "M45_Pleiades", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -1449,41 +1559,41 @@ private func writeTrendLightFITS(
     #expect(reports.allSatisfy { $0["cooler"] != nil && $0["focus"] != nil })
 }
 
-@Test func healthHumanOutputPrintsCoolerAndFocusLines() throws {
+@Test func healthHumanOutputPrintsCoolerAndFocusLines() async throws {
     let root = try makeTempRoot("health-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["health", "--root", root.path, "--target", "M45_Pleiades"])
+    let result = try await runCLI(["health", "--root", root.path, "--target", "M45_Pleiades"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("Hűtés:"))
     #expect(result.stdout.contains("Fókusz:"))
 }
 
-@Test func healthWithoutTargetExitsWithError() throws {
+@Test func healthWithoutTargetExitsWithError() async throws {
     let root = try makeTempRoot("health-no-target")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["health", "--root", root.path])
+    let result = try await runCLI(["health", "--root", root.path])
     #expect(result.exitCode == 1)
 }
 
-@Test func healthWithDateFlagFiltersToSingleSession() throws {
+@Test func healthWithDateFlagFiltersToSingleSession() async throws {
     let root = try makeTempRoot("health-date")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["health", "--root", root.path, "--target", "M45_Pleiades", "--date", "2026-01-10", "--json"])
+    let result = try await runCLI(["health", "--root", root.path, "--target", "M45_Pleiades", "--date", "2026-01-10", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -1494,15 +1604,15 @@ private func writeTrendLightFITS(
 
 // MARK: - panels
 
-@Test func panelsJSONAfterScanDecodesForFixtureTarget() throws {
+@Test func panelsJSONAfterScanDecodesForFixtureTarget() async throws {
     let root = try makeTempRoot("panels-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["panels", "--root", root.path, "--target", "M45_Pleiades", "--json"])
+    let result = try await runCLI(["panels", "--root", root.path, "--target", "M45_Pleiades", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
@@ -1511,28 +1621,28 @@ private func writeTrendLightFITS(
     #expect(report["panels"] is [Any])
 }
 
-@Test func panelsHumanOutputReportsNoWCSSolvedFramesForFixtureWithoutCRVAL() throws {
+@Test func panelsHumanOutputReportsNoWCSSolvedFramesForFixtureWithoutCRVAL() async throws {
     let root = try makeTempRoot("panels-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["panels", "--root", root.path, "--target", "M45_Pleiades"])
+    let result = try await runCLI(["panels", "--root", root.path, "--target", "M45_Pleiades"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("no WCS-solved frames"))
 }
 
-@Test func panelsWithoutTargetExitsWithError() throws {
+@Test func panelsWithoutTargetExitsWithError() async throws {
     let root = try makeTempRoot("panels-no-target")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["panels", "--root", root.path])
+    let result = try await runCLI(["panels", "--root", root.path])
     #expect(result.exitCode == 1)
 }
 
@@ -1542,15 +1652,15 @@ private func writeTrendLightFITS(
 /// result.fit` -- a real "location signal only" case (the filename `result.fit`
 /// doesn't mention the target at all, so this exercises the "mappa"
 /// `match_source` path with zero extra fixture setup).
-@Test func stacksJSONAfterScanFindsExistingFixtureStack() throws {
+@Test func stacksJSONAfterScanFindsExistingFixtureStack() async throws {
     let root = try makeTempRoot("stacks-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stacks", "--root", root.path, "--target", "M42_Orion", "--json"])
+    let result = try await runCLI(["stacks", "--root", root.path, "--target", "M42_Orion", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -1563,15 +1673,15 @@ private func writeTrendLightFITS(
     #expect(found["kind"] as? String == "stack")
 }
 
-@Test func stacksHumanOutputPrintsFileAndBestLine() throws {
+@Test func stacksHumanOutputPrintsFileAndBestLine() async throws {
     let root = try makeTempRoot("stacks-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stacks", "--root", root.path, "--target", "M42_Orion"])
+    let result = try await runCLI(["stacks", "--root", root.path, "--target", "M42_Orion"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("result.fit"))
     // R8-3: human output is grouped now -- one "N stack-csoport, M fájl"
@@ -1579,15 +1689,15 @@ private func writeTrendLightFITS(
     #expect(result.stdout.contains("stack-csoport"))
 }
 
-@Test func stacksWithoutTargetListsEveryTargetWithDiscoveredStacks() throws {
+@Test func stacksWithoutTargetListsEveryTargetWithDiscoveredStacks() async throws {
     let root = try makeTempRoot("stacks-no-target")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stacks", "--root", root.path, "--json"])
+    let result = try await runCLI(["stacks", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -1597,15 +1707,15 @@ private func writeTrendLightFITS(
 
 // MARK: - stacks --grouped / --verbose (R8-3)
 
-@Test func stacksJSONGroupedReturnsStackGroupShapeInsteadOfFlatTargetStacks() throws {
+@Test func stacksJSONGroupedReturnsStackGroupShapeInsteadOfFlatTargetStacks() async throws {
     let root = try makeTempRoot("stacks-grouped-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stacks", "--root", root.path, "--target", "M42_Orion", "--json", "--grouped"])
+    let result = try await runCLI(["stacks", "--root", root.path, "--target", "M42_Orion", "--json", "--grouped"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -1618,7 +1728,7 @@ private func writeTrendLightFITS(
     #expect(base["path"] as? String == "stacks/M42_Orion/2026-01-17/result.fit")
 }
 
-@Test func stacksHumanVerboseListsVariantsIndentedUnderneathTheirGroup() throws {
+@Test func stacksHumanVerboseListsVariantsIndentedUnderneathTheirGroup() async throws {
     let root = try makeTempRoot("stacks-verbose")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -1637,15 +1747,15 @@ private func writeTrendLightFITS(
         "stacks/NGC2237_Rosette_Nebula/2026-04-04/starless_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956.fit"
     )
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let plain = try runCLI(["stacks", "--root", root.path, "--target", "NGC2237_Rosette_Nebula"])
+    let plain = try await runCLI(["stacks", "--root", root.path, "--target", "NGC2237_Rosette_Nebula"])
     #expect(plain.exitCode == 0, "stderr: \(plain.stderr)")
     #expect(plain.stdout.contains("(+1 starless)"))
     #expect(!plain.stdout.contains("starless_NGC"))
 
-    let verbose = try runCLI(["stacks", "--root", root.path, "--target", "NGC2237_Rosette_Nebula", "--verbose"])
+    let verbose = try await runCLI(["stacks", "--root", root.path, "--target", "NGC2237_Rosette_Nebula", "--verbose"])
     #expect(verbose.exitCode == 0, "stderr: \(verbose.stderr)")
     #expect(verbose.stdout.contains("starless_NGC"))
 }
@@ -1655,15 +1765,15 @@ private func writeTrendLightFITS(
 /// `Fixtures.makeMessyLibrary` plants a real `README.txt` for
 /// `M45_Pleiades/2026-01-10` containing "Camera: ZWO ASI2600MC Pro" -- a
 /// scan must index it so `search` can find it by a substring of that value.
-@Test func searchFindsMatchAfterScanOfFixtureReadme() throws {
+@Test func searchFindsMatchAfterScanOfFixtureReadme() async throws {
     let root = try makeTempRoot("search-hit")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["search", "ZWO", "--root", root.path, "--json"])
+    let result = try await runCLI(["search", "ZWO", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -1671,30 +1781,30 @@ private func writeTrendLightFITS(
     #expect(rows.contains { ($0["target"] as? String) == "M45_Pleiades" && ($0["date"] as? String) == "2026-01-10" })
 }
 
-@Test func searchWithNoMatchesStillExitsZero() throws {
+@Test func searchWithNoMatchesStillExitsZero() async throws {
     let root = try makeTempRoot("search-miss")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["search", "nonexistent-term-xyz", "--root", root.path])
+    let result = try await runCLI(["search", "nonexistent-term-xyz", "--root", root.path])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("no matches"))
 }
 
 // MARK: - search --all (R10-B8)
 
-@Test func searchAllJSONFindsTargetByFolderNameSubstring() throws {
+@Test func searchAllJSONFindsTargetByFolderNameSubstring() async throws {
     let root = try makeTempRoot("search-all-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["search", "Pleiades", "--root", root.path, "--all", "--json"])
+    let result = try await runCLI(["search", "Pleiades", "--root", root.path, "--all", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try #require(try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
@@ -1712,21 +1822,21 @@ private func writeTrendLightFITS(
 /// merge `AppState.runSearch` performs), not just `Database.searchAll`'s
 /// own README-only notes section -- write one via `note set`, then confirm
 /// `search --all` finds it by value.
-@Test func searchAllFindsNoteWrittenThroughNoteSetCommand() throws {
+@Test func searchAllFindsNoteWrittenThroughNoteSetCommand() async throws {
     let root = try makeTempRoot("search-all-store-note")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let setNote = try runCLI([
+    let setNote = try await runCLI([
         "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
         "--key", "Seeing", "--value", "kivételesen stabil éjszaka", "--root", root.path,
     ])
     #expect(setNote.exitCode == 0, "stderr: \(setNote.stderr)")
 
-    let result = try runCLI(["search", "kivételesen stabil", "--root", root.path, "--all", "--json"])
+    let result = try await runCLI(["search", "kivételesen stabil", "--root", root.path, "--all", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     let json = try #require(try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
     let notes = try #require(json["notes"] as? [[String: Any]])
@@ -1735,176 +1845,176 @@ private func writeTrendLightFITS(
     })
 }
 
-@Test func searchAllHumanOutputListsSectionsInPageOrder() throws {
+@Test func searchAllHumanOutputListsSectionsInPageOrder() async throws {
     let root = try makeTempRoot("search-all-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["search", "Pleiades", "--root", root.path, "--all"])
+    let result = try await runCLI(["search", "Pleiades", "--root", root.path, "--all"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("Célpontok"))
     #expect(result.stdout.contains("M45_Pleiades"))
 }
 
-@Test func searchAllWithNoMatchesStillExitsZero() throws {
+@Test func searchAllWithNoMatchesStillExitsZero() async throws {
     let root = try makeTempRoot("search-all-miss")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["search", "nonexistent-term-xyz", "--root", root.path, "--all"])
+    let result = try await runCLI(["search", "nonexistent-term-xyz", "--root", root.path, "--all"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("no matches"))
 }
 
 // MARK: - tag
 
-@Test func tagAddThenListShowsIt() throws {
+@Test func tagAddThenListShowsIt() async throws {
     let root = try makeTempRoot("tag-add-list")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let add = try runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
+    let add = try await runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
     #expect(add.exitCode == 0, "stderr: \(add.stderr)")
 
-    let list = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    let list = try await runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(list.exitCode == 0, "stderr: \(list.stderr)")
     let tags = try jsonStringItems(list.stdout)
     #expect(tags == ["favorite"])
 }
 
-@Test func tagAddSameTwiceStaysIdempotent() throws {
+@Test func tagAddSameTwiceStaysIdempotent() async throws {
     let root = try makeTempRoot("tag-idempotent")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let first = try runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
+    let first = try await runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
     #expect(first.exitCode == 0, "stderr: \(first.stderr)")
-    let second = try runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
+    let second = try await runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
     #expect(second.exitCode == 0, "stderr: \(second.stderr)")
 
-    let list = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    let list = try await runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(list.exitCode == 0, "stderr: \(list.stderr)")
     let tags = try jsonStringItems(list.stdout)
     #expect(tags == ["favorite"])
 }
 
-@Test func tagRemoveDeletesIt() throws {
+@Test func tagRemoveDeletesIt() async throws {
     let root = try makeTempRoot("tag-remove")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let add = try runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
+    let add = try await runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
     #expect(add.exitCode == 0, "stderr: \(add.stderr)")
-    let remove = try runCLI(["tag", "remove", "--target", "M45_Pleiades", "favorite", "--root", root.path])
+    let remove = try await runCLI(["tag", "remove", "--target", "M45_Pleiades", "favorite", "--root", root.path])
     #expect(remove.exitCode == 0, "stderr: \(remove.stderr)")
 
-    let list = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    let list = try await runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(list.exitCode == 0, "stderr: \(list.stderr)")
     let tags = try jsonStringItems(list.stdout)
     #expect(tags == [])
 }
 
-@Test func tagSessionScopedTagOnlyListedWithMatchingDate() throws {
+@Test func tagSessionScopedTagOnlyListedWithMatchingDate() async throws {
     let root = try makeTempRoot("tag-session-scoped")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let sessionsResult = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--sessions", "--json"])
+    let sessionsResult = try await runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--sessions", "--json"])
     #expect(sessionsResult.exitCode == 0, "stderr: \(sessionsResult.stderr)")
     let sessions = try #require(try jsonItems(sessionsResult.stdout))
     let date = try #require(sessions.first?["date_raw"] as? String)
 
-    let add = try runCLI(["tag", "add", "--target", "M45_Pleiades", "--date", date, "clouds", "--root", root.path])
+    let add = try await runCLI(["tag", "add", "--target", "M45_Pleiades", "--date", date, "clouds", "--root", root.path])
     #expect(add.exitCode == 0, "stderr: \(add.stderr)")
 
-    let sessionList = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--date", date, "--root", root.path, "--json"])
+    let sessionList = try await runCLI(["tag", "list", "--target", "M45_Pleiades", "--date", date, "--root", root.path, "--json"])
     #expect(sessionList.exitCode == 0, "stderr: \(sessionList.stderr)")
     let sessionTags = try jsonStringItems(sessionList.stdout)
     #expect(sessionTags == ["clouds"])
 
-    let targetList = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    let targetList = try await runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(targetList.exitCode == 0, "stderr: \(targetList.stderr)")
     let targetTags = try jsonStringItems(targetList.stdout)
     #expect(targetTags == [])
 }
 
-@Test func statsTagFilterOnlyShowsTaggedTargets() throws {
+@Test func statsTagFilterOnlyShowsTaggedTargets() async throws {
     let root = try makeTempRoot("stats-tag-filter")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let add = try runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
+    let add = try await runCLI(["tag", "add", "--target", "M45_Pleiades", "favorite", "--root", root.path])
     #expect(add.exitCode == 0, "stderr: \(add.stderr)")
 
-    let filtered = try runCLI(["stats", "--root", root.path, "--tag", "favorite", "--json"])
+    let filtered = try await runCLI(["stats", "--root", root.path, "--tag", "favorite", "--json"])
     #expect(filtered.exitCode == 0, "stderr: \(filtered.stderr)")
     let json = try jsonItems(filtered.stdout)
     let stats = try #require(json)
     #expect(!stats.isEmpty)
     #expect(stats.allSatisfy { ($0["target"] as? String) == "M45_Pleiades" })
 
-    let filteredOut = try runCLI(["stats", "--root", root.path, "--tag", "nonexistent-tag", "--json"])
+    let filteredOut = try await runCLI(["stats", "--root", root.path, "--tag", "nonexistent-tag", "--json"])
     #expect(filteredOut.exitCode == 0, "stderr: \(filteredOut.stderr)")
     let jsonOut = try jsonItems(filteredOut.stdout)
     #expect(try #require(jsonOut).isEmpty)
 }
 
-@Test func tagAddRejectsEmptyTagText() throws {
+@Test func tagAddRejectsEmptyTagText() async throws {
     let root = try makeTempRoot("tag-empty")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["tag", "add", "--target", "M45_Pleiades", "   ", "--root", root.path])
+    let result = try await runCLI(["tag", "add", "--target", "M45_Pleiades", "   ", "--root", root.path])
     #expect(result.exitCode == 1)
 }
 
-@Test func tagAddWithoutTargetExitsWithError() throws {
+@Test func tagAddWithoutTargetExitsWithError() async throws {
     let root = try makeTempRoot("tag-no-target")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["tag", "add", "favorite", "--root", root.path])
+    let result = try await runCLI(["tag", "add", "favorite", "--root", root.path])
     #expect(result.exitCode == 1)
 }
 
 // MARK: - ack (R10-B8)
 
-@Test func ackAddThenListShowsAckedKeyAndNote() throws {
+@Test func ackAddThenListShowsAckedKeyAndNote() async throws {
     let root = try makeTempRoot("ack-add-list")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let add = try runCLI(["ack", "add", "residue|*.seq", "--note", "ismert, szándékos", "--root", root.path])
+    let add = try await runCLI(["ack", "add", "residue|*.seq", "--note", "ismert, szándékos", "--root", root.path])
     #expect(add.exitCode == 0, "stderr: \(add.stderr)")
 
-    let list = try runCLI(["ack", "list", "--root", root.path, "--json"])
+    let list = try await runCLI(["ack", "list", "--root", root.path, "--json"])
     #expect(list.exitCode == 0, "stderr: \(list.stderr)")
     let json = try jsonItems(list.stdout)
     let acks = try #require(json)
@@ -1915,31 +2025,31 @@ private func writeTrendLightFITS(
     #expect(acks[0]["acked_at"] != nil)
 }
 
-@Test func ackAddThenRemoveClearsIt() throws {
+@Test func ackAddThenRemoveClearsIt() async throws {
     let root = try makeTempRoot("ack-add-remove")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let add = try runCLI(["ack", "add", "misplaced-file|sessions/M31/2026-01-01", "--root", root.path])
+    let add = try await runCLI(["ack", "add", "misplaced-file|sessions/M31/2026-01-01", "--root", root.path])
     #expect(add.exitCode == 0, "stderr: \(add.stderr)")
-    let remove = try runCLI(["ack", "remove", "misplaced-file|sessions/M31/2026-01-01", "--root", root.path])
+    let remove = try await runCLI(["ack", "remove", "misplaced-file|sessions/M31/2026-01-01", "--root", root.path])
     #expect(remove.exitCode == 0, "stderr: \(remove.stderr)")
 
-    let list = try runCLI(["ack", "list", "--root", root.path, "--json"])
+    let list = try await runCLI(["ack", "list", "--root", root.path, "--json"])
     #expect(list.exitCode == 0, "stderr: \(list.stderr)")
     let json = try jsonItems(list.stdout)
     #expect(try #require(json).isEmpty)
 }
 
-@Test func ackListHumanOutputPrintsKeyAndTimestamp() throws {
+@Test func ackListHumanOutputPrintsKeyAndTimestamp() async throws {
     let root = try makeTempRoot("ack-list-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let add = try runCLI(["ack", "add", "residue|*.seq", "--root", root.path])
+    let add = try await runCLI(["ack", "add", "residue|*.seq", "--root", root.path])
     #expect(add.exitCode == 0, "stderr: \(add.stderr)")
 
-    let list = try runCLI(["ack", "list", "--root", root.path])
+    let list = try await runCLI(["ack", "list", "--root", root.path])
     #expect(list.exitCode == 0, "stderr: \(list.stderr)")
     #expect(list.stdout.contains("residue|*.seq"))
     #expect(list.stdout.contains("acked:"))
@@ -1947,41 +2057,41 @@ private func writeTrendLightFITS(
 
 /// The positional must look exactly like an `ack_key` (`category|groupKey`)
 /// -- missing the `|` separator is a usage error, not a silent no-op.
-@Test func ackAddRejectsPositionalWithoutPipeSeparator() throws {
+@Test func ackAddRejectsPositionalWithoutPipeSeparator() async throws {
     let root = try makeTempRoot("ack-bad-positional")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI(["ack", "add", "no-pipe-here", "--root", root.path])
+    let result = try await runCLI(["ack", "add", "no-pipe-here", "--root", root.path])
     #expect(result.exitCode == 1)
 }
 
-@Test func ackAddWithoutPositionalExitsWithError() throws {
+@Test func ackAddWithoutPositionalExitsWithError() async throws {
     let root = try makeTempRoot("ack-no-positional")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI(["ack", "add", "--root", root.path])
+    let result = try await runCLI(["ack", "add", "--root", root.path])
     #expect(result.exitCode == 1)
 }
 
 // MARK: - note (R10-B8)
 
-@Test func noteSetThenShowRoundTrips() throws {
+@Test func noteSetThenShowRoundTrips() async throws {
     let root = try makeTempRoot("note-set-show")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let set = try runCLI([
+    let set = try await runCLI([
         "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
         "--key", "Bortle", "--value", "5", "--root", root.path,
     ])
     #expect(set.exitCode == 0, "stderr: \(set.stderr)")
 
-    let show = try runCLI([
+    let show = try await runCLI([
         "note", "show", "--target", "M45_Pleiades", "--date", "2026-01-10", "--root", root.path, "--json",
     ])
     #expect(show.exitCode == 0, "stderr: \(show.stderr)")
@@ -1999,23 +2109,23 @@ private func writeTrendLightFITS(
 /// a store-written key that ALSO exists in the README-sourced
 /// `session_notes` (populated by `scan` from `README.txt`) must show the
 /// README's value, not the store's.
-@Test func noteShowLetsReadmeWinAKeyCollisionWithTheStore() throws {
+@Test func noteShowLetsReadmeWinAKeyCollisionWithTheStore() async throws {
     let root = try makeTempRoot("note-show-readme-wins")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     // The fixture's README has "Camera: ZWO ASI2600MC Pro" -- collide with
     // that exact key via the store and confirm the README's value wins.
-    let set = try runCLI([
+    let set = try await runCLI([
         "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
         "--key", "Camera", "--value", "store-value-should-lose", "--root", root.path,
     ])
     #expect(set.exitCode == 0, "stderr: \(set.stderr)")
 
-    let show = try runCLI([
+    let show = try await runCLI([
         "note", "show", "--target", "M45_Pleiades", "--date", "2026-01-10", "--root", root.path, "--json",
     ])
     #expect(show.exitCode == 0, "stderr: \(show.stderr)")
@@ -2033,21 +2143,21 @@ private func writeTrendLightFITS(
 /// after `printJSON`'s snake_case conversion of the FIXED schema field
 /// names (never applied to the user's own arbitrary key text, see
 /// `NoteShowJSONValue`'s own doc comment for why that distinction matters).
-@Test func noteShowJSONIncludesConflictsBlockWhenReadmeAndStoreDisagree() throws {
+@Test func noteShowJSONIncludesConflictsBlockWhenReadmeAndStoreDisagree() async throws {
     let root = try makeTempRoot("note-show-conflicts-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let set = try runCLI([
+    let set = try await runCLI([
         "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
         "--key", "Camera", "--value", "store-value-should-lose", "--root", root.path,
     ])
     #expect(set.exitCode == 0, "stderr: \(set.stderr)")
 
-    let show = try runCLI([
+    let show = try await runCLI([
         "note", "show", "--target", "M45_Pleiades", "--date", "2026-01-10", "--root", root.path, "--json",
     ])
     #expect(show.exitCode == 0, "stderr: \(show.stderr)")
@@ -2061,21 +2171,21 @@ private func writeTrendLightFITS(
 /// The human-readable side of the same conflict: a "⚠ eltér a README-től"
 /// suffix on the disagreeing key's line, nothing extra on a non-conflicting
 /// one.
-@Test func noteShowHumanOutputFlagsConflictingKeyWithWarningSuffix() throws {
+@Test func noteShowHumanOutputFlagsConflictingKeyWithWarningSuffix() async throws {
     let root = try makeTempRoot("note-show-conflicts-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let set = try runCLI([
+    let set = try await runCLI([
         "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
         "--key", "Camera", "--value", "store-value-should-lose", "--root", root.path,
     ])
     #expect(set.exitCode == 0, "stderr: \(set.stderr)")
 
-    let show = try runCLI([
+    let show = try await runCLI([
         "note", "show", "--target", "M45_Pleiades", "--date", "2026-01-10", "--root", root.path,
     ])
     #expect(show.exitCode == 0, "stderr: \(show.stderr)")
@@ -2085,21 +2195,21 @@ private func writeTrendLightFITS(
 
 /// No conflict at all -- `note show --json`'s root object stays the plain
 /// flat `[String: String]` it always was, with no "conflicts" key added.
-@Test func noteShowJSONHasNoConflictsKeyWhenNothingDisagrees() throws {
+@Test func noteShowJSONHasNoConflictsKeyWhenNothingDisagrees() async throws {
     let root = try makeTempRoot("note-show-no-conflicts")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let set = try runCLI([
+    let set = try await runCLI([
         "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
         "--key", "Bortle", "--value", "5", "--root", root.path,
     ])
     #expect(set.exitCode == 0, "stderr: \(set.stderr)")
 
-    let show = try runCLI([
+    let show = try await runCLI([
         "note", "show", "--target", "M45_Pleiades", "--date", "2026-01-10", "--root", root.path, "--json",
     ])
     #expect(show.exitCode == 0, "stderr: \(show.stderr)")
@@ -2111,26 +2221,26 @@ private func writeTrendLightFITS(
 /// An empty (or omitted) `--value` removes that key -- `SessionNoteStore`
 /// already drops blank-value pairs on save; this asserts the CLI round-trip
 /// of that behavior end to end.
-@Test func noteSetWithEmptyValueRemovesTheKey() throws {
+@Test func noteSetWithEmptyValueRemovesTheKey() async throws {
     let root = try makeTempRoot("note-set-empty-removes")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let set = try runCLI([
+    let set = try await runCLI([
         "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
         "--key", "Szél", "--value", "erős", "--root", root.path,
     ])
     #expect(set.exitCode == 0, "stderr: \(set.stderr)")
-    let clear = try runCLI([
+    let clear = try await runCLI([
         "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10",
         "--key", "Szél", "--value", "", "--root", root.path,
     ])
     #expect(clear.exitCode == 0, "stderr: \(clear.stderr)")
 
-    let show = try runCLI([
+    let show = try await runCLI([
         "note", "show", "--target", "M45_Pleiades", "--date", "2026-01-10", "--root", root.path, "--json",
     ])
     #expect(show.exitCode == 0, "stderr: \(show.stderr)")
@@ -2138,21 +2248,21 @@ private func writeTrendLightFITS(
     #expect(json?["Szél"] == nil)
 }
 
-@Test func noteShowWithoutTargetOrDateExitsWithError() throws {
+@Test func noteShowWithoutTargetOrDateExitsWithError() async throws {
     let root = try makeTempRoot("note-show-no-target")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI(["note", "show", "--target", "M45_Pleiades", "--root", root.path])
+    let result = try await runCLI(["note", "show", "--target", "M45_Pleiades", "--root", root.path])
     #expect(result.exitCode == 1)
 }
 
-@Test func noteSetWithoutKeyExitsWithError() throws {
+@Test func noteSetWithoutKeyExitsWithError() async throws {
     let root = try makeTempRoot("note-set-no-key")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "note", "set", "--target", "M45_Pleiades", "--date", "2026-01-10", "--value", "x", "--root", root.path,
     ])
     #expect(result.exitCode == 1)
@@ -2160,32 +2270,32 @@ private func writeTrendLightFITS(
 
 // MARK: - goal (R10-B8)
 
-@Test func goalSetThenClearRoundTrips() throws {
+@Test func goalSetThenClearRoundTrips() async throws {
     let root = try makeTempRoot("goal-set-clear")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let set = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "6", "--root", root.path, "--json"])
+    let set = try await runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "6", "--root", root.path, "--json"])
     #expect(set.exitCode == 0, "stderr: \(set.stderr)")
     let setJSON = try #require(try JSONSerialization.jsonObject(with: Data(set.stdout.utf8)) as? [String: Any])
     // Integral hours print without a decimal -- must match
     // `AppState.formatGoalTag`'s exact text so app and CLI round-trip.
     #expect(setJSON["goal_tag"] as? String == "goal:6h")
 
-    let tagList = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    let tagList = try await runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(tagList.exitCode == 0, "stderr: \(tagList.stderr)")
     let tags = try jsonStringItems(tagList.stdout)
     #expect(tags == ["goal:6h"])
 
-    let clear = try runCLI(["goal", "clear", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    let clear = try await runCLI(["goal", "clear", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(clear.exitCode == 0, "stderr: \(clear.stderr)")
     let clearJSON = try #require(try JSONSerialization.jsonObject(with: Data(clear.stdout.utf8)) as? [String: Any])
     #expect(clearJSON["goal_tag"] == nil || clearJSON["goal_tag"] is NSNull)
 
-    let tagListAfterClear = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    let tagListAfterClear = try await runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(tagListAfterClear.exitCode == 0, "stderr: \(tagListAfterClear.stderr)")
     let tagsAfterClear = try jsonStringItems(tagListAfterClear.stdout)
     #expect(tagsAfterClear == [])
@@ -2193,15 +2303,15 @@ private func writeTrendLightFITS(
 
 /// Fractional hours format with exactly one decimal place, same as
 /// `AppState.formatGoalTag`'s non-integral branch.
-@Test func goalSetWithFractionalHoursFormatsWithOneDecimal() throws {
+@Test func goalSetWithFractionalHoursFormatsWithOneDecimal() async throws {
     let root = try makeTempRoot("goal-set-fractional")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let set = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "6.5", "--root", root.path, "--json"])
+    let set = try await runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "6.5", "--root", root.path, "--json"])
     #expect(set.exitCode == 0, "stderr: \(set.stderr)")
     let setJSON = try #require(try JSONSerialization.jsonObject(with: Data(set.stdout.utf8)) as? [String: Any])
     #expect(setJSON["goal_tag"] as? String == "goal:6.5h")
@@ -2210,60 +2320,60 @@ private func writeTrendLightFITS(
 /// Setting a new goal must replace (not accumulate alongside) any prior
 /// `goal:*` tag -- same "there should only ever be at most one" invariant
 /// `AppState.setGoal` documents.
-@Test func goalSetReplacesAnyPriorGoalTagRatherThanAddingASecondOne() throws {
+@Test func goalSetReplacesAnyPriorGoalTagRatherThanAddingASecondOne() async throws {
     let root = try makeTempRoot("goal-set-replaces")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let first = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "4", "--root", root.path])
+    let first = try await runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "4", "--root", root.path])
     #expect(first.exitCode == 0, "stderr: \(first.stderr)")
-    let second = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "8", "--root", root.path])
+    let second = try await runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "8", "--root", root.path])
     #expect(second.exitCode == 0, "stderr: \(second.stderr)")
 
-    let tagList = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    let tagList = try await runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(tagList.exitCode == 0, "stderr: \(tagList.stderr)")
     let tags = try jsonStringItems(tagList.stdout)
     #expect(tags == ["goal:8h"])
 }
 
-@Test func goalSetRejectsZeroOrMissingHours() throws {
+@Test func goalSetRejectsZeroOrMissingHours() async throws {
     let root = try makeTempRoot("goal-set-bad-hours")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let zero = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "0", "--root", root.path])
+    let zero = try await runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "0", "--root", root.path])
     #expect(zero.exitCode == 1)
 
-    let missing = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--root", root.path])
+    let missing = try await runCLI(["goal", "set", "--target", "M45_Pleiades", "--root", root.path])
     #expect(missing.exitCode == 1)
 }
 
-@Test func goalSetWithoutTargetExitsWithError() throws {
+@Test func goalSetWithoutTargetExitsWithError() async throws {
     let root = try makeTempRoot("goal-set-no-target")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI(["goal", "set", "--hours", "6", "--root", root.path])
+    let result = try await runCLI(["goal", "set", "--hours", "6", "--root", root.path])
     #expect(result.exitCode == 1)
 }
 
 // MARK: - goal --filter / goal list (R11-T5/F2)
 
-@Test func goalSetFilterThenClearRoundTrips() throws {
+@Test func goalSetFilterThenClearRoundTrips() async throws {
     let root = try makeTempRoot("goal-set-filter-clear")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let set = try runCLI([
+    let set = try await runCLI([
         "goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path, "--json",
     ])
     #expect(set.exitCode == 0, "stderr: \(set.stderr)")
@@ -2271,49 +2381,49 @@ private func writeTrendLightFITS(
     #expect(setJSON["goal_tag"] as? String == "goal:Ha=12h")
     #expect(setJSON["filter"] as? String == "Ha")
 
-    let tagList = try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    let tagList = try await runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(tagList.exitCode == 0, "stderr: \(tagList.stderr)")
     let tags = try jsonStringItems(tagList.stdout)
     #expect(tags == ["goal:Ha=12h"])
 
-    let clear = try runCLI(["goal", "clear", "--target", "M45_Pleiades", "--filter", "Ha", "--root", root.path, "--json"])
+    let clear = try await runCLI(["goal", "clear", "--target", "M45_Pleiades", "--filter", "Ha", "--root", root.path, "--json"])
     #expect(clear.exitCode == 0, "stderr: \(clear.stderr)")
     let clearJSON = try #require(try JSONSerialization.jsonObject(with: Data(clear.stdout.utf8)) as? [String: Any])
     #expect(clearJSON["goal_tag"] == nil || clearJSON["goal_tag"] is NSNull)
 
     let tagsAfterClear = try jsonStringItems(
-        try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"]).stdout
+        try await runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"]).stdout
     )
     #expect(tagsAfterClear == [])
 }
 
 /// The two goal conventions must coexist -- setting a per-filter goal must
 /// never touch (or be touched by) the overall `goal:<hours>h` tag.
-@Test func goalSetFilterAndOverallGoalCoexistIndependently() throws {
+@Test func goalSetFilterAndOverallGoalCoexistIndependently() async throws {
     let root = try makeTempRoot("goal-set-filter-coexist")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let setOverall = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "30", "--root", root.path])
+    let setOverall = try await runCLI(["goal", "set", "--target", "M45_Pleiades", "--hours", "30", "--root", root.path])
     #expect(setOverall.exitCode == 0, "stderr: \(setOverall.stderr)")
-    let setFilter = try runCLI([
+    let setFilter = try await runCLI([
         "goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path,
     ])
     #expect(setFilter.exitCode == 0, "stderr: \(setFilter.stderr)")
 
     let tags = try #require(try jsonStringItems(
-        try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"]).stdout
+        try await runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"]).stdout
     ))
     #expect(Set(tags) == ["goal:30h", "goal:Ha=12h"])
 
     // Clearing the OVERALL goal must leave the filter goal untouched.
-    let clearOverall = try runCLI(["goal", "clear", "--target", "M45_Pleiades", "--root", root.path])
+    let clearOverall = try await runCLI(["goal", "clear", "--target", "M45_Pleiades", "--root", root.path])
     #expect(clearOverall.exitCode == 0, "stderr: \(clearOverall.stderr)")
     let tagsAfter = try jsonStringItems(
-        try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"]).stdout
+        try await runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"]).stdout
     )
     #expect(tagsAfter == ["goal:Ha=12h"])
 }
@@ -2321,39 +2431,39 @@ private func writeTrendLightFITS(
 /// Setting a new goal for one filter must replace only THAT filter's prior
 /// tag (not any other filter's), same "replace, don't accumulate"
 /// invariant the overall goal already has.
-@Test func goalSetFilterReplacesOnlyThatFiltersPriorTag() throws {
+@Test func goalSetFilterReplacesOnlyThatFiltersPriorTag() async throws {
     let root = try makeTempRoot("goal-set-filter-replace")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    _ = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "4", "--root", root.path])
-    _ = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "OIII", "--hours", "6", "--root", root.path])
-    let second = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "8", "--root", root.path])
+    _ = try await runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "4", "--root", root.path])
+    _ = try await runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "OIII", "--hours", "6", "--root", root.path])
+    let second = try await runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "8", "--root", root.path])
     #expect(second.exitCode == 0, "stderr: \(second.stderr)")
 
     let tags = try #require(try jsonStringItems(
-        try runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"]).stdout
+        try await runCLI(["tag", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"]).stdout
     ))
     #expect(Set(tags) == ["goal:Ha=8h", "goal:OIII=6h"])
 }
 
-@Test func goalListJSONShowsAGoalOnlyFilterAsZeroUsableWithFullMissing() throws {
+@Test func goalListJSONShowsAGoalOnlyFilterAsZeroUsableWithFullMissing() async throws {
     let root = try makeTempRoot("goal-list-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let set = try runCLI([
+    let set = try await runCLI([
         "goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path,
     ])
     #expect(set.exitCode == 0, "stderr: \(set.stderr)")
 
-    let list = try runCLI(["goal", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
+    let list = try await runCLI(["goal", "list", "--target", "M45_Pleiades", "--root", root.path, "--json"])
     #expect(list.exitCode == 0, "stderr: \(list.stderr)")
     let json = try #require(try JSONSerialization.jsonObject(with: Data(list.stdout.utf8)) as? [String: Any])
     #expect(json["target"] as? String == "M45_Pleiades")
@@ -2365,16 +2475,16 @@ private func writeTrendLightFITS(
     #expect(ha["missing_seconds"] as? Double == 12 * 3600.0)
 }
 
-@Test func goalListHumanOutputPrintsTargetAndFilterTable() throws {
+@Test func goalListHumanOutputPrintsTargetAndFilterTable() async throws {
     let root = try makeTempRoot("goal-list-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
-    _ = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path])
+    _ = try await runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path])
 
-    let list = try runCLI(["goal", "list", "--target", "M45_Pleiades", "--root", root.path])
+    let list = try await runCLI(["goal", "list", "--target", "M45_Pleiades", "--root", root.path])
     #expect(list.exitCode == 0, "stderr: \(list.stderr)")
     #expect(list.stdout.contains("M45_Pleiades"))
     #expect(list.stdout.contains("SZŰRŐ"))
@@ -2383,16 +2493,16 @@ private func writeTrendLightFITS(
 
 /// `stats --filters --json` (whole-target mode) must reflect a filter goal
 /// once one is set -- same merge `goal list` uses.
-@Test func statsFiltersJSONIncludesGoalAndMissingWhenAFilterGoalIsSet() throws {
+@Test func statsFiltersJSONIncludesGoalAndMissingWhenAFilterGoalIsSet() async throws {
     let root = try makeTempRoot("stats-filters-with-goal")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
-    _ = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path])
+    _ = try await runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path])
 
-    let result = try runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--filters", "--json"])
+    let result = try await runCLI(["stats", "--root", root.path, "--target", "M45_Pleiades", "--filters", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     let rows = try #require(try jsonItems(result.stdout))
     let ha = try #require(rows.first { $0["filter"] as? String == "Ha" })
@@ -2402,16 +2512,16 @@ private func writeTrendLightFITS(
 
 /// A date-scoped `stats --filters --json --date D` must NOT merge in goal
 /// data -- a single night has no goal of its own.
-@Test func statsFiltersWithDateNeverMergesInGoalData() throws {
+@Test func statsFiltersWithDateNeverMergesInGoalData() async throws {
     let root = try makeTempRoot("stats-filters-date-no-goal")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
-    _ = try runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path])
+    _ = try await runCLI(["goal", "set", "--target", "M45_Pleiades", "--filter", "Ha", "--hours", "12", "--root", root.path])
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "stats", "--root", root.path, "--target", "M45_Pleiades", "--filters", "--date", "2026-01-10", "--json",
     ])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
@@ -2421,23 +2531,23 @@ private func writeTrendLightFITS(
     }
 }
 
-@Test func goalListWithoutTargetExitsWithError() throws {
+@Test func goalListWithoutTargetExitsWithError() async throws {
     let root = try makeTempRoot("goal-list-no-target")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI(["goal", "list", "--root", root.path])
+    let result = try await runCLI(["goal", "list", "--root", root.path])
     #expect(result.exitCode == 1)
 }
 
 // MARK: - config (R11-T4)
 
-@Test func configShowHumanReadableByDefaultPrintsSectionsAndRootPath() throws {
+@Test func configShowHumanReadableByDefaultPrintsSectionsAndRootPath() async throws {
     let root = try makeTempRoot("config-show-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI(["config", "show", "--root", root.path])
+    let result = try await runCLI(["config", "show", "--root", root.path])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("rootPath: \(root.path)"))
     #expect(result.stdout.contains("Kalibráció"))
@@ -2446,12 +2556,12 @@ private func writeTrendLightFITS(
     #expect(!result.stdout.contains("{"))
 }
 
-@Test func configShowJSONFlagStillPrintsFullStructure() throws {
+@Test func configShowJSONFlagStillPrintsFullStructure() async throws {
     let root = try makeTempRoot("config-show-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI(["config", "show", "--root", root.path, "--json"])
+    let result = try await runCLI(["config", "show", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonObject(result.stdout)
@@ -2460,12 +2570,12 @@ private func writeTrendLightFITS(
     #expect(json?["calib"] != nil)
 }
 
-@Test func configPathHumanReadableUnaffectedByJSONFix() throws {
+@Test func configPathHumanReadableUnaffectedByJSONFix() async throws {
     let root = try makeTempRoot("config-path")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI(["config", "path", "--root", root.path])
+    let result = try await runCLI(["config", "path", "--root", root.path])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         == root.appendingPathComponent(".astro_tool/config.json").path)
@@ -2473,12 +2583,12 @@ private func writeTrendLightFITS(
 
 // MARK: - new-session
 
-@Test func newSessionCreatesThenRerunFails() throws {
+@Test func newSessionCreatesThenRerunFails() async throws {
     let root = try makeTempRoot("new-session")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let first = try runCLI([
+    let first = try await runCLI([
         "new-session", "--root", root.path,
         "--catalog", "M1", "--name", "Crab Nebula", "--date", "2026-08-02",
     ])
@@ -2491,19 +2601,19 @@ private func writeTrendLightFITS(
     #expect(FileManager.default.fileExists(atPath: sessionDir.appendingPathComponent("biases").path))
     #expect(FileManager.default.fileExists(atPath: sessionDir.appendingPathComponent("README.txt").path))
 
-    let second = try runCLI([
+    let second = try await runCLI([
         "new-session", "--root", root.path,
         "--catalog", "M1", "--name", "Crab Nebula", "--date", "2026-08-02",
     ])
     #expect(second.exitCode == 1)
 }
 
-@Test func newSessionRejectsNonCanonicalDate() throws {
+@Test func newSessionRejectsNonCanonicalDate() async throws {
     let root = try makeTempRoot("new-session-bad-date")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "new-session", "--root", root.path,
         "--catalog", "M1", "--name", "Test", "--date", "2026-08-02-2",
     ])
@@ -2512,7 +2622,7 @@ private func writeTrendLightFITS(
 
 // MARK: - calib --health
 
-@Test func calibHealthJSONReportsFlatDisciplineBiasAndDarkMasters() throws {
+@Test func calibHealthJSONReportsFlatDisciplineBiasAndDarkMasters() async throws {
     let root = try makeTempRoot("calib-health-json")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -2520,10 +2630,10 @@ private func writeTrendLightFITS(
     try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
     try writeLinkCalibDummy("calibration_library/darks/300sec_-10deg/master.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["calib", "--root", root.path, "--health", "--json"])
+    let result = try await runCLI(["calib", "--root", root.path, "--health", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
@@ -2537,32 +2647,32 @@ private func writeTrendLightFITS(
     #expect(darkMasters.contains { $0["path"] as? String == "calibration_library/darks/300sec_-10deg" })
 }
 
-@Test func calibHealthHumanOutputPrintsHungarianHeaders() throws {
+@Test func calibHealthHumanOutputPrintsHungarianHeaders() async throws {
     let root = try makeTempRoot("calib-health-human")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["calib", "--root", root.path, "--health"])
+    let result = try await runCLI(["calib", "--root", root.path, "--health"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("Flat-fegyelem"))
     #expect(result.stdout.contains("Bias-készlet"))
     #expect(result.stdout.contains("Dark-készlet egészség"))
 }
 
-@Test func calibWithoutHealthFlagStaysOnCoverageReport() throws {
+@Test func calibWithoutHealthFlagStaysOnCoverageReport() async throws {
     let root = try makeTempRoot("calib-no-health")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["calib", "--root", root.path, "--json"])
+    let result = try await runCLI(["calib", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -2572,16 +2682,16 @@ private func writeTrendLightFITS(
 
 // MARK: - calib --flats (R11-T16/F17)
 
-@Test func calibFlatsFlagListsOnlyFlatCoverageRows() throws {
+@Test func calibFlatsFlagListsOnlyFlatCoverageRows() async throws {
     let root = try makeTempRoot("calib-flats-json")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0, filter: "OIII")
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["calib", "--root", root.path, "--flats", "--json"])
+    let result = try await runCLI(["calib", "--root", root.path, "--flats", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -2590,17 +2700,17 @@ private func writeTrendLightFITS(
     #expect(needs.contains { $0["filter"] as? String == "OIII" })
 }
 
-@Test func calibPlainHumanSummaryMentionsFlatTodoCount() throws {
+@Test func calibPlainHumanSummaryMentionsFlatTodoCount() async throws {
     let root = try makeTempRoot("calib-plain-human")
     defer { try? FileManager.default.removeItem(at: root) }
 
     // No flat anywhere for this OIII light -- one flat todo.
     try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0, filter: "OIII")
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["calib", "--root", root.path])
+    let result = try await runCLI(["calib", "--root", root.path])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("flat)"))
     #expect(result.stdout.contains("Készíts OIII flatet"))
@@ -2608,12 +2718,12 @@ private func writeTrendLightFITS(
 
 // MARK: - calib --shopping (R12-U5)
 
-@Test func calibShoppingJSONCarriesNightSiteAndEmptyItems() throws {
+@Test func calibShoppingJSONCarriesNightSiteAndEmptyItems() async throws {
     let root = try makeTempRoot("calib-shopping-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "calib", "--root", root.path, "--shopping", "--date", "2026-08-10",
         "--site", "Del", "--json",
     ])
@@ -2624,26 +2734,26 @@ private func writeTrendLightFITS(
     #expect((json["items"] as? [[String: Any]])?.isEmpty == true)
 }
 
-@Test func calibShoppingRejectsUnknownSiteAndConflictingModes() throws {
+@Test func calibShoppingRejectsUnknownSiteAndConflictingModes() async throws {
     let root = try makeTempRoot("calib-shopping-errors")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
 
-    let unknown = try runCLI(["calib", "--root", root.path, "--shopping", "--site", "Sehol"])
+    let unknown = try await runCLI(["calib", "--root", root.path, "--shopping", "--site", "Sehol"])
     #expect(unknown.exitCode == 1)
     #expect(unknown.stderr.contains("ismeretlen helyszín"))
 
-    let conflict = try runCLI(["calib", "--root", root.path, "--shopping", "--health"])
+    let conflict = try await runCLI(["calib", "--root", root.path, "--shopping", "--health"])
     #expect(conflict.exitCode == 1)
     #expect(conflict.stderr.contains("egyszerre csak egy"))
 }
 
-@Test func calibShoppingHumanHeaderNamesTheRequestedNight() throws {
+@Test func calibShoppingHumanHeaderNamesTheRequestedNight() async throws {
     let root = try makeTempRoot("calib-shopping-human")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
 
-    let result = try runCLI(["calib", "--root", root.path, "--shopping", "--date", "2026-08-10"])
+    let result = try await runCLI(["calib", "--root", root.path, "--shopping", "--date", "2026-08-10"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("Kalibrációs bevásárlólista — 2026-08-10 éjszakájára"))
     #expect(result.stdout.contains("Helyszín: Otthon"))
@@ -2651,7 +2761,7 @@ private func writeTrendLightFITS(
 
 // MARK: - permission errors -> exit 2
 
-@Test func scanOnReadOnlyRootExitsWithTCCGuidance() throws {
+@Test func scanOnReadOnlyRootExitsWithTCCGuidance() async throws {
     // Deliberately NOT `Fixtures.makeMessyLibrary` -- one of its fixture
     // files lives under `.astro_tool/`, which would pre-create that
     // directory (with its own, still-writable permissions) before the
@@ -2668,7 +2778,7 @@ private func writeTrendLightFITS(
 
     try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
 
-    let result = try runCLI(["scan", "--root", root.path])
+    let result = try await runCLI(["scan", "--root", root.path])
     #expect(result.exitCode == 2, "stdout: \(result.stdout), stderr: \(result.stderr)")
     #expect(result.stderr.contains("Teljes lemezhozzáférés"))
 }
@@ -2697,7 +2807,7 @@ private func writeLinkCalibDummy(_ relativePath: String, root: URL) throws {
     try "dummy master".write(to: url, atomically: true, encoding: .utf8)
 }
 
-@Test func linkCalibDryRunPrintsPlanAndCreatesNothing() throws {
+@Test func linkCalibDryRunPrintsPlanAndCreatesNothing() async throws {
     let root = try makeTempRoot("link-calib-dry-run")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -2705,10 +2815,10 @@ private func writeLinkCalibDummy(_ relativePath: String, root: URL) throws {
     try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l2.fit", root: root, exptime: 300.0, setTemp: -10.0)
     try writeLinkCalibDummy("calibration_library/darks/300sec_-10deg/master.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "link-calib", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--dry-run", "--json",
     ])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
@@ -2722,17 +2832,17 @@ private func writeLinkCalibDummy(_ relativePath: String, root: URL) throws {
     #expect(!FileManager.default.fileExists(atPath: destURL.path))
 }
 
-@Test func linkCalibWithYesLinksThenRerunReportsSkipped() throws {
+@Test func linkCalibWithYesLinksThenRerunReportsSkipped() async throws {
     let root = try makeTempRoot("link-calib-yes")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
     try writeLinkCalibDummy("calibration_library/darks/300sec_-10deg/master.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let first = try runCLI([
+    let first = try await runCLI([
         "link-calib", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--yes", "--json",
     ])
     #expect(first.exitCode == 0, "stderr: \(first.stderr)")
@@ -2744,7 +2854,7 @@ private func writeLinkCalibDummy(_ relativePath: String, root: URL) throws {
     let destURL = root.appendingPathComponent("sessions/T1/2026-01-10/darks/master.fit")
     #expect(FileManager.default.fileExists(atPath: destURL.path))
 
-    let second = try runCLI([
+    let second = try await runCLI([
         "link-calib", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--yes", "--json",
     ])
     #expect(second.exitCode == 0, "stderr: \(second.stderr)")
@@ -2753,32 +2863,32 @@ private func writeLinkCalibDummy(_ relativePath: String, root: URL) throws {
     #expect(secondJSON?["skipped"] as? [String] == ["sessions/T1/2026-01-10/darks/master.fit"])
 }
 
-@Test func linkCalibJSONWithoutYesOrDryRunExitsWithError() throws {
+@Test func linkCalibJSONWithoutYesOrDryRunExitsWithError() async throws {
     let root = try makeTempRoot("link-calib-no-yes")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
     try writeLinkCalibDummy("calibration_library/darks/300sec_-10deg/master.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["link-calib", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
+    let result = try await runCLI(["link-calib", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
     #expect(result.exitCode == 1)
 
     let destURL = root.appendingPathComponent("sessions/T1/2026-01-10/darks/master.fit")
     #expect(!FileManager.default.fileExists(atPath: destURL.path))
 }
 
-@Test func linkCalibWithUnknownSessionExitsWithTargetNotFoundError() throws {
+@Test func linkCalibWithUnknownSessionExitsWithTargetNotFoundError() async throws {
     let root = try makeTempRoot("link-calib-unknown-session")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "link-calib", "--root", root.path, "--target", "T1", "--date", "1999-01-01", "--dry-run",
     ])
     // R11-T4: target/session-lookup failure gets its own exit code (3).
@@ -2787,15 +2897,15 @@ private func writeLinkCalibDummy(_ relativePath: String, root: URL) throws {
 
 // MARK: - match (R11-T4)
 
-@Test func matchJSONAfterScanReportsCalibrationForFixtureSession() throws {
+@Test func matchJSONAfterScanReportsCalibrationForFixtureSession() async throws {
     let root = try makeTempRoot("match-json")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["match", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
+    let result = try await runCLI(["match", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonObject(result.stdout)
@@ -2804,15 +2914,15 @@ private func writeLinkCalibDummy(_ relativePath: String, root: URL) throws {
     #expect(json?["lights"] as? Int == 1)
 }
 
-@Test func matchWithUnknownSessionExitsWithTargetNotFoundError() throws {
+@Test func matchWithUnknownSessionExitsWithTargetNotFoundError() async throws {
     let root = try makeTempRoot("match-unknown-session")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeLinkCalibFITS("sessions/T1/2026-01-10/lights/l1.fit", root: root, exptime: 300.0, setTemp: -10.0)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["match", "--root", root.path, "--target", "T1", "--date", "1999-01-01"])
+    let result = try await runCLI(["match", "--root", root.path, "--target", "T1", "--date", "1999-01-01"])
     // R11-T4: target/session-lookup failure gets its own exit code (3).
     #expect(result.exitCode == 3)
     #expect(result.stderr.contains("no such session"))
@@ -2835,16 +2945,16 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
     try buildHeaderData(cards).write(to: url)
 }
 
-@Test func planJSONAfterScanReportsVerdictsForFixtureTarget() throws {
+@Test func planJSONAfterScanReportsVerdictsForFixtureTarget() async throws {
     let root = try makeTempRoot("plan-json")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writePlanFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, crval1: 10.6847, crval2: 41.2687, dateObs: "2026-08-01T22:00:00")
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--json"])
+    let result = try await runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -2856,16 +2966,16 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
     #expect((plan["verdict"] as? String)?.isEmpty == false)
 }
 
-@Test func planHumanOutputShowsHeaderAndTableWithoutSiteCoordinates() throws {
+@Test func planHumanOutputShowsHeaderAndTableWithoutSiteCoordinates() async throws {
     let root = try makeTempRoot("plan-human")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writePlanFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, crval1: 10.6847, crval2: 41.2687, dateObs: "2026-08-01T22:00:00")
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10"])
+    let result = try await runCLI(["plan", "--root", root.path, "--date", "2026-08-10"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("Ma este"))
     #expect(result.stdout.contains("M31_Andromeda"))
@@ -2877,17 +2987,17 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
     #expect(!result.stdout.contains("19.0"))
 }
 
-@Test func planRespectsMinAltFlag() throws {
+@Test func planRespectsMinAltFlag() async throws {
     let root = try makeTempRoot("plan-min-alt")
     defer { try? FileManager.default.removeItem(at: root) }
 
     // dec -80 at lat 47.5 never rises anywhere near minAlt.
     try writePlanFITS("sessions/T_Low/2026-08-01/lights/l1.fit", root: root, crval1: 10.0, crval2: -80.0, dateObs: "2026-08-01T22:00:00")
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--min-alt", "30", "--json"])
+    let result = try await runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--min-alt", "30", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     let json = try jsonItems(result.stdout)
     let plans = try #require(json)
@@ -2895,46 +3005,46 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
     #expect((plan["verdict"] as? String)?.hasPrefix("alacsony") == true)
 }
 
-@Test func planWithInvalidDateExitsWithError() throws {
+@Test func planWithInvalidDateExitsWithError() async throws {
     let root = try makeTempRoot("plan-bad-date")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI(["plan", "--root", root.path, "--date", "not-a-date"])
+    let result = try await runCLI(["plan", "--root", root.path, "--date", "not-a-date"])
     #expect(result.exitCode == 1)
 }
 
 // MARK: - plan --out (R11-T6/F18a)
 
-@Test func planOutDashPrintsCSVToStdout() throws {
+@Test func planOutDashPrintsCSVToStdout() async throws {
     let root = try makeTempRoot("plan-out-dash")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writePlanFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, crval1: 10.6847, crval2: 41.2687, dateObs: "2026-08-01T22:00:00")
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--out", "-"])
+    let result = try await runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--out", "-"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.hasPrefix(PlanExport.csvHeader + "\n"))
     #expect(result.stdout.contains("M31_Andromeda"))
 }
 
-@Test func planOutPathWritesCSVToCustomPathOutsideRoot() throws {
+@Test func planOutPathWritesCSVToCustomPathOutsideRoot() async throws {
     let root = try makeTempRoot("plan-out-path")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writePlanFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, crval1: 10.6847, crval2: 41.2687, dateObs: "2026-08-01T22:00:00")
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     let outDir = try makeTempRoot("plan-out-path-dest")
     defer { try? FileManager.default.removeItem(at: outDir) }
     let outPath = outDir.appendingPathComponent("plan.csv").path
 
-    let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--out", outPath])
+    let result = try await runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--out", outPath])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(FileManager.default.fileExists(atPath: outPath))
 
@@ -2942,19 +3052,19 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
     #expect(content.contains("M31_Andromeda"))
 }
 
-@Test func planOutWithMonthExitsWithUsageError() throws {
+@Test func planOutWithMonthExitsWithUsageError() async throws {
     let root = try makeTempRoot("plan-out-month")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI(["plan", "--root", root.path, "--month", "--out", "-"])
+    let result = try await runCLI(["plan", "--root", root.path, "--month", "--out", "-"])
     #expect(result.exitCode == 1)
     #expect(result.stderr.contains("--out is not supported together with --month"))
 }
 
 // MARK: - night-info (R10-B8)
 
-@Test func nightInfoJSONReportsDarkHoursAndMoonWhenSiteResolvable() throws {
+@Test func nightInfoJSONReportsDarkHoursAndMoonWhenSiteResolvable() async throws {
     let root = try makeTempRoot("night-info-json")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -2963,17 +3073,17 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
         crval1: 10.6847, crval2: 41.2687, dateObs: "2026-08-01T22:00:00"
     )
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["night-info", "--root", root.path, "--date", "2026-08-10", "--json"])
+    let result = try await runCLI(["night-info", "--root", root.path, "--date", "2026-08-10", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     let json = try #require(try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
     #expect(json["moon_illumination_percent"] != nil)
     #expect(json["dark_hours"] != nil)
 }
 
-@Test func nightInfoHumanOutputPrintsDarkHoursAndMoonLinesWithoutLeakingCoordinates() throws {
+@Test func nightInfoHumanOutputPrintsDarkHoursAndMoonLinesWithoutLeakingCoordinates() async throws {
     let root = try makeTempRoot("night-info-human")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -2982,10 +3092,10 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
         crval1: 10.6847, crval2: 41.2687, dateObs: "2026-08-01T22:00:00"
     )
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["night-info", "--root", root.path, "--date", "2026-08-10"])
+    let result = try await runCLI(["night-info", "--root", root.path, "--date", "2026-08-10"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("sötét óra:"))
     #expect(result.stdout.contains("Hold:"))
@@ -2996,15 +3106,15 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
     #expect(!result.stdout.contains("19.0"))
 }
 
-@Test func nightInfoWithoutSiteCoordinatesStillReportsMoonIlluminationAndExplainsWhy() throws {
+@Test func nightInfoWithoutSiteCoordinatesStillReportsMoonIlluminationAndExplainsWhy() async throws {
     let root = try makeTempRoot("night-info-no-site")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["night-info", "--root", root.path, "--date", "2026-08-10", "--json"])
+    let result = try await runCLI(["night-info", "--root", root.path, "--date", "2026-08-10", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     let json = try #require(try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
     #expect(json["dark_hours"] == nil || json["dark_hours"] is NSNull)
@@ -3012,12 +3122,12 @@ private func writePlanFITS(_ relativePath: String, root: URL, crval1: Double, cr
     #expect(json["moon_illumination_percent"] != nil)
 }
 
-@Test func nightInfoWithInvalidDateExitsWithError() throws {
+@Test func nightInfoWithInvalidDateExitsWithError() async throws {
     let root = try makeTempRoot("night-info-bad-date")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI(["night-info", "--root", root.path, "--date", "not-a-date"])
+    let result = try await runCLI(["night-info", "--root", root.path, "--date", "not-a-date"])
     #expect(result.exitCode == 1)
 }
 
@@ -3039,7 +3149,7 @@ private let twoSitesConfigJSON = """
 }
 """
 
-@Test func planSiteFlagSelectsNamedSiteOverDefault() throws {
+@Test func planSiteFlagSelectsNamedSiteOverDefault() async throws {
     let root = try makeTempRoot("plan-site-flag")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -3049,17 +3159,17 @@ private let twoSitesConfigJSON = """
         crval1: 10.6847, crval2: 41.2687, dateObs: "2026-08-01T22:00:00"
     )
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let defaultResult = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--json"])
+    let defaultResult = try await runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--json"])
     #expect(defaultResult.exitCode == 0, "stderr: \(defaultResult.stderr)")
     let defaultPlan = try #require(try jsonItems(defaultResult.stdout)?.first { $0["target"] as? String == "M31_Andromeda" })
     let defaultAlt = try #require(defaultPlan["max_altitude_deg"] as? Double)
 
     // "Del" is a far-southern site sharing the same longitude -- the very
     // same target/night gives a dramatically lower max altitude from there.
-    let southResult = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--site", "Del", "--json"])
+    let southResult = try await runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--site", "Del", "--json"])
     #expect(southResult.exitCode == 0, "stderr: \(southResult.stderr)")
     let southPlan = try #require(try jsonItems(southResult.stdout)?.first { $0["target"] as? String == "M31_Andromeda" })
     let southAlt = try #require(southPlan["max_altitude_deg"] as? Double)
@@ -3067,65 +3177,65 @@ private let twoSitesConfigJSON = """
     #expect(abs(defaultAlt - southAlt) > 20)
 }
 
-@Test func planWithUnknownSiteNameExitsWithErrorListingConfiguredNames() throws {
+@Test func planWithUnknownSiteNameExitsWithErrorListingConfiguredNames() async throws {
     let root = try makeTempRoot("plan-site-unknown")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--site", "Nemletezo"])
+    let result = try await runCLI(["plan", "--root", root.path, "--date", "2026-08-10", "--site", "Nemletezo"])
     #expect(result.exitCode == 1)
     #expect(result.stderr.contains("Otthon"))
     #expect(result.stderr.contains("Del"))
 }
 
-@Test func planMonthSiteFlagSelectsNamedSite() throws {
+@Test func planMonthSiteFlagSelectsNamedSite() async throws {
     let root = try makeTempRoot("plan-month-site-flag")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["plan", "--root", root.path, "--month", "--nights", "1", "--site", "Del", "--json"])
+    let result = try await runCLI(["plan", "--root", root.path, "--month", "--nights", "1", "--site", "Del", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 }
 
-@Test func nightInfoSiteFlagSelectsNamedSite() throws {
+@Test func nightInfoSiteFlagSelectsNamedSite() async throws {
     let root = try makeTempRoot("night-info-site-flag")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["night-info", "--root", root.path, "--date", "2026-08-10", "--site", "Del", "--json"])
+    let result = try await runCLI(["night-info", "--root", root.path, "--date", "2026-08-10", "--site", "Del", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     let json = try #require(try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
     #expect(json["moon_illumination_percent"] != nil)
 }
 
-@Test func nightInfoWithUnknownSiteNameExitsWithError() throws {
+@Test func nightInfoWithUnknownSiteNameExitsWithError() async throws {
     let root = try makeTempRoot("night-info-site-unknown")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["night-info", "--root", root.path, "--site", "Nemletezo"])
+    let result = try await runCLI(["night-info", "--root", root.path, "--site", "Nemletezo"])
     #expect(result.exitCode == 1)
     #expect(result.stderr.contains("Otthon"))
 }
 
-@Test func configShowHumanReadablePrintsConfiguredSitesWithDefaultMarker() throws {
+@Test func configShowHumanReadablePrintsConfiguredSitesWithDefaultMarker() async throws {
     let root = try makeTempRoot("config-show-sites")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeSitesConfig(root: root, sitesJSON: twoSitesConfigJSON)
 
-    let result = try runCLI(["config", "show", "--root", root.path])
+    let result = try await runCLI(["config", "show", "--root", root.path])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("Helyszínek (sites)"))
     #expect(result.stdout.contains("Otthon"))
@@ -3147,57 +3257,59 @@ private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Doubl
     try buildHeaderData(cards).write(to: url)
 }
 
-@Test func projectsJSONDecodesAndReportsPhaseForFixtureTarget() throws {
+@Test func projectsJSONDecodesAndReportsPhaseForFixtureTarget() async throws {
     let root = try makeTempRoot("projects-json")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    // No stack yet, well above the 2h default collecting threshold, no
-    // goal tag -> readyToStack.
+    // No explicit goal tag: the brightness- and setup-aware automatic goal
+    // keeps this short M31 fixture in collection.
     try writeProjectsFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, exptime: 3 * 3600)
     try "notes".write(to: root.appendingPathComponent("sessions/M31_Andromeda/2026-08-01/README.txt"), atomically: true, encoding: .utf8)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["projects", "--root", root.path, "--json"])
+    let result = try await runCLI(["projects", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
     let projects = try #require(json)
     let project = try #require(projects.first { $0["target"] as? String == "M31_Andromeda" })
-    #expect(project["phase"] as? String == "stackelheto")
+    #expect(project["phase"] as? String == "gyujtes")
     let todos = try #require(project["todos"] as? [String])
-    #expect(todos.contains("készíts stacket: M31_Andromeda/2026-08-01"))
+    #expect(todos.contains { $0.contains("automatikus cél") })
+    #expect(todos.contains { $0.contains("hiányzik még") })
 }
 
-@Test func projectsHumanOutputShowsPhaseHeaders() throws {
+@Test func projectsHumanOutputShowsPhaseHeaders() async throws {
     let root = try makeTempRoot("projects-human")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeProjectsFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, exptime: 3 * 3600)
     try "notes".write(to: root.appendingPathComponent("sessions/M31_Andromeda/2026-08-01/README.txt"), atomically: true, encoding: .utf8)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["projects", "--root", root.path])
+    let result = try await runCLI(["projects", "--root", root.path])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
-    #expect(result.stdout.contains("Stackelhető"))
+    #expect(result.stdout.contains("Gyűjtés alatt"))
+    #expect(result.stdout.contains("automatikus cél"))
     #expect(result.stdout.contains("M31_Andromeda"))
 }
 
 // MARK: - export
 
-@Test func exportOutDashPrintsContentToStdoutWithoutWritingAFile() throws {
+@Test func exportOutDashPrintsContentToStdoutWithoutWritingAFile() async throws {
     let root = try makeTempRoot("export-stdout")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeProjectsFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, exptime: 300.0)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["export", "--root", root.path, "--target", "M31_Andromeda", "--format", "astrobin", "--out", "-"])
+    let result = try await runCLI(["export", "--root", root.path, "--target", "M31_Andromeda", "--format", "astrobin", "--out", "-"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.hasPrefix("date,filter,number,duration,binning,gain,sensorCooling,darks,flats,flatDarks,bias,bortle,meanSqm"))
     #expect(result.stdout.contains("2026-08-01"))
@@ -3206,16 +3318,16 @@ private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Doubl
     #expect(!FileManager.default.fileExists(atPath: exportsDir.path))
 }
 
-@Test func exportDefaultModeWritesFileUnderExportsAndPrintsPath() throws {
+@Test func exportDefaultModeWritesFileUnderExportsAndPrintsPath() async throws {
     let root = try makeTempRoot("export-file")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeProjectsFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, exptime: 300.0)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["export", "--root", root.path, "--target", "M31_Andromeda", "--format", "md"])
+    let result = try await runCLI(["export", "--root", root.path, "--target", "M31_Andromeda", "--format", "md"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let printedPath = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3224,27 +3336,27 @@ private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Doubl
     #expect(FileManager.default.fileExists(atPath: printedPath))
 }
 
-@Test func exportAstrobinWarnsOnStderrAboutAnUnmappedFilter() throws {
+@Test func exportAstrobinWarnsOnStderrAboutAnUnmappedFilter() async throws {
     let root = try makeTempRoot("export-astrobin-unmapped-filter")
     defer { try? FileManager.default.removeItem(at: root) }
 
     // No `astrobin.filterIds` mapping configured at all -- OIII must warn.
     try writeProjectsFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, exptime: 300.0, filter: "OIII")
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["export", "--root", root.path, "--target", "M31_Andromeda", "--format", "astrobin", "--out", "-"])
+    let result = try await runCLI(["export", "--root", root.path, "--target", "M31_Andromeda", "--format", "astrobin", "--out", "-"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stderr.contains("OIII"))
     #expect(result.stderr.contains("AstroBin filter-ID"))
 }
 
-@Test func exportMissingTargetOrFormatExitsWithError() throws {
+@Test func exportMissingTargetOrFormatExitsWithError() async throws {
     let root = try makeTempRoot("export-missing-flags")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let result = try runCLI(["export", "--root", root.path, "--format", "csv"])
+    let result = try await runCLI(["export", "--root", root.path, "--format", "csv"])
     #expect(result.exitCode == 1)
 }
 
@@ -3274,45 +3386,45 @@ private func writeBogusSirilPathConfig(root: URL) throws {
     try Data(json.utf8).write(to: configURL)
 }
 
-@Test func solveWithoutTargetOrAllExitsWithError() throws {
+@Test func solveWithoutTargetOrAllExitsWithError() async throws {
     let root = try makeTempRoot("solve-no-target")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["solve", "--root", root.path])
+    let result = try await runCLI(["solve", "--root", root.path])
     #expect(result.exitCode == 1)
 }
 
-@Test func solveWithUnknownTargetExitsWithError() throws {
+@Test func solveWithUnknownTargetExitsWithError() async throws {
     let root = try makeTempRoot("solve-unknown-target")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["solve", "--root", root.path, "--target", "NoSuchTarget12345"])
+    let result = try await runCLI(["solve", "--root", root.path, "--target", "NoSuchTarget12345"])
     // R11-T4: target-lookup failure gets its own exit code (3).
     #expect(result.exitCode == 3)
     #expect(result.stderr.contains("target not found"))
 }
 
-@Test func solveWithSirilMissingExitsWithClearError() throws {
+@Test func solveWithSirilMissingExitsWithClearError() async throws {
     let root = try makeTempRoot("solve-siril-missing")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
     try writeBogusSirilPathConfig(root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     // A real target on record (`Fixtures.makeMessyLibrary` always plants
     // M45_Pleiades), so this fails specifically on the missing Siril binary
     // rather than on an unknown-target check.
-    let result = try runCLI(["solve", "--root", root.path, "--target", "M45_Pleiades"])
+    let result = try await runCLI(["solve", "--root", root.path, "--target", "M45_Pleiades"])
     // R11-T4: an external-tool failure (Siril missing) gets its own exit
     // code (4), carved out of the generic usage/error bucket (1).
     #expect(result.exitCode == 4)
@@ -3359,35 +3471,35 @@ private func writeSensorFITS(
     try data.write(to: url)
 }
 
-@Test func sensorWithoutMeasureFlagPrintsAlreadyStoredProfilesOnly() throws {
+@Test func sensorWithoutMeasureFlagPrintsAlreadyStoredProfilesOnly() async throws {
     let root = try makeTempRoot("sensor-no-measure")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeSensorFITS("calibration_library/biases/bias_a.fit", root: root, pixelValue: 500)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     // No `--measure` yet -- nothing has ever been persisted to
     // `sensor_profile`, so this must print "nothing measured" rather than
     // silently running a measurement itself.
-    let result = try runCLI(["sensor", "--root", root.path, "--json"])
+    let result = try await runCLI(["sensor", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     let json = try jsonItems(result.stdout)
     #expect(json?.isEmpty == true)
 }
 
-@Test func sensorMeasureFlagRunsMeasurementAndPersistsThenJSONReportsBiasLevel() throws {
+@Test func sensorMeasureFlagRunsMeasurementAndPersistsThenJSONReportsBiasLevel() async throws {
     let root = try makeTempRoot("sensor-measure-json")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeSensorFITS("calibration_library/biases/bias_a.fit", root: root, pixelValue: 500, egain: 0.25)
     try writeSensorFITS("calibration_library/biases/bias_b.fit", root: root, pixelValue: 500, egain: 0.25)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["sensor", "--root", root.path, "--measure", "--json"])
+    let result = try await runCLI(["sensor", "--root", root.path, "--measure", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
@@ -3398,22 +3510,22 @@ private func writeSensorFITS(
     #expect(profile["offset"] as? Double == 50)
 
     // A second, non-measuring call must still see the persisted profile.
-    let rerun = try runCLI(["sensor", "--root", root.path, "--json"])
+    let rerun = try await runCLI(["sensor", "--root", root.path, "--json"])
     #expect(rerun.exitCode == 0, "stderr: \(rerun.stderr)")
     let rerunJSON = try jsonItems(rerun.stdout)
     #expect(rerunJSON?.count == 1)
 }
 
-@Test func sensorHumanOutputPrintsHungarianLabelsWithBiasAndEGain() throws {
+@Test func sensorHumanOutputPrintsHungarianLabelsWithBiasAndEGain() async throws {
     let root = try makeTempRoot("sensor-human")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeSensorFITS("calibration_library/biases/bias_a.fit", root: root, pixelValue: 501, egain: 0.243)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["sensor", "--root", root.path, "--measure"])
+    let result = try await runCLI(["sensor", "--root", root.path, "--measure"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("ASI2600MC"))
     #expect(result.stdout.contains("gain 100"))
@@ -3422,7 +3534,7 @@ private func writeSensorFITS(
     #expect(result.stdout.contains("EGAIN"))
 }
 
-@Test func sensorPrintsDriftWarningWhenLightsUseAComboWithNoMeasuredProfile() throws {
+@Test func sensorPrintsDriftWarningWhenLightsUseAComboWithNoMeasuredProfile() async throws {
     let root = try makeTempRoot("sensor-drift-warning")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -3433,10 +3545,10 @@ private func writeSensorFITS(
         pixelValue: 600, gain: 100, offset: 50
     )
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["sensor", "--root", root.path])
+    let result = try await runCLI(["sensor", "--root", root.path])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stderr.contains("nincs mérés ehhez"))
     #expect(result.stderr.contains("ASI2600MC"))
@@ -3444,14 +3556,14 @@ private func writeSensorFITS(
 
 // MARK: - sensor --history (R11-T10/F8)
 
-@Test func sensorHistoryJSONGroupsTwoMeasureRunsOldestFirstWithEstimatorVersion() throws {
+@Test func sensorHistoryJSONGroupsTwoMeasureRunsOldestFirstWithEstimatorVersion() async throws {
     let root = try makeTempRoot("sensor-history-json")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeSensorFITS("calibration_library/biases/bias_a.fit", root: root, pixelValue: 500, egain: 0.25)
-    let scan1 = try runCLI(["scan", "--root", root.path])
+    let scan1 = try await runCLI(["scan", "--root", root.path])
     #expect(scan1.exitCode == 0, "stderr: \(scan1.stderr)")
-    let measure1 = try runCLI(["sensor", "--root", root.path, "--measure"])
+    let measure1 = try await runCLI(["sensor", "--root", root.path, "--measure"])
     #expect(measure1.exitCode == 0, "stderr: \(measure1.stderr)")
 
     // Re-measure against a changed bias level, simulating fresh frames --
@@ -3460,10 +3572,10 @@ private func writeSensorFITS(
     // rescan is needed just to pick up the new pixel VALUES at the same
     // already-tracked path.
     try writeSensorFITS("calibration_library/biases/bias_a.fit", root: root, pixelValue: 520, egain: 0.25)
-    let measure2 = try runCLI(["sensor", "--root", root.path, "--measure"])
+    let measure2 = try await runCLI(["sensor", "--root", root.path, "--measure"])
     #expect(measure2.exitCode == 0, "stderr: \(measure2.stderr)")
 
-    let result = try runCLI(["sensor", "--root", root.path, "--history", "--json"])
+    let result = try await runCLI(["sensor", "--root", root.path, "--history", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let groups = try jsonItems(result.stdout)
@@ -3476,49 +3588,49 @@ private func writeSensorFITS(
 
     // The "latest view" (plain `sensor --json`) still only ever has ONE row
     // per combo -- history is additive, not a replacement.
-    let latest = try jsonItems(try runCLI(["sensor", "--root", root.path, "--json"]).stdout)
+    let latest = try jsonItems(try await runCLI(["sensor", "--root", root.path, "--json"]).stdout)
     #expect(latest?.count == 1)
     #expect(latest?.first?["bias_level_adu"] as? Double == 520)
 }
 
-@Test func sensorHistoryHumanOutputPrintsPerComboEntriesWithEstimatorVersion() throws {
+@Test func sensorHistoryHumanOutputPrintsPerComboEntriesWithEstimatorVersion() async throws {
     let root = try makeTempRoot("sensor-history-human")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeSensorFITS("calibration_library/biases/bias_a.fit", root: root, pixelValue: 500, egain: 0.25)
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
-    let measure = try runCLI(["sensor", "--root", root.path, "--measure"])
+    let measure = try await runCLI(["sensor", "--root", root.path, "--measure"])
     #expect(measure.exitCode == 0, "stderr: \(measure.stderr)")
 
-    let result = try runCLI(["sensor", "--root", root.path, "--history"])
+    let result = try await runCLI(["sensor", "--root", root.path, "--history"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("ASI2600MC"))
     #expect(result.stdout.contains("becslő v"))
 }
 
-@Test func sensorHistoryCombinedWithMeasureExitsWithUsageError() throws {
+@Test func sensorHistoryCombinedWithMeasureExitsWithUsageError() async throws {
     let root = try makeTempRoot("sensor-history-measure-conflict")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let result = try runCLI(["sensor", "--root", root.path, "--history", "--measure"])
+    let result = try await runCLI(["sensor", "--root", root.path, "--history", "--measure"])
     #expect(result.exitCode == 1)
 }
 
-@Test func sensorHistoryWithNoProfilesPrintsEmptyResult() throws {
+@Test func sensorHistoryWithNoProfilesPrintsEmptyResult() async throws {
     let root = try makeTempRoot("sensor-history-empty")
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let jsonResult = try runCLI(["sensor", "--root", root.path, "--history", "--json"])
+    let jsonResult = try await runCLI(["sensor", "--root", root.path, "--history", "--json"])
     #expect(jsonResult.exitCode == 0, "stderr: \(jsonResult.stderr)")
     #expect(try jsonItems(jsonResult.stdout)?.isEmpty == true)
 
-    let humanResult = try runCLI(["sensor", "--root", root.path, "--history"])
+    let humanResult = try await runCLI(["sensor", "--root", root.path, "--history"])
     #expect(humanResult.exitCode == 0, "stderr: \(humanResult.stderr)")
     #expect(humanResult.stdout.contains("nincs mért szenzor-profil"))
 }
@@ -3573,7 +3685,7 @@ private func writeBayerLightFITS(
     try data.write(to: url)
 }
 
-@Test func exposeJSONAfterSensorMeasureAndRateReportsNumericAdviceForFixtureTarget() throws {
+@Test func exposeJSONAfterSensorMeasureAndRateReportsNumericAdviceForFixtureTarget() async throws {
     let root = try makeTempRoot("expose-numeric")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -3590,16 +3702,16 @@ private func writeBayerLightFITS(
         value00: 700, value01: 650, value10: 650, value11: 520, egain: 0.25, exptime: 120
     )
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let measure = try runCLI(["sensor", "--root", root.path, "--measure", "--json"])
+    let measure = try await runCLI(["sensor", "--root", root.path, "--measure", "--json"])
     #expect(measure.exitCode == 0, "stderr: \(measure.stderr)")
 
-    let rate = try runCLI(["rate", "--root", root.path, "--target", "M42", "--no-siril", "--json"])
+    let rate = try await runCLI(["rate", "--root", root.path, "--target", "M42", "--no-siril", "--json"])
     #expect(rate.exitCode == 0, "stderr: \(rate.stderr)")
 
-    let result = try runCLI(["expose", "--root", root.path, "--target", "M42", "--json"])
+    let result = try await runCLI(["expose", "--root", root.path, "--target", "M42", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
@@ -3610,7 +3722,7 @@ private func writeBayerLightFITS(
     #expect((advice["current_sub_seconds"] as? Double) == 120)
 }
 
-@Test func exposeWithoutSensorProfileReportsHonestNAReason() throws {
+@Test func exposeWithoutSensorProfileReportsHonestNAReason() async throws {
     let root = try makeTempRoot("expose-no-profile")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -3621,13 +3733,13 @@ private func writeBayerLightFITS(
         value00: 700, value01: 650, value10: 650, value11: 520
     )
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let rate = try runCLI(["rate", "--root", root.path, "--target", "M31", "--no-siril", "--json"])
+    let rate = try await runCLI(["rate", "--root", root.path, "--target", "M31", "--no-siril", "--json"])
     #expect(rate.exitCode == 0, "stderr: \(rate.stderr)")
 
-    let jsonResult = try runCLI(["expose", "--root", root.path, "--target", "M31", "--json"])
+    let jsonResult = try await runCLI(["expose", "--root", root.path, "--target", "M31", "--json"])
     #expect(jsonResult.exitCode == 0, "stderr: \(jsonResult.stderr)")
     let json = try JSONSerialization.jsonObject(with: Data(jsonResult.stdout.utf8)) as? [String: Any]
     let advice = try #require(json)
@@ -3635,12 +3747,12 @@ private func writeBayerLightFITS(
     #expect(reason.contains("sensor --measure"))
     #expect(advice["optimal_sub_seconds"] == nil)
 
-    let humanResult = try runCLI(["expose", "--root", root.path, "--target", "M31"])
+    let humanResult = try await runCLI(["expose", "--root", root.path, "--target", "M31"])
     #expect(humanResult.exitCode == 0, "stderr: \(humanResult.stderr)")
     #expect(humanResult.stdout.contains("sensor --measure"))
 }
 
-@Test func exposeWithoutTargetPrintsOneRowPerTarget() throws {
+@Test func exposeWithoutTargetPrintsOneRowPerTarget() async throws {
     let root = try makeTempRoot("expose-all-targets")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -3649,19 +3761,19 @@ private func writeBayerLightFITS(
         value00: 700, value01: 650, value10: 650, value11: 520
     )
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
-    let rate = try runCLI(["rate", "--root", root.path, "--target", "M31", "--no-siril", "--json"])
+    let rate = try await runCLI(["rate", "--root", root.path, "--target", "M31", "--no-siril", "--json"])
     #expect(rate.exitCode == 0, "stderr: \(rate.stderr)")
 
-    let jsonResult = try runCLI(["expose", "--root", root.path, "--json"])
+    let jsonResult = try await runCLI(["expose", "--root", root.path, "--json"])
     #expect(jsonResult.exitCode == 0, "stderr: \(jsonResult.stderr)")
     let json = try jsonItems(jsonResult.stdout)
     let rows = try #require(json)
     #expect(rows.count == 1)
     #expect(rows.first?["target"] as? String == "M31")
 
-    let humanResult = try runCLI(["expose", "--root", root.path])
+    let humanResult = try await runCLI(["expose", "--root", root.path])
     #expect(humanResult.exitCode == 0, "stderr: \(humanResult.stderr)")
     #expect(humanResult.stdout.contains("M31"))
     #expect(humanResult.stdout.contains("CÉLPONT"))
@@ -3675,7 +3787,7 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
     try "dummy light: \(relativePath)".write(to: url, atomically: true, encoding: .utf8)
 }
 
-@Test func stackListJSONExportsHardlinksDssfilelistAndSsf() throws {
+@Test func stackListJSONExportsHardlinksDssfilelistAndSsf() async throws {
     let root = try makeTempRoot("stacklist-json")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -3683,10 +3795,10 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
         try writeStackListLight("sessions/T1/2026-01-10/lights/l\(i).fit", root: root)
     }
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
+    let result = try await runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
@@ -3706,7 +3818,7 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
     #expect(FileManager.default.fileExists(atPath: stackListDir.appendingPathComponent("stack.ssf").path))
 }
 
-@Test func stackListHumanReadableOutputPrintsSummaryAndDir() throws {
+@Test func stackListHumanReadableOutputPrintsSummaryAndDir() async throws {
     let root = try makeTempRoot("stacklist-human")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -3714,26 +3826,26 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
     try writeStackListLight("sessions/T1/2026-01-10/lights/l2.fit", root: root)
     try writeStackListLight("sessions/T1/2026-01-10/lights/l3.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10"])
+    let result = try await runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("T1"))
     #expect(result.stdout.contains("2026-01-10"))
     #expect(result.stdout.contains("stacklists/T1-2026-01-10"))
 }
 
-@Test func stackListWithoutTargetOrDateExitsWithError() throws {
+@Test func stackListWithoutTargetOrDateExitsWithError() async throws {
     let root = try makeTempRoot("stacklist-missing-args")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let result = try runCLI(["stacklist", "--root", root.path, "--target", "T1"])
+    let result = try await runCLI(["stacklist", "--root", root.path, "--target", "T1"])
     #expect(result.exitCode == 1)
     #expect(result.stderr.contains("--target and --date are required"))
 }
 
-@Test func stackListRerunIsIdempotent() throws {
+@Test func stackListRerunIsIdempotent() async throws {
     let root = try makeTempRoot("stacklist-idempotent")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -3741,13 +3853,13 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
     try writeStackListLight("sessions/T1/2026-01-10/lights/l2.fit", root: root)
     try writeStackListLight("sessions/T1/2026-01-10/lights/l3.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let first = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
+    let first = try await runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
     #expect(first.exitCode == 0, "stderr: \(first.stderr)")
 
-    let second = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
+    let second = try await runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
     #expect(second.exitCode == 0, "stderr: \(second.stderr)")
 
     let stackListDir = root.appendingPathComponent(".astro_tool/stacklists/T1-2026-01-10/lights")
@@ -3763,18 +3875,18 @@ private func writeStackListLight(_ relativePath: String, root: URL) throws {
 /// surface, no direct DB access from the test. Returns after that setup,
 /// right before the SECOND `stacklist` call the caller makes (with either
 /// `--json` or plain human output) to observe the re-export sync.
-private func setUpStackListStaleSyncFixture(_ label: String) throws -> URL {
+private func setUpStackListStaleSyncFixture(_ label: String) async throws -> URL {
     let root = try makeTempRoot(label)
 
     for i in 1...4 {
         try writeStackListLight("sessions/T1/2026-01-10/lights/l\(i).fit", root: root)
     }
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     // Every frame is unrated and un-verdicted, so this FIRST export links
     // all 4.
-    let first = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10"])
+    let first = try await runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10"])
     #expect(first.exitCode == 0, "stderr: \(first.stderr)")
     let lightsDir = root.appendingPathComponent(".astro_tool/stacklists/T1-2026-01-10/lights")
     #expect(Set(try FileManager.default.contentsOfDirectory(atPath: lightsDir.path)) == Set(["l1.fit", "l2.fit", "l3.fit", "l4.fit"]))
@@ -3791,19 +3903,19 @@ private func setUpStackListStaleSyncFixture(_ label: String) throws -> URL {
         to: root.appendingPathComponent("sessions/T1/2026-01-10/session.dssfilelist"),
         atomically: true, encoding: .utf8
     )
-    let rescan = try runCLI(["scan", "--root", root.path])
+    let rescan = try await runCLI(["scan", "--root", root.path])
     #expect(rescan.exitCode == 0, "stderr: \(rescan.stderr)")
-    let ingest = try runCLI(["ingest-dss", "--root", root.path])
+    let ingest = try await runCLI(["ingest-dss", "--root", root.path])
     #expect(ingest.exitCode == 0, "stderr: \(ingest.stderr)")
 
     return root
 }
 
-@Test func stackListRerunAfterNewDSSRejectsReportsRemovedStaleLinksInJSON() throws {
-    let root = try setUpStackListStaleSyncFixture("stacklist-stale-sync-json")
+@Test func stackListRerunAfterNewDSSRejectsReportsRemovedStaleLinksInJSON() async throws {
+    let root = try await setUpStackListStaleSyncFixture("stacklist-stale-sync-json")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let result = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
+    let result = try await runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let payload = try #require(try jsonObject(result.stdout))
@@ -3822,31 +3934,31 @@ private func setUpStackListStaleSyncFixture(_ label: String) throws -> URL {
     }
 }
 
-@Test func stackListRerunAfterNewDSSRejectsPrintsRemovedStaleLinkCountInHumanOutput() throws {
-    let root = try setUpStackListStaleSyncFixture("stacklist-stale-sync-human")
+@Test func stackListRerunAfterNewDSSRejectsPrintsRemovedStaleLinkCountInHumanOutput() async throws {
+    let root = try await setUpStackListStaleSyncFixture("stacklist-stale-sync-human")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let result = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10"])
+    let result = try await runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("2 elavult link eltávolítva"))
 }
 
 // MARK: - stacklist --out (R11-T4)
 
-@Test func stackListOutWritesDirectlyIntoGivenDirectory() throws {
+@Test func stackListOutWritesDirectlyIntoGivenDirectory() async throws {
     let root = try makeTempRoot("stacklist-out")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
     try writeStackListLight("sessions/T1/2026-01-10/lights/l2.fit", root: root)
     try writeStackListLight("sessions/T1/2026-01-10/lights/l3.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     let outDir = try makeTempRoot("stacklist-out-dest")
     defer { try? FileManager.default.removeItem(at: outDir) }
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--out", outDir.path,
     ])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
@@ -3860,31 +3972,31 @@ private func setUpStackListStaleSyncFixture(_ label: String) throws -> URL {
     #expect(!FileManager.default.fileExists(atPath: defaultDir.path))
 }
 
-@Test func stackListOutDashIsRejectedWithClearError() throws {
+@Test func stackListOutDashIsRejectedWithClearError() async throws {
     let root = try makeTempRoot("stacklist-out-dash")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--out", "-",
     ])
     #expect(result.exitCode == 1)
     #expect(result.stderr.contains("--out -"))
 }
 
-@Test func stackListOutInsideLibraryRootIsRejected() throws {
+@Test func stackListOutInsideLibraryRootIsRejected() async throws {
     let root = try makeTempRoot("stacklist-out-inside")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     let insideDir = root.appendingPathComponent("sneaky-stacklist-dir").path
-    let result = try runCLI([
+    let result = try await runCLI([
         "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--out", insideDir,
     ])
     #expect(result.exitCode == 1)
@@ -3914,19 +4026,19 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     try data.write(to: url)
 }
 
-@Test func stackListKeepFilterFlagIsAcceptedAndIgnoredForBucketsItDoesNotName() throws {
+@Test func stackListKeepFilterFlagIsAcceptedAndIgnoredForBucketsItDoesNotName() async throws {
     let root = try makeTempRoot("stacklist-keep-filter-noop")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
     try writeStackListLight("sessions/T1/2026-01-10/lights/l2.fit", root: root)
     try writeStackListLight("sessions/T1/2026-01-10/lights/l3.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     // No filter data at all in this library -- "Ha=0.5" names a bucket that
     // doesn't exist, so it's a harmless no-op, not an error.
-    let result = try runCLI([
+    let result = try await runCLI([
         "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
         "--keep-filter", "Ha=0.5", "--json",
     ])
@@ -3938,15 +4050,15 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     #expect(selection["per_filter"] == nil)
 }
 
-@Test func stackListKeepFilterRejectsMalformedValue() throws {
+@Test func stackListKeepFilterRejectsMalformedValue() async throws {
     let root = try makeTempRoot("stacklist-keep-filter-bad")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
         "--keep-filter", "Ha=not-a-number",
     ])
@@ -3954,7 +4066,7 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     #expect(result.stderr.contains("--keep-filter"))
 }
 
-@Test func stackListMultiFilterJSONAndExportTreeUseSeparateFilterSubfolders() throws {
+@Test func stackListMultiFilterJSONAndExportTreeUseSeparateFilterSubfolders() async throws {
     let root = try makeTempRoot("stacklist-multi-filter")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -3962,10 +4074,10 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/ha2.fit", root: root, filter: "Ha")
     try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/oiii1.fit", root: root, filter: "OIII")
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
+    let result = try await runCLI(["stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let payload = try #require(try jsonObject(result.stdout))
@@ -3992,7 +4104,7 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     #expect(manifestText.contains("OIII"))
 }
 
-@Test func stackListKeepFilterOverridesOneFilterOnly() throws {
+@Test func stackListKeepFilterOverridesOneFilterOnly() async throws {
     let root = try makeTempRoot("stacklist-keep-filter-override")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -4003,14 +4115,14 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
         try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/oiii\(i).fit", root: root, filter: "OIII")
     }
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     // Neither filter has any rated/verdict data, so every frame is
     // "unrated -- always kept" regardless of keepFraction; this only checks
     // that the flag parses and threads through without affecting the
     // (unrelated) unrated-frame floor.
-    let result = try runCLI([
+    let result = try await runCLI([
         "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
         "--keep-filter", "Ha=0.5,OIII=1.0", "--json",
     ])
@@ -4023,17 +4135,17 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
 
 // MARK: - stacklist --keep-filter case-insensitivity, "none" alias, unknown-name warning (R12-U2, point 3)
 
-@Test func stackListKeepFilterWarnsOnStderrForAnUnknownFilterNameButStillSucceeds() throws {
+@Test func stackListKeepFilterWarnsOnStderrForAnUnknownFilterNameButStillSucceeds() async throws {
     let root = try makeTempRoot("stacklist-keep-filter-unknown")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/ha1.fit", root: root, filter: "Ha")
     try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/oiii1.fit", root: root, filter: "OIII")
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
         "--keep-filter", "Bogus=0.5",
     ])
@@ -4042,7 +4154,7 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     #expect(result.stderr.contains("Bogus"))
 }
 
-@Test func stackListKeepFilterMatchesActualFilterNamesCaseInsensitivelyWithoutWarning() throws {
+@Test func stackListKeepFilterMatchesActualFilterNamesCaseInsensitivelyWithoutWarning() async throws {
     let root = try makeTempRoot("stacklist-keep-filter-case")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -4053,12 +4165,12 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
         try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/oiii\(i).fit", root: root, filter: "OIII")
     }
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     // Deliberately wrong case on both names -- must still match, so NO
     // "ismeretlen szűrőnév" warning for either.
-    let result = try runCLI([
+    let result = try await runCLI([
         "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
         "--keep-filter", "ha=0.5,OIII=1.0", "--json",
     ])
@@ -4074,7 +4186,7 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     #expect(selection["selected_frames"] as? Int == 8)
 }
 
-@Test func stackListKeepFilterNoneAliasTargetsTheNoFilterBucketWithoutWarning() throws {
+@Test func stackListKeepFilterNoneAliasTargetsTheNoFilterBucketWithoutWarning() async throws {
     let root = try makeTempRoot("stacklist-keep-filter-none-alias")
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -4084,10 +4196,10 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     try writeStackListFilteredLight("sessions/T1/2026-01-10/lights/ha1.fit", root: root, filter: "Ha")
     try writeStackListLight("sessions/T1/2026-01-10/lights/plain1.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "stacklist", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
         "--keep-filter", "none=0.9", "--json",
     ])
@@ -4102,16 +4214,16 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
 
 // MARK: - report (R7-B5)
 
-@Test func reportOutDashPrintsHTMLToStdoutWithoutWritingAFile() throws {
+@Test func reportOutDashPrintsHTMLToStdoutWithoutWritingAFile() async throws {
     let root = try makeTempRoot("report-stdout")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["report", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--out", "-"])
+    let result = try await runCLI(["report", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--out", "-"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.hasPrefix("<!doctype html>"))
     #expect(result.stdout.contains("T1"))
@@ -4121,16 +4233,16 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     #expect(!FileManager.default.fileExists(atPath: reportsDir.path))
 }
 
-@Test func reportDefaultModeWritesFileUnderReportsAndPrintsPath() throws {
+@Test func reportDefaultModeWritesFileUnderReportsAndPrintsPath() async throws {
     let root = try makeTempRoot("report-file")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["report", "--root", root.path, "--target", "T1", "--date", "2026-01-10"])
+    let result = try await runCLI(["report", "--root", root.path, "--target", "T1", "--date", "2026-01-10"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let printedPath = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -4139,16 +4251,16 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     #expect(FileManager.default.fileExists(atPath: printedPath))
 }
 
-@Test func reportExplicitOutPathWritesExactlyThereWithoutDefaultReport() throws {
+@Test func reportExplicitOutPathWritesExactlyThereWithoutDefaultReport() async throws {
     let root = try makeTempRoot("report-explicit-out")
     defer { try? FileManager.default.removeItem(at: root) }
     let out = FileManager.default.temporaryDirectory
         .appendingPathComponent("astro-report-out-\(UUID().uuidString).html")
     defer { try? FileManager.default.removeItem(at: out) }
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
-    #expect(try runCLI(["scan", "--root", root.path]).exitCode == 0)
+    #expect(try await runCLI(["scan", "--root", root.path]).exitCode == 0)
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "report", "--root", root.path, "--target", "T1", "--date", "2026-01-10", "--out", out.path,
     ])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
@@ -4157,7 +4269,7 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(".astro_tool/reports").path))
 }
 
-@Test func reportExplicitOutSymlinkIntoLibraryIsRejected() throws {
+@Test func reportExplicitOutSymlinkIntoLibraryIsRejected() async throws {
     let root = try makeTempRoot("report-symlink-escape")
     defer { try? FileManager.default.removeItem(at: root) }
     let link = FileManager.default.temporaryDirectory
@@ -4165,10 +4277,10 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     defer { try? FileManager.default.removeItem(at: link) }
     try FileManager.default.createSymbolicLink(at: link, withDestinationURL: root)
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
-    #expect(try runCLI(["scan", "--root", root.path]).exitCode == 0)
+    #expect(try await runCLI(["scan", "--root", root.path]).exitCode == 0)
 
     let escapedDestination = link.appendingPathComponent("must-not-write.html")
-    let result = try runCLI([
+    let result = try await runCLI([
         "report", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
         "--out", escapedDestination.path,
     ])
@@ -4178,7 +4290,7 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("must-not-write.html").path))
 }
 
-@Test func reportExplicitOutDanglingFileSymlinkIntoLibraryIsRejected() throws {
+@Test func reportExplicitOutDanglingFileSymlinkIntoLibraryIsRejected() async throws {
     let root = try makeTempRoot("report-dangling-symlink-escape")
     defer { try? FileManager.default.removeItem(at: root) }
     let link = FileManager.default.temporaryDirectory
@@ -4187,9 +4299,9 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     let insideDestination = root.appendingPathComponent("must-not-materialize.html")
     try FileManager.default.createSymbolicLink(at: link, withDestinationURL: insideDestination)
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
-    #expect(try runCLI(["scan", "--root", root.path]).exitCode == 0)
+    #expect(try await runCLI(["scan", "--root", root.path]).exitCode == 0)
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "report", "--root", root.path, "--target", "T1", "--date", "2026-01-10",
         "--out", link.path,
     ])
@@ -4199,40 +4311,40 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     #expect(!FileManager.default.fileExists(atPath: insideDestination.path))
 }
 
-@Test func reportWithoutTargetOrDateExitsWithError() throws {
+@Test func reportWithoutTargetOrDateExitsWithError() async throws {
     let root = try makeTempRoot("report-missing-args")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let result = try runCLI(["report", "--root", root.path, "--target", "T1"])
+    let result = try await runCLI(["report", "--root", root.path, "--target", "T1"])
     #expect(result.exitCode == 1)
     #expect(result.stderr.contains("--target and --date are required"))
 }
 
-@Test func reportWithUnknownSessionExitsWithTargetNotFoundError() throws {
+@Test func reportWithUnknownSessionExitsWithTargetNotFoundError() async throws {
     let root = try makeTempRoot("report-unknown-session")
     defer { try? FileManager.default.removeItem(at: root) }
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["report", "--root", root.path, "--target", "T1", "--date", "1999-01-01"])
+    let result = try await runCLI(["report", "--root", root.path, "--target", "T1", "--date", "1999-01-01"])
     // R11-T4: target/session-lookup failure gets its own exit code (3).
     #expect(result.exitCode == 3)
 }
 
 // MARK: - target-report (R8-2)
 
-@Test func targetReportOutDashPrintsHTMLToStdoutWithoutWritingAFile() throws {
+@Test func targetReportOutDashPrintsHTMLToStdoutWithoutWritingAFile() async throws {
     let root = try makeTempRoot("target-report-stdout")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["target-report", "--root", root.path, "--target", "T1", "--out", "-"])
+    let result = try await runCLI(["target-report", "--root", root.path, "--target", "T1", "--out", "-"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.hasPrefix("<!doctype html>"))
     #expect(result.stdout.contains("T1"))
@@ -4242,16 +4354,16 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     #expect(!FileManager.default.fileExists(atPath: reportsDir.path))
 }
 
-@Test func targetReportDefaultModeWritesFileUnderReportsAndPrintsPath() throws {
+@Test func targetReportDefaultModeWritesFileUnderReportsAndPrintsPath() async throws {
     let root = try makeTempRoot("target-report-file")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["target-report", "--root", root.path, "--target", "T1"])
+    let result = try await runCLI(["target-report", "--root", root.path, "--target", "T1"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let printedPath = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -4260,16 +4372,16 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     #expect(FileManager.default.fileExists(atPath: printedPath))
 }
 
-@Test func targetReportExplicitOutPathWritesExactlyThereWithoutDefaultReport() throws {
+@Test func targetReportExplicitOutPathWritesExactlyThereWithoutDefaultReport() async throws {
     let root = try makeTempRoot("target-report-explicit-out")
     defer { try? FileManager.default.removeItem(at: root) }
     let out = FileManager.default.temporaryDirectory
         .appendingPathComponent("astro-target-report-out-\(UUID().uuidString).html")
     defer { try? FileManager.default.removeItem(at: out) }
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
-    #expect(try runCLI(["scan", "--root", root.path]).exitCode == 0)
+    #expect(try await runCLI(["scan", "--root", root.path]).exitCode == 0)
 
-    let result = try runCLI([
+    let result = try await runCLI([
         "target-report", "--root", root.path, "--target", "T1", "--out", out.path,
     ])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
@@ -4278,48 +4390,48 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(".astro_tool/reports").path))
 }
 
-@Test func targetReportWithUnknownTargetExitsWithError() throws {
+@Test func targetReportWithUnknownTargetExitsWithError() async throws {
     let root = try makeTempRoot("target-report-unknown")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeStackListLight("sessions/T1/2026-01-10/lights/l1.fit", root: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["target-report", "--root", root.path, "--target", "Nope"])
+    let result = try await runCLI(["target-report", "--root", root.path, "--target", "Nope"])
     // R11-T4: target-lookup failure gets its own exit code (3).
     #expect(result.exitCode == 3)
 }
 
 // MARK: - plan --month (R7-B5)
 
-@Test func planMonthJSONReportsThirtyNightsForFixtureLibrary() throws {
+@Test func planMonthJSONReportsThirtyNightsForFixtureLibrary() async throws {
     let root = try makeTempRoot("plan-month-json")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeProjectsFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, exptime: 300.0)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["plan", "--root", root.path, "--month", "--json"])
+    let result = try await runCLI(["plan", "--root", root.path, "--month", "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let json = try jsonItems(result.stdout)
     #expect(json?.count == 30)
 }
 
-@Test func planMonthHumanOutputShowsTableHeader() throws {
+@Test func planMonthHumanOutputShowsTableHeader() async throws {
     let root = try makeTempRoot("plan-month-human")
     defer { try? FileManager.default.removeItem(at: root) }
 
     try writeProjectsFITS("sessions/M31_Andromeda/2026-08-01/lights/l1.fit", root: root, exptime: 300.0)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["plan", "--root", root.path, "--month", "--nights", "5"])
+    let result = try await runCLI(["plan", "--root", root.path, "--month", "--nights", "5"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
     #expect(result.stdout.contains("DÁTUM"))
     #expect(result.stdout.contains("SÖTÉT ÓRA"))
@@ -4327,12 +4439,12 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
 
 // MARK: - schema_version (R11-T4)
 
-@Test func jsonObjectRootCommandsCarrySchemaVersion() throws {
+@Test func jsonObjectRootCommandsCarrySchemaVersion() async throws {
     let root = try makeTempRoot("schema-version-object")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path, "--json"])
+    let scan = try await runCLI(["scan", "--root", root.path, "--json"])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
     let json = try jsonObject(scan.stdout)
@@ -4345,15 +4457,15 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
 /// whose `--json` root used to be a bare array now wraps it into
 /// `{"schema_version": "1", "items": [...]}` instead -- documented in
 /// CHANGELOG.md as the tool's first JSON-schema-breaking change.
-@Test func jsonArrayRootCommandsWrapIntoSchemaVersionAndItemsEnvelope() throws {
+@Test func jsonArrayRootCommandsWrapIntoSchemaVersionAndItemsEnvelope() async throws {
     let root = try makeTempRoot("schema-version-array")
     defer { try? FileManager.default.removeItem(at: root) }
     try Fixtures.makeMessyLibrary(in: root)
 
-    let scan = try runCLI(["scan", "--root", root.path])
+    let scan = try await runCLI(["scan", "--root", root.path])
     #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
 
-    let result = try runCLI(["nights", "--root", root.path, "--json"])
+    let result = try await runCLI(["nights", "--root", root.path, "--json"])
     #expect(result.exitCode == 0, "stderr: \(result.stderr)")
 
     let root2 = try #require(try jsonObject(result.stdout))
@@ -4365,20 +4477,20 @@ private func writeStackListFilteredLight(_ relativePath: String, root: URL, filt
 
 // MARK: - misc
 
-@Test func unknownSubcommandExitsWithUsage() throws {
-    let result = try runCLI(["bogus-command"])
+@Test func unknownSubcommandExitsWithUsage() async throws {
+    let result = try await runCLI(["bogus-command"])
     #expect(result.exitCode == 1)
     #expect(result.stderr.lowercased().contains("usage"))
 }
 
-@Test func versionFlagPrintsVersion() throws {
-    let result = try runCLI(["--version"])
+@Test func versionFlagPrintsVersion() async throws {
+    let result = try await runCLI(["--version"])
     #expect(result.exitCode == 0)
-    // Format check rather than a pinned literal, so a release version bump
-    // in main.swift can't silently break the suite (which is exactly what
-    // happened at v0.10.0 with the old `== "astrotool 0.1.0"` expectation).
+    // The shared product identity accepts both stable and prerelease SemVer
+    // without duplicating either a pinned literal or a second version parser
+    // in this smoke test.
     let output = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-    #expect(output.wholeMatch(of: /astrotool \d+\.\d+\.\d+/) != nil, "unexpected --version output: \(output)")
+    #expect(output == "astrotool \(ProductInfo.version)", "unexpected --version output: \(output)")
 }
 
 } // CLISmokeTests

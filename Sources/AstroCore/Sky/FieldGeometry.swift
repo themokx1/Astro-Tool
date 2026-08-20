@@ -51,7 +51,7 @@ public struct FrameField: Codable, Sendable {
 /// field centers sit close together, distinct from another panel's cluster
 /// far enough away that they're clearly separate pointings rather than
 /// dithered frames of the same field.
-public struct Panel: Codable, Sendable {
+public struct Panel: Codable, Sendable, Equatable {
     /// "A", "B", "C", ... assigned after sorting panels by `frameCount`
     /// descending -- the panel with the most frames is always "A".
     public var label: String

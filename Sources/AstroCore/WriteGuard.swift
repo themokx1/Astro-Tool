@@ -38,6 +38,44 @@ public struct WriteGuard: Sendable {
         root.appendingPathComponent(".astro_tool", isDirectory: true)
     }
 
+    /// The complete top-level scaffold of a new AstroTool library. The order
+    /// is user-facing and stable: working areas first, shared calibration
+    /// folders next, and the app-owned metadata area last.
+    public static let libraryScaffoldRelativePaths = [
+        "sessions",
+        "stacks",
+        "processed",
+        "calibration_library/darks",
+        "calibration_library/flats",
+        "calibration_library/biases",
+        ".astro_tool",
+    ]
+
+    /// Creates only missing canonical library directories. Existing entries
+    /// are left byte-for-byte untouched; an existing non-directory at one of
+    /// the canonical paths is a hard conflict rather than an overwrite.
+    @discardableResult
+    public func createLibraryScaffold() throws -> [URL] {
+        let fm = FileManager.default
+        var created: [URL] = []
+
+        for relativePath in Self.libraryScaffoldRelativePaths {
+            let destination = root.appendingPathComponent(relativePath, isDirectory: true)
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: destination.path, isDirectory: &isDirectory) {
+                guard isDirectory.boolValue else {
+                    throw AstroError.writeForbidden(path: destination.path)
+                }
+                continue
+            }
+            try Self.classifyingPermissionErrors(path: destination.path) {
+                try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+            }
+            created.append(destination)
+        }
+        return created
+    }
+
     /// Creates the full session tree the real `add_new_session.sh` builds
     /// for a brand-new session -- `sessions/<target>/<dateDir>/
     /// {lights,flats,darks,biases}` plus a `README.txt` under the new date
@@ -51,6 +89,34 @@ public struct WriteGuard: Sendable {
     /// overwrites one; the sibling `stacks`/`processed`/
     /// `calibration_library` directories are ensured with mkdir -p semantics
     /// and are never themselves treated as a conflict.
+    /// The exact root-relative paths `createSessionTree(target:dateDir:
+    /// readme:)` creates for THIS session -- in the same left-to-right order,
+    /// computed with no filesystem access at all. Exists so a preview (V2's
+    /// "New Session" sheet) can show precisely what the real call below will
+    /// do before it runs, without a second hand-written copy of this list
+    /// that could silently drift from the real one -- `SessionCreatorTests
+    /// .previewedRelativePathsMatchWhatSessionCreatorActuallyCreates` pins
+    /// exactly that. Deliberately excludes `calibration_library/{darks,
+    /// flats,biases}`: those three directories are shared library
+    /// scaffolding `createSessionTree` ensures with mkdir-p semantics on
+    /// EVERY session creation (present whether or not this particular call
+    /// is what first created them), not something that belongs to this one
+    /// session -- a preview of "what will be created for this session"
+    /// should not claim ownership of a shared directory some earlier session
+    /// may already depend on.
+    public static func sessionTreeRelativePaths(target: String, dateDir: String) throws -> [String] {
+        try Self.validatePathComponent(target)
+        try Self.validatePathComponent(dateDir)
+        var paths: [String] = []
+        for sub in ["lights", "flats", "darks", "biases"] {
+            paths.append("sessions/\(target)/\(dateDir)/\(sub)")
+        }
+        paths.append("sessions/\(target)/\(dateDir)/README.txt")
+        paths.append("stacks/\(target)/\(dateDir)")
+        paths.append("processed/\(target)/\(dateDir)")
+        return paths
+    }
+
     @discardableResult
     public func createSessionTree(
         target: String,
@@ -107,6 +173,114 @@ public struct WriteGuard: Sendable {
         }
 
         return created
+    }
+
+    /// The exact root-relative paths `createSessionRoot(target:dateDir:
+    /// readme:)` creates -- just the README, mirroring that call's own
+    /// reduced `created` list. See `createSessionRoot`'s own doc comment
+    /// for why it omits the classic RAW quartet `createSessionTree` above
+    /// makes.
+    public static func sessionRootRelativePaths(target: String, dateDir: String) throws -> [String] {
+        try Self.validatePathComponent(target)
+        try Self.validatePathComponent(dateDir)
+        return ["sessions/\(target)/\(dateDir)/README.txt"]
+    }
+
+    /// W3-10 owner correction (screenshot of the shipped V2 preview): "ezeket
+    /// feleslegesen csinálja meg, a captures-be kellenek csak" (these are
+    /// made unnecessarily; they only belong under captures/) -- creates the
+    /// MINIMAL session root for a session whose first capture is created
+    /// alongside it: the session directory itself, its `README.txt`, and
+    /// the shared `calibration_library/{darks,flats,biases}` mkdir-p
+    /// scaffolding (same as `createSessionTree`) -- but deliberately NO
+    /// classic date-level `lights/flats/darks/biases` quartet and no bare
+    /// `stacks/<dateDir>`/`processed/<dateDir>`. Once every raw frame for
+    /// this session lives under a specific capture's own
+    /// `captures/<slug>/{...}` branch, a parallel, always-empty classic
+    /// quartet at the session root only misleads the card-copy workflow
+    /// (which of the two lights/ folders does this camera's SD card go
+    /// into?) -- it is dead weight, not a second valid destination. The
+    /// actual capture tree (`captures/<slug>/...`, plus that capture's own
+    /// `stacks/<dateDir>/<slug>`/`processed/<dateDir>/<slug>`) is created
+    /// separately by `createCaptureTree`, called right after this by
+    /// `SessionCreator`'s capture-aware overload -- `stacks/<dateDir>`/
+    /// `processed/<dateDir>` still end up existing on disk as ordinary
+    /// intermediate directories of THAT call, exactly as they do for
+    /// `CaptureManager.create` adding a capture to an already-existing
+    /// session; this call just never claims or tracks them as its own.
+    /// Throws `AstroError.writeForbidden` under the same conditions
+    /// `createSessionTree` does (invalid path components, or an
+    /// already-existing session date directory).
+    @discardableResult
+    public func createSessionRoot(
+        target: String,
+        dateDir: String,
+        readme: String
+    ) throws -> [URL] {
+        try Self.validatePathComponent(target)
+        try Self.validatePathComponent(dateDir)
+
+        let fm = FileManager.default
+        let sessionDir = root
+            .appendingPathComponent("sessions", isDirectory: true)
+            .appendingPathComponent(target, isDirectory: true)
+            .appendingPathComponent(dateDir, isDirectory: true)
+
+        guard !fm.fileExists(atPath: sessionDir.path) else {
+            throw AstroError.writeForbidden(path: sessionDir.path)
+        }
+
+        var created: [URL] = []
+
+        func ensureDir(_ url: URL) throws {
+            try Self.classifyingPermissionErrors(path: url.path) {
+                try fm.createDirectory(at: url, withIntermediateDirectories: true)
+            }
+            created.append(url)
+        }
+
+        // Not appended to `created` -- `createSessionTree` never lists the
+        // session date directory itself as one of its own created URLs
+        // either; only its leaf children are tracked.
+        try Self.classifyingPermissionErrors(path: sessionDir.path) {
+            try fm.createDirectory(at: sessionDir, withIntermediateDirectories: true)
+        }
+
+        let readmeURL = sessionDir.appendingPathComponent("README.txt", isDirectory: false)
+        try Self.classifyingPermissionErrors(path: readmeURL.path) {
+            try Data(readme.utf8).write(to: readmeURL, options: .withoutOverwriting)
+        }
+        created.append(readmeURL)
+
+        let calibDir = root.appendingPathComponent("calibration_library", isDirectory: true)
+        for sub in ["darks", "flats", "biases"] {
+            try ensureDir(calibDir.appendingPathComponent(sub, isDirectory: true))
+        }
+
+        return created
+    }
+
+    /// The exact root-relative paths `createCaptureTree(target:dateDir:
+    /// slug:)` creates for THIS capture -- same no-filesystem-access,
+    /// same-order-as-the-real-call shape as `sessionTreeRelativePaths`
+    /// above, and for the same reason: a preview (V2's "New Session"/"Add
+    /// Capture" sheet) can show exactly what the real call below will do,
+    /// with no second hand-written copy of the list to drift from it.
+    /// Deliberately excludes the `sessions/<target>/<date>/captures/<slug>`
+    /// wrapper directory itself and its `captures` parent -- like
+    /// `createCaptureTree`'s own returned URLs, this lists only the six
+    /// actual leaf destinations it creates.
+    public static func captureTreeRelativePaths(target: String, dateDir: String, slug: String) throws -> [String] {
+        try Self.validatePathComponent(target)
+        try Self.validatePathComponent(dateDir)
+        try Self.validatePathComponent(slug)
+        var paths: [String] = []
+        for sub in ["lights", "flats", "darks", "biases"] {
+            paths.append("sessions/\(target)/\(dateDir)/captures/\(slug)/\(sub)")
+        }
+        paths.append("stacks/\(target)/\(dateDir)/\(slug)")
+        paths.append("processed/\(target)/\(dateDir)/\(slug)")
+        return paths
     }
 
     /// Adds one canonical capture tree below an already existing exact
@@ -249,6 +423,59 @@ public struct WriteGuard: Sendable {
             destinationRelative: move.sourceRelative,
             scope: scope
         )
+    }
+
+    /// Executes one exact `FrameArchivePlanner` move. Rebuilding the plan
+    /// here prevents callers from smuggling an arbitrary destination into a
+    /// superficially valid value. Existing destinations are never replaced.
+    public func moveArchivedFrame(_ plan: FrameArchivePlan) throws {
+        let rebuilt = try FrameArchivePlanner.plan(
+            sourceRelative: plan.sourceRelative, mode: plan.mode
+        )
+        guard rebuilt == plan else { throw AstroError.writeForbidden(path: plan.destinationRelative) }
+
+        let rootURL = root.standardizedFileURL
+        let source = root.appendingPathComponent(plan.sourceRelative).standardizedFileURL
+        let destination = root.appendingPathComponent(plan.destinationRelative).standardizedFileURL
+        let resolvedRoot = rootURL.resolvingSymlinksInPath()
+        let resolvedSource = source.resolvingSymlinksInPath()
+        let resolvedDestination = destination.resolvingSymlinksInPath()
+        guard source.path.hasPrefix(rootURL.path + "/"),
+              destination.path.hasPrefix(rootURL.path + "/"),
+              resolvedSource.path.hasPrefix(resolvedRoot.path + "/"),
+              resolvedDestination.path.hasPrefix(resolvedRoot.path + "/")
+        else { throw AstroError.writeForbidden(path: plan.destinationRelative) }
+
+        // `resolvingSymlinksInPath()` does not reliably resolve a symlinked
+        // parent when the final destination does not exist yet. Reject every
+        // existing symlink component explicitly before creating a directory
+        // or moving the file, so `lights/archive -> /outside` cannot redirect
+        // a confirmed in-library operation.
+        for relativePath in [plan.sourceRelative, plan.destinationRelative] {
+            var componentURL = rootURL
+            for component in relativePath.split(separator: "/") {
+                componentURL.appendPathComponent(String(component))
+                let attributes = try? FileManager.default.attributesOfItem(atPath: componentURL.path)
+                if attributes?[.type] as? FileAttributeType == .typeSymbolicLink {
+                    throw AstroError.writeForbidden(path: relativePath)
+                }
+            }
+        }
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: source.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue
+        else { throw AstroError.pathNotFound(path: source.path) }
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            throw AstroError.writeForbidden(path: destination.path)
+        }
+
+        try Self.classifyingPermissionErrors(path: destination.path) {
+            try FileManager.default.createDirectory(
+                at: destination.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            try FileManager.default.moveItem(at: source, to: destination)
+        }
     }
 
     /// Writes `data` to `relativePath` resolved under `toolDir`, creating
@@ -498,6 +725,181 @@ public struct WriteGuard: Sendable {
         }
 
         return destFileURL
+    }
+
+    /// Copies one external file (from a card-import source -- an SD card, an
+    /// ASI Air's storage, any arbitrary folder the user picked) into one
+    /// leaf of an already-existing canonical capture tree -- the copy-half
+    /// counterpart of `createCaptureTree` above, and the card-import
+    /// wizard's ONLY way to place bytes in the library, keeping this type's
+    /// "sole filesystem-writing component" contract intact for that feature
+    /// too.
+    ///
+    /// Unlike every other `WriteGuard` write, `sourceURL` is NOT required to
+    /// live under `root` -- it names a file on the card/volume the user is
+    /// importing from, which is the entire point of this call. Only the
+    /// DESTINATION is guarded:
+    ///
+    /// - `destDirRelative` must be *exactly* `sessions/<target>/<date>/
+    ///   captures/<slug>/(lights|flats|darks|biases)` -- six components, the
+    ///   same shape `captureTreeRelativePaths(target:dateDir:slug:)` already
+    ///   produces for these four leaves, both as a raw component check and,
+    ///   again, via `standardizedFileURL` containment inside
+    ///   `<root>/sessions/` for defense in depth. This never creates a
+    ///   session or capture tree itself -- `createCaptureTree`/
+    ///   `SessionCreationCommand` are what must have already made this
+    ///   directory exist; a missing one is the caller's bug, not something
+    ///   this call papers over by mkdir-p'ing an arbitrary new capture into
+    ///   existence.
+    /// - The destination file name is `destFileName` when given, otherwise
+    ///   the source file's own last path component -- validated as a single
+    ///   ordinary path component either way, so a pathological name can
+    ///   never smuggle a `/`/`..` traversal into the destination.
+    ///
+    /// If a file already sits at the resolved destination, this makes NO
+    /// change and returns `nil` -- the wizard's own "same-name file already
+    /// there -> skip and report, never overwrite" rule, same shape as
+    /// `linkCalibrationFile`/`linkStackListFile`'s own re-run behavior.
+    ///
+    /// Otherwise copies to a hidden temp name inside the SAME destination
+    /// directory first, then atomically renames it into place -- so a copy
+    /// that is interrupted (app quit, disk full, cancelled operation) never
+    /// leaves a half-written file at the real destination name; a failure
+    /// at either the copy or the rename step deletes the temp file before
+    /// rethrowing. Permission failures are reclassified as
+    /// `AstroError.accessDenied`, same as every other write in this type;
+    /// a missing `sourceURL` throws `AstroError.pathNotFound`.
+    @discardableResult
+    public func copyCaptureFile(
+        sourceURL: URL,
+        destDirRelative: String,
+        destFileName: String? = nil
+    ) throws -> URL? {
+        let destComponents = destDirRelative.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard destComponents.count == 6,
+              destComponents[0] == "sessions",
+              destComponents[3] == "captures",
+              ["lights", "flats", "darks", "biases"].contains(destComponents[5])
+        else {
+            throw AstroError.writeForbidden(path: destDirRelative)
+        }
+        let target = destComponents[1]
+        let dateDir = destComponents[2]
+        let slug = destComponents[4]
+        try Self.validatePathComponent(target)
+        try Self.validatePathComponent(dateDir)
+        try Self.validatePathComponent(slug)
+
+        let sessionsBase = root.appendingPathComponent("sessions", isDirectory: true).standardizedFileURL
+        let destDirCandidate = root.appendingPathComponent(destDirRelative, isDirectory: true).standardizedFileURL
+        guard destDirCandidate.path.hasPrefix(sessionsBase.path + "/") else {
+            throw AstroError.writeForbidden(path: destDirRelative)
+        }
+
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: sourceURL.path) else {
+            throw AstroError.pathNotFound(path: sourceURL.path)
+        }
+
+        let fileName = destFileName ?? sourceURL.lastPathComponent
+        try Self.validatePathComponent(fileName)
+        let destFileURL = destDirCandidate.appendingPathComponent(fileName, isDirectory: false)
+
+        guard !fm.fileExists(atPath: destFileURL.path) else {
+            return nil
+        }
+
+        let tempFileURL = destDirCandidate.appendingPathComponent(
+            ".importing-\(UUID().uuidString)-\(fileName)", isDirectory: false
+        )
+
+        try Self.classifyingPermissionErrors(path: destFileURL.path) {
+            try fm.createDirectory(at: destDirCandidate, withIntermediateDirectories: true)
+            do {
+                try fm.copyItem(at: sourceURL, to: tempFileURL)
+            } catch {
+                try? fm.removeItem(at: tempFileURL)
+                throw error
+            }
+            do {
+                try fm.moveItem(at: tempFileURL, to: destFileURL)
+            } catch {
+                try? fm.removeItem(at: tempFileURL)
+                throw error
+            }
+        }
+
+        return destFileURL
+    }
+
+    /// Writes a newly Siril-BUILT calibration master file (dark/flat/bias --
+    /// V3 pre-stack program, `docs/superpowers/specs/
+    /// 2026-08-20-v3-prestack-program.md` section 5.2, Kalibrációs automata)
+    /// from a scratch `tempURL` into `calibration_library/` at
+    /// `destRelative`, atomically -- copies to a hidden temp name INSIDE the
+    /// destination directory first, then renames into place, so a copy
+    /// interrupted partway (app quit, disk full) never leaves a half-written
+    /// master at the real destination name; a failure at either step deletes
+    /// the temp file before rethrowing. Same temp+rename contract as
+    /// `copyCaptureFile`, the only other place this type copies bytes in
+    /// from OUTSIDE the library (`tempURL` is `SirilMasterBuilder`'s own
+    /// scratch `workDir`, never a library path).
+    ///
+    /// Validates that `destRelative` resolves (after `standardizedFileURL`,
+    /// same traversal defense as every other WriteGuard check) to a path
+    /// inside `<root>/calibration_library/` -- this is the ONLY area this
+    /// call may ever write a new file into. If a file already sits at the
+    /// resolved destination, this makes NO change and returns `nil` -- a
+    /// built master is never overwritten, touched, or replaced, matching
+    /// this feature's own "never mark a gap resolved on failure, never leave
+    /// a half-written master" rule (the caller, `CalibrationMasterBuildCommand`,
+    /// always builds into a fresh, timestamped destination name, so a
+    /// pre-existing file here means a genuine caller bug, not a legitimate
+    /// re-build). Permission failures are reclassified as
+    /// `AstroError.accessDenied`, same as every other write in this type; a
+    /// missing `tempURL` throws `AstroError.pathNotFound`.
+    @discardableResult
+    public func writeCalibrationMaster(destRelative: String, tempURL: URL) throws -> URL? {
+        guard !destRelative.hasPrefix("/") else {
+            throw AstroError.writeForbidden(path: destRelative)
+        }
+
+        let calibBase = root.appendingPathComponent("calibration_library", isDirectory: true).standardizedFileURL
+        let destCandidate = root.appendingPathComponent(destRelative).standardizedFileURL
+        guard destCandidate.path.hasPrefix(calibBase.path + "/") else {
+            throw AstroError.writeForbidden(path: destRelative)
+        }
+
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: tempURL.path) else {
+            throw AstroError.pathNotFound(path: tempURL.path)
+        }
+        guard !fm.fileExists(atPath: destCandidate.path) else {
+            return nil
+        }
+
+        let destDir = destCandidate.deletingLastPathComponent()
+        let tempFileURL = destDir.appendingPathComponent(
+            ".building-\(UUID().uuidString)-\(destCandidate.lastPathComponent)", isDirectory: false
+        )
+
+        try Self.classifyingPermissionErrors(path: destCandidate.path) {
+            try fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+            do {
+                try fm.copyItem(at: tempURL, to: tempFileURL)
+            } catch {
+                try? fm.removeItem(at: tempFileURL)
+                throw error
+            }
+            do {
+                try fm.moveItem(at: tempFileURL, to: destCandidate)
+            } catch {
+                try? fm.removeItem(at: tempFileURL)
+                throw error
+            }
+        }
+
+        return destCandidate
     }
 
     /// Runs a filesystem-writing `body`, reclassifying a permission failure

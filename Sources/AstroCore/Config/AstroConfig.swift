@@ -112,6 +112,14 @@ public struct CalibRule: Codable, Equatable, Sendable {
     /// `SET-TEMP` header never contributes to this check at all). Default
     /// 1.0°C.
     public var coolerToleranceC: Double
+    /// Wave 0 seam (V3 pre-stack program, `docs/superpowers/specs/
+    /// 2026-08-20-v3-prestack-program.md` section 5.2, Kalibrációs automata):
+    /// off by default -- until that feature lands, nothing reads this field
+    /// at all. It exists now so 5.2's own `CalibrationMasterBuildCommand` can
+    /// gate its Siril-backed master build on this flag (in addition to
+    /// `LibraryAccessMode.mutationEnabled`) without a second config.json
+    /// migration.
+    public var autoMasterBuildEnabled: Bool
 
     public init(
         tempToleranceC: Double = 1.0,
@@ -125,7 +133,8 @@ public struct CalibRule: Codable, Equatable, Sendable {
         exposureToleranceFraction: Double = 0.02,
         flatMaxAgeDays: Int = 30,
         rotatorToleranceDeg: Double = 2.0,
-        coolerToleranceC: Double = 1.0
+        coolerToleranceC: Double = 1.0,
+        autoMasterBuildEnabled: Bool = false
     ) {
         self.tempToleranceC = tempToleranceC
         self.exposureToleranceS = exposureToleranceS
@@ -139,6 +148,7 @@ public struct CalibRule: Codable, Equatable, Sendable {
         self.flatMaxAgeDays = flatMaxAgeDays
         self.rotatorToleranceDeg = rotatorToleranceDeg
         self.coolerToleranceC = coolerToleranceC
+        self.autoMasterBuildEnabled = autoMasterBuildEnabled
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -146,6 +156,7 @@ public struct CalibRule: Codable, Equatable, Sendable {
         case matchGain, matchOffset, matchBinning, matchCamera
         case gainTolerance, exposureToleranceFraction
         case flatMaxAgeDays, rotatorToleranceDeg, coolerToleranceC
+        case autoMasterBuildEnabled
     }
 
     public init(from decoder: any Decoder) throws {
@@ -163,6 +174,7 @@ public struct CalibRule: Codable, Equatable, Sendable {
         self.flatMaxAgeDays = try container.decodeIfPresent(Int.self, forKey: .flatMaxAgeDays) ?? defaults.flatMaxAgeDays
         self.rotatorToleranceDeg = try container.decodeIfPresent(Double.self, forKey: .rotatorToleranceDeg) ?? defaults.rotatorToleranceDeg
         self.coolerToleranceC = try container.decodeIfPresent(Double.self, forKey: .coolerToleranceC) ?? defaults.coolerToleranceC
+        self.autoMasterBuildEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoMasterBuildEnabled) ?? defaults.autoMasterBuildEnabled
     }
 }
 
@@ -334,6 +346,41 @@ public struct WeatherRule: Codable, Equatable, Sendable {
     }
 }
 
+/// Wave 0 seam (V3 pre-stack program, `docs/superpowers/specs/
+/// 2026-08-20-v3-prestack-program.md` section 5.5, Derült-trigger): the
+/// future opt-in "tell me when it clears tonight" notification switch,
+/// following `WeatherRule`'s own pattern exactly -- a single `enabled` flag,
+/// off by default, because enabling it is what will let that feature request
+/// `UNUserNotificationCenter` permission and read `WeatherService`, so
+/// silence-by-default matters here the same way it does for `WeatherRule`.
+/// 5.5's own commit (V3 pre-stack program section 5.5, Derült-trigger): adds
+/// `checkHourLocal` -- the local hour of day (0-23) the afternoon "has it
+/// cleared up?" check is allowed to actually fire a notification at, per the
+/// spec's own "délutáni ablak (pl. 14:00-16:00)" -- additive, same
+/// `decodeIfPresent(...) ?? default` pattern every other field in this file
+/// uses, so a config.json written before this field existed still decodes
+/// cleanly at the honest `14` default rather than throwing.
+public struct NotificationRule: Codable, Equatable, Sendable {
+    public var enabled: Bool
+    public var checkHourLocal: Int
+
+    public init(enabled: Bool = false, checkHourLocal: Int = 14) {
+        self.enabled = enabled
+        self.checkHourLocal = checkHourLocal
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, checkHourLocal
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = NotificationRule()
+        self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
+        self.checkHourLocal = try container.decodeIfPresent(Int.self, forKey: .checkHourLocal) ?? defaults.checkHourLocal
+    }
+}
+
 /// R11-T15/F16: one named observing site -- the "több helyszín" (multiple
 /// sites) config unit. Unlike `SiteRule` (a single optional lat/lon pair,
 /// still kept around unchanged for backward compatibility -- see
@@ -421,6 +468,66 @@ public struct PlanRule: Codable, Equatable, Sendable {
     }
 }
 
+/// Library-wide default for targets without an explicit overall goal. The
+/// factory baseline is deliberately concrete and visible: 10 hours on a
+/// 23.5 × 15.6 mm APS-C sensor at f/5.
+public struct IntegrationReferenceRule: Codable, Equatable, Sendable {
+    public var baseHours: Double
+    public var referenceSensorWidthMM: Double
+    public var referenceSensorHeightMM: Double
+    public var referenceFNumber: Double
+    public var referenceEfficiency: Double
+    /// The target difficulty tied to `baseHours`. Mean surface brightness is
+    /// used rather than integrated magnitude, because a large nebula spreads
+    /// the same total light over far more pixels than a compact object.
+    public var referenceSurfaceBrightnessMagPerArcsec2: Double
+    /// Planning guardrails: keep the heuristic useful and attainable instead
+    /// of turning uncertain catalog photometry into hundreds of hours.
+    public var minimumTargetFactor: Double
+    public var maximumTargetFactor: Double
+
+    public init(
+        baseHours: Double = 10,
+        referenceSensorWidthMM: Double = 23.5,
+        referenceSensorHeightMM: Double = 15.6,
+        referenceFNumber: Double = 5,
+        referenceEfficiency: Double = 1,
+        referenceSurfaceBrightnessMagPerArcsec2: Double = 22,
+        minimumTargetFactor: Double = 0.5,
+        maximumTargetFactor: Double = 3
+    ) {
+        self.baseHours = baseHours
+        self.referenceSensorWidthMM = referenceSensorWidthMM
+        self.referenceSensorHeightMM = referenceSensorHeightMM
+        self.referenceFNumber = referenceFNumber
+        self.referenceEfficiency = referenceEfficiency
+        self.referenceSurfaceBrightnessMagPerArcsec2 = referenceSurfaceBrightnessMagPerArcsec2
+        self.minimumTargetFactor = minimumTargetFactor
+        self.maximumTargetFactor = maximumTargetFactor
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case baseHours, referenceSensorWidthMM, referenceSensorHeightMM
+        case referenceFNumber, referenceEfficiency
+        case referenceSurfaceBrightnessMagPerArcsec2, minimumTargetFactor, maximumTargetFactor
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = IntegrationReferenceRule()
+        baseHours = try container.decodeIfPresent(Double.self, forKey: .baseHours) ?? defaults.baseHours
+        referenceSensorWidthMM = try container.decodeIfPresent(Double.self, forKey: .referenceSensorWidthMM) ?? defaults.referenceSensorWidthMM
+        referenceSensorHeightMM = try container.decodeIfPresent(Double.self, forKey: .referenceSensorHeightMM) ?? defaults.referenceSensorHeightMM
+        referenceFNumber = try container.decodeIfPresent(Double.self, forKey: .referenceFNumber) ?? defaults.referenceFNumber
+        referenceEfficiency = try container.decodeIfPresent(Double.self, forKey: .referenceEfficiency) ?? defaults.referenceEfficiency
+        referenceSurfaceBrightnessMagPerArcsec2 = try container.decodeIfPresent(
+            Double.self, forKey: .referenceSurfaceBrightnessMagPerArcsec2
+        ) ?? defaults.referenceSurfaceBrightnessMagPerArcsec2
+        minimumTargetFactor = try container.decodeIfPresent(Double.self, forKey: .minimumTargetFactor) ?? defaults.minimumTargetFactor
+        maximumTargetFactor = try container.decodeIfPresent(Double.self, forKey: .maximumTargetFactor) ?? defaults.maximumTargetFactor
+    }
+}
+
 /// R11-T16/F20: AstroBin's own numeric equipment-database filter IDs, keyed
 /// by the FITS `FILTER` name Astro-Tool already reads off scanned lights.
 /// When present, `AcquisitionExport`'s AstroBin CSV writes the numeric ID
@@ -490,6 +597,22 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     /// Root-relative paths to exclude from scanning, beyond `excludedDirNames`.
     public var excludedPaths: [String]
     public var residuePatterns: [String]
+    /// Residue filename globs that only count for files whose
+    /// `PathClassifier` area is `.sessions` -- the vocabulary that is junk
+    /// when loose in a session date dir but first-class, WANTED
+    /// `StackVariantKind`/`looksLikeStackOutput` output in `stacks/`/
+    /// `processed/` (`starless_*` variants, GraXpert intermediates, Siril
+    /// `result*` integrations), which `residuePatterns`'s universal list
+    /// therefore can never carry (see its doc comment for the reverted
+    /// attempt). Consulted by `ResidueMatcher.category`/`isResidue` --
+    /// i.e. it feeds both `CleanupReport`'s cleanup summary (category
+    /// `residue-session`) and `LibraryScanner`'s IMAGETYP-promotion guard
+    /// -- and deliberately NOT by `StackDiscovery`, whose stack-variant
+    /// recognition keeps using only the universal list. Every default is
+    /// verified against a copy of the owner's real library to match only
+    /// confirmed stack byproducts in the sessions area, zero genuine subs
+    /// (`ResidueMatcherRealLibraryTests`).
+    public var sessionResiduePatterns: [String]
     public var residueDirNames: [String]
     /// Directory names (case-sensitive match on the path component) that are
     /// known outputs of coexisting tools -- currently `tools/rate/
@@ -529,7 +652,12 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var sites: [SiteProfile]
     public var expose: ExposeRule
     public var weather: WeatherRule
+    /// Wave 0 seam (V3 pre-stack program, section 5.5, Derült-trigger): see
+    /// `NotificationRule`'s own doc comment. Off by default, read by nothing
+    /// until 5.5 lands.
+    public var notification: NotificationRule
     public var plan: PlanRule
+    public var integrationReference: IntegrationReferenceRule
     /// User-defined camera + optic combinations for manual Discovery FOV
     /// planning. An empty list preserves the legacy automatic behavior that
     /// derives the dominant setup from scanned image/WCS metadata.
@@ -539,10 +667,38 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var astrobin: AstroBinRule
 
     public init(
-        rootPath: String = "/Volumes/images/Astro",
+        rootPath: String = "",
         excludedDirNames: [String] = ["tools"],
         excludedPaths: [String] = [],
-        residuePatterns: [String] = ["*.seq", "*.lst", "*_conv*", "*_bkg*", "*_pp_*", "r_*", "bkg_*", ".DS_Store"],
+        residuePatterns: [String] = [
+            "*.seq", "*.lst", "*_conv*", "*_bkg*", "*_pp_*", "r_*", "bkg_*", ".DS_Store",
+            // Stack-PRODUCT names (not intermediate files) confirmed against
+            // a real library as loose session-area residue that inherits
+            // IMAGETYP='Light Frame' and gets wrongly promoted by
+            // `LibraryScanner`'s IMAGETYP-based loose-frame refinement (see
+            // `ResidueMatcherRealLibraryTests`). Deliberately EXCLUDES
+            // `starless`/`starmask`/`graxpert_result` tokens despite those
+            // accounting for most of the confirmed pollution: this same
+            // vocabulary is first-class, WANTED `StackVariantKind`
+            // (`.starless`/`.starmask`/`.edited`) output in the `stacks/`/
+            // `processed/` areas (`Stats/StackDiscovery.swift`), which
+            // hardcodes this exact default list to decide what to skip as
+            // junk before variant-kind classification runs. Adding those
+            // tokens here made `StackDiscovery` reject real stack variants
+            // (6 test failures: `StackDiscoveryTests`, `ResultsQueryTests`,
+            // `ResultsStoreTests`, `CLISmokeTests`) -- residue-ness for that
+            // vocabulary is area-dependent (junk loose in `sessions/`, a
+            // keeper in `stacks/`/`processed/`), which a single flat global
+            // pattern list can't express: that vocabulary lives in
+            // `sessionResiduePatterns` below instead, which only applies to
+            // `.sessions`-area paths. Catches 10 of 53 confirmed
+            // wrongly-promoted files with zero matches among ~4200 other
+            // session light frames.
+            "veralux_*", "*stack_work*", "*_synt*", "fixstars*", "*star recomposition result*",
+        ],
+        sessionResiduePatterns: [String] = [
+            "starless*", "starmask*", "*graxpert*", "result_*",
+        ],
         residueDirNames: [String] = ["process"],
         toolOutputDirNames: [String] = ["Stack", "Review", "Reject", "light_frame_rating_report_assets", "masters"],
         intentional: IntentionalPatterns = IntentionalPatterns(),
@@ -554,7 +710,9 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         sites: [SiteProfile] = [],
         expose: ExposeRule = ExposeRule(),
         weather: WeatherRule = WeatherRule(),
+        notification: NotificationRule = NotificationRule(),
         plan: PlanRule = PlanRule(),
+        integrationReference: IntegrationReferenceRule = IntegrationReferenceRule(),
         imagingSetups: [ImagingSetupProfile] = [],
         astrobin: AstroBinRule = AstroBinRule()
     ) {
@@ -562,6 +720,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.excludedDirNames = excludedDirNames
         self.excludedPaths = excludedPaths
         self.residuePatterns = residuePatterns
+        self.sessionResiduePatterns = sessionResiduePatterns
         self.residueDirNames = residueDirNames
         self.toolOutputDirNames = toolOutputDirNames
         self.intentional = intentional
@@ -573,14 +732,16 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.sites = sites
         self.expose = expose
         self.weather = weather
+        self.notification = notification
         self.plan = plan
+        self.integrationReference = integrationReference
         self.imagingSetups = imagingSetups
         self.astrobin = astrobin
     }
 
     private enum CodingKeys: String, CodingKey {
-        case rootPath, excludedDirNames, excludedPaths, residuePatterns, residueDirNames, toolOutputDirNames
-        case intentional, wideField, calib, rating, stats, site, sites, expose, weather, plan, imagingSetups, astrobin
+        case rootPath, excludedDirNames, excludedPaths, residuePatterns, sessionResiduePatterns, residueDirNames, toolOutputDirNames
+        case intentional, wideField, calib, rating, stats, site, sites, expose, weather, notification, plan, integrationReference, imagingSetups, astrobin
     }
 
     public init(from decoder: any Decoder) throws {
@@ -590,6 +751,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.excludedDirNames = try container.decodeIfPresent([String].self, forKey: .excludedDirNames) ?? defaults.excludedDirNames
         self.excludedPaths = try container.decodeIfPresent([String].self, forKey: .excludedPaths) ?? defaults.excludedPaths
         self.residuePatterns = try container.decodeIfPresent([String].self, forKey: .residuePatterns) ?? defaults.residuePatterns
+        self.sessionResiduePatterns = try container.decodeIfPresent([String].self, forKey: .sessionResiduePatterns) ?? defaults.sessionResiduePatterns
         self.residueDirNames = try container.decodeIfPresent([String].self, forKey: .residueDirNames) ?? defaults.residueDirNames
         self.toolOutputDirNames = try container.decodeIfPresent([String].self, forKey: .toolOutputDirNames) ?? defaults.toolOutputDirNames
         self.intentional = try container.decodeIfPresent(IntentionalPatterns.self, forKey: .intentional) ?? defaults.intentional
@@ -614,7 +776,9 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         }
         self.expose = try container.decodeIfPresent(ExposeRule.self, forKey: .expose) ?? defaults.expose
         self.weather = try container.decodeIfPresent(WeatherRule.self, forKey: .weather) ?? defaults.weather
+        self.notification = try container.decodeIfPresent(NotificationRule.self, forKey: .notification) ?? defaults.notification
         self.plan = try container.decodeIfPresent(PlanRule.self, forKey: .plan) ?? defaults.plan
+        self.integrationReference = try container.decodeIfPresent(IntegrationReferenceRule.self, forKey: .integrationReference) ?? defaults.integrationReference
         self.imagingSetups = try container.decodeIfPresent([ImagingSetupProfile].self, forKey: .imagingSetups) ?? defaults.imagingSetups
         self.astrobin = try container.decodeIfPresent(AstroBinRule.self, forKey: .astrobin) ?? defaults.astrobin
     }

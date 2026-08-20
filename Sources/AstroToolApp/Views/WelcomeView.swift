@@ -2,6 +2,42 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct LegacyMigrationView: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                .font(.system(size: 64))
+                .foregroundStyle(Color.accentColor)
+                .accessibilityHidden(true)
+            VStack(spacing: 8) {
+                Text("Korábbi AstroTool telepítés található")
+                    .font(.largeTitle.bold())
+                Text("Átveheted a korábbi képkönyvtár-kapcsolatot és az ismert, biztonságos beállításokat. A régi beállítások és a képfájlok változatlanok maradnak.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 620)
+            }
+            HStack(spacing: 12) {
+                Button("Tiszta indítás") { appState.declineLegacyMigration() }
+                Button("Korábbi beállítások átvétele") { appState.acceptLegacyMigration() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+            Text("Csak a könyvtárengedély, a legutóbbi könyvtárak és általános felületi beállítások vehetők át. Ismeretlen vagy érzékeny kulcsot az AstroTool nem másol.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 620)
+        }
+        .padding(48)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.regularMaterial)
+    }
+}
+
 /// First-run screen (R9-T1, spec A.9): replaces the WHOLE window when there
 /// is no saved root bookmark at all -- `RootView` shows this instead of
 /// `NavigationSplitView`, same "full-screen replacement, not an overlay"
@@ -14,36 +50,77 @@ struct WelcomeView: View {
     @State private var isDropTargeted = false
 
     var body: some View {
-        VStack(spacing: 28) {
-            Image(nsImage: NSApplication.shared.applicationIconImage ?? NSImage())
-                .resizable()
-                .frame(width: 96, height: 96)
+        ZStack {
+            LinearGradient(
+                colors: [Color.accentColor.opacity(0.10), Color.clear, Color.indigo.opacity(0.05)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
 
-            Text("Üdv az AstroToolban")
-                .font(.largeTitle)
-                .bold()
+            VStack(spacing: 26) {
+                Image(nsImage: NSApplication.shared.applicationIconImage ?? NSImage())
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 112, height: 112)
+                    .shadow(color: .black.opacity(0.18), radius: 24, y: 12)
+                    .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 10) {
-                bullet("Végigolvassa a képkönyvtáradat, és megmondja, mi hiányzik.")
-                bullet("**Soha nem töröl és nem mozgat semmit** a könyvtáradban.")
-                bullet("Minden a te gépeden fut, semmi nem megy ki az internetre.")
+                VStack(spacing: 8) {
+                    Text("Az égbolt-adatbázisod, végre egyben.")
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .multilineTextAlignment(.center)
+                    Text("Az AstroTool rendszerezi az éjszakáidat, ellenőrzi a minőséget, és megmutatja a következő értelmes lépést.")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 650)
+                }
+
+                HStack(alignment: .top, spacing: 12) {
+                    promise(
+                        "A képeid helyben maradnak",
+                        detail: "Nincs fiók, felhő vagy háttérben futó feltöltés.",
+                        symbol: "lock.shield"
+                    )
+                    promise(
+                        "Te választod a könyvtárat",
+                        detail: "Csak az általad kiválasztott könyvtárhoz fér hozzá.",
+                        symbol: "folder.badge.plus"
+                    )
+                    promise(
+                        "Biztonságos első lépés",
+                        detail: "Az első beolvasás nem töröl és nem mozgat.",
+                        symbol: "checkmark.shield"
+                    )
+                }
+                .frame(maxWidth: 760)
+
+                VStack(spacing: 12) {
+                    Button("Képkönyvtár kiválasztása…") { appState.chooseRoot() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .keyboardShortcut(.defaultAction)
+                        .accessibilityLabel("Képkönyvtár kiválasztása")
+
+                    Button("Milyen mappastruktúrát vár?") { showStructureHelp = true }
+                        .buttonStyle(.link)
+                }
+
+                Text("Tipp: egy mappát ide is húzhatsz.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .accessibilityLabel("Képkönyvtár mappája ide húzható")
+
+                if let lastError = appState.lastError {
+                    Label(lastError, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .font(.callout)
+                        .accessibilityLabel("Hiba: \(lastError)")
+                }
             }
-            .frame(maxWidth: 460, alignment: .leading)
-
-            VStack(spacing: 10) {
-                Button("Képkönyvtár kiválasztása…") { appState.chooseRoot() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-
-                Button("Milyen mappastruktúrát vár?") { showStructureHelp = true }
-                    .buttonStyle(.link)
-            }
-
-            if let lastError = appState.lastError {
-                Text(lastError).foregroundStyle(.red).font(.callout)
-            }
+            .padding(48)
         }
-        .padding(48)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(isDropTargeted ? Color.accentColor.opacity(0.08) : Color.clear)
         .overlay {
@@ -61,11 +138,21 @@ struct WelcomeView: View {
         }
     }
 
-    private func bullet(_ text: LocalizedStringKey) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text("•")
-            Text(text)
+    private func promise(_ title: String, detail: String, symbol: String) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Image(systemName: symbol)
+                .font(.title2)
+                .foregroundStyle(Color.accentColor)
+            Text(title).font(.headline)
+            Text(detail)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.separator.opacity(0.45)))
     }
 
     /// Accepts a single dropped folder anywhere on the window and selects it

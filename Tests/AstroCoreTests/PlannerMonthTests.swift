@@ -80,13 +80,25 @@ private struct MonthFixture {
     #expect(abs(best.usableHours - expectedDarkHours) < 0.5, "usable=\(best.usableHours) dark=\(expectedDarkHours)")
 }
 
-// MARK: - 2. Moon veto zeroes usable hours
+// MARK: - 2. Moon interference drastically reduces (but no longer binary-vetoes) usable hours
 
 /// Reuses `PlannerTests`' own full-moon derivation (2026-08-27, lat 47.5 /
 /// lon 19.0): a target placed exactly at the Moon's own position for that
-/// night's midpoint has ~0° separation and a highly illuminated Moon, so it
-/// must be vetoed entirely -- absent from `bestTargets`, not merely reduced.
-@Test func monthZeroesUsableHoursWhenMoonVetoesTheTarget() throws {
+/// night's midpoint has ~0° separation and a ~99.9%-illuminated Moon, above
+/// the horizon for the target's entire overlap window -- almost exactly the
+/// `SkyScore.moonFactor` "hours go to zero" limit (100% illum, 0° sep, Moon
+/// up the whole window).
+///
+/// W7-A audit fix: the OLD binary `separation >= 40 || illum < 60` veto
+/// zeroed this target's usable hours outright and dropped it from
+/// `bestTargets` entirely (this test used to assert exactly that -- pin
+/// updated per the audit's instruction). The new continuous
+/// `SkyScore.moonFactor` instead reduces them almost to nothing rather than
+/// exactly nothing (independently verified: factor ≈ 0.00056, usable ≈ 13
+/// seconds out of a ~6.6h dark window) -- present, but nowhere near a
+/// competitive number, which is the whole point of replacing a cliff with a
+/// continuous reduction.
+@Test func monthDrasticallyReducesUsableHoursWhenTheMoonSitsOnTopOfTheTarget() throws {
     var fixture = try MonthFixture.make()
     defer { fixture.cleanup() }
     let lat = 47.5, lon = 19.0
@@ -96,6 +108,7 @@ private struct MonthFixture {
     let night = SunMoon.astronomicalTwilight(nightOf: referenceDate, latDeg: lat, lonDeg: lon, timeZone: TimeZone.current)
     let dusk = try #require(night.duskUTC)
     let dawn = try #require(night.dawnUTC)
+    let expectedDarkHours = dawn.timeIntervalSince(dusk) / 3600.0
     let midNight = dusk.addingTimeInterval(dawn.timeIntervalSince(dusk) / 2)
     let moon = SunMoon.moonPosition(julianDay: JulianDate.julianDay(midNight))
 
@@ -106,7 +119,14 @@ private struct MonthFixture {
     let summaries = try Planner.month(from: referenceDate, nights: 1, minAltitudeDeg: 10, db: fixture.db, config: fixture.config)
     let summary = try #require(summaries.first)
 
-    #expect(!summary.bestTargets.contains { $0.target == "T_MoonNear" })
+    let best = try #require(
+        summary.bestTargets.first { $0.target == "T_MoonNear" },
+        "a continuous penalty should still leave a small positive usable-hours figure rather than vanishing entirely"
+    )
+    #expect(best.usableHours > 0)
+    // Nowhere near competitive against a Moon-free night's dark window --
+    // this alignment is (almost exactly) the Moon's worst case.
+    #expect(best.usableHours < expectedDarkHours * 0.05, "usable=\(best.usableHours) dark=\(expectedDarkHours) -- penalty should still be severe")
 }
 
 // MARK: - 3. 30 entries, sequential dates

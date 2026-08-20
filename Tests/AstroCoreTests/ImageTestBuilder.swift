@@ -16,7 +16,8 @@ func writeTestTIFF(
     cameraModel: String = "Canon EOS R6",
     dateTimeOriginal: String = "2026:01:15 20:30:00",
     exposureSeconds: Double? = nil,
-    iso: Int? = nil
+    iso: Int? = nil,
+    apertureFNumber: Double? = nil
 ) throws {
     let width = 2
     let height = 2
@@ -53,6 +54,9 @@ func writeTestTIFF(
     }
     if let iso {
         exifDict[kCGImagePropertyExifISOSpeedRatings] = [iso]
+    }
+    if let apertureFNumber {
+        exifDict[kCGImagePropertyExifFNumber] = apertureFNumber
     }
     let tiffDict: [CFString: Any] = [
         kCGImagePropertyTIFFModel: cameraModel,

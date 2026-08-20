@@ -4,3 +4,7 @@ build/
 *.xcodeproj
 .swiftpm/
 .worktrees/
+
+# The minimal reproducer for the async-default-argument compiler bug
+# is checked in as sources only; its build output is not.
+docs/swift-async-default-arg-bug/.build/

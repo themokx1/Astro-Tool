@@ -65,12 +65,21 @@ public enum SensorProfiler {
     /// returning the full set. `root` resolves each tracked file's
     /// root-relative `path` to an actual URL to read pixels from -- this
     /// never writes anywhere in the library itself, only reads.
+    ///
+    /// `progress` is called once per combo, BEFORE that combo's own reads
+    /// and upsert -- `throws` (rather than a separate cancellation flag) so
+    /// a caller wanting cooperative cancellation (`SensorMeasurementCommand`)
+    /// can simply throw from inside it to stop the loop between combos,
+    /// never mid-combo: every already-completed combo's history row and
+    /// upsert have already landed by the time a later combo's `progress`
+    /// call is even reached, so stopping there can never leave a combo
+    /// half-written.
     @discardableResult
     public static func measure(
         db: Database,
         config: AstroConfig,
         root: URL,
-        progress: (@Sendable (String) -> Void)? = nil
+        progress: (@Sendable (String) throws -> Void)? = nil
     ) throws -> [SensorProfileRecord] {
         let allFiles = try db.allFiles(includeMissing: false)
         let biasFiles = allFiles.filter { ($0.area == .sessions || $0.area == .calibration) && $0.role == .bias }
@@ -87,7 +96,7 @@ public enum SensorProfiler {
 
         var results: [SensorProfileRecord] = []
         for key in biasByCombo.keys.sorted(by: comboKeyLessThan) {
-            progress?(comboDescription(key))
+            try progress?(comboDescription(key))
 
             let biasSet = (biasByCombo[key] ?? []).sorted { $0.path < $1.path }
             guard !biasSet.isEmpty else { continue }

@@ -237,7 +237,16 @@ struct CalibrationSettingsView: View {
             exposureToleranceFraction: exposureToleranceFraction,
             flatMaxAgeDays: flatMaxAgeDays,
             rotatorToleranceDeg: rotatorToleranceDeg,
-            coolerToleranceC: coolerToleranceC
+            coolerToleranceC: coolerToleranceC,
+            // V3 pre-stack program section 5.2 (Kalibrációs automata): this
+            // V1 screen has no field for `autoMasterBuildEnabled` (V1 stays
+            // untouched -- V2 UI only, per this program's own iron rule) and
+            // never should get one, but omitting it here would silently
+            // reset it to `CalibRule()`'s own `false` default on every V1
+            // "Mentés" -- clobbering whatever the V2 Calibration workspace's
+            // own toggle just set. Preserving the already-loaded value keeps
+            // this an additive-field round-trip, not a data-loss path.
+            autoMasterBuildEnabled: appState.config.calib.autoMasterBuildEnabled
         )
 
         do {

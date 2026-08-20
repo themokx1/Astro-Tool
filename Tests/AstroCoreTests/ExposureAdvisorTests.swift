@@ -277,6 +277,77 @@ private func makeReferenceFixture(
     #expect(abs(multiplier - expected) < 0.0001)
 }
 
+// MARK: - W7-C: ASI Air plate-solve FOCALLEN jitter must not undercount integration
+
+/// Inserts a rated LIGHT frame with an explicit `focallen` -- like
+/// `insertRatedLight` above, but this suite also needs to vary focal length
+/// per frame to reproduce ASI Air's plate-solve jitter (255/256/261/262 mm
+/// all one physical rig, verified against the owner's real library).
+@discardableResult
+private func insertRatedLightWithFocalLength(
+    db: Database, target: String, date: String, name: String, focallen: Double, exptime: Double = 120
+) throws -> Int64 {
+    let path = "sessions/\(target)/\(date)/lights/\(name).fit"
+    let fileID = try db.upsertFile(
+        FileRecord(
+            path: path, size: 1024, mtime: 1_700_000_000, ext: "fit", kind: "fits",
+            area: .sessions, target: target, sessionDate: date, role: .light,
+            scannedAt: 1_700_000_100
+        )
+    )
+    try db.backfillInode(id: fileID, inode: fileID, nlink: 1)
+    try db.upsertFITSMeta(
+        FITSMetaRecord(
+            fileID: fileID, exptime: exptime, gain: 100, offset: 50,
+            instrume: "ZWO ASI2600MC Pro", focallen: focallen, egain: 1.0,
+            headerJSON: headerJSON(["BAYERPAT": "'RGGB'"])
+        )
+    )
+    try db.upsertRating(
+        RatingRecord(
+            fileID: fileID, background: 700, saturatedFraction: 0,
+            score: 0, ratedAt: 1_700_000_200, inputSig: "sig-\(name)",
+            bg00: 700, bg01: 650, bg10: 650, bg11: 509.72
+        )
+    )
+    return fileID
+}
+
+@Test func totalUsableSecondsSumsAllFramesAcrossJitteredFocalLengthOfOnePhysicalRig() throws {
+    let db = try makeMemoryDB()
+    try insertProfile(db: db, camera: "ZWO ASI2600MC Pro")
+    // Four nights, four ASI-Air plate-solve-refined FOCALLEN readings for
+    // the SAME physical rig -- 480 s total. Before W7-C, `advise` picked
+    // whichever single value was most common (the "dominant" fingerprint)
+    // and summed only ITS frames, undercounting every other night's
+    // integration behind the "+X h to +10% SNR" guidance.
+    try insertRatedLightWithFocalLength(db: db, target: "IC1396", date: "2026-08-01", name: "a", focallen: 255, exptime: 120)
+    try insertRatedLightWithFocalLength(db: db, target: "IC1396", date: "2026-08-02", name: "b", focallen: 256, exptime: 120)
+    try insertRatedLightWithFocalLength(db: db, target: "IC1396", date: "2026-08-03", name: "c", focallen: 261, exptime: 120)
+    try insertRatedLightWithFocalLength(db: db, target: "IC1396", date: "2026-08-04", name: "d", focallen: 262, exptime: 120)
+
+    let advice = try ExposureAdvisor.advise(target: "IC1396", db: db, config: AstroConfig())
+
+    #expect(abs(advice.totalUsableSeconds - 480) < 1, "all four jittered nights are the same physical rig -- integration must not fragment")
+}
+
+@Test func totalUsableSecondsStillExcludesAGenuinelyDifferentOpticalTrain() throws {
+    let db = try makeMemoryDB()
+    try insertProfile(db: db, camera: "ZWO ASI2600MC Pro")
+    // Three nights of jitter around one rig (255-262 mm), plus one night on
+    // a completely different optical train (a 480 mm setup) -- the
+    // dominant-fingerprint restriction must still exclude genuinely
+    // different equipment, only jitter within one rig should merge.
+    try insertRatedLightWithFocalLength(db: db, target: "IC1396", date: "2026-08-01", name: "a", focallen: 255, exptime: 120)
+    try insertRatedLightWithFocalLength(db: db, target: "IC1396", date: "2026-08-02", name: "b", focallen: 261, exptime: 120)
+    try insertRatedLightWithFocalLength(db: db, target: "IC1396", date: "2026-08-03", name: "c", focallen: 262, exptime: 120)
+    try insertRatedLightWithFocalLength(db: db, target: "IC1396", date: "2026-08-04", name: "d", focallen: 480, exptime: 300)
+
+    let advice = try ExposureAdvisor.advise(target: "IC1396", db: db, config: AstroConfig())
+
+    #expect(abs(advice.totalUsableSeconds - 360) < 1, "the 480 mm night is a different rig and must stay excluded")
+}
+
 // MARK: - adviseAll
 
 @Test func exposureAdvisorAdviseAllIncludesEveryTargetWithUsableLightsAndSkipsTargetsWithNone() throws {

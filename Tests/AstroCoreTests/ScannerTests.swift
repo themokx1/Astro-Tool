@@ -746,6 +746,311 @@ private struct ScanFixture {
     #expect(second.reclassified == 0)
 }
 
+// MARK: - Residue must never be promoted via IMAGETYP
+//
+// Siril stack products (starless/starmask/registered sequences) inherit
+// IMAGETYP='Light Frame' from the subs they were stacked from. Sitting loose
+// in a session date dir (no lights/flats/darks/biases subdir), they hit the
+// exact same "role .other, area .sessions, FITS header says Light" shape as
+// a genuine loose light frame -- `refineLooseFrameRole` must not promote
+// them just because their filename/dir happens to match
+// `AstroConfig.residuePatterns`/`residueDirNames`, the SAME predicate
+// `CleanupReport`'s audit uses to flag residue for cleanup.
+
+@Test func looseResidueNamedFrameStaysOtherDespiteLightIMAGETYP() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    // "r_*" is one of the default `residuePatterns` -- a Siril registered/
+    // stacked byproduct left loose in the date dir, same shape as the
+    // Heart-and-Soul fixture above but with a residue-matching name.
+    let relativePath = "sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/r_stacked.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try #require(try fixture.db.file(path: relativePath))
+    #expect(record.role == .other)
+    #expect(record.area == .sessions)
+}
+
+@Test func looseFrameInsideResidueProcessDirStaysOtherDespiteLightIMAGETYP() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    // An ancestor directory named "process" (a default `residueDirNames`
+    // entry) makes everything under it residue regardless of its own
+    // filename -- mirrors `CleanupReport.residueCategory`'s dir-name
+    // precedence.
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/process/starless.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try #require(try fixture.db.file(path: relativePath))
+    #expect(record.role == .other)
+    #expect(record.area == .sessions)
+}
+
+/// Writes a real residue-named FITS file (`r_*` pattern) with a Light Frame
+/// IMAGETYP header, scans once (the residue guard already keeps it `.other`
+/// on this first scan), then force-writes the stored role back to `.light`
+/// -- simulating a row left over from BEFORE this fix, where the wrong
+/// IMAGETYP-based promotion had already happened and was persisted. Returns
+/// the scanner (reused across rescans) and the path so heal-pass tests can
+/// pick up from exactly this "already polluted" state.
+private func makeFixtureWithStaleResiduePromotion() throws -> (fixture: ScanFixture, scanner: LibraryScanner, relativePath: String) {
+    let fixture = try ScanFixture.make()
+    let relativePath = "sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/r_stacked.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    var record = try #require(try fixture.db.file(path: relativePath))
+    record.role = .light
+    _ = try fixture.db.upsertFile(record)
+
+    return (fixture, scanner, relativePath)
+}
+
+@Test func healDemotesPreviouslyPromotedResidueRowBackToOther() throws {
+    let (fixture, scanner, relativePath) = try makeFixtureWithStaleResiduePromotion()
+    defer { fixture.cleanup() }
+
+    let second = try scanner.scan()
+    #expect(second.reclassified == 1)
+
+    let healed = try #require(try fixture.db.file(path: relativePath))
+    #expect(healed.role == .other)
+}
+
+@Test func healDemotionOfResidueRowIsIdempotentOnRescan() throws {
+    let (fixture, scanner, relativePath) = try makeFixtureWithStaleResiduePromotion()
+    defer { fixture.cleanup() }
+
+    _ = try scanner.scan() // first heal pass: demotes the stale `.light` row back to `.other`
+    let third = try scanner.scan()
+    #expect(third.reclassified == 0)
+
+    let healed = try #require(try fixture.db.file(path: relativePath))
+    #expect(healed.role == .other)
+}
+
+// MARK: - Stack-product recognition (StackDiscovery), the SECOND residue guard
+//
+// `starless_`/`starmask_`/`graxpert`-marked Siril byproducts don't match any
+// `AstroConfig.residuePatterns` default -- adding those tokens there was
+// tried and reverted (breaks `StackDiscovery`'s own stacks/processed-area
+// variant recognition, which treats this exact vocabulary as first-class,
+// WANTED output). Instead, `refineLooseFrameRole`/`healStaleClassification`
+// additionally consult `StackDiscovery.classifiesAsStackProduct` -- the same
+// engine `stacks/`/`processed`-area variant grouping already uses -- so this
+// recognition is code, not config, and applies regardless of what the
+// owner's `config.json` says.
+
+@Test func looseStarlessNamedFrameStaysOtherDespiteLightIMAGETYPEvenWithoutAResiduePattern() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    // "starless_*" matches NO default `residuePatterns` glob (that was
+    // deliberately reverted -- see `AstroConfig.residuePatterns`'s doc
+    // comment) but DOES classify as a stack product via `StackDiscovery`.
+    // The session-scoped `sessionResiduePatterns` default would ALSO catch
+    // it -- emptied here on purpose, so this test keeps proving the
+    // code-driven guard alone suffices no matter what config.json says.
+    let relativePath = "sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/starless_stacked_result.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    var config = fixture.config
+    config.sessionResiduePatterns = []
+    let scanner = LibraryScanner(config: config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try #require(try fixture.db.file(path: relativePath))
+    #expect(record.role == .other)
+    #expect(record.area == .sessions)
+    // Confirms the config-pattern predicate really doesn't already cover
+    // this name under the emptied session list -- otherwise this test
+    // wouldn't be exercising the stack-product guard at all.
+    #expect(!ResidueMatcher.isResidue(path: relativePath, config: config))
+}
+
+/// Same shape as `makeFixtureWithStaleResiduePromotion` above, but for a
+/// filename that only the STACK-PRODUCT guard recognizes: the session-
+/// scoped pattern list (which would also match `starmask_*` by default) is
+/// emptied so the heal path being pinned is the code-driven one.
+private func makeFixtureWithStaleStackProductPromotion() throws -> (fixture: ScanFixture, scanner: LibraryScanner, relativePath: String) {
+    let fixture = try ScanFixture.make()
+    let relativePath = "sessions/IC1805-1848_Heart-and-Soul_Nebula/2026-01-17/starmask_stacked_result.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    var config = fixture.config
+    config.sessionResiduePatterns = []
+    let scanner = LibraryScanner(config: config, db: fixture.db)
+    _ = try scanner.scan()
+
+    var record = try #require(try fixture.db.file(path: relativePath))
+    record.role = .light
+    _ = try fixture.db.upsertFile(record)
+
+    return (fixture, scanner, relativePath)
+}
+
+@Test func healDemotesPreviouslyPromotedStackProductRowBackToOther() throws {
+    let (fixture, scanner, relativePath) = try makeFixtureWithStaleStackProductPromotion()
+    defer { fixture.cleanup() }
+
+    let second = try scanner.scan()
+    #expect(second.reclassified == 1)
+
+    let healed = try #require(try fixture.db.file(path: relativePath))
+    #expect(healed.role == .other)
+}
+
+@Test func healDemotionOfStackProductRowIsIdempotentOnRescan() throws {
+    let (fixture, scanner, relativePath) = try makeFixtureWithStaleStackProductPromotion()
+    defer { fixture.cleanup() }
+
+    _ = try scanner.scan()
+    let third = try scanner.scan()
+    #expect(third.reclassified == 0)
+
+    let healed = try #require(try fixture.db.file(path: relativePath))
+    #expect(healed.role == .other)
+}
+
+// MARK: - Session-scoped residue patterns, the THIRD residue guard
+//
+// `result_Ha_12720s.fit` is the real library's hardest case: no universal
+// pattern matches it (`result*` is WANTED `looksLikeStackOutput` vocabulary
+// in `stacks/`/`processed/`), and `StackDiscovery.variantKind` classifies it
+// `.original` (no starless/starmask/edit marker), so BOTH other guards pass
+// it through. Only `AstroConfig.sessionResiduePatterns`'s `result_*`
+// (consulted by `ResidueMatcher.isResidue` solely for `.sessions`-area
+// paths) stops its inherited IMAGETYP='Light' from promoting it.
+
+@Test func looseResultNamedStackedIntegrationStaysOtherDespiteLightIMAGETYP() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_Ha_12720s.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try #require(try fixture.db.file(path: relativePath))
+    #expect(record.role == .other)
+    #expect(record.area == .sessions)
+    // Confirms neither of the other two guards already covers this name --
+    // otherwise this test wouldn't be exercising the session-pattern layer.
+    #expect(!ResidueMatcher.matchesFilePattern(name: "result_Ha_12720s.fit", config: fixture.config))
+    #expect(!StackDiscovery.classifiesAsStackProduct(fileName: "result_Ha_12720s.fit"))
+}
+
+@Test func healDemotesPreviouslyPromotedSessionPatternRowBackToOther() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/NGC_7000_North_American_Nebula/2026-05-23/results/result_OIII_12720s.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "NAXIS1  =                  100",
+        "NAXIS2  =                  100",
+        "IMAGETYP= 'Light Frame'",
+        "END",
+    ])
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    // Simulate the pre-fix wrong promotion exactly as the real DB copy has
+    // it (role='light' on a session-loose stack integration).
+    var record = try #require(try fixture.db.file(path: relativePath))
+    record.role = .light
+    _ = try fixture.db.upsertFile(record)
+
+    let second = try scanner.scan()
+    #expect(second.reclassified == 1)
+
+    let healed = try #require(try fixture.db.file(path: relativePath))
+    #expect(healed.role == .other)
+}
+
 @Test func normalUnchangedFileHasNoRowChurn() throws {
     let fixture = try ScanFixture.make()
     defer { fixture.cleanup() }
@@ -1083,4 +1388,80 @@ private struct ScanFixture {
         #expect(count > previous)
         previous = count
     }
+}
+
+@Test func detailedProgressUsesOnePassAndBoundedCallbacks() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 0..<2_048 {
+        let url = fixture.root.appendingPathComponent("stacks/Progress/f\(i).fit")
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("x".utf8).write(to: url)
+    }
+
+    final class ProgressBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [ScanProgress] = []
+
+        func append(_ progress: ScanProgress) {
+            lock.withLock { stored.append(progress) }
+        }
+
+        var values: [ScanProgress] {
+            lock.withLock { stored }
+        }
+    }
+    let box = ProgressBox()
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+
+    _ = try scanner.scan(progressUpdate: box.append)
+
+    let values = box.values
+    let first = try #require(values.first)
+    let last = try #require(values.last)
+    #expect(first.scanned == 0)
+    #expect(first.total == nil)
+    #expect(values.dropLast().allSatisfy { $0.total == nil })
+    #expect(last.scanned == last.total!)
+    #expect(last.fraction == 1)
+    #expect(values.count <= (last.scanned / 64) + 3)
+    #expect(values.dropFirst().dropLast().allSatisfy { $0.scanned % 64 == 0 })
+}
+
+@Test func detailedScanCooperativelyCancelsBeforeProcessingAllFiles() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 0..<512 {
+        let url = fixture.root.appendingPathComponent("stacks/Cancellation/f\(i).fit")
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("x".utf8).write(to: url)
+    }
+
+    final class CancellationCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var checks = 0
+
+        func shouldCancel() -> Bool {
+            lock.withLock {
+                checks += 1
+                return checks > 90
+            }
+        }
+    }
+    let cancellation = CancellationCounter()
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+
+    #expect(throws: CancellationError.self) {
+        _ = try scanner.scan(shouldCancel: cancellation.shouldCancel)
+    }
+
+    #expect(try fixture.db.allFiles(includeMissing: false).count < 512)
 }

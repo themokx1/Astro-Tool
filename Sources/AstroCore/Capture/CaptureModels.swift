@@ -51,6 +51,19 @@ public enum SensorMode: String, Codable, Sendable, CaseIterable {
         case .unknown: return "Ismeretlen szenzor"
         }
     }
+
+    /// English sibling of `displayNameHU` -- V1 and the `astrotool` CLI keep
+    /// reading `displayNameHU` unchanged; this exists only for V2's
+    /// `ConversionWorkspace` picker, whose otherwise-English UI must never
+    /// show "Monokróm"/"Ismeretlen szenzor" (V2 UI/UX audit, 2026-08-15,
+    /// section 4).
+    public var displayName: String {
+        switch self {
+        case .osc: return "OSC"
+        case .mono: return "Mono"
+        case .unknown: return "Unknown sensor"
+        }
+    }
 }
 
 /// Spectral intent/passband of a capture, kept separate from sensor type.
@@ -74,6 +87,22 @@ public enum SignalMode: String, Codable, Sendable, CaseIterable {
         case .unfiltered: return "Szűrő nélkül"
         case .other: return "Egyéb fénysáv"
         case .unknown: return "Ismeretlen fénysáv"
+        }
+    }
+
+    /// English sibling of `displayNameHU` -- see `SensorMode.displayName`'s
+    /// own doc comment for why this exists alongside it rather than
+    /// replacing it.
+    public var displayName: String {
+        switch self {
+        case .broadband: return "Broadband"
+        case .dualBand: return "Dual-band"
+        case .narrowband: return "Narrowband"
+        case .lrgb: return "LRGB"
+        case .luminance: return "Luminance"
+        case .unfiltered: return "No filter"
+        case .other: return "Other passband"
+        case .unknown: return "Unknown passband"
         }
     }
 }

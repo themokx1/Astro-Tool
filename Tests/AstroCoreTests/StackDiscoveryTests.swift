@@ -365,6 +365,61 @@ private func insertFile(
     ) == .export_)
 }
 
+// MARK: - classifiesAsStackProduct
+//
+// `Scan/Scanner.swift`'s loose-frame promotion guard needs a plain
+// yes/no answer ("does this filename look like a stack PRODUCT, as opposed
+// to a raw captured sub") without duplicating `variantKind`'s recognition
+// rules -- these tests pin that `classifiesAsStackProduct` is exactly
+// `variantKind(fileName:) != .original`, reusing the SAME engine that
+// already classifies `stacks/`/`processed`-area variants (starless/
+// starmask/edited/export), not a second copy of the predicate.
+
+@Test func classifiesAsStackProductIsTrueForStarlessStarmaskEditedAndExportVariants() throws {
+    #expect(StackDiscovery.classifiesAsStackProduct(
+        fileName: "starless_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_seti_strech.fit"
+    ))
+    #expect(StackDiscovery.classifiesAsStackProduct(
+        fileName: "starmask_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956.fit"
+    ))
+    #expect(StackDiscovery.classifiesAsStackProduct(
+        fileName: "NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_graxpert_result_HOO_Improved.fit"
+    ))
+    #expect(StackDiscovery.classifiesAsStackProduct(
+        fileName: "NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og_work_seti_strech.jpg"
+    ))
+}
+
+@Test func stackOutputRecognitionIgnoresSessionScopedResiduePatterns() throws {
+    // `looksLikeStackOutput`'s residue exclusion is (and must stay) the
+    // UNIVERSAL `residuePatterns` list only: `result_Ha_12720s.fit` and
+    // `starless_*` names match `AstroConfig.sessionResiduePatterns`'s
+    // defaults, yet in the `stacks/`/`processed/` areas -- the only areas
+    // this recognizer runs on -- they are first-class, WANTED output (the
+    // real library keeps exactly these basenames there). A regression here
+    // is the "6 broken tests" failure mode that got the token-broadening
+    // attempt reverted.
+    #expect(StackDiscovery.looksLikeStackOutput(
+        fileName: "result_Ha_12720s.fit", ext: "fit", sizeBytes: 1_000_000))
+    #expect(StackDiscovery.variantKind(
+        fileName: "starless_NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og.fit"
+    ) == .starless)
+    // The universal exclusion itself still works -- a Siril-registered
+    // r_*-named file is rejected despite containing "_stacked".
+    #expect(!StackDiscovery.looksLikeStackOutput(
+        fileName: "r_merged_lights_stacked.fit", ext: "fit", sizeBytes: 1_000_000))
+}
+
+@Test func classifiesAsStackProductIsFalseForAPlainUnmarkedOriginalName() throws {
+    // Same real family, but the bare "_og" original -- no edit markers, no
+    // starless/starmask prefix, not an export extension. This is also
+    // exactly the shape of a genuine ASIAIR-style raw light frame name with
+    // no processing markers, so it must stay `false`.
+    #expect(!StackDiscovery.classifiesAsStackProduct(
+        fileName: "NGC_2244_Satellite_Cluster_145x120sec_12300s__drizzle-2-0x_2026-03-17_1956_og.fit"
+    ))
+}
+
 // MARK: - stem (R8-3)
 
 @Test func stemGroupsRealNGC2244FamilyUnderOneKey() throws {

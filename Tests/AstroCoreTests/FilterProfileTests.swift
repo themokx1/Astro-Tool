@@ -62,6 +62,27 @@ private func filterProfile(
     #expect(try database.allFilterProfiles().count == 1)
 }
 
+@Test func replaceFilterProfilesSynchronizesInventoryAtomicallyAndKeepsStableIDs() throws {
+    let database = try Database(path: ":memory:")
+    let keptID = try database.upsertFilterProfile(filterProfile(manufacturer: "SVBONY", model: "SV220"))
+    _ = try database.upsertFilterProfile(filterProfile(manufacturer: "Optolong", model: "L-Ultimate"))
+
+    var kept = try #require(try database.filterProfile(id: keptID))
+    kept.notes = "frissített"
+    try database.replaceFilterProfiles([
+        kept,
+        filterProfile(manufacturer: "Baader", model: "H-alpha", signalMode: .narrowband),
+    ])
+
+    let profiles = try database.allFilterProfiles()
+    #expect(profiles.map(\.displayLabel) == ["Baader H-alpha", "SVBONY SV220"])
+    #expect(profiles.first { $0.displayLabel == "SVBONY SV220" }?.id == keptID)
+    #expect(profiles.first { $0.displayLabel == "SVBONY SV220" }?.notes == "frissített")
+
+    try database.replaceFilterProfiles([])
+    #expect(try database.allFilterProfiles().isEmpty)
+}
+
 @Test func filterProfilesSortByDisplayLabelAndDeleteWithoutCaptureSideEffects() throws {
     let database = try Database(path: ":memory:")
     let sv220ID = try database.upsertFilterProfile(filterProfile())

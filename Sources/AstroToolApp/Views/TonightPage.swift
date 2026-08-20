@@ -1,3 +1,4 @@
+import AstroApplication
 import AstroCore
 import SwiftUI
 
@@ -816,7 +817,14 @@ struct TonightPage: View {
     @ViewBuilder
     private func goalCell(_ row: PlanRow) -> some View {
         if let goal = row.plan.goalSeconds {
-            Text(TDFormat.hm(goal)).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(TDFormat.hm(goal)).foregroundStyle(.secondary)
+                if row.plan.goalSource == .automaticReference {
+                    Text("automatikus fényesség + setup")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
         } else if let goal = row.filterGoalTotalSeconds {
             VStack(alignment: .leading, spacing: 1) {
                 Text(TDFormat.hm(goal)).foregroundStyle(.secondary)

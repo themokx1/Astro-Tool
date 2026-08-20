@@ -34,6 +34,16 @@ private func makeTempDir() throws -> URL {
     #expect(meta?.iso == 800)
 }
 
+@Test func readReturnsApertureFNumberFromGeneratedTIFF() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let url = dir.appendingPathComponent("test-aperture.tif")
+    try writeTestTIFF(to: url, apertureFNumber: 2.8)
+
+    let meta = ImageMetaReader.read(url: url)
+    #expect(meta?.apertureFNumber == 2.8)
+}
+
 @Test func readReturnsNilExposureAndISOWhenTagsAbsent() throws {
     let dir = try makeTempDir()
     defer { try? FileManager.default.removeItem(at: dir) }

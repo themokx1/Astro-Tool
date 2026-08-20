@@ -11,6 +11,23 @@ private func makeTempDir(_ label: String) throws -> URL {
     return dir
 }
 
+private final class SirilVersionResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: String?
+
+    func set(_ value: String) {
+        lock.lock()
+        storedValue = value
+        lock.unlock()
+    }
+
+    var value: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedValue
+    }
+}
+
 /// Builds a complete FITS file: a plain primary header (`BITPIX 16`,
 /// `NAXIS1`/`NAXIS2` set from `width`/`height`, `BZERO` included only when
 /// `bzero` is given) immediately followed by big-endian `Int16` pixel data.
@@ -674,6 +691,41 @@ private final class ProgressRecorder: @unchecked Sendable {
     } catch {
         Issue.record("expected AstroError.sirilNotFound, got \(error)")
     }
+}
+
+/// `Process.waitUntilExit()` cannot run before stdout is drained: a child
+/// that writes more than the pipe buffer then blocks waiting for a reader,
+/// while the parent blocks waiting for that same child to exit. Running the
+/// initializer off-thread lets this regression fail promptly instead of
+/// hanging the entire test process.
+@Test func sirilCLIInitDrainsLargeVersionOutputBeforeWaitingForExit() throws {
+    let dir = try makeTempDir("siril-version-pipe")
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let fakeSiril = dir.appendingPathComponent("fake-siril-cli")
+    let script = """
+    #!/bin/sh
+    /usr/bin/yes "version-output-padding" | /usr/bin/head -c 1048576
+    printf '\\nsiril 9.8.7\\n'
+    """
+    try Data(script.utf8).write(to: fakeSiril)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeSiril.path)
+
+    let result = SirilVersionResultBox()
+    let finished = DispatchSemaphore(value: 0)
+    DispatchQueue.global(qos: .userInitiated).async {
+        do {
+            result.set(try SirilCLI(path: fakeSiril.path).version)
+        } catch {
+            result.set("error: \(error)")
+        }
+        finished.signal()
+    }
+
+    let outcome = finished.wait(timeout: .now() + 5)
+    #expect(outcome == .success, "SirilCLI.init deadlocked while the child waited for its stdout pipe to be drained")
+    guard outcome == .success else { return }
+    #expect(result.value == "siril 9.8.7")
 }
 
 @Test func sirilCLIBuildScriptContainsRequiresLoadFindstarClose() throws {

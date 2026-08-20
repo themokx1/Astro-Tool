@@ -1,306 +1,41 @@
-<!DOCTYPE html>
-<html lang="hu">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AstroTool · CLI</title>
-<meta name="description" content="AstroTool teljes CLI-parancs referencia csoportosítva: alap, minőség, kalibráció, tervezés, export, egyéb, mindegyik egy sor leírással és példával.">
+<!doctype html><html lang="hu"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CLI referencia — AstroTool</title><meta name="description" content="Az astrotool 1.0 parancssori referencia és biztonsági modell."><link rel="icon" href="favicon-32.png"><link rel="stylesheet" href="assets/site.css"></head><body>
+<a class="skip-link" href="#main-content">Ugrás a tartalomra</a>
+<header class="site-header"><nav class="nav-shell" aria-label="Fő navigáció"><a class="wordmark" href="index.html"><img src="icon.png" alt="">AstroTool</a><div class="site-nav"><a href="features.html">Funkciók</a><a href="first-steps.html">Első lépések</a><a href="cli.html" aria-current="page">CLI</a><a href="support.html">Támogatás</a><a class="nav-download" href="https://github.com/themokx1/Astro-Tool/releases/latest">Letöltés</a></div></nav></header>
+<main id="main-content" tabindex="-1"><div class="shell"><header class="page-hero"><div class="eyebrow">astrotool 1.0</div><h1>Ugyanaz a motor. Automatizálhatóan.</h1><p>A natív app és a CLI ugyanazt az AstroCore modellt használja. Minden fontos parancs támogat gépi olvasható <code>--json</code> kimenetet.</p></header>
+<div class="docs-layout"><nav class="toc" aria-label="Tartalom"><strong>Tartalom</strong><a href="#basics">Alapok</a><a href="#scan">Scan és audit</a><a href="#stats">Statisztika</a><a href="#capture">Capture</a><a href="#quality">Minőség</a><a href="#planning">Tervezés</a><a href="#exports">Export</a></nav>
+<article class="prose">
+<section id="basics"><h2>Alapok</h2><pre><code>astrotool --version
+astrotool --help
+astrotool &lt;parancs&gt; --root /path/to/Astro</code></pre><p>A <code>--root</code> explicit könyvtárat választ. A nem módosító parancsok bárhol biztonságosan futtathatók; fájlművelethez külön megerősítés szükséges.</p></section>
+<section id="scan"><h2>Scan és audit</h2><div class="command"><h3>scan</h3><p>Frissíti a helyi fájl- és FITS-indexet.</p><pre><code>astrotool scan --root /path/to/Astro
+astrotool scan --root /path/to/Astro --json</code></pre><div class="metadata"><span>nem módosít képet</span><span>inkrementális</span></div></div><div class="command"><h3>audit</h3><p>Megkeresi a szerkezeti hibákat, duplikátumokat és gyanús maradványokat.</p><pre><code>astrotool audit --root /path/to/Astro
+astrotool audit --no-duplicates --json
+astrotool audit --suggest</code></pre><div class="metadata"><span>csak jelöl</span><span>javaslat-script külön</span></div></div></section>
+<section id="stats"><h2>Statisztika és kalibráció</h2><pre><code>astrotool stats
+astrotool stats --target M31
+astrotool calib
+astrotool match --target M31 --date 2026-09-14</code></pre><p>A statisztika használható integrációt számol. A <code>match</code> egy konkrét session light és kalibrációs készletét vizsgálja.</p></section>
+<section id="capture"><h2>Capture-gyűjtések</h2><pre><code>astrotool capture list --target M31 --date 2026-09-14
 
-<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
-<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
-<link rel="stylesheet" href="site.css">
-<meta name="theme-color" content="#0B0B0D">
-<link rel="alternate" hreflang="hu" href="https://themokx1.github.io/Astro-Tool/cli.html">
-<link rel="alternate" hreflang="en" href="https://themokx1.github.io/Astro-Tool/en/cli.html">
-<link rel="alternate" hreflang="x-default" href="https://themokx1.github.io/Astro-Tool/cli.html">
+astrotool capture create \
+  --target M31 --date 2026-09-14 \
+  --name "Broadband · 120 s" --slug broadband-120s \
+  --sensor osc --signal broadband</code></pre><h3>Egy-session konverzió</h3><pre><code>astrotool session-convert plan \
+  --target M31 --date 2026-09-14 \
+  --out conversion-plan.json
 
-<meta property="og:type" content="website">
-<meta property="og:title" content="AstroTool · CLI-referencia">
-<meta property="og:description" content="Teljes CLI-parancs referencia, csoportosítva, egy-egy példával.">
-<meta property="og:url" content="https://themokx1.github.io/Astro-Tool/cli.html">
-<meta property="og:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="AstroTool · CLI-referencia">
-<meta name="twitter:description" content="Teljes CLI-parancs referencia, csoportosítva, egy-egy példával.">
-<meta name="twitter:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
-</head>
-<body>
-
-<nav>
-  <div class="wrap">
-    <a class="brand" href="index.html" style="text-decoration:none;color:inherit;"><span class="brand-mark" aria-hidden="true"></span>AstroTool</a>
-    <div class="nav-lang">
-      <a href="cli.html" class="current">HU</a>
-      <a href="en/cli.html">EN</a>
-    </div>
-  </div>
-</nav>
-
-<header class="wrap compact">
-  <h1>CLI-referencia</h1>
-  <p class="sub">Minden alparancs, csoportosítva, egy sor leírással és egy futtatható példával.</p>
-  <p class="crumbs"><a href="tutorial.html">Útmutató</a> · <a href="features.html">Funkciók</a> · <a href="install.html">Telepítés</a> · <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Letöltés</a></p>
-</header>
-
-<main class="doc-wrap doc">
-
-  <p class="req-note">Minden parancs elfogadja a <code>--root PATH</code> kapcsolót a könyvtár felülbírálására, és a legtöbb támogatja a <code>--json</code> kapcsolót gépi olvasható (snake_case, rendezett) kimenethez. Minden <code>--json</code> kimenet gyökere <code>schema_version</code> mezőt kap; azoknál a parancsoknál, ahol a gyökér korábban egy sima tömb volt, a válasz mostantól <code>{"schema_version": "1", "items": [...]}</code> alakba van csomagolva; a pontos változásokat a kiadási jegyzetek tartalmazzák.</p>
-
-  <div class="panels">
-
-    <div class="panel">
-      <h2><span class="dot" aria-hidden="true"></span>Kilépési kódok</h2>
-      <div class="table-scroll">
-      <table>
-        <tr><th>Kód</th><th>Jelentés</th></tr>
-        <tr><td>0</td><td>Siker.</td></tr>
-        <tr><td>1</td><td>Általános/usage hiba (hiányzó vagy érvénytelen kapcsoló, ismeretlen alparancs).</td></tr>
-        <tr><td>2</td><td>TCC/kötet-hiba: a könyvtár nem érhető el (Teljes lemezhozzáférés hiányzik, vagy a kötet nincs csatlakoztatva).</td></tr>
-        <tr><td>3</td><td>Nem található target/session: a <code>--target</code>/<code>--date</code> nem azonosít semmit a nyilvántartásban (pl. <code>stats</code>, <code>solve</code>, <code>match</code>, <code>link-calib</code>, <code>report</code>, <code>target-report</code>).</td></tr>
-        <tr><td>4</td><td>Külső eszköz hiba: a Siril nem található a konfigurált útvonalon (pl. <code>solve</code>).</td></tr>
-        <tr><td>5</td><td>A <code>verify</code> legalább egy megerősített tartalom-eltérést talált (<code>content-changed</code>: azonos méret/módosítási idő mellett más hash, néma korrupció gyanús). A <code>modified</code> és a suspicious <code>modified-in-place</code> nem számít bele; olvasási hiba az 1-es kódot adja, nem az 5-öst.</td></tr>
-      </table>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2><span class="dot" aria-hidden="true"></span>Alap</h2>
-      <div class="cmdgroup">
-        <div class="cmd">
-          <div class="name">scan</div>
-          <div class="desc">Bejárja a könyvtárat, frissíti a belső SQLite indexet: mindig ez az első lépés. <code>--json</code> kimenete <code>changed_targets</code> mezőt is ad: azon célpontok listája, ahol ebben a futásban added/updated/missing fájl volt; ez alapján dönthető el egy pipeline-ban, mely célpontra érdemes rate/audit-ot futtatni utána. <code>--refresh-meta</code> a már ismert fájlok metaadatát is újraolvassa, nemcsak az újakat.</div>
-          <pre class="code">astrotool scan --root ~/Astro</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">audit</div>
-          <div class="desc">Három súlyossági szintbe sorolt hibalista + duplikátum-keresés; <code>--suggest</code> esetén átnézhető javaslat-scriptet ír. <code>--out PATH</code> (csak <code>--suggest</code>-tel együtt) a könyvtáron kívülre is írhatja a scriptet a fix <code>.astro_tool/suggestions/</code> hely helyett; <code>--out -</code> stdoutra írja a script szövegét fájl írása nélkül. <code>--json</code> kimenete <code>diff</code> mezőt is ad, ha volt előző audit-futás: új/megoldódott/változatlan csoport-darabszám + az új csoportok kulcsai (severity/category/group_key). Ha a két futás duplikátum-beállítása eltér vagy régi futásnál ismeretlen, a duplikátum-kategória mindkét oldalról kimarad, és az <code>omitted_categories</code> ezt jelzi. Az első futásnál a diff elmarad. <code>--no-duplicates</code> teljesen kikapcsolja a duplikátum-keresést egy futásra, ha csak a strukturális hibákra vagy gyanús találatokra vagy kíváncsi.</div>
-          <pre class="code">astrotool audit --suggest --include-suspicious --out ~/Desktop/fix.sh</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">cleanup</div>
-          <div class="desc">A már azonosított reziduum/duplikátum-találatok korlátozott elemszámú összegzése és javaslat-script generálás. <code>--out PATH|-</code> ugyanúgy működik, mint <code>audit --suggest</code>-nél. <code>--json</code> kimenete <code>storage</code> mezőt is ad: célpontonkénti méret area-bontással (sessions/stacks/processed/other), méret szerint csökkenő sorrendben; ugyanaz az adat, amit az app Takarítható szegmensének "Tárhely" blokkja mutat, ezért itt fér rá a meglévő <code>cleanup</code> parancsra, nem külön alparancsként.</div>
-          <pre class="code">astrotool cleanup --suggest --limit 50 --out -</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">verify</div>
-          <div class="desc">Fixity/bitrot-ellenőrzés: minden már baseline SHA-256-tal rendelkező, nem-hiányzó indexelt fájlt újraolvas, és összeveti a tárolt ellenőrző-összeggel. A normál ellenőrzés kizárólag olvas; eltérést csak jelöl, a visszaállítás biztonsági mentésből emberi döntés marad. <code>--target T</code>/<code>--path P</code> szűkíti a kört; <code>--sample N</code> (1-100) véletlen mintát ellenőriz. Az explicit <code>--baseline</code> csak a hiányzó hash-eket tölti fel az Astro Tool adatbázisában, a képfájlokhoz nem nyúl, és <code>--sample</code>-lel nem kombinálható. Fájlonkénti eredmény: <b>ok</b>; <b>content-changed</b> (változatlan méret/mtime mellett más hash, <code>sure_error</code>); <b>modified</b> (méret és mtime is változott, szándékos); <b>modified-in-place</b> (csak mtime változott, suspicious); vagy suspicious olvasási hiba. A JSON <code>summary</code>, <code>coverage</code> és <code>items</code> blokkokat ad.</div>
-          <pre class="code">astrotool verify --baseline --json
-astrotool verify --sample 20 --json</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">ack</div>
-          <div class="desc">Az Audit-oldal "rendben van, ismerem" jelöléseinek CLI-változata: hiba-csoportok elfogadása (<code>add</code>), visszavonása (<code>remove</code>), listázása (<code>list</code>). A <code>&lt;category|groupKey&gt;</code> pontosan az <code>audit --json</code> találatainak saját ack-kulcs alakja.</div>
-          <pre class="code">astrotool ack add "residue|*.seq" --note "ismert, szándékos"</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">stats</div>
-          <div class="desc">Célpontonkénti integráció/keret-összegzés; <code>--target</code>-tel session-bontás, <code>--tag</code>-gel szűrés, <code>--filters</code>-szel szűrőnkénti integráció-bontás (mono LRGB/SHO "hány óra van meg szűrőnként"); teljes célpontra (nem <code>--date</code>-tel szűkítve) a szűrőnkénti <code>goal:F=&lt;óra&gt;h</code> cél/hiányzik is megjelenik, ha van.</div>
-          <pre class="code">astrotool stats --target M31 --filters</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">nights</div>
-          <div class="desc">Célpontokon átívelő éjszaka-böngésző: minden session egy táblában, legújabb dátum elöl, keret/integráció és minőség-oszlopokkal (FWHM, duty cycle): a <code>stats --sessions</code> egy célpontra szűkített nézetének kereszt-célpontos megfelelője.</div>
-          <pre class="code">astrotool nights --year 2026 --month 3</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">trends</div>
-          <div class="desc">Hosszú távú, session-szintű idősor célpontokon átívelve: medián FWHM (ívmásodperc, vagy képpont <code>is_pixel_fallback=true</code>-val, ha nincs képpont-skála), háttér e⁻/s/″², vagy hatékonyság% (duty cycle): <code>--metric</code>-kel választva, dátum+érték párokban, legrégebbi elöl. <code>--setup</code> egy konkrét EquipmentProfile setup-fingerprint leírásra szűkít; <code>--from</code>/<code>--to</code> a session kanonikus kezdő-dátumára.</div>
-          <pre class="code">astrotool trends --metric fwhm --from 2026-01-01 --json</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">new-session</div>
-          <div class="desc">Új session könyvtár létrehozása (<code>YYYY-MM-DD</code>) README-sablonnal egy célponthoz.</div>
-          <pre class="code">astrotool new-session --catalog M --name 31 --date 2026-03-15</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">capture list | create | assign</div>
-          <div class="desc">Egy célpont/dátum sessionön belüli önálló capture-gyűjtések kezelése. A gyűjtés külön rögzíti a szenzormódot (<code>osc</code>/<code>mono</code>), a jellegét (<code>broadband</code>/<code>narrowband</code>/<code>dual_band</code>) és a pontos szűrőgyártó, modell és név adatot (<code>--filter-maker</code>/<code>--filter-model</code>/<code>--filter-name</code>), opcionális <code>--notes</code> jegyzettel. Az <code>assign</code> pontosan egy, már indexelt fájlt rendel a kiválasztott gyűjtéshez, csak a megadott target/date sessionben fogad el útvonalat, és ugyanazokkal a <code>--filter-*</code> kapcsolókkal felül is bírálhatja a fájl szűrő-adatát.</div>
-          <pre class="code">astrotool capture create --target IC_1396 --date 2026-08-08 \
-  --name "OSC · duál-sáv szűrő · 300 mp" --slug osc-duo-300s --sensor osc \
-  --signal dual_band --filter-maker &lt;GYÁRTÓ&gt; --filter-model &lt;MODELL&gt;
-
-astrotool capture assign --target IC_1396 --date 2026-08-08 \
-  --group osc-duo-300s --path sessions/IC_1396/2026-08-08/light_0001.fit</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">session-convert plan | apply | rollback</div>
-          <div class="desc">Átlátható, pontosan egy kiválasztott target/date sessionre zárt konverter. A <code>plan</code> alapértelmezetten csak logikai besorolást tervez: felsorolja a felismert capture-öket, nyers képeket, kalibrációs frame-eket, műtermékeket, bizonytalan döntéseket és konfliktusokat, de semmit nem mozgat. A külön megadott <code>--physical</code> tételes forrás→cél mozgatási tervet készít. Az <code>apply</code> csak elmentett tervvel és <code>--yes</code> megerősítéssel fut; felülírást tilt, a session változását fingerprinttel ellenőrzi, bizonylatot ment, és a bizonylat azonosítójával visszavonható.</div>
-          <pre class="code">astrotool session-convert plan --target IC_1396 --date 2026-08-08 \
-  --out ~/Desktop/ic1396-plan.json
-
-# Csak a teljes előnézet átnézése után:
-astrotool session-convert apply --plan ~/Desktop/ic1396-plan.json --yes
-astrotool session-convert rollback --id &lt;conversion-id&gt; --yes</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">config</div>
-          <div class="desc">A jelenleg érvényes konfiguráció (<code>show</code>) vagy a <code>config.json</code> elérési útja (<code>path</code>). <code>config show</code> alapból ember-olvasható, szekciónkénti kulcs-érték kimenetet ad; <code>--json</code>-nal a teljes struktúrát.</div>
-          <pre class="code">astrotool config show --json</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">tag</div>
-          <div class="desc">Célpont- vagy session-szintű szabadszöveges címkék hozzáadása, törlése, listázása.</div>
-          <pre class="code">astrotool tag add --target M31 goal:8h</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">goal</div>
-          <div class="desc">Célpont cél-óraszám (<code>goal:&lt;óra&gt;h</code> címke) beállítása vagy törlése: ugyanaz a formátum, mint amit az app cél-szerkesztője ír, így a kettő szabadon felcserélhető. <code>--filter F</code>-fel szűrőnkénti cél (<code>goal:F=&lt;óra&gt;h</code>, R11), függetlenül az összcéltól; a kettő szabadon együtt is élhet. <code>goal list --target T</code> a szűrőnkénti megvan/cél/hiányzik bontást adja vissza.</div>
-          <pre class="code">astrotool goal set --target M31 --filter Ha --hours 12
-astrotool goal list --target M31 --json</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">note</div>
-          <div class="desc">Session éjszakai jegyzetek (Bortle/SQM/seeing/szabadszöveg) megjelenítése (<code>show</code>, README-vel egyesítve) vagy írása (<code>set</code>). Sosem érinti a <code>README.txt</code>-t; egy üres <code>--value</code> törli a kulcsot.</div>
-          <pre class="code">astrotool note set --target M31 --date 2026-03-15 --key Bortle --value 5</pre>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2><span class="dot" aria-hidden="true"></span>Minőség</h2>
-      <div class="cmdgroup">
-        <div class="cmd">
-          <div class="name">rate</div>
-          <div class="desc">Light frame-ek pontozása natív metrikákkal, opcionálisan Siril CLI hibriddel; kiugró keretek jelölésével.</div>
-          <pre class="code">astrotool rate --target M31 --date 2026-03-15</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">quality</div>
-          <div class="desc">Egy adott célpont/session mért minőség-összegzése (FWHM, háttér, rang, kiugrók).</div>
-          <pre class="code">astrotool quality --target M31 --date 2026-03-15</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">sensor</div>
-          <div class="desc">Mért szenzor-profilok (bias-szint, leolvasási zaj, dark-ráta, EGAIN) listázása, vagy <code>--measure</code>-rel újramérés bias/dark keretekből: minden mérés a mérés-történetbe is bekerül, a <code>sensor_profile</code> tábla csak a legfrissebbet mutatja. <code>--history</code>-val a teljes mérés-történet kombónkénti csoportosításban (dátum, leolvasási zaj, dark-ráta, becslő-verzió); nem kombinálható <code>--measure</code>-rel.</div>
-          <pre class="code">astrotool sensor --measure
-astrotool sensor --history --json</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">ingest-dss</div>
-          <div class="desc">DeepSkyStacker <code>.info.txt</code> csillag-metrikák és <code>.dssfilelist</code> accept/reject döntések beolvasása; nem fut automatikusan a scan-nel.</div>
-          <pre class="code">astrotool ingest-dss</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">expose</div>
-          <div class="desc">Mért szenzor-zajból és per-Bayer égháttérből számolt ideális sub-hossz + relatív SNR-tanács. <code>--target</code> nélkül egysoros táblázat célpontonként.</div>
-          <pre class="code">astrotool expose --target NGC7000</pre>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2><span class="dot" aria-hidden="true"></span>Kalibráció</h2>
-      <div class="cmdgroup">
-        <div class="cmd">
-          <div class="name">calib</div>
-          <div class="desc">Kalibrációs lefedettség-hiánylista (mely expozíció/hőmérséklet kombinációhoz kell még dark, mely szűrőhöz kell még flat); <code>--health</code> a flat-higiénia riporthoz, <code>--flats</code> csak a szűrőnkénti flat-lefedettséghez. A <code>--shopping [--date YYYY-MM-DD] [--site NÉV]</code> kizárólag az adott éjszaka látható célpontjaihoz szükséges hiányokat adja; JSON-ban a <code>night</code>, <code>site</code> és <code>items</code> mezőket kapod. A három mód egymással nem kombinálható.</div>
-          <pre class="code">astrotool calib --shopping --date 2026-03-15 --site "Nyári ház" --json</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">match</div>
-          <div class="desc">Egy adott célpont+dátum session light/flat/dark/bias készletének összerendelése és a talált problémák listája.</div>
-          <pre class="code">astrotool match --target M31 --date 2026-03-15</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">link-calib</div>
-          <div class="desc">A megfelelő mester-kalibrációs kereteket hardlinkeli a session mellé; <code>--dry-run</code> előnézet, <code>--yes</code> nélkül csak jelöl.</div>
-          <pre class="code">astrotool link-calib --target M31 --date 2026-03-15 --dry-run</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">health</div>
-          <div class="desc">Éjszakai hardver-egészség: hűtő-stabilitás és fókusz-trend egy session-re.</div>
-          <pre class="code">astrotool health --target M31 --date 2026-03-15</pre>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2><span class="dot" aria-hidden="true"></span>Tervezés</h2>
-      <div class="cmdgroup">
-        <div class="cmd">
-          <div class="name">plan</div>
-          <div class="desc">Ma esti célpont-rangsor (kulmináció, max magasság, láthatósági ablak, Hold-zavarás, Hold-tudatos szűrő-ajánlás); <code>--month</code> a 30 éjszakás tervező-naptárhoz. <code>--out PATH|-</code> a napi tervet CSV-ként exportálja; a meglévő mezők mellett gépi <code>night</code>, nyers <code>filter</code>, <code>filter_missing_hours</code> és <code>missing_hours</code> oszlopokkal. <code>--out -</code> stdoutra írja, és nem használható <code>--month</code>-tal együtt. <code>--site &lt;név&gt;</code> a <code>config.json</code> <code>sites</code> listájából választ helyszínt (a beállított alapértelmezett helyett): ismeretlen névre hiba a konfigurált nevek felsorolásával; ha nincs <code>sites</code> konfigurálva, a régi <code>site</code>/FITS-medián automatika érvényes változatlanul.</div>
-          <pre class="code">astrotool plan --site "Nyári ház" --out plan.csv</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">night-info</div>
-          <div class="desc">Csak a ma esti sötét-óra/Hold összegzés (cél-koordináta nélkül is): sötét órák száma, Hold-megvilágítottság és kelés/nyugvás-időpont, ugyanazzal a helyszín-felderítéssel, amit a <code>plan</code> is használ. Ugyanaz a <code>--site &lt;név&gt;</code> is elérhető rajta.</div>
-          <pre class="code">astrotool night-info --date 2026-03-15 --site "Nyári ház"</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">projects</div>
-          <div class="desc">Célpontonkénti pipeline-státusz: hol tart a felvétel/kalibráció/stack/feldolgozás.</div>
-          <pre class="code">astrotool projects</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">panels</div>
-          <div class="desc">Egy mozaik-célpont paneljeinek WCS-alapú integrációs követése (mely panel mennyi időt kapott).</div>
-          <pre class="code">astrotool panels --target M_Milky_Way</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">solve</div>
-          <div class="desc">Koordináta nélküli (pl. wide-field CR3) célpontok plate-solve-olása Sirillel, session-önként korlátozott keretszámmal.</div>
-          <pre class="code">astrotool solve --target M_Milky_Way --frames 2</pre>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2><span class="dot" aria-hidden="true"></span>Export</h2>
-      <div class="cmdgroup">
-        <div class="cmd">
-          <div class="name">export</div>
-          <div class="desc">AstroBin bulk-import CSV, gazdagabb session-CSV vagy emberi Markdown napló egy célponthoz. AstroBin formátumban külön sor készül minden <code>(session, szűrő, nominális expozíció)</code> csoporthoz, így az azonos éjszakán és expozícióval készült Ha/OIII/SII keretek sem mosódnak össze. Minden sor a saját, szóköz- és kis/nagybetű-függetlenül feloldott <code>config astrobin.filterIds</code> numerikus ID-ját kapja; le nem képezett szűrőnél a név marad, a stderr-figyelmeztetés pedig minden hiányzó nevet felsorol.</div>
-          <pre class="code">astrotool export --target M31 --format astrobin</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">stacklist</div>
-          <div class="desc">A session legjobb frame-jeinek kiválasztása és exportálása (hardlink + <code>.dssfilelist</code> + Siril <code>.ssf</code> + <code>manifest.csv</code>) a DSS/Siril/WBPP munkafolyamathoz. A <code>--capture SLUG</code> egyetlen capture-gyűjtésre szűkíti a minőségi kiválasztást és az exportot, így például az OSC rövid tesztsor és a duál-sáv többórás sorozat külön stackelhető. Több szűrős anyagnál szűrőnként külön <code>lights/&lt;SZŰRŐ&gt;/</code> almappa és szűrőnként külön <code>.dssfilelist</code>/<code>.ssf</code> pár (PixInsight WBPP-barát; üres vagy két szűrő közti azonos szlugnál <code>filter_1</code>/<code>_2</code>-szerű utótag védi az ütközést); a <code>manifest.csv</code> mindig egy, a gyökérben, első sora <code>#&nbsp;library_root:&nbsp;&lt;abszolút&nbsp;út&gt;</code> komment, utána oszlopok: file, filter, score, fwhm_px, session_date, verdict, linked_name (a ténylegesen linkelt fájlnév: bucketen belüli fájlnév-ütközésnél ez eltér a forrás-fájlnévtől, pl. <code>part2__img_0001.fit</code>). A <code>--keep</code> a közös megtartási arány; <code>--keep-filter "Ha=0.9,OIII=0.7"</code> szűrőnként felülbírálja (vesszős lista, mindegyik (0, 1] tartományban, a szűrőnév kis-nagybetű-független; a <code>none</code> kulcs a szűrő nélküli keretek csoportjára vonatkozik; ismeretlen szűrőnévre stderr-figyelmeztetés, nem hiba). Re-export a meglévő exportot szinkronba hozza a friss kiválasztással: a kiválasztásban már nem szereplő korábbi hardlinkek eltűnnek a <code>lights/</code> fából, szigorúan csak onnan (a könyvtár eredeti fájljai érintetlenek), a kimenet jelzi ("N elavult link eltávolítva"). Alapból a <code>.astro_tool/stacklists/&lt;cél&gt;-&lt;dátum&gt;/</code> alá exportál; <code>--out PATH</code> helyette közvetlenül PATH-ba exportál (PATH lesz maga a stacklist-könyvtár, lehet a könyvtáron kívül is; más kötetre hardlink helyett másolat készül, a kimenet ezt is jelzi). <code>--out -</code> nem támogatott, mert ez egy egész könyvtárfát exportál, nem egyetlen fájlt: világos hibával leáll.</div>
-          <pre class="code">astrotool stacklist --target IC_1396 --date 2026-08-08 --capture osc-duo-300s \
-  --keep 0.8 --out ~/Desktop/IC1396-osc-stack</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">stacks</div>
-          <div class="desc">Célponthoz felderített kész stack-fájlok, variáns-csoportokba rendezve (eredeti/szerkesztett/starless/starmask/export); <code>--verbose</code> a variánsokat is kilistázza.</div>
-          <pre class="code">astrotool stacks --target M31 --grouped</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">report</div>
-          <div class="desc">Önmagában megnyitható HTML éjszaka-riport: idővonal, minőség, magasság &amp; Hold, kalibráció, teendők és kizárólag az adott session dátumára számolt szűrő-bontás. Alapból a riportkönyvtárba ír; <code>--out PATH</code> pontosan a megadott fájlba, <code>--out -</code> pedig stdoutra küldi a HTML-t.</div>
-          <pre class="code">astrotool report --target M31 --date 2026-03-15 --out ~/Desktop/M31-2026-03-15.html</pre>
-        </div>
-        <div class="cmd">
-          <div class="name">target-report</div>
-          <div class="desc">Önmagában megnyitható HTML célpont-riport: minden session, stack, kalibráció-lefedettség és minőség-adat egy célponthoz, egy oldalon, projekt-szintű szűrőnkénti megvan/cél/hiányzik táblával. Alapból a riportkönyvtárba ír; <code>--out PATH</code> pontosan a megadott fájlba, <code>--out -</code> pedig stdoutra küldi a HTML-t.</div>
-          <pre class="code">astrotool target-report --target M31 --out -</pre>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2><span class="dot" aria-hidden="true"></span>Egyéb</h2>
-      <div class="cmdgroup">
-        <div class="cmd">
-          <div class="name">search</div>
-          <div class="desc">A session <code>README.txt</code>-jébe (és a jegyzet-szerkesztőbe) írt Bortle/SQM/seeing jegyzetek kulcs vagy érték szerinti keresése; <code>--all</code> esetén a teljes oldalsáv-keresés helyette: célpontok, session-ök, fájlok és jegyzetek egyszerre.</div>
-          <pre class="code">astrotool search M31 --all</pre>
-        </div>
-      </div>
-    </div>
-
-  </div>
-
-  <p class="closing-note">A funkciók bővebb leírásáért lásd a <a href="features.html">Funkciók oldalt</a>, kezdéshez az <a href="tutorial.html">Útmutatót</a>. MIT licenc.</p>
-</main>
-
-<footer>
-  <div class="wrap">
-    <span>© 2026 AstroTool</span>
-    <span><a href="tutorial.html">Útmutató</a> · <a href="cli.html">CLI</a> · <a href="privacy.html">Adatvédelem</a> · v2.0.0</span>
-  </div>
-</footer>
-
-</body>
-</html>
+astrotool session-convert apply \
+  --plan conversion-plan.json --yes</code></pre><div class="callout warning"><p>Az <code>apply</code> csak a mentett, változatlan előnézetre és explicit <code>--yes</code> mellett fut. A logikai terv alapból nulla fájlmozgatás.</p></div></section>
+<section id="quality"><h2>Minőség és szenzor</h2><pre><code>astrotool rate --target M31 --date 2026-09-14
+astrotool rate --target M31 --no-siril
+astrotool expose --target M31</code></pre><p>A natív pontozás Siril nélkül is működik; a hibrid mérés további csillagmetrikákat ad.</p></section>
+<section id="planning"><h2>Tervezés</h2><pre><code>astrotool plan
+astrotool plan --date 2026-09-14 --min-alt 30
+astrotool plan --month --nights 30
+astrotool solve --all --json</code></pre><p>A tervező a könyvtár koordinátáit, a megfigyelési helyet, Holdat, célintegrációt és setupot használja.</p></section>
+<section id="exports"><h2>Stack, riport és export</h2><pre><code>astrotool stacklist --target M31 --date 2026-09-14
+astrotool stacklist --target M31 --date 2026-09-14 --capture broadband-120s
+astrotool report --target M31 --date 2026-09-14
+astrotool export --target M31 --format astrobin</code></pre><p>A stacklista hardlinkeket és feldolgozólistákat készít, a riport önálló HTML, az export a feloldott szűrőmetaadatokat használja.</p></section>
+</article></div></div></main>
+<footer class="site-footer"><div class="footer-shell"><span>© <span data-year>2026</span> AstroTool contributors · MIT</span><span class="footer-links"><a href="index.html">Kezdőlap</a><a href="features.html">Funkciók</a><a href="privacy.html">Adatvédelem</a><a href="support.html">Támogatás</a></span></div></footer><script src="assets/site.js"></script></body></html>

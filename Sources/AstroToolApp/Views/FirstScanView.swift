@@ -51,6 +51,7 @@ struct FirstScanView: View {
         .onAppear {
             let entries = try? FileManager.default.contentsOfDirectory(atPath: appState.config.rootPath)
             topLevelEntries = Set(entries ?? [])
+            appState.markCleanInstallFirstScanVisible()
         }
         .onChange(of: appState.isBusy) { wasBusy, isBusyNow in
             guard didStartScan, wasBusy, !isBusyNow, !scanFinished else { return }
@@ -101,6 +102,9 @@ struct FirstScanView: View {
         VStack(alignment: .leading, spacing: 10) {
             Toggle("Auditot is futtassunk most?", isOn: $runAuditAfter)
                 .toggleStyle(.checkbox)
+            Text("Az audit csak jelöl és javasol; fájlt nem töröl és nem mozgat.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack {
                 Button("Beolvasás indítása") {
                     didStartScan = true
@@ -141,12 +145,19 @@ struct FirstScanView: View {
                 }
             }
 
-            Button("Tovább a Ma este oldalra") {
-                appState.currentPage = .tonight
-                appState.didDismissFirstRun = true
+            HStack {
+                Button("Tovább a Ma este oldalra") {
+                    appState.currentPage = .tonight
+                    appState.didDismissFirstRun = true
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+
+                Button("Személyre szabás…") {
+                    appState.requestOnboarding()
+                }
+                .controlSize(.large)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
 
             // R11-T12/F12: right after the first successful scan's result --
             // the natural next moment to point a first-time user at "what's

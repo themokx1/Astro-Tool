@@ -55,6 +55,38 @@ private func buildFITS(
     return data
 }
 
+/// Builds a `BITPIX=-32` (IEEE 754 32-bit float) primary-HDU FITS file --
+/// the standard output depth for a finished/calibrated stack (Siril,
+/// PixInsight, DeepSkyStacker), and the W6-E item 4 fixture: real stacks
+/// showed a generic placeholder thumbnail because this depth was rejected
+/// outright. `values` are written verbatim, big-endian, per the FITS
+/// standard -- deliberately NOT pre-scaled to 0...1, so a fixture can prove
+/// the renderer handles a float stack's own arbitrary range (including
+/// negative, background-subtracted values).
+private func buildFloatFITS(width: Int, height: Int, values: [Double]) -> Data {
+    precondition(values.count == width * height, "value count must match width*height")
+    let cards = [
+        "SIMPLE  =                    T",
+        "BITPIX  =                  -32",
+        "NAXIS   =                    2",
+        "NAXIS1  =                 \(width)",
+        "NAXIS2  =                 \(height)",
+        "END",
+    ]
+    var data = buildHeaderData(cards)
+    var pixelBytes = Data()
+    pixelBytes.reserveCapacity(values.count * 4)
+    for value in values {
+        let bits = Float(value).bitPattern
+        pixelBytes.append(UInt8((bits >> 24) & 0xFF))
+        pixelBytes.append(UInt8((bits >> 16) & 0xFF))
+        pixelBytes.append(UInt8((bits >> 8) & 0xFF))
+        pixelBytes.append(UInt8(bits & 0xFF))
+    }
+    data.append(pixelBytes)
+    return data
+}
+
 /// Realistic `.fz` (fpack-style Rice-compressed) layout: primary HDU with
 /// `NAXIS=0` immediately followed by a `BINTABLE` extension carrying the
 /// tile-compression keywords -- mirrors `RateTests.buildFZShapedFITS`.
@@ -196,6 +228,97 @@ private func rgbaBytes(_ image: CGImage) -> (r: [UInt8], g: [UInt8], b: [UInt8])
 
     let image = try FITSImageRenderer.render(url: url)
     #expect(image != nil)
+}
+
+// MARK: - Float32 (BITPIX=-32) -- W6-E item 4
+
+@Test func rendersFloat32MonoStackWithArbitraryRange() throws {
+    // A "background-subtracted" float stack: values span a small negative
+    // range plus a bright positive signal cell -- exactly the kind of range
+    // an integer camera's fixed 0...maxValue divide could never handle, and
+    // the case this renderer used to reject outright (`unsupportedBitpix32
+    // ReturnsNilWithoutThrowing` above pins the DIFFERENT, still-unsupported
+    // `BITPIX=32` -- positive, integer -- depth; this is `-32`, float).
+    let width = 10, height = 10
+    var values = [Double](repeating: -0.02, count: width * height)
+    for i in values.indices where i % 7 == 0 { values[i] = -0.01 }
+    values[42] = 1.5 // one bright "star" pixel, far above the background
+    let data = buildFloatFITS(width: width, height: height, values: values)
+
+    let image = try FITSImageRenderer.render(data: data, maxDimension: 64)
+    let cgImage = try #require(image, "a BITPIX=-32 mono frame must now render")
+    #expect(cgImage.width == 10)
+    #expect(cgImage.height == 10)
+    #expect(cgImage.bitsPerPixel == 8, "no BAYERPAT -> grayscale")
+
+    let bytes = grayBytes(cgImage)
+    let brightIndex = 42
+    #expect(bytes[brightIndex] == bytes.max(), "the one bright float pixel must map to (one of) the brightest output byte(s)")
+}
+
+@Test func rendersFloat32BayerFrameDebayered() throws {
+    let width = 8, height = 8
+    var values = [Double](repeating: 0, count: width * height)
+    for cellRow in 0..<4 {
+        for cellCol in 0..<4 {
+            let r0 = cellRow * 2, c0 = cellCol * 2
+            let isSignalCell = (cellRow == 0 && cellCol == 0)
+            let neutral = ((cellRow * 4 + cellCol) % 2 == 0) ? 9.9 : 10.1
+            let (r, g, b): (Double, Double, Double) = isSignalCell ? (900.0, 400.0, 20.0) : (neutral, neutral, neutral)
+            values[r0 * width + c0] = r
+            values[r0 * width + c0 + 1] = g
+            values[(r0 + 1) * width + c0] = g
+            values[(r0 + 1) * width + c0 + 1] = b
+        }
+    }
+    let data = buildFloatFITS(width: width, height: height, values: values)
+    let dataWithBayer: Data = {
+        // `buildFloatFITS` has no BAYERPAT parameter -- rebuild the header
+        // with one inserted, reusing the same pixel bytes.
+        let cards = [
+            "SIMPLE  =                    T",
+            "BITPIX  =                  -32",
+            "NAXIS   =                    2",
+            "NAXIS1  =                    \(width)",
+            "NAXIS2  =                    \(height)",
+            "BAYERPAT= 'RGGB'",
+            "END",
+        ]
+        var header = buildHeaderData(cards)
+        header.append(data.suffix(width * height * 4))
+        return header
+    }()
+
+    let image = try FITSImageRenderer.render(data: dataWithBayer, maxDimension: 1024)
+    let cgImage = try #require(image)
+    #expect(cgImage.bitsPerPixel == 32, "BAYERPAT present -> RGBA color output")
+    let (r, _, b) = rgbaBytes(cgImage)
+    let maxRIndex = r.indices.max { r[$0] < r[$1] }!
+    #expect(Int(r[maxRIndex]) - Int(b[maxRIndex]) > 10, "the reddest pixel should be red-dominant, not blue-dominant")
+}
+
+@Test func constantFloat32FrameReturnsFlatMidGrayWithoutCrashing() throws {
+    let width = 4, height = 4
+    let values = [Double](repeating: 3.5, count: width * height)
+    let data = buildFloatFITS(width: width, height: height, values: values)
+
+    let image = try FITSImageRenderer.render(data: data)
+    let cgImage = try #require(image, "a constant float frame is degenerate but still valid -- must not throw, return nil, or produce NaN")
+    let bytes = grayBytes(cgImage)
+    #expect(bytes.allSatisfy { $0 == 128 })
+}
+
+@Test func nonFiniteFloat32PixelsAreSanitizedRatherThanPoisoningTheImage() throws {
+    let width = 4, height = 4
+    var values = [Double](repeating: 1.0, count: width * height)
+    values[5] = Double.nan
+    values[9] = Double.infinity
+    let data = buildFloatFITS(width: width, height: height, values: values)
+
+    // Must not crash/trap and must not produce a NaN-poisoned image
+    // (CoreGraphics would refuse to build one, surfacing as a `nil` image).
+    let image = try FITSImageRenderer.render(data: data)
+    #expect(image != nil, "NaN/Inf pixels must be sanitized, not propagated")
 }
 
 // MARK: - Debayer

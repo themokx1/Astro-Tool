@@ -14,14 +14,43 @@ public struct DiscoveryRow: Sendable, Equatable {
     /// here.
     public let maxAltitudeDeg: Double?
     public let culminationLocal: String?
+    /// `false` when `culminationLocal` is only the EDGE of tonight's scanned
+    /// window rather than a genuine meridian transit -- see
+    /// `NightSweepResult.isGenuineCulmination`'s own doc comment. `nil`
+    /// under the same conditions `culminationLocal` is (no resolvable site/
+    /// night at all).
+    public let isGenuineCulmination: Bool?
     public let visibleHours: Double?
+    /// `"HH:mm–HH:mm"` (site-local time) window during which the target is
+    /// at or above the caller's `minAltitudeDeg`, same
+    /// `NightSweep.visibleWindowLocal(_:timeZone:)` formatting `Planner
+    /// .buildPlan`'s own `TargetPlan.visibleWindowLocal` uses -- `nil` under
+    /// the same conditions `visibleHours` is (no resolvable site/night, or
+    /// the target never clears the threshold). W7-B: `PlanningQuery` (an
+    /// `AstroApplication` consumer with no access to `NightSweep` itself,
+    /// which is internal to this module) needs this to render an honest
+    /// window-edge culmination label instead of `culminationLocal` alone.
+    public let visibleWindowLocal: String?
     public let moonSeparationDeg: Double?
+    /// The Moon's own above-horizon fraction across THIS target's visible
+    /// window (`NightSweep.moonAboveHorizonFraction`, sampled over
+    /// `sweep.visibleStart`...`sweep.visibleEnd`) -- the exact number this
+    /// row's own `score` already folds into `SkyScore.moonFactor` (W7-A).
+    /// Exposed here too because `PlanningQuery` (`AstroApplication`) computes
+    /// its OWN, differently-weighted composite score (`PlanningScore
+    /// .composite`) over the same sky facts, and has no access to
+    /// `NightSweep` (internal to this module) to derive this itself --
+    /// W7-B's "PlanningScore CALLER wiring" leftover. Defaults to `1` (Moon
+    /// treated as up the whole window) in `unresolvedRows`, matching
+    /// `PlanningScore.moonFactor`'s own conservative default for "unknown".
+    public let moonAboveHorizonFraction: Double
     /// Same Hungarian verdict vocabulary as `Planner.plan` (`SkyVerdict`) --
     /// see `discover`'s own doc comment for the priority order.
     public let verdict: String
-    /// `visibilityFactor x moonPenalty x compositionScoreFactor` (the last
-    /// factor is neutral when no setup FOV is known). Sort key, descending:
-    /// higher means both well placed tonight AND usefully framed by the
+    /// `visibilityFactor x SkyScore.moonFactor x compositionScoreFactor`
+    /// (the last factor is neutral when no setup FOV is known). Sort key,
+    /// descending: higher means both well placed tonight AND usefully
+    /// framed by the
     /// selected setup -- merely being a tiny visible speck is not enough.
     public let score: Double
     /// `true` when `target.designation` matches one of the caller-supplied
@@ -45,8 +74,11 @@ public struct DiscoveryRow: Sendable, Equatable {
         target: CatalogTarget,
         maxAltitudeDeg: Double? = nil,
         culminationLocal: String? = nil,
+        isGenuineCulmination: Bool? = nil,
         visibleHours: Double? = nil,
+        visibleWindowLocal: String? = nil,
         moonSeparationDeg: Double? = nil,
+        moonAboveHorizonFraction: Double = 1,
         verdict: String,
         score: Double,
         alreadyInLibrary: Bool,
@@ -57,8 +89,11 @@ public struct DiscoveryRow: Sendable, Equatable {
         self.target = target
         self.maxAltitudeDeg = maxAltitudeDeg
         self.culminationLocal = culminationLocal
+        self.isGenuineCulmination = isGenuineCulmination
         self.visibleHours = visibleHours
+        self.visibleWindowLocal = visibleWindowLocal
         self.moonSeparationDeg = moonSeparationDeg
+        self.moonAboveHorizonFraction = moonAboveHorizonFraction
         self.verdict = verdict
         self.score = score
         self.alreadyInLibrary = alreadyInLibrary
@@ -106,28 +141,39 @@ public enum DiscoveryPlanner {
     /// 3. `SkyVerdict.notVisibleTonight` when it clears the bar for under
     ///    half an hour.
     /// 4. `SkyVerdict.moonInterferes` when the Moon (evaluated once, at the
-    ///    dark window's midpoint) is within 40 deg and over 60% illuminated.
+    ///    dark window's midpoint, for separation/illumination) is within 40
+    ///    deg and over 60% illuminated -- AND is above the horizon for at
+    ///    least part of the target's own visible window (W7-A: a Moon that
+    ///    never rises during that window cannot be brightening it, checked
+    ///    via `NightSweep.moonAboveHorizonFraction` sampled across
+    ///    `sweep.visibleStart`...`sweep.visibleEnd`, same fix `Planner.
+    ///    buildPlan` applies).
     /// 5. `SkyVerdict.good` otherwise.
     public static func discover(
         date: Date,
         site: SiteRule,
         minAltitudeDeg: Double = 30,
+        /// The catalog to sweep. Defaults to the built-in table; the Planning
+        /// workbench passes the merged built-in + downloaded extended catalog,
+        /// because a target with no sky row here is treated as unobservable
+        /// and silently vanishes from the planner.
+        targets: [CatalogTarget] = TargetCatalog.all,
         existingDesignations: Set<String> = [],
         setupFOVDeg: (width: Double, height: Double)? = nil
     ) -> [DiscoveryRow] {
         let timeZone = TimeZone.current
 
         guard let lat = site.latitudeDeg, let lon = site.longitudeDeg else {
-            return unresolvedRows(existingDesignations: existingDesignations, setupFOVDeg: setupFOVDeg)
+            return unresolvedRows(targets: targets, existingDesignations: existingDesignations, setupFOVDeg: setupFOVDeg)
         }
         let night = SunMoon.astronomicalTwilight(nightOf: date, latDeg: lat, lonDeg: lon, timeZone: timeZone)
         guard let duskUTC = night.duskUTC, let dawnUTC = night.dawnUTC else {
-            return unresolvedRows(existingDesignations: existingDesignations, setupFOVDeg: setupFOVDeg)
+            return unresolvedRows(targets: targets, existingDesignations: existingDesignations, setupFOVDeg: setupFOVDeg)
         }
 
         let moon = NightSweep.midnightMoon(duskUTC: duskUTC, dawnUTC: dawnUTC)
 
-        let rows = TargetCatalog.all.map { catalogTarget -> DiscoveryRow in
+        let rows = targets.map { catalogTarget -> DiscoveryRow in
             let sweep = NightSweep.sweep(
                 raDeg: catalogTarget.raDeg, decDeg: catalogTarget.decDeg, latDeg: lat, lonDeg: lon,
                 duskUTC: duskUTC, dawnUTC: dawnUTC, minAltitudeDeg: minAltitudeDeg
@@ -137,8 +183,24 @@ public enum DiscoveryPlanner {
             )
             let visibleHours = sweep.visibleSeconds / 3600.0
             let culminationLocal = sweep.culminationUTC.map { NightSweep.formatLocalTime($0, timeZone: timeZone) }
+            let visibleWindowLocal = NightSweep.visibleWindowLocal(sweep, timeZone: timeZone)
 
-            let moonInterferes = moon.illuminationPercent > 60 && moonSeparation < 40
+            // W7-A audit fix -- same reasoning as `Planner.buildPlan`: the
+            // Moon must actually be above the horizon for at least part of
+            // the target's own visible window to interfere with it at all.
+            let moonAboveHorizonFraction: Double
+            if let visStart = sweep.visibleStart, let visEnd = sweep.visibleEnd {
+                moonAboveHorizonFraction = NightSweep.moonAboveHorizonFraction(
+                    latDeg: lat, lonDeg: lon, startUTC: visStart, endUTC: visEnd
+                ) ?? 0
+            } else {
+                moonAboveHorizonFraction = 0
+            }
+            let moonScoreFactor = SkyScore.moonFactor(
+                separationDeg: moonSeparation, illuminationPercent: moon.illuminationPercent,
+                aboveHorizonFraction: moonAboveHorizonFraction
+            )
+            let moonInterferes = moon.illuminationPercent > 60 && moonSeparation < 40 && moonAboveHorizonFraction > 0
             let verdict: String
             if sweep.maxAltitudeDeg < minAltitudeDeg {
                 verdict = SkyVerdict.tooLow(sweep.maxAltitudeDeg)
@@ -155,15 +217,18 @@ public enum DiscoveryPlanner {
                 setupFOVDeg: setupFOVDeg
             )
             let score = SkyScore.visibilityFactor(visibleHours: visibleHours)
-                * SkyScore.moonPenalty(moonInterferes: moonInterferes)
+                * moonScoreFactor
                 * (composition?.scoreFactor ?? 1)
 
             return DiscoveryRow(
                 target: catalogTarget,
                 maxAltitudeDeg: sweep.maxAltitudeDeg,
                 culminationLocal: culminationLocal,
+                isGenuineCulmination: sweep.isGenuineCulmination,
                 visibleHours: visibleHours,
+                visibleWindowLocal: visibleWindowLocal,
                 moonSeparationDeg: moonSeparation,
+                moonAboveHorizonFraction: moonAboveHorizonFraction,
                 verdict: verdict,
                 score: score,
                 alreadyInLibrary: existingDesignations.contains(catalogTarget.designation),
@@ -182,10 +247,11 @@ public enum DiscoveryPlanner {
     /// `discover`'s own doc, case 1). `fovFitLabel`/`alreadyInLibrary` are
     /// still filled in -- both are independent of tonight's sky.
     private static func unresolvedRows(
+        targets: [CatalogTarget] = TargetCatalog.all,
         existingDesignations: Set<String>,
         setupFOVDeg: (width: Double, height: Double)?
     ) -> [DiscoveryRow] {
-        TargetCatalog.all.map { catalogTarget in
+        targets.map { catalogTarget in
             let composition = fovComposition(
                 sizeArcmin: catalogTarget.sizeArcmin,
                 setupFOVDeg: setupFOVDeg

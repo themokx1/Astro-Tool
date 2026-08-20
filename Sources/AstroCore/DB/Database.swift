@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 extension Array {
@@ -547,6 +548,18 @@ extension SearchResults: Encodable {
 
 // MARK: - Database
 
+public struct LibraryIndexCounts: Equatable, Sendable {
+    public let projectCount: Int
+    public let nightCount: Int
+    public let frameCount: Int
+
+    public init(projectCount: Int, nightCount: Int, frameCount: Int) {
+        self.projectCount = projectCount
+        self.nightCount = nightCount
+        self.frameCount = frameCount
+    }
+}
+
 /// The single source of truth for a scanned library: schema owner and DAO
 /// layer over `SQLiteDB`. The scanner fills `files`/`fits_meta`; audit,
 /// stats, calibration, and rating all read from here.
@@ -557,6 +570,10 @@ extension SearchResults: Encodable {
 /// concurrent statement execution. Marked `@unchecked Sendable` because the
 /// compiler cannot see through the lock to verify this.
 public final class Database: @unchecked Sendable {
+    /// Exposed only as release/support metadata. It never identifies a
+    /// user's library and lets diagnostics avoid duplicating a magic number.
+    public static let currentSchemaVersion = 12
+
     // Internal (not private) so tests in this module can verify migration
     // and DAO behavior directly against the underlying connection via
     // `@testable import`.
@@ -788,6 +805,24 @@ public final class Database: @unchecked Sendable {
         try migrate()
     }
 
+    package init(
+        confinedIndexPath path: String,
+        beforeOpen: @Sendable () throws -> Void,
+        validateBeforeUse: @Sendable () throws -> Void
+    ) throws {
+        guard let resolvedPath = Darwin.realpath(path, nil) else {
+            throw AstroError.databaseError("Unable to canonicalize confined index database path.")
+        }
+        defer { Darwin.free(resolvedPath) }
+        let canonicalPath = String(cString: resolvedPath)
+        self.db = try SQLiteDB(
+            confinedIndexPath: canonicalPath,
+            beforeOpen: beforeOpen,
+            validateBeforeUse: validateBeforeUse
+        )
+        try migrate()
+    }
+
     /// Brings the database up to the current schema version, one version
     /// step at a time, so a real deployed v1 database upgrades in place
     /// without losing its existing rows, while a brand-new database walks
@@ -1014,58 +1049,126 @@ public final class Database: @unchecked Sendable {
         return try body()
     }
 
+    public func libraryIndexCounts() throws -> LibraryIndexCounts {
+        try withLock {
+            var counts = LibraryIndexCounts(projectCount: 0, nightCount: 0, frameCount: 0)
+            try db.query(
+                """
+                SELECT
+                  (SELECT COUNT(DISTINCT target)
+                   FROM files
+                   WHERE missing = 0
+                     AND target IS NOT NULL AND target <> ''
+                     AND area IN ('sessions', 'stacks', 'processed')),
+                  (SELECT COUNT(DISTINCT session_date)
+                   FROM files
+                   WHERE missing = 0
+                     AND area = 'sessions'
+                     AND session_date IS NOT NULL AND session_date <> ''),
+                  (SELECT COUNT(*)
+                   FROM files
+                   WHERE missing = 0
+                     AND lower(ext) IN ('fit', 'fits', 'fz', 'cr3', 'tif'));
+                """
+            ) { row in
+                counts = LibraryIndexCounts(
+                    projectCount: Int(row.int64(0) ?? 0),
+                    nightCount: Int(row.int64(1) ?? 0),
+                    frameCount: Int(row.int64(2) ?? 0)
+                )
+            }
+            return counts
+        }
+    }
+
     // MARK: filter profiles (schema v12)
 
     @discardableResult
     public func upsertFilterProfile(_ record: FilterProfileRecord) throws -> Int64 {
         let prepared = try FilterProfileValidator.prepared(record)
         return try withLock {
-            if let id = prepared.id {
-                var exists = false
-                try db.query("SELECT 1 FROM filter_profiles WHERE id = ? LIMIT 1;", bind: [.int(id)]) { _ in
-                    exists = true
-                }
-                guard exists else {
-                    throw AstroError.databaseError("upsertFilterProfile: unknown id \(id)")
-                }
-                try db.run(
-                    """
-                    UPDATE filter_profiles SET
-                      manufacturer = ?, model = ?, name = ?, signal_mode = ?, notes = ?,
-                      identity_key = ?, updated_at = ?
-                    WHERE id = ?;
-                    """,
-                    bind: Self.filterProfileBindings(prepared, includeCreatedAt: false) + [.int(id)]
-                )
-                return id
-            }
+            try upsertFilterProfileUnlocked(prepared)
+        }
+    }
 
+    /// Synchronizes the editable onboarding inventory in one transaction.
+    /// Capture groups retain their historical filter metadata snapshots.
+    public func replaceFilterProfiles(_ records: [FilterProfileRecord]) throws {
+        let prepared = try records.map(FilterProfileValidator.prepared)
+        let identities = prepared.map(\.identityKey)
+        guard Set(identities).count == identities.count else {
+            throw AstroError.invalidInput("Ugyanaz a szűrő többször szerepel az onboarding listában.")
+        }
+
+        try withLock {
+            try db.exec("BEGIN IMMEDIATE;")
+            do {
+                var keptIDs = Set<Int64>()
+                for record in prepared {
+                    keptIDs.insert(try upsertFilterProfileUnlocked(record))
+                }
+
+                var existingIDs: [Int64] = []
+                try db.query("SELECT id FROM filter_profiles;") { row in
+                    if let id = row.int64(0) { existingIDs.append(id) }
+                }
+                for id in existingIDs where !keptIDs.contains(id) {
+                    try db.run("DELETE FROM filter_profiles WHERE id = ?;", bind: [.int(id)])
+                }
+                try db.exec("COMMIT;")
+            } catch {
+                try? db.exec("ROLLBACK;")
+                throw error
+            }
+        }
+    }
+
+    private func upsertFilterProfileUnlocked(_ prepared: FilterProfileRecord) throws -> Int64 {
+        if let id = prepared.id {
+            var exists = false
+            try db.query("SELECT 1 FROM filter_profiles WHERE id = ? LIMIT 1;", bind: [.int(id)]) { _ in
+                exists = true
+            }
+            guard exists else {
+                throw AstroError.databaseError("upsertFilterProfile: unknown id \(id)")
+            }
             try db.run(
                 """
-                INSERT INTO filter_profiles(
-                  manufacturer, model, name, signal_mode, notes, identity_key, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(identity_key) DO UPDATE SET
-                  manufacturer = excluded.manufacturer,
-                  model = excluded.model,
-                  name = excluded.name,
-                  signal_mode = excluded.signal_mode,
-                  notes = excluded.notes,
-                  updated_at = excluded.updated_at;
+                UPDATE filter_profiles SET
+                  manufacturer = ?, model = ?, name = ?, signal_mode = ?, notes = ?,
+                  identity_key = ?, updated_at = ?
+                WHERE id = ?;
                 """,
-                bind: Self.filterProfileBindings(prepared, includeCreatedAt: true)
+                bind: Self.filterProfileBindings(prepared, includeCreatedAt: false) + [.int(id)]
             )
-
-            var id: Int64?
-            try db.query(
-                "SELECT id FROM filter_profiles WHERE identity_key = ?;",
-                bind: [.text(prepared.identityKey)]
-            ) { id = $0.int64(0) }
-            guard let id else {
-                throw AstroError.databaseError("upsertFilterProfile: no row after upsert")
-            }
             return id
         }
+
+        try db.run(
+            """
+            INSERT INTO filter_profiles(
+              manufacturer, model, name, signal_mode, notes, identity_key, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(identity_key) DO UPDATE SET
+              manufacturer = excluded.manufacturer,
+              model = excluded.model,
+              name = excluded.name,
+              signal_mode = excluded.signal_mode,
+              notes = excluded.notes,
+              updated_at = excluded.updated_at;
+            """,
+            bind: Self.filterProfileBindings(prepared, includeCreatedAt: true)
+        )
+
+        var id: Int64?
+        try db.query(
+            "SELECT id FROM filter_profiles WHERE identity_key = ?;",
+            bind: [.text(prepared.identityKey)]
+        ) { id = $0.int64(0) }
+        guard let id else {
+            throw AstroError.databaseError("upsertFilterProfile: no row after upsert")
+        }
+        return id
     }
 
     public func filterProfile(id: Int64) throws -> FilterProfileRecord? {
@@ -1895,6 +1998,34 @@ public final class Database: @unchecked Sendable {
                 record = Self.fileRecord(from: row)
             }
             return record
+        }
+    }
+
+    /// Changes only one tracked file's path while preserving its primary key
+    /// and every dependent metadata row. Both the expected old path and id
+    /// must match, and an existing destination is a hard collision.
+    public func relocateFilePath(
+        fileID: Int64,
+        sourcePath: String,
+        destinationPath: String
+    ) throws {
+        try withLock {
+            var sourceID: Int64?
+            try db.query("SELECT id FROM files WHERE path = ?;", bind: [.text(sourcePath)]) { row in
+                sourceID = row.int64(0)
+            }
+            guard sourceID == fileID else { throw AstroError.pathNotFound(path: sourcePath) }
+
+            var destinationExists = false
+            try db.query("SELECT 1 FROM files WHERE path = ? LIMIT 1;", bind: [.text(destinationPath)]) { _ in
+                destinationExists = true
+            }
+            guard !destinationExists else { throw AstroError.writeForbidden(path: destinationPath) }
+
+            try db.run(
+                "UPDATE files SET path = ? WHERE id = ? AND path = ?;",
+                bind: [.text(destinationPath), .int(fileID), .text(sourcePath)]
+            )
         }
     }
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AstroTool · Telepítés</title>
-<meta name="description" content="Hogyan telepítsd az AstroTool-t: DMG letöltése, áthúzás az Alkalmazásokba, és mit csinálj, ha a Gatekeeper blokkolja az első indításkor.">
+<meta name="description" content="Az aláírt és Apple által notarizált AstroTool 3.0 telepítése Apple Silicon és Intel Macre.">
 
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
@@ -16,14 +16,14 @@
 
 <meta property="og:type" content="website">
 <meta property="og:title" content="AstroTool · Telepítés">
-<meta property="og:description" content="DMG letöltése, áthúzás az Alkalmazásokba, és a Gatekeeper-blokk feloldása első indításkor.">
+<meta property="og:description" content="Az aláírt és notarizált AstroTool 3.0 telepítése Apple Silicon és Intel Macre.">
 <meta property="og:url" content="https://themokx1.github.io/Astro-Tool/install.html">
 <meta property="og:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="AstroTool · Telepítés">
-<meta name="twitter:description" content="DMG letöltése, áthúzás az Alkalmazásokba, és a Gatekeeper-blokk feloldása első indításkor.">
+<meta name="twitter:description" content="Az aláírt és notarizált AstroTool 3.0 telepítése Apple Silicon és Intel Macre.">
 <meta name="twitter:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
 </head>
 <body>
@@ -40,8 +40,8 @@
 
 <header class="wrap compact">
   <h1>Telepítés</h1>
-  <p class="sub">Öt lépés a letöltéstől az első indításig. Az app egyelőre nincs notarizálva, ezért macOS az első indításnál figyelmeztet: alul megmutatjuk, hogyan engedélyezd.</p>
-  <p class="crumbs"><a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Letöltés</a> · <a href="tutorial.html">Útmutató</a> · <a href="cli.html">CLI</a></p>
+  <p class="sub">Négy egyszerű lépés a letöltéstől az első indításig. A nyilvános kiadás Developer ID aláírással és Apple-notarizációval készül.</p>
+  <p class="crumbs"><a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Letöltés</a> · <a href="first-steps.html">Első lépések</a> · <a href="cli.html">CLI</a></p>
 </header>
 
 <main class="doc-wrap doc">
@@ -49,7 +49,7 @@
 
     <div class="panel">
       <h2><span class="dot" aria-hidden="true"></span>Rendszerkövetelmény</h2>
-      <p>macOS 26 vagy újabb, Apple Silicon Mac (M1 és újabb). Az app ingyenes, fiók vagy regisztráció nem kell hozzá.</p>
+      <p>macOS 26 vagy újabb, Apple Silicon vagy Intel Mac. Az app ingyenes, fiók vagy regisztráció nem kell hozzá.</p>
     </div>
 
     <div class="panel">
@@ -58,32 +58,14 @@
         <li><strong>Töltsd le a DMG-t</strong><span class="detail">a <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">GitHub kiadások oldaláról</a> a legfrissebb <code>AstroTool-x.y.z.dmg</code> fájlt.</span></li>
         <li><strong>Nyisd meg a DMG-t</strong><span class="detail">dupla katt a letöltött fájlon, ez megnyit egy ablakot az AstroTool ikonjával.</span></li>
         <li><strong>Húzd az AstroTool-t az Alkalmazások mappába</strong><span class="detail">a megnyíló ablakban húzd az app-ikont az "Alkalmazások" parancsikonra, majd zárd be a DMG-ablakot.</span></li>
-        <li><strong>Indítsd el az Alkalmazások mappából</strong><span class="detail">mivel az app egyelőre nincs notarizálva, macOS az első indításnál blokkolni fogja: lásd alább, hogyan engedélyezd.</span></li>
-        <li><strong>Add meg a lemezhozzáférést, ha kéri</strong><span class="detail">a képkönyvtárad kötetéhez az app engedélyt kér: ezt a Rendszerbeállítások ▸ Adatvédelem és biztonság ▸ Teljes lemezhozzáférés alatt bármikor visszavonhatod.</span></li>
+        <li><strong>Indítsd el az Alkalmazások mappából</strong><span class="detail">a notarizált kiadás normál alkalmazásként indul; ha a macOS megerősítést kér, ellenőrizd, hogy a hivatalos GitHub-kiadást töltötted le.</span></li>
+        <li><strong>Válaszd ki a képkönyvtár helyét</strong><span class="detail">az AstroTool csak ahhoz a mappához vagy kötethez kér hozzáférést, amelyet te kiválasztasz.</span></li>
       </ol>
     </div>
 
     <div class="panel callout">
-      <h2>Első indítás: a Gatekeeper blokkolja</h2>
-      <p>Az AstroTool egy kisebb, önállóan fejlesztett projekt, egyelőre Apple-notarizáció nélkül. Ez nem vírusjelzés, csak azt jelenti, hogy Apple még nem futtatta át a saját automata ellenőrzésén. Az alábbi két mód bármelyikével feloldható, csak az első indításkor kell megcsinálni.</p>
-    </div>
-
-    <div class="panel">
-      <h2><span class="dot" aria-hidden="true"></span>A. mód: jobb klikk → Megnyitás</h2>
-      <ol class="steps">
-        <li><strong>Alkalmazások mappa</strong><span class="detail">keresd meg az AstroTool ikonját (Finder ▸ Alkalmazások, vagy ⌘⇧A).</span></li>
-        <li><strong>Control-klikk (vagy jobb klikk) az ikonon</strong><span class="detail">a felugró menüben válaszd a "Megnyitás" pontot. Ne dupla-kattints, ez a lépés csak jobb klikkel működik.</span></li>
-        <li><strong>Erősítsd meg</strong><span class="detail">a megjelenő párbeszédablakban is a "Megnyitás" gombra kattints. Ezután az app már dupla kattintással is normálisan indul.</span></li>
-      </ol>
-    </div>
-
-    <div class="panel">
-      <h2><span class="dot" aria-hidden="true"></span>B. mód: Rendszerbeállítások</h2>
-      <ol class="steps">
-        <li><strong>Próbáld meg megnyitni</strong><span class="detail">dupla kattintás az AstroTool-on: macOS ekkor egy "nem lehet megnyitni" jellegű figyelmeztetést mutat, mert az app nem azonosított fejlesztőtől jött.</span></li>
-        <li><strong>Rendszerbeállítások ▸ Adatvédelem és biztonság</strong><span class="detail">görgess le, amíg meg nem látod az AstroTool-ra vonatkozó blokkolás-üzenetet a lap alján.</span></li>
-        <li><strong>"Megnyitás mégis"</strong><span class="detail">kattints a gombra, majd erősítsd meg jelszóval vagy Touch ID-vel.</span></li>
-      </ol>
+      <h2>Ellenőrzött kiadás</h2>
+      <p>A DMG és a parancssoros ZIP ellenőrzőösszege a kiadás mellett található <code>SHA256SUMS.txt</code> fájlban van. Az alkalmazás aláírását és notarizációját a kiadási folyamat még a feltöltés előtt ellenőrzi.</p>
     </div>
 
     <div class="panel">
@@ -92,19 +74,18 @@
       <ol class="steps">
         <li><strong>Csomagold ki</strong><span class="detail">dupla kattintás a ZIP-en, vagy <code>unzip astrotool-x.y.z-macos-universal.zip</code> a terminálban.</span></li>
         <li><strong>Tedd a PATH-ba</strong><span class="detail">például <code>mv astrotool /usr/local/bin/</code> (vagy bármelyik, a PATH-adban szereplő mappa).</span></li>
-        <li><strong>Oldd fel a karantént</strong><span class="detail">terminálos binárisnál a Gatekeeper-jelölést közvetlenül is levehetsz: <code>xattr -d com.apple.quarantine /usr/local/bin/astrotool</code>. Ez ugyanazt old fel, mint az A/B. mód az app esetén, csak parancssorból.</span></li>
         <li><strong>Ellenőrizd</strong><span class="detail"><code>astrotool --help</code> a terminálban.</span></li>
       </ol>
     </div>
 
   </div>
-  <p class="closing-note">Kérdésed van a telepítéssel? Az <a href="tutorial.html">Útmutatóban</a> és a <a href="cli.html">CLI-referenciában</a> több részlet van a használatról. MIT licenc.</p>
+  <p class="closing-note">Kérdésed van a telepítéssel? Az <a href="first-steps.html">Első lépésekben</a> és a <a href="cli.html">CLI-referenciában</a> több részlet van a használatról. MIT licenc.</p>
 </main>
 
 <footer>
   <div class="wrap">
     <span>© 2026 AstroTool</span>
-    <span><a href="tutorial.html">Útmutató</a> · <a href="cli.html">CLI</a> · <a href="privacy.html">Adatvédelem</a> · v2.0.0</span>
+    <span><a href="first-steps.html">Első lépések</a> · <a href="cli.html">CLI</a> · <a href="privacy.html">Adatvédelem</a> · v3.0.0</span>
   </div>
 </footer>
 

@@ -1,4 +1,6 @@
 import AppKit
+import AstroCore
+import AstroUI
 import SwiftUI
 
 extension Notification.Name {
@@ -27,10 +29,13 @@ extension Notification.Name {
     /// the "Első lépések" checklist sheet is presented from `RootView`, the
     /// one place always on screen regardless of which page is open.
     static let showFirstSteps = Notification.Name("AstroTool.showFirstSteps")
+    /// Opens Settings directly on the support page. Export remains disabled
+    /// there until the user reviews the exact diagnostics snapshot.
+    static let showSupportDiagnostics = Notification.Name("AstroTool.showSupportDiagnostics")
 }
 
-private let tutorialURL = URL(string: "https://themokx1.github.io/Astro-Tool/tutorial.html")!
-private let cliReferenceURL = URL(string: "https://themokx1.github.io/Astro-Tool/cli.html")!
+private let tutorialURL = URL(string: ProductInfo.documentationURL)!
+private let cliReferenceURL = URL(string: ProductInfo.cliDocumentationURL)!
 
 /// The app's menu bar (R9-T1, spec A.8). Commands run outside the normal
 /// view hierarchy, so they can't use `@Environment(AppState.self)` --
@@ -243,6 +248,199 @@ struct AstroToolCommands: Commands {
             }
             Button("Tutorial") { NSWorkspace.shared.open(tutorialURL) }
             Button("CLI-referencia") { NSWorkspace.shared.open(cliReferenceURL) }
+            Divider()
+            Button("Diagnosztika előnézete…") {
+                NotificationCenter.default.post(name: .showSupportDiagnostics, object: nil)
+            }
+            Button("Adatvédelem") {
+                NSWorkspace.shared.open(URL(string: ProductInfo.privacyURL)!)
+            }
+            Button("Támogatás") {
+                NSWorkspace.shared.open(URL(string: ProductInfo.supportURL)!)
+            }
+        }
+    }
+}
+
+/// V2 menu commands resolve the active window's router through FocusedValues.
+/// They never reach across windows or depend on the V1 singleton/notifications.
+struct V2AstroToolCommands: Commands {
+    @FocusedValue(\.appRouter) private var router
+    @FocusedValue(\.libraryRescan) private var libraryRescan
+    @FocusedValue(\.libraryAudit) private var libraryAudit
+    @FocusedValue(\.sensorMeasure) private var sensorMeasure
+    @FocusedValue(\.reviewRate) private var reviewRate
+    @FocusedValue(\.globalSearchFocus) private var globalSearchFocus
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            // W6-D: these two used to be permanently hard-disabled (a fixed
+            // `true` argument) with a "not built yet" tooltip, but
+            // `V2RootView` has carried real
+            // `.newProject`/`.newNight` router presentations since Wave 4
+            // (the toolbar's own "New Project"/"Import from Card…" buttons,
+            // `NewProjectView`/`NewSessionView`) -- the exact same
+            // `router?.present(...)` shape this file already uses two lines
+            // down for "Rescan", and further below for "Glossary"/"Folder
+            // Structure"/"First Steps". `newProjectInitialQuery`/
+            // `newSessionPrefill` are `V2RootView`-local `@State`, not
+            // reachable from here, but both already default to an empty/nil
+            // "no seed" value and are reset back to it on the sheet's own
+            // dismiss, so presenting with neither set behaves exactly like a
+            // plain, context-free "start one from scratch" entry point.
+            // Standard macOS back shortcut (Finder, Safari, System
+            // Settings all bind it): pops the active section's stack by
+            // one, exactly like the native Back chevron. `pop()` is a
+            // documented no-op at a section root, so no extra guard.
+            Button("Back") {
+                router?.pop()
+            }
+            .keyboardShortcut("[", modifiers: .command)
+            .disabled(router == nil)
+
+            Divider()
+
+            Button("New Project…") {
+                router?.present(.newProject)
+            }
+            .disabled(router == nil)
+
+            Button("New Night…") {
+                router?.present(.newNight)
+            }
+            .disabled(router == nil)
+
+            Divider()
+
+            // R11 parity: V1's ⌘R "Beolvasás" -- re-runs the same read-only
+            // scan pipeline onboarding used against the already-open
+            // library, through `OperationHost` (shows up in the toolbar's
+            // activity indicator, is cancellable, reports progress).
+            // Disabled with no library open, matching V1's own
+            // `AppState.shared?.db == nil` gate for the equivalent command.
+            Button("Rescan") {
+                libraryRescan?()
+            }
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(libraryRescan?.isAvailable != true)
+        }
+
+        // Wave 3 parity: V1's "Audit futtatása" (⌥⌘A) / "Duplikátum-keresés
+        // nélkül auditálás" -- same `LibraryHealthStore.runAudit`
+        // (`OperationHost`-backed: toolbar progress, cancel, success/failure
+        // toast) whichever page happens to be showing, exactly the way
+        // `libraryRescan` already reaches its own action regardless of the
+        // active page.
+        CommandMenu("Actions") {
+            Button("Run Audit") {
+                libraryAudit?(.full)
+            }
+            .keyboardShortcut("a", modifiers: [.command, .option])
+            .disabled(libraryAudit?.isAvailable != true)
+
+            Button("Run Audit (Fast, Skip Duplicate Scan)") {
+                libraryAudit?(.fast)
+            }
+            .disabled(libraryAudit?.isAvailable != true)
+
+            Divider()
+
+            // Wave 3 Task 7: same "run it straight through `OperationHost`,
+            // no confirm sheet" shortcut `libraryAudit`/`libraryRescan`
+            // already give the menu bar -- available whenever Sensor
+            // Profiles (`SensorProfilesView`) is on screen.
+            Button("Measure Sensors") {
+                sensorMeasure?()
+            }
+            .disabled(sensorMeasure?.isAvailable != true)
+
+            // Available whenever the Review workspace is open with a
+            // capture series selected that has frames to rate and no
+            // rating run already in flight for it -- mirrors that
+            // workspace's own "Rate Frames…" primary action (native-only).
+            Button("Rate Frames in Review") {
+                reviewRate?()
+            }
+            .disabled(reviewRate?.isAvailable != true)
+        }
+
+        CommandGroup(after: .toolbar) {
+            ForEach(Array(PrimarySection.allCases.enumerated()), id: \.element) { index, section in
+                Button(section.commandTitle) {
+                    FocusedAppCommands(router: router).navigate(to: section)
+                }
+                .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                .disabled(router == nil)
+            }
+
+            Divider()
+
+            Button(router?.isInspectorPresented == true ? "Hide Inspector" : "Show Inspector") {
+                FocusedAppCommands(router: router).toggleInspector()
+            }
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            .disabled(router == nil)
+        }
+
+        // Wave 3 Task 7: ⌘F -- opens/focuses the shell's own global search
+        // popover, through a focused value rather than `NotificationCenter`
+        // (unlike V1's "Kereső fókuszálása", which V2's own root view is
+        // forbidden from using at all). Same menu location V1 used for its
+        // equivalent command.
+        CommandGroup(after: .pasteboard) {
+            Button("Find") {
+                globalSearchFocus?()
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            .disabled(globalSearchFocus?.isAvailable != true)
+        }
+
+        // Wave 3 Task 7: V2's own Help menu -- Glossary/Folder
+        // Structure/First Steps present the real V2 sheets
+        // (`AppRouter.present(_:)`, rendered by `V2RootView`'s own
+        // `.sheet(item:)`), Documentation/Support/Source open
+        // `ProductInfo`'s URLs, matching V1's equivalent Help menu one
+        // for one.
+        CommandGroup(replacing: .help) {
+            Button("Glossary") {
+                router?.present(.glossary(nil))
+            }
+            .disabled(router == nil)
+
+            Button("Folder Structure") {
+                router?.present(.folderStructure)
+            }
+            .disabled(router == nil)
+
+            Button("First Steps") {
+                router?.present(.firstSteps)
+            }
+            .disabled(router == nil)
+
+            Divider()
+
+            Button("Documentation") {
+                NSWorkspace.shared.open(tutorialURL)
+            }
+            Button("Support") {
+                NSWorkspace.shared.open(URL(string: ProductInfo.supportURL)!)
+            }
+            Button("Source Code") {
+                NSWorkspace.shared.open(URL(string: ProductInfo.sourceURL)!)
+            }
+        }
+    }
+}
+
+private extension PrimarySection {
+    var commandTitle: String {
+        switch self {
+        case .home: "Home"
+        case .projects: "Projects"
+        case .nights: "Nights"
+        case .planning: "Planning"
+        case .library: "Library"
+        case .insights: "Insights"
         }
     }
 }

@@ -1,25 +1,66 @@
+import AstroUI
 import SwiftUI
 
 @main
 struct AstroToolApp: App {
-    @State private var appState = AppState()
+    @State private var appState: AppState?
+    @State private var appModel: AppModel
+    private let launchSelection: AppUILaunchSelection
+    private let uiTestFixture: V2UITestFixture?
+
+    init() {
+        launchSelection = AppUILaunchSelection.current
+        uiTestFixture = V2PreviewFixtures.currentOrTerminate()
+        _appState = State(initialValue: launchSelection.usesV2 ? nil : AppState())
+        _appModel = State(initialValue: AppModel(
+            restorationValidator: RouteRestorationValidator(
+            selectionIsAvailable: { _ in false },
+            contentRouteIsAvailable: { $0.selection == nil }
+        )
+        ))
+    }
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environment(appState)
-                .frame(minWidth: 1100, minHeight: 700)
-                .onAppear {
-                    appState.resolveRootOnLaunch()
+            if launchSelection.usesV2 {
+                V2RootView(
+                    appModel: appModel,
+                    uiTestFixture: uiTestFixture,
+                    initialSection: launchSelection.initialSection
+                )
+                // V3 pre-stack program section 5.5 ("Derült-trigger"): the
+                // one place the in-process "has it cleared up for tonight?"
+                // periodic check runs -- attached to this window's own
+                // content so it runs for exactly as long as this window
+                // does, never longer (see `ClearSkyTriggerLoop`'s own doc
+                // comment for the deliberate V3.0 "app must be open" limit).
+                .task {
+                    await ClearSkyTriggerLoop.runWhileActive { appModel.currentLibraryRootURL }
                 }
+            } else if let appState {
+                RootView()
+                    .environment(appState)
+                    .frame(minWidth: 1100, minHeight: 700)
+                    .onAppear {
+                        appState.resolveRootOnLaunch()
+                    }
+            }
         }
         .commands {
-            AstroToolCommands()
+            if launchSelection.usesV2 {
+                V2AstroToolCommands()
+            } else {
+                AstroToolCommands()
+            }
         }
 
         Settings {
-            SettingsWindow()
-                .environment(appState)
+            if let appState {
+                SettingsWindow()
+                    .environment(appState)
+            } else {
+                V2SettingsView(appModel: appModel)
+            }
         }
     }
 }
@@ -31,6 +72,7 @@ struct AstroToolApp: App {
 /// `TabView`).
 struct RootView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.openSettings) private var openSettings
     @State private var showFolderStructureHelp = false
     /// R9-T6/B16(b): "Súgó ▸ Fogalomtár" -- same "the menu bar has no view
     /// state, so it posts a `Notification` this always-on-screen view
@@ -45,24 +87,10 @@ struct RootView: View {
     @State private var showSirilHelp = false
     /// R11-T12/F12: "Súgó ▸ Első lépések…" -- same notification pattern.
     @State private var showFirstSteps = false
+    @State private var showOnboarding = false
 
     var body: some View {
-        Group {
-            switch appState.rootStatus {
-            case .accessDenied, .notMounted:
-                AccessDeniedView(status: appState.rootStatus) {
-                    appState.retryRootAccess()
-                }
-            case .noRoot:
-                WelcomeView()
-            case .notScanned, .ok:
-                if appState.lastScanDate == nil, !appState.didDismissFirstRun {
-                    FirstScanView()
-                } else {
-                    MainShellView()
-                }
-            }
-        }
+        rootContent
         .sheet(isPresented: $showFolderStructureHelp) {
             FolderStructureHelpSheet()
         }
@@ -74,6 +102,18 @@ struct RootView: View {
         }
         .sheet(isPresented: $showFirstSteps) {
             FirstStepsSheet()
+        }
+        .sheet(isPresented: $showOnboarding) {
+            OnboardingWizardView(
+                onSkipAll: {
+                    appState.completeOnboardingVersion()
+                    showOnboarding = false
+                },
+                onFinished: { showOnboarding = false }
+            )
+        }
+        .onChange(of: appState.onboardingPresentationNonce) { _, _ in
+            if canPresentOnboarding { showOnboarding = true }
         }
         .onReceive(NotificationCenter.default.publisher(for: .showFolderStructureHelp)) { _ in
             showFolderStructureHelp = true
@@ -87,6 +127,36 @@ struct RootView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .showFirstSteps)) { _ in
             showFirstSteps = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showSupportDiagnostics)) { _ in
+            appState.settingsTab = .support
+            openSettings()
+        }
+    }
+
+    private var canPresentOnboarding: Bool {
+        appState.rootStatus == .ok || appState.rootStatus == .notScanned
+    }
+
+    @ViewBuilder
+    private var rootContent: some View {
+        if appState.legacyMigrationAvailable {
+            LegacyMigrationView()
+        } else {
+            switch appState.rootStatus {
+            case .accessDenied, .notMounted:
+                AccessDeniedView(status: appState.rootStatus) {
+                    appState.retryRootAccess()
+                }
+            case .noRoot:
+                WelcomeView()
+            case .notScanned, .ok:
+                if appState.shouldShowFirstScanExperience {
+                    FirstScanView()
+                } else {
+                    MainShellView()
+                }
+            }
         }
     }
 }

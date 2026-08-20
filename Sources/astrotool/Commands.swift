@@ -303,6 +303,9 @@ func describeAstroError(_ error: AstroError) -> String {
 /// config file loaded from that root specifies a different one.
 func resolveConfig(rootFlag: String?) throws -> AstroConfig {
     let lookupRoot = rootFlag ?? AstroConfig().rootPath
+    guard !lookupRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        throw AstroError.invalidInput("no library root selected; pass --root /path/to/library")
+    }
     let configURL = URL(fileURLWithPath: lookupRoot, isDirectory: true)
         .appendingPathComponent(".astro_tool", isDirectory: true)
         .appendingPathComponent("config.json", isDirectory: false)
@@ -321,7 +324,7 @@ func resolveConfig(rootFlag: String?) throws -> AstroConfig {
 }
 
 /// The volume mount point portion of an absolute path -- its first two path
-/// components, e.g. `/Volumes/images/sessions` -> `/Volumes/images`. Mirrors
+/// components, e.g. `/Volumes/AstroDrive/sessions` -> `/Volumes/AstroDrive`. Mirrors
 /// the equivalent (internal, not visible from here) logic in
 /// `AstroCore`'s `RootErrorClassifier`.
 private func volumePortion(of path: String) -> String {
@@ -1885,6 +1888,7 @@ private func printConfigHumanReadable(_ config: AstroConfig) {
     print("  excludedDirNames: \(joinedOrDash(config.excludedDirNames))")
     print("  excludedPaths: \(joinedOrDash(config.excludedPaths))")
     print("  residuePatterns: \(joinedOrDash(config.residuePatterns))")
+    print("  sessionResiduePatterns: \(joinedOrDash(config.sessionResiduePatterns))")
     print("  residueDirNames: \(joinedOrDash(config.residueDirNames))")
     print("  toolOutputDirNames: \(joinedOrDash(config.toolOutputDirNames))")
 

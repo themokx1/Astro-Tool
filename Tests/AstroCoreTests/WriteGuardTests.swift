@@ -9,6 +9,34 @@ private func makeTempRoot() throws -> URL {
     return dir
 }
 
+@Test func createLibraryScaffoldCreatesOnlyCanonicalMissingDirectories() throws {
+    let parent = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: parent) }
+    let root = parent.appendingPathComponent("My Astro Library", isDirectory: true)
+    let guardian = WriteGuard(root: root)
+
+    let created = try guardian.createLibraryScaffold()
+
+    #expect(WriteGuard.libraryScaffoldRelativePaths == [
+        "sessions", "stacks", "processed",
+        "calibration_library/darks", "calibration_library/flats",
+        "calibration_library/biases", ".astro_tool",
+    ])
+    #expect(created.map { $0.path } == WriteGuard.libraryScaffoldRelativePaths.map {
+        root.appendingPathComponent($0, isDirectory: true).path
+    })
+    for relativePath in WriteGuard.libraryScaffoldRelativePaths {
+        var isDirectory: ObjCBool = false
+        #expect(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent(relativePath).path,
+            isDirectory: &isDirectory
+        ))
+        #expect(isDirectory.boolValue)
+    }
+
+    #expect(try guardian.createLibraryScaffold().isEmpty)
+}
+
 @Test func createSessionTreeCreatesExpectedSubdirsAndReadme() throws {
     let root = try makeTempRoot()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -633,4 +661,147 @@ private func inode(_ url: URL) throws -> UInt64 {
     }
 
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(".astro_tool/stacklists/T1-2026-01-10/lights/..").path))
+}
+
+// MARK: - copyCaptureFile (card-import wizard)
+
+private func makeSourceFile(named name: String = "light_0001.fit", contents: String = "raw bytes") throws -> URL {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-writeguard-source-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let url = dir.appendingPathComponent(name)
+    try Data(contents.utf8).write(to: url)
+    return url
+}
+
+@Test func copyCaptureFileCopiesIntoAnExistingCaptureLeaf() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+    _ = try guardian.createSessionTree(target: "IC1396", dateDir: "2026-08-16", readme: "x")
+    _ = try guardian.createCaptureTree(target: "IC1396", dateDir: "2026-08-16", slug: "sv220-nb")
+
+    let source = try makeSourceFile()
+    defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+    let destURL = try guardian.copyCaptureFile(
+        sourceURL: source,
+        destDirRelative: "sessions/IC1396/2026-08-16/captures/sv220-nb/lights"
+    )
+
+    let expected = root.appendingPathComponent(
+        "sessions/IC1396/2026-08-16/captures/sv220-nb/lights/light_0001.fit"
+    )
+    #expect(destURL?.standardizedFileURL.path == expected.standardizedFileURL.path)
+    #expect(FileManager.default.fileExists(atPath: expected.path))
+    #expect(try String(contentsOf: expected, encoding: .utf8) == "raw bytes")
+
+    // No leftover temp file.
+    let entries = try FileManager.default.contentsOfDirectory(atPath: expected.deletingLastPathComponent().path)
+    #expect(entries == ["light_0001.fit"])
+}
+
+@Test func copyCaptureFileNeverOverwritesAnExistingDestination() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+    _ = try guardian.createSessionTree(target: "IC1396", dateDir: "2026-08-16", readme: "x")
+    _ = try guardian.createCaptureTree(target: "IC1396", dateDir: "2026-08-16", slug: "sv220-nb")
+
+    let destDir = root.appendingPathComponent("sessions/IC1396/2026-08-16/captures/sv220-nb/lights", isDirectory: true)
+    let existing = destDir.appendingPathComponent("light_0001.fit")
+    try Data("already here".utf8).write(to: existing)
+
+    let source = try makeSourceFile()
+    defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+    let result = try guardian.copyCaptureFile(
+        sourceURL: source,
+        destDirRelative: "sessions/IC1396/2026-08-16/captures/sv220-nb/lights"
+    )
+
+    #expect(result == nil)
+    #expect(try String(contentsOf: existing, encoding: .utf8) == "already here")
+}
+
+@Test func copyCaptureFileRejectsADestinationOutsideTheCanonicalCaptureLeaves() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+    _ = try guardian.createSessionTree(target: "IC1396", dateDir: "2026-08-16", readme: "x")
+    _ = try guardian.createCaptureTree(target: "IC1396", dateDir: "2026-08-16", slug: "sv220-nb")
+    let source = try makeSourceFile()
+    defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+    // Not one of lights/flats/darks/biases.
+    #expect(throws: AstroError.self) {
+        try guardian.copyCaptureFile(
+            sourceURL: source,
+            destDirRelative: "sessions/IC1396/2026-08-16/captures/sv220-nb/masters"
+        )
+    }
+    // Missing the "captures" component -- classic session role dir, not a capture leaf.
+    #expect(throws: AstroError.self) {
+        try guardian.copyCaptureFile(sourceURL: source, destDirRelative: "sessions/IC1396/2026-08-16/lights")
+    }
+    // Traversal in the slug component.
+    #expect(throws: AstroError.self) {
+        try guardian.copyCaptureFile(
+            sourceURL: source,
+            destDirRelative: "sessions/IC1396/2026-08-16/captures/../lights"
+        )
+    }
+}
+
+@Test func copyCaptureFileThrowsPathNotFoundForAMissingSource() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+    _ = try guardian.createSessionTree(target: "IC1396", dateDir: "2026-08-16", readme: "x")
+    _ = try guardian.createCaptureTree(target: "IC1396", dateDir: "2026-08-16", slug: "sv220-nb")
+
+    let missingSource = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-writeguard-missing-\(UUID().uuidString).fit")
+
+    do {
+        _ = try guardian.copyCaptureFile(
+            sourceURL: missingSource,
+            destDirRelative: "sessions/IC1396/2026-08-16/captures/sv220-nb/lights"
+        )
+        Issue.record("expected pathNotFound to be thrown")
+    } catch let AstroError.pathNotFound(path) {
+        #expect(!path.isEmpty)
+    } catch {
+        Issue.record("expected AstroError.pathNotFound, got \(error)")
+    }
+}
+
+@Test func copyCaptureFileCleansUpTheTempFileWhenTheCopyFails() throws {
+    let root = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let guardian = WriteGuard(root: root)
+    _ = try guardian.createSessionTree(target: "IC1396", dateDir: "2026-08-16", readme: "x")
+    _ = try guardian.createCaptureTree(target: "IC1396", dateDir: "2026-08-16", slug: "sv220-nb")
+
+    let source = try makeSourceFile(named: "wont-work.fit")
+    defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+    // A read-only destination directory makes the temp-file write itself
+    // fail (EACCES) after this call's own existence checks already passed
+    // -- exercising the cleanup path without needing to fake a disk I/O
+    // error. Restored to writable before removal so `makeTempRoot`'s own
+    // `defer` cleanup above can actually delete it.
+    let destDir = root.appendingPathComponent("sessions/IC1396/2026-08-16/captures/sv220-nb/lights", isDirectory: true)
+    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: destDir.path)
+    defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destDir.path) }
+
+    #expect(throws: (any Error).self) {
+        try guardian.copyCaptureFile(
+            sourceURL: source,
+            destDirRelative: "sessions/IC1396/2026-08-16/captures/sv220-nb/lights"
+        )
+    }
+
+    let entries = try FileManager.default.contentsOfDirectory(atPath: destDir.path)
+    #expect(entries.isEmpty, "expected no leftover temp/partial file, found \(entries)")
 }

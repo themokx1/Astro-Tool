@@ -38,9 +38,11 @@ enum GlobMatcher {
     }
 }
 
-/// Shared residue-matching primitives used by both `ResidueRule` (the
-/// per-run audit finding) and `CleanupReport` (the aggregated, size-ordered
-/// cleanup summary) so the two never drift on what counts as residue.
+/// Shared residue-matching primitives used by `ResidueRule` (the per-run
+/// audit finding), `CleanupReport` (the aggregated, size-ordered cleanup
+/// summary), and `LibraryScanner` (which must never promote a residue file
+/// to a specific frame role via its FITS IMAGETYP header) so none of the
+/// three ever drift on what counts as residue.
 enum ResidueMatcher {
     /// Whether `name` (a bare filename, no path) matches one of
     /// `config.residuePatterns`.
@@ -48,10 +50,71 @@ enum ResidueMatcher {
         config.residuePatterns.contains { GlobMatcher.matches(pattern: $0, name: name) }
     }
 
+    /// Whether `name` (a bare filename, no path) matches one of
+    /// `config.sessionResiduePatterns` -- the vocabulary that only counts
+    /// as residue for `.sessions`-area paths (see that property's doc
+    /// comment). Callers are responsible for the area check; only
+    /// `category(forPath:config:)` below should normally need this
+    /// directly.
+    static func matchesSessionFilePattern(name: String, config: AstroConfig) -> Bool {
+        config.sessionResiduePatterns.contains { GlobMatcher.matches(pattern: $0, name: name) }
+    }
+
     /// Whether `name` (a bare directory name, no path) is one of
     /// `config.residueDirNames`, case-insensitively.
     static func isResidueDirName(_ name: String, config: AstroConfig) -> Bool {
         config.residueDirNames.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    /// The cleanup-report sub-category a file at `path` (root-relative)
+    /// falls into, or `nil` if it isn't residue at all. An ancestor
+    /// directory named in `residueDirNames` (e.g. `process/`) takes
+    /// precedence over filename pattern matching -- everything under it is
+    /// residue regardless of its own name, mirroring `ResidueRule`'s
+    /// whole-directory finding -- then filename-pattern matches split by
+    /// extension (`.seq`/`.lst`/other), then -- for paths whose
+    /// `PathClassifier` area is `.sessions` only -- the session-scoped
+    /// `config.sessionResiduePatterns` (`residue-session`). A file sitting
+    /// anywhere under a `toolOutputDirNames` directory is never residue,
+    /// however its name looks: those are known-intentional tool output
+    /// (`ToolOutputRule`'s territory), not mess.
+    static func category(forPath path: String, config: AstroConfig) -> String? {
+        let components = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard !components.contains(where: { config.toolOutputDirNames.contains($0) }) else { return nil }
+
+        let ancestors = components.dropLast()
+        if ancestors.contains(where: { isResidueDirName($0, config: config) }) {
+            return "residue-process-dir"
+        }
+
+        let name = components.last ?? path
+        if matchesFilePattern(name: name, config: config) {
+            switch (name as NSString).pathExtension.lowercased() {
+            case "seq": return "residue-seq"
+            case "lst": return "residue-lst"
+            default: return "residue-other"
+            }
+        }
+
+        // Session-area-scoped patterns: `PathClassifier.classify` is the
+        // single authority on what counts as the `sessions` area (exact
+        // top-level dir match), so this can never fire on a `stacks/`/
+        // `processed/` path however similar the basename -- which is the
+        // whole point: this vocabulary (`starless*`, `result_*`, ...) is
+        // WANTED StackDiscovery output there.
+        if PathClassifier.classify(relativePath: path).area == .sessions,
+           matchesSessionFilePattern(name: name, config: config) {
+            return "residue-session"
+        }
+
+        return nil
+    }
+
+    /// Whether `path` (root-relative) is residue at all, per
+    /// `category(forPath:config:)` -- the plain match/no-match check
+    /// `LibraryScanner` needs (it doesn't care which residue sub-kind).
+    static func isResidue(path: String, config: AstroConfig) -> Bool {
+        category(forPath: path, config: config) != nil
     }
 }
 
@@ -567,6 +630,14 @@ public struct InvalidDateDirRule: AuditRule {
 /// `*` only, case-insensitive), or directories whose name is in
 /// `config.residueDirNames` — leftover stacking/processing byproducts that
 /// don't belong in the library long-term.
+///
+/// Deliberately does NOT consult the session-scoped
+/// `config.sessionResiduePatterns`: those matches (starless/starmask/
+/// GraXpert/`result_*` byproducts loose under `sessions/`) already surface
+/// through `CleanupReport`'s `residue-session` group and gate
+/// `LibraryScanner`'s IMAGETYP promotion — raising a per-file audit finding
+/// for each of them too would only duplicate the cleanup listing as dozens
+/// of "gyanús" rows.
 public struct ResidueRule: AuditRule {
     public let id = "residue"
     public init() {}
@@ -680,13 +751,15 @@ public struct CalibInWrongDirRule: AuditRule {
         )
     }
 
+    /// Delegates to `FrameRoleFromHeader` (W5-4 item 2) -- see that type's
+    /// own doc comment for why one shared predicate exists at all. This used
+    /// to be its own private copy of the same four-substring check, in a
+    /// DIFFERENT order (flat/dark/bias/light instead of light/flat/dark/
+    /// bias); the two disagreed on an IMAGETYP value naming more than one of
+    /// those substrings at once (see `AuditTests
+    /// .calibInWrongDirAgreesWithFrameRoleFromHeaderOnAmbiguousImagetyp`).
     private static func impliedRole(from imagetyp: String) -> FrameRole? {
-        let lower = imagetyp.lowercased()
-        if lower.contains("flat") { return .flat }
-        if lower.contains("dark") { return .dark }
-        if lower.contains("bias") { return .bias }
-        if lower.contains("light") { return .light }
-        return nil
+        FrameRoleFromHeader.role(fromImagetyp: imagetyp)
     }
 
     private static func dirName(for role: FrameRole) -> String? {

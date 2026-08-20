@@ -53,7 +53,12 @@ public enum CaptureManager {
         return Result(group: group, createdURLs: createdURLs)
     }
 
-    static func validate(draft: CaptureGroupDraft) throws {
+    /// `public` (W3-10): V2's "New Session"/"Add Capture" sheet previews a
+    /// draft's validity BEFORE the user submits, the same way it previews
+    /// `SessionCreator`'s own target/date validation -- this lets that
+    /// preview call the engine's actual validation instead of a second,
+    /// hand-copied version of "name non-empty, slug sanitizes to itself".
+    public static func validate(draft: CaptureGroupDraft) throws {
         let name = draft.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else {
             throw AstroError.invalidInput("A gyűjtés neve nem lehet üres.")

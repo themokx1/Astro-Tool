@@ -48,13 +48,67 @@ public struct SQLiteRow {
 public final class SQLiteDB {
     private var handle: OpaquePointer?
 
+    private enum OpenPolicy {
+        case standard
+        case confinedIndex
+        case readOnly
+    }
+
     /// Opens (creating if needed) the database at `path`. Pass `":memory:"`
     /// for an ephemeral in-memory database. WAL mode is enabled for
     /// file-backed databases (skipped for `:memory:`, where it is a no-op
     /// SQLite would otherwise silently ignore anyway).
-    public init(path: String) throws {
+    public convenience init(path: String) throws {
+        try self.init(
+            path: path,
+            policy: .standard,
+            beforeOpen: {},
+            validateBeforeUse: {}
+        )
+    }
+
+    package convenience init(
+        confinedIndexPath path: String,
+        beforeOpen: @Sendable () throws -> Void,
+        validateBeforeUse: @Sendable () throws -> Void
+    ) throws {
+        try self.init(
+            path: path,
+            policy: .confinedIndex,
+            beforeOpen: beforeOpen,
+            validateBeforeUse: validateBeforeUse
+        )
+    }
+
+    /// Opens an existing database without creating files or changing its
+    /// journal mode. Callers that require path confinement validate it before
+    /// handing the URL to this read-only compatibility probe.
+    package convenience init(readOnlyPath path: String) throws {
+        try self.init(
+            path: path,
+            policy: .readOnly,
+            beforeOpen: {},
+            validateBeforeUse: {}
+        )
+    }
+
+    private init(
+        path: String,
+        policy: OpenPolicy,
+        beforeOpen: @Sendable () throws -> Void,
+        validateBeforeUse: @Sendable () throws -> Void
+    ) throws {
+        try beforeOpen()
         var db: OpaquePointer?
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        var flags = SQLITE_OPEN_FULLMUTEX
+        switch policy {
+        case .standard:
+            flags |= SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
+        case .confinedIndex:
+            flags |= SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOFOLLOW
+        case .readOnly:
+            flags |= SQLITE_OPEN_READONLY
+        }
         let rc = sqlite3_open_v2(path, &db, flags, nil)
         guard rc == SQLITE_OK, let db else {
             let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "sqlite3_open_v2 failed (\(rc))"
@@ -63,8 +117,20 @@ public final class SQLiteDB {
         }
         self.handle = db
 
+        try validateBeforeUse()
+
         if path != ":memory:" {
-            try exec("PRAGMA journal_mode=WAL;")
+            switch policy {
+            case .standard:
+                try exec("PRAGMA busy_timeout=5000;")
+                try exec("PRAGMA journal_mode=WAL;")
+            case .confinedIndex:
+                try exec("PRAGMA busy_timeout=5000;")
+                try exec("PRAGMA journal_mode=MEMORY;")
+                try exec("PRAGMA temp_store=MEMORY;")
+            case .readOnly:
+                try exec("PRAGMA busy_timeout=5000;")
+            }
         }
     }
 
@@ -120,6 +186,54 @@ public final class SQLiteDB {
     /// The rowid of the most recent successful INSERT on this connection.
     public var lastInsertRowID: Int64 {
         sqlite3_last_insert_rowid(handle)
+    }
+
+    /// Creates a transactionally consistent copy using SQLite's backup API.
+    /// Unlike copying the main database file, this includes pages that are
+    /// committed in a live WAL. The source connection is never written.
+    public func backup(to destinationURL: URL) throws {
+        var destination: OpaquePointer?
+        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        let openResult = sqlite3_open_v2(destinationURL.path, &destination, flags, nil)
+        guard openResult == SQLITE_OK, let destination else {
+            let message = destination.map { String(cString: sqlite3_errmsg($0)) }
+                ?? "sqlite3_open_v2 backup destination failed (\(openResult))"
+            if let destination { sqlite3_close(destination) }
+            throw AstroError.databaseError(message)
+        }
+        defer { sqlite3_close(destination) }
+
+        guard let backup = sqlite3_backup_init(destination, "main", handle, "main") else {
+            throw AstroError.databaseError(String(cString: sqlite3_errmsg(destination)))
+        }
+        var stepResult: Int32 = SQLITE_OK
+        repeat {
+            stepResult = sqlite3_backup_step(backup, 256)
+            if stepResult == SQLITE_BUSY || stepResult == SQLITE_LOCKED {
+                sqlite3_sleep(10)
+            }
+        } while stepResult == SQLITE_OK || stepResult == SQLITE_BUSY || stepResult == SQLITE_LOCKED
+        let finishResult = sqlite3_backup_finish(backup)
+        guard stepResult == SQLITE_DONE, finishResult == SQLITE_OK else {
+            throw AstroError.databaseError(String(cString: sqlite3_errmsg(destination)))
+        }
+        // A backup copies the source database header, including WAL mode.
+        // Normalize only the private destination to a standalone file so a
+        // later immutable/read-only open never needs to create -wal/-shm.
+        var journalError: UnsafeMutablePointer<Int8>?
+        let journalResult = sqlite3_exec(
+            destination,
+            "PRAGMA journal_mode=DELETE;",
+            nil,
+            nil,
+            &journalError
+        )
+        guard journalResult == SQLITE_OK else {
+            let message = journalError.map { String(cString: $0) }
+                ?? String(cString: sqlite3_errmsg(destination))
+            sqlite3_free(journalError)
+            throw AstroError.databaseError(message)
+        }
     }
 
     private func prepare(_ sql: String) throws -> OpaquePointer? {

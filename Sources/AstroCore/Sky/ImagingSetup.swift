@@ -8,6 +8,7 @@ import Foundation
 /// setup unambiguous to the photographer and leaves a sound input for future
 /// target/filter suitability advice.
 public enum CameraKind: String, Codable, CaseIterable, Equatable, Sendable {
+    case unspecified
     case dedicatedAstro
     case unmodifiedColor
     case modifiedColor
@@ -29,9 +30,12 @@ public struct SetupFieldOfView: Equatable, Sendable {
 public enum ImagingSetupValidationError: Error, Equatable, Sendable {
     case emptyName
     case emptyCameraName
+    case unspecifiedCameraKind
     case invalidSensorSize
     case invalidFocalRange
     case defaultFocalLengthOutsideRange
+    case invalidFNumber
+    case invalidRelativeEfficiency
 }
 
 /// One user-defined camera + lens/telescope combination for planning.
@@ -51,7 +55,27 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
     public var focalLengthMinMM: Double
     public var focalLengthMaxMM: Double
     public var defaultFocalLengthMM: Double
+    /// Working focal ratio used by the integration-reference planner. Older
+    /// saved setups decode to f/5, the app-wide reference default.
+    public var fNumber: Double
+    /// Relative throughput/QE multiplier. `1` means reference efficiency;
+    /// values below one require proportionally more integration.
+    public var relativeEfficiency: Double
     public var isDefault: Bool
+    /// W7-D: fallback passband the V2 series builder applies to a headerless
+    /// frame from this setup's camera when neither the FITS header, the
+    /// file's capture group, nor its capture-slug name it either -- the case
+    /// an ASI Air writes on an OSC + duoband/narrowband filter train with no
+    /// filter wheel (it never writes a `FILTER` header at all). `.unknown`
+    /// (the default) means "no fallback configured", leaving the pre-W7-D
+    /// broadband/unfiltered guess untouched. Only ever consulted for the
+    /// `defaultSetup(in:)` profile, and only for OSC frames -- see
+    /// `ScanWorkflowMaterializer`'s own derivation for the full precedence
+    /// chain (FITS header > capture group > capture slug > this > guess).
+    public var defaultFilterSignalMode: SignalMode
+    /// Free-text label shown next to `defaultFilterSignalMode` in Settings
+    /// (e.g. "SV220") -- display only, never parsed by the derivation.
+    public var defaultFilterName: String?
 
     public init(
         id: String,
@@ -63,7 +87,11 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
         focalLengthMinMM: Double,
         focalLengthMaxMM: Double,
         defaultFocalLengthMM: Double,
-        isDefault: Bool = false
+        fNumber: Double = 5,
+        relativeEfficiency: Double = 1,
+        isDefault: Bool = false,
+        defaultFilterSignalMode: SignalMode = .unknown,
+        defaultFilterName: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -74,7 +102,36 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
         self.focalLengthMinMM = focalLengthMinMM
         self.focalLengthMaxMM = focalLengthMaxMM
         self.defaultFocalLengthMM = defaultFocalLengthMM
+        self.fNumber = fNumber
+        self.relativeEfficiency = relativeEfficiency
         self.isDefault = isDefault
+        self.defaultFilterSignalMode = defaultFilterSignalMode
+        self.defaultFilterName = defaultFilterName
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, cameraName, cameraKind, sensorWidthMM, sensorHeightMM
+        case focalLengthMinMM, focalLengthMaxMM, defaultFocalLengthMM
+        case fNumber, relativeEfficiency, isDefault
+        case defaultFilterSignalMode, defaultFilterName
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        cameraName = try container.decode(String.self, forKey: .cameraName)
+        cameraKind = try container.decode(CameraKind.self, forKey: .cameraKind)
+        sensorWidthMM = try container.decode(Double.self, forKey: .sensorWidthMM)
+        sensorHeightMM = try container.decode(Double.self, forKey: .sensorHeightMM)
+        focalLengthMinMM = try container.decode(Double.self, forKey: .focalLengthMinMM)
+        focalLengthMaxMM = try container.decode(Double.self, forKey: .focalLengthMaxMM)
+        defaultFocalLengthMM = try container.decode(Double.self, forKey: .defaultFocalLengthMM)
+        fNumber = try container.decodeIfPresent(Double.self, forKey: .fNumber) ?? 5
+        relativeEfficiency = try container.decodeIfPresent(Double.self, forKey: .relativeEfficiency) ?? 1
+        isDefault = try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+        defaultFilterSignalMode = try container.decodeIfPresent(SignalMode.self, forKey: .defaultFilterSignalMode) ?? .unknown
+        defaultFilterName = try container.decodeIfPresent(String.self, forKey: .defaultFilterName)
     }
 
     public var isZoom: Bool {
@@ -91,6 +148,9 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
         guard !cameraName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ImagingSetupValidationError.emptyCameraName
         }
+        guard cameraKind != .unspecified else {
+            throw ImagingSetupValidationError.unspecifiedCameraKind
+        }
         guard sensorWidthMM.isFinite, sensorHeightMM.isFinite,
               sensorWidthMM > 0, sensorHeightMM > 0 else {
             throw ImagingSetupValidationError.invalidSensorSize
@@ -103,6 +163,12 @@ public struct ImagingSetupProfile: Codable, Equatable, Sendable, Identifiable {
               defaultFocalLengthMM >= focalLengthMinMM,
               defaultFocalLengthMM <= focalLengthMaxMM else {
             throw ImagingSetupValidationError.defaultFocalLengthOutsideRange
+        }
+        guard fNumber.isFinite, fNumber > 0 else {
+            throw ImagingSetupValidationError.invalidFNumber
+        }
+        guard relativeEfficiency.isFinite, relativeEfficiency > 0 else {
+            throw ImagingSetupValidationError.invalidRelativeEfficiency
         }
     }
 

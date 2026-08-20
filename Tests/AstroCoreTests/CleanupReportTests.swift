@@ -74,6 +74,20 @@ private func group(_ summary: CleanupSummary, category: String) -> CleanupGroup?
     #expect(summary.grandTotalBytes == 2_010_000)
 }
 
+@Test func cleanupReportCanOpenAnExistingIndexStrictlyReadOnly() throws {
+    let fixture = try CleanupFixture.make()
+    defer { fixture.cleanup() }
+    try fixture.db.upsertFile(makeFileRecord(path: "stacks/M42/process/x.fit", size: 4096))
+    let databaseURL = fixture.dbDir.appendingPathComponent("test.sqlite")
+    let before = try FileManager.default.attributesOfItem(atPath: databaseURL.path)[.modificationDate] as? Date
+
+    let summary = try CleanupReport.build(readOnlyDatabasePath: databaseURL.path, config: fixture.config)
+
+    #expect(summary.grandTotalBytes == 4096)
+    #expect(summary.groups.first?.category == "residue-process-dir")
+    #expect(try FileManager.default.attributesOfItem(atPath: databaseURL.path)[.modificationDate] as? Date == before)
+}
+
 @Test func cleanupReportSubcategorizesResidueByExtensionAndProcessDir() throws {
     let fixture = try CleanupFixture.make()
     defer { fixture.cleanup() }
@@ -92,6 +106,29 @@ private func group(_ summary: CleanupSummary, category: String) -> CleanupGroup?
     #expect(categories.contains("residue-lst"))
     #expect(categories.contains("residue-other")) // .DS_Store
     #expect(categories.contains("residue-process-dir"))
+}
+
+@Test func cleanupReportListsSessionScopedResidueOnlyForSessionsAreaPaths() throws {
+    let fixture = try CleanupFixture.make()
+    defer { fixture.cleanup() }
+
+    // The SAME basename in three areas: junk loose in `sessions/`
+    // (`residue-session` via `config.sessionResiduePatterns`), a
+    // first-class StackVariantKind keeper in `stacks/`/`processed/` --
+    // exactly the real library's `starless_*`/`result_*` situation.
+    try fixture.db.upsertFile(makeFileRecord(
+        path: "sessions/M42/2026-01-17/starless_result.fit", size: 3_000_000, area: .sessions))
+    try fixture.db.upsertFile(makeFileRecord(
+        path: "stacks/M42/2026-01-17/starless_result.fit", size: 3_000_000))
+    try fixture.db.upsertFile(makeFileRecord(
+        path: "processed/M42/2026-01-17/starless_result.fit", size: 3_000_000, area: .processed))
+
+    let summary = try CleanupReport.build(db: fixture.db, config: fixture.config)
+
+    let session = try #require(group(summary, category: "residue-session"))
+    #expect(session.paths == ["sessions/M42/2026-01-17/starless_result.fit"])
+    #expect(session.totalBytes == 3_000_000)
+    #expect(summary.grandTotalBytes == 3_000_000)
 }
 
 @Test func cleanupReportComputesDuplicateWastedBytesExcludingKeeper() throws {

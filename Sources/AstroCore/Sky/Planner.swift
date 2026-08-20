@@ -18,12 +18,24 @@ public struct TargetPlan: Codable, Sendable, Equatable {
     public var decDeg: Double?
     public var usableIntegrationSeconds: Double
     public var goalSeconds: Double?
+    /// Whether `goalSeconds` came from a tag or the automatic planning
+    /// reference. `nil` only for older decoded payloads/direct test values.
+    public var goalSource: IntegrationGoalSource?
     /// ISO 8601 (UTC) instant of tonight's meridian transit, within the
     /// scanned night window. `nil` if there's no coordinate, or the target
     /// never rises during the window.
     public var culminationUTC: String?
     /// `culminationUTC`, formatted in the site's local time as `"HH:mm"`.
     public var culminationLocal: String?
+    /// `false` when `culminationUTC`/`culminationLocal` is only the EDGE of
+    /// tonight's scanned window (the target was still climbing at dawn, or
+    /// already past its peak at dusk) rather than a genuine meridian
+    /// transit -- see `NightSweepResult.isGenuineCulmination`'s own doc for
+    /// why this distinction matters (W7-A audit: labeling a window-edge
+    /// sample "delelés HH:mm" reads as a real transit time when it isn't
+    /// one). `nil` under the exact same conditions `culminationUTC` is:
+    /// no coordinate/site/night to sweep at all, or a comet.
+    public var isGenuineCulmination: Bool?
     public var maxAltitudeDeg: Double?
     /// `"HH:mm–HH:mm"` (site-local time) window during which the target is
     /// at or above `minAltitudeDeg` within tonight's astronomical-night
@@ -60,8 +72,10 @@ public struct TargetPlan: Codable, Sendable, Equatable {
         decDeg: Double? = nil,
         usableIntegrationSeconds: Double,
         goalSeconds: Double? = nil,
+        goalSource: IntegrationGoalSource? = nil,
         culminationUTC: String? = nil,
         culminationLocal: String? = nil,
+        isGenuineCulmination: Bool? = nil,
         maxAltitudeDeg: Double? = nil,
         visibleWindowLocal: String? = nil,
         visibleHours: Double? = nil,
@@ -78,8 +92,10 @@ public struct TargetPlan: Codable, Sendable, Equatable {
         self.decDeg = decDeg
         self.usableIntegrationSeconds = usableIntegrationSeconds
         self.goalSeconds = goalSeconds
+        self.goalSource = goalSource
         self.culminationUTC = culminationUTC
         self.culminationLocal = culminationLocal
+        self.isGenuineCulmination = isGenuineCulmination
         self.maxAltitudeDeg = maxAltitudeDeg
         self.visibleWindowLocal = visibleWindowLocal
         self.visibleHours = visibleHours
@@ -92,8 +108,8 @@ public struct TargetPlan: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case target, displayName, raDeg, decDeg, usableIntegrationSeconds, goalSeconds,
-             culminationUTC, culminationLocal, maxAltitudeDeg, visibleWindowLocal, visibleHours,
+        case target, displayName, raDeg, decDeg, usableIntegrationSeconds, goalSeconds, goalSource,
+             culminationUTC, culminationLocal, isGenuineCulmination, maxAltitudeDeg, visibleWindowLocal, visibleHours,
              moonIlluminationPercent, moonSeparationDeg, verdict, score, filterGoals, filterAdvice
     }
 
@@ -107,8 +123,12 @@ public struct TargetPlan: Codable, Sendable, Equatable {
         decDeg = try c.decodeIfPresent(Double.self, forKey: .decDeg)
         usableIntegrationSeconds = try c.decode(Double.self, forKey: .usableIntegrationSeconds)
         goalSeconds = try c.decodeIfPresent(Double.self, forKey: .goalSeconds)
+        goalSource = try c.decodeIfPresent(IntegrationGoalSource.self, forKey: .goalSource)
         culminationUTC = try c.decodeIfPresent(String.self, forKey: .culminationUTC)
         culminationLocal = try c.decodeIfPresent(String.self, forKey: .culminationLocal)
+        // Absent in JSON produced before this field existed -- `nil` (no
+        // opinion) rather than assuming either honest state.
+        isGenuineCulmination = try c.decodeIfPresent(Bool.self, forKey: .isGenuineCulmination)
         maxAltitudeDeg = try c.decodeIfPresent(Double.self, forKey: .maxAltitudeDeg)
         visibleWindowLocal = try c.decodeIfPresent(String.self, forKey: .visibleWindowLocal)
         visibleHours = try c.decodeIfPresent(Double.self, forKey: .visibleHours)
@@ -349,47 +369,37 @@ public enum Planner {
     /// Samples the Moon's altitude every `stepMinutes` from dusk to dawn and
     /// reports whether/when it crosses the horizon -- the "felkel 23:41"/
     /// "nyugszik 02:15"/"egész éjjel fent"/"egész éjjel lent" wording for the
-    /// "Hold" tile. A brute-force scan, same simplicity tradeoff as
-    /// `sweepNight`'s altitude sweep.
+    /// "Hold" tile. Walks `NightSweep.moonAltitudeSamples` -- the SAME
+    /// Moon-altitude-over-time sampler `buildPlan`'s moon-penalty altitude
+    /// weighting uses (W7-A), rather than a private second copy of the loop.
     private static func moonEventLabel(
         latDeg: Double, lonDeg: Double, duskUTC: Date, dawnUTC: Date, timeZone: TimeZone, stepMinutes: Double = 5
     ) -> String {
-        func moonAltitude(at date: Date) -> Double {
-            let jd = JulianDate.julianDay(date)
-            let moon = SunMoon.moonPosition(julianDay: jd)
-            let lst = SiderealTime.lstHours(julianDay: jd, longitudeDeg: lonDeg)
-            return AltAz.position(raDeg: moon.raDeg, decDeg: moon.decDeg, lstHours: lst, latDeg: latDeg).altitudeDeg
-        }
-
-        let stepSeconds = stepMinutes * 60
-        var samples: [(date: Date, alt: Double)] = []
-        var t = duskUTC
-        while t <= dawnUTC {
-            samples.append((t, moonAltitude(at: t)))
-            t = t.addingTimeInterval(stepSeconds)
-        }
+        let samples = NightSweep.moonAltitudeSamples(
+            latDeg: latDeg, lonDeg: lonDeg, startUTC: duskUTC, endUTC: dawnUTC, stepMinutes: stepMinutes
+        )
         guard let first = samples.first else { return "egész éjjel lent" }
 
         for i in 1..<samples.count {
             let a = samples[i - 1], b = samples[i]
-            if a.alt < 0, b.alt >= 0 {
+            if a.altitudeDeg < 0, b.altitudeDeg >= 0 {
                 return "felkel \(formatLocalTime(interpolatedZeroCrossing(a, b), timeZone: timeZone))"
             }
-            if a.alt >= 0, b.alt < 0 {
+            if a.altitudeDeg >= 0, b.altitudeDeg < 0 {
                 return "nyugszik \(formatLocalTime(interpolatedZeroCrossing(a, b), timeZone: timeZone))"
             }
         }
-        return first.alt >= 0 ? "egész éjjel fent" : "egész éjjel lent"
+        return first.altitudeDeg >= 0 ? "egész éjjel fent" : "egész éjjel lent"
     }
 
     /// Linear interpolation of the instant altitude crosses zero between two
     /// consecutive samples -- same technique as `SunMoon`'s own (private,
     /// unreachable from here) `interpolatedCrossing`, specialized to a
     /// `threshold` of `0`.
-    private static func interpolatedZeroCrossing(_ a: (date: Date, alt: Double), _ b: (date: Date, alt: Double)) -> Date {
-        let span = b.alt - a.alt
+    private static func interpolatedZeroCrossing(_ a: (date: Date, altitudeDeg: Double), _ b: (date: Date, altitudeDeg: Double)) -> Date {
+        let span = b.altitudeDeg - a.altitudeDeg
         guard span != 0 else { return a.date }
-        let fraction = -a.alt / span
+        let fraction = -a.altitudeDeg / span
         return a.date.addingTimeInterval(b.date.timeIntervalSince(a.date) * fraction)
     }
 
@@ -399,23 +409,28 @@ public enum Planner {
     ///
     /// Per night: resolves the dark window (`SunMoon.astronomicalTwilight`,
     /// same fallback behavior `plan(...)` already relies on) and the Moon's
-    /// illumination at that window's midpoint, then -- for every target with
-    /// a resolvable coordinate -- scores "usable overlap hours" as the
-    /// intersection of (altitude ≥ `minAltitudeDeg`) AND (inside the dark
-    /// window) AND (Moon OK: separation ≥ 40° from the target OR
-    /// illumination < 60%, evaluated ONCE at the window's midpoint -- same
-    /// rule, same single-point evaluation, as `plan(...)`'s own per-target
-    /// verdict). A target the Moon vetoes contributes exactly `0` usable
-    /// hours for that night (not a reduced number) and is therefore never
-    /// among that night's `bestTargets` -- the veto is binary, not a partial
-    /// penalty, since the Moon is either close and bright enough to ruin
-    /// the exposure or it isn't.
+    /// illumination/position at that window's midpoint, then -- for every
+    /// target with a resolvable coordinate -- computes its altitude-overlap
+    /// window (`NightSweep.sweep`) and scales it by `SkyScore.moonFactor`
+    /// (separation from the midpoint Moon position, midpoint illumination,
+    /// and the fraction of the TARGET's own overlap window during which the
+    /// Moon is actually above the horizon -- `NightSweep.
+    /// moonAboveHorizonFraction`, sampled across that same overlap window).
+    /// "Usable hours" is therefore `overlapHours x moonFactor`: a continuous
+    /// reduction, not a binary veto -- W7-A audit fix, replacing the OLD
+    /// `separation >= 40 || illum < 60` OR-gate that cliffed sharply at its
+    /// threshold (59%@41° kept full hours, 61%@39° zeroed them) and never
+    /// checked Moon altitude at all. Hours reach exactly `0` only in
+    /// `moonFactor`'s own documented limit (100%-illuminated Moon at 0°
+    /// separation, above the horizon for the target's entire overlap
+    /// window) -- see that function's own doc comment.
     ///
     /// Sampling is coarsened to 10-minute steps for the overlap scan (vs.
     /// `plan`'s 2-minute steps): `nights x targets x samples-per-night`
     /// would otherwise scale poorly for a full month against a library with
     /// many targets, and a few minutes of granularity is more than enough
-    /// accuracy at planning-calendar (not pointing) resolution.
+    /// accuracy at planning-calendar (not pointing) resolution. The Moon
+    /// above-horizon sampling reuses this same 10-minute step.
     public static func month(
         from date: Date? = nil,
         nights: Int = 30,
@@ -497,18 +512,26 @@ public enum Planner {
 
             var windows: [NightSummary.BestWindow] = []
             for entry in targetCoords {
+                let overlap = NightSweep.sweep(
+                    raDeg: entry.raDeg, decDeg: entry.decDeg, latDeg: lat, lonDeg: lon,
+                    duskUTC: duskUTC, dawnUTC: dawnUTC, minAltitudeDeg: minAltitudeDeg, stepMinutes: 10
+                )
+                guard overlap.visibleSeconds > 0,
+                      let overlapStart = overlap.visibleStart, let overlapEnd = overlap.visibleEnd
+                else { continue }
+
                 let separation = SunMoon.angularSeparationDeg(
                     ra1: entry.raDeg, dec1: entry.decDeg, ra2: moonAtMidnight.raDeg, dec2: moonAtMidnight.decDeg
                 )
-                let moonOK = separation >= 40 || moonIllum < 60
-                guard moonOK else { continue }
-
-                let usableSeconds = overlapSeconds(
-                    raDeg: entry.raDeg, decDeg: entry.decDeg, latDeg: lat, lonDeg: lon,
-                    duskUTC: duskUTC, dawnUTC: dawnUTC, minAltitudeDeg: minAltitudeDeg
+                let moonAboveHorizonFraction = NightSweep.moonAboveHorizonFraction(
+                    latDeg: lat, lonDeg: lon, startUTC: overlapStart, endUTC: overlapEnd, stepMinutes: 10
+                ) ?? 0
+                let moonFactor = SkyScore.moonFactor(
+                    separationDeg: separation, illuminationPercent: moonIllum, aboveHorizonFraction: moonAboveHorizonFraction
                 )
-                guard usableSeconds > 0 else { continue }
-                windows.append(NightSummary.BestWindow(target: entry.target, usableHours: usableSeconds / 3600.0))
+                let usableHours = (overlap.visibleSeconds / 3600.0) * moonFactor
+                guard usableHours > 0 else { continue }
+                windows.append(NightSummary.BestWindow(target: entry.target, usableHours: usableHours))
             }
 
             let bestTargets = Array(windows.sorted { $0.usableHours > $1.usableHours }.prefix(3))
@@ -530,35 +553,6 @@ public enum Planner {
         let startOfDay = calendar.startOfDay(for: day)
         let midnight = calendar.date(byAdding: .day, value: 1, to: startOfDay) ?? startOfDay
         return SunMoon.moonIlluminationPercent(julianDay: JulianDate.julianDay(midnight))
-    }
-
-    /// Seconds, within `[duskUTC, dawnUTC]`, that the target's altitude is
-    /// `>= minAltitudeDeg` -- a coarser (`stepMinutes`, default 10) sibling
-    /// of `sweepNight`'s per-plan altitude scan, used only by `month`'s
-    /// per-night x per-target overlap scoring.
-    private static func overlapSeconds(
-        raDeg: Double,
-        decDeg: Double,
-        latDeg: Double,
-        lonDeg: Double,
-        duskUTC: Date,
-        dawnUTC: Date,
-        minAltitudeDeg: Double,
-        stepMinutes: Double = 10
-    ) -> Double {
-        var visibleSampleCount = 0
-        let stepSeconds = stepMinutes * 60
-        var t = duskUTC
-        while t <= dawnUTC {
-            let jd = JulianDate.julianDay(t)
-            let lst = SiderealTime.lstHours(julianDay: jd, longitudeDeg: lonDeg)
-            let position = AltAz.position(raDeg: raDeg, decDeg: decDeg, lstHours: lst, latDeg: latDeg)
-            if position.altitudeDeg >= minAltitudeDeg {
-                visibleSampleCount += 1
-            }
-            t = t.addingTimeInterval(stepSeconds)
-        }
-        return Double(visibleSampleCount) * stepSeconds
     }
 
     /// Builds tonight's plan for every target on record, sorted by `score`
@@ -596,7 +590,13 @@ public enum Planner {
         for stat in stats {
             let targetLights = allLights.filter { $0.target == stat.target }
             let coord = TargetCoordinates.medianCoordinates(files: targetLights, meta: allMeta)
-            let goalSeconds = GoalTag.parse(tags: stat.tags)
+            let effectiveGoal = IntegrationGoalCalculator.effectiveGoal(
+                tags: stat.tags,
+                rule: config.integrationReference,
+                setup: ImagingSetupProfile.defaultSetup(in: config.imagingSetups),
+                target: TargetCatalog.target(matchingFolderName: stat.target)
+            )
+            let goalSeconds = effectiveGoal.seconds
             let isComet = TargetNameResolver.resolve(folderName: stat.target).isComet
 
             // R11-T5/F2: per-filter goal breakdown, gated on the target
@@ -615,6 +615,7 @@ public enum Planner {
                 displayName: stat.displayName,
                 usableIntegrationSeconds: stat.usableIntegrationSeconds,
                 goalSeconds: goalSeconds,
+                goalSource: effectiveGoal.source,
                 filterGoals: filterGoals,
                 coord: coord,
                 isComet: isComet,
@@ -692,6 +693,7 @@ public enum Planner {
         displayName: String,
         usableIntegrationSeconds: Double,
         goalSeconds: Double?,
+        goalSource: IntegrationGoalSource?,
         filterGoals: [FilterIntegration],
         coord: (raDeg: Double, decDeg: Double)?,
         isComet: Bool,
@@ -710,6 +712,7 @@ public enum Planner {
                 decDeg: coord?.decDeg,
                 usableIntegrationSeconds: usableIntegrationSeconds,
                 goalSeconds: goalSeconds,
+                goalSource: goalSource,
                 verdict: Verdict.cometStaleCoordinate,
                 score: 0,
                 filterGoals: filterGoals
@@ -726,6 +729,7 @@ public enum Planner {
                 decDeg: coord?.decDeg,
                 usableIntegrationSeconds: usableIntegrationSeconds,
                 goalSeconds: goalSeconds,
+                goalSource: goalSource,
                 verdict: Verdict.noCoordinate,
                 score: 0,
                 filterGoals: filterGoals
@@ -744,7 +748,35 @@ public enum Planner {
         let culminationLocal = sweep.culminationUTC.map { formatLocalTime($0, timeZone: timeZone) }
         let visibleWindowLocal = NightSweep.visibleWindowLocal(sweep, timeZone: timeZone)
 
-        let moonInterferes = moonIllum > 60 && moonSeparation < 40
+        // W7-A audit fix: the OLD `moonIllum > 60 && moonSeparation < 40`
+        // veto never checked whether the Moon was even above the horizon
+        // during the target's own visible window -- a set Moon (e.g. -28.8°
+        // at the window's midpoint) brightens nothing, yet still fired the
+        // verdict and the score's 0.2x penalty. `moonAboveHorizonFraction`
+        // samples the Moon across the SAME window `visibleWindowLocal`
+        // reports (`sweep.visibleStart`...`sweep.visibleEnd`), reusing the
+        // engine's own sampler (`NightSweep.moonAboveHorizonFraction`) --
+        // `nil` (no visible window at all) is treated as "the Moon question
+        // is moot", since a target with no visible window never reaches
+        // this verdict branch anyway.
+        let moonAboveHorizonFraction: Double
+        if let visStart = sweep.visibleStart, let visEnd = sweep.visibleEnd {
+            moonAboveHorizonFraction = NightSweep.moonAboveHorizonFraction(
+                latDeg: siteLat, lonDeg: siteLon, startUTC: visStart, endUTC: visEnd
+            ) ?? 0
+        } else {
+            moonAboveHorizonFraction = 0
+        }
+        let moonScoreFactor = SkyScore.moonFactor(
+            separationDeg: moonSeparation, illuminationPercent: moonIllum, aboveHorizonFraction: moonAboveHorizonFraction
+        )
+        // The "Hold zavar" verdict TEXT stays the same illum/separation gate
+        // it always was, additionally requiring the Moon to be above the
+        // horizon at all for at least part of the window -- a Moon that
+        // never rises during the target's visible window can never
+        // interfere with it, no matter how full or how close it sits to the
+        // target's coordinate.
+        let moonInterferes = moonIllum > 60 && moonSeparation < 40 && moonAboveHorizonFraction > 0
         var verdict: String
         if sweep.maxAltitudeDeg < minAltitudeDeg {
             verdict = Verdict.tooLow(sweep.maxAltitudeDeg)
@@ -772,9 +804,10 @@ public enum Planner {
         let score = self.score(
             usableIntegrationSeconds: usableIntegrationSeconds,
             goalSeconds: goalSeconds,
+            goalSource: goalSource,
             filterGoals: filterGoals,
             visibleHours: visibleHours,
-            moonInterferes: moonInterferes
+            moonScoreFactor: moonScoreFactor
         )
 
         return TargetPlan(
@@ -784,8 +817,10 @@ public enum Planner {
             decDeg: coord.decDeg,
             usableIntegrationSeconds: usableIntegrationSeconds,
             goalSeconds: goalSeconds,
+            goalSource: goalSource,
             culminationUTC: sweep.culminationUTC.map(isoString),
             culminationLocal: culminationLocal,
+            isGenuineCulmination: sweep.isGenuineCulmination,
             maxAltitudeDeg: sweep.maxAltitudeDeg,
             visibleWindowLocal: visibleWindowLocal,
             visibleHours: visibleHours,
@@ -800,30 +835,38 @@ public enum Planner {
 
     // MARK: - Score
 
-    /// `missingNeed x visibilityFactor x moonPenalty`. `missingNeed` is 1.0
-    /// when there's no overall or filter goal (every target with data is
-    /// equally "worth finishing"). Otherwise it is the larger of the
-    /// overall missing hours and the largest per-filter deficit, capped
-    /// at 99 (so a wildly under-shot goal doesn't dwarf everything else)
-    /// and floored at a small positive value once the goal is already met
-    /// (still shootable, just deprioritized under anything still missing
-    /// hours). `visibilityFactor` is `min(visibleHours/4, 1)`.
-    /// `moonPenalty` is 0.2 when the verdict is "Hold zavar", else 1.
+    /// `missingNeed x visibilityFactor x moonScoreFactor`. Explicit overall
+    /// and filter goals use missing hours because they are deliberate user
+    /// intent. An automatic reference uses only its missing fraction (0...1),
+    /// so it usefully orders otherwise-unplanned targets without outranking
+    /// an outstanding explicit filter plan merely because every target now
+    /// has a default number of hours. Explicit need is capped at 99 and a
+    /// completed target is floored at 0.1. `visibilityFactor` is
+    /// `min(visibleHours/4, 1)`.
+    /// `moonScoreFactor` is `SkyScore.moonFactor` (W7-A: continuous,
+    /// altitude-weighted -- see that function's own doc for the shape and
+    /// the "hours go to zero" limit; replaces the old binary
+    /// `moonPenalty(moonInterferes:)`, 0.2 or 1 with no altitude check).
     private static func score(
         usableIntegrationSeconds: Double,
         goalSeconds: Double?,
+        goalSource: IntegrationGoalSource?,
         filterGoals: [FilterIntegration],
         visibleHours: Double,
-        moonInterferes: Bool
+        moonScoreFactor: Double
     ) -> Double {
-        let overallMissingHours = goalSeconds.map {
-            max(0, ($0 - usableIntegrationSeconds) / 3600.0)
+        let overallMissingNeed = goalSeconds.map { goal -> Double in
+            let missing = max(0, goal - usableIntegrationSeconds)
+            if goalSource == .automaticReference, goal > 0 {
+                return min(missing / goal, 1)
+            }
+            return missing / 3600.0
         }
         let largestFilterMissingHours = filterGoals
             .compactMap(\.missingSeconds)
             .map { $0 / 3600.0 }
             .max()
-        let relevantMissingHours = max(overallMissingHours ?? 0, largestFilterMissingHours ?? 0)
+        let relevantMissingHours = max(overallMissingNeed ?? 0, largestFilterMissingHours ?? 0)
         let hasAnyGoal = goalSeconds != nil || filterGoals.contains { $0.goalSeconds != nil }
 
         let missingNeed: Double
@@ -834,7 +877,7 @@ public enum Planner {
         }
         return missingNeed
             * SkyScore.visibilityFactor(visibleHours: visibleHours)
-            * SkyScore.moonPenalty(moonInterferes: moonInterferes)
+            * moonScoreFactor
     }
 
     // MARK: - Helpers

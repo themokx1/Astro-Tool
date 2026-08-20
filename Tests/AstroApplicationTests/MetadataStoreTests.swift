@@ -1,0 +1,1212 @@
+@testable import AstroApplication
+import AstroCore
+import Foundation
+import Testing
+
+@Suite("Durable V2 workflow metadata")
+struct MetadataStoreTests {
+    @Test("Project goals and notes round-trip outside the image library")
+    func projectAnnotationRoundTrip() async throws {
+        let store = try MetadataStore.temporary()
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "IC 1396", displayName: "Elephant Trunk", phase: .collecting
+        )
+        try await store.save(project)
+        let annotation = ProjectAnnotationRecord(
+            projectID: project.id,
+            integrationGoalHours: 12.5,
+            notes: "Continue SV220 capture after midnight.",
+            updatedAt: Date(timeIntervalSince1970: 1_786_404_000)
+        )
+
+        try await store.save(annotation)
+
+        #expect(try await store.projectAnnotation(projectID: project.id) == annotation)
+    }
+
+    @Test("Acknowledging a finding group upserts on ack key and revoking removes it")
+    func acknowledgeFindingGroupUpsertsAndRevokes() async throws {
+        let store = try MetadataStore.temporary()
+        let ackedAt = Date(timeIntervalSince1970: 1_786_404_000)
+
+        try await store.acknowledgeFindingGroup(category: "dark", groupKey: "IC1396|2026-08-08", note: "known gap", at: ackedAt)
+
+        let acks = try await store.acknowledgements()
+        #expect(acks.count == 1)
+        let ack = try #require(acks.first)
+        #expect(ack.ackKey == MetadataStore.ackKey(category: "dark", groupKey: "IC1396|2026-08-08"))
+        #expect(ack.category == "dark")
+        #expect(ack.groupKey == "IC1396|2026-08-08")
+        #expect(ack.note == "known gap")
+        #expect(abs(ack.ackedAt.timeIntervalSince1970 - ackedAt.timeIntervalSince1970) < 1)
+
+        let updatedAt = Date(timeIntervalSince1970: 1_786_500_000)
+        try await store.acknowledgeFindingGroup(category: "dark", groupKey: "IC1396|2026-08-08", note: "still fine", at: updatedAt)
+        let updatedAcks = try await store.acknowledgements()
+        #expect(updatedAcks.count == 1)
+        #expect(updatedAcks.first?.note == "still fine")
+
+        try await store.revokeAcknowledgement(ackKey: ack.ackKey)
+        #expect(try await store.acknowledgements().isEmpty)
+    }
+
+    @Test("Revoking an acknowledgement that was never made is a no-op")
+    func revokingUnknownAcknowledgementIsANoOp() async throws {
+        let store = try MetadataStore.temporary()
+
+        try await store.revokeAcknowledgement(ackKey: MetadataStore.ackKey(category: "dark", groupKey: "missing"))
+
+        #expect(try await store.acknowledgements().isEmpty)
+    }
+
+    @Test("Audit run history records runs newest-first and diffs the two most recent")
+    func auditRunHistoryRecordsAndDiffsRuns() async throws {
+        let store = try MetadataStore.temporary()
+
+        try await store.recordAuditRun(
+            findingCount: 2, groupKeys: ["dark|A", "flat|B"],
+            at: Date(timeIntervalSince1970: 1_786_400_000)
+        )
+        try await store.recordAuditRun(
+            findingCount: 2, groupKeys: ["dark|A", "duplicate|C"],
+            at: Date(timeIntervalSince1970: 1_786_500_000)
+        )
+
+        let history = try await store.auditRunHistory()
+        #expect(history.count == 2)
+        #expect(history[0].groupKeys == ["dark|A", "duplicate|C"])
+        #expect(history[1].groupKeys == ["dark|A", "flat|B"])
+
+        let diff = try await #require(store.auditRunDiff())
+        #expect(diff.newGroupKeys == ["duplicate|C"])
+        #expect(diff.resolvedGroupKeys == ["flat|B"])
+    }
+
+    @Test("A single audit run has no diff")
+    func singleAuditRunHasNoDiff() async throws {
+        let store = try MetadataStore.temporary()
+        try await store.recordAuditRun(findingCount: 1, groupKeys: ["dark|A"])
+
+        #expect(try await store.auditRunDiff() == nil)
+    }
+
+    @Test("Audit run history honors the requested limit")
+    func auditRunHistoryHonorsLimit() async throws {
+        let store = try MetadataStore.temporary()
+        for index in 0..<5 {
+            try await store.recordAuditRun(
+                findingCount: index, groupKeys: ["group|\(index)"],
+                at: Date(timeIntervalSince1970: 1_786_400_000 + Double(index))
+            )
+        }
+
+        let limited = try await store.auditRunHistory(limit: 2)
+        #expect(limited.count == 2)
+        #expect(limited[0].findingCount == 4)
+        #expect(limited[1].findingCount == 3)
+    }
+
+    // MARK: - Planning saved targets (schema v6)
+
+    @Test("Saving a target is idempotent on designation and updates its note in place")
+    func saveTargetIsIdempotentOnDesignation() async throws {
+        let store = try MetadataStore.temporary()
+        let firstSavedAt = Date(timeIntervalSince1970: 1_786_400_000)
+
+        let first = try await store.saveTarget(designation: "IC 1396", note: nil, at: firstSavedAt)
+        let second = try await store.saveTarget(
+            designation: "IC 1396", note: "Shoot after midnight",
+            at: Date(timeIntervalSince1970: 1_786_500_000)
+        )
+
+        #expect(try await store.savedTargets().count == 1)
+        #expect(second.id == first.id)
+        // Re-saving updates the note but does not bump `savedAt` -- an
+        // already-saved target shouldn't jump back to the top of a
+        // newest-first list just because its note changed.
+        #expect(second.savedAt == firstSavedAt)
+        #expect(second.note == "Shoot after midnight")
+    }
+
+    @Test("updateNote changes only the note, and is a no-op for a target that was never saved")
+    func updateNoteChangesOnlyTheNote() async throws {
+        let store = try MetadataStore.temporary()
+        let savedAt = Date(timeIntervalSince1970: 1_786_400_000)
+        try await store.saveTarget(designation: "M 42", note: "Initial note", at: savedAt)
+
+        try await store.updateNote(designation: "M 42", note: "Updated note")
+
+        let record = try await #require(store.savedTarget(designation: "M 42"))
+        #expect(record.note == "Updated note")
+        #expect(record.savedAt == savedAt)
+
+        // No-op for a designation that was never saved.
+        try await store.updateNote(designation: "Never Saved", note: "orphan note")
+        #expect(try await store.savedTarget(designation: "Never Saved") == nil)
+    }
+
+    @Test("Removing a saved target is reversible and a no-op if it was never saved")
+    func removeSavedTargetIsANoOpWhenMissing() async throws {
+        let store = try MetadataStore.temporary()
+        try await store.saveTarget(designation: "M 31")
+
+        try await store.removeSavedTarget(designation: "M 31")
+
+        #expect(try await store.savedTargets().isEmpty)
+
+        // Removing again (already gone) is a no-op, not an error.
+        try await store.removeSavedTarget(designation: "M 31")
+        #expect(try await store.savedTargets().isEmpty)
+    }
+
+    @Test("savedTargets lists every saved target newest-saved first")
+    func savedTargetsOrdersNewestFirst() async throws {
+        let store = try MetadataStore.temporary()
+        try await store.saveTarget(designation: "M 31", at: Date(timeIntervalSince1970: 1_786_400_000))
+        try await store.saveTarget(designation: "IC 1396", at: Date(timeIntervalSince1970: 1_786_500_000))
+        try await store.saveTarget(designation: "M 42", at: Date(timeIntervalSince1970: 1_786_450_000))
+
+        let saved = try await store.savedTargets()
+
+        #expect(saved.map(\.designation) == ["IC 1396", "M 42", "M 31"])
+    }
+
+    @Test("All UUID workflow records round-trip with stable lineage")
+    func metadataRoundTripsStableIdentityAndLineage() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+        let records = SampleRecords.make()
+
+        try await store.save(records.project)
+        try await store.save(records.night)
+        try await store.save(records.series)
+        try await store.save(records.frameDecision)
+        try await store.save(records.reviewState)
+        try await store.save(records.mutationJournal)
+
+        #expect(try await store.project(id: records.project.id) == records.project)
+        #expect(try await store.night(id: records.night.id) == records.night)
+        #expect(try await store.series(id: records.series.id) == records.series)
+        #expect(try await store.frameDecision(id: records.frameDecision.id) == records.frameDecision)
+        #expect(try await store.reviewState(id: records.reviewState.id) == records.reviewState)
+        #expect(try await store.mutationJournal(id: records.mutationJournal.id) == records.mutationJournal)
+    }
+
+    @Test("Saving the same UUID updates in place without breaking children")
+    func stableIdentityUpsertPreservesChildren() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+        let records = SampleRecords.make()
+        try await store.save(records.project)
+        try await store.save(records.night)
+        try await store.save(records.series)
+
+        let updated = ProjectRecord(
+            id: records.project.id,
+            catalogID: records.project.catalogID,
+            displayName: "Elephant Trunk Nebula",
+            phase: .processing
+        )
+        try await store.save(updated)
+
+        #expect(try await store.project(id: updated.id) == updated)
+        #expect(try await store.series(id: records.series.id) == records.series)
+        #expect(try await store.projectCount() == 1)
+    }
+
+    @Test("Foreign keys reject orphan workflow records")
+    func orphanForeignKeyIsRejected() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+        let orphan = SeriesRecord(
+            id: UUID(),
+            projectID: UUID(),
+            nightID: UUID(),
+            setupID: "widefield-rig",
+            setupDescriptor: "RedCat 51 · ASI2600MC",
+            sensorMode: .osc,
+            passband: .dualBand,
+            exposureSeconds: 120,
+            filterName: "SV220",
+            filterID: "svbony-sv220",
+            gain: 100,
+            offset: 50,
+            binning: "1x1"
+        )
+
+        await #expect(throws: AstroError.self) {
+            try await store.save(orphan)
+        }
+        #expect(try await store.series(id: orphan.id) == nil)
+    }
+
+    @Test("A failed batch rolls back every earlier write")
+    func failedBatchRollsBack() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+        let first = ProjectRecord(
+            id: UUID(),
+            catalogID: "IC 1396",
+            displayName: "First",
+            phase: .planned
+        )
+        let duplicateCatalog = ProjectRecord(
+            id: UUID(),
+            catalogID: "ic 1396",
+            displayName: "Duplicate",
+            phase: .collecting
+        )
+
+        await #expect(throws: AstroError.self) {
+            try await store.save(MetadataWriteBatch(projects: [first, duplicateCatalog]))
+        }
+
+        #expect(try await store.project(id: first.id) == nil)
+        #expect(try await store.projectCount() == 0)
+    }
+
+    @Test("A fresh database installs the current schema, foreign keys, and lookup indexes")
+    func freshSchemaIsComplete() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+
+        #expect(try await store.schemaVersion() == MetadataSchema.currentVersion)
+        #expect(try await store.foreignKeysEnabled())
+
+        let objects = try schemaObjects(at: fixture.databaseURL)
+        #expect(objects.tables.isSuperset(of: [
+            "metadata_schema",
+            "projects",
+            "nights",
+            "series",
+            "frame_decisions",
+            "review_states",
+            "mutation_journal",
+            "project_annotations",
+            "audit_acknowledgements",
+            "audit_run_history",
+            "planning_saved_targets",
+            "scan_completions",
+        ]))
+        #expect(objects.indexes.isSuperset(of: [
+            "idx_series_project",
+            "idx_series_night",
+            "idx_frame_decisions_series",
+            "idx_review_states_series",
+            "idx_mutation_journal_operation",
+            "idx_project_annotations_updated",
+            "idx_audit_run_history_ran_at",
+            "idx_planning_saved_targets_saved_at",
+        ]))
+        // W4-6 (owner decision): schema v8 drops `results`/`lineage_edges`
+        // -- no writer anywhere in the product ever populated them. A fresh
+        // database must never materialize them, not even transiently.
+        #expect(objects.tables.isDisjoint(with: ["results", "lineage_edges"]))
+        #expect(objects.indexes.isDisjoint(with: [
+            "idx_results_project", "idx_results_parent", "idx_lineage_result",
+            "idx_lineage_series_source", "idx_lineage_frame_source", "idx_lineage_result_source",
+        ]))
+    }
+
+    @Test("A version-one database migrates once and reopening is idempotent")
+    func migrationIsIdempotent() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let project = ProjectRecord(
+            id: UUID(),
+            catalogID: "M 42",
+            displayName: "Orion Nebula",
+            phase: .collecting
+        )
+        try createVersionOneDatabase(at: fixture.databaseURL, project: project)
+
+        let firstOpen = try MetadataStore(databaseURL: fixture.databaseURL)
+        #expect(try await firstOpen.schemaVersion() == MetadataSchema.currentVersion)
+        #expect(try await firstOpen.project(id: project.id) == project)
+
+        let secondOpen = try MetadataStore(databaseURL: fixture.databaseURL)
+        #expect(try await secondOpen.schemaVersion() == MetadataSchema.currentVersion)
+        #expect(try await secondOpen.project(id: project.id) == project)
+        #expect(try await secondOpen.projectCount() == 1)
+    }
+
+    @Test("A failed migration rolls back DDL and leaves the old version stamp")
+    func failedMigrationDoesNotAdvanceVersion() throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        try createVersionOneDatabase(at: fixture.databaseURL)
+        do {
+            let database = try SQLiteDB(path: fixture.databaseURL.path)
+            try database.exec("CREATE TABLE mutation_journal(unexpected TEXT NOT NULL);")
+        }
+
+        #expect(throws: AstroError.self) {
+            _ = try MetadataStore(databaseURL: fixture.databaseURL)
+        }
+
+        let database = try SQLiteDB(path: fixture.databaseURL.path)
+        #expect(try schemaVersion(in: database) == 1)
+        #expect(try !tableExists("results", in: database))
+        #expect(try !tableExists("lineage_edges", in: database))
+        #expect(try !tableExists("review_states", in: database))
+    }
+
+    @Test("A version-four database migrates to version five preserving existing data")
+    func migratesVersionFourToVersionFive() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "M 31", displayName: "Andromeda Galaxy", phase: .collecting
+        )
+        try createVersionFourDatabase(at: fixture.databaseURL, project: project)
+
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+
+        // Opening a v4 database migrates all the way to the CURRENT schema
+        // version in one pass (v6 as of this branch) -- this test only
+        // pins the v4 -> v5 step's own data preservation, not a specific
+        // final version number, so it stays correct as later versions land.
+        #expect(try await store.schemaVersion() == MetadataSchema.currentVersion)
+        #expect(try await store.project(id: project.id) == project)
+        #expect(try await store.acknowledgements().isEmpty)
+        #expect(try await store.auditRunHistory().isEmpty)
+    }
+
+    @Test("A failed version-five migration rolls back DDL and leaves the old version stamp")
+    func failedVersionFiveMigrationDoesNotAdvanceVersion() throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        try createVersionFourDatabase(at: fixture.databaseURL)
+        do {
+            let database = try SQLiteDB(path: fixture.databaseURL.path)
+            try database.exec("CREATE TABLE idx_audit_run_history_ran_at(unexpected TEXT NOT NULL);")
+        }
+
+        #expect(throws: AstroError.self) {
+            _ = try MetadataStore(databaseURL: fixture.databaseURL)
+        }
+
+        let database = try SQLiteDB(path: fixture.databaseURL.path)
+        #expect(try schemaVersion(in: database) == 4)
+        #expect(try !tableExists("audit_acknowledgements", in: database))
+        #expect(try !tableExists("audit_run_history", in: database))
+    }
+
+    @Test("A version-five database migrates to version six preserving existing data")
+    func migratesVersionFiveToVersionSix() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "M 31", displayName: "Andromeda Galaxy", phase: .collecting
+        )
+        try createVersionFiveDatabase(at: fixture.databaseURL, project: project)
+
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+
+        // Same forward-safety as `migratesVersionFourToVersionFive`: pins
+        // the v5 -> v6 step's own data preservation, not a specific final
+        // version number, so a later v7+ doesn't break this assertion.
+        #expect(try await store.schemaVersion() == MetadataSchema.currentVersion)
+        #expect(try await store.project(id: project.id) == project)
+        #expect(try await store.savedTargets().isEmpty)
+        // v5's own tables/data must still be intact after the v6 migration.
+        #expect(try await store.acknowledgements().isEmpty)
+    }
+
+    @Test("A failed version-six migration rolls back DDL and leaves the old version stamp")
+    func failedVersionSixMigrationDoesNotAdvanceVersion() throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        try createVersionFiveDatabase(at: fixture.databaseURL)
+        do {
+            let database = try SQLiteDB(path: fixture.databaseURL.path)
+            try database.exec("CREATE TABLE idx_planning_saved_targets_saved_at(unexpected TEXT NOT NULL);")
+        }
+
+        #expect(throws: AstroError.self) {
+            _ = try MetadataStore(databaseURL: fixture.databaseURL)
+        }
+
+        let database = try SQLiteDB(path: fixture.databaseURL.path)
+        #expect(try schemaVersion(in: database) == 5)
+        #expect(try !tableExists("planning_saved_targets", in: database))
+    }
+
+    @Test("A version-six database migrates to version seven preserving existing data")
+    func migratesVersionSixToVersionSeven() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "M 31", displayName: "Andromeda Galaxy", phase: .collecting
+        )
+        try createVersionSixDatabase(at: fixture.databaseURL, project: project)
+
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+
+        // Same forward-safety as `migratesVersionFiveToVersionSix`: pins the
+        // v6 -> v7 step's own data preservation, not a specific final
+        // version number, so a later v8+ doesn't break this assertion.
+        #expect(try await store.schemaVersion() == MetadataSchema.currentVersion)
+        #expect(try await store.project(id: project.id) == project)
+        #expect(try await store.lastScanCompletedAt() == nil)
+        // v6's own tables/data must still be intact after the v7 migration.
+        #expect(try await store.savedTargets().isEmpty)
+        #expect(try await store.acknowledgements().isEmpty)
+    }
+
+    @Test("A failed version-seven migration rolls back DDL and leaves the old version stamp")
+    func failedVersionSevenMigrationDoesNotAdvanceVersion() throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        try createVersionSixDatabase(at: fixture.databaseURL)
+        do {
+            // `scan_completions`'s own `CREATE TABLE IF NOT EXISTS` only
+            // suppresses a collision with an existing TABLE/VIEW of that
+            // name, not an INDEX -- mirrors
+            // `failedVersionSixMigrationDoesNotAdvanceVersion`'s use of a
+            // cross-type name collision to force a real failure despite
+            // `IF NOT EXISTS`.
+            let database = try SQLiteDB(path: fixture.databaseURL.path)
+            try database.exec("""
+            CREATE TABLE placeholder_for_v7_collision(x TEXT);
+            CREATE INDEX scan_completions ON placeholder_for_v7_collision(x);
+            """)
+        }
+
+        #expect(throws: AstroError.self) {
+            _ = try MetadataStore(databaseURL: fixture.databaseURL)
+        }
+
+        let database = try SQLiteDB(path: fixture.databaseURL.path)
+        #expect(try schemaVersion(in: database) == 6)
+        var scanCompletionsIsATable = false
+        try database.query(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'scan_completions';"
+        ) { _ in scanCompletionsIsATable = true }
+        #expect(!scanCompletionsIsATable, "the v7 table must never have been created")
+    }
+
+    // MARK: - Dropping the unwritten lineage schema (schema v8, W4-6)
+
+    @Test("A version-seven database migrates to version eight, dropping the unwritten lineage tables")
+    func migratesVersionSevenToVersionEight() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "M 31", displayName: "Andromeda Galaxy", phase: .collecting
+        )
+        try createVersionSevenDatabase(at: fixture.databaseURL, project: project)
+
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+
+        // Same forward-safety as `migratesVersionSixToVersionSeven`: pins
+        // the v7 -> v8 step's own effect, not a specific final version
+        // number, so a later v9+ doesn't break this assertion.
+        #expect(try await store.schemaVersion() == MetadataSchema.currentVersion)
+        #expect(try await store.project(id: project.id) == project)
+        // v7's own data must still be intact after the v8 migration.
+        #expect(try await store.lastScanCompletedAt() == nil)
+        #expect(try await store.savedTargets().isEmpty)
+        #expect(try await store.acknowledgements().isEmpty)
+
+        let database = try SQLiteDB(path: fixture.databaseURL.path)
+        #expect(try !tableExists("results", in: database))
+        #expect(try !tableExists("lineage_edges", in: database))
+    }
+
+    @Test("A failed version-eight migration rolls back DDL, leaves the old version stamp, and keeps existing lineage rows")
+    func failedVersionEightMigrationDoesNotAdvanceVersion() throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let project = ProjectRecord(
+            id: UUID(), catalogID: "M 31", displayName: "Andromeda Galaxy", phase: .collecting
+        )
+        try createVersionSevenDatabase(at: fixture.databaseURL, project: project)
+        let firstResultID = UUID().uuidString.lowercased()
+        let secondResultID = UUID().uuidString.lowercased()
+        do {
+            // A `lineage_edges` row still pointing at a `results` row forces
+            // `DROP TABLE results`'s own implicit `DELETE FROM` (see
+            // `MetadataSchema.versionEightSQL`'s doc comment) into that
+            // row's `ON DELETE RESTRICT` -- proven at the raw SQLite level
+            // before writing that migration, not assumed. Two rows because
+            // `lineage_edges`'s own CHECK forbids a row citing itself as its
+            // source; the second row is only there to be a valid, distinct
+            // source.
+            let database = try SQLiteDB(path: fixture.databaseURL.path)
+            let projectIDText = project.id.uuidString.lowercased()
+            for resultID in [firstResultID, secondResultID] {
+                try database.run(
+                    """
+                    INSERT INTO results(id, project_id, kind, role, created_at)
+                    VALUES (?, ?, 'stack', 'intermediate', 0);
+                    """,
+                    bind: [.text(resultID), .text(projectIDText)]
+                )
+            }
+            try database.run(
+                """
+                INSERT INTO lineage_edges(id, result_id, source_kind, source_result_id)
+                VALUES (?, ?, 'result', ?);
+                """,
+                bind: [.text(UUID().uuidString.lowercased()), .text(firstResultID), .text(secondResultID)]
+            )
+        }
+
+        #expect(throws: AstroError.self) {
+            _ = try MetadataStore(databaseURL: fixture.databaseURL)
+        }
+
+        let database = try SQLiteDB(path: fixture.databaseURL.path)
+        #expect(try schemaVersion(in: database) == 7)
+        #expect(try tableExists("results", in: database))
+        #expect(try tableExists("lineage_edges", in: database))
+        var survivingResultIDs: [String] = []
+        try database.query("SELECT id FROM results ORDER BY id;") { row in
+            if let id = row.string(0) { survivingResultIDs.append(id) }
+        }
+        #expect(Set(survivingResultIDs) == Set([firstResultID, secondResultID]))
+    }
+
+    @Test("A schema newer than this build is rejected without modification")
+    func futureSchemaIsRejected() throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let futureVersion = MetadataSchema.currentVersion + 1
+        do {
+            let database = try SQLiteDB(path: fixture.databaseURL.path)
+            try database.exec(Self.schemaVersionSQL)
+            try database.run(
+                "INSERT INTO metadata_schema(singleton, version) VALUES (1, ?);",
+                bind: [.int(Int64(futureVersion))]
+            )
+            try database.exec("PRAGMA journal_mode=DELETE;")
+        }
+
+        let beforeBytes = try Data(contentsOf: fixture.databaseURL)
+        let beforeNames = try Set(FileManager.default.contentsOfDirectory(
+            atPath: fixture.container.path
+        ))
+
+        do {
+            _ = try MetadataStore(databaseURL: fixture.databaseURL)
+            Issue.record("Expected a future schema to be rejected")
+        } catch let error as MetadataStoreError {
+            #expect(error == .unsupportedSchemaVersion(
+                found: futureVersion,
+                supported: MetadataSchema.currentVersion
+            ))
+        }
+
+        #expect(try Data(contentsOf: fixture.databaseURL) == beforeBytes)
+        #expect(try Set(FileManager.default.contentsOfDirectory(
+            atPath: fixture.container.path
+        )) == beforeNames)
+    }
+
+    @Test("Concurrent store opens migrate one old schema exactly once")
+    func concurrentMigrationIsIdempotent() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        try createVersionOneDatabase(at: fixture.databaseURL)
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0..<8 {
+                group.addTask {
+                    let store = try MetadataStore(databaseURL: fixture.databaseURL)
+                    #expect(try await store.schemaVersion() == MetadataSchema.currentVersion)
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+        #expect(try await store.schemaVersion() == MetadataSchema.currentVersion)
+    }
+
+    @Test("Invalid civil dates, time zones, and non-finite measurements are rejected")
+    func invalidDomainValuesAreRejected() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+        let records = SampleRecords.make()
+        try await store.save(records.project)
+
+        let invalidNights = [
+            NightRecord(id: UUID(), localDate: "2026-02-30", timeZoneID: "Europe/Budapest"),
+            NightRecord(id: UUID(), localDate: "2026-08-08", timeZoneID: "Not/A_Timezone"),
+        ]
+        for night in invalidNights {
+            await #expect(throws: MetadataStoreError.self) {
+                try await store.save(night)
+            }
+        }
+
+        try await store.save(records.night)
+        let invalidSeries = SeriesRecord(
+            id: UUID(),
+            projectID: records.project.id,
+            nightID: records.night.id,
+            setupID: nil,
+            setupDescriptor: "Fixture",
+            sensorMode: .osc,
+            passband: .broadband,
+            exposureSeconds: .infinity,
+            filterName: nil,
+            filterID: nil,
+            gain: .nan,
+            offset: nil,
+            binning: "1x1"
+        )
+        await #expect(throws: MetadataStoreError.self) {
+            try await store.save(invalidSeries)
+        }
+    }
+
+    @Test("AppStorage metadata stays outside the read-only image manifest")
+    func metadataUsesExternalStorageWithoutChangingLibrary() async throws {
+        let fixture = try StoreFixture.makeLibrary()
+        defer { fixture.remove() }
+        let before = try await LibraryManifest.capture(root: fixture.libraryRoot)
+        let paths = try AppStoragePaths(
+            applicationSupport: fixture.applicationSupport,
+            caches: fixture.caches,
+            libraryID: LibraryIdentity(rootURL: fixture.libraryRoot),
+            libraryRoot: fixture.libraryRoot
+        )
+
+        let store = try MetadataStore(storagePaths: paths)
+        try await store.save(ProjectRecord(
+            id: UUID(),
+            catalogID: "NGC 7000",
+            displayName: "North America Nebula",
+            phase: .planned
+        ))
+
+        #expect(FileManager.default.fileExists(atPath: paths.metadataDatabase.path))
+        #expect(!paths.metadataDatabase.path.hasPrefix(fixture.libraryRoot.path + "/"))
+        #expect(!FileManager.default.fileExists(atPath: paths.indexDatabase.path))
+        #expect(try await LibraryManifest.capture(root: fixture.libraryRoot) == before)
+    }
+
+    @Test("An AppStorage ancestor swapped to the library cannot redirect metadata writes")
+    func metadataAncestorSwapFailsWithoutLibraryWrites() async throws {
+        let fixture = try StoreFixture.makeLibrary()
+        defer { fixture.remove() }
+        let paths = try AppStoragePaths(
+            applicationSupport: fixture.applicationSupport,
+            caches: fixture.caches,
+            libraryID: LibraryIdentity(rootURL: fixture.libraryRoot),
+            libraryRoot: fixture.libraryRoot
+        )
+        let before = try await LibraryManifest.capture(root: fixture.libraryRoot)
+
+        #expect(throws: (any Error).self) {
+            _ = try MetadataStore(
+                storagePaths: paths,
+                beforeMetadataParentOpen: {
+                    try FileManager.default.createSymbolicLink(
+                        at: fixture.applicationSupport,
+                        withDestinationURL: fixture.libraryRoot
+                    )
+                },
+                beforeDatabaseOpen: {}
+            )
+        }
+
+        #expect(try await LibraryManifest.capture(root: fixture.libraryRoot) == before)
+        #expect(!FileManager.default.fileExists(
+            atPath: fixture.libraryRoot.appendingPathComponent("AstroTool").path
+        ))
+    }
+
+    @Test("Concurrent callers serialize without losing UUID records")
+    func concurrentSavesAreSerialized() async throws {
+        let fixture = try StoreFixture.make()
+        defer { fixture.remove() }
+        let store = try MetadataStore(databaseURL: fixture.databaseURL)
+        let projects = (0..<64).map { index in
+            ProjectRecord(
+                id: UUID(),
+                catalogID: "fixture-\(index)",
+                displayName: "Project \(index)",
+                phase: .collecting
+            )
+        }
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for project in projects {
+                group.addTask {
+                    try await store.save(project)
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        #expect(try await store.projectCount() == projects.count)
+        for project in projects {
+            #expect(try await store.project(id: project.id) == project)
+        }
+    }
+
+    // MARK: - Scan completion (schema v7)
+
+    @Test("A fresh store has never recorded a scan completion")
+    func lastScanCompletedAtIsNilOnAFreshStore() async throws {
+        let store = try MetadataStore.temporary()
+
+        #expect(try await store.lastScanCompletedAt() == nil)
+    }
+
+    @Test("Recording a scan completion is readable back exactly")
+    func recordScanCompletedIsReadableBack() async throws {
+        let store = try MetadataStore.temporary()
+        let completedAt = Date(timeIntervalSince1970: 1_786_404_000)
+
+        try await store.recordScanCompleted(at: completedAt)
+
+        let recorded = try await store.lastScanCompletedAt()
+        #expect(recorded != nil)
+        #expect(abs((recorded ?? .distantPast).timeIntervalSince1970 - completedAt.timeIntervalSince1970) < 1)
+    }
+
+    @Test("Recording a scan completion twice keeps only the newer one")
+    func recordScanCompletedTwiceKeepsTheNewerOne() async throws {
+        let store = try MetadataStore.temporary()
+        let first = Date(timeIntervalSince1970: 1_786_400_000)
+        let second = Date(timeIntervalSince1970: 1_786_500_000)
+
+        try await store.recordScanCompleted(at: first)
+        try await store.recordScanCompleted(at: second)
+
+        let recorded = try await store.lastScanCompletedAt()
+        #expect(abs((recorded ?? .distantPast).timeIntervalSince1970 - second.timeIntervalSince1970) < 1)
+    }
+
+    @Test("Persisted enum values are stable language-neutral tokens")
+    func enumRawValuesAreLanguageNeutral() {
+        #expect(ProjectWorkflowPhase.allCases.map(\.rawValue) == [
+            "planned", "collecting", "processing", "complete", "archived",
+        ])
+        #expect(SeriesSensorMode.allCases.map(\.rawValue) == [
+            "osc", "mono", "dslr", "unknown",
+        ])
+        #expect(SeriesPassband.allCases.map(\.rawValue) == [
+            "broadband", "dual_band", "narrowband", "lrgb", "luminance",
+            "unfiltered", "other", "unknown",
+        ])
+        #expect(FrameVerdict.allCases.map(\.rawValue) == [
+            "undecided", "accepted", "rejected",
+        ])
+        #expect(ReviewStatus.allCases.map(\.rawValue) == ["pending", "in_progress", "complete"])
+        #expect(MutationJournalStatus.allCases.map(\.rawValue) == [
+            "planned", "applying", "applied", "rolling_back", "rolled_back", "failed",
+        ])
+    }
+
+    private static let schemaVersionSQL = """
+    CREATE TABLE metadata_schema(
+      singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+      version INTEGER NOT NULL CHECK(version >= 0)
+    );
+    """
+
+    private func createVersionOneDatabase(
+        at url: URL,
+        project: ProjectRecord? = nil
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let database = try SQLiteDB(path: url.path)
+        try database.exec(Self.schemaVersionSQL)
+        try database.exec("""
+        CREATE TABLE projects(
+          id TEXT PRIMARY KEY NOT NULL,
+          catalog_id TEXT NOT NULL COLLATE NOCASE UNIQUE,
+          display_name TEXT NOT NULL,
+          phase TEXT NOT NULL
+        );
+        CREATE TABLE nights(
+          id TEXT PRIMARY KEY NOT NULL,
+          local_date TEXT NOT NULL,
+          time_zone_id TEXT NOT NULL,
+          UNIQUE(local_date, time_zone_id)
+        );
+        CREATE TABLE series(
+          id TEXT PRIMARY KEY NOT NULL,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+          night_id TEXT NOT NULL REFERENCES nights(id) ON DELETE RESTRICT,
+          setup_id TEXT,
+          setup_descriptor TEXT NOT NULL,
+          sensor_mode TEXT NOT NULL,
+          passband TEXT NOT NULL,
+          exposure_seconds REAL NOT NULL,
+          filter_name TEXT,
+          filter_id TEXT,
+          gain REAL,
+          offset REAL,
+          binning TEXT NOT NULL
+        );
+        CREATE TABLE frame_decisions(
+          id TEXT PRIMARY KEY NOT NULL,
+          series_id TEXT NOT NULL REFERENCES series(id) ON DELETE RESTRICT,
+          relative_path TEXT NOT NULL UNIQUE,
+          verdict TEXT NOT NULL,
+          logically_excluded INTEGER NOT NULL
+        );
+        CREATE INDEX idx_series_project ON series(project_id);
+        CREATE INDEX idx_series_night ON series(night_id);
+        CREATE INDEX idx_frame_decisions_series ON frame_decisions(series_id);
+        """)
+        try database.run(
+            "INSERT INTO metadata_schema(singleton, version) VALUES (1, 1);"
+        )
+        if let project {
+            try database.run(
+                "INSERT INTO projects(id, catalog_id, display_name, phase) VALUES (?, ?, ?, ?);",
+                bind: [
+                    .text(project.id.uuidString.lowercased()),
+                    .text(project.catalogID),
+                    .text(project.displayName),
+                    .text(project.phase.rawValue),
+                ]
+            )
+        }
+    }
+
+    private func createVersionFourDatabase(
+        at url: URL,
+        project: ProjectRecord? = nil
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let database = try SQLiteDB(path: url.path)
+        try database.exec(Self.schemaVersionSQL)
+        try database.exec(MetadataSchema.versionOneSQL)
+        try database.exec(MetadataSchema.versionTwoSQL)
+        try database.exec(MetadataSchema.versionThreeSQL)
+        try database.exec(MetadataSchema.versionFourSQL)
+        try database.run(
+            "INSERT INTO metadata_schema(singleton, version) VALUES (1, 4);"
+        )
+        if let project {
+            try database.run(
+                "INSERT INTO projects(id, catalog_id, display_name, phase) VALUES (?, ?, ?, ?);",
+                bind: [
+                    .text(project.id.uuidString.lowercased()),
+                    .text(project.catalogID),
+                    .text(project.displayName),
+                    .text(project.phase.rawValue),
+                ]
+            )
+        }
+    }
+
+    private func createVersionFiveDatabase(
+        at url: URL,
+        project: ProjectRecord? = nil
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let database = try SQLiteDB(path: url.path)
+        try database.exec(Self.schemaVersionSQL)
+        try database.exec(MetadataSchema.versionOneSQL)
+        try database.exec(MetadataSchema.versionTwoSQL)
+        try database.exec(MetadataSchema.versionThreeSQL)
+        try database.exec(MetadataSchema.versionFourSQL)
+        try database.exec(MetadataSchema.versionFiveSQL)
+        try database.run(
+            "INSERT INTO metadata_schema(singleton, version) VALUES (1, 5);"
+        )
+        if let project {
+            try database.run(
+                "INSERT INTO projects(id, catalog_id, display_name, phase) VALUES (?, ?, ?, ?);",
+                bind: [
+                    .text(project.id.uuidString.lowercased()),
+                    .text(project.catalogID),
+                    .text(project.displayName),
+                    .text(project.phase.rawValue),
+                ]
+            )
+        }
+    }
+
+    private func createVersionSixDatabase(
+        at url: URL,
+        project: ProjectRecord? = nil
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let database = try SQLiteDB(path: url.path)
+        try database.exec(Self.schemaVersionSQL)
+        try database.exec(MetadataSchema.versionOneSQL)
+        try database.exec(MetadataSchema.versionTwoSQL)
+        try database.exec(MetadataSchema.versionThreeSQL)
+        try database.exec(MetadataSchema.versionFourSQL)
+        try database.exec(MetadataSchema.versionFiveSQL)
+        try database.exec(MetadataSchema.versionSixSQL)
+        try database.run(
+            "INSERT INTO metadata_schema(singleton, version) VALUES (1, 6);"
+        )
+        if let project {
+            try database.run(
+                "INSERT INTO projects(id, catalog_id, display_name, phase) VALUES (?, ?, ?, ?);",
+                bind: [
+                    .text(project.id.uuidString.lowercased()),
+                    .text(project.catalogID),
+                    .text(project.displayName),
+                    .text(project.phase.rawValue),
+                ]
+            )
+        }
+    }
+
+    private func createVersionSevenDatabase(
+        at url: URL,
+        project: ProjectRecord? = nil
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let database = try SQLiteDB(path: url.path)
+        try database.exec(Self.schemaVersionSQL)
+        try database.exec(MetadataSchema.versionOneSQL)
+        try database.exec(MetadataSchema.versionTwoSQL)
+        try database.exec(MetadataSchema.versionThreeSQL)
+        try database.exec(MetadataSchema.versionFourSQL)
+        try database.exec(MetadataSchema.versionFiveSQL)
+        try database.exec(MetadataSchema.versionSixSQL)
+        try database.exec(MetadataSchema.versionSevenSQL)
+        try database.run(
+            "INSERT INTO metadata_schema(singleton, version) VALUES (1, 7);"
+        )
+        if let project {
+            try database.run(
+                "INSERT INTO projects(id, catalog_id, display_name, phase) VALUES (?, ?, ?, ?);",
+                bind: [
+                    .text(project.id.uuidString.lowercased()),
+                    .text(project.catalogID),
+                    .text(project.displayName),
+                    .text(project.phase.rawValue),
+                ]
+            )
+        }
+    }
+
+    private func schemaObjects(at url: URL) throws -> (tables: Set<String>, indexes: Set<String>) {
+        let database = try SQLiteDB(path: url.path)
+        var tables = Set<String>()
+        var indexes = Set<String>()
+        try database.query("SELECT type, name FROM sqlite_master WHERE type IN ('table', 'index');") { row in
+            guard let type = row.string(0), let name = row.string(1) else { return }
+            if type == "table" {
+                tables.insert(name)
+            } else if type == "index" {
+                indexes.insert(name)
+            }
+        }
+        return (tables, indexes)
+    }
+
+    private func schemaVersion(in database: SQLiteDB) throws -> Int {
+        var version: Int?
+        try database.query("SELECT version FROM metadata_schema WHERE singleton = 1;") { row in
+            version = row.int64(0).map(Int.init)
+        }
+        return try #require(version)
+    }
+
+    private func tableExists(_ name: String, in database: SQLiteDB) throws -> Bool {
+        var exists = false
+        try database.query(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1;",
+            bind: [.text(name)]
+        ) { _ in exists = true }
+        return exists
+    }
+}
+
+private struct SampleRecords {
+    let project: ProjectRecord
+    let night: NightRecord
+    let series: SeriesRecord
+    let frameDecision: FrameDecisionRecord
+    let reviewState: ReviewStateRecord
+    let mutationJournal: MutationJournalRecord
+
+    static func make() -> Self {
+        let project = ProjectRecord(
+            id: UUID(),
+            catalogID: "IC 1396",
+            displayName: "Elephant Trunk Nebula",
+            phase: .collecting
+        )
+        let night = NightRecord(
+            id: UUID(),
+            localDate: "2026-08-08",
+            timeZoneID: "Europe/Budapest"
+        )
+        let series = SeriesRecord(
+            id: UUID(),
+            projectID: project.id,
+            nightID: night.id,
+            setupID: "widefield-rig",
+            setupDescriptor: "RedCat 51 · ASI2600MC",
+            sensorMode: .osc,
+            passband: .dualBand,
+            exposureSeconds: 120,
+            filterName: "SV220",
+            filterID: "svbony-sv220",
+            gain: 100,
+            offset: 50,
+            binning: "1x1"
+        )
+        let frame = FrameDecisionRecord(
+            id: UUID(),
+            seriesID: series.id,
+            relativePath: "IC1396/2026-08-08/Lights/frame-001.fit",
+            verdict: .accepted,
+            logicallyExcluded: false
+        )
+        return Self(
+            project: project,
+            night: night,
+            series: series,
+            frameDecision: frame,
+            reviewState: ReviewStateRecord(
+                id: UUID(),
+                seriesID: series.id,
+                status: .complete,
+                updatedAt: Date(timeIntervalSince1970: 1_786_404_000)
+            ),
+            mutationJournal: MutationJournalRecord(
+                id: UUID(),
+                operationID: UUID(),
+                status: .applied,
+                createdAt: Date(timeIntervalSince1970: 1_786_404_100),
+                payloadJSON: "{\"kind\":\"archive\"}"
+            )
+        )
+    }
+}
+
+private struct StoreFixture {
+    let container: URL
+    let databaseURL: URL
+    let libraryRoot: URL
+    let applicationSupport: URL
+    let caches: URL
+
+    static func make() throws -> Self {
+        let container = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "AstroTool-MetadataStoreTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: container, withIntermediateDirectories: false)
+        return Self(
+            container: container,
+            databaseURL: container.appendingPathComponent("metadata.sqlite"),
+            libraryRoot: container.appendingPathComponent("Library", isDirectory: true),
+            applicationSupport: container.appendingPathComponent("ApplicationSupport", isDirectory: true),
+            caches: container.appendingPathComponent("Caches", isDirectory: true)
+        )
+    }
+
+    static func makeLibrary() throws -> Self {
+        let fixture = try make()
+        try FileManager.default.createDirectory(
+            at: fixture.libraryRoot.appendingPathComponent("Project/Night", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try Data("immutable image bytes".utf8).write(
+            to: fixture.libraryRoot.appendingPathComponent("Project/Night/frame.fit")
+        )
+        return fixture
+    }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: container)
+    }
+}
+
+/// W4-6 (owner decision): keeps the removed lineage schema removed. Follows
+/// this repo's established "surface" suite convention (`V2ShellSurfaceTests`,
+/// `V2PolishSurfaceTests`): a literal source-text scan rather than a
+/// compile-time check, because the risk this guards against is someone
+/// re-adding raw SQL against `lineage_edges`/`results` (or a new type shaped
+/// like `ResultRecord`/`LineageEdgeRecord`) without the compiler ever
+/// noticing -- those tables simply won't exist at runtime, which fails loud
+/// in a debug build but not in review.
+///
+/// Deliberately does NOT gate on the bare word "results": that collides with
+/// the live `ResultsQuery`/`StackResultsSnapshot`/`ResultsView` stack-
+/// discovery feature this removal does not touch (see `ResultsQuery.swift`).
+/// The literal SQL shapes below (`FROM results`, `INTO results(`, etc.) are
+/// how the dead table was actually queried; `ResultsQuery`/`ResultsView`
+/// never contain them because they read `StackDiscovery`, not SQL.
+@Suite("Dead lineage schema stays dead")
+struct DeadLineageSchemaGateTests {
+    private var repositoryRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    /// Repository-relative paths of every `.swift` file under `relativePath`,
+    /// recursing into subdirectories. Same enumeration approach as
+    /// `V2PolishSurfaceTests.swiftFiles(under:)`.
+    private func swiftFiles(under relativePath: String) throws -> [String] {
+        let directory = repositoryRoot.appendingPathComponent(relativePath)
+        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil) else {
+            return []
+        }
+        var found: [String] = []
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            found.append(url.path.replacingOccurrences(of: repositoryRoot.path + "/", with: ""))
+        }
+        return found
+    }
+
+    @Test("No source file constructs the dropped record types or queries the dropped tables")
+    func deadLineageSchemaHasNoSourceReferences() throws {
+        // `MetadataSchema.swift` is the one file allowed to still say
+        // `lineage_edges`/`results` as literal text: `versionTwoSQL` must
+        // keep creating them (a v1 database still has to pass through that
+        // step on its way to v8), and `versionEightSQL` is the `DROP TABLE`
+        // that removes them. Nothing else has a reason to.
+        let schemaFile = "Sources/AstroApplication/Persistence/MetadataSchema.swift"
+        let bannedEverywhere = ["ResultRecord(", "LineageEdgeRecord("]
+        let bannedOutsideSchema = [
+            "lineage_edges",
+            "FROM results", "INTO results(", "TABLE results(", "JOIN results",
+        ]
+
+        for path in try swiftFiles(under: "Sources") {
+            let source = try String(
+                contentsOf: repositoryRoot.appendingPathComponent(path), encoding: .utf8
+            )
+            for banned in bannedEverywhere {
+                #expect(!source.contains(banned), "\(path) still references dropped schema token '\(banned)'")
+            }
+            guard path != schemaFile else { continue }
+            for banned in bannedOutsideSchema {
+                #expect(!source.contains(banned), "\(path) still references dropped schema token '\(banned)'")
+            }
+        }
+    }
+}

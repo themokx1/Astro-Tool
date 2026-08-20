@@ -8,6 +8,462 @@ történik.
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-08-20
+
+A végleges V3 kiadás a stackelés előtti munkafolyamatot egy teljesen új,
+kezdők számára is követhető első indítással teszi hozzáférhetővé. A béta
+funkciói megmaradnak, de a könyvtár létrehozása és az első ellenőrzött import
+most egyetlen, kihagyható folyamatban elvégezhető.
+
+### Hozzáadva
+
+- **Első siker onboarding** három világos belépési ponttal: „Új képkönyvtár
+  létrehozása”, „Már van AstroTool-könyvtáram” és „Előbb szeretném
+  megérteni”.
+- **Biztonságos könyvtárlétrehozás**, amely a szabványos projekt-, session-,
+  kalibrációs és eredménymappákat automatikusan létrehozza.
+- **Opcionális első import**, amely egy folyamatban hozza létre az első
+  projektet, éjszakát és capture-t, majd ellenőrzött másolatokat készít.
+- **Bármikor újranyitható Első lépések** a Súgó menüből, valamint azonos
+  felépítésű nyilvános weboldal.
+
+### Biztonság
+
+- A kiválasztott forrásfájlok változatlanok maradnak: az onboarding csak
+  másol, minden elkészült fájlt ellenőrzőösszeggel igazol, ütközéskor pedig
+  kihagyja a célfájlt.
+- Nincs önálló törlési művelet. Az AstroTool csak létrehozást, másolást vagy
+  külön jóváhagyott, bizonylatos mozgatást végezhet.
+- Az onboarding kizárólag valódi importbizonylat után állítja, hogy az első
+  projekt elkészült; a folyamat korai bezárása nem jelenít meg hamis sikert.
+
+## [3.0.0-beta.1] - 2026-08-20
+
+Az első V3 béta a stackelés előtti teljes munkafolyamatot bővíti. A V2
+könyvtár- és projektmodellje változatlanul az alap; az új réteg a felvételek
+behozatalától az élő éjszaka követéséig ad opt-in automatizálást.
+
+### Hozzáadva
+
+- **Ingest-figyelő** újonnan csatlakoztatott felvételi kötetek felismerésével,
+  előre kitöltött importtal és óvatos projektjavaslattal.
+- **Kalibrációs automata** Siril-alapú dark master építéssel, explicit
+  mutációs jóváhagyással és „flat kell” indulás előtti jelzéssel.
+- **Irányított rendrakó**, amely a meglévő preview → karantén → nyugta →
+  visszaállítás biztonsági láncot lépésenkénti felülettel használja.
+- **Metaadat-javító** szabályjavaslatokkal és kézi capture-hozzárendelési
+  felülbírálásokkal.
+- **Derült-trigger** opt-in értesítéssel, cache-elt időjárásból és
+  konfigurálható helyi ellenőrzési idővel.
+- **Élő éjszaka-mód** read-only sessionfigyeléssel, gyors csillagmetrikával,
+  célbecsléssel és Kezdőlap-kártyával.
+
+### Javítva
+
+- A Siril verziólekérdezés a stdout pipe-ot a folyamatra várás előtt üríti,
+  ezért nagyobb indítási kimenet sem okozhat kölcsönös várakozást.
+- Az ingest-figyelő eldobja a közben leválasztott kötet későn befejeződő
+  vizsgálatát, ezért nem jelenhet meg elavult importjavaslat.
+- Az élő éjszaka figyelt mappájának cseréje leállítja az előző műveletet,
+  ezért gyors beállításváltás után is pontosan egy figyelőciklus fut.
+- A kalibrációs beállítás mentése megőrzi az automatikus masterépítés opt-in
+  kapcsolóját.
+- A scan materializáló a kanonikus `CaptureResolver` szabályait használja,
+  így az import és a könyvtárindex nem tér el egymástól.
+
+### Béta-korlátok
+
+- A kötetfigyelés, az értesítés és az élő éjszaka csak addig működik, amíg az
+  AstroTool fut; nincs háttér-daemon vagy login helper.
+- Minden könyvtármutáció alapból tiltott, külön engedélyt és tételes
+  megerősítést igényel.
+- Ez prerelease: pótolhatatlan képkönyvtáron használat előtt legyen külön
+  biztonsági mentés, és az első futás maradjon read-only.
+
+## [2.0.0] - 2026-08-19
+
+A végleges 2.0.0: a béta lezárása. Tíz új funkció, a mérési út őszintesége,
+a feldolgozási maradékok teljes rendbetétele és az utolsó hiányzó
+beállítási felület, teljes átkattintásos ellenőrzés után.
+
+### Hozzáadva
+
+- **Indulás előtti lista** a Kezdőlapon: kalibráció, égbolt, Hold és a ma esti
+  fő célpont láthatósága egy ✓/✗ listában; ha minden rendben, egy sorrá csukódik.
+- **Éjszaka-idővonal** az éjszaka-munkatérben: szürkület-, célpont- és
+  felvételi sávok, a felvételi lyukak jelölésével.
+- **Éjszakák ranglistája** az Elemzésekben: mért capture-ök átlátható
+  rangsora FWHM, elfogadási arány és háttér szerint — csak a nyers számok
+  látszanak, rejtett pontszám nincs.
+- **„Ez a hónap tavalyhoz képest"** kártya és **év-összefoglaló** az
+  Elemzésekben; **Hold×égi háttér** összefüggés-kártya (mérésekből).
+- **Alacsony horizont-figyelmeztetés** a reggeli triázsban: ha a leggyengébb
+  keretek mind 35° alatt készültek, a digest kimondja.
+- **Műhold-csík gyanú** a triázsban: fedezeti jelzés, sosem automatikus elvetés.
+- **Felszerelés-összevetés** a Tervezésben: „Összevetés" választóval bármelyik
+  másik mentett összeállítás képkivágása ugyanarra a célpontra.
+- **Két rig, egy éjszaka**: a Kezdőlap javaslata, melyik géped melyik ma esti
+  célpontra való — katalógusméretből vagy a saját előzményeidből.
+- **Célpont-történet** a projektoldalon: első fény, gyűjtések és elkészült
+  stackek idővonala.
+- **Ismétlődő tanulságok**: ha az utolsó éjszakáid többségén fókuszcsúszás
+  vagy hűtési gond volt, a Kezdőlap megnevezi.
+- **Session-kártya export**: 1200×675 megosztható PNG egy éjszakáról,
+  reprezentatív képkockával.
+- **Mérés indítása** gomb az Elemzésekben: valódi csillagmérés (FWHM) a gyors
+  triázs-értékeléstől függetlenül.
+- **Felszerelés-szerkesztő** a Beállításokban: összeállítások felvétele,
+  szerkesztése, törlése a V2 felületen; a Tervezés mostantól a configból
+  olvassa a felszereléseket.
+- **Session-residue minták**: területfüggő maradék-felismerés (a `stacks/`
+  és `processed/` alatt a starless/starmask változat érték, a session-fában
+  maradék), szerkeszthető mintalistával a Beállításokban.
+- **Weboldal**: letisztult bemutatkozó oldal a projekthez (`website/`).
+
+### Javítva
+
+- A **stack-termékek nem minősülnek többé light frame-nek**: az IMAGETYP-öröklés
+  miatt tévesen előléptetett fájlokat a beolvasás magától visszasorolja, a
+  szűrő-statisztikából eltűntek a hamis „Starless/StarMask" sorok, és az
+  integrációs összegek a valódi expozíciót mutatják.
+- Az **értékelés-gomb őszintesége**: a RAW (CR3) képkockák nem mérhetők — a
+  felület ezt kimondja és nem ígéri őket „értékeletlenként".
+- A **tabsor nem ugrál** az éjszaka- és projekt-munkatérben tabváltáskor.
+- Az oldalsáv **Liquid Glass** hatása a Finderéhez igazodik.
+- A rig-összevetés mondata nem tör mondat közben nagybetűre; a szűk oszlopban
+  nem csonkul.
+- A támogatási diagnosztika a valódi időjárás-kapcsolót jelenti.
+- A blink-review szegélyfilmje sötét módban is sötétít, nem világosít.
+- Belső egységesítés: a fingerprint-számítás, az éjszaka-metszet és az
+  IMAGETYP-szerepfeloldás egy-egy kanonikus motorra konvergál.
+
+## [2.0.0-rc.7] - 2026-08-19
+
+A szakértő kiadás: egy szenior-asztrofotós szemlélettel végzett audit, amely a
+teljes égi motort független számítással igazolta (percre pontos), és minden
+talált hibát és hiányt bevitt.
+
+### Hozzáadva
+
+- **Munkára hajtó Kezdőlap**: „N éjszaka képkockái még értékeletlenek" kártya
+  egy-gombos értékeléssel és szenzorprofil-méréssel; felhős esténél
+  „Legközelebbi tiszta éjszaka: …" a 7 napos előrejelzésből; „felhős éjszaka =
+  dark-éjszaka" kártya a hiányzó kalibrációkkal.
+- **Meridián-átfordulás jelzés**: ahol a delelés a ma esti ablakon belülre
+  esik, a sor jelzi („delelés 23:50 — meridián-átfordulás várható"), új
+  szójegyzék-szócikkel.
+- **Mozaik panel-főkönyv**: panelenkénti lemaradás a legjobb panelhez képest,
+  és domináns eltérésnél a projekt következő lépése a kiegyenlítés — előtöltött
+  Új session-nel. (Csak plate-solve-olt képkockákból számol; nem talál ki
+  deficitet.)
+- Az integráció-becslés megmondja, mire épül („μ=21 égi háttérrel becsülve"),
+  és 3+ mért sessiontől a saját méréseidből származó égi háttérrel számol.
+
+### Javítva
+
+- **A Hold csak akkor büntet, ha fent van**: a tervezés a Hold horizont
+  feletti idejével súlyoz a célpont látható ablakában; a 60%/40°-os
+  szikla-vétó helyett folytonos függvény — egyetlen közös képlet a
+  pontszámnak, a havi nézetnek és a vétónak.
+- **Egy fizikai rig egy setup**: a plate-solve által finomított gyújtótáv
+  (255/256/261/262 mm) nem darabolja szét az összeállítást; az
+  expozíció-tanács a teljes anyagot számolja.
+- **A duoband szűrő látszik**: fejléc nélküli OSC-képkockák a capture-mappa
+  vagy -csoport jelmódját öröklik (pl. sv220_dual-band), és a setuphoz
+  alapértelmezett szűrő is rendelhető.
+- **A beolvasás megőrzi a döntéseidet**: a sorozat-azonosítók változásakor a
+  képkocka-döntések átkötődnek az új sorozatokhoz — e nélkül a következő
+  beolvasás hibával leállt volna, és a triázs-munka elveszettnek látszott
+  volna.
+- A két integráció-motor (cél és idő) azonos órákat ad; ablak-széli időpont
+  nem jelenik meg delelésként; a read-noise arány magyarázata pontos.
+
+## [2.0.0-rc.6] - 2026-08-18
+
+### Hozzáadva
+
+- **A Szójegyzék magyarul beszél** — mind a 31 szócikk lefordítva; pont az a
+  funkció, amit akkor nyitsz meg, ha nem értesz egy szakszót.
+- A menüsor „Új projekt…" és „Új éjszaka…" pontjai működnek (eddig örökre
+  le voltak tiltva); minden hibaállapot „Újra" gombot kapott; a „állítsd be
+  a Beállításokban" üzenetek mellett ott a gomb, ami odavisz.
+- Az Elemzések minőségi trendjei **capture-szintűek**: egy éjszaka különböző
+  összeállításai nem keverednek egy vonalba, és minden capture a saját
+  elfogadási arányát mutatja; a FWHM egységgel (arcsec/pixel) jelenik meg.
+- A duplikátum-találatok megmutatják, hol él a másolat párja; az Archívum
+  rejtett műveletei látható gombot kaptak.
+
+### Javítva
+
+- **A szűrő-hozzárendelés a sorozat-lapon tényleg mentődik** — a panel egy
+  néma, üres művelethez volt kötve: a szűrő létrejött, de sosem kapcsolódott
+  a sorozathoz. Most a nézett sorozathoz köt, és újraindítás után is megvan.
+- **Az Archívum nem állít elavult számot tényként**: ha az ellenőrzés régebbi
+  a beolvasásnál, a kártyák „a legutóbbi ellenőrzés szerint" felirattal és
+  „Ellenőrzés futtatása" gombbal jelennek meg, a részletlap pedig megmondja,
+  miért térhet el a két szám.
+- A lebegőpontos (float) FITS-ek előnézete megjelenik a képkocka-táblákban
+  és az Eredmények részletpanelén — eddig ezek szürke ikonok voltak.
+- A Gyűjtések „Szűrők" oszlopa nem mutat többé stack-termék neveket
+  (StarMask, Starless) szűrőként — csak valódi képkockák adnak címkét.
+- Egy éjszaka-, session- és mappaszám mind megmondja, mit számol — a 16/20/26
+  nem mond többé ellent egymásnak.
+- Az Áttekintés tab a stackek összefoglalóját mutatja gombbal az Eredmények
+  felé, a teljes táblázat helyett; első indításkor a tanácsok nem mutatnak
+  zárt panelre; a bias-expozíció sehol nem jelenik meg „0 s"-ként; az árva
+  (éjszakához nem köthető) sorozatok látszanak és beleszámítanak a projekt
+  összesítőibe.
+- Vegyes magyar/angol feliratok javítva az Actions-menüben, a Kalibráció
+  lapon, az onboardingon, a Beállításokban és a keresésben; egy fordított
+  szivárgás is (magyar hibaszöveg angol felületen).
+
+## [2.0.0-rc.5] - 2026-08-18
+
+### Hozzáadva
+
+- **A jelentések az appban élnek** — az éjszaka riportja az éjszaka sorának
+  dupla kattintására nyíló lapon (szűrők, gyűjtések, minőség, magasság és
+  Hold, hardver, teendők), a teljes projekt-riport a projekt Áttekintés
+  tabján (célpont-adatok, sessionök, stackek, kalibráció, flat-higiénia,
+  mozaik-panelek). HTML-fájlt nem generálunk és nem mentünk; az éjszaka- és
+  célpont-riport export-gombjai megszűntek. A stack-lista (Sirilnek) és az
+  AstroBin CSV megmaradt.
+- **A behozatal csoportokban gondolkodik** — az egymás után, intervallumban
+  készült fájlok felvételi idő szerint kötegekbe állnak; egy csoport-sor
+  előnézeti képet (a flat láthatóan flat, a light láthatóan csillagos),
+  darabszámot, időtartamot és expozíció/ISO/blende összefoglalót mutat
+  (FITS-nél az EXPTIME fejlécből). A szerep csoportonként állítható.
+- Finom mozgás az egész felületen: guruló számok, üveg-morfolás, szekció-
+  átmenetek — egyetlen közös szótárból, a Csökkentett mozgás beállítást
+  tiszteletben tartva.
+
+### Javítva
+
+- Az éjszaka-riport táblázatai a vegyes-expozíció szétválasztás által
+  létrehozott testvér-sessionöket (pl. `2026-05-24-2`) is összesítik — a
+  fejléc és a táblázatok számai mostantól kiadják egymást, és a lap megnevezi
+  az összevont mappákat.
+- Az audit „kalibráció rossz mappában" szabálya a közös fejléc-értelmezőt
+  hívja — többjelentésű FITS-fejlécnél nem ad többé hamis riasztást.
+- A tervezés havi nézete ugyanazt az éjszaka-metszést használja, mint minden
+  más felület.
+- Hideg indításnál (lassan ébredő SSD) a Kezdőlap töltés-állapotot mutat a
+  „Nincs megnyitott könyvtár" helyett; a „Projekt megnyitása" gomb tényleg a
+  projektet nyitja meg.
+- Az Archívum jelmagyarázata sorba törik és magyarul beszél; az Elemzések
+  grafikonjainak tengelycímkéi olvashatók; a fordítás-kinyerő script
+  `%%`-kulcshibája javítva (több „lefordított" szöveg emiatt maradt angol).
+- A képkocka-összehasonlító háttere mindkét megjelenésben sötétít; a
+  diagnosztika a valódi felhő-beállítást jelenti.
+
+### Eltávolítva
+
+- A soha el nem érhető `.result` útvonal és maradványai.
+
+## [2.0.0-rc.4] - 2026-08-18
+
+### Hozzáadva
+
+- **Behozatal-varázsló** — a hazaérkezés-workflow: csatlakoztatott kötet (ASI
+  Air, kamera-kártya) kiválasztása, a talált FIT/CR3 fájlok osztályozása a FITS
+  `IMAGETYP` fejlécből, cél-session és capture kiválasztása vagy létrehozása,
+  tételes forrás→cél előnézet, majd SHA-256-tal ellenőrzött másolás nyugtával
+  és azonnali beolvasással. A forrás a kártyán érintetlenül marad; a másolásnak
+  nincs visszavonása, és ezt a nyugta ki is mondja.
+- **Új session és capture létrehozása** — három helyről (projekt oldal,
+  projekt-sor, Éjszakák), a capture-ök `sessions/<célpont>/<dátum>/captures/`
+  alá kerülnek; egy éjszakához több capture is felvehető. A dátum-szintű
+  lights/flats/darks/biases mappák capture-rel már nem jönnek létre.
+- **Felhő-előrejelzés** (Open-Meteo, a V1 motorjával): a Kezdőlap
+  éjszaka-kártyáján, a Tervezésben az éjszaka mellett, és a Következő 30
+  éjszaka nézet Felhő oszlopában. A 7 napos horizonton túl őszintén nincs adat.
+- **Results-lap** — a könyvtár valódi stackjei családokba csoportosítva,
+  előnézettel, expozícióval, hellyel; a V1 kipróbált stack-felismerő motorjára
+  kötve.
+- Az Archívum sávja jelmagyarázatot kapott; a találat-lapok mappánként
+  csoportosítanak és karantén-műveletet kínálnak a meglévő
+  előnézet–megerősítés–nyugta–visszavonás folyamaton át.
+- Az integráció-becslés mellett látszik, hány éjszaka kell hozzá a ma esti
+  sötét órákkal számolva.
+
+### Javítva
+
+- A világos mód rétegzése: a lapok visszakapták a szürke alapot, a tartalom
+  egyetlen közös kiemelt-felület definíción ül (él + lágy árnyék világosban),
+  a süllyesztett mezők mindkét megjelenésben valóban süllyednek, a táblázatok
+  a kártyájuk lekerekítésén belül maradnak.
+- Egy betűnyi mappanév-eltérés miatt a legnagyobb célpont exportjai üresek
+  lettek volna — minden export-, Finder- és jegyzet-útvonal ugyanazt a
+  névfeloldót hívja.
+- A műveletek visszajelzése megvárja, hogy az ablak látható legyen; négy néma
+  hibaút hangot kapott; a teszt-alapvonal ismét determinisztikusan zöld.
+- A sidebar Könyvtár-badge mostantól az Archívum-lap kártyáinak összege.
+- A projektek/éjszakák/tervezés lapok felső fele egyetlen akciósorra tömörült;
+  a felügyelő-panel eltűnik, ahol nincs mit kijelölni; a maradék angol
+  szövegek magyarul jelennek meg.
+
+### Eltávolítva
+
+- A soha nem írt lineage-táblák (results/lineage_edges) és holt fogyasztóik;
+  a séma a v8-as migrációval droppolja őket.
+
+## [2.0.0-rc.3] - 2026-08-17
+
+### Hozzáadva
+
+- **Archívum-térkép** — a `Library` szekció helyén: ítélet-mondat elöl, egyetlen
+  sáv az egész könyvtár bájtjairól kategóriánként, alatta a visszanyerhető rész,
+  legfeljebb hat teendő-kártya (mindegyiken végrehajtható művelettel) és
+  célpontonkénti bontás. A karantén-előnézet a kártya kategóriájára előre
+  kiválasztva nyílik.
+- **Saját vizuális nyelv** — paletta, amelyben minden szín egy dolgot jelent, és
+  mindkét megjelenéshez saját értéke van; egységes típusskála tabuláris
+  számokkal; közös formázó (egy mértékegység, egy formátum).
+
+### Javítva
+
+- **Swift fordítóhiba megkerülése:** modulhatárt átlépő async alapértelmezett
+  argumentumok eltérő méretű async-kontextust emittáltak, ami a task-allokátor
+  túlírásához és véletlenszerű összeomláshoz vezethetett. Hét hely javítva,
+  bináris szintű ellenőrzéssel (`docs/swift-async-default-arg-bug/`).
+- A hibaüzenetek a valódi okot nevezik meg, és a gombjaik a hiba fajtájából
+  származnak; belső típusnév és hibakód nem jelenik meg többé.
+- A fejléc nem állítja, hogy „semmi nem sérült", ha integritás-ellenőrzés soha
+  nem futott.
+- A frissesség-jelzés valós adatra épül: a beolvasás rögzíti a befejezését,
+  csak sikeres futás után.
+- A célponthoz nem köthető fájlok saját sort kapnak a térképen.
+
+### Eltávolítva
+
+- A „Move to Archive…" művelet, amely olyat ígért, amit az app semmilyen
+  kódúton nem hajtott végre.
+
+### Ismert korlátok
+
+- A vizuális átépítés félúton van: a rendszer üveg-anyagai, a
+  doboz-egyszerűsítés és a mozgás még hátravan.
+- A toolbar gombfeliratai magyar felületen is angolul jelennek meg.
+- A tesztkészlet időnként piros egy `OperationHost` időzítési kérdés miatt
+  (a művelet „késznek" látszhat a sikerjelzés megjelenése előtt). Vizsgálat
+  alatt; adatvesztést nem okoz.
+
+
+### Breaking change (minimum macOS 26 — Task 1)
+
+**A V2-nek mostantól macOS 26 vagy újabb kell.** A csomag korábban macOS
+14-et célzott; a V2 még előzetes kiadás, ezért ez a legolcsóbb pillanat az
+emelésre, mielőtt a felület a macOS 26-os Liquid Glass-alapokra épül.
+
+- **Ha macOS 14 vagy macOS 15 rendszert használsz**, a V2 mostantól nem
+  települ és nem frissül a gépeden. Ez nem hiba — ez a fenti követelmény
+  következménye.
+- **A [korábbi, macOS 14-kompatibilis 1.0.0 kiadás](../../releases/tag/v1.0.0)
+  változatlanul elérhető marad**, és nem kap ezt a törő emelést; onnan tölthető
+  le, és a jelen frissítés nem szünteti meg.
+- Az érintett fájlok: `Package.swift` (`platforms: [.macOS(.v26)]`,
+  `swift-tools-version: 6.2`), `project.yml`, `build.sh`
+  (`LSMinimumSystemVersion`), a CI/release workflow-k (`runs-on: macos-26`),
+  a README és a weboldal.
+
+## [2.0.0] - 2026-08-12
+
+### Added
+
+- Első nyilvános V2 béta natív, háromoszlopos macOS munkatérrel: Home,
+  Projects, Nights, Planning, Library és Insights felületekkel.
+- Read-only könyvtár-onboarding valós projekt-, éjszaka- és keretszámokkal;
+  a forrásképeket a V2 beolvasás nem módosítja.
+- Offline célpontkereső katalógusszám, angol név és magyar név alapján,
+  kanonikus mappanév-előnézettel.
+
+### Changed
+
+- A V2 felület a normál kiadás alapértelmezett felülete; a korábbi felület
+  szükség esetén a `-UseV1UI` indítási kapcsolóval még elérhető.
+- A fő navigáció letiltott helyőrzői helyett minden elsődleges munkatér
+  őszinte, használható állapot- és következő-lépés felületet kapott.
+
+### Beta limitations
+
+- A projekt létrehozásának metadata-mentése, a részletes éjszaka-lista,
+  minőségi grafikonok és a teljes V1 munkafolyamat-paritás további béta
+  frissítésekben kapcsolódik rá az elkészült V2 adattárra.
+- A lokális béta build ad-hoc aláírt; nyilvános, Gatekeeper-barát stabil
+  kiadás csak Developer ID aláírással és Apple-notarizációval készül.
+
+## [1.0.0] - 2026-08-10
+
+### Added
+
+- Első nyilvános termékkiadás tiszta, semleges első indítással és opcionális,
+  többoldalas személyre szabással.
+- Adatvédelem és támogatás beállításlap másolható/menthető, szerkezetileg
+  redaktált diagnosztikával.
+- Universal (`arm64 + x86_64`) app- és CLI-csomag, SHA-256 ellenőrzőösszegek,
+  explicit helyi telepítő és fail-closed Developer ID/notarizációs release.
+- Újratervezett reszponzív weboldal külön Funkciók, Első lépések, CLI,
+  Adatvédelem és Támogatás oldalakkal.
+
+### Changed
+
+- A bundle identifier `io.github.themokx1.AstroTool`; a korábbi preferenciák
+  csak szűk allowlist alapján, egyszer migrálódnak.
+- A Beállítások natív oldalsávos szerkezetet, a fő felületek közös spacing-,
+  kártya-, fejléc- és üresállapot-rendszert kaptak.
+- A normál build többé nem telepít appot és nem hoz létre CLI-szimlinket.
+- A production első indítás és a publikus dokumentáció nem tartalmaz konkrét
+  fejlesztői könyvtárat, felszerelést, szűrőt vagy személyes mérőszámot.
+
+### Safety
+
+- Tiszta induláskor nincs kitalált vagy örökölt root path.
+- A támogatási export nem fogad el útvonalat, fájlnevet, célpontot,
+  koordinátát, jegyzetet, FITS-fejlécet, bookmarkot vagy hibaüzenetet.
+- A publikus release érvényes Apple aláírás és notarizáció nélkül nem készül
+  el; a helyi ad-hoc build egyértelműen fejlesztői csomag marad.
+
+## [0.16.0] - 2026-08-10
+
+### Added
+
+- Többoldalas, teljesen és oldalanként is kihagyható első indítási
+  onboarding a helyszín, több kamera–optika setup, saját szűrők,
+  minőségpontozás/Siril és integrációs referencia beállításához. A
+  varázsló később a Beállításokból bármikor újraindítható.
+- Offline célpontkatalógus-kereső az új session felületén: katalógusszám,
+  angol vagy magyar név alapján is megtalálja ugyanazt a rekordot, stabil
+  kanonikus mappanevet használ, és a már meglévő azonos célpontmappát nyitja
+  tovább.
+- Fényesség- és setupfüggő automatikus integrációs cél. A referencia
+  10 óra APS-C f/5 setupon, 22,0 mag/arcsec² becsült felületi
+  fényességnél; a célpontszorzó 0,5–3× közé korlátozott. Az explicit
+  `goal:` címke változatlanul elsőbbséget élvez.
+- Elvetett frame-enkénti **Áthelyezés archívumba** és **Visszaállítás**
+  pontos forrás→cél előnézettel. A frame az appban látható, `ARCHÍV ·
+  kizárva` jelölt és minden mérése/capture-besorolása megmarad.
+
+### Changed
+
+- A setupok f-száma és relatív rendszerhatékonysága a Felszerelés
+  beállításokban is szerkeszthető; az automatikus célidő teljes
+  referencia-modellje a Pontozás & expozíció oldalon később is
+  finomhangolható.
+- A Ma este tervező, a projektfázis, a hiányzó órák, a célpontoldal és
+  a HTML célpont-riport ugyanazt az effektív célt és annak forrását
+  használja. A kézzel megadott szűrőcél rangsorolási elsőbbsége
+  megmaradt az automatikus referencia mellett.
+- Az onboarding szűrőoldala tranzakciósan szinkronizálja a teljes saját
+  listát; a kihagyott oldal semmit nem módosít, a törölt profil nem írja
+  át a capture-gyűjtések történeti szűrőadatait.
+
+### Safety
+
+- Az archívum kizárólag az adott session `lights` vagy
+  `captures/<slug>/lights` ágán belül mozoghat, célfájlt soha nem ír felül.
+  Adatbázis-hiba esetén a fájlművelet automatikusan visszagördül; restore
+  után az elvetési döntés szándékosan megmarad.
+
 ## [0.15.3] - 2026-08-09
 
 ### Added

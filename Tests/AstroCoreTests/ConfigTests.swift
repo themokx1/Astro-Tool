@@ -5,10 +5,16 @@ import Testing
 @Test func defaultConfigHasExpectedValues() {
     let config = AstroConfig()
 
-    #expect(config.rootPath == "/Volumes/images/Astro")
+    #expect(config.rootPath.isEmpty)
     #expect(config.excludedDirNames == ["tools"])
     #expect(config.excludedPaths == [])
-    #expect(config.residuePatterns == ["*.seq", "*.lst", "*_conv*", "*_bkg*", "*_pp_*", "r_*", "bkg_*", ".DS_Store"])
+    #expect(config.residuePatterns == [
+        "*.seq", "*.lst", "*_conv*", "*_bkg*", "*_pp_*", "r_*", "bkg_*", ".DS_Store",
+        "veralux_*", "*stack_work*", "*_synt*", "fixstars*", "*star recomposition result*",
+    ])
+    #expect(config.sessionResiduePatterns == [
+        "starless*", "starmask*", "*graxpert*", "result_*",
+    ])
     #expect(config.residueDirNames == ["process"])
     #expect(config.toolOutputDirNames == ["Stack", "Review", "Reject", "light_frame_rating_report_assets", "masters"])
     #expect(config.intentional == IntentionalPatterns())
@@ -30,6 +36,7 @@ import Testing
     #expect(config.calib.flatMaxAgeDays == 30)
     #expect(config.calib.rotatorToleranceDeg == 2.0)
     #expect(config.calib.coolerToleranceC == 1.0)
+    #expect(config.calib.autoMasterBuildEnabled == false)
 
     #expect(config.rating.workers == 4)
     #expect(config.rating.outlierZScore == 2.0)
@@ -44,6 +51,27 @@ import Testing
     #expect(config.site.longitudeDeg == nil)
 
     #expect(config.weather.enabled == false)
+    #expect(config.notification.enabled == false)
+
+    #expect(config.integrationReference == IntegrationReferenceRule())
+}
+
+@Test func decodingConfigWithoutSessionResiduePatternsFallsBackToDefaults() throws {
+    // Every pre-existing on-disk config.json predates this key -- decoding
+    // one must yield the same defaults a fresh `AstroConfig()` has, and an
+    // explicit empty list must survive a round-trip (an owner deliberately
+    // disabling the session layer), not get "repaired" back to defaults.
+    let withoutKey = try JSONDecoder().decode(AstroConfig.self, from: Data("{}".utf8))
+    #expect(withoutKey.sessionResiduePatterns == AstroConfig().sessionResiduePatterns)
+
+    let explicitlyEmpty = try JSONDecoder().decode(
+        AstroConfig.self, from: Data(#"{"sessionResiduePatterns": []}"#.utf8))
+    #expect(explicitlyEmpty.sessionResiduePatterns == [])
+
+    var config = AstroConfig()
+    config.sessionResiduePatterns = ["custom_*"]
+    let decoded = try JSONDecoder().decode(AstroConfig.self, from: JSONEncoder().encode(config))
+    #expect(decoded.sessionResiduePatterns == ["custom_*"])
 }
 
 @Test func defaultSiteRuleHasNilCoordinates() {
@@ -249,6 +277,129 @@ import Testing
     #expect(config.rootPath == "/Volumes/images/OldConfig")
 }
 
+// MARK: - Wave 0 seam (V3 pre-stack program, section 5.5, Derült-trigger)
+
+@Test func defaultNotificationRuleIsDisabled() {
+    let rule = NotificationRule()
+    #expect(rule.enabled == false)
+}
+
+@Test func defaultConfigHasDisabledNotificationRule() {
+    #expect(AstroConfig().notification == NotificationRule())
+}
+
+@Test func decodingPartialNotificationRuleFillsMissingKeyWithDefault() throws {
+    let json = """
+    { "notification": { "enabled": true } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.notification.enabled == true)
+}
+
+@Test func decodingConfigWithoutNotificationKeyStillDecodes() throws {
+    // Wave 0 lands this key for the first time -- every pre-existing
+    // config.json has no "notification" key at all and must still decode
+    // cleanly, defaulting to disabled (never silently opting a pre-existing
+    // config INTO a system notification permission prompt it never asked
+    // for -- the same rule `WeatherRule`'s own equivalent test enforces).
+    let json = """
+    { "rootPath": "/Volumes/images/OldConfig", "site": { "latitudeDeg": 47.5, "longitudeDeg": 19.0 } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.notification == NotificationRule())
+    #expect(config.notification.enabled == false)
+    #expect(config.rootPath == "/Volumes/images/OldConfig")
+}
+
+@Test func notificationRuleRoundTripsThroughEncodeDecode() throws {
+    var config = AstroConfig()
+    config.notification.enabled = true
+
+    let data = try JSONEncoder().encode(config)
+    let decoded = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(decoded == config)
+    #expect(decoded.notification.enabled == true)
+}
+
+// MARK: - 5.5 own commit: NotificationRule.checkHourLocal
+
+@Test func defaultNotificationRuleChecksAtFourteenLocal() {
+    #expect(NotificationRule().checkHourLocal == 14)
+}
+
+@Test func decodingPartialNotificationRuleFillsMissingCheckHourWithDefault() throws {
+    // A config written after `enabled` existed but before `checkHourLocal`
+    // did -- must still decode cleanly, defaulting the check hour rather
+    // than throwing (the same additive-field contract this file's every
+    // other `Rule` type already documents).
+    let json = """
+    { "notification": { "enabled": true } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.notification.enabled == true)
+    #expect(config.notification.checkHourLocal == 14)
+}
+
+@Test func decodingExplicitCheckHourLocalRoundTrips() throws {
+    let json = """
+    { "notification": { "enabled": true, "checkHourLocal": 16 } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.notification.checkHourLocal == 16)
+
+    let reencoded = try JSONEncoder().encode(config)
+    let redecoded = try JSONDecoder().decode(AstroConfig.self, from: reencoded)
+    #expect(redecoded.notification.checkHourLocal == 16)
+}
+
+// MARK: - Wave 0 seam (V3 pre-stack program, section 5.2, Kalibrációs automata)
+
+@Test func defaultCalibRuleHasAutoMasterBuildDisabled() {
+    #expect(CalibRule().autoMasterBuildEnabled == false)
+}
+
+@Test func decodingPartialCalibRuleWithAutoMasterBuildFillsOtherKeysWithDefaults() throws {
+    let json = """
+    { "calib": { "autoMasterBuildEnabled": true } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.calib.autoMasterBuildEnabled == true)
+    #expect(config.calib.flatMaxAgeDays == 30)
+    #expect(config.calib.tempToleranceC == 1.0)
+}
+
+@Test func decodingCalibRuleWithoutAutoMasterBuildKeyStillDecodes() throws {
+    let json = """
+    { "calib": { "flatMaxAgeDays": 45 } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.calib.autoMasterBuildEnabled == false)
+}
+
+@Test func calibRuleAutoMasterBuildRoundTripsThroughEncodeDecode() throws {
+    var config = AstroConfig()
+    config.calib.autoMasterBuildEnabled = true
+
+    let data = try JSONEncoder().encode(config)
+    let decoded = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(decoded == config)
+    #expect(decoded.calib.autoMasterBuildEnabled == true)
+}
+
 @Test func decodingPartialSiteRuleFillsMissingKeyWithDefault() throws {
     let json = """
     { "site": { "latitudeDeg": 47.5 } }
@@ -353,6 +504,7 @@ import Testing
     #expect(rule.flatMaxAgeDays == 30)
     #expect(rule.rotatorToleranceDeg == 2.0)
     #expect(rule.coolerToleranceC == 1.0)
+    #expect(rule.autoMasterBuildEnabled == false)
 }
 
 @Test func decodingPartialCalibRuleFillsMissingKeysWithDefaults() throws {
@@ -366,6 +518,7 @@ import Testing
     #expect(config.calib.rotatorToleranceDeg == 2.0)
     #expect(config.calib.tempToleranceC == 1.0)
     #expect(config.calib.coolerToleranceC == 1.0)
+    #expect(config.calib.autoMasterBuildEnabled == false)
 }
 
 @Test func defaultRatingRuleHasExpectedValues() {
@@ -413,6 +566,7 @@ import Testing
     #expect(config.stats == StatsRule())
     #expect(config.site == SiteRule())
     #expect(config.weather == WeatherRule())
+    #expect(config.notification == NotificationRule())
     #expect(config.astrobin == AstroBinRule())
 
     #expect(config.rating.workers == 8)

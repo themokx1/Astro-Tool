@@ -1,4 +1,5 @@
 import AppKit
+import AstroApplication
 import AstroCore
 import Foundation
 import Observation
@@ -75,6 +76,44 @@ enum Page: Hashable {
     case sensor
     case filters
     case searchResults
+}
+
+extension Page {
+    var persistentIdentifier: String {
+        switch self {
+        case .tonight: "tonight"
+        case .calendar: "calendar"
+        case .discover: "discover"
+        case .previousNight: "previousNight"
+        case .allTargets, .target: "allTargets"
+        case .nights: "nights"
+        case .calibration: "calibration"
+        case .audit: "audit"
+        case .cleanup: "cleanup"
+        case .trends: "trends"
+        case .sensor: "sensor"
+        case .filters: "filters"
+        case .searchResults: "allTargets"
+        }
+    }
+
+    init?(persistentIdentifier: String) {
+        switch persistentIdentifier {
+        case "tonight": self = .tonight
+        case "calendar": self = .calendar
+        case "discover": self = .discover
+        case "previousNight": self = .previousNight
+        case "allTargets": self = .allTargets
+        case "nights": self = .nights
+        case "calibration": self = .calibration
+        case "audit": self = .audit
+        case "cleanup": self = .cleanup
+        case "trends": self = .trends
+        case "sensor": self = .sensor
+        case "filters": self = .filters
+        default: return nil
+        }
+    }
 }
 
 /// The resolved manual-setup or WCS-fallback FOV, wrapped for
@@ -165,6 +204,21 @@ final class AppState: @unchecked Sendable {
     private static let recentRootsKey = "recentRootBookmarks"
     /// R11-T9/F5: `autoScanOnMount`'s `UserDefaults` key.
     private static let autoScanOnMountKey = "autoScanOnMount"
+    /// V3 pre-stack program, section 5.1 (Ingest-figyelő):
+    /// `ingestWatcherEnabled`'s `UserDefaults` key -- the SAME literal
+    /// `AstroUI.IngestWatcher`'s own `isEnabled` default reads, via
+    /// `IngestWatcherSettings.enabledDefaultsKey` (`AstroApplication`, the
+    /// one layer both this V1-only `AppState` and V2's `IngestWatcher` sit
+    /// above) -- see that constant's own doc comment for why this is one
+    /// shared literal rather than two that could silently drift apart.
+    private static let ingestWatcherEnabledKey = IngestWatcherSettings.enabledDefaultsKey
+    /// V3 pre-stack program, section 5.6 (Élő éjszaka-mód): same sharing
+    /// reasoning as `ingestWatcherEnabledKey` above, but for the two keys
+    /// `AstroUI.LiveNightWatcher` reads independently
+    /// (`LiveNightWatcherSettings`, `AstroApplication`) -- the toggle and
+    /// the chosen-folder bookmark.
+    private static let liveNightWatcherEnabledKey = LiveNightWatcherSettings.enabledDefaultsKey
+    private static let liveNightWatchFolderBookmarkKey = LiveNightWatcherSettings.folderBookmarkDefaultsKey
     /// R11-T12/F12: `firstStepsCardDismissed`'s `UserDefaults` key.
     private static let firstStepsCardDismissedKey = "firstStepsCardDismissed"
     /// R11-T15/F16: `selectedSiteName`'s `UserDefaults` key.
@@ -174,6 +228,19 @@ final class AppState: @unchecked Sendable {
     /// structure, so they live in UserDefaults rather than config.json.
     private static let selectedImagingSetupIDKey = "selectedImagingSetupID"
     private static let discoveryFocalLengthsBySetupKey = "discoveryFocalLengthsBySetup"
+    private static let onboardingCompletedVersionKey = "onboardingCompletedVersion"
+    private static let legacyPreferencesMigratedKey = "legacyPreferencesMigratedV1"
+    private static let cleanInstallSmokeReachedFirstScanKey = "cleanInstallSmokeReachedFirstScan"
+    private static let lastPageKey = "lastPage"
+    private static let lastSettingsTabKey = "lastSettingsTab"
+
+    @ObservationIgnored
+    private let preferences: UserDefaults
+
+    /// A pre-1.0 preference domain was found while the new product domain
+    /// was still empty. Migration waits for an explicit choice instead of
+    /// silently opening a legacy security-scoped bookmark.
+    var legacyMigrationAvailable: Bool = false
 
     /// App-lifetime singleton reference, set from `init()`. The menu bar
     /// (`Views/Commands.swift`) needs to call into `AppState` from `.commands`
@@ -196,7 +263,9 @@ final class AppState: @unchecked Sendable {
 
     /// The navigation shell's current page (R9-T1) -- drives both the
     /// sidebar's selection highlight and which detail view is shown.
-    var currentPage: Page = .tonight
+    var currentPage: Page = .tonight {
+        didSet { preferences.set(currentPage.persistentIdentifier, forKey: Self.lastPageKey) }
+    }
 
     /// One entry per completed background operation (B15 activity log),
     /// newest first, capped at 50 -- appended from `endOperation` (see its
@@ -306,6 +375,12 @@ final class AppState: @unchecked Sendable {
     /// user relaunches still not having scanned.
     var didDismissFirstRun: Bool = false
 
+    /// Keeps the successful first-scan result visible until the user chooses
+    /// Continue or opens the optional personalization wizard.
+    var shouldShowFirstScanExperience: Bool {
+        !didDismissFirstRun && (lastScanDate == nil || scanSummary != nil)
+    }
+
     /// R11-T12/F12: "Ma este"'s dismissible "Első lépések" card -- persisted
     /// (unlike `cloudBannerDismissed`) since the spec wants this to stay
     /// dismissed across relaunches once the user has waved it off, same
@@ -328,7 +403,7 @@ final class AppState: @unchecked Sendable {
     /// reads the persisted starting value once (a stored property's own
     /// declared default can't reach `UserDefaults` itself).
     var firstStepsCardDismissed: Bool = false {
-        didSet { UserDefaults.standard.set(firstStepsCardDismissed, forKey: Self.firstStepsCardDismissedKey) }
+        didSet { preferences.set(firstStepsCardDismissed, forKey: Self.firstStepsCardDismissedKey) }
     }
 
     /// R11-T12/F12: the "Első lépések" checklist -- 6 fixed steps, each
@@ -491,7 +566,26 @@ final class AppState: @unchecked Sendable {
     /// READ this property ever got invalidated the instant it changed.
     /// `init()` reads the persisted starting value once.
     var autoScanOnMount: Bool = false {
-        didSet { UserDefaults.standard.set(autoScanOnMount, forKey: Self.autoScanOnMountKey) }
+        didSet { preferences.set(autoScanOnMount, forKey: Self.autoScanOnMountKey) }
+    }
+    /// V3 pre-stack program, section 5.1 (Ingest-figyelő): Settings ▸
+    /// Könyvtár's OTHER, separate toggle right below `autoScanOnMount` --
+    /// same "plain stored property, `didSet` mirrors to `UserDefaults`,
+    /// default OFF" shape for the exact same `@Observable`-tracking reason
+    /// `autoScanOnMount`'s own doc comment explains. This one gates the V2
+    /// Home banner (`AstroUI.IngestWatcher`), never the V1 auto-scan
+    /// `autoScanOnMount` already controls -- two similarly-shaped toggles
+    /// with deliberately distinct copy, per the spec's own risk note about
+    /// keeping their UX language sharply separated.
+    var ingestWatcherEnabled: Bool = false {
+        didSet { preferences.set(ingestWatcherEnabled, forKey: Self.ingestWatcherEnabledKey) }
+    }
+    /// V3 pre-stack program, section 5.6 (Élő éjszaka-mód): same "plain
+    /// stored property, `didSet` mirrors to `UserDefaults`, default OFF"
+    /// shape as `ingestWatcherEnabled` right above -- gates the V2 Home
+    /// live-session card (`AstroUI.LiveNightWatcher`), never anything V1.
+    var liveNightWatcherEnabled: Bool = false {
+        didSet { preferences.set(liveNightWatcherEnabled, forKey: Self.liveNightWatcherEnabledKey) }
     }
     var findings: [Finding] = []
     /// Audit and verify evidence are persisted independently, then composed
@@ -630,15 +724,36 @@ final class AppState: @unchecked Sendable {
     /// page's "Helyszín" tile (which preselects `.location` before opening
     /// the Settings window) so that click actually lands on the tab it
     /// promises, not just Settings in general.
-    enum SettingsTab: Hashable {
+    enum SettingsTab: String, CaseIterable, Hashable, Identifiable {
+        case general
         case library
         case location
         case equipment
+        case filters
         case calibration
         case rating
         case libraryRules
+        case support
+
+        var id: String { rawValue }
     }
-    var settingsTab: SettingsTab = .library
+    var settingsTab: SettingsTab = .general {
+        didSet { preferences.set(settingsTab.rawValue, forKey: Self.lastSettingsTabKey) }
+    }
+    /// Incrementing this requests a user-initiated re-run even when the
+    /// current onboarding version was already completed.
+    var onboardingPresentationNonce: Int = 0
+
+    func completeOnboardingVersion() {
+        preferences.set(
+            OnboardingLifecycle.currentVersion,
+            forKey: Self.onboardingCompletedVersionKey
+        )
+    }
+
+    func requestOnboarding() {
+        onboardingPresentationNonce += 1
+    }
 
     // MARK: - Global search (R9-T6/B3)
 
@@ -833,9 +948,9 @@ final class AppState: @unchecked Sendable {
     var selectedSiteName: String? = nil {
         didSet {
             if let selectedSiteName {
-                UserDefaults.standard.set(selectedSiteName, forKey: Self.selectedSiteNameKey)
+                preferences.set(selectedSiteName, forKey: Self.selectedSiteNameKey)
             } else {
-                UserDefaults.standard.removeObject(forKey: Self.selectedSiteNameKey)
+                preferences.removeObject(forKey: Self.selectedSiteNameKey)
             }
         }
     }
@@ -885,9 +1000,9 @@ final class AppState: @unchecked Sendable {
     var selectedImagingSetupID: String? = nil {
         didSet {
             if let selectedImagingSetupID {
-                UserDefaults.standard.set(selectedImagingSetupID, forKey: Self.selectedImagingSetupIDKey)
+                preferences.set(selectedImagingSetupID, forKey: Self.selectedImagingSetupIDKey)
             } else {
-                UserDefaults.standard.removeObject(forKey: Self.selectedImagingSetupIDKey)
+                preferences.removeObject(forKey: Self.selectedImagingSetupIDKey)
             }
         }
     }
@@ -898,7 +1013,7 @@ final class AppState: @unchecked Sendable {
     var discoveryFocalLengthsBySetup: [String: Double] = [:] {
         didSet {
             if let data = try? JSONEncoder().encode(discoveryFocalLengthsBySetup) {
-                UserDefaults.standard.set(data, forKey: Self.discoveryFocalLengthsBySetupKey)
+                preferences.set(data, forKey: Self.discoveryFocalLengthsBySetupKey)
             }
         }
     }
@@ -1199,55 +1314,212 @@ final class AppState: @unchecked Sendable {
 
     // MARK: - Root selection
 
-    init() {
+    init(preferences: UserDefaults? = nil) {
+        let resolvedPreferences = preferences ?? Self.defaultPreferences()
+        self.preferences = resolvedPreferences
+        if preferences == nil {
+            legacyMigrationAvailable = Self.shouldOfferLegacyMigration(using: resolvedPreferences)
+        }
         // R12-U1 item 4: `firstStepsCardDismissed`/`autoScanOnMount`/
         // `selectedSiteName` are now plain STORED properties (see each
         // one's own doc comment for why) -- the one-time read of whatever
         // was already persisted has to happen explicitly here, since a
         // stored property's own declared default (`false`/`nil`) is all
         // `@Observable` initializes it to otherwise.
-        firstStepsCardDismissed = UserDefaults.standard.bool(forKey: Self.firstStepsCardDismissedKey)
-        autoScanOnMount = UserDefaults.standard.bool(forKey: Self.autoScanOnMountKey)
-        selectedSiteName = UserDefaults.standard.string(forKey: Self.selectedSiteNameKey)
-        selectedImagingSetupID = UserDefaults.standard.string(forKey: Self.selectedImagingSetupIDKey)
-        if let data = UserDefaults.standard.data(forKey: Self.discoveryFocalLengthsBySetupKey),
-           let decoded = try? JSONDecoder().decode([String: Double].self, from: data) {
-            discoveryFocalLengthsBySetup = decoded
-        }
-        loadRecentRoots()
+        loadStoredPreferences()
         AppState.shared = self
     }
 
+    private func loadStoredPreferences() {
+        firstStepsCardDismissed = preferences.bool(forKey: Self.firstStepsCardDismissedKey)
+        autoScanOnMount = preferences.bool(forKey: Self.autoScanOnMountKey)
+        ingestWatcherEnabled = preferences.bool(forKey: Self.ingestWatcherEnabledKey)
+        liveNightWatcherEnabled = preferences.bool(forKey: Self.liveNightWatcherEnabledKey)
+        selectedSiteName = preferences.string(forKey: Self.selectedSiteNameKey)
+        selectedImagingSetupID = preferences.string(forKey: Self.selectedImagingSetupIDKey)
+        if let data = preferences.data(forKey: Self.discoveryFocalLengthsBySetupKey),
+           let decoded = try? JSONDecoder().decode([String: Double].self, from: data) {
+            discoveryFocalLengthsBySetup = decoded
+        } else {
+            discoveryFocalLengthsBySetup = [:]
+        }
+        restoreNavigationPreferences()
+        loadRecentRoots()
+    }
+
+    private func restoreNavigationPreferences() {
+        if let rawPage = preferences.string(forKey: Self.lastPageKey),
+           let restored = Page(persistentIdentifier: rawPage)
+        {
+            currentPage = restored
+        }
+        if let rawSettingsTab = preferences.string(forKey: Self.lastSettingsTabKey),
+           let restored = SettingsTab(rawValue: rawSettingsTab)
+        {
+            settingsTab = restored
+        }
+    }
+
+    private static func defaultPreferences() -> UserDefaults {
+        if let suiteName = ProcessInfo.processInfo.environment["ASTROTOOL_DEFAULTS_SUITE"],
+           !suiteName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let isolated = UserDefaults(suiteName: suiteName)
+        {
+            return isolated
+        }
+        return .standard
+    }
+
+    /// Release-CI hook: opens one explicitly supplied temporary library only
+    /// when paired with the isolated clean-install suite. Normal launches can
+    /// never take this branch. This lets the packaged release render its real
+    /// selected-library/first-scan UI without manufacturing a security-scoped
+    /// bookmark in a differently signed helper process.
+    private static func cleanInstallSmokeLibraryURL() -> URL? {
+        let environment = ProcessInfo.processInfo.environment
+        guard let suite = environment["ASTROTOOL_DEFAULTS_SUITE"],
+              suite.hasPrefix("\(ProductInfo.bundleIdentifier).clean-install-smoke."),
+              let path = environment["ASTROTOOL_CLEAN_INSTALL_SMOKE_LIBRARY"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !path.isEmpty
+        else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    func markCleanInstallFirstScanVisible() {
+        guard Self.cleanInstallSmokeLibraryURL() != nil else { return }
+        preferences.set(true, forKey: Self.cleanInstallSmokeReachedFirstScanKey)
+    }
+
+    private static let legacyPreferenceAllowlist: Set<String> = [
+            bookmarkKey,
+            recentRootsKey,
+            autoScanOnMountKey,
+            firstStepsCardDismissedKey,
+            selectedSiteNameKey,
+            selectedImagingSetupIDKey,
+            discoveryFocalLengthsBySetupKey,
+            onboardingCompletedVersionKey,
+            lastPageKey,
+            lastSettingsTabKey,
+        ]
+
+    private static func shouldOfferLegacyMigration(using preferences: UserDefaults) -> Bool {
+        let current = preferences.persistentDomain(forName: ProductInfo.bundleIdentifier) ?? [:]
+        let legacy = preferences.persistentDomain(forName: ProductInfo.legacyBundleIdentifier) ?? [:]
+        return PreferenceMigration.shouldOffer(
+            currentDomain: current,
+            legacyDomain: legacy,
+            allowedKeys: legacyPreferenceAllowlist,
+            alreadyCompleted: preferences.bool(forKey: legacyPreferencesMigratedKey)
+        )
+    }
+
+    func acceptLegacyMigration() {
+        guard legacyMigrationAvailable else { return }
+        PreferenceMigration.migratePersistentDomain(
+            named: ProductInfo.legacyBundleIdentifier,
+            into: preferences,
+            allowedKeys: Self.legacyPreferenceAllowlist,
+            markerKey: Self.legacyPreferencesMigratedKey,
+            targetDomainWasEmpty: true
+        )
+        legacyMigrationAvailable = false
+        loadStoredPreferences()
+        resolveRootOnLaunch()
+    }
+
+    func declineLegacyMigration() {
+        guard legacyMigrationAvailable else { return }
+        preferences.set(true, forKey: Self.legacyPreferencesMigratedKey)
+        legacyMigrationAvailable = false
+        config = AstroConfig()
+        db = nil
+        rootStatus = .noRoot
+    }
+
     /// Called once from `.onAppear`: resolves a previously-saved
-    /// security-scoped bookmark if there is one, otherwise falls back to
-    /// `AstroConfig()`'s default root path. Never scans automatically --
+    /// security-scoped bookmark if there is one. Without one, presents the
+    /// explicit library-selection welcome state. Never scans automatically --
     /// a large external volume should only be walked on explicit request.
     ///
     /// `-ResetOnboarding` (acceptance ⓑ): a debug-only launch argument that
-    /// clears the saved bookmark before resolving, so the first-run flow
-    /// (`WelcomeView`/`FirstScanView`) can be exercised on a machine that
-    /// already has a real library configured, without touching that
-    /// configuration on disk.
+    /// clears only the versioned detailed-onboarding completion flag. It no
+    /// longer destroys the real library bookmark merely to preview help UI.
     func resolveRootOnLaunch() {
         startVolumeMountObserverIfNeeded()
         startActivationObserverIfNeeded()
-        if ProcessInfo.processInfo.arguments.contains("-ResetOnboarding") {
-            UserDefaults.standard.removeObject(forKey: Self.bookmarkKey)
+        if let smokeLibrary = Self.cleanInstallSmokeLibraryURL() {
+            legacyMigrationAvailable = false
+            openRoot(at: smokeLibrary)
+            return
         }
-        if let data = UserDefaults.standard.data(forKey: Self.bookmarkKey),
+        guard !legacyMigrationAvailable else {
+            config = AstroConfig()
+            db = nil
+            rootStatus = .noRoot
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("-ResetOnboarding") {
+            preferences.removeObject(forKey: Self.onboardingCompletedVersionKey)
+        }
+        if let data = preferences.data(forKey: Self.bookmarkKey),
            let url = Self.resolveBookmark(data)
         {
             _ = url.startAccessingSecurityScopedResource()
             openRoot(at: url)
             return
         }
-        openRoot(at: URL(fileURLWithPath: AstroConfig().rootPath, isDirectory: true))
+        config = AstroConfig()
+        db = nil
+        lastError = nil
+        rootStatus = .noRoot
     }
 
     /// "Újrapróbálás" on the access-denied/not-mounted screens: re-checks the
     /// currently configured root without prompting for a new one.
     func retryRootAccess() {
         openRoot(at: URL(fileURLWithPath: config.rootPath, isDirectory: true))
+    }
+
+    /// Saves the wizard's merged config once, then upserts its new filter
+    /// inventory rows. Returns false with `lastError` populated on any
+    /// validation/write failure so the wizard stays open.
+    func applyOnboarding(config newConfig: AstroConfig, filters newFilters: [FilterProfileRecord]?) -> Bool {
+        do {
+            for setup in newConfig.imagingSetups { try setup.validate() }
+            guard newConfig.rating.workers > 0,
+                  newConfig.rating.outlierZScore.isFinite,
+                  newConfig.rating.outlierZScore > 0
+            else { throw AstroError.invalidInput("A pontozási worker és z-küszöb pozitív legyen.") }
+
+            let root = URL(fileURLWithPath: newConfig.rootPath, isDirectory: true)
+            try newConfig.save(using: WriteGuard(root: root))
+
+            if let newFilters {
+                guard let db else { throw AstroError.databaseError("A szűrők mentéséhez nyisd meg a könyvtár adatbázisát.") }
+                let now = Date().timeIntervalSince1970
+                let stamped = newFilters.map { input -> FilterProfileRecord in
+                    var filter = input
+                    if filter.createdAt == 0 { filter.createdAt = now }
+                    filter.updatedAt = now
+                    return filter
+                }
+                try db.replaceFilterProfiles(stamped)
+                filterProfiles = try db.allFilterProfiles()
+                discoveredFilterProfiles = try db.discoveredFilterProfiles()
+            }
+
+            config = newConfig
+            completeOnboardingVersion()
+            lastError = nil
+            progressText = "Az onboarding beállításai mentve."
+            refreshDiscoveryAfterEquipmentChange()
+            return true
+        } catch {
+            handle(error)
+            return false
+        }
     }
 
     /// "Mappa választása…": prompts via `NSOpenPanel`, then hands the chosen
@@ -1274,7 +1546,7 @@ final class AppState: @unchecked Sendable {
     /// "Legutóbbi könyvtárak" entry, then opens it.
     func selectRoot(at url: URL) {
         if let bookmark = makeBookmark(for: url) {
-            UserDefaults.standard.set(bookmark, forKey: Self.bookmarkKey)
+            preferences.set(bookmark, forKey: Self.bookmarkKey)
             rememberRecentRoot(url: url, bookmark: bookmark)
         }
         openRoot(at: url)
@@ -1294,8 +1566,37 @@ final class AppState: @unchecked Sendable {
         try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
     }
 
+    /// V3 pre-stack program, section 5.6 (Élő éjszaka-mód): "Figyelt mappa
+    /// kiválasztása…" -- prompts via `NSOpenPanel`, exactly `chooseRoot()`'s
+    /// own shape, then persists a security-scoped bookmark under
+    /// `LiveNightWatcherSettings.folderBookmarkDefaultsKey`, which
+    /// `AstroUI.LiveNightWatcher` resolves independently (this `AppState`
+    /// never talks to the watcher directly -- see that key's own doc
+    /// comment for why). Reuses THIS type's own `makeBookmark(for:)`/
+    /// `resolveBookmark(_:)` rather than a second bookmark helper.
+    func chooseLiveNightFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Kiválasztás"
+        panel.message = "Válaszd ki a figyelendő mappát (rig megosztása vagy bármely mappa)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let bookmark = makeBookmark(for: url) else { return }
+        preferences.set(bookmark, forKey: Self.liveNightWatchFolderBookmarkKey)
+    }
+
+    /// Settings ▸ Könyvtár's own read-only display of whatever
+    /// `chooseLiveNightFolder()` last saved -- `nil` when nothing has been
+    /// chosen yet, or the saved bookmark no longer resolves (the folder was
+    /// deleted/renamed since).
+    var liveNightWatchFolderDisplayPath: String? {
+        guard let data = preferences.data(forKey: Self.liveNightWatchFolderBookmarkKey) else { return nil }
+        return Self.resolveBookmark(data)?.path
+    }
+
     private func loadRecentRoots() {
-        guard let datas = UserDefaults.standard.array(forKey: Self.recentRootsKey) as? [Data] else { return }
+        guard let datas = preferences.array(forKey: Self.recentRootsKey) as? [Data] else { return }
         recentRoots = datas.compactMap { data in
             Self.resolveBookmark(data).map { RecentRoot(path: $0.path, bookmark: data) }
         }
@@ -1307,7 +1608,7 @@ final class AppState: @unchecked Sendable {
         if recentRoots.count > 5 {
             recentRoots.removeLast(recentRoots.count - 5)
         }
-        UserDefaults.standard.set(recentRoots.map(\.bookmark), forKey: Self.recentRootsKey)
+        preferences.set(recentRoots.map(\.bookmark), forKey: Self.recentRootsKey)
     }
 
     private static func resolveBookmark(_ data: Data) -> URL? {
@@ -1385,6 +1686,7 @@ final class AppState: @unchecked Sendable {
         db = nil
         lastError = nil
         lastScanDate = nil
+        scanSummary = nil
         didDismissFirstRun = false
         findings = []
         auditFindings = []
@@ -4227,6 +4529,32 @@ final class AppState: @unchecked Sendable {
         }
     }
 
+    /// The onboarding editor is authoritative only after this awaited
+    /// snapshot finishes. Unlike the fire-and-forget page refresh, callers
+    /// can keep editing disabled on failure and therefore cannot replace a
+    /// delayed inventory with a partial draft.
+    func loadFilterProfilesForOnboarding() async -> [FilterProfileRecord]? {
+        guard let db else {
+            lastError = "A szűrők betöltéséhez nyisd meg a könyvtár adatbázisát."
+            return nil
+        }
+        do {
+            let inventory = try await Task.detached(priority: .userInitiated) {
+                (
+                    try db.allFilterProfiles(),
+                    try db.discoveredFilterProfiles()
+                )
+            }.value
+            guard !Task.isCancelled else { return nil }
+            filterProfiles = inventory.0
+            discoveredFilterProfiles = inventory.1
+            return inventory.0
+        } catch {
+            handle(error)
+            return nil
+        }
+    }
+
     func saveFilterProfile(_ profile: FilterProfileRecord) {
         guard let db else { return }
         // Force a distinct observable transition even when an inline editor
@@ -4621,6 +4949,52 @@ final class AppState: @unchecked Sendable {
             try db.clearUserVerdict(fileID: fileID)
         }
         return true
+    }
+
+    /// Applies the exact frame archive/restore preview confirmed in the
+    /// Minőség UI. `FrameArchiveExecutor` owns filesystem+DB rollback; this
+    /// layer only patches the already loaded path-keyed presentation state.
+    func applyFrameArchive(_ plan: FrameArchivePlan) {
+        guard let db else { return }
+        let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+        let opID = beginOperation(plan.mode == .archive ? "Frame archíválása…" : "Frame visszaállítása…")
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let updated = try await Task.detached(priority: .userInitiated) {
+                    try FrameArchiveExecutor.apply(plan: plan, root: root, db: db)
+                }.value
+                guard !Task.isCancelled else { self.endOperation(opID); return }
+
+                if let index = self.frameScores.firstIndex(where: { $0.path == plan.sourceRelative }) {
+                    var score = self.frameScores[index]
+                    score.path = updated.path
+                    score.sessionSubdir = Self.sessionSubdir(path: updated.path, date: plan.date)
+                    self.frameScores[index] = score
+                }
+                if let verdict = self.frameVerdicts.removeValue(forKey: plan.sourceRelative) {
+                    self.frameVerdicts[plan.destinationRelative] = verdict
+                }
+                if let metadata = self.frameCaptureMetadata.removeValue(forKey: plan.sourceRelative) {
+                    self.frameCaptureMetadata[plan.destinationRelative] = metadata
+                }
+                self.trendPoints = nil
+                self.progressText = plan.mode == .archive
+                    ? "Archívumba helyezve: \(plan.destinationRelative)"
+                    : "Visszaállítva: \(plan.destinationRelative)"
+            } catch {
+                self.handle(error)
+            }
+            self.endOperation(opID)
+        }
+    }
+
+    private nonisolated static func sessionSubdir(path: String, date: String) -> String? {
+        let components = path.split(separator: "/").map(String.init)
+        guard let dateIndex = components.firstIndex(of: date), dateIndex + 1 < components.count - 1 else {
+            return nil
+        }
+        return components[(dateIndex + 1)..<(components.count - 1)].joined(separator: "/")
     }
 
     // MARK: - Plate-solve backfill (R7-1)
@@ -5314,7 +5688,8 @@ final class AppState: @unchecked Sendable {
         catalog: String,
         name: String,
         date: String,
-        initialCapture: CaptureGroupDraft? = nil
+        initialCapture: CaptureGroupDraft? = nil,
+        catalogTarget: CatalogTarget? = nil
     ) {
         guard let parsedDate = SessionDateParser.parse(date), parsedDate.isCanonical else {
             lastError = "Érvénytelen dátum: \(date) (YYYY-MM-DD formátum szükséges)"
@@ -5327,27 +5702,44 @@ final class AppState: @unchecked Sendable {
 
         let root = URL(fileURLWithPath: config.rootPath, isDirectory: true)
         let database = db
+        let indexedTargetFolders = stats.map(\.target)
+        let resolvedCatalog = catalogTarget?.designation ?? catalog
+        let resolvedName = catalogTarget.flatMap { TargetCatalog.englishName(for: $0) }
+            ?? catalogTarget?.commonNameHU
+            ?? name
 
         let opID = beginOperation("Session létrehozása…")
         currentTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
+                    let targetFolderOverride = catalogTarget.map { target in
+                        SessionCreator.targetFolder(
+                            for: target,
+                            root: root,
+                            indexedFolders: indexedTargetFolders
+                        )
+                    }
                     if let initialCapture {
                         guard let database else {
                             throw AstroError.databaseError("A könyvtár-adatbázis nem érhető el.")
                         }
                         return try SessionCreator.create(
                             root: root,
-                            catalogRaw: catalog,
-                            nameRaw: name,
+                            catalogRaw: resolvedCatalog,
+                            nameRaw: resolvedName,
                             date: date,
                             initialCapture: initialCapture,
-                            db: database
+                            db: database,
+                            targetFolderOverride: targetFolderOverride
                         )
                     }
                     return try SessionCreator.create(
-                        root: root, catalogRaw: catalog, nameRaw: name, date: date
+                        root: root,
+                        catalogRaw: resolvedCatalog,
+                        nameRaw: resolvedName,
+                        date: date,
+                        targetFolderOverride: targetFolderOverride
                     )
                 }.value
                 guard !Task.isCancelled else { self.endOperation(opID); return }

@@ -42,10 +42,17 @@ public struct ExposureAdvice: Codable, Sendable {
     /// computed independent of the configured `noiseContributionC`, so a
     /// caller can show both trade-off points side by side.
     public var recommendedSubSecondsC10: Double?
-    /// How much read noise inflates the CURRENT sub's total per-sub noise
-    /// over pure sky shot noise, as a percent: `(1 − √(B·t / (R² + B·t))) ×
-    /// 100`. E.g. 8% means the frame's noise is 8% higher than if read noise
-    /// didn't exist at all.
+    /// Read noise's SHARE of the current sub's total per-sub noise (stddev
+    /// terms), as a percent: `(1 − √(B·t / (R² + B·t))) × 100`. This is a
+    /// share, not a "the frame's noise is X% higher" figure -- the two only
+    /// coincide in the limit of a vanishing share. Writing `s` for this
+    /// share (as a fraction, not percent), the actual increase in total
+    /// per-sub noise over pure sky shot noise alone is `s / (1 − s)`: an 8%
+    /// share is an 0.08/0.92 ≈ 8.7% actual increase, and the gap between
+    /// the two widens as read noise's contribution grows. Displayed as-is
+    /// ("8%") rather than converted to the increase figure -- share is what
+    /// the sub-length trade-off (`optimalSubSeconds`'s own `C` parameter)
+    /// is actually defined in terms of.
     public var currentReadNoiseSharePercent: Double?
     /// Same formula, evaluated at `recommendedSubSeconds` instead of the
     /// current sub length.
@@ -168,14 +175,24 @@ public enum ExposureAdvisor {
             return naReply(target: target, reason: "nincs használható light-keret ehhez a célponthoz", totalUsableSeconds: 0)
         }
 
-        let counts = EquipmentProfile.fingerprintCounts(usableLights: buckets.usable, meta: metaByFileID)
+        // W7-C: ASI Air rewrites FOCALLEN by a few percent across nights as
+        // its plate-solve refines it (255/256/261/262 mm for one physical
+        // rig, verified against the owner's real library) -- without this
+        // table, `fingerprintCounts` and the per-frame check just below
+        // would treat each jittered value as its own setup, fragmenting one
+        // rig's integration across several "dominant" fingerprints and
+        // undercounting `totalUsableSeconds`. Built once, from exactly the
+        // same frame population `counts`/`dominantFrames` are drawn from, so
+        // the two stay consistent with each other.
+        let focalLengthBuckets = EquipmentProfile.focalLengthBuckets(metaByFileID.values)
+        let counts = EquipmentProfile.fingerprintCounts(usableLights: buckets.usable, meta: metaByFileID, focalLengthBuckets: focalLengthBuckets)
         guard let dominant = EquipmentProfile.dominant(counts) else {
             return naReply(target: target, reason: "nincs elég fejléc-adat a setup meghatározásához", totalUsableSeconds: 0)
         }
 
         let dominantFrames = buckets.usable.filter { file in
             guard let id = file.id, let meta = metaByFileID[id] else { return false }
-            return EquipmentProfile.fingerprint(meta: meta, headerJSON: meta.headerJSON) == dominant
+            return EquipmentProfile.fingerprint(meta: meta, headerJSON: meta.headerJSON, focalLengthBuckets: focalLengthBuckets) == dominant
         }
 
         var totalUsableSeconds: Double = 0

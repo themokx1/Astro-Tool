@@ -9,7 +9,6 @@ struct EquipmentSettingsView: View {
 
     private enum SensorPreset: String, CaseIterable, Identifiable {
         case apsc
-        case canonAPSC
         case fullFrame
         case custom
 
@@ -17,7 +16,6 @@ struct EquipmentSettingsView: View {
         var label: String {
             switch self {
             case .apsc: "APS-C · 23,5 × 15,7 mm"
-            case .canonAPSC: "Canon APS-C · 22,3 × 14,9 mm"
             case .fullFrame: "Full frame · 36 × 24 mm"
             case .custom: "Egyedi méret"
             }
@@ -26,7 +24,6 @@ struct EquipmentSettingsView: View {
         var dimensions: (width: Double, height: Double)? {
             switch self {
             case .apsc: (23.5, 15.7)
-            case .canonAPSC: (22.3, 14.9)
             case .fullFrame: (36, 24)
             case .custom: nil
             }
@@ -53,6 +50,8 @@ struct EquipmentSettingsView: View {
         var focalMinText: String
         var focalMaxText: String
         var defaultFocalText: String
+        var fNumberText: String
+        var relativeEfficiencyText: String
         var isDefault: Bool
     }
 
@@ -115,35 +114,10 @@ struct EquipmentSettingsView: View {
 
     private var addSetupMenu: some View {
         Menu {
-            Button("APS-C astro · 100–400 mm") {
-                addTemplate(
-                    name: "APS-C astro · 100–400 mm", cameraName: "Dedikált asztrokamera",
-                    cameraKind: .dedicatedAstro, sensorPreset: .apsc,
-                    opticMode: .zoom, min: 100, max: 400, defaultFocal: 200
-                )
-            }
-            Button("Canon R8 · 16 mm") {
-                addTemplate(
-                    name: "Canon R8 · 16 mm", cameraName: "Canon R8 (nem modolt)",
-                    cameraKind: .unmodifiedColor, sensorPreset: .fullFrame,
-                    opticMode: .fixed, min: 16, max: 16, defaultFocal: 16
-                )
-            }
-            Button("Canon R8 · 28–70 mm") {
-                addTemplate(
-                    name: "Canon R8 · 28–70 mm", cameraName: "Canon R8 (nem modolt)",
-                    cameraKind: .unmodifiedColor, sensorPreset: .fullFrame,
-                    opticMode: .zoom, min: 28, max: 70, defaultFocal: 50
-                )
-            }
+            Button("APS-C szenzorméret") { addTemplate(sensorPreset: .apsc) }
+            Button("Full frame szenzorméret") { addTemplate(sensorPreset: .fullFrame) }
             Divider()
-            Button("Egyedi setup") {
-                addTemplate(
-                    name: "Új setup", cameraName: "Kamera", cameraKind: .dedicatedAstro,
-                    sensorPreset: .custom, opticMode: .fixed,
-                    min: 200, max: 200, defaultFocal: 200
-                )
-            }
+            Button("Egyedi szenzorméret") { addTemplate(sensorPreset: .custom) }
         } label: {
             Label("Setup hozzáadása", systemImage: "plus")
         }
@@ -189,6 +163,18 @@ struct EquipmentSettingsView: View {
                         .labelsHidden()
                         .frame(width: 190)
                     }
+                }
+
+                HStack {
+                    LabeledContent("F-szám") {
+                        TextField("f/", text: draft.fNumberText).frame(width: 70)
+                    }
+                    LabeledContent("Relatív rendszerhatékonyság") {
+                        TextField("1,0", text: draft.relativeEfficiencyText).frame(width: 70)
+                        Text("×").foregroundStyle(.secondary)
+                    }
+                    Text("Az automatikus integrációs cél számításához; 1,0 = referencia.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
 
                 HStack {
@@ -265,24 +251,18 @@ struct EquipmentSettingsView: View {
     }
 
     private func addTemplate(
-        name: String,
-        cameraName: String,
-        cameraKind: CameraKind,
-        sensorPreset: SensorPreset,
-        opticMode: OpticMode,
-        min: Double,
-        max: Double,
-        defaultFocal: Double
+        sensorPreset: SensorPreset
     ) {
-        let dimensions = sensorPreset.dimensions ?? (23.5, 15.7)
+        let dimensions = sensorPreset.dimensions
         drafts.append(
             SetupDraft(
-                id: UUID().uuidString, name: uniqueDraftName(name), cameraName: cameraName,
-                cameraKind: cameraKind, sensorPreset: sensorPreset,
-                sensorWidthText: Self.numberText(dimensions.width),
-                sensorHeightText: Self.numberText(dimensions.height), opticMode: opticMode,
-                focalMinText: Self.numberText(min), focalMaxText: Self.numberText(max),
-                defaultFocalText: Self.numberText(defaultFocal), isDefault: drafts.isEmpty
+                id: UUID().uuidString, name: uniqueDraftName("Új setup"), cameraName: "",
+                cameraKind: .unspecified, sensorPreset: sensorPreset,
+                sensorWidthText: dimensions.map { Self.numberText($0.width) } ?? "",
+                sensorHeightText: dimensions.map { Self.numberText($0.height) } ?? "", opticMode: .fixed,
+                focalMinText: "", focalMaxText: "", defaultFocalText: "",
+                fNumberText: "", relativeEfficiencyText: "1",
+                isDefault: drafts.isEmpty
             )
         )
         clearFeedback()
@@ -331,6 +311,8 @@ struct EquipmentSettingsView: View {
             focalMinText: numberText(profile.focalLengthMinMM),
             focalMaxText: numberText(profile.focalLengthMaxMM),
             defaultFocalText: numberText(profile.defaultFocalLengthMM),
+            fNumberText: numberText(profile.fNumber),
+            relativeEfficiencyText: numberText(profile.relativeEfficiency),
             isDefault: profile.isDefault
         )
     }
@@ -362,7 +344,10 @@ struct EquipmentSettingsView: View {
                     sensorWidthMM: try parseNumber(draft.sensorWidthText),
                     sensorHeightMM: try parseNumber(draft.sensorHeightText),
                     focalLengthMinMM: min, focalLengthMaxMM: max,
-                    defaultFocalLengthMM: defaultFocal, isDefault: draft.isDefault
+                    defaultFocalLengthMM: defaultFocal,
+                    fNumber: try parseNumber(draft.fNumberText),
+                    relativeEfficiency: try parseNumber(draft.relativeEfficiencyText),
+                    isDefault: draft.isDefault
                 )
                 try profile.validate()
                 let normalizedName = profile.name.lowercased()
@@ -422,9 +407,12 @@ struct EquipmentSettingsView: View {
         switch error {
         case .emptyName: "Minden setupnak nevet kell adni."
         case .emptyCameraName: "Minden setupnál add meg a kamera nevét."
+        case .unspecifiedCameraKind: "Minden setupnál válaszd ki a kamera jellegét."
         case .invalidSensorSize: "A szenzor szélessége és magassága pozitív szám legyen."
         case .invalidFocalRange: "A fókusztáv pozitív legyen, és a minimum nem lehet nagyobb a maximumnál."
         case .defaultFocalLengthOutsideRange: "Az alapértelmezett fókusztávnak a zoomtartományba kell esnie."
+        case .invalidFNumber: "Az f-szám pozitív szám legyen."
+        case .invalidRelativeEfficiency: "A relatív rendszerhatékonyság pozitív szám legyen (1,0 = referencia)."
         }
     }
 
@@ -449,6 +437,7 @@ private enum EquipmentSettingsError: Error {
 private extension CameraKind {
     var settingsLabel: String {
         switch self {
+        case .unspecified: "Válassz típust"
         case .dedicatedAstro: "Dedikált asztrokamera"
         case .unmodifiedColor: "Nem modifikált színes"
         case .modifiedColor: "Asztromodifikált színes"
