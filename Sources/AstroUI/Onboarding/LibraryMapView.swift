@@ -56,6 +56,7 @@ public struct LibraryMapView: View {
             .font(.caption.weight(.medium))
             .padding(.horizontal, 9)
             .padding(.vertical, 6)
-            .background(AstroTokens.Color.recess, in: Capsule())
+            .foregroundStyle(AstroTokens.Color.accent)
+            .background(AstroTokens.Color.accent.opacity(0.12), in: Capsule())
     }
 }
