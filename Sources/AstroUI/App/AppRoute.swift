@@ -60,6 +60,10 @@ public enum ContentRoute: Hashable, Codable, Sendable {
     case library
     case health
     case calibration
+    /// V3 5.4 (metadata fixer): the batched "missing filters" workspace --
+    /// same shape as `.calibration`, a Library child row rather than a new
+    /// `PrimarySection`.
+    case metadataFixer
     case insights
     case reviewFrame(Int64)
     /// Wave 4 Task 1: the frame-review workspace as a route (was a
@@ -104,7 +108,7 @@ public enum ContentRoute: Hashable, Codable, Sendable {
         case .projects, .project, .projectSeries, .review, .resultsWorkspace: .projects
         case .nights, .night, .reviewFrame: .nights
         case .planning, .savedTargets: .planning
-        case .library, .health, .calibration, .conversion, .cleanup, .sensorProfiles, .archiveTaskDetail: .library
+        case .library, .health, .calibration, .metadataFixer, .conversion, .cleanup, .sensorProfiles, .archiveTaskDetail: .library
         case .insights: .insights
         }
     }
@@ -221,6 +225,7 @@ public enum AppRoute: Hashable, Sendable {
         // instead of resolving to nothing.
         case ("library", ["health"]): self = .content(.library)
         case ("library", ["calibration"]): self = .content(.calibration)
+        case ("library", ["metadata-fixer"]): self = .content(.metadataFixer)
         case ("insights", []): self = .content(.insights)
         case ("settings", let parts) where parts.count == 1 && !parts[0].isEmpty:
             self = .presentation(.settingsDeepLink(parts[0]))

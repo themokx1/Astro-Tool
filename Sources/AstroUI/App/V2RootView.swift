@@ -1192,6 +1192,14 @@ private struct V2Sidebar: View {
                             route: .calibration,
                             accessibilityID: "v2.sidebar.library.calibration"
                         )
+                        // V3 5.4: the batched "missing filters" workspace,
+                        // same disclosure-child shape as Calibration.
+                        libraryChildRow(
+                            title: "Metadata Fixer",
+                            systemImage: "camera.metering.matrix",
+                            route: .metadataFixer,
+                            accessibilityID: "v2.sidebar.library.metadata-fixer"
+                        )
                     } label: {
                         sectionRow(section)
                     }
@@ -1478,6 +1486,7 @@ private struct DetailHost: View {
         case .library: "Library"
         case .health: "Health"
         case .calibration: "Calibration"
+        case .metadataFixer: "Metadata Fixer"
         case .insights: "Insights"
         case .reviewFrame: "Frame Review"
         case .review: "Review"
@@ -1771,6 +1780,11 @@ private struct DetailHost: View {
             CalibrationView(
                 rootURL: onboardingStore.selectedRoot, accessMode: accessMode,
                 chooseLibrary: chooseLibrary,
+                onLibraryFindingsChanged: libraryFindingsChanged
+            )
+        case .metadataFixer:
+            MetadataFixerView(
+                rootURL: onboardingStore.selectedRoot, accessMode: accessMode,
                 onLibraryFindingsChanged: libraryFindingsChanged
             )
         case .reviewFrame:
