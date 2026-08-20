@@ -1490,6 +1490,14 @@
    regardless -- included here together for one wizard, one block. */
 "Import from Card…" = "Behozatal a kártyáról…";
 "Import from Card" = "Behozatal a kártyáról";
+/* V3 pre-stack program, section 5.1 (Ingest-figyelő): the Home banner's own
+   four literals (`IngestHomeCard.swift`) -- "%@ — %@" is the pre-formatted
+   "<volume> — <N files, M bursts>" sentence, `Import…`/`Not now` are the
+   banner's two buttons. */
+"New capture source found" = "Új felvétel-forrás található";
+"%@ — %@" = "%@ — %@";
+"Import…" = "Import…";
+"Not now" = "Most nem";
 "Copy capture files from a card or the ASI Air's storage" = "Capture-fájlok másolása kártyáról vagy az ASI Air tárhelyéről";
 "Import from card" = "Behozatal kártyáról";
 "Classify" = "Osztályozás";
@@ -2436,6 +2444,43 @@
    LocalizationCoverageTests stays green and 5.2's own commit doesn't have
    to touch hu.lproj for text that already exists. */
 "%lld flat calibration items still need attention" = "%lld flat kalibrációs tétel még figyelmet igényel";
+
+/* V3 pre-stack program section 5.5 ("Derült-trigger"): Settings ▸
+   Notifications (NotificationSettingsView, AstroUI) -- the toggle, its
+   honest in-process-only caption, and the three authorization-state lines. */
+"Notifications" = "Értesítések";
+"Clear-sky notification" = "Derült égbolt értesítés";
+"Tell me when it clears up tonight" = "Szólj, ha kitisztul ma este";
+"Checks the afternoon forecast while AstroTool is open, and -- if it clears up for tonight -- shows a notification with the pre-flight status and a suggested target. This only runs while the app is open: if you quit before the afternoon check window, you will not get a notification tonight." = "A délutáni előrejelzést ellenőrzi, amíg az AstroTool nyitva van, és -- ha kitisztul mára estére -- értesítést küld a preflight-státusszal és egy javasolt célponttal. Ez csak akkor működik, ha az app nyitva van: ha a délutáni ellenőrzési ablak előtt kilépsz, ma este nem kapsz értesítést.";
+"Notifications are allowed." = "Az értesítések engedélyezve vannak.";
+"Notifications are blocked for AstroTool. Allow them in System Settings ▸ Notifications." = "Az értesítések le vannak tiltva az AstroTool számára. Engedélyezd a Rendszerbeállítások ▸ Értesítések alatt.";
+"Waiting for permission…" = "Engedélyre várunk…";
+
+/* V3 pre-stack program section 5.5: `NotificationSettingsStore`'s own
+   save-result messages -- plain `NSLocalizedString` calls (AstroUI, but not
+   a literal `Text(...)`/etc. argument), invisible to
+   scripts/extract-localizable-strings.swift for the same reason every other
+   hand-added entry in this file is; see `CaptureImportCommand.swift`'s
+   identical use of this pattern for why NSLocalizedString(_:bundle:.main,
+   comment:) works from any module without an AstroUI import. */
+"Saved." = "Mentve.";
+"Could not save this setting. Try again." = "Nem sikerült menteni ezt a beállítást. Próbáld újra.";
+
+/* V3 pre-stack program section 5.5: `ClearSkyNotificationContent.build`
+   (AstroApplication) -- the actual macOS notification's title/body. Hand-
+   added for the same reason as the two save-result messages just above:
+   `AstroApplication` cannot import `AstroUI`, so this calls
+   NSLocalizedString directly rather than going through SwiftUI's `Text`,
+   which the extraction script cannot see either way. Dynamic data (the
+   calibration count, the suggested target's name) is always interpolated
+   AROUND the already-resolved literal via `String(format:)`, never through
+   the key itself -- the documented `OperationHost.localized(_:)` trap this
+   whole codebase designs around. */
+"Tonight looks clear" = "Ma este kitisztul az ég";
+"Calibration is current. Tonight's top target: %@." = "A kalibráció naprakész. Ma esti javasolt célpont: %@.";
+"Calibration is current." = "A kalibráció naprakész.";
+"%lld calibration item(s) need attention. Tonight's top target: %@." = "%lld kalibrációs tétel figyelmet igényel. Ma esti javasolt célpont: %@.";
+"%lld calibration item(s) need attention." = "%lld kalibrációs tétel figyelmet igényel.";
 "Flat calibration is current" = "A flat kalibráció naprakész";
 
 /* Feature 5.3 (V3 prestack program, Irányított rendrakó): GuidedCleanupView.swift/
@@ -2466,3 +2511,46 @@
 "All caught up." = "Minden naprakész.";
 "%@ quarantined · %@ left as-is" = "%@ karanténba téve · %@ maradt változatlanul";
 "Decide" = "Döntés";
+
+/* Feature 5.4 (V3 prestack program, Metaadat-javító): MetadataFixerView.swift/
+   MetadataFixerStore.swift -- the batched "missing filters" workspace that
+   routes writes through CaptureAssignmentCommand into
+   file_capture_assignments. "Session"/"Frames"/"Rig"/"Filter" already have a
+   translation from elsewhere and need no new entry here -- only the
+   genuinely new sentences below were reported by
+   `swift scripts/extract-localizable-strings.swift --missing`. */
+"Metadata Fixer" = "Metaadat javítása";
+"Rig" = "Rig";
+"Fills in the FILTER field folder/date/rig at a time, with manual overrides that survive every rescan." = "A FILTER mezőt tölti ki mappánként/dátumonként/rignként, olyan kézi felülbírálásokkal, amelyek minden újraszkennelést túlélnek.";
+"Capture metadata unavailable" = "A capture-metaadat nem elérhető";
+"Every frame has a resolved filter" = "Minden keretnek van feloldott szűrője";
+"No session in this library has a light frame with a missing filter or a metadata conflict." = "Ebben a könyvtárban egyetlen sessionnek sincs hiányzó szűrőjű vagy metaadat-ütközéses fénykerete.";
+"Select a session" = "Válassz egy sessiont";
+"Choose a folder on the left to review its missing filter and any suggested fix." = "Válassz egy mappát balra, hogy átnézd a hiányzó szűrőjét és az esetleges javasolt javítást.";
+"Conflicts" = "Ütközések";
+"Missing filters" = "Hiányzó szűrők";
+"%lld frames · %@" = "%lld keret · %@";
+"These frames aren't assigned to a capture group yet -- assign them to one first (Library ▸ Classify) before a rule can be applied here." = "Ezek a keretek még nincsenek gyűjtéshez rendelve -- előbb rendeld hozzá őket egyhez (Könyvtár ▸ Besorolás), mielőtt itt szabályt alkalmaznál.";
+"Saved -- this override survives every future rescan." = "Mentve -- ez a felülbírálás minden jövőbeli újraszkennelést túlél.";
+"Clear override for this session's frames" = "Felülbírálás törlése ennek a sessionnek a kereteire";
+"Looking for a rule…" = "Szabály keresése…";
+"Suggested rule" = "Javasolt szabály";
+"Signal mode" = "Fénysáv";
+"Apply this rule to %lld frames" = "Szabály alkalmazása %lld keretre";
+"Not enough context for an automatic suggestion -- enter the filter by hand below." = "Nincs elég kontextus az automatikus javaslathoz -- add meg a szűrőt kézzel lent.";
+"Manual override" = "Kézi felülbírálás";
+"Not set" = "Nincs beállítva";
+"Filter name" = "Szűrő neve";
+"Save override" = "Felülbírálás mentése";
+"Doesn't inherit the group's filter" = "Nem örökli a gyűjtés szűrőjét";
+"Requires write access. Enable write operations in Settings to save an override." = "Íráshozzáférés szükséges. Engedélyezd az írási műveleteket a Beállításokban egy felülbírálás mentéséhez.";
+"Requires write access. Enable write operations in Settings to edit capture metadata." = "Íráshozzáférés szükséges. Engedélyezd az írási műveleteket a Beállításokban a capture-metaadat szerkesztéséhez.";
+"Reading capture metadata…" = "Capture-metaadat olvasása…";
+/* CaptureRuleSuggestion.Basis.displayLabel (MetadataFixerView.swift) --
+   not a direct Text/Button/Label literal call site (a switch-returned
+   LocalizedStringKey, same shape as SeriesPassband.displayLabel in
+   NightsStore.swift), so the extraction script does not report these, but
+   they are real user-facing text and get a translation here regardless. */
+"Inferred from this folder's own name" = "A mappa saját nevéből következtetve";
+"Matches every other night using this same folder name" = "Minden más, ugyanezt a mappanevet használó éjszakával egyezik";
+"Matches this library's default imaging setup" = "Egyezik a könyvtár alapértelmezett felszerelésével";

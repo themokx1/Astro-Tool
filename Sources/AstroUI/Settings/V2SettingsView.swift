@@ -21,6 +21,7 @@ public struct V2SettingsView: View {
             PlanningSettingsView().tabItem { Label("Planning", systemImage: "sparkles") }
             ImagingSetupsSettingsView(appModel: appModel).tabItem { Label("Imaging Setups", systemImage: "camera.on.rectangle") }
             EquipmentEvaluationSettingsView(store: store).tabItem { Label("Equipment", systemImage: "camera.aperture") }
+            NotificationSettingsView(appModel: appModel).tabItem { Label("Notifications", systemImage: "bell") }
             IntegrationsSupportSettingsView(appModel: appModel, store: store).tabItem { Label("Support", systemImage: "lifepreserver") }
         }
         .padding(20)

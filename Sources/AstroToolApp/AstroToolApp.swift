@@ -28,6 +28,15 @@ struct AstroToolApp: App {
                     uiTestFixture: uiTestFixture,
                     initialSection: launchSelection.initialSection
                 )
+                // V3 pre-stack program section 5.5 ("Derült-trigger"): the
+                // one place the in-process "has it cleared up for tonight?"
+                // periodic check runs -- attached to this window's own
+                // content so it runs for exactly as long as this window
+                // does, never longer (see `ClearSkyTriggerLoop`'s own doc
+                // comment for the deliberate V3.0 "app must be open" limit).
+                .task {
+                    await ClearSkyTriggerLoop.runWhileActive { appModel.currentLibraryRootURL }
+                }
             } else if let appState {
                 RootView()
                     .environment(appState)
