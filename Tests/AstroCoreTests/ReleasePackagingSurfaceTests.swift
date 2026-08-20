@@ -149,11 +149,23 @@ struct ReleasePackagingSurfaceTests {
         #expect(metadataCheck.contains("Release metadata check passed."))
     }
 
-    @Test("Public website identifies the current V2 product")
-    func websiteIdentifiesV2() throws {
+    @Test("Public website identifies the stable V3 product")
+    func websiteIdentifiesV3() throws {
         let homepage = try source("docs/index.html")
-        #expect(homepage.contains("AstroTool 2.0"))
-        #expect(homepage.contains("Project → Night → Series → Frame → Result"))
-        #expect(!homepage.contains("AstroTool 1.0"))
+        #expect(homepage.contains("AstroTool 3.0"))
+        #expect(homepage.contains("Project → Night → Capture → Frame → Result"))
+        #expect(!homepage.contains("AstroTool 2.0"))
+    }
+
+    @Test("Stable V3 has matching final release notes and changelog")
+    func stableV3Documentation() throws {
+        let notes = try source("docs/releases/v3.0.0.md")
+        let changelog = try source("CHANGELOG.md")
+        #expect(notes.contains("# AstroTool 3.0.0"))
+        #expect(notes.contains("Első lépések"))
+        #expect(notes.contains("forrásfájlok változatlanok"))
+        #expect(!notes.lowercased().contains("prerelease"))
+        #expect(!notes.lowercased().contains("béta-korlát"))
+        #expect(changelog.contains("## [3.0.0] - 2026-08-20"))
     }
 }

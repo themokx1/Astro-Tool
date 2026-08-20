@@ -8,6 +8,35 @@ történik.
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-08-20
+
+A végleges V3 kiadás a stackelés előtti munkafolyamatot egy teljesen új,
+kezdők számára is követhető első indítással teszi hozzáférhetővé. A béta
+funkciói megmaradnak, de a könyvtár létrehozása és az első ellenőrzött import
+most egyetlen, kihagyható folyamatban elvégezhető.
+
+### Hozzáadva
+
+- **Első siker onboarding** három világos belépési ponttal: „Új képkönyvtár
+  létrehozása”, „Már van AstroTool-könyvtáram” és „Előbb szeretném
+  megérteni”.
+- **Biztonságos könyvtárlétrehozás**, amely a szabványos projekt-, session-,
+  kalibrációs és eredménymappákat automatikusan létrehozza.
+- **Opcionális első import**, amely egy folyamatban hozza létre az első
+  projektet, éjszakát és capture-t, majd ellenőrzött másolatokat készít.
+- **Bármikor újranyitható Első lépések** a Súgó menüből, valamint azonos
+  felépítésű nyilvános weboldal.
+
+### Biztonság
+
+- A kiválasztott forrásfájlok változatlanok maradnak: az onboarding csak
+  másol, minden elkészült fájlt ellenőrzőösszeggel igazol, ütközéskor pedig
+  kihagyja a célfájlt.
+- Nincs önálló törlési művelet. Az AstroTool csak létrehozást, másolást vagy
+  külön jóváhagyott, bizonylatos mozgatást végezhet.
+- Az onboarding kizárólag valódi importbizonylat után állítja, hogy az első
+  projekt elkészült; a folyamat korai bezárása nem jelenít meg hamis sikert.
+
 ## [3.0.0-beta.1] - 2026-08-20
 
 Az első V3 béta a stackelés előtti teljes munkafolyamatot bővíti. A V2

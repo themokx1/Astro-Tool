@@ -49,10 +49,12 @@ struct PublicWebsiteSurfaceTests {
         #expect(homepage.contains("href=\"first-steps.html\""))
     }
 
-    @Test("Homepage describes the real 2.0 product and Universal download")
+    @Test("Homepage describes the real stable 3.0 product and Universal download")
     func accurateHomepage() throws {
         let html = try source("docs/index.html")
-        #expect(html.contains("AstroTool 2.0"))
+        #expect(html.contains("AstroTool 3.0"))
+        #expect(html.contains("Project → Night → Capture → Frame → Result"))
+        #expect(!html.contains("AstroTool 2.0"))
         #expect(html.contains("Apple Silicon és Intel"))
         #expect(html.contains("A képeid a Maceden maradnak"))
         #expect(html.contains("Az audit nem töröl és nem mozgat"))
