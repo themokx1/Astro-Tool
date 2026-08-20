@@ -38,6 +38,44 @@ public struct WriteGuard: Sendable {
         root.appendingPathComponent(".astro_tool", isDirectory: true)
     }
 
+    /// The complete top-level scaffold of a new AstroTool library. The order
+    /// is user-facing and stable: working areas first, shared calibration
+    /// folders next, and the app-owned metadata area last.
+    public static let libraryScaffoldRelativePaths = [
+        "sessions",
+        "stacks",
+        "processed",
+        "calibration_library/darks",
+        "calibration_library/flats",
+        "calibration_library/biases",
+        ".astro_tool",
+    ]
+
+    /// Creates only missing canonical library directories. Existing entries
+    /// are left byte-for-byte untouched; an existing non-directory at one of
+    /// the canonical paths is a hard conflict rather than an overwrite.
+    @discardableResult
+    public func createLibraryScaffold() throws -> [URL] {
+        let fm = FileManager.default
+        var created: [URL] = []
+
+        for relativePath in Self.libraryScaffoldRelativePaths {
+            let destination = root.appendingPathComponent(relativePath, isDirectory: true)
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: destination.path, isDirectory: &isDirectory) {
+                guard isDirectory.boolValue else {
+                    throw AstroError.writeForbidden(path: destination.path)
+                }
+                continue
+            }
+            try Self.classifyingPermissionErrors(path: destination.path) {
+                try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+            }
+            created.append(destination)
+        }
+        return created
+    }
+
     /// Creates the full session tree the real `add_new_session.sh` builds
     /// for a brand-new session -- `sessions/<target>/<dateDir>/
     /// {lights,flats,darks,biases}` plus a `README.txt` under the new date

@@ -9,6 +9,34 @@ private func makeTempRoot() throws -> URL {
     return dir
 }
 
+@Test func createLibraryScaffoldCreatesOnlyCanonicalMissingDirectories() throws {
+    let parent = try makeTempRoot()
+    defer { try? FileManager.default.removeItem(at: parent) }
+    let root = parent.appendingPathComponent("My Astro Library", isDirectory: true)
+    let guardian = WriteGuard(root: root)
+
+    let created = try guardian.createLibraryScaffold()
+
+    #expect(WriteGuard.libraryScaffoldRelativePaths == [
+        "sessions", "stacks", "processed",
+        "calibration_library/darks", "calibration_library/flats",
+        "calibration_library/biases", ".astro_tool",
+    ])
+    #expect(created.map { $0.path } == WriteGuard.libraryScaffoldRelativePaths.map {
+        root.appendingPathComponent($0, isDirectory: true).path
+    })
+    for relativePath in WriteGuard.libraryScaffoldRelativePaths {
+        var isDirectory: ObjCBool = false
+        #expect(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent(relativePath).path,
+            isDirectory: &isDirectory
+        ))
+        #expect(isDirectory.boolValue)
+    }
+
+    #expect(try guardian.createLibraryScaffold().isEmpty)
+}
+
 @Test func createSessionTreeCreatesExpectedSubdirsAndReadme() throws {
     let root = try makeTempRoot()
     defer { try? FileManager.default.removeItem(at: root) }
