@@ -10,6 +10,9 @@
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="stylesheet" href="site.css">
 <meta name="theme-color" content="#0B0B0D">
+<link rel="alternate" hreflang="hu" href="https://themokx1.github.io/Astro-Tool/tutorial.html">
+<link rel="alternate" hreflang="en" href="https://themokx1.github.io/Astro-Tool/en/tutorial.html">
+<link rel="alternate" hreflang="x-default" href="https://themokx1.github.io/Astro-Tool/tutorial.html">
 
 <meta property="og:type" content="website">
 <meta property="og:title" content="AstroTool · Útmutató">
@@ -28,13 +31,17 @@
 <nav>
   <div class="wrap">
     <a class="brand" href="index.html" style="text-decoration:none;color:inherit;"><span class="brand-mark" aria-hidden="true"></span>AstroTool</a>
+    <div class="nav-lang">
+      <a href="tutorial.html" class="current">HU</a>
+      <a href="en/tutorial.html">EN</a>
+    </div>
   </div>
 </nav>
 
 <header class="wrap compact">
   <h1>Útmutató</h1>
   <p class="sub">A lényeg egy oldalon: hogyan épül fel a könyvtárad, és mit csinálj vele egy éjszaka után.</p>
-  <p class="crumbs"><a href="features.html">Funkciók</a> · <a href="cli.html">CLI</a> · <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Letöltés</a></p>
+  <p class="crumbs"><a href="features.html">Funkciók</a> · <a href="cli.html">CLI</a> · <a href="install.html">Telepítés</a> · <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Letöltés</a></p>
 </header>
 
 <main class="doc-wrap doc">
@@ -42,28 +49,33 @@
 
     <div class="panel">
       <h2><span class="dot" aria-hidden="true"></span>1. A könyvtár felépítése</h2>
-      <p>Az AstroTool egy rögzített, négy-területes könyvtárszerkezetre épít. Minden területnek pontosan egy szerepe van: ha ezt betartod, a tool minden számítása (integráció, kalibráció-lefedettség, tervezés) megbízhatóan működik.</p>
+      <p>Az AstroTool négy területre épít a könyvtárad gyökerében: <code>sessions</code>, <code>stacks</code>, <code>processed</code>, <code>calibration_library</code>. Egy session ma már <strong>gyűjtésekre (capture) bontva</strong> tárolja a nyers kereteket, mert egy éjszakán belül gyakran több kamera/szűrő-kombináció is előfordul (pl. egy rövid OSC teszt és egy hosszú mono sorozat ugyanarra a célpontra):</p>
       <pre class="tree">&lt;ROOT&gt;/
 ├── <span class="dir">sessions</span>/&lt;CÉLPONT&gt;/&lt;ÉÉÉÉ-HH-NN&gt;/
-│   ├── lights/   flats/   darks/   biases/
+│   ├── <span class="dir">captures</span>/&lt;slug&gt;/
+│   │   └── lights/   flats/   darks/   biases/
+│   ├── <span class="dir">captures</span>/&lt;másik-slug&gt;/...      <span class="comment"># egy éjszakához több gyűjtés is tartozhat</span>
 │   └── README.txt                        <span class="comment"># kézzel kitöltött jegyzet: Bortle, SQM, seeing...</span>
-├── <span class="dir">stacks</span>/&lt;CÉLPONT&gt;/&lt;ÉÉÉÉ-HH-NN&gt;/
-├── <span class="dir">processed</span>/&lt;CÉLPONT&gt;/&lt;ÉÉÉÉ-HH-NN&gt;/
+├── <span class="dir">stacks</span>/&lt;CÉLPONT&gt;/&lt;ÉÉÉÉ-HH-NN&gt;/&lt;slug&gt;/
+├── <span class="dir">processed</span>/&lt;CÉLPONT&gt;/&lt;ÉÉÉÉ-HH-NN&gt;/&lt;slug&gt;/
 └── <span class="dir">calibration_library</span>/
     ├── darks/&lt;exp&gt;sec_&lt;temp&gt;deg/       <span class="comment"># pl. 300sec_-10deg</span>
     ├── flats/
     └── biases/</pre>
       <ul class="list">
-        <li><strong>sessions</strong>: a nyers, eredeti felvételek. Ide semmit sosem írunk felül és sosem törlünk, ez az egyetlen igazságforrás.</li>
-        <li><strong>stacks</strong>: a stackelt köztes eredmények. Bármikor újra elő tudod állítani a sessions-ből, ha elveszik.</li>
+        <li><strong>sessions</strong>: a nyers, eredeti felvételek, gyűjtésenként (<code>captures/&lt;slug&gt;</code>) csoportosítva. Egy gyűjtés rögzíti a szenzormódot (OSC/mono), a jelleget (széles sáv/keskeny sáv/duál-sáv) és a pontos szűrőt. Ide semmit sosem írunk felül és sosem törlünk, ez az egyetlen igazságforrás.</li>
+        <li><strong>stacks</strong>: a stackelt köztes eredmények, ugyanazzal a <code>&lt;slug&gt;</code> tükrözéssel. Bármikor újra elő tudod állítani a sessions-ből, ha elveszik.</li>
         <li><strong>processed</strong>: a végleges, feldolgozott (post-processed) képek. Ez a publikálásra kész állapot.</li>
         <li><strong>calibration_library</strong>: újrafelhasználható master dark/flat/bias keretek, expozíció és hőmérséklet szerint mappázva.</li>
       </ul>
+      <div class="whenbox">
+        <strong>Régi könyvtár?</strong> Ha nálad a session mappája közvetlenül <code>lights/</code>, <code>flats/</code>, <code>darks/</code>, <code>biases/</code> almappákat tartalmaz (a <code>captures/</code> szint nélkül), semmit nem kell átalakítanod: az AstroTool beolvasása ezt a régi formát is felismeri és helyesen kezeli, beleértve az olyan egyedi mappaneveket is, mint <code>lights_osc</code>. A régi sessionöket az app Könyvtár szekciójának <em>Átalakítás</em> varázslója tudja, kérésre, átláthatóan átszervezni az új <code>captures/&lt;slug&gt;</code> formára (előnézettel, visszavonhatóan), de ez nem kötelező. A CLI <code>new-session</code> parancsa is továbbra is ezt a klasszikus, gyűjtés nélküli négyes mappaszerkezetet hozza létre.
+      </div>
     </div>
 
     <div class="panel">
       <h2><span class="dot" aria-hidden="true"></span>2. Elnevezési szabályok</h2>
-      <p>A célpontnév és a dátum-mappa neve nem szabad szöveg: az eszköz ezekből olvassa ki, melyik felvétel melyik célponthoz és melyik éjszakához tartozik.</p>
+      <p>A célpontnév és a dátum-mappa neve nem szabad szöveg: az eszköz ezekből olvassa ki, melyik felvétel melyik célponthoz és melyik éjszakához tartozik. Egy gyűjtésen belüli adatok (szenzormód, szűrő) mostantól saját mezőkben élnek, de a dátum-szintű elnevezési szabályok változatlanul érvényesek:</p>
       <div class="table-scroll">
       <table>
         <tr><th>Minta</th><th>Jelentés</th><th>Példa</th></tr>
@@ -75,21 +87,21 @@
         <tr><td><code>_hibas</code> jelölés</td><td>rossz éjszaka: az eszköz tudatosan <strong>kimarad a statisztikából</strong></td><td><code>2026-03-15_hibas</code></td></tr>
       </table>
       </div>
-      <p style="color:var(--muted);font-size:13.5px;margin-top:10px;">Ezek a minták a <code>config.json</code>-ban felülbírálhatók (<code>intentional.runSuffix</code>/<code>dateRange</code>/<code>labels</code>), de az alapértékek pontosan ezt a négy esetet ismerik fel.</p>
+      <p style="color:var(--muted);font-size:13.5px;margin-top:10px;">Ezek a minták a <code>config.json</code>-ban felülbírálhatók (<code>intentional.runSuffix</code>/<code>dateRange</code>/<code>labels</code>), de az alapértékek pontosan ezt a négy esetet ismerik fel. Az <code>-OSC</code>-höz hasonló dátum-utótagok azért maradtak meg, mert a session/dátum szintjén dolgoznak; a gyűjtés-szintű OSC/mono és szűrő-adat ezt kiegészíti, nem váltja ki.</p>
     </div>
 
     <div class="panel">
       <h2><span class="dot" aria-hidden="true"></span>3. Egy éjszaka munkafolyamata</h2>
       <ol class="steps">
-        <li><strong>Felvétel után: <code>astrotool scan</code></strong><span class="detail">bejárja a könyvtárat, frissíti a belső indexet: mindig ez az első lépés, minden más erre épül.</span></li>
-        <li><strong><code>astrotool audit</code></strong><span class="detail">három súlyosság szerint csoportosítja a talált gondokat: <em>biztos hiba</em> (pl. sérült FITS fejléc), <em>gyanús</em> (pl. szokatlan méret), <em>valószínűleg szándékos</em> (pl. ismert reziduum); sosem töröl, csak jelöl.</span></li>
-        <li><strong>Pontozás: <code>astrotool rate</code></strong><span class="detail">a light frame-ek minőség-pontozása (FWHM, kerekség, háttér, csillagszám), kiugró keretek megjelölésével.</span></li>
-        <li><strong><code>astrotool stacklist</code></strong><span class="detail">a legjobb frame-ek kiválasztása és exportálása hardlinkek, <code>.dssfilelist</code> és Siril script formájában.</span></li>
-        <li><strong>Stackelés DSS-ben vagy Sirilben</strong><span class="detail">az exportált listát a szokásos módon töltöd be a saját eszközödbe: az AstroTool ide nem szól bele.</span></li>
-        <li><strong><code>astrotool report</code></strong><span class="detail">önmagában megnyitható HTML éjszaka-riport: idővonal, minőség, magasság és Hold, kalibráció-státusz, teendők.</span></li>
+        <li><strong>Behozatal-varázsló</strong><span class="detail">csatlakoztatod a kártyát vagy a kötetet (pl. ASI Air, kamera-kártya), a varázsló FITS <code>IMAGETYP</code>/<code>DATE-OBS</code> vagy Exif-dátum alapján osztályozza a talált fájlokat, te kiválasztod vagy létrehozod a cél-sessiont és gyűjtést, tételes előnézet után SHA-256-tal ellenőrzött másolás történik nyugtával. A kártyán lévő eredeti fájlokhoz nem nyúl.</span></li>
+        <li><strong>Könyvtár-ellenőrzés</strong><span class="detail">a Könyvtár szekció Egészség nézete megmutatja a kalibráció-hiányokat, duplikátumokat és az audit talált hibáit, mielőtt bármit stackelnél.</span></li>
+        <li><strong>Keretek átnézése ("blink")</strong><span class="detail">a Projektek oldalról nyitható frame-szintű elfogadás/elutasítás: nyilakkal lépegetsz, <code>A</code> elfogad, <code>X</code> elutasít, <code>U</code> visszavonja a döntést és a következőre lép.</span></li>
+        <li><strong>Kalibráció linkelése</strong><span class="detail">a megfelelő mester dark/flat/bias kereteket az app előnézettel hardlinkeli a session vagy gyűjtés mellé; egy éjszaka context-menüjéből is elindítható.</span></li>
+        <li><strong>Stackelés Sirilben vagy DSS-ben</strong><span class="detail">az AstroTool nem stackel helyetted: a legjobb kereteket exportálja (hardlink + <code>.dssfilelist</code> + Siril script), amit a szokásos módon töltesz be a saját eszközödbe.</span></li>
+        <li><strong>Tervezés és nyomon követés</strong><span class="detail">a Tervezés oldal segít a következő derült éjszaka beosztásában, az Éjszakák oldal pedig az eddigi megfigyeléseidet és azok minőségét mutatja.</span></li>
       </ol>
       <div class="whenbox">
-        <strong>Melyiket mikor?</strong> Derült este előtt <code>astrotool plan</code> (ma este mit érdemes fényképezni), felhős vagy bent-maradós estén <code>astrotool projects</code> (hol tart az egyes célpontok feldolgozása: mihez kell még adat, mihez kell csak stackelés vagy utómunka).
+        <strong>Melyiket mikor?</strong> Derült este előtt a Tervezés (ma este mit érdemes fényképezni), felhős vagy bent-maradós estén a Projektek (hol tart az egyes célpontok feldolgozása: mihez kell még adat, mihez kell csak stackelés vagy utómunka). Ugyanezek a lépések parancssorból is elérhetők, ha azt preferálod: <code>astrotool scan</code> → <code>astrotool audit</code> → <code>astrotool rate</code> → <code>astrotool stacklist</code> → saját stackelő eszköz → <code>astrotool report</code>; lásd a <a href="cli.html">CLI-referenciát</a>.
       </div>
     </div>
 
@@ -97,7 +109,7 @@
       <h2><span class="dot" aria-hidden="true"></span>4. Kalibráció gyorstalpaló</h2>
       <p><strong>Dark</strong>: ugyanazon expozíció, hőmérséklet és gain mellett a hőzajt méri; a szenzor hőmérséklet-ingadozása miatt kell rendszeresen frissíteni. <strong>Flat</strong>: az optikai vignettálást és port méri; minden alkalommal újra kell venni, ha a kamera vagy a fókusz elmozdult (a rotátor állása is számít). <strong>Bias</strong>: a szenzor kiolvasási pedesztálja; ritkán változik, de a gain és offset kombónak pontosan egyeznie kell.</p>
       <p>A <code>calibration_library/darks/</code> alatt a mappanév-konvenció <code>&lt;exp&gt;sec_&lt;temp&gt;deg</code> (pl. <code>300sec_-10deg</code>): ebből olvassa ki az eszköz, melyik dark melyik felvételi paraméterhez illik.</p>
-      <p>Az <code>astrotool calib</code> pontosan kamera, gain, offset és hőmérséklet egyezést vár: sosem tippel hamis egyezést, és a <strong>flat-rotátor állását</strong> is figyeli, mert egy elforgatott flat nem érvényes a session-re. A <code>link-calib</code> a megfelelő mester-kereteket hardlinkeli a session mellé (<code>--dry-run</code> előnézettel, <code>--yes</code> nélkül csak jelöl, sosem ír automatikusan).</p>
+      <p>Az <code>astrotool calib</code> pontosan kamera, gain, offset és hőmérséklet egyezést vár: sosem tippel hamis egyezést, és a <strong>flat-rotátor állását</strong> is figyeli, mert egy elforgatott flat nem érvényes a session-re. A kalibráció-linkelés (a Kalibráció nézetből, egy éjszaka menüjéből, vagy CLI-ből a <code>link-calib</code>) a megfelelő mester-kereteket hardlinkeli a session vagy gyűjtés mellé, mindig előnézettel: fájlt felülírni sosem fog.</p>
     </div>
 
     <div class="panel">
@@ -107,15 +119,16 @@
           <h4>Amit az eszköz ír</h4>
           <ul>
             <li>Saját munkakönyvtára: <code>.astro_tool/</code> (index, exportok, riportok, javaslat-scriptek)</li>
-            <li>Új session könyvtár és README-sablon (<code>new-session</code>)</li>
-            <li>Hardlinkek a saját <code>.astro_tool/</code> alkönyvtáraiba, sosem az eredeti fájlok helyén</li>
+            <li>Új session könyvtár, gyűjtés-mappák és README-sablon (a Behozatal-varázslóból vagy a CLI <code>new-session</code>/<code>capture create</code> parancsaiból)</li>
+            <li>SHA-256-tal ellenőrzött, nyugtázott másolat a behozatalnál; a forrás (kártya, kötet) érintetlen marad</li>
+            <li>Hardlinkek a kalibráció-linkeléshez és a stackelés-exporthoz, sosem az eredeti fájlok helyén</li>
             <li>Belső SQLite index a metaadatokról</li>
           </ul>
         </div>
         <div class="col no">
           <h4>Amit sosem tesz</h4>
           <ul>
-            <li>Nem töröl és nem mozgat semmit a képkönyvtárban</li>
+            <li>Nem töröl semmit a képkönyvtárban; ami eltűnik a helyéről, archívumba (karanténba) kerül</li>
             <li>Nem írja felül az eredeti light/flat/dark/bias fájlokat</li>
             <li>Nem futtat automatikusan semmilyen javaslat-scriptet</li>
             <li>A README.txt-t csak olvassa, sosem ír bele</li>
@@ -126,7 +139,7 @@
 
     <div class="panel callout">
       <h2>Vasszabály</h2>
-      <p>Az eszköz a képkönyvtárban <strong>soha nem töröl és nem mozgat semmit</strong>. A karanténos takarítás így néz ki: az audit és a cleanup csak <em>jelöl</em> (találatok listája), és kérésre egy átnézhető <code>.sh</code> javaslat-scriptet ír a <code>.astro_tool/suggestions/</code> mappába: ezt te nézed át és futtatod le saját belátásod szerint. Az eszköz maga sosem hajt végre fájlműveletet a könyvtáron kívül, a saját <code>.astro_tool/</code> munkaterületén.</p>
+      <p>Az eszköz a képkönyvtárban <strong>soha nem töröl semmit véglegesen</strong>. Az alkalmazásban ezt az Archívum-térkép szolgálja: az audit és a takarítás találatait áttekintheted, és karanténba mozgathatod, ami eltűnik a helyéről, visszahozható. Parancssorból ugyanez a logika: az <code>audit</code>/<code>cleanup --suggest</code> csak <em>jelöl</em> (találatok listája), és egy átnézhető <code>.sh</code> javaslat-scriptet ír a <code>.astro_tool/suggestions/</code> mappába, amit te nézel át és futtatsz le saját belátásod szerint. Az eszköz maga sosem hajt végre fájlműveletet a könyvtáron kívül, a saját <code>.astro_tool/</code> munkaterületén.</p>
     </div>
 
   </div>

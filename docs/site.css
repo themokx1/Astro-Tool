@@ -55,8 +55,25 @@
     -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
     border-bottom: 1px solid var(--hairline);
   }
-  nav .wrap { display: flex; align-items: center; justify-content: center; height: 52px; }
+  nav .wrap { display: flex; align-items: center; justify-content: center; height: 52px; position: relative; }
   .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 17px; letter-spacing: -0.01em; }
+  .nav-lang {
+    position: absolute; right: 24px; top: 50%; transform: translateY(-50%);
+    display: flex; align-items: center; gap: 2px; font-size: 13px;
+    border: 1px solid var(--hairline); border-radius: 980px; padding: 3px; background: var(--surface);
+  }
+  .nav-lang a {
+    display: inline-block; padding: 4px 10px; border-radius: 980px; color: var(--muted);
+    text-decoration: none; font-weight: 500;
+  }
+  .nav-lang a.current { background: var(--ground); color: var(--ink); font-weight: 600; }
+  .nav-lang a:hover, .nav-lang a:focus-visible { color: var(--ink); }
+
+  /* Install CTA pairing next to primary download buttons */
+  .cta-row .btn-secondary {
+    background: var(--surface); color: var(--ink); border: 1px solid var(--hairline);
+  }
+  .cta-row .btn-secondary:hover, .cta-row .btn-secondary:focus-visible { border-color: var(--accent); color: var(--accent); }
   .brand-mark {
     width: 22px; height: 22px; border-radius: 6px; flex: none;
     background: radial-gradient(circle at 34% 30%, var(--accent), color-mix(in srgb, var(--accent) 45%, #12343a));

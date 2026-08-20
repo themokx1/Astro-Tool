@@ -9,12 +9,19 @@
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <meta name="theme-color" content="#0B0B0D">
 <link rel="stylesheet" href="site.css">
+<link rel="alternate" hreflang="hu" href="https://themokx1.github.io/Astro-Tool/privacy.html">
+<link rel="alternate" hreflang="en" href="https://themokx1.github.io/Astro-Tool/en/privacy.html">
+<link rel="alternate" hreflang="x-default" href="https://themokx1.github.io/Astro-Tool/privacy.html">
 </head>
 <body>
 
 <nav>
   <div class="wrap">
     <a class="brand" href="index.html" style="text-decoration:none;color:inherit;"><span class="brand-mark" aria-hidden="true"></span>AstroTool</a>
+    <div class="nav-lang">
+      <a href="privacy.html" class="current">HU</a>
+      <a href="en/privacy.html">EN</a>
+    </div>
   </div>
 </nav>
 
@@ -35,8 +42,8 @@
     <h2><span class="dot" aria-hidden="true"></span>Ami elhagyja a géped, ha engeded</h2>
     <p>Két funkció kér le adatot a hálózatról, és mindkettő kikapcsolható a Beállításokban:</p>
     <ul>
-      <li><strong>Időjárás</strong>: a felhő-előrejelzéshez a megfigyelőhely koordinátái mennek el az Open-Meteo felé. Se fájlnév, se célpont, se más adat.</li>
-      <li><strong>Bővített célpontkatalógus</strong>: a katalógus frissítésekor katalógusnevek és égi koordináták mennek a SIMBAD/VizieR felé. A letöltött katalógus helyben tárolódik, utána offline is működik.</li>
+      <li><strong>Időjárás</strong>: alapból kikapcsolva. Ha bekapcsolod, a felhő-előrejelzéshez a megfigyelőhely koordinátái mennek el az Open-Meteo felé. Se fájlnév, se célpont, se más adat.</li>
+      <li><strong>Bővített célpontkatalógus</strong>: alapból bekapcsolva, és az első Felfedezés-megnyitáskor magától lekéri a hiányzó adatokat, ha még nincs helyi katalógus. Ilyenkor katalógusnevek és égi koordináták mennek a SIMBAD/VizieR felé, semmi más. A letöltött katalógus helyben tárolódik, utána offline is működik; a funkció bármikor kikapcsolható a Beállításokban.</li>
     </ul>
     <p>A könyvtárad tartalma, elérési útjai, fájljai és jegyzetei soha nem hagyják el a géped.</p>
   </section>

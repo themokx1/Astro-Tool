@@ -10,6 +10,9 @@
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="stylesheet" href="site.css">
 <meta name="theme-color" content="#0B0B0D">
+<link rel="alternate" hreflang="hu" href="https://themokx1.github.io/Astro-Tool/cli.html">
+<link rel="alternate" hreflang="en" href="https://themokx1.github.io/Astro-Tool/en/cli.html">
+<link rel="alternate" hreflang="x-default" href="https://themokx1.github.io/Astro-Tool/cli.html">
 
 <meta property="og:type" content="website">
 <meta property="og:title" content="AstroTool · CLI-referencia">
@@ -28,13 +31,17 @@
 <nav>
   <div class="wrap">
     <a class="brand" href="index.html" style="text-decoration:none;color:inherit;"><span class="brand-mark" aria-hidden="true"></span>AstroTool</a>
+    <div class="nav-lang">
+      <a href="cli.html" class="current">HU</a>
+      <a href="en/cli.html">EN</a>
+    </div>
   </div>
 </nav>
 
 <header class="wrap compact">
   <h1>CLI-referencia</h1>
   <p class="sub">Minden alparancs, csoportosítva, egy sor leírással és egy futtatható példával.</p>
-  <p class="crumbs"><a href="tutorial.html">Útmutató</a> · <a href="features.html">Funkciók</a> · <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Letöltés</a></p>
+  <p class="crumbs"><a href="tutorial.html">Útmutató</a> · <a href="features.html">Funkciók</a> · <a href="install.html">Telepítés</a> · <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Letöltés</a></p>
 </header>
 
 <main class="doc-wrap doc">
@@ -63,12 +70,12 @@
       <div class="cmdgroup">
         <div class="cmd">
           <div class="name">scan</div>
-          <div class="desc">Bejárja a könyvtárat, frissíti a belső SQLite indexet: mindig ez az első lépés. <code>--json</code> kimenete <code>changed_targets</code> mezőt is ad: azon célpontok listája, ahol ebben a futásban added/updated/missing fájl volt; ez alapján dönthető el egy pipeline-ban, mely célpontra érdemes rate/audit-ot futtatni utána.</div>
+          <div class="desc">Bejárja a könyvtárat, frissíti a belső SQLite indexet: mindig ez az első lépés. <code>--json</code> kimenete <code>changed_targets</code> mezőt is ad: azon célpontok listája, ahol ebben a futásban added/updated/missing fájl volt; ez alapján dönthető el egy pipeline-ban, mely célpontra érdemes rate/audit-ot futtatni utána. <code>--refresh-meta</code> a már ismert fájlok metaadatát is újraolvassa, nemcsak az újakat.</div>
           <pre class="code">astrotool scan --root ~/Astro</pre>
         </div>
         <div class="cmd">
           <div class="name">audit</div>
-          <div class="desc">Három súlyossági szintbe sorolt hibalista + duplikátum-keresés; <code>--suggest</code> esetén átnézhető javaslat-scriptet ír. <code>--out PATH</code> (csak <code>--suggest</code>-tel együtt) a könyvtáron kívülre is írhatja a scriptet a fix <code>.astro_tool/suggestions/</code> hely helyett; <code>--out -</code> stdoutra írja a script szövegét fájl írása nélkül. <code>--json</code> kimenete <code>diff</code> mezőt is ad, ha volt előző audit-futás: új/megoldódott/változatlan csoport-darabszám + az új csoportok kulcsai (severity/category/group_key). Ha a két futás duplikátum-beállítása eltér vagy régi futásnál ismeretlen, a duplikátum-kategória mindkét oldalról kimarad, és az <code>omitted_categories</code> ezt jelzi. Az első futásnál a diff elmarad.</div>
+          <div class="desc">Három súlyossági szintbe sorolt hibalista + duplikátum-keresés; <code>--suggest</code> esetén átnézhető javaslat-scriptet ír. <code>--out PATH</code> (csak <code>--suggest</code>-tel együtt) a könyvtáron kívülre is írhatja a scriptet a fix <code>.astro_tool/suggestions/</code> hely helyett; <code>--out -</code> stdoutra írja a script szövegét fájl írása nélkül. <code>--json</code> kimenete <code>diff</code> mezőt is ad, ha volt előző audit-futás: új/megoldódott/változatlan csoport-darabszám + az új csoportok kulcsai (severity/category/group_key). Ha a két futás duplikátum-beállítása eltér vagy régi futásnál ismeretlen, a duplikátum-kategória mindkét oldalról kimarad, és az <code>omitted_categories</code> ezt jelzi. Az első futásnál a diff elmarad. <code>--no-duplicates</code> teljesen kikapcsolja a duplikátum-keresést egy futásra, ha csak a strukturális hibákra vagy gyanús találatokra vagy kíváncsi.</div>
           <pre class="code">astrotool audit --suggest --include-suspicious --out ~/Desktop/fix.sh</pre>
         </div>
         <div class="cmd">
@@ -109,7 +116,7 @@ astrotool verify --sample 20 --json</pre>
         </div>
         <div class="cmd">
           <div class="name">capture list | create | assign</div>
-          <div class="desc">Egy célpont/dátum sessionön belüli önálló capture-gyűjtések kezelése. A gyűjtés külön rögzíti a szenzormódot (<code>osc</code>/<code>mono</code>), a jellegét (<code>broadband</code>/<code>narrowband</code>/<code>dual_band</code>) és a pontos szűrőgyártó, modell és név adatot. Az <code>assign</code> pontosan egy, már indexelt fájlt rendel a kiválasztott gyűjtéshez, és csak a megadott target/date sessionben fogad el útvonalat.</div>
+          <div class="desc">Egy célpont/dátum sessionön belüli önálló capture-gyűjtések kezelése. A gyűjtés külön rögzíti a szenzormódot (<code>osc</code>/<code>mono</code>), a jellegét (<code>broadband</code>/<code>narrowband</code>/<code>dual_band</code>) és a pontos szűrőgyártó, modell és név adatot (<code>--filter-maker</code>/<code>--filter-model</code>/<code>--filter-name</code>), opcionális <code>--notes</code> jegyzettel. Az <code>assign</code> pontosan egy, már indexelt fájlt rendel a kiválasztott gyűjtéshez, csak a megadott target/date sessionben fogad el útvonalat, és ugyanazokkal a <code>--filter-*</code> kapcsolókkal felül is bírálhatja a fájl szűrő-adatát.</div>
           <pre class="code">astrotool capture create --target IC_1396 --date 2026-08-08 \
   --name "OSC · duál-sáv szűrő · 300 mp" --slug osc-duo-300s --sensor osc \
   --signal dual_band --filter-maker &lt;GYÁRTÓ&gt; --filter-model &lt;MODELL&gt;
