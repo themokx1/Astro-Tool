@@ -54,4 +54,13 @@ struct FirstSuccessOnboardingSurfaceTests {
         #expect(onboarding.contains("importCompleted: { coordinator.importCompleted(createdFirstProject: true) }"))
         #expect(!onboarding.contains("dismiss: { coordinator.importCompleted(createdFirstProject: true) }"))
     }
+
+    @Test("Production gets the first-success flow while the injected UI fixture keeps its scan summary")
+    func fixtureCompatibility() throws {
+        let root = try source("Sources/AstroUI/App/V2RootView.swift")
+        #expect(root.contains("if libraryRootFallback != nil"))
+        #expect(root.contains("LibraryWelcomeView("))
+        #expect(root.contains("FirstSuccessOnboardingView("))
+        #expect(root.contains("uiTestFixture != nil"))
+    }
 }

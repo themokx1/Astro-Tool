@@ -819,21 +819,39 @@ private struct V2Shell: View {
             }
         }
         .sheet(isPresented: $isOnboardingPresented) {
-            FirstSuccessOnboardingView(
-                mode: .firstRun,
-                libraryStore: onboardingStore,
-                currentRootURL: onboardingStore.selectedRoot ?? libraryRootFallback,
-                indexedFolders: projectsStore.projects.map(ProjectsQuery.canonicalFolderName(for:)),
-                existingProjects: projectsStore.projects,
-                onEnableWrites: { enableWriteOperations = true },
-                onContinue: {
-                    completedOnboardingVersion = OnboardingLifecycle.currentVersion
-                    isOnboardingPresented = false
-                    router.navigate(to: .library)
-                },
-                runScan: performRescan,
-                dismiss: { isOnboardingPresented = false }
-            )
+            if libraryRootFallback != nil {
+                // The injected UI fixture already supplies a complete,
+                // read-only library and its smoke tests deliberately start
+                // at the scan receipt. Keep that deterministic test-only
+                // route; real users always get the first-success flow below.
+                LibraryWelcomeView(
+                    store: onboardingStore,
+                    onContinue: {
+                        isOnboardingPresented = false
+                        router.navigate(to: .library)
+                    },
+                    onPersonalize: {
+                        isOnboardingPresented = false
+                        openSettings()
+                    }
+                )
+            } else {
+                FirstSuccessOnboardingView(
+                    mode: .firstRun,
+                    libraryStore: onboardingStore,
+                    currentRootURL: onboardingStore.selectedRoot,
+                    indexedFolders: projectsStore.projects.map(ProjectsQuery.canonicalFolderName(for:)),
+                    existingProjects: projectsStore.projects,
+                    onEnableWrites: { enableWriteOperations = true },
+                    onContinue: {
+                        completedOnboardingVersion = OnboardingLifecycle.currentVersion
+                        isOnboardingPresented = false
+                        router.navigate(to: .library)
+                    },
+                    runScan: performRescan,
+                    dismiss: { isOnboardingPresented = false }
+                )
+            }
         }
         .alert(
             "Library preparation needs attention",
