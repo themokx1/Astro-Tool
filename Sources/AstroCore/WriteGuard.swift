@@ -794,6 +794,76 @@ public struct WriteGuard: Sendable {
         return destFileURL
     }
 
+    /// Writes a newly Siril-BUILT calibration master file (dark/flat/bias --
+    /// V3 pre-stack program, `docs/superpowers/specs/
+    /// 2026-08-20-v3-prestack-program.md` section 5.2, Kalibrációs automata)
+    /// from a scratch `tempURL` into `calibration_library/` at
+    /// `destRelative`, atomically -- copies to a hidden temp name INSIDE the
+    /// destination directory first, then renames into place, so a copy
+    /// interrupted partway (app quit, disk full) never leaves a half-written
+    /// master at the real destination name; a failure at either step deletes
+    /// the temp file before rethrowing. Same temp+rename contract as
+    /// `copyCaptureFile`, the only other place this type copies bytes in
+    /// from OUTSIDE the library (`tempURL` is `SirilMasterBuilder`'s own
+    /// scratch `workDir`, never a library path).
+    ///
+    /// Validates that `destRelative` resolves (after `standardizedFileURL`,
+    /// same traversal defense as every other WriteGuard check) to a path
+    /// inside `<root>/calibration_library/` -- this is the ONLY area this
+    /// call may ever write a new file into. If a file already sits at the
+    /// resolved destination, this makes NO change and returns `nil` -- a
+    /// built master is never overwritten, touched, or replaced, matching
+    /// this feature's own "never mark a gap resolved on failure, never leave
+    /// a half-written master" rule (the caller, `CalibrationMasterBuildCommand`,
+    /// always builds into a fresh, timestamped destination name, so a
+    /// pre-existing file here means a genuine caller bug, not a legitimate
+    /// re-build). Permission failures are reclassified as
+    /// `AstroError.accessDenied`, same as every other write in this type; a
+    /// missing `tempURL` throws `AstroError.pathNotFound`.
+    @discardableResult
+    public func writeCalibrationMaster(destRelative: String, tempURL: URL) throws -> URL? {
+        guard !destRelative.hasPrefix("/") else {
+            throw AstroError.writeForbidden(path: destRelative)
+        }
+
+        let calibBase = root.appendingPathComponent("calibration_library", isDirectory: true).standardizedFileURL
+        let destCandidate = root.appendingPathComponent(destRelative).standardizedFileURL
+        guard destCandidate.path.hasPrefix(calibBase.path + "/") else {
+            throw AstroError.writeForbidden(path: destRelative)
+        }
+
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: tempURL.path) else {
+            throw AstroError.pathNotFound(path: tempURL.path)
+        }
+        guard !fm.fileExists(atPath: destCandidate.path) else {
+            return nil
+        }
+
+        let destDir = destCandidate.deletingLastPathComponent()
+        let tempFileURL = destDir.appendingPathComponent(
+            ".building-\(UUID().uuidString)-\(destCandidate.lastPathComponent)", isDirectory: false
+        )
+
+        try Self.classifyingPermissionErrors(path: destCandidate.path) {
+            try fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+            do {
+                try fm.copyItem(at: tempURL, to: tempFileURL)
+            } catch {
+                try? fm.removeItem(at: tempFileURL)
+                throw error
+            }
+            do {
+                try fm.moveItem(at: tempFileURL, to: destCandidate)
+            } catch {
+                try? fm.removeItem(at: tempFileURL)
+                throw error
+            }
+        }
+
+        return destCandidate
+    }
+
     /// Runs a filesystem-writing `body`, reclassifying a permission failure
     /// (TCC / EPERM / EACCES -- e.g. a read-only root, or a directory whose
     /// TCC grant was revoked mid-session) as `AstroError.accessDenied(path:)`

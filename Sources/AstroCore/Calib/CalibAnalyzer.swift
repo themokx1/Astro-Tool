@@ -694,6 +694,80 @@ public enum CalibAnalyzer {
         return counts.max(by: { $0.value < $1.value })?.key
     }
 
+    // MARK: - Kalibrációs automata (V3 pre-stack program, section 5.2):
+    // dark master-build sources
+
+    /// Read-only source-frame selection for one dark `CalibNeed`'s own
+    /// (exposure, temp) combo -- the raw, already-scanned session `darks/`
+    /// subs a Siril master build for that gap would stack. `mismatchReasons`
+    /// non-empty (and `files` empty) means the matching raw subs are NOT
+    /// electronically homogeneous; see `darkMasterSources`'s own doc comment.
+    public struct DarkMasterSourceSelection: Equatable, Sendable {
+        public var files: [FileRecord]
+        public var mismatchReasons: [String]
+
+        public init(files: [FileRecord], mismatchReasons: [String]) {
+            self.files = files
+            self.mismatchReasons = mismatchReasons
+        }
+    }
+
+    /// Finds the already-scanned session `darks/` subs matching one dark
+    /// `CalibNeed`'s own (exposure, temp) combo -- reusing `CalibCombo
+    /// .rounded` (the identical rounding `lightGroups`/`coverage()` already
+    /// key every light combo by) so "which dark subs belong to this exact
+    /// gap" can never drift from what `coverage()` itself decided the
+    /// combo's own identity is.
+    ///
+    /// `CalibNeed` itself only carries `(exposureSeconds, tempC)`, not gain/
+    /// offset/camera (except when `coverage()` already detected a mismatch)
+    /// -- so more than one electronically distinct set of raw darks can
+    /// share the same (exposure, temp) pair. Rather than guess a "dominant"
+    /// electronic identity and silently stack a mixed batch, this groups the
+    /// matching subs by their own (gain, offset, camera) identity and
+    /// refuses (empty `files`, non-empty `mismatchReasons`) the moment more
+    /// than one such group exists -- the spec's own risk mitigation ("az
+    /// első verzió induljon csak azokra a kombinációkra, ahol a bemenet
+    /// homogén"). `CalibrationMasterBuildCommand` (`AstroApplication`)
+    /// surfaces that refusal as an honest "build manually" state.
+    public static func darkMasterSources(
+        exposureSeconds: Double,
+        tempC: Double?,
+        db: Database
+    ) throws -> DarkMasterSourceSelection {
+        let files = try db.allFiles(includeMissing: false)
+
+        struct Identity: Hashable {
+            var gain: Double?
+            var offset: Double?
+            var camera: String?
+        }
+        func label(_ identity: Identity) -> String {
+            var parts: [String] = []
+            if let gain = identity.gain { parts.append("gain\(formatted(gain))") }
+            if let offset = identity.offset { parts.append("offset\(formatted(offset))") }
+            if let camera = identity.camera { parts.append(camera) }
+            return parts.isEmpty ? "ismeretlen elektronikus beállítás" : parts.joined(separator: "/")
+        }
+
+        var byIdentity: [Identity: [FileRecord]] = [:]
+        for file in files where file.area == .sessions && file.role == .dark {
+            guard let id = file.id, let meta = try db.fitsMeta(fileID: id), let exptime = meta.exptime else { continue }
+            let key = CalibCombo.rounded(
+                exptime: exptime, setTemp: meta.setTemp, gain: meta.gain, offset: meta.offset, camera: meta.instrume
+            )
+            guard key.exposureS == exposureSeconds, key.tempC == tempC else { continue }
+            let identity = Identity(gain: meta.gain, offset: meta.offset, camera: meta.instrume)
+            byIdentity[identity, default: []].append(file)
+        }
+
+        guard byIdentity.count <= 1 else {
+            let reasons = byIdentity.keys.map(label).sorted().map { "vegyes forrás: \($0)" }
+            return DarkMasterSourceSelection(files: [], mismatchReasons: reasons)
+        }
+        return DarkMasterSourceSelection(files: byIdentity.first?.value ?? [], mismatchReasons: [])
+    }
+
     // MARK: - Todo strings
 
     /// `camera`/`gain` are only ever mentioned in the returned text when

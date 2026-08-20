@@ -861,3 +861,69 @@ private struct CalibFixture {
     #expect(darkNeeds.count == 1)
     #expect(darkNeeds[0].kind == .dark)
 }
+
+// MARK: - darkMasterSources (V3 pre-stack program section 5.2, Kalibrációs automata)
+
+@Test func darkMasterSourcesFindsHomogeneousSessionDarksAtTheExactCombo() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 1...5 {
+        try fixture.writeFITSLight(
+            "sessions/T1/2026-01-10/darks/d\(i).fit",
+            exptime: 120.0, setTemp: -10.0, gain: 100, offset: 50, instrume: "ZWO ASI2600MC Pro"
+        )
+    }
+    // A different (exposure, temp) combo's own dark -- must never be picked up.
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/darks/other.fit",
+        exptime: 300.0, setTemp: -10.0, gain: 100, offset: 50, instrume: "ZWO ASI2600MC Pro"
+    )
+    try fixture.scan()
+
+    let selection = try CalibAnalyzer.darkMasterSources(exposureSeconds: 120.0, tempC: -10.0, db: fixture.db)
+
+    #expect(selection.files.count == 5)
+    #expect(selection.mismatchReasons.isEmpty)
+}
+
+@Test func darkMasterSourcesRefusesAHeterogeneousElectronicMix() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 1...3 {
+        try fixture.writeFITSLight(
+            "sessions/T1/2026-01-10/darks/gain100_\(i).fit",
+            exptime: 120.0, setTemp: -10.0, gain: 100, offset: 50, instrume: "ZWO ASI2600MC Pro"
+        )
+    }
+    for i in 1...3 {
+        try fixture.writeFITSLight(
+            "sessions/T1/2026-01-11/darks/gain200_\(i).fit",
+            exptime: 120.0, setTemp: -10.0, gain: 200, offset: 50, instrume: "ZWO ASI2600MC Pro"
+        )
+    }
+    try fixture.scan()
+
+    let selection = try CalibAnalyzer.darkMasterSources(exposureSeconds: 120.0, tempC: -10.0, db: fixture.db)
+
+    #expect(selection.files.isEmpty)
+    #expect(!selection.mismatchReasons.isEmpty)
+}
+
+@Test func darkMasterSourcesIgnoresLightAndFlatFrames() throws {
+    let fixture = try CalibFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/l1.fit",
+        exptime: 120.0, setTemp: -10.0, gain: 100, offset: 50, instrume: "ZWO ASI2600MC Pro"
+    )
+    try fixture.writeFITSFlat("sessions/T1/2026-01-10/flats/f1.fit", filter: "Ha")
+    try fixture.scan()
+
+    let selection = try CalibAnalyzer.darkMasterSources(exposureSeconds: 120.0, tempC: -10.0, db: fixture.db)
+
+    #expect(selection.files.isEmpty)
+    #expect(selection.mismatchReasons.isEmpty)
+}
