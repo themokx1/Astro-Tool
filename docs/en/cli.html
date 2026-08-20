@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AstroTool · CLI</title>
+<meta name="description" content="AstroTool's full CLI command reference, grouped: basics, quality, calibration, planning, export, other, each with a one-line description and an example.">
+
+<link rel="icon" type="image/png" sizes="32x32" href="../favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+<link rel="stylesheet" href="../site.css">
+<meta name="theme-color" content="#0B0B0D">
+<link rel="alternate" hreflang="hu" href="https://themokx1.github.io/Astro-Tool/cli.html">
+<link rel="alternate" hreflang="en" href="https://themokx1.github.io/Astro-Tool/en/cli.html">
+<link rel="alternate" hreflang="x-default" href="https://themokx1.github.io/Astro-Tool/cli.html">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="AstroTool · CLI reference">
+<meta property="og:description" content="Full CLI command reference, grouped, each with an example.">
+<meta property="og:url" content="https://themokx1.github.io/Astro-Tool/en/cli.html">
+<meta property="og:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AstroTool · CLI reference">
+<meta name="twitter:description" content="Full CLI command reference, grouped, each with an example.">
+<meta name="twitter:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="index.html" style="text-decoration:none;color:inherit;"><span class="brand-mark" aria-hidden="true"></span>AstroTool</a>
+    <div class="nav-lang">
+      <a href="../cli.html">HU</a>
+      <a href="cli.html" class="current">EN</a>
+    </div>
+  </div>
+</nav>
+
+<header class="wrap compact">
+  <h1>CLI reference</h1>
+  <p class="sub">Every subcommand, grouped, with a one-line description and one runnable example each.</p>
+  <p class="crumbs"><a href="tutorial.html">Guide</a> · <a href="features.html">Features</a> · <a href="install.html">Install</a> · <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Download</a></p>
+</header>
+
+<main class="doc-wrap doc">
+
+  <p class="req-note">Every command accepts <code>--root PATH</code> to override the library location, and most support <code>--json</code> for machine-readable (snake_case, sorted) output. Every <code>--json</code> output gets a <code>schema_version</code> field at the root; for commands where the root used to be a plain array, the response is now wrapped as <code>{"schema_version": "1", "items": [...]}</code>; exact changes are listed in the release notes.</p>
+
+  <div class="panels">
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Exit codes</h2>
+      <div class="table-scroll">
+      <table>
+        <tr><th>Code</th><th>Meaning</th></tr>
+        <tr><td>0</td><td>Success.</td></tr>
+        <tr><td>1</td><td>General/usage error (missing or invalid flag, unknown subcommand).</td></tr>
+        <tr><td>2</td><td>TCC/volume error: the library isn't reachable (missing Full Disk Access, or the volume isn't mounted).</td></tr>
+        <tr><td>3</td><td>Target/session not found: <code>--target</code>/<code>--date</code> doesn't identify anything in the index (e.g. <code>stats</code>, <code>solve</code>, <code>match</code>, <code>link-calib</code>, <code>report</code>, <code>target-report</code>).</td></tr>
+        <tr><td>4</td><td>External tool error: Siril isn't found at the configured path (e.g. <code>solve</code>).</td></tr>
+        <tr><td>5</td><td><code>verify</code> found at least one confirmed content mismatch (<code>content-changed</code>: same size/mtime but a different hash, suspected silent corruption). <code>modified</code> and suspicious <code>modified-in-place</code> don't count toward this; a read error returns exit code 1, not 5.</td></tr>
+      </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Basics</h2>
+      <div class="cmdgroup">
+        <div class="cmd">
+          <div class="name">scan</div>
+          <div class="desc">Walks the library and refreshes the internal SQLite index: always the first step. Its <code>--json</code> output also carries a <code>changed_targets</code> field: the targets where this run found an added/updated/missing file, useful for deciding which targets to run rate/audit on next in a pipeline. <code>--refresh-meta</code> re-reads metadata for already-known files too, not just new ones.</div>
+          <pre class="code">astrotool scan --root ~/Astro</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">audit</div>
+          <div class="desc">Error list sorted into three severities, plus duplicate detection; with <code>--suggest</code> it writes a reviewable suggestion script. <code>--out PATH</code> (only together with <code>--suggest</code>) can write the script outside the library instead of the fixed <code>.astro_tool/suggestions/</code> spot; <code>--out -</code> prints the script text to stdout without writing a file. Its <code>--json</code> output also carries a <code>diff</code> field when a previous audit run exists: new/resolved/unchanged group counts plus the new groups' keys (severity/category/group_key). If the two runs' duplicate-detection setting differs, or is unknown for the older run, the duplicate category is dropped from both sides and <code>omitted_categories</code> flags it. The diff is skipped on the first run. <code>--no-duplicates</code> turns off duplicate detection entirely for a run, if you only care about structural errors or suspicious findings.</div>
+          <pre class="code">astrotool audit --suggest --include-suspicious --out ~/Desktop/fix.sh</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">cleanup</div>
+          <div class="desc">A capped summary of already-identified residue/duplicate findings, plus suggestion-script generation. <code>--out PATH|-</code> works the same as with <code>audit --suggest</code>. Its <code>--json</code> output also carries a <code>storage</code> field: per-target size broken down by area (sessions/stacks/processed/other), sorted by size descending; the same data the app's Cleanable segment shows in its "Storage" block, which is why it lives on the existing <code>cleanup</code> command rather than as a separate subcommand.</div>
+          <pre class="code">astrotool cleanup --suggest --limit 50 --out -</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">verify</div>
+          <div class="desc">Fixity/bitrot check: re-reads every indexed, non-missing file that already has a baseline SHA-256 and compares it against the stored checksum. The normal check only reads; it just flags mismatches, restoring from a backup stays a human decision. <code>--target T</code>/<code>--path P</code> narrows the scope; <code>--sample N</code> (1-100) checks a random sample. The explicit <code>--baseline</code> only fills in missing hashes in AstroTool's database, never touches the image files, and can't be combined with <code>--sample</code>. Per-file outcome: <b>ok</b>; <b>content-changed</b> (same size/mtime, different hash, <code>sure_error</code>); <b>modified</b> (both size and mtime changed, intentional); <b>modified-in-place</b> (only mtime changed, suspicious); or a suspicious read error. The JSON gives <code>summary</code>, <code>coverage</code>, and <code>items</code> blocks.</div>
+          <pre class="code">astrotool verify --baseline --json
+astrotool verify --sample 20 --json</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">ack</div>
+          <div class="desc">CLI version of the Audit page's "I know about this, it's fine" marks: accepting error groups (<code>add</code>), reverting them (<code>remove</code>), listing them (<code>list</code>). The <code>&lt;category|groupKey&gt;</code> is exactly the ack-key shape from <code>audit --json</code>'s findings.</div>
+          <pre class="code">astrotool ack add "residue|*.seq" --note "known, intentional"</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">stats</div>
+          <div class="desc">Per-target integration/frame summary; <code>--target</code> for a session breakdown, <code>--tag</code> to filter, <code>--filters</code> for a per-filter integration breakdown (mono LRGB/SHO "how many hours do I have per filter"); for a whole target (not narrowed by <code>--date</code>) the per-filter <code>goal:F=&lt;hours&gt;h</code> target/missing also shows up, if set.</div>
+          <pre class="code">astrotool stats --target M31 --filters</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">nights</div>
+          <div class="desc">A cross-target night browser: every session in one table, newest date first, with frame/integration and quality columns (FWHM, duty cycle): the cross-target counterpart of <code>stats --sessions</code> narrowed to one target.</div>
+          <pre class="code">astrotool nights --year 2026 --month 3</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">trends</div>
+          <div class="desc">A long-term, session-level time series across targets: median FWHM (arcseconds, or pixels with <code>is_pixel_fallback=true</code> when there's no pixel scale), background e⁻/s/″², or efficiency% (duty cycle): chosen with <code>--metric</code>, as date+value pairs, oldest first. <code>--setup</code> narrows to one specific EquipmentProfile setup-fingerprint description; <code>--from</code>/<code>--to</code> filter on the session's canonical start date.</div>
+          <pre class="code">astrotool trends --metric fwhm --from 2026-01-01 --json</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">new-session</div>
+          <div class="desc">Creates a new session directory (<code>YYYY-MM-DD</code>) with a README template for a target.</div>
+          <pre class="code">astrotool new-session --catalog M --name 31 --date 2026-03-15</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">capture list | create | assign</div>
+          <div class="desc">Manages standalone capture groups within one target/date session. A capture separately records the sensor mode (<code>osc</code>/<code>mono</code>), its character (<code>broadband</code>/<code>narrowband</code>/<code>dual_band</code>), and the exact filter maker, model, and name (<code>--filter-maker</code>/<code>--filter-model</code>/<code>--filter-name</code>), plus an optional <code>--notes</code> note. <code>assign</code> attaches exactly one already-indexed file to the chosen capture, only accepts a path within the given target/date session, and can override the file's filter data with the same <code>--filter-*</code> flags.</div>
+          <pre class="code">astrotool capture create --target IC_1396 --date 2026-08-08 \
+  --name "OSC · dual-band filter · 300s" --slug osc-duo-300s --sensor osc \
+  --signal dual_band --filter-maker &lt;MAKER&gt; --filter-model &lt;MODEL&gt;
+
+astrotool capture assign --target IC_1396 --date 2026-08-08 \
+  --group osc-duo-300s --path sessions/IC_1396/2026-08-08/light_0001.fit</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">session-convert plan | apply | rollback</div>
+          <div class="desc">A transparent converter scoped to exactly one chosen target/date session. By default, <code>plan</code> only plans a logical classification: it lists the capture groups it recognizes, raw frames, calibration frames, artifacts, uncertain decisions, and conflicts, but moves nothing. The separate <code>--physical</code> flag produces an itemized source-to-destination move plan. <code>apply</code> only runs with a saved plan and <code>--yes</code> confirmation; it refuses to overwrite, checks the session hasn't changed via a fingerprint, saves a receipt, and can be rolled back by that receipt's id.</div>
+          <pre class="code">astrotool session-convert plan --target IC_1396 --date 2026-08-08 \
+  --out ~/Desktop/ic1396-plan.json
+
+# Only after reviewing the full preview:
+astrotool session-convert apply --plan ~/Desktop/ic1396-plan.json --yes
+astrotool session-convert rollback --id &lt;conversion-id&gt; --yes</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">config</div>
+          <div class="desc">The currently effective configuration (<code>show</code>) or the path to <code>config.json</code> (<code>path</code>). <code>config show</code> gives human-readable, per-section key-value output by default; <code>--json</code> for the full structure.</div>
+          <pre class="code">astrotool config show --json</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">tag</div>
+          <div class="desc">Adds, removes, and lists free-text target- or session-level tags.</div>
+          <pre class="code">astrotool tag add --target M31 goal:8h</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">goal</div>
+          <div class="desc">Sets or clears a target's goal hour count (a <code>goal:&lt;hours&gt;h</code> tag): the same format the app's goal editor writes, so the two are freely interchangeable. <code>--filter F</code> sets a per-filter goal (<code>goal:F=&lt;hours&gt;h</code>, R11), independent of the overall goal; the two can coexist freely. <code>goal list --target T</code> returns the per-filter have/goal/missing breakdown.</div>
+          <pre class="code">astrotool goal set --target M31 --filter Ha --hours 12
+astrotool goal list --target M31 --json</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">note</div>
+          <div class="desc">Shows (<code>show</code>, merged with the README) or writes (<code>set</code>) session night notes (Bortle/SQM/seeing/free text). Never touches <code>README.txt</code>; an empty <code>--value</code> clears the key.</div>
+          <pre class="code">astrotool note set --target M31 --date 2026-03-15 --key Bortle --value 5</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Quality</h2>
+      <div class="cmdgroup">
+        <div class="cmd">
+          <div class="name">rate</div>
+          <div class="desc">Scores light frames with native metrics, optionally hybridized with the Siril CLI; flags outlier frames.</div>
+          <pre class="code">astrotool rate --target M31 --date 2026-03-15</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">quality</div>
+          <div class="desc">A measured quality summary for one target/session (FWHM, background, rank, outliers).</div>
+          <pre class="code">astrotool quality --target M31 --date 2026-03-15</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">sensor</div>
+          <div class="desc">Lists measured sensor profiles (bias level, read noise, dark rate, EGAIN), or re-measures with <code>--measure</code> from bias/dark frames: every measurement also joins the measurement history, while the <code>sensor_profile</code> table only shows the latest. <code>--history</code> gives the full measurement history grouped per combo (date, read noise, dark rate, estimator version); can't combine with <code>--measure</code>.</div>
+          <pre class="code">astrotool sensor --measure
+astrotool sensor --history --json</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">ingest-dss</div>
+          <div class="desc">Reads DeepSkyStacker <code>.info.txt</code> star metrics and <code>.dssfilelist</code> accept/reject decisions; doesn't run automatically with scan.</div>
+          <pre class="code">astrotool ingest-dss</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">expose</div>
+          <div class="desc">Ideal sub-length and relative SNR advice, computed from measured sensor noise and per-Bayer sky background. Without <code>--target</code>, a one-line table per target.</div>
+          <pre class="code">astrotool expose --target NGC7000</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Calibration</h2>
+      <div class="cmdgroup">
+        <div class="cmd">
+          <div class="name">calib</div>
+          <div class="desc">A calibration coverage gap list (which exposure/temperature combination still needs a dark, which filter still needs a flat); <code>--health</code> for the flat-discipline report, <code>--flats</code> for just the per-filter flat coverage. <code>--shopping [--date YYYY-MM-DD] [--site NAME]</code> gives only the gaps needed for that night's actually-visible targets; in JSON you get <code>night</code>, <code>site</code>, and <code>items</code> fields. The three modes can't be combined.</div>
+          <pre class="code">astrotool calib --shopping --date 2026-03-15 --site "Summer house" --json</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">match</div>
+          <div class="desc">Matches a given target+date session's light/flat/dark/bias set and lists the problems it finds.</div>
+          <pre class="code">astrotool match --target M31 --date 2026-03-15</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">link-calib</div>
+          <div class="desc">Hardlinks the matching master calibration frames next to the session; <code>--dry-run</code> for a preview, without <code>--yes</code> it only flags what it would do.</div>
+          <pre class="code">astrotool link-calib --target M31 --date 2026-03-15 --dry-run</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">health</div>
+          <div class="desc">Night hardware health: cooler stability and focus trend for one session.</div>
+          <pre class="code">astrotool health --target M31 --date 2026-03-15</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Planning</h2>
+      <div class="cmdgroup">
+        <div class="cmd">
+          <div class="name">plan</div>
+          <div class="desc">Tonight's target ranking (culmination, max altitude, visibility window, moon interference, moon-aware filter suggestion); <code>--month</code> for the 30-night planning calendar. <code>--out PATH|-</code> exports the daily plan as CSV, with machine-readable <code>night</code>, raw <code>filter</code>, <code>filter_missing_hours</code>, and <code>missing_hours</code> columns alongside the existing fields. <code>--out -</code> writes to stdout and can't be used together with <code>--month</code>. <code>--site &lt;name&gt;</code> picks a location from <code>config.json</code>'s <code>sites</code> list (instead of the configured default): an unknown name errors out listing the configured names; if no <code>sites</code> are configured, the old <code>site</code>/FITS-median automation still applies unchanged.</div>
+          <pre class="code">astrotool plan --site "Summer house" --out plan.csv</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">night-info</div>
+          <div class="desc">Just tonight's dark-hours/moon summary (works without a target coordinate too): dark hour count, moon illumination, and rise/set time, using the same site resolution as <code>plan</code>. The same <code>--site &lt;name&gt;</code> is available here too.</div>
+          <pre class="code">astrotool night-info --date 2026-03-15 --site "Summer house"</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">projects</div>
+          <div class="desc">Per-target pipeline status: where capture/calibration/stacking/processing stands.</div>
+          <pre class="code">astrotool projects</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">panels</div>
+          <div class="desc">WCS-based integration tracking for a mosaic target's panels (how much time each panel got).</div>
+          <pre class="code">astrotool panels --target M_Milky_Way</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">solve</div>
+          <div class="desc">Plate-solves targets without coordinates (e.g. wide-field CR3) using Siril, with a per-session frame-count cap.</div>
+          <pre class="code">astrotool solve --target M_Milky_Way --frames 2</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Export</h2>
+      <div class="cmdgroup">
+        <div class="cmd">
+          <div class="name">export</div>
+          <div class="desc">AstroBin bulk-import CSV, a richer session CSV, or a human Markdown log for one target. In AstroBin format, a separate row is produced for every <code>(session, filter, nominal exposure)</code> group, so Ha/OIII/SII frames shot the same night at the same exposure don't blur together. Each row gets its own numeric ID from <code>config astrobin.filterIds</code>, resolved space- and case-insensitively; an unmapped filter keeps its name, and the stderr warning lists every missing name.</div>
+          <pre class="code">astrotool export --target M31 --format astrobin</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">stacklist</div>
+          <div class="desc">Selects and exports a session's best frames (hardlink + <code>.dssfilelist</code> + Siril <code>.ssf</code> + <code>manifest.csv</code>) for a DSS/Siril/WBPP workflow. <code>--capture SLUG</code> narrows both the quality selection and the export to a single capture group, so for example a short OSC test run and a multi-hour dual-band sequence can be stacked separately. For multi-filter material, a separate <code>lights/&lt;FILTER&gt;/</code> subfolder and a separate <code>.dssfilelist</code>/<code>.ssf</code> pair per filter (PixInsight WBPP-friendly; an empty or colliding slug between two filters gets a <code>filter_1</code>/<code>_2</code>-style suffix to protect against collisions); <code>manifest.csv</code> is always one file at the root, whose first line is a <code>#&nbsp;library_root:&nbsp;&lt;absolute&nbsp;path&gt;</code> comment, followed by columns: file, filter, score, fwhm_px, session_date, verdict, linked_name (the name actually used for the link: on a filename collision within a bucket this differs from the source filename, e.g. <code>part2__img_0001.fit</code>). <code>--keep</code> is the shared keep ratio; <code>--keep-filter "Ha=0.9,OIII=0.7"</code> overrides it per filter (comma-separated list, each in (0, 1], filter name case-insensitive; the <code>none</code> key applies to the group of frames with no filter; an unknown filter name gets a stderr warning, not an error). Re-exporting syncs an existing export with the fresh selection: hardlinks no longer in the selection disappear from the <code>lights/</code> tree, strictly only there (the library's original files are untouched), and the output reports it ("N stale links removed"). By default it exports under <code>.astro_tool/stacklists/&lt;target&gt;-&lt;date&gt;/</code>; <code>--out PATH</code> exports directly into PATH instead (PATH becomes the stacklist directory itself, and can be outside the library; a copy is made instead of a hardlink across volumes, and the output reports that too). <code>--out -</code> isn't supported, since this exports a whole directory tree, not a single file: it stops with a clear error.</div>
+          <pre class="code">astrotool stacklist --target IC_1396 --date 2026-08-08 --capture osc-duo-300s \
+  --keep 0.8 --out ~/Desktop/IC1396-osc-stack</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">stacks</div>
+          <div class="desc">Discovered finished stack files for a target, grouped into variant families (original/edited/starless/starmask/export); <code>--verbose</code> lists the variants too.</div>
+          <pre class="code">astrotool stacks --target M31 --grouped</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">report</div>
+          <div class="desc">A standalone HTML night report: timeline, quality, altitude &amp; moon, calibration, to-dos, and a filter breakdown computed only for that session's date. Writes to the report directory by default; <code>--out PATH</code> for exactly the given file, <code>--out -</code> to send the HTML to stdout.</div>
+          <pre class="code">astrotool report --target M31 --date 2026-03-15 --out ~/Desktop/M31-2026-03-15.html</pre>
+        </div>
+        <div class="cmd">
+          <div class="name">target-report</div>
+          <div class="desc">A standalone HTML target report: every session, stack, calibration coverage, and quality figure for one target, on one page, with a project-level per-filter have/goal/missing table. Writes to the report directory by default; <code>--out PATH</code> for exactly the given file, <code>--out -</code> to send the HTML to stdout.</div>
+          <pre class="code">astrotool target-report --target M31 --out -</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Other</h2>
+      <div class="cmdgroup">
+        <div class="cmd">
+          <div class="name">search</div>
+          <div class="desc">Searches Bortle/SQM/seeing notes written into a session's <code>README.txt</code> (and the note editor) by key or value; with <code>--all</code>, a full sidebar-style search instead: targets, sessions, files, and notes at once.</div>
+          <pre class="code">astrotool search M31 --all</pre>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="closing-note">For fuller feature descriptions see the <a href="features.html">Features page</a>, and the <a href="tutorial.html">Guide</a> to get started. MIT license.</p>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 AstroTool</span>
+    <span><a href="tutorial.html">Guide</a> · <a href="cli.html">CLI</a> · <a href="privacy.html">Privacy</a> · v2.0.0</span>
+  </div>
+</footer>
+
+</body>
+</html>

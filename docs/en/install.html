@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AstroTool · Install</title>
+<meta name="description" content="How to install AstroTool: download the DMG, drag it to Applications, and what to do if Gatekeeper blocks the first launch.">
+
+<link rel="icon" type="image/png" sizes="32x32" href="../favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+<link rel="stylesheet" href="../site.css">
+<meta name="theme-color" content="#0B0B0D">
+<link rel="alternate" hreflang="hu" href="https://themokx1.github.io/Astro-Tool/install.html">
+<link rel="alternate" hreflang="en" href="https://themokx1.github.io/Astro-Tool/en/install.html">
+<link rel="alternate" hreflang="x-default" href="https://themokx1.github.io/Astro-Tool/install.html">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="AstroTool · Install">
+<meta property="og:description" content="Download the DMG, drag it to Applications, and clear the Gatekeeper block on first launch.">
+<meta property="og:url" content="https://themokx1.github.io/Astro-Tool/en/install.html">
+<meta property="og:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AstroTool · Install">
+<meta name="twitter:description" content="Download the DMG, drag it to Applications, and clear the Gatekeeper block on first launch.">
+<meta name="twitter:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="index.html" style="text-decoration:none;color:inherit;"><span class="brand-mark" aria-hidden="true"></span>AstroTool</a>
+    <div class="nav-lang">
+      <a href="../install.html">HU</a>
+      <a href="install.html" class="current">EN</a>
+    </div>
+  </div>
+</nav>
+
+<header class="wrap compact">
+  <h1>Install</h1>
+  <p class="sub">Five steps from download to first launch. The app isn't notarized yet, so macOS will warn you the first time: here's how to allow it.</p>
+  <p class="crumbs"><a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Download</a> · <a href="tutorial.html">Guide</a> · <a href="cli.html">CLI</a></p>
+</header>
+
+<main class="doc-wrap doc">
+  <div class="panels">
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Requirements</h2>
+      <p>macOS 26 or later, an Apple Silicon Mac (M1 or newer). The app is free, no account or registration needed.</p>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Installing</h2>
+      <ol class="steps">
+        <li><strong>Download the DMG</strong><span class="detail">get the latest <code>AstroTool-x.y.z.dmg</code> from the <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">GitHub releases page</a>.</span></li>
+        <li><strong>Open the DMG</strong><span class="detail">double-click the downloaded file, which opens a window with the AstroTool icon.</span></li>
+        <li><strong>Drag AstroTool into Applications</strong><span class="detail">in the window that opens, drag the app icon onto the "Applications" shortcut, then close the DMG window.</span></li>
+        <li><strong>Launch it from Applications</strong><span class="detail">since the app isn't notarized yet, macOS will block the first launch: see below for how to allow it.</span></li>
+        <li><strong>Grant disk access if asked</strong><span class="detail">the app will request permission for the volume your image library lives on: you can revoke this any time under System Settings ▸ Privacy & Security ▸ Full Disk Access.</span></li>
+      </ol>
+    </div>
+
+    <div class="panel callout">
+      <h2>First launch: Gatekeeper blocks it</h2>
+      <p>AstroTool is a small, independently developed project, not yet notarized by Apple. This isn't a virus warning, it just means Apple hasn't run it through their own automated check yet. Either of the two methods below clears it, and you only need to do this once.</p>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Option A: right-click → Open</h2>
+      <ol class="steps">
+        <li><strong>Applications folder</strong><span class="detail">find the AstroTool icon (Finder ▸ Applications, or ⌘⇧A).</span></li>
+        <li><strong>Control-click (or right-click) the icon</strong><span class="detail">choose "Open" from the menu that appears. Don't double-click, this step only works with a right-click.</span></li>
+        <li><strong>Confirm</strong><span class="detail">click "Open" again in the dialog that appears. After this, the app launches normally with a plain double-click.</span></li>
+      </ol>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Option B: System Settings</h2>
+      <ol class="steps">
+        <li><strong>Try opening it</strong><span class="detail">double-click AstroTool: macOS shows a "can't be opened" style warning because the app isn't from an identified developer.</span></li>
+        <li><strong>System Settings ▸ Privacy &amp; Security</strong><span class="detail">scroll down until you see the blocked-app message about AstroTool near the bottom of the page.</span></li>
+        <li><strong>"Open Anyway"</strong><span class="detail">click the button, then confirm with your password or Touch ID.</span></li>
+      </ol>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Optional: CLI</h2>
+      <p>The <code>astrotool</code> command-line tool is a separate ZIP on the same <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">releases page</a> (<code>astrotool-x.y.z-macos-universal.zip</code>).</p>
+      <ol class="steps">
+        <li><strong>Unzip it</strong><span class="detail">double-click the ZIP, or run <code>unzip astrotool-x.y.z-macos-universal.zip</code> in Terminal.</span></li>
+        <li><strong>Put it on your PATH</strong><span class="detail">for example <code>mv astrotool /usr/local/bin/</code> (or any directory already on your PATH).</span></li>
+        <li><strong>Clear the quarantine flag</strong><span class="detail">for a terminal binary you can lift the Gatekeeper flag directly: <code>xattr -d com.apple.quarantine /usr/local/bin/astrotool</code>. This clears the same flag as Option A/B above, just from the command line.</span></li>
+        <li><strong>Check it works</strong><span class="detail"><code>astrotool --help</code> in Terminal.</span></li>
+      </ol>
+    </div>
+
+  </div>
+  <p class="closing-note">Questions about installing? The <a href="tutorial.html">guide</a> and the <a href="cli.html">CLI reference</a> have more on actually using it. MIT license.</p>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 AstroTool</span>
+    <span><a href="tutorial.html">Guide</a> · <a href="cli.html">CLI</a> · <a href="privacy.html">Privacy</a> · v2.0.0</span>
+  </div>
+</footer>
+
+</body>
+</html>
