@@ -81,6 +81,13 @@ public final class FirstSuccessOnboardingStore {
         step = .completion
     }
 
+    public func cancelImport() {
+        guard hasOpenedLibrary else { return }
+        didSkipImport = false
+        didCreateFirstProject = false
+        step = .importOffer
+    }
+
     public func returnToLanding() {
         errorMessage = nil
         step = .landing

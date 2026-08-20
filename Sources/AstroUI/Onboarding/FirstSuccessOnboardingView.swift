@@ -251,8 +251,9 @@ public struct FirstSuccessOnboardingView: View {
                     accessMode: .mutationEnabled,
                     indexedFolders: indexedFolders,
                     existingProjects: existingProjects,
-                    dismiss: { coordinator.importCompleted(createdFirstProject: true) },
-                    runScan: runScan
+                    dismiss: { coordinator.cancelImport() },
+                    runScan: runScan,
+                    importCompleted: { coordinator.importCompleted(createdFirstProject: true) }
                 )
             }
         } else {

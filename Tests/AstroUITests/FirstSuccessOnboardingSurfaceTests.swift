@@ -43,4 +43,15 @@ struct FirstSuccessOnboardingSurfaceTests {
         }
         #expect(map.contains("accessibilityIdentifier(\"v3.onboarding.library-map\")"))
     }
+
+    @Test("Closing import and completing a verified import use separate callbacks")
+    func honestImportCompletion() throws {
+        let importView = try source("Sources/AstroUI/Features/Library/CaptureImportView.swift")
+        let onboarding = try source("Sources/AstroUI/Onboarding/FirstSuccessOnboardingView.swift")
+        #expect(importView.contains("importCompleted: @escaping () -> Void"))
+        #expect(importView.contains("importCompleted()"))
+        #expect(onboarding.contains("dismiss: { coordinator.cancelImport() }"))
+        #expect(onboarding.contains("importCompleted: { coordinator.importCompleted(createdFirstProject: true) }"))
+        #expect(!onboarding.contains("dismiss: { coordinator.importCompleted(createdFirstProject: true) }"))
+    }
 }

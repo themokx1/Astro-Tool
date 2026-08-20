@@ -436,6 +436,7 @@ public struct CaptureImportView: View {
     @State private var store: CaptureImportStore
     let dismiss: () -> Void
     let runScan: () -> Void
+    let importCompleted: () -> Void
     @Environment(OperationHost.self) private var operationHost
 
     public init(
@@ -444,7 +445,8 @@ public struct CaptureImportView: View {
         indexedFolders: [String],
         existingProjects: [ProjectRecord],
         dismiss: @escaping () -> Void,
-        runScan: @escaping () -> Void
+        runScan: @escaping () -> Void,
+        importCompleted: @escaping () -> Void = {}
     ) {
         _store = State(initialValue: CaptureImportStore(
             rootURL: rootURL, accessMode: accessMode,
@@ -452,6 +454,7 @@ public struct CaptureImportView: View {
         ))
         self.dismiss = dismiss
         self.runScan = runScan
+        self.importCompleted = importCompleted
     }
 
     /// V3 pre-stack program, section 5.1 (Ingest-figyelő): the Home banner's
@@ -465,7 +468,8 @@ public struct CaptureImportView: View {
         existingProjects: [ProjectRecord],
         ingestCandidate: IngestWatcher.Candidate,
         dismiss: @escaping () -> Void,
-        runScan: @escaping () -> Void
+        runScan: @escaping () -> Void,
+        importCompleted: @escaping () -> Void = {}
     ) {
         _store = State(initialValue: CaptureImportStore(
             prefilling: rootURL, accessMode: accessMode, indexedFolders: indexedFolders,
@@ -474,6 +478,7 @@ public struct CaptureImportView: View {
         ))
         self.dismiss = dismiss
         self.runScan = runScan
+        self.importCompleted = importCompleted
     }
 
     public var body: some View {
@@ -1036,11 +1041,16 @@ public struct CaptureImportView: View {
                 HStack {
                     Button("Run Scan Now") {
                         runScan()
+                        importCompleted()
                         dismiss()
                     }
                     .accessibilityIdentifier("v2.capture-import.run-scan")
                     Spacer()
-                    Button("Done", action: dismiss).buttonStyle(.borderedProminent)
+                    Button("Done") {
+                        importCompleted()
+                        dismiss()
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
             }
         }

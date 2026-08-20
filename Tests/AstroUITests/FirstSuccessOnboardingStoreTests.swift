@@ -52,6 +52,20 @@ struct FirstSuccessOnboardingStoreTests {
         #expect(!store.didCreateFirstProject)
     }
 
+    @Test("Closing import early returns to the offer without claiming success")
+    func cancelImport() {
+        let store = FirstSuccessOnboardingStore(mode: .firstRun)
+        store.chooseEntry(.createLibrary)
+        store.libraryBecameReady()
+        store.startImport()
+
+        store.cancelImport()
+
+        #expect(store.step == .importOffer)
+        #expect(!store.didSkipImport)
+        #expect(!store.didCreateFirstProject)
+    }
+
     @Test("Recoverable errors keep the current step")
     func recoverableError() {
         let store = FirstSuccessOnboardingStore(mode: .firstRun)
