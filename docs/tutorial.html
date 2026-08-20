@@ -3,158 +3,47 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AstroTool — tutorial</title>
-<meta name="description" content="AstroTool tutorial: könyvtár-felépítés, elnevezési szabályok, egy éjszaka munkafolyamata és kalibráció-gyorstalpaló kezdőknek.">
+<title>AstroTool · Útmutató</title>
+<meta name="description" content="AstroTool útmutató: könyvtár-felépítés, elnevezési szabályok, egy éjszaka munkafolyamata és kalibráció-gyorstalpaló kezdőknek.">
 
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
-<meta name="theme-color" content="#405282">
+<link rel="stylesheet" href="site.css">
+<meta name="theme-color" content="#0B0B0D">
 
 <meta property="og:type" content="website">
-<meta property="og:title" content="AstroTool — tutorial">
+<meta property="og:title" content="AstroTool · Útmutató">
 <meta property="og:description" content="Könyvtár-felépítés, elnevezési szabályok, egy éjszaka munkafolyamata és kalibráció-gyorstalpaló.">
 <meta property="og:url" content="https://themokx1.github.io/Astro-Tool/tutorial.html">
 <meta property="og:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="AstroTool — tutorial">
+<meta name="twitter:title" content="AstroTool · Útmutató">
 <meta name="twitter:description" content="Könyvtár-felépítés, elnevezési szabályok, egy éjszaka munkafolyamata és kalibráció-gyorstalpaló.">
 <meta name="twitter:image" content="https://themokx1.github.io/Astro-Tool/og-image.jpg">
-<style>
-  :root {
-    --bg: #f5f5f7; --card: #ffffff; --text: #1d1d1f; --muted: #6e6e73;
-    --line: #e5e5ea; --accent: #405282; --accent2: #7a2bff; --code-bg: #f0f0f3;
-    --star: transparent;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #06081a; --card: #10142c; --text: #f2f3fb; --muted: #9096b8;
-      --line: #262c4d; --accent: #9fb2e8; --accent2: #c7d3ff; --code-bg: #171b38;
-      --star: #ffffff;
-    }
-  }
-  * { box-sizing: border-box; }
-  html { background: var(--bg); }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    -webkit-font-smoothing: antialiased; display: flex; justify-content: center;
-    padding: 40px 20px 48px; position: relative; overflow-x: hidden;
-  }
-  body::before {
-    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-    background-image:
-      radial-gradient(1.6px 1.6px at 8% 12%, var(--star), transparent),
-      radial-gradient(1.2px 1.2px at 22% 38%, var(--star), transparent),
-      radial-gradient(1.8px 1.8px at 34% 8%, var(--star), transparent),
-      radial-gradient(1.2px 1.2px at 47% 52%, var(--star), transparent),
-      radial-gradient(1.5px 1.5px at 63% 22%, var(--star), transparent),
-      radial-gradient(1.1px 1.1px at 78% 44%, var(--star), transparent),
-      radial-gradient(1.7px 1.7px at 89% 15%, var(--star), transparent),
-      radial-gradient(1.3px 1.3px at 12% 70%, var(--star), transparent),
-      radial-gradient(1.6px 1.6px at 29% 86%, var(--star), transparent),
-      radial-gradient(1.1px 1.1px at 55% 78%, var(--star), transparent),
-      radial-gradient(1.4px 1.4px at 71% 92%, var(--star), transparent),
-      radial-gradient(1.2px 1.2px at 94% 68%, var(--star), transparent),
-      radial-gradient(1.5px 1.5px at 5% 95%, var(--star), transparent),
-      radial-gradient(1.3px 1.3px at 85% 88%, var(--star), transparent);
-    opacity: .55;
-  }
-  main { width: 100%; max-width: 720px; position: relative; z-index: 1; }
-  nav.topnav {
-    display: flex; justify-content: center; gap: 4px; flex-wrap: wrap; margin: 0 0 32px;
-  }
-  nav.topnav a {
-    color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 600;
-    padding: 8px 14px; border-radius: 999px; transition: background .12s ease, color .12s ease;
-  }
-  nav.topnav a:hover { background: var(--code-bg); color: var(--text); }
-  nav.topnav a.active { color: var(--text); background: var(--card); border: 1px solid var(--line); }
-  h1.pagetitle { font-size: 30px; margin: 0 0 6px; letter-spacing: -.02em; text-align: center; }
-  p.pagesub { color: var(--muted); font-size: 16px; margin: 0 0 32px; text-align: center; }
-  .card {
-    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
-    padding: 24px 26px; margin-top: 22px;
-  }
-  .card h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em;
-    color: var(--muted); margin: 0 0 16px; display: flex; align-items: center; gap: 8px; }
-  .card h2 .num {
-    display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
-    border-radius: 50%; background: var(--accent2); color: #0b0d1f; font-size: 12px; font-weight: 800;
-  }
-  p { margin: 0 0 12px; }
-  code {
-    background: var(--code-bg); border-radius: 6px; padding: 2px 7px;
-    font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word;
-  }
-  pre.tree {
-    background: var(--code-bg); border-radius: 12px; padding: 18px 20px; overflow-x: auto;
-    font: 13.5px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0 0 16px;
-  }
-  pre.tree .dir { color: var(--accent2); font-weight: 700; }
-  pre.tree .comment { color: var(--muted); font-style: italic; }
-  .legend { list-style: none; margin: 0; padding: 0; }
-  .legend li { margin: 10px 0; padding-left: 22px; position: relative; font-size: 14.5px; }
-  .legend li::before { content: "›"; position: absolute; left: 0; color: var(--accent2); font-weight: 700; }
-  .tablewrap { overflow-x: auto; margin: 4px 0 8px; }
-  table { width: 100%; min-width: 540px; border-collapse: collapse; margin: 0; font-size: 14px; }
-  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { color: var(--muted); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .03em; }
-  tr:last-child td { border-bottom: none; }
-  td code { white-space: nowrap; }
-  ol.steps { margin: 0; padding-left: 0; list-style: none; counter-reset: step; }
-  ol.steps li {
-    counter-increment: step; position: relative; padding: 4px 0 4px 40px; margin: 14px 0;
-  }
-  ol.steps li::before {
-    content: counter(step); position: absolute; left: 0; top: 2px; width: 28px; height: 28px;
-    border-radius: 50%; background: var(--accent2); color: #0b0d1f; font-weight: 800; font-size: 13px;
-    display: flex; align-items: center; justify-content: center;
-  }
-  ol.steps li strong { display: block; margin-bottom: 2px; }
-  ol.steps li span.detail { color: var(--muted); font-size: 14px; }
-  .whenbox {
-    background: var(--code-bg); border-radius: 12px; padding: 14px 18px; margin-top: 18px; font-size: 14px;
-  }
-  .whenbox strong { color: var(--accent2); }
-  .iron {
-    background: rgba(255,181,69,.10); border: 1px solid rgba(255,181,69,.32);
-    border-radius: 14px; padding: 20px 22px; margin-top: 22px;
-  }
-  .iron h2 { color: #ffb545; margin: 0 0 10px; font-size: 15px; text-transform: uppercase; letter-spacing: .04em; }
-  .iron ul { margin: 8px 0 0; padding-left: 20px; }
-  .iron li { margin: 6px 0; font-size: 14.5px; }
-  .yn { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
-  @media (max-width: 560px) { .yn { grid-template-columns: 1fr; } }
-  .yn .col { border-radius: 10px; padding: 12px 14px; font-size: 14px; }
-  .yn .yes { background: rgba(79,191,120,.10); border: 1px solid rgba(79,191,120,.3); }
-  .yn .no { background: rgba(255,92,92,.08); border: 1px solid rgba(255,92,92,.28); }
-  .yn h4 { margin: 0 0 6px; font-size: 13px; }
-  .yn .yes h4 { color: #4fbf78; } .yn .no h4 { color: #ff8a8a; }
-  .yn ul { margin: 0; padding-left: 18px; }
-  .yn li { margin: 4px 0; }
-  footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 36px; }
-  a { color: var(--accent2); }
-</style>
 </head>
 <body>
-<main>
-  <nav class="topnav">
-    <a href="index.html">Kezdőlap</a>
-    <a class="active" href="tutorial.html">Tutorial</a>
-    <a href="features.html">Funkciók</a>
-    <a href="cli.html">CLI</a>
-    <a href="https://github.com/themokx1/Astro-Tool/releases/latest">Letöltés</a>
-  </nav>
 
-  <h1 class="pagetitle">Tutorial</h1>
-  <p class="pagesub">A lényeg egy oldalon: hogyan épül fel a könyvtárad, és mit csinálj vele egy éjszaka után.</p>
+<nav>
+  <div class="wrap">
+    <a class="brand" href="index.html" style="text-decoration:none;color:inherit;"><span class="brand-mark" aria-hidden="true"></span>AstroTool</a>
+  </div>
+</nav>
 
-  <div class="card">
-    <h2><span class="num">1</span>A könyvtár felépítése</h2>
-    <p>Az AstroTool egy rögzített, négy-területes könyvtárszerkezetre épít. Minden területnek pontosan egy szerepe van — ha ezt betartod, a tool minden számítása (integráció, kalibráció-lefedettség, tervezés) megbízhatóan működik.</p>
-    <pre class="tree">&lt;ROOT&gt;/
+<header class="wrap compact">
+  <h1>Útmutató</h1>
+  <p class="sub">A lényeg egy oldalon: hogyan épül fel a könyvtárad, és mit csinálj vele egy éjszaka után.</p>
+  <p class="crumbs"><a href="features.html">Funkciók</a> · <a href="cli.html">CLI</a> · <a href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">Letöltés</a></p>
+</header>
+
+<main class="doc-wrap doc">
+  <div class="panels">
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>1. A könyvtár felépítése</h2>
+      <p>Az AstroTool egy rögzített, négy-területes könyvtárszerkezetre épít. Minden területnek pontosan egy szerepe van: ha ezt betartod, a tool minden számítása (integráció, kalibráció-lefedettség, tervezés) megbízhatóan működik.</p>
+      <pre class="tree">&lt;ROOT&gt;/
 ├── <span class="dir">sessions</span>/&lt;CÉLPONT&gt;/&lt;ÉÉÉÉ-HH-NN&gt;/
 │   ├── lights/   flats/   darks/   biases/
 │   └── README.txt                        <span class="comment"># kézzel kitöltött jegyzet: Bortle, SQM, seeing...</span>
@@ -164,84 +53,92 @@
     ├── darks/&lt;exp&gt;sec_&lt;temp&gt;deg/       <span class="comment"># pl. 300sec_-10deg</span>
     ├── flats/
     └── biases/</pre>
-    <ul class="legend">
-      <li><strong>sessions</strong> — a nyers, eredeti felvételek. Ide semmit sosem írunk felül és sosem törlünk — ez az egyetlen igazságforrás.</li>
-      <li><strong>stacks</strong> — a stackelt köztes eredmények. Bármikor újra elő tudod állítani a sessions-ből, ha elveszik.</li>
-      <li><strong>processed</strong> — a végleges, feldolgozott (post-processed) képek. Ez a publikálásra kész állapot.</li>
-      <li><strong>calibration_library</strong> — újrafelhasználható master dark/flat/bias keretek, expozíció+hőmérséklet szerint mappázva.</li>
-    </ul>
-  </div>
-
-  <div class="card">
-    <h2><span class="num">2</span>Elnevezési szabályok</h2>
-    <p>A célpontnév és a dátum-mappa neve nem szabad szöveg — az eszköz ezekből olvassa ki, melyik felvétel melyik célponthoz és melyik éjszakához tartozik.</p>
-    <div class="tablewrap">
-    <table>
-      <tr><th>Minta</th><th>Jelentés</th><th>Példa</th></tr>
-      <tr><td><code>&lt;katalógus&gt;_&lt;név&gt;</code></td><td>célpont-mappanév, szóközök <code>_</code>-re cserélve, minden más karakter kiszűrve</td><td><code>IC1805-1848_Heart_and_Soul_Nebula</code></td></tr>
-      <tr><td><code>ÉÉÉÉ-HH-NN</code></td><td>session-dátum, szigorúan ISO-formában</td><td><code>2026-03-15</code></td></tr>
-      <tr><td><code>-N</code> végződés</td><td>második (vagy N-edik) futás ugyanarra a célpontra/éjszakára</td><td><code>2026-04-06-2</code></td></tr>
-      <tr><td>két dátum összekötve</td><td>több éjszaka egy session-be összevonva</td><td><code>2026-02-25_2026-03-15</code></td></tr>
-      <tr><td><code>-OSC</code> jelölés</td><td>tudatosan megjelölt eltérés (pl. OSC-kamerás felvétel egy mono-sorozat mellett)</td><td><code>2026-03-15-OSC</code></td></tr>
-      <tr><td><code>_hibas</code> jelölés</td><td>rossz éjszaka — az eszköz tudatosan <strong>kimarad a statisztikából</strong></td><td><code>2026-03-15_hibas</code></td></tr>
-    </table>
+      <ul class="list">
+        <li><strong>sessions</strong>: a nyers, eredeti felvételek. Ide semmit sosem írunk felül és sosem törlünk, ez az egyetlen igazságforrás.</li>
+        <li><strong>stacks</strong>: a stackelt köztes eredmények. Bármikor újra elő tudod állítani a sessions-ből, ha elveszik.</li>
+        <li><strong>processed</strong>: a végleges, feldolgozott (post-processed) képek. Ez a publikálásra kész állapot.</li>
+        <li><strong>calibration_library</strong>: újrafelhasználható master dark/flat/bias keretek, expozíció és hőmérséklet szerint mappázva.</li>
+      </ul>
     </div>
-    <p style="color:var(--muted);font-size:13.5px;margin-top:6px;">Ezek a minták a <code>config.json</code>-ban felülbírálhatók (<code>intentional.runSuffix</code>/<code>dateRange</code>/<code>labels</code>), de az alapértékek pontosan ezt a négy esetet ismerik fel.</p>
-  </div>
 
-  <div class="card">
-    <h2><span class="num">3</span>Egy éjszaka munkafolyamata</h2>
-    <ol class="steps">
-      <li><strong>Felvétel után: <code>astrotool scan</code></strong><span class="detail">bejárja a könyvtárat, frissíti a belső indexet — mindig ez az első lépés, minden más erre épül.</span></li>
-      <li><strong><code>astrotool audit</code></strong><span class="detail">három súlyosság szerint csoportosítja a talált gondokat: <em>biztos hiba</em> (pl. sérült FITS fejléc), <em>gyanús</em> (pl. szokatlan méret), <em>valószínűleg szándékos</em> (pl. ismert reziduum) — sosem töröl, csak jelöl.</span></li>
-      <li><strong>Pontozás: <code>astrotool rate</code></strong><span class="detail">a light frame-ek minőség-pontozása (FWHM, kerekség, háttér, csillagszám), kiugró keretek megjelölésével.</span></li>
-      <li><strong><code>astrotool stacklist</code></strong><span class="detail">a legjobb frame-ek kiválasztása és exportálása hardlinkek + <code>.dssfilelist</code> + Siril script formájában.</span></li>
-      <li><strong>Stackelés DSS-ben vagy Sirilben</strong><span class="detail">az exportált listát a szokásos módon töltöd be a saját eszközödbe — az AstroTool ide nem szól bele.</span></li>
-      <li><strong><code>astrotool report</code></strong><span class="detail">önmagában megnyitható HTML éjszaka-riport: idővonal, minőség, magasság &amp; Hold, kalibráció-státusz, teendők.</span></li>
-    </ol>
-    <div class="whenbox">
-      <strong>Melyiket mikor?</strong> Derült este előtt <code>astrotool plan</code> (ma este mit érdemes fényképezni), felhős/bent-maradós estén <code>astrotool projects</code> (hol tart az egyes célpontok feldolgozása — mihez kell még adat, mihez kell csak stackelés vagy utómunka).
-    </div>
-  </div>
-
-  <div class="card">
-    <h2><span class="num">4</span>Kalibráció gyorstalpaló</h2>
-    <p><strong>Dark</strong> — ugyanazon expozíció+hőmérséklet+gain hőzajt méri; a szenzor hőmérséklet-ingadozása miatt kell rendszeresen frissíteni. <strong>Flat</strong> — az optikai vignettálást és port méri; minden alkalommal újra kell venni, ha a kamera vagy a fókusz elmozdult (rotátor-állás is számít!). <strong>Bias</strong> — a szenzor kiolvasási pedesztálja; ritkán változik, de a gain/offset kombónak pontosan egyeznie kell.</p>
-    <p>A <code>calibration_library/darks/</code> alatt a mappanév-konvenció <code>&lt;exp&gt;sec_&lt;temp&gt;deg</code> (pl. <code>300sec_-10deg</code>) — ebből olvassa ki az eszköz, melyik dark melyik felvételi paraméterhez illik.</p>
-    <p>Az <code>astrotool calib</code> pontosan (kamera, gain, offset, hőmérséklet) egyezést vár — sosem tippel hamis egyezést, és a <strong>flat-rotátor állását</strong> is figyeli, mert egy elforgatott flat nem érvényes a session-re. A <code>link-calib</code> a megfelelő mester-kereteket hardlinkeli a session mellé (<code>--dry-run</code> előnézettel, <code>--yes</code> nélkül csak jelöl, sosem ír automatikusan).</p>
-  </div>
-
-  <div class="card">
-    <h2><span class="num">5</span>Biztonság</h2>
-    <div class="yn">
-      <div class="col yes">
-        <h4>✓ Amit az eszköz ír</h4>
-        <ul>
-          <li>Saját munkakönyvtára: <code>.astro_tool/</code> (index, exportok, riportok, javaslat-scriptek)</li>
-          <li>Új session könyvtár + README-sablon (<code>new-session</code>)</li>
-          <li>Hardlinkek a saját <code>.astro_tool/</code> alkönyvtáraiba (sosem az eredeti fájlok helyén)</li>
-          <li>Belső SQLite index a metaadatokról</li>
-        </ul>
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>2. Elnevezési szabályok</h2>
+      <p>A célpontnév és a dátum-mappa neve nem szabad szöveg: az eszköz ezekből olvassa ki, melyik felvétel melyik célponthoz és melyik éjszakához tartozik.</p>
+      <div class="table-scroll">
+      <table>
+        <tr><th>Minta</th><th>Jelentés</th><th>Példa</th></tr>
+        <tr><td><code>&lt;katalógus&gt;_&lt;név&gt;</code></td><td>célpont-mappanév, szóközök <code>_</code>-re cserélve, minden más karakter kiszűrve</td><td><code>IC1805-1848_Heart_and_Soul_Nebula</code></td></tr>
+        <tr><td><code>ÉÉÉÉ-HH-NN</code></td><td>session-dátum, szigorúan ISO-formában</td><td><code>2026-03-15</code></td></tr>
+        <tr><td><code>-N</code> végződés</td><td>második (vagy N-edik) futás ugyanarra a célpontra és éjszakára</td><td><code>2026-04-06-2</code></td></tr>
+        <tr><td>két dátum összekötve</td><td>több éjszaka egy session-be összevonva</td><td><code>2026-02-25_2026-03-15</code></td></tr>
+        <tr><td><code>-OSC</code> jelölés</td><td>tudatosan megjelölt eltérés (pl. OSC-kamerás felvétel egy mono-sorozat mellett)</td><td><code>2026-03-15-OSC</code></td></tr>
+        <tr><td><code>_hibas</code> jelölés</td><td>rossz éjszaka: az eszköz tudatosan <strong>kimarad a statisztikából</strong></td><td><code>2026-03-15_hibas</code></td></tr>
+      </table>
       </div>
-      <div class="col no">
-        <h4>✗ Amit sosem tesz</h4>
-        <ul>
-          <li>Nem töröl és nem mozgat semmit a képkönyvtárban</li>
-          <li>Nem írja felül az eredeti light/flat/dark/bias fájlokat</li>
-          <li>Nem futtat automatikusan semmilyen javaslat-scriptet</li>
-          <li>A README.txt-t csak olvassa, sosem ír bele</li>
-        </ul>
+      <p style="color:var(--muted);font-size:13.5px;margin-top:10px;">Ezek a minták a <code>config.json</code>-ban felülbírálhatók (<code>intentional.runSuffix</code>/<code>dateRange</code>/<code>labels</code>), de az alapértékek pontosan ezt a négy esetet ismerik fel.</p>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>3. Egy éjszaka munkafolyamata</h2>
+      <ol class="steps">
+        <li><strong>Felvétel után: <code>astrotool scan</code></strong><span class="detail">bejárja a könyvtárat, frissíti a belső indexet: mindig ez az első lépés, minden más erre épül.</span></li>
+        <li><strong><code>astrotool audit</code></strong><span class="detail">három súlyosság szerint csoportosítja a talált gondokat: <em>biztos hiba</em> (pl. sérült FITS fejléc), <em>gyanús</em> (pl. szokatlan méret), <em>valószínűleg szándékos</em> (pl. ismert reziduum); sosem töröl, csak jelöl.</span></li>
+        <li><strong>Pontozás: <code>astrotool rate</code></strong><span class="detail">a light frame-ek minőség-pontozása (FWHM, kerekség, háttér, csillagszám), kiugró keretek megjelölésével.</span></li>
+        <li><strong><code>astrotool stacklist</code></strong><span class="detail">a legjobb frame-ek kiválasztása és exportálása hardlinkek, <code>.dssfilelist</code> és Siril script formájában.</span></li>
+        <li><strong>Stackelés DSS-ben vagy Sirilben</strong><span class="detail">az exportált listát a szokásos módon töltöd be a saját eszközödbe: az AstroTool ide nem szól bele.</span></li>
+        <li><strong><code>astrotool report</code></strong><span class="detail">önmagában megnyitható HTML éjszaka-riport: idővonal, minőség, magasság és Hold, kalibráció-státusz, teendők.</span></li>
+      </ol>
+      <div class="whenbox">
+        <strong>Melyiket mikor?</strong> Derült este előtt <code>astrotool plan</code> (ma este mit érdemes fényképezni), felhős vagy bent-maradós estén <code>astrotool projects</code> (hol tart az egyes célpontok feldolgozása: mihez kell még adat, mihez kell csak stackelés vagy utómunka).
       </div>
     </div>
-  </div>
-  <div class="iron">
-    <h2>⛔ Vasszabály</h2>
-    <p style="margin:0;">Az eszköz a képkönyvtárban <strong>SOHA nem töröl és nem mozgat semmit</strong>. A karanténos takarítás így néz ki: az audit/cleanup csak <em>jelöl</em> (találatok listája), és kérésre egy átnézhető <code>.sh</code> javaslat-scriptet ír a <code>.astro_tool/suggestions/</code> mappába — ezt te nézed át és futtatod le saját belátásod szerint, az eszköz maga sosem hajt végre fájlműveletet a könyvtáron kívül a saját <code>.astro_tool/</code> munkaterületén.</p>
-  </div>
 
-  <footer>
-    MIT licenc · <a href="https://github.com/themokx1/Astro-Tool">forráskód a GitHubon</a>
-  </footer>
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>4. Kalibráció gyorstalpaló</h2>
+      <p><strong>Dark</strong>: ugyanazon expozíció, hőmérséklet és gain mellett a hőzajt méri; a szenzor hőmérséklet-ingadozása miatt kell rendszeresen frissíteni. <strong>Flat</strong>: az optikai vignettálást és port méri; minden alkalommal újra kell venni, ha a kamera vagy a fókusz elmozdult (a rotátor állása is számít). <strong>Bias</strong>: a szenzor kiolvasási pedesztálja; ritkán változik, de a gain és offset kombónak pontosan egyeznie kell.</p>
+      <p>A <code>calibration_library/darks/</code> alatt a mappanév-konvenció <code>&lt;exp&gt;sec_&lt;temp&gt;deg</code> (pl. <code>300sec_-10deg</code>): ebből olvassa ki az eszköz, melyik dark melyik felvételi paraméterhez illik.</p>
+      <p>Az <code>astrotool calib</code> pontosan kamera, gain, offset és hőmérséklet egyezést vár: sosem tippel hamis egyezést, és a <strong>flat-rotátor állását</strong> is figyeli, mert egy elforgatott flat nem érvényes a session-re. A <code>link-calib</code> a megfelelő mester-kereteket hardlinkeli a session mellé (<code>--dry-run</code> előnézettel, <code>--yes</code> nélkül csak jelöl, sosem ír automatikusan).</p>
+    </div>
+
+    <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>5. Biztonság</h2>
+      <div class="yn">
+        <div class="col yes">
+          <h4>Amit az eszköz ír</h4>
+          <ul>
+            <li>Saját munkakönyvtára: <code>.astro_tool/</code> (index, exportok, riportok, javaslat-scriptek)</li>
+            <li>Új session könyvtár és README-sablon (<code>new-session</code>)</li>
+            <li>Hardlinkek a saját <code>.astro_tool/</code> alkönyvtáraiba, sosem az eredeti fájlok helyén</li>
+            <li>Belső SQLite index a metaadatokról</li>
+          </ul>
+        </div>
+        <div class="col no">
+          <h4>Amit sosem tesz</h4>
+          <ul>
+            <li>Nem töröl és nem mozgat semmit a képkönyvtárban</li>
+            <li>Nem írja felül az eredeti light/flat/dark/bias fájlokat</li>
+            <li>Nem futtat automatikusan semmilyen javaslat-scriptet</li>
+            <li>A README.txt-t csak olvassa, sosem ír bele</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel callout">
+      <h2>Vasszabály</h2>
+      <p>Az eszköz a képkönyvtárban <strong>soha nem töröl és nem mozgat semmit</strong>. A karanténos takarítás így néz ki: az audit és a cleanup csak <em>jelöl</em> (találatok listája), és kérésre egy átnézhető <code>.sh</code> javaslat-scriptet ír a <code>.astro_tool/suggestions/</code> mappába: ezt te nézed át és futtatod le saját belátásod szerint. Az eszköz maga sosem hajt végre fájlműveletet a könyvtáron kívül, a saját <code>.astro_tool/</code> munkaterületén.</p>
+    </div>
+
+  </div>
+  <p class="closing-note">MIT licenc.</p>
 </main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 AstroTool</span>
+    <span><a href="tutorial.html">Útmutató</a> · <a href="cli.html">CLI</a> · <a href="privacy.html">Adatvédelem</a> · v2.0.0</span>
+  </div>
+</footer>
+
 </body>
 </html>
