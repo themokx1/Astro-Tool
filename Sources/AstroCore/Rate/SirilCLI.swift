@@ -101,8 +101,10 @@ public struct SirilCLI: StarMetricsProvider {
 
         do {
             try process.run()
-            process.waitUntilExit()
+            // Drain stdout before waiting: if the child fills the pipe
+            // buffer, it cannot exit until a reader makes room.
             let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
             if let text = String(data: data, encoding: .utf8) {
                 return parseVersionOutput(text)
             }

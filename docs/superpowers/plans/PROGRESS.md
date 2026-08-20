@@ -125,7 +125,7 @@ végső) — minden találat javítva és re-approve-olva.
   célra történő kódkivitelt külön, konkrét remote-engedély hiányában blokkolta.
   Ezt nem szabad megkerülni; a helyi commitok ettől függetlenül folyamatosak.
 
-### Átadási prompt, ha másik agentnek kell folytatnia
+### Történeti V2 átadási prompt (elavult, csak archívum)
 
 > Folytasd az AstroTool V2.0.0 kiadás elkészítését a
 > `/Users/zoltanpalotai16/PhpstormProjects/Astro-Tool/.worktrees/v200-ui-rework`
@@ -148,3 +148,30 @@ végső) — minden találat javítva és re-approve-olva.
 > commit. `/Volumes/images`-hez és valódi képekhez ne írj, ne mozgass, ne
 > törölj. Push csak akkor, ha a konkrét GitHub remote-ra történő kódkivitel
 > engedélyezett; egyébként dokumentáld a blokkot, de ne kerüld meg.
+
+## V3 stackelés előtti program — élő állapot (2026-08-20)
+
+- Aktív worktree: `.worktrees/v200-ui-rework`
+- Aktív ág: `codex/v2.0.0-ui-rework`
+- Kiindulási tag: `v2.0.0` (`831e084`, build 20035)
+- A specifikáció hat funkciója implementálva: ingest-figyelő, kalibrációs
+  automata, irányított rendrakó, metaadat-javító, derült-trigger és élő
+  éjszaka-mód.
+- Implementációs tartomány: `4f029f6..93cd418`, 16 commit, 74 fájl,
+  `+9833/-90` sor a V2.0.0 tag után.
+- A Siril verziólekérdezés stdout-pipe deadlockja 2026-08-20-án célzott,
+  red/green regressziós teszttel javítva: a folyamat kimenete a
+  `waitUntilExit()` előtt ürül ki.
+- Friss teljes verifikáció: `swift test` — **3297 teszt / 205 suite zöld**,
+  0 hiba (2026-08-20, 26.647 s).
+- A V3 release verziószáma, az ág elnevezése és a `main`-be integrálás még
+  tulajdonosi döntés.
+
+### Aktuális folytatási pont
+
+1. Végezz integrációs review-t a hat V3 vertikális szeleten, különösen a
+   fájlrendszeri mutációk és a Siril subprocess útvonalain.
+2. Döntsd el, hogy a munka új `codex/v3-*` ágra kerül-e, illetve mikor és
+   hogyan egyesül a dokumentációs `main` fővonallal.
+3. Csak az ágstratégia rendezése után selejtezd a régi worktree-ket; a dirty
+   worktree-ket törlés előtt külön diffeld és mentsd.

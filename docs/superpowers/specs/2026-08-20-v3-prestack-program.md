@@ -3,7 +3,23 @@
 **Dátum:** 2026-08-20
 **Ág:** `codex/v2.0.0-ui-rework` (kutatás a `.worktrees/v200-ui-rework` munkakönyvtárban)
 **Kiindulási alap:** AstroTool V2.0.0 (végleges kiadás, 55741d1, build 20035)
-**Állapot:** implementáció előtti specifikáció, hat funkcióra a tulajdonos által jóváhagyott scope szerint
+**Állapot:** mind a hat jóváhagyott funkció implementálva a fejlesztési ágon; integrációs review és V3 release-előkészítés hátravan
+
+## Implementációs pillanatkép — 2026-08-20
+
+| Funkció | Állapot | Fő commitok |
+|---|---|---|
+| Ingest-figyelő | Implementálva | `6aab0e3`, `7a4fc49` |
+| Kalibrációs automata | Implementálva | `18e81a1`, `221ae1e`, `cd9e481`, `3701648`, `78616f9` |
+| Irányított rendrakó | Implementálva | `ae49eec` |
+| Metaadat-javító | Implementálva | `74d478a` |
+| Derült-trigger | Implementálva | `ac42262`, `f89cc8b` |
+| Élő éjszaka-mód | Implementálva | `c2c429c`, `66593e5`, `93cd418` |
+
+A V2.0.0 tag (`831e084`) óta ez a program 16 commitban, 74 fájlban
+9833 hozzáadott és 90 törölt sort tett a fejlesztési ágra. A branch neve és
+a `ProductInfo` még V2/2.0.0 maradt; a V3 verzió-, ág- és release-stratégiája
+tulajdonosi döntést igényel, ezért ez a dokumentációfrissítés nem módosítja őket.
 
 ## 1. Cél és keret
 
